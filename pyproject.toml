@@ -1,0 +1,9 @@
+[project]
+name = "nir-protocol"
+version = "0.1.0"
+description = "Executable sketch of Proof of Intelligence Progress"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
