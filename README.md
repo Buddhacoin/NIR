@@ -1,9 +1,7 @@
 # NIR Protocol
 
-NIR is an experimental monetary protocol in which new currency is issued for
+NIR is a monetary protocol in which new currency is issued for
 **verified progress in machine intelligence**, not for raw computation alone.
-
-> Bitcoin proves that energy was spent. NIR aims to prove that intelligence was created.
 
 This repository is the first executable protocol sketch. It is deliberately
 not a tradable token, investment product, wallet, or mainnet.
