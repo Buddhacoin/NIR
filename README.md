@@ -63,6 +63,7 @@ candidate runs are committed.
 - `docs/protocol.md` — protocol and threat-model draft.
 - `nir/model.py` — deterministic scoring and capped emission model.
 - `nir/evaluator.py` — hidden-suite commitment and progress evaluation.
+- `nir/memory.py` — world capability frontier, lineage, and novelty registry.
 - `nir/genesis.py` — command-line commit/reveal demonstrator.
 - `nir/simulation.py` — a small example epoch.
 - `blockchain/` — post-quantum signed ledger and local chain demonstration.

@@ -109,7 +109,31 @@ grading is not reliable.
 - **Quantum migration:** addresses and signatures need crypto-agility from
   genesis, with versioned post-quantum signature suites and migration paths.
 
-## 5. Open research questions
+## 5. World capability memory
+
+NIR does not reward possession of knowledge already demonstrated by existing
+models. Before issuance starts, reference models form a sealed, unrewarded
+world-capability snapshot. For each evaluation family the ledger remembers the
+best verified score, model lineage, artifact commitment, and behavioral-output
+commitment.
+
+A renamed model, a bot repeatedly calling an existing API, or a known model
+compared with a deliberately weak baseline earns nothing because it does not
+move the world frontier. A candidate is novel only for the measured marginal
+delta above the previous best. Its challenge is derived after the complete
+artifact is committed, so stored answers cannot be prepared for the exact test.
+Every accepted change produces a new deterministic memory root.
+
+This defines two different things:
+
+- **knowledge** is information or an answer that can be copied;
+- **intelligence progress** is a reproducible increase in capability on fresh,
+  procedurally generated tasks, including transfer to unseen variations.
+
+The memory stores commitments and capability measurements, not private model
+weights or the world's conversations.
+
+## 6. Open research questions
 
 Before any public testnet, the project must specify:
 
@@ -122,7 +146,7 @@ Before any public testnet, the project must specify:
 7. treasury vesting, spending transparency, and founder allocation;
 8. applicable securities, payments, sanctions, tax, and privacy law.
 
-## 6. First realistic milestone
+## 7. First realistic milestone
 
 The first testnet should reward progress on one open, inexpensive benchmark
 family. It should use valueless test units. Only after adversarial trials show

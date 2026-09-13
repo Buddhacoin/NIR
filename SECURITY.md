@@ -17,6 +17,7 @@ or an exploit against a live third-party system in a public issue.
 - deterministic issuance with a 21 million NIR hard cap;
 - duplicate progress-proof rejection;
 - quorum-signed evaluation receipts bound to network, epoch, artifact, and score;
+- deterministic world-frontier memory with model lineage and behavior commitments;
 - linear treasury vesting by bounded block timestamps;
 - limits on block bytes, transaction counts, reward counts, keys, signatures,
   and numeric input lengths.
@@ -35,9 +36,10 @@ or an exploit against a live third-party system in a public issue.
    not exist yet.
 4. **Verifier identities are not Sybil-resistant.** Three valid keys can still
    be controlled by one party.
-5. **Semantic novelty is not independently proven.** Exact artifact replays are
-   rejected, but a repackaged or slightly altered copy may still receive an
-   evaluator-assigned novelty score.
+5. **Capability memory is not yet enforced by the JavaScript chain.** The
+   deterministic registry rejects known artifacts, behavior, weak-baseline
+   games, and non-frontier scores, but its state root still needs to become part
+   of consensus and signed evaluation receipts.
 
 ### High
 
