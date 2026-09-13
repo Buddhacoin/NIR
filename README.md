@@ -29,8 +29,9 @@ adjustment for the energy used.
 - Intelligence-mining pool: **88%**.
 - Builder and protocol treasury: **12%**, locked and intended to vest over ten
   years. This is a draft governance parameter, not a final allocation.
-- Epoch reward starts at 50 NIR and halves every 210,000 epochs; the hard cap
-  always wins.
+- A successful intelligence epoch starts at 50 NIR and its budget is cut in
+  half after every 210,000 rewarded epochs. Empty blocks issue nothing and do
+  not advance this counter; the hard cap always wins.
 - Holding NIR does not automatically grant protocol governance power.
 
 ## Run the prototype

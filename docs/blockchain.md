@@ -16,6 +16,8 @@ identically.
 - proportional reward allocation from proof scores;
 - ML-DSA-65-signed evaluation receipts bound to network and epoch;
 - on-chain recomputation of progress scores;
+- a world-capability memory root committed by genesis and every block;
+- consensus validation of lineage, behavior novelty, and marginal frontier gain;
 - permanent rejection of already rewarded proof fingerprints;
 - ten-year linear treasury vesting by bounded block timestamps;
 - domain-separated signatures and hashes;
@@ -24,9 +26,10 @@ identically.
 ## Trust boundary
 
 Validators attest identical evaluation metrics and the chain recomputes the
-score, allocation, uniqueness, signatures, and monetary cap. It does not rerun
-an AI model inside block validation. Production still needs a transport that
-creates these receipts directly from reproducible evaluator executions.
+score, world-memory transition, allocation, uniqueness, signatures, and
+monetary cap. Empty blocks do not consume issuance epochs. The chain does not
+rerun an AI model inside block validation. Production still needs a transport
+that creates receipts directly from reproducible evaluator executions.
 
 Validator identities in this version are configured at genesis. This is not yet
 permissionless consensus and has no Sybil-resistance, validator rotation,

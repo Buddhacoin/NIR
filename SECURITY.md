@@ -18,6 +18,7 @@ or an exploit against a live third-party system in a public issue.
 - duplicate progress-proof rejection;
 - quorum-signed evaluation receipts bound to network, epoch, artifact, and score;
 - deterministic world-frontier memory with model lineage and behavior commitments;
+- world-memory roots committed in genesis, blocks, and evaluation transitions;
 - linear treasury vesting by bounded block timestamps;
 - limits on block bytes, transaction counts, reward counts, keys, signatures,
   and numeric input lengths.
@@ -36,10 +37,6 @@ or an exploit against a live third-party system in a public issue.
    not exist yet.
 4. **Verifier identities are not Sybil-resistant.** Three valid keys can still
    be controlled by one party.
-5. **Capability memory is not yet enforced by the JavaScript chain.** The
-   deterministic registry rejects known artifacts, behavior, weak-baseline
-   games, and non-frontier scores, but its state root still needs to become part
-   of consensus and signed evaluation receipts.
 
 ### High
 
@@ -87,6 +84,8 @@ Fixed during review:
 - progress scores were accepted without quorum-signed evaluation receipts;
 - one evaluator could overweight a result by submitting multiple runs;
 - unattested baseline energy could distort the efficiency score;
+- empty blocks could consume issuance epochs and accelerate reward reduction;
+- capability memory existed outside consensus and could diverge between nodes;
 - block, number, key, signature, and collection sizes were insufficiently bounded;
 - future block timestamps were not bounded;
 - reward aggregation mishandled multiple proofs from the same contributor;

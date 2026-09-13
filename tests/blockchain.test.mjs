@@ -26,11 +26,19 @@ import {
   signObject,
   verifyObject,
 } from "../blockchain/crypto.mjs";
+import { CapabilityMemory } from "../blockchain/memory.mjs";
 
 function fixture() {
   const validators = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const chain = new NirChain({
+    capabilityReferences: [
+      {
+        artifactHash: `sha256:${fingerprint("baseline")}`,
+        behaviorCommitment: fingerprint("baseline-behavior"),
+        capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
+      },
+    ],
     genesisTimestamp: 0,
     networkId: "nir-testnet",
     validators: validators.map(publicWallet),
@@ -52,23 +60,29 @@ function quorumFor(block, validators) {
 }
 
 function progressClaim(chain, validators, recipient, label = "proof-a") {
+  const evaluation = chain.prepareProgressEvaluation({
+    artifactHash: `sha256:${fingerprint(`artifact-${label}`)}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    suiteCommitment: fingerprint("hidden-suite-v1"),
+    parents: [`sha256:${fingerprint("baseline")}`],
+    committedEpoch: chain.height,
+    challengeEpoch: chain.height + 1,
+    challengeSeed: fingerprint(`challenge-${chain.height + 1}`),
+    behaviorCommitment: fingerprint(`behavior-${label}`),
+    capabilitiesBps: { "code-v1": 8_400, "reasoning-v1": 8_200 },
+    gainPpm: 10_000,
+    generalityBps: 10_000,
+    reproducibilityBps: 10_000,
+    safetyBps: 10_000,
+    candidateEnergyWh: 100,
+    baselineEnergyWh: 100,
+    energyAttested: true,
+  });
   return createProgressClaim({
     networkId: chain.networkId,
-    epoch: chain.height,
+    epoch: chain.height + 1,
     recipient,
-    evaluation: {
-      artifactHash: `sha256:${fingerprint(`artifact-${label}`)}`,
-      baselineHash: `sha256:${fingerprint("baseline")}`,
-      suiteCommitment: fingerprint("hidden-suite-v1"),
-      gainPpm: 10_000,
-      generalityBps: 10_000,
-      reproducibilityBps: 10_000,
-      safetyBps: 10_000,
-      noveltyBps: 10_000,
-      candidateEnergyWh: 100,
-      baselineEnergyWh: 100,
-      energyAttested: true,
-    },
+    evaluation,
     evaluatorWallets: validators.slice(0, 3),
   });
 }
@@ -99,9 +113,29 @@ test("genesis supply contains only the locked treasury allocation", () => {
   assert.ok(chain.issued < MAX_SUPPLY);
 });
 
+test("Python and JavaScript capability memory use the same state root", () => {
+  const memory = new CapabilityMemory([
+    {
+      artifactHash: `sha256:${fingerprint("known-model-a")}`,
+      behaviorCommitment: fingerprint("known-behavior-a"),
+      capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
+    },
+    {
+      artifactHash: `sha256:${fingerprint("known-model-b")}`,
+      behaviorCommitment: fingerprint("known-behavior-b"),
+      capabilitiesBps: { "code-v1": 8_000, "reasoning-v1": 7_500 },
+    },
+  ]);
+  assert.equal(
+    memory.stateRoot,
+    "74fe4a4f969946c880ad08924f88ee8bc7d3feef4e28ede7351e462a6e84ea19",
+  );
+});
+
 test("a finalized progress block mints its fixed epoch budget", () => {
   const { chain, validators } = fixture();
   const miner = generateWallet();
+  const memoryRootBefore = chain.capabilityMemoryRoot;
   const block = chain.buildBlock({
     rewardClaims: [
       progressClaim(chain, validators, miner.address),
@@ -109,6 +143,53 @@ test("a finalized progress block mints its fixed epoch budget", () => {
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
+  assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
+  assert.equal(
+    chain.capabilityMemoryRoot,
+    block.progressRewards[0].evaluation.frontierRootAfter,
+  );
+});
+
+test("known capability cannot mint against a weaker selected baseline", () => {
+  const { chain } = fixture();
+  assert.throws(
+    () => chain.prepareProgressEvaluation({
+      artifactHash: `sha256:${fingerprint("repackaged-known-model")}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      suiteCommitment: fingerprint("hidden-suite-v1"),
+      parents: [`sha256:${fingerprint("baseline")}`],
+      committedEpoch: 0,
+      challengeEpoch: 1,
+      challengeSeed: fingerprint("challenge-1"),
+      behaviorCommitment: fingerprint("repackaged-behavior"),
+      capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
+      gainPpm: 10_000,
+      generalityBps: 10_000,
+      reproducibilityBps: 10_000,
+      safetyBps: 10_000,
+      candidateEnergyWh: 100,
+      baselineEnergyWh: 100,
+      energyAttested: true,
+    }),
+    /no new world-frontier capability/,
+  );
+});
+
+test("empty blocks do not consume intelligence issuance epochs", () => {
+  const { chain, validators } = fixture();
+  const empty = chain.buildBlock({ timestamp: 1 });
+  chain.appendBlock(finalizeBlock(empty, quorumFor(empty, validators)));
+  assert.equal(chain.nextIssuanceEpoch, 0);
+
+  const miner = generateWallet();
+  const rewarded = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, validators, miner.address)],
+    timestamp: 2,
+  });
+  assert.equal(rewarded.issuanceEpoch, 0);
+  chain.appendBlock(finalizeBlock(rewarded, quorumFor(rewarded, validators)));
+  assert.equal(chain.nextIssuanceEpoch, 1);
   assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
 });
 
@@ -215,10 +296,10 @@ test("one progress proof cannot mint twice", () => {
   };
   const first = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
-  const replayed = progressClaim(chain, validators, miner.address);
-  const second = chain.buildBlock({ rewardClaims: [replayed], timestamp: 2 });
-  const finalized = finalizeBlock(second, quorumFor(second, validators));
-  assert.throws(() => chain.appendBlock(finalized), /already rewarded/);
+  assert.throws(
+    () => progressClaim(chain, validators, miner.address),
+    /already known/,
+  );
 });
 
 test("an arbitrary intelligence score cannot mint NIR", () => {
@@ -295,6 +376,46 @@ test("treasury allocation becomes spendable only after elapsed vesting time", ()
   assert.equal(chain.balance(recipient.address), 100_000_000n);
 });
 
+test("treasury vesting unlocks only the elapsed linear share", () => {
+  const first = fixture();
+  const recipient = generateWallet();
+  const midpoint = Math.floor(TREASURY_VESTING_MS / 2);
+  const tooMuch = createTransfer({
+    wallet: first.treasury,
+    networkId: first.chain.networkId,
+    recipient: recipient.address,
+    amount: (TREASURY_ALLOCATION / 2n + 1n).toString(),
+    nonce: 0,
+  });
+  const rejected = first.chain.buildBlock({
+    transactions: [tooMuch],
+    timestamp: midpoint,
+  });
+  assert.throws(
+    () => first.chain.appendBlock(
+      finalizeBlock(rejected, quorumFor(rejected, first.validators)),
+    ),
+    /still vesting/,
+  );
+
+  const second = fixture();
+  const exactShare = createTransfer({
+    wallet: second.treasury,
+    networkId: second.chain.networkId,
+    recipient: recipient.address,
+    amount: (TREASURY_ALLOCATION / 2n).toString(),
+    nonce: 0,
+  });
+  const accepted = second.chain.buildBlock({
+    transactions: [exactShare],
+    timestamp: midpoint,
+  });
+  second.chain.appendBlock(
+    finalizeBlock(accepted, quorumFor(accepted, second.validators)),
+  );
+  assert.equal(second.chain.balance(recipient.address), TREASURY_ALLOCATION / 2n);
+});
+
 test("blocks too far in the future are rejected", () => {
   const { chain, validators } = fixture();
   const block = chain.buildBlock({
@@ -320,6 +441,14 @@ test("tampering with a finalized block invalidates its quorum certificate", () =
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   finalized.timestamp = 2;
   assert.throws(() => chain.appendBlock(finalized), /block hash mismatch/);
+});
+
+test("a block cannot claim a false world capability memory root", () => {
+  const { chain, validators } = fixture();
+  const block = chain.buildBlock({ timestamp: 1 });
+  block.capabilityMemoryRoot = fingerprint("false-world-memory");
+  const finalized = finalizeBlock(block, quorumFor(block, validators));
+  assert.throws(() => chain.appendBlock(finalized), /capability memory root/);
 });
 
 test("the same validator vote cannot be counted twice", () => {

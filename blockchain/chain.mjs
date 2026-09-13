@@ -21,6 +21,7 @@ import {
   signObject,
   verifyObject,
 } from "./crypto.mjs";
+import { CapabilityMemory } from "./memory.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -254,17 +255,25 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
 export class NirChain {
   #balances;
   #blocks;
+  #capabilityMemory;
   #mined;
   #networkId;
   #nonces;
   #quorum;
+  #rewardEpoch;
   #rewardedProofs;
   #treasuryAddress;
   #genesisTimestamp;
   #validatorOrder;
   #validators;
 
-  constructor({ networkId, validators, treasuryAddress, genesisTimestamp = Date.now() }) {
+  constructor({
+    networkId,
+    validators,
+    treasuryAddress,
+    capabilityReferences,
+    genesisTimestamp = Date.now(),
+  }) {
     if (
       typeof networkId !== "string" ||
       networkId.length === 0 ||
@@ -310,9 +319,12 @@ export class NirChain {
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
+    this.#rewardEpoch = 0;
     this.#mined = 0n;
+    this.#capabilityMemory = new CapabilityMemory(capabilityReferences);
     const genesis = {
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
+      capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
       genesisTimestamp,
       networkId,
       protocolVersion: PROTOCOL_VERSION,
@@ -320,6 +332,7 @@ export class NirChain {
     };
     this.#blocks = [
       {
+        capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
         certificate: [],
         hash: hashObject(genesis, "GENESIS"),
         height: 0,
@@ -357,15 +370,44 @@ export class NirChain {
     return this.#networkId;
   }
 
+  get capabilityMemoryRoot() {
+    return this.#capabilityMemory.stateRoot;
+  }
+
+  get nextIssuanceEpoch() {
+    return this.#rewardEpoch;
+  }
+
+  prepareProgressEvaluation(evaluation) {
+    const report = this.#capabilityMemory.assess(evaluation);
+    return {
+      ...structuredClone(evaluation),
+      frontierRootBefore: report.frontierRootBefore,
+      frontierRootAfter: report.frontierRootAfter,
+      noveltyBps: report.noveltyBps,
+    };
+  }
+
   expectedProposer(height) {
     return this.#validatorOrder[height % this.#validatorOrder.length];
   }
 
-  #verifyProgressClaim(claim, epoch) {
+  #verifyProgressClaim(claim, epoch, capabilityMemory) {
     if (claim.networkId !== this.#networkId || claim.epoch !== epoch) {
       throw new Error("progress receipt belongs to another network or epoch");
     }
+    if (claim.evaluation.challengeEpoch !== epoch) {
+      throw new Error("progress challenge belongs to another epoch");
+    }
     assertAddress(claim.recipient, "reward recipient");
+    const novelty = capabilityMemory.assess(claim.evaluation);
+    if (
+      claim.evaluation.frontierRootBefore !== novelty.frontierRootBefore ||
+      claim.evaluation.frontierRootAfter !== novelty.frontierRootAfter ||
+      claim.evaluation.noveltyBps !== novelty.noveltyBps
+    ) {
+      throw new Error("progress claim uses an invalid world frontier transition");
+    }
     const payload = progressReceiptPayload({
       networkId: claim.networkId,
       epoch: claim.epoch,
@@ -405,23 +447,28 @@ export class NirChain {
     if (evaluators.size < this.#quorum) {
       throw new Error("progress evaluation quorum not reached");
     }
+    capabilityMemory.accept(claim.evaluation);
   }
 
   buildBlock({ transactions = [], rewardClaims = [], timestamp = Date.now() }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
-    for (const claim of rewardClaims) {
-      this.#verifyProgressClaim(claim, height - 1);
+    const progressRewards = allocateProgressRewards(
+      this.#rewardEpoch,
+      rewardClaims,
+      remaining,
+    );
+    const stagedMemory = this.#capabilityMemory.clone();
+    for (const claim of progressRewards) {
+      this.#verifyProgressClaim(claim, height, stagedMemory);
     }
     return {
+      capabilityMemoryRoot: stagedMemory.stateRoot,
       height,
       networkId: this.#networkId,
       previousHash: this.#blocks.at(-1).hash,
-      progressRewards: allocateProgressRewards(
-        height - 1,
-        rewardClaims,
-        remaining,
-      ),
+      progressRewards,
+      issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
       proposer: this.expectedProposer(height),
       protocolVersion: PROTOCOL_VERSION,
       timestamp,
@@ -542,12 +589,23 @@ export class NirChain {
     }
     this.#verifyCertificate(block);
 
+    const capabilityMemory = this.#capabilityMemory.clone();
     for (const claim of block.progressRewards) {
-      this.#verifyProgressClaim(claim, block.height - 1);
+      this.#verifyProgressClaim(claim, block.height, capabilityMemory);
+    }
+    if (block.capabilityMemoryRoot !== capabilityMemory.stateRoot) {
+      throw new Error("invalid world capability memory root");
+    }
+
+    if (
+      (block.progressRewards.length === 0 && block.issuanceEpoch !== null) ||
+      (block.progressRewards.length > 0 && block.issuanceEpoch !== this.#rewardEpoch)
+    ) {
+      throw new Error("unexpected intelligence issuance epoch");
     }
 
     const expectedRewards = allocateProgressRewards(
-      block.height - 1,
+      this.#rewardEpoch,
       block.progressRewards.map(({ amount: _amount, ...claim }) => claim),
       MINING_POOL - this.#mined,
     );
@@ -591,7 +649,9 @@ export class NirChain {
     this.#balances = balances;
     this.#nonces = nonces;
     this.#rewardedProofs = rewardedProofs;
+    this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;
+    if (block.progressRewards.length > 0) this.#rewardEpoch += 1;
     this.#blocks.push(structuredClone(block));
     return block.hash;
   }

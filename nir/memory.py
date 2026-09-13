@@ -5,15 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import re
 from typing import Mapping
 
 from .model import BPS, ProtocolError
 
 
 MAX_CAPABILITIES = 256
-MAX_CAPABILITY_ID_CHARS = 128
 MIN_FRONTIER_GAIN_BPS = 100
 MAX_PARENT_REGRESSION_BPS = 500
+CAPABILITY_ID = re.compile(r"^[a-z][a-z0-9._-]{0,110}-v[1-9][0-9]{0,8}$")
 
 
 def _canonical(value: object) -> bytes:
@@ -45,8 +46,7 @@ def _validated_scores(scores: Mapping[str, int]) -> dict[str, int]:
     normalized: dict[str, int] = {}
     for capability, score in scores.items():
         if (
-            not capability
-            or len(capability) > MAX_CAPABILITY_ID_CHARS
+            not CAPABILITY_ID.fullmatch(capability)
             or capability in normalized
         ):
             raise ProtocolError("capability identifier is invalid or duplicated")
@@ -188,7 +188,7 @@ class CapabilityMemory:
         if not gains:
             raise ProtocolError("candidate adds no new world-frontier capability")
         denominator = max(1, sum(scores.values()))
-        novelty = min(BPS, sum(gains.values()) * BPS // denominator)
+        novelty = max(1, min(BPS, sum(gains.values()) * BPS // denominator))
 
         projected = dict(before)
         for capability, score in scores.items():

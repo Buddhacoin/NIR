@@ -29,6 +29,13 @@ from minting currency.
 The treasury allocation is part of the fixed cap and must be time-locked. No
 administrator may mint beyond the cap.
 
+The builder/protocol treasury exists at genesis but is linearly spendable over
+ten years according to bounded block time, with no cliff and no administrator
+override. Intelligence-mining supply does not unlock with ordinary blocks or
+elapsed time. The first accepted progress epoch has a 50 NIR budget; after each
+210,000 rewarded epochs the budget is divided by two. Empty blocks neither mint
+currency nor advance the reduction counter.
+
 ## 3. Proof of Intelligence Progress
 
 A submission contains a content-addressed artifact, a frozen baseline, an
@@ -123,6 +130,8 @@ move the world frontier. A candidate is novel only for the measured marginal
 delta above the previous best. Its challenge is derived after the complete
 artifact is committed, so stored answers cannot be prepared for the exact test.
 Every accepted change produces a new deterministic memory root.
+That root is committed by genesis and every block, so all validators must apply
+the same history before they can finalize another intelligence reward.
 
 This defines two different things:
 
