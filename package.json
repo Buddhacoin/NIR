@@ -1,0 +1,13 @@
+{
+  "name": "nir-protocol",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "demo:chain": "node blockchain/demo.mjs",
+    "test:chain": "node --test tests/blockchain.test.mjs"
+  }
+}

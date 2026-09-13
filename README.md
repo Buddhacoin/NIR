@@ -63,7 +63,18 @@ verifiers, and reveals the suite after candidate runs are committed.
 - `nir/evaluator.py` — hidden-suite commitment and progress evaluation.
 - `nir/genesis.py` — command-line commit/reveal demonstrator.
 - `nir/simulation.py` — a small example epoch.
+- `blockchain/` — post-quantum signed ledger and local chain demonstration.
+- `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `tests/test_model.py` — invariant tests.
+
+## Run the blockchain core
+
+Node.js 26+ is required for native ML-DSA-65 signatures.
+
+```bash
+npm run test:chain
+npm run demo:chain
+```
 
 ## Non-negotiable design constraints
 
