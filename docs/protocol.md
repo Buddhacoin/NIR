@@ -38,7 +38,9 @@ reproducible contribution.
 
 After a commit/reveal deadline, randomly assigned evaluators test the artifact
 against hidden and rotating tasks. Results enter a challenge window. A proof is
-accepted only if enough independently selected verifiers reproduce it.
+accepted only if enough independently selected verifiers reproduce it. Genesis
+v0.1 requires three distinct verifier identities; production must additionally
+make those identities Sybil-resistant and randomly assign them.
 
 ### Draft score
 
@@ -107,4 +109,3 @@ The first testnet should reward progress on one open, inexpensive benchmark
 family. It should use valueless test units. Only after adversarial trials show
 that duplicate submissions, evaluator collusion, energy falsification, and
 benchmark overfitting are controlled should monetary deployment be considered.
-

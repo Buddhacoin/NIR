@@ -52,6 +52,14 @@ class EmissionTests(unittest.TestCase):
         )
         self.assertEqual(sum(rewards.values()), INITIAL_EPOCH_REWARD)
 
+    def test_one_contributor_can_receive_multiple_proof_allocations(self):
+        ledger = EmissionLedger()
+        rewards = ledger.settle_epoch(
+            0,
+            [valid_proof(), valid_proof("lab-a", "candidate-b")],
+        )
+        self.assertEqual(rewards["lab-a"], INITIAL_EPOCH_REWARD)
+
     def test_duplicate_cannot_be_rewarded_twice(self):
         ledger = EmissionLedger()
         proof = valid_proof()
@@ -79,4 +87,3 @@ class EmissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

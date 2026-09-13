@@ -41,13 +41,29 @@ Requires Python 3.11+ and has no third-party dependencies.
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m nir.simulation
+
+COMMITMENT=$(python3 -m nir.genesis commit \
+  examples/genesis_suite.json --salt nir-genesis-demo)
+
+python3 -m nir.genesis evaluate examples/genesis_suite.json \
+  --salt nir-genesis-demo \
+  --commitment "$COMMITMENT" \
+  --baseline examples/baseline.json \
+  --candidate examples/candidate-1.json examples/candidate-2.json \
+    examples/candidate-3.json \
+  --contributor genesis-lab
 ```
+
+The bundled suite is public and exists only to demonstrate the commit/reveal
+flow. A real epoch commits to an unrevealed suite, requires three distinct
+verifiers, and reveals the suite after candidate runs are committed.
 
 ## Repository map
 
 - `docs/protocol.md` — protocol and threat-model draft.
 - `nir/model.py` — deterministic scoring and capped emission model.
+- `nir/evaluator.py` — hidden-suite commitment and progress evaluation.
+- `nir/genesis.py` — command-line commit/reveal demonstrator.
 - `nir/simulation.py` — a small example epoch.
 - `tests/test_model.py` — invariant tests.
 
@@ -56,4 +72,3 @@ python3 -m nir.simulation
 NIR must remain useful to ordinary people as money, while its issuance serves
 AI progress. Payments and mining are separate: paying for an AI answer moves
 existing NIR; only verified new capability can mint NIR.
-

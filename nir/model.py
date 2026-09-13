@@ -136,21 +136,26 @@ class EmissionLedger:
             return {}
 
         total_score = sum(score for _, score in scored)
-        rewards = {
-            proof.contributor: budget * score // total_score
-            for proof, score in scored
-        }
+        allocations = [budget * score // total_score for _, score in scored]
 
         # Assign indivisible remainder deterministically by score then identity.
-        remainder = budget - sum(rewards.values())
+        remainder = budget - sum(allocations)
         order = sorted(scored, key=lambda item: (-item[1], item[0].contributor))
         for index in range(remainder):
-            contributor = order[index % len(order)][0].contributor
-            rewards[contributor] += 1
+            winner = order[index % len(order)][0]
+            allocation_index = next(
+                i for i, (proof, _) in enumerate(scored) if proof is winner
+            )
+            allocations[allocation_index] += 1
+
+        rewards: dict[str, int] = {}
+        for (proof, _), allocation in zip(scored, allocations, strict=True):
+            rewards[proof.contributor] = (
+                rewards.get(proof.contributor, 0) + allocation
+            )
 
         self.mined += budget
         self._accepted_fingerprints.update(seen_this_epoch)
         if self.issued > MAX_SUPPLY:
             raise AssertionError("hard supply cap violated")
         return rewards
-
