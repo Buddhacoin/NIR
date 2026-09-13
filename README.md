@@ -46,15 +46,17 @@ COMMITMENT=$(python3 -m nir.genesis commit \
 python3 -m nir.genesis evaluate examples/genesis_suite.json \
   --salt nir-genesis-demo \
   --commitment "$COMMITMENT" \
-  --baseline examples/baseline.json \
+  --baseline examples/baseline.json examples/baseline-2.json \
+    examples/baseline-3.json \
   --candidate examples/candidate-1.json examples/candidate-2.json \
     examples/candidate-3.json \
   --contributor genesis-lab
 ```
 
 The bundled suite is public and exists only to demonstrate the commit/reveal
-flow. A real epoch commits to an unrevealed suite, requires three distinct
-verifiers, and reveals the suite after candidate runs are committed.
+flow. A real epoch commits to an unrevealed suite, requires the same three or
+more independent verifiers to run both models, and reveals the suite only after
+candidate runs are committed.
 
 ## Repository map
 

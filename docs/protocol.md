@@ -38,9 +38,22 @@ reproducible contribution.
 
 After a commit/reveal deadline, randomly assigned evaluators test the artifact
 against hidden and rotating tasks. Results enter a challenge window. A proof is
-accepted only if enough independently selected verifiers reproduce it. Genesis
-v0.1 requires three distinct verifier identities; production must additionally
-make those identities Sybil-resistant and randomly assign them.
+accepted only if enough independently selected verifiers reproduce it. The same
+verifier set must run the frozen baseline and candidate so a deliberately weak
+baseline cannot manufacture progress. Genesis v0.1 requires three distinct
+verifier identities; production must additionally make those identities
+Sybil-resistant and randomly assign them.
+
+Each verifier signs an evaluation receipt containing the network, epoch,
+benchmark commitment, artifact hashes, measured metrics, recipient, and derived
+score. A block can issue NIR only when a finality quorum has signed the identical
+receipt. Validators recompute the score; submitters cannot choose it.
+
+One verifier key contributes at most one result for each artifact. Energy-based
+scoring is eligible only when both baseline and candidate measurements are
+attested. The artifact commitment must ultimately cover the model, inference
+configuration, runtime, dependencies, and evaluator harness—not merely model
+weights.
 
 ### Draft score
 
@@ -73,6 +86,12 @@ NIR does not claim that intelligence has a universal physical unit comparable
 to a joule. The score is a protocol-defined accounting measure produced by a
 published evaluation constitution. Different evaluation families must not be
 silently combined without calibration.
+
+The current evaluator uses exact-answer tasks to make the state transition
+deterministic. It is not a universal intelligence test. A production family
+needs its own frozen grader, minimum sample size, confidence threshold,
+contamination probes, adversarial cases, and human review rules where automatic
+grading is not reliable.
 
 ## 4. Required defenses
 

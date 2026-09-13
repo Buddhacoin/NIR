@@ -73,6 +73,112 @@ export function transactionId(transaction) {
   return hashObject(transaction, "TRANSACTION_ID");
 }
 
+function assertMetric(value, field, minimum = 0, maximum = 10_000) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${field} is outside protocol limits`);
+  }
+}
+
+export function progressFingerprint(evaluation) {
+  return hashObject(
+    {
+      artifactHash: evaluation.artifactHash,
+      baselineHash: evaluation.baselineHash,
+      suiteCommitment: evaluation.suiteCommitment,
+    },
+    "PROGRESS_FINGERPRINT",
+  );
+}
+
+export function computeProgressScore(evaluation) {
+  if (
+    typeof evaluation !== "object" ||
+    evaluation === null ||
+    !/^sha256:[0-9a-f]{64}$/.test(evaluation.artifactHash ?? "") ||
+    !/^sha256:[0-9a-f]{64}$/.test(evaluation.baselineHash ?? "") ||
+    !/^[0-9a-f]{64}$/.test(evaluation.suiteCommitment ?? "")
+  ) {
+    throw new Error("evaluation commitments are invalid");
+  }
+  if (evaluation.artifactHash === evaluation.baselineHash) {
+    throw new Error("candidate artifact must differ from baseline");
+  }
+  assertMetric(evaluation.gainPpm, "gain", 1, 1_000_000);
+  assertMetric(evaluation.generalityBps, "generality");
+  assertMetric(evaluation.reproducibilityBps, "reproducibility", 6_667);
+  assertMetric(evaluation.safetyBps, "safety", 8_000);
+  assertMetric(evaluation.noveltyBps, "novelty");
+  if (
+    !Number.isSafeInteger(evaluation.candidateEnergyWh) ||
+    !Number.isSafeInteger(evaluation.baselineEnergyWh) ||
+    evaluation.candidateEnergyWh <= 0 ||
+    evaluation.baselineEnergyWh <= 0 ||
+    evaluation.energyAttested !== true
+  ) {
+    throw new Error("evaluation energy must be positive and attested");
+  }
+  let quality = BigInt(evaluation.gainPpm);
+  for (const factor of [
+    evaluation.generalityBps,
+    evaluation.reproducibilityBps,
+    evaluation.safetyBps,
+    evaluation.noveltyBps,
+  ]) {
+    quality = (quality * BigInt(factor)) / 10_000n;
+  }
+  const rawEfficiency =
+    (BigInt(evaluation.baselineEnergyWh) * 10_000n) /
+    BigInt(evaluation.candidateEnergyWh);
+  const efficiency = rawEfficiency < 5_000n
+    ? 5_000n
+    : rawEfficiency > 20_000n
+      ? 20_000n
+      : rawEfficiency;
+  const score = (quality * efficiency) / 10_000n;
+  if (score <= 0n) throw new Error("evaluation produces no rewardable progress");
+  return score.toString();
+}
+
+function progressReceiptPayload({ networkId, epoch, recipient, evaluation }) {
+  return {
+    epoch,
+    evaluation,
+    fingerprint: progressFingerprint(evaluation),
+    networkId,
+    recipient,
+    score: computeProgressScore(evaluation),
+  };
+}
+
+export function createProgressClaim({
+  networkId,
+  epoch,
+  recipient,
+  evaluation,
+  evaluatorWallets,
+}) {
+  assertAddress(recipient, "reward recipient");
+  if (!Number.isSafeInteger(epoch) || epoch < 0) {
+    throw new Error("evaluation epoch is invalid");
+  }
+  if (!Array.isArray(evaluatorWallets)) {
+    throw new Error("evaluator wallets are required");
+  }
+  const payload = progressReceiptPayload({
+    networkId,
+    epoch,
+    recipient,
+    evaluation: structuredClone(evaluation),
+  });
+  return {
+    ...payload,
+    attestations: evaluatorWallets.map((wallet) => ({
+      evaluator: wallet.address,
+      signature: signObject(payload, wallet, "PROGRESS_RECEIPT"),
+    })),
+  };
+}
+
 function unsignedBlock(block) {
   const { certificate: _certificate, hash: _hash, ...unsigned } = block;
   return unsigned;
@@ -255,9 +361,58 @@ export class NirChain {
     return this.#validatorOrder[height % this.#validatorOrder.length];
   }
 
+  #verifyProgressClaim(claim, epoch) {
+    if (claim.networkId !== this.#networkId || claim.epoch !== epoch) {
+      throw new Error("progress receipt belongs to another network or epoch");
+    }
+    assertAddress(claim.recipient, "reward recipient");
+    const payload = progressReceiptPayload({
+      networkId: claim.networkId,
+      epoch: claim.epoch,
+      recipient: claim.recipient,
+      evaluation: claim.evaluation,
+    });
+    if (claim.fingerprint !== payload.fingerprint || claim.score !== payload.score) {
+      throw new Error("progress claim does not match its evaluation");
+    }
+    if (
+      !Array.isArray(claim.attestations) ||
+      claim.attestations.length > this.#validators.size
+    ) {
+      throw new Error("invalid progress attestation count");
+    }
+    const evaluators = new Set();
+    for (const attestation of claim.attestations) {
+      if (evaluators.has(attestation.evaluator)) {
+        throw new Error("duplicate progress evaluator");
+      }
+      const publicKey = this.#validators.get(attestation.evaluator);
+      if (
+        !publicKey ||
+        typeof attestation.signature !== "string" ||
+        attestation.signature.length > 7_000 ||
+        !verifyObject(
+          payload,
+          attestation.signature,
+          publicKey,
+          "PROGRESS_RECEIPT",
+        )
+      ) {
+        throw new Error("invalid progress evaluator signature");
+      }
+      evaluators.add(attestation.evaluator);
+    }
+    if (evaluators.size < this.#quorum) {
+      throw new Error("progress evaluation quorum not reached");
+    }
+  }
+
   buildBlock({ transactions = [], rewardClaims = [], timestamp = Date.now() }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
+    for (const claim of rewardClaims) {
+      this.#verifyProgressClaim(claim, height - 1);
+    }
     return {
       height,
       networkId: this.#networkId,
@@ -386,6 +541,10 @@ export class NirChain {
       throw new Error("unexpected block proposer");
     }
     this.#verifyCertificate(block);
+
+    for (const claim of block.progressRewards) {
+      this.#verifyProgressClaim(claim, block.height - 1);
+    }
 
     const expectedRewards = allocateProgressRewards(
       block.height - 1,

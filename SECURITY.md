@@ -16,6 +16,7 @@ or an exploit against a live third-party system in a public issue.
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - duplicate progress-proof rejection;
+- quorum-signed evaluation receipts bound to network, epoch, artifact, and score;
 - linear treasury vesting by bounded block timestamps;
 - limits on block bytes, transaction counts, reward counts, keys, signatures,
   and numeric input lengths.
@@ -27,12 +28,16 @@ or an exploit against a live third-party system in a public issue.
 1. **No distributed consensus protocol.** Validators run in one local process.
    There is no network transport, consensus round, locked quorum certificate,
    fork recovery, or equivocation evidence.
-2. **Proof scores are not yet bound to evaluation receipts.** A quorum currently
-   attests a score without the chain verifying signed evaluator output.
+2. **Evaluator execution is not yet remotely attested.** Receipts are signed and
+   scores are recomputed, but the chain cannot prove the signer actually ran the
+   committed model in the declared environment.
 3. **Energy is self-reported.** Hardware attestation and independent metering do
    not exist yet.
-4. **Verifier identities are not Sybil-resistant.** Three strings are not three
-   independently controlled parties.
+4. **Verifier identities are not Sybil-resistant.** Three valid keys can still
+   be controlled by one party.
+5. **Semantic novelty is not independently proven.** Exact artifact replays are
+   rejected, but a repackaged or slightly altered copy may still receive an
+   evaluator-assigned novelty score.
 
 ### High
 
@@ -76,12 +81,16 @@ Fixed during review:
 - account addresses truncated SHA3-256 to 160 bits;
 - signatures lacked explicit protocol-purpose domain separation;
 - signed transfers were replayable across networks with matching account state;
+- a deliberately weak baseline could manufacture apparent progress;
+- progress scores were accepted without quorum-signed evaluation receipts;
+- one evaluator could overweight a result by submitting multiple runs;
+- unattested baseline energy could distort the efficiency score;
 - block, number, key, signature, and collection sizes were insufficiently bounded;
 - future block timestamps were not bounded;
-- reward aggregation mishandled multiple proofs from the same contributor.
+- reward aggregation mishandled multiple proofs from the same contributor;
 - evaluator artifact identifiers accepted arbitrary non-hash strings;
 - evaluation-family regressions could be hidden by aggregate improvement;
-- evaluator text, energy, case, and repetition inputs lacked resource limits.
+- evaluator text, energy, case, and repetition inputs lacked resource limits;
 - cryptographic key type was trusted from a label rather than inspected;
 - mutable in-process maps and retained block objects exposed consensus state.
 

@@ -30,6 +30,11 @@ def _evaluate(args: argparse.Namespace) -> dict:
     result = report.as_dict()
     result.update(
         {
+            "chain_evaluation": report.as_chain_evaluation(
+                artifact_hash=candidate_hash,
+                baseline_hash=baseline_hash,
+                suite_commitment=args.commitment,
+            ),
             "proof_fingerprint": proof.fingerprint,
             "proof_score": proof.score(),
             "test_reward_nir": rewards[args.contributor] / ATOMIC_UNITS,
@@ -76,4 +81,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

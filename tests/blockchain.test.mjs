@@ -5,6 +5,8 @@ import test from "node:test";
 import {
   NirChain,
   allocateProgressRewards,
+  computeProgressScore,
+  createProgressClaim,
   createTransfer,
   finalizeBlock,
   formatNir,
@@ -49,6 +51,28 @@ function quorumFor(block, validators) {
   ];
 }
 
+function progressClaim(chain, validators, recipient, label = "proof-a") {
+  return createProgressClaim({
+    networkId: chain.networkId,
+    epoch: chain.height,
+    recipient,
+    evaluation: {
+      artifactHash: `sha256:${fingerprint(`artifact-${label}`)}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      suiteCommitment: fingerprint("hidden-suite-v1"),
+      gainPpm: 10_000,
+      generalityBps: 10_000,
+      reproducibilityBps: 10_000,
+      safetyBps: 10_000,
+      noveltyBps: 10_000,
+      candidateEnergyWh: 100,
+      baselineEnergyWh: 100,
+      energyAttested: true,
+    },
+    evaluatorWallets: validators.slice(0, 3),
+  });
+}
+
 test("ML-DSA-65 detects a modified message", () => {
   const wallet = generateWallet();
   assert.match(wallet.address, /^nir1[0-9a-f]{64}$/);
@@ -80,7 +104,7 @@ test("a finalized progress block mints its fixed epoch budget", () => {
   const miner = generateWallet();
   const block = chain.buildBlock({
     rewardClaims: [
-      { fingerprint: fingerprint("proof-a"), recipient: miner.address, score: "10" },
+      progressClaim(chain, validators, miner.address),
     ],
     timestamp: 1,
   });
@@ -103,7 +127,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [
-      { fingerprint: fingerprint("proof-a"), recipient: alice.address, score: "10" },
+      progressClaim(chain, validators, alice.address),
     ],
     timestamp: 1,
   });
@@ -129,7 +153,7 @@ test("a modified transfer signature is rejected atomically", () => {
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [
-      { fingerprint: fingerprint("proof-a"), recipient: alice.address, score: "10" },
+      progressClaim(chain, validators, alice.address),
     ],
     timestamp: 1,
   });
@@ -187,15 +211,55 @@ test("one progress proof cannot mint twice", () => {
   const { chain, validators } = fixture();
   const miner = generateWallet();
   const claim = {
-    fingerprint: fingerprint("proof-a"),
-    recipient: miner.address,
-    score: "10",
+    ...progressClaim(chain, validators, miner.address),
   };
   const first = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
-  const second = chain.buildBlock({ rewardClaims: [claim], timestamp: 2 });
+  const replayed = progressClaim(chain, validators, miner.address);
+  const second = chain.buildBlock({ rewardClaims: [replayed], timestamp: 2 });
   const finalized = finalizeBlock(second, quorumFor(second, validators));
   assert.throws(() => chain.appendBlock(finalized), /already rewarded/);
+});
+
+test("an arbitrary intelligence score cannot mint NIR", () => {
+  const { chain, validators } = fixture();
+  const miner = generateWallet();
+  const claim = progressClaim(chain, validators, miner.address);
+  claim.score = String(BigInt(claim.score) * 1_000_000n);
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
+    /does not match/,
+  );
+});
+
+test("chain scoring matches the evaluator output", () => {
+  assert.equal(
+    computeProgressScore({
+      artifactHash: `sha256:${fingerprint("candidate")}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      suiteCommitment: fingerprint("suite"),
+      gainPpm: 375_000,
+      generalityBps: 7_500,
+      reproducibilityBps: 10_000,
+      safetyBps: 10_000,
+      noveltyBps: 10_000,
+      candidateEnergyWh: 710,
+      baselineEnergyWh: 1_000,
+      energyAttested: true,
+    }),
+    "396112",
+  );
+});
+
+test("progress needs independently signed evaluator receipts", () => {
+  const { chain, validators } = fixture();
+  const miner = generateWallet();
+  const claim = progressClaim(chain, validators, miner.address);
+  claim.attestations = [claim.attestations[0]];
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
+    /quorum/,
+  );
 });
 
 test("treasury allocation cannot be spent before it vests", () => {

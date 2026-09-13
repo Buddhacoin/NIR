@@ -14,17 +14,19 @@ identically.
 - finality certificates requiring at least `floor(2N/3) + 1` validator votes;
 - fixed per-epoch progress-reward budgets and the 21 million NIR hard cap;
 - proportional reward allocation from proof scores;
-- permanent rejection of already rewarded proof fingerprints.
+- ML-DSA-65-signed evaluation receipts bound to network and epoch;
+- on-chain recomputation of progress scores;
+- permanent rejection of already rewarded proof fingerprints;
 - ten-year linear treasury vesting by bounded block timestamps;
 - domain-separated signatures and hashes;
 - limits on block bytes, transactions, rewards, and numeric inputs.
 
 ## Trust boundary
 
-Validators currently attest that a proof score was produced correctly. The
-chain verifies the score allocation, uniqueness, signatures, and monetary cap;
-it does not rerun an AI model inside block validation. The evaluator and chain
-will be joined through signed evaluation receipts in the next protocol version.
+Validators attest identical evaluation metrics and the chain recomputes the
+score, allocation, uniqueness, signatures, and monetary cap. It does not rerun
+an AI model inside block validation. Production still needs a transport that
+creates these receipts directly from reproducible evaluator executions.
 
 Validator identities in this version are configured at genesis. This is not yet
 permissionless consensus and has no Sybil-resistance, validator rotation,

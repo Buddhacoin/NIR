@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   NirChain,
+  createProgressClaim,
   createTransfer,
   finalizeBlock,
   formatNir,
@@ -31,10 +32,27 @@ function quorumFor(block) {
 const proofFingerprint = createHash("sha256")
   .update("nir-genesis-proof-1")
   .digest("hex");
+const progressClaim = createProgressClaim({
+  networkId: chain.networkId,
+  epoch: 0,
+  recipient: alice.address,
+  evaluation: {
+    artifactHash: `sha256:${proofFingerprint}`,
+    baselineHash: `sha256:${createHash("sha256").update("baseline").digest("hex")}`,
+    suiteCommitment: createHash("sha256").update("hidden-suite-v1").digest("hex"),
+    gainPpm: 396_112,
+    generalityBps: 10_000,
+    reproducibilityBps: 10_000,
+    safetyBps: 10_000,
+    noveltyBps: 10_000,
+    candidateEnergyWh: 720,
+    baselineEnergyWh: 1_000,
+    energyAttested: true,
+  },
+  evaluatorWallets: validators.slice(0, 3),
+});
 const rewardBlock = chain.buildBlock({
-  rewardClaims: [
-    { fingerprint: proofFingerprint, recipient: alice.address, score: "396112" },
-  ],
+  rewardClaims: [progressClaim],
   timestamp: genesisTimestamp + 1,
 });
 chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock)));

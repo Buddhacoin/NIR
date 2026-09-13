@@ -213,6 +213,40 @@ class EvaluationReport:
             "suite": self.suite,
         }
 
+    def as_chain_evaluation(
+        self,
+        *,
+        artifact_hash: str,
+        baseline_hash: str,
+        suite_commitment: str,
+        novelty_bps: int = BPS,
+    ) -> dict[str, Any]:
+        _require_hash(artifact_hash, "artifact hash")
+        _require_hash(baseline_hash, "baseline hash")
+        if len(suite_commitment) != 64:
+            raise ProtocolError("suite commitment must be a 64-character hash")
+        try:
+            int(suite_commitment, 16)
+        except ValueError as error:
+            raise ProtocolError(
+                "suite commitment contains non-hexadecimal data"
+            ) from error
+        if not 0 <= novelty_bps <= BPS:
+            raise ProtocolError("novelty must be between 0 and 10000 bps")
+        return {
+            "artifactHash": artifact_hash,
+            "baselineHash": baseline_hash,
+            "suiteCommitment": suite_commitment.casefold(),
+            "gainPpm": self.gain_ppm,
+            "generalityBps": self.generality_bps,
+            "reproducibilityBps": self.reproducibility_bps,
+            "safetyBps": self.safety_bps,
+            "noveltyBps": novelty_bps,
+            "candidateEnergyWh": self.candidate_energy_wh,
+            "baselineEnergyWh": self.baseline_energy_wh,
+            "energyAttested": self.energy_attested,
+        }
+
 
 def _assert_compatible(
     suite: BenchmarkSuite, runs: list[RunRecord], *, min_verifiers: int = 1
@@ -226,10 +260,13 @@ def _assert_compatible(
         raise ProtocolError("repeated runs must use the same artifact")
     if len({run.run_id for run in runs}) != len(runs):
         raise ProtocolError("run ids must be unique")
-    if len({run.verifier_id for run in runs}) < min_verifiers:
+    verifier_ids = {run.verifier_id for run in runs}
+    if len(verifier_ids) < min_verifiers:
         raise ProtocolError(
             f"at least {min_verifiers} distinct verifiers are required"
         )
+    if len(verifier_ids) != len(runs):
+        raise ProtocolError("each verifier may cast only one result per artifact")
     expected_ids = {case.case_id for case in suite.cases}
     for run in runs:
         if set(run.answers) != expected_ids:
@@ -260,10 +297,16 @@ def evaluate_progress(
     candidate_runs: list[RunRecord],
 ) -> tuple[EvaluationReport, str, str]:
     """Compare repeated baseline/candidate runs and derive protocol metrics."""
-    baseline_hash = _assert_compatible(suite, baseline_runs)
+    baseline_hash = _assert_compatible(suite, baseline_runs, min_verifiers=3)
     candidate_hash = _assert_compatible(suite, candidate_runs, min_verifiers=3)
     if baseline_hash == candidate_hash:
         raise ProtocolError("candidate artifact must differ from baseline")
+    baseline_verifiers = {run.verifier_id for run in baseline_runs}
+    candidate_verifiers = {run.verifier_id for run in candidate_runs}
+    if baseline_verifiers != candidate_verifiers:
+        raise ProtocolError(
+            "baseline and candidate must use the same independent verifiers"
+        )
 
     baseline = _majority_answers(baseline_runs, suite)
     candidate = _majority_answers(candidate_runs, suite)
@@ -304,7 +347,9 @@ def evaluate_progress(
         safety_bps=safety,
         candidate_energy_wh=int(median(run.energy_wh for run in candidate_runs)),
         baseline_energy_wh=int(median(run.energy_wh for run in baseline_runs)),
-        energy_attested=all(run.energy_attested for run in candidate_runs),
+        energy_attested=all(
+            run.energy_attested for run in baseline_runs + candidate_runs
+        ),
         family_deltas_bps=family_deltas,
     )
     return report, baseline_hash, candidate_hash

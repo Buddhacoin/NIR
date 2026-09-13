@@ -35,9 +35,11 @@ def main() -> None:
     )
     for contributor, atomic_reward in sorted(rewards.items()):
         print(f"{contributor}: {atomic_reward / ATOMIC_UNITS:.8f} NIR")
-    print(f"total issued (including locked treasury): {ledger.issued / ATOMIC_UNITS:,.8f} NIR")
+    print(
+        "total issued (including locked treasury): "
+        f"{ledger.issued / ATOMIC_UNITS:,.8f} NIR"
+    )
 
 
 if __name__ == "__main__":
     main()
-
