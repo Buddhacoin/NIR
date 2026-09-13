@@ -13,6 +13,7 @@ import {
 } from "../blockchain/chain.mjs";
 import {
   MAX_FUTURE_DRIFT_MS,
+  MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
@@ -191,6 +192,50 @@ test("empty blocks do not consume intelligence issuance epochs", () => {
   chain.appendBlock(finalizeBlock(rewarded, quorumFor(rewarded, validators)));
   assert.equal(chain.nextIssuanceEpoch, 1);
   assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
+});
+
+test("fast hardware cannot accelerate intelligence issuance", () => {
+  const { chain, validators } = fixture();
+  const firstMiner = generateWallet();
+  const first = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, validators, firstMiner.address)],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
+
+  const secondMiner = generateWallet();
+  const evaluation = chain.prepareProgressEvaluation({
+    artifactHash: `sha256:${fingerprint("second-frontier-model")}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    suiteCommitment: fingerprint("hidden-suite-v1"),
+    parents: [`sha256:${fingerprint("baseline")}`],
+    committedEpoch: 1,
+    challengeEpoch: 2,
+    challengeSeed: fingerprint("challenge-2"),
+    behaviorCommitment: fingerprint("second-frontier-behavior"),
+    capabilitiesBps: { "code-v1": 8_600, "reasoning-v1": 8_400 },
+    gainPpm: 10_000,
+    generalityBps: 10_000,
+    reproducibilityBps: 10_000,
+    safetyBps: 10_000,
+    candidateEnergyWh: 100,
+    baselineEnergyWh: 100,
+    energyAttested: true,
+  });
+  const secondClaim = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: 2,
+    recipient: secondMiner.address,
+    evaluation,
+    evaluatorWallets: validators.slice(0, 3),
+  });
+  assert.throws(
+    () => chain.buildBlock({
+      rewardClaims: [secondClaim],
+      timestamp: 1 + MIN_REWARD_INTERVAL_MS - 1,
+    }),
+    /too quickly/,
+  );
 });
 
 test("fewer than two-thirds plus one validator votes cannot finalize", () => {

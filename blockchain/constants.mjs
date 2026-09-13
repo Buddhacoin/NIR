@@ -12,6 +12,7 @@ export const MAX_PROGRESS_REWARDS_PER_BLOCK = 256;
 export const MAX_VALIDATORS = 256;
 export const MAX_BLOCK_BYTES = 2_000_000;
 export const MAX_FUTURE_DRIFT_MS = 120_000;
+export const MIN_REWARD_INTERVAL_MS = 600_000;
 export const MAX_DECIMAL_DIGITS = 32;
 export const TREASURY_VESTING_MS = 315_576_000_000;
 

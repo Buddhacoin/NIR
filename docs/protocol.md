@@ -34,7 +34,9 @@ ten years according to bounded block time, with no cliff and no administrator
 override. Intelligence-mining supply does not unlock with ordinary blocks or
 elapsed time. The first accepted progress epoch has a 50 NIR budget; after each
 210,000 rewarded epochs the budget is divided by two. Empty blocks neither mint
-currency nor advance the reduction counter.
+currency nor advance the reduction counter. Rewarded blocks must be separated
+by at least ten minutes, so faster hardware or a fast block producer cannot
+compress the entire issuance schedule into a short interval.
 
 ## 3. Proof of Intelligence Progress
 

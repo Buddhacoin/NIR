@@ -31,7 +31,8 @@ adjustment for the energy used.
   years. This is a draft governance parameter, not a final allocation.
 - A successful intelligence epoch starts at 50 NIR and its budget is cut in
   half after every 210,000 rewarded epochs. Empty blocks issue nothing and do
-  not advance this counter; the hard cap always wins.
+  not advance this counter. Rewarded blocks must be at least ten minutes apart,
+  and the hard cap always wins.
 - Holding NIR does not automatically grant protocol governance power.
 
 ## Run the prototype

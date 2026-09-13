@@ -3,6 +3,7 @@ import {
   MAX_BLOCK_BYTES,
   MAX_DECIMAL_DIGITS,
   MAX_FUTURE_DRIFT_MS,
+  MIN_REWARD_INTERVAL_MS,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
@@ -257,6 +258,7 @@ export class NirChain {
   #blocks;
   #capabilityMemory;
   #mined;
+  #lastRewardTimestamp;
   #networkId;
   #nonces;
   #quorum;
@@ -320,6 +322,7 @@ export class NirChain {
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
     this.#rewardEpoch = 0;
+    this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
     this.#mined = 0n;
     this.#capabilityMemory = new CapabilityMemory(capabilityReferences);
     const genesis = {
@@ -458,6 +461,12 @@ export class NirChain {
       rewardClaims,
       remaining,
     );
+    if (
+      progressRewards.length > 0 &&
+      timestamp < this.#lastRewardTimestamp + MIN_REWARD_INTERVAL_MS
+    ) {
+      throw new Error("intelligence rewards are being issued too quickly");
+    }
     const stagedMemory = this.#capabilityMemory.clone();
     for (const claim of progressRewards) {
       this.#verifyProgressClaim(claim, height, stagedMemory);
@@ -603,6 +612,12 @@ export class NirChain {
     ) {
       throw new Error("unexpected intelligence issuance epoch");
     }
+    if (
+      block.progressRewards.length > 0 &&
+      block.timestamp < this.#lastRewardTimestamp + MIN_REWARD_INTERVAL_MS
+    ) {
+      throw new Error("intelligence rewards are being issued too quickly");
+    }
 
     const expectedRewards = allocateProgressRewards(
       this.#rewardEpoch,
@@ -651,7 +666,10 @@ export class NirChain {
     this.#rewardedProofs = rewardedProofs;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;
-    if (block.progressRewards.length > 0) this.#rewardEpoch += 1;
+    if (block.progressRewards.length > 0) {
+      this.#rewardEpoch += 1;
+      this.#lastRewardTimestamp = block.timestamp;
+    }
     this.#blocks.push(structuredClone(block));
     return block.hash;
   }

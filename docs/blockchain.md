@@ -13,6 +13,7 @@ identically.
 - deterministic round-robin block proposers;
 - finality certificates requiring at least `floor(2N/3) + 1` validator votes;
 - fixed per-epoch progress-reward budgets and the 21 million NIR hard cap;
+- a ten-minute minimum interval between intelligence-reward blocks;
 - proportional reward allocation from proof scores;
 - ML-DSA-65-signed evaluation receipts bound to network and epoch;
 - on-chain recomputation of progress scores;

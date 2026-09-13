@@ -15,6 +15,7 @@ or an exploit against a live third-party system in a public issue.
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
+- reward epochs advance only on accepted progress and are rate-limited;
 - duplicate progress-proof rejection;
 - quorum-signed evaluation receipts bound to network, epoch, artifact, and score;
 - deterministic world-frontier memory with model lineage and behavior commitments;
@@ -86,6 +87,7 @@ Fixed during review:
 - unattested baseline energy could distort the efficiency score;
 - empty blocks could consume issuance epochs and accelerate reward reduction;
 - capability memory existed outside consensus and could diverge between nodes;
+- colluding validators could compress many reward epochs into a short interval;
 - block, number, key, signature, and collection sizes were insufficiently bounded;
 - future block timestamps were not bounded;
 - reward aggregation mishandled multiple proofs from the same contributor;
