@@ -1,7 +1,7 @@
 {
   "run_id": "candidate-3",
   "verifier_id": "verifier-c",
-  "artifact_hash": "sha256:candidate-model-v2",
+  "artifact_hash": "sha256:487d0a6a759cf5f5a578d2de9d1f2e4c343f2b87dc80a4fb005ec1a949e1234e",
   "energy_wh": 710,
   "energy_attested": false,
   "answers": {

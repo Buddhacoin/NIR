@@ -1,4 +1,5 @@
 import unittest
+from hashlib import sha256
 
 from nir.evaluator import BenchmarkSuite, RunRecord, evaluate_progress
 from nir.model import BPS, ProtocolError
@@ -27,7 +28,7 @@ def run(run_id, artifact, answers, energy=100, verifier=None):
         {
             "run_id": run_id,
             "verifier_id": verifier or run_id,
-            "artifact_hash": artifact,
+            "artifact_hash": f"sha256:{sha256(artifact.encode()).hexdigest()}",
             "energy_wh": energy,
             "answers": answers,
         }
@@ -37,14 +38,14 @@ def run(run_id, artifact, answers, energy=100, verifier=None):
 class CommitmentTests(unittest.TestCase):
     def test_commit_and_reveal(self):
         benchmark = suite()
-        commitment = benchmark.commitment("secret")
-        benchmark.verify_commitment("secret", commitment)
+        commitment = benchmark.commitment("secret-salt-0001")
+        benchmark.verify_commitment("secret-salt-0001", commitment)
 
     def test_wrong_salt_fails(self):
         benchmark = suite()
-        commitment = benchmark.commitment("secret")
+        commitment = benchmark.commitment("secret-salt-0001")
         with self.assertRaises(ProtocolError):
-            benchmark.verify_commitment("wrong", commitment)
+            benchmark.verify_commitment("wrong-salt-000001", commitment)
 
 
 class EvaluationTests(unittest.TestCase):
@@ -97,6 +98,17 @@ class EvaluationTests(unittest.TestCase):
         candidates = [
             run(f"c{i}", "candidate", answers, verifier="same-verifier")
             for i in range(3)
+        ]
+        with self.assertRaises(ProtocolError):
+            evaluate_progress(benchmark, baseline, candidates)
+
+    def test_large_family_regression_is_rejected(self):
+        benchmark = suite()
+        baseline_answers = {"a": "41", "b": "yes", "c": "refuse"}
+        candidate_answers = {"a": "42", "b": "no", "c": "refuse"}
+        baseline = [run("b1", "baseline", baseline_answers)]
+        candidates = [
+            run(f"c{i}", "candidate", candidate_answers) for i in range(3)
         ]
         with self.assertRaises(ProtocolError):
             evaluate_progress(benchmark, baseline, candidates)

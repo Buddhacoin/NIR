@@ -12,6 +12,29 @@ from typing import Any
 from .model import BPS, ProgressProof, ProtocolError
 
 
+MAX_CASES = 10_000
+MAX_RUNS = 64
+MAX_TEXT_CHARS = 10_000
+MAX_ID_CHARS = 128
+MAX_ENERGY_WH = 10**15
+MAX_FAMILY_REGRESSION_BPS = 500
+
+
+def _require_identifier(value: str, field: str) -> None:
+    if not value or len(value) > MAX_ID_CHARS:
+        raise ProtocolError(f"{field} has an invalid length")
+
+
+def _require_hash(value: str, field: str) -> None:
+    prefix, separator, digest = value.partition(":")
+    if separator != ":" or prefix != "sha256" or len(digest) != 64:
+        raise ProtocolError(f"{field} must be a sha256:<64 hex> identifier")
+    try:
+        int(digest, 16)
+    except ValueError as error:
+        raise ProtocolError(f"{field} contains non-hexadecimal data") from error
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(
         value,
@@ -43,8 +66,10 @@ class EvalCase:
             )
         except KeyError as error:
             raise ProtocolError(f"benchmark case lacks {error.args[0]}") from error
-        if not case.case_id or not case.family:
-            raise ProtocolError("case id and family cannot be empty")
+        _require_identifier(case.case_id, "case id")
+        _require_identifier(case.family, "case family")
+        if len(case.expected) > MAX_TEXT_CHARS:
+            raise ProtocolError("expected answer exceeds size limit")
         return case
 
     def public_dict(self) -> dict[str, Any]:
@@ -70,9 +95,10 @@ class BenchmarkSuite:
             )
         except KeyError as error:
             raise ProtocolError(f"benchmark lacks {error.args[0]}") from error
+        _require_identifier(suite.name, "benchmark name")
         ids = [case.case_id for case in suite.cases]
-        if not suite.name or not ids:
-            raise ProtocolError("benchmark name and cases are required")
+        if not ids or len(ids) > MAX_CASES:
+            raise ProtocolError("benchmark case count is outside protocol limits")
         if len(ids) != len(set(ids)):
             raise ProtocolError("benchmark case ids must be unique")
         return suite
@@ -83,8 +109,8 @@ class BenchmarkSuite:
             return cls.from_dict(json.load(source))
 
     def commitment(self, salt: str) -> str:
-        if not salt:
-            raise ProtocolError("commitment salt cannot be empty")
+        if len(salt.encode("utf-8")) < 16:
+            raise ProtocolError("commitment salt must contain at least 16 bytes")
         payload = {
             "cases": [case.public_dict() for case in self.cases],
             "name": self.name,
@@ -119,10 +145,13 @@ class RunRecord:
             )
         except KeyError as error:
             raise ProtocolError(f"run record lacks {error.args[0]}") from error
-        if not record.run_id or not record.verifier_id or not record.artifact_hash:
-            raise ProtocolError("run, verifier, and artifact identifiers are required")
-        if record.energy_wh <= 0:
-            raise ProtocolError("run energy must be positive")
+        _require_identifier(record.run_id, "run id")
+        _require_identifier(record.verifier_id, "verifier id")
+        _require_hash(record.artifact_hash, "artifact hash")
+        if not 0 < record.energy_wh <= MAX_ENERGY_WH:
+            raise ProtocolError("run energy is outside protocol limits")
+        if any(len(answer) > MAX_TEXT_CHARS for answer in record.answers.values()):
+            raise ProtocolError("run answer exceeds size limit")
         return record
 
     @classmethod
@@ -190,6 +219,8 @@ def _assert_compatible(
 ) -> str:
     if not runs:
         raise ProtocolError("at least one run is required")
+    if len(runs) > MAX_RUNS:
+        raise ProtocolError("run count exceeds protocol limit")
     artifact_hashes = {run.artifact_hash for run in runs}
     if len(artifact_hashes) != 1:
         raise ProtocolError("repeated runs must use the same artifact")
@@ -246,6 +277,8 @@ def evaluate_progress(
         family_deltas[family] = _accuracy_bps(cases, candidate) - _accuracy_bps(
             cases, baseline
         )
+    if min(family_deltas.values()) < -MAX_FAMILY_REGRESSION_BPS:
+        raise ProtocolError("candidate regresses too far in an evaluation family")
     improved_families = sum(delta > 0 for delta in family_deltas.values())
     generality = improved_families * BPS // len(families)
 

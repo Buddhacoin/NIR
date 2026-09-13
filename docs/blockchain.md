@@ -15,6 +15,9 @@ identically.
 - fixed per-epoch progress-reward budgets and the 21 million NIR hard cap;
 - proportional reward allocation from proof scores;
 - permanent rejection of already rewarded proof fingerprints.
+- ten-year linear treasury vesting by bounded block timestamps;
+- domain-separated signatures and hashes;
+- limits on block bytes, transactions, rewards, and numeric inputs.
 
 ## Trust boundary
 

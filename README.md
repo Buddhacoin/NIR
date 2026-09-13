@@ -65,6 +65,7 @@ verifiers, and reveals the suite after candidate runs are committed.
 - `nir/simulation.py` — a small example epoch.
 - `blockchain/` — post-quantum signed ledger and local chain demonstration.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
+- `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 
 ## Run the blockchain core

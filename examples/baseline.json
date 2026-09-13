@@ -1,7 +1,7 @@
 {
   "run_id": "baseline-1",
   "verifier_id": "verifier-a",
-  "artifact_hash": "sha256:baseline-model-v1",
+  "artifact_hash": "sha256:ee999e790ec74b44c86475ea07502a339ef021a9a0306450d39463341db63fae",
   "energy_wh": 1000,
   "energy_attested": false,
   "answers": {

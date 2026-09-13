@@ -22,12 +22,20 @@ export function canonicalJson(value) {
     .join(",")}}`;
 }
 
-export function hashObject(value) {
-  return createHash("sha3-256").update(canonicalJson(value)).digest("hex");
+function domainPayload(domain, value) {
+  if (!/^[A-Z0-9_-]{1,40}$/.test(domain)) {
+    throw new Error("invalid cryptographic domain");
+  }
+  return Buffer.from(`NIR/${domain}/v1\0${canonicalJson(value)}`);
+}
+
+export function hashObject(value, domain = "OBJECT") {
+  return createHash("sha3-256").update(domainPayload(domain, value)).digest("hex");
 }
 
 export function addressFromPublicKey(publicKeyBase64) {
   const digest = createHash("sha3-256")
+    .update("NIR/ADDRESS/v1\0")
     .update(Buffer.from(publicKeyBase64, "base64"))
     .digest("hex");
   return `nir1${digest}`;
@@ -49,7 +57,7 @@ export function generateWallet() {
   };
 }
 
-export function signObject(value, wallet) {
+export function signObject(value, wallet, domain) {
   if (wallet.algorithm !== SIGNATURE_ALGORITHM) {
     throw new Error("unsupported signature algorithm");
   }
@@ -58,19 +66,23 @@ export function signObject(value, wallet) {
     type: "pkcs8",
     format: "der",
   });
-  return sign(null, Buffer.from(canonicalJson(value)), key).toString("base64");
+  if (key.asymmetricKeyType !== SIGNATURE_ALGORITHM) {
+    throw new Error("private key is not ML-DSA-65");
+  }
+  return sign(null, domainPayload(domain, value), key).toString("base64");
 }
 
-export function verifyObject(value, signatureBase64, publicKeyBase64) {
+export function verifyObject(value, signatureBase64, publicKeyBase64, domain) {
   try {
     const key = createPublicKey({
       key: Buffer.from(publicKeyBase64, "base64"),
       type: "spki",
       format: "der",
     });
+    if (key.asymmetricKeyType !== SIGNATURE_ALGORITHM) return false;
     return verify(
       null,
-      Buffer.from(canonicalJson(value)),
+      domainPayload(domain, value),
       key,
       Buffer.from(signatureBase64, "base64"),
     );

@@ -7,6 +7,29 @@ export const INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
 export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
 export const PROTOCOL_VERSION = 1;
+export const MAX_TRANSACTIONS_PER_BLOCK = 1_000;
+export const MAX_PROGRESS_REWARDS_PER_BLOCK = 256;
+export const MAX_VALIDATORS = 256;
+export const MAX_BLOCK_BYTES = 2_000_000;
+export const MAX_FUTURE_DRIFT_MS = 120_000;
+export const MAX_DECIMAL_DIGITS = 32;
+export const TREASURY_VESTING_MS = 315_576_000_000;
+
+export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
+  if (
+    !Number.isSafeInteger(genesisTimestamp) ||
+    !Number.isSafeInteger(timestamp) ||
+    genesisTimestamp < 0 ||
+    timestamp < genesisTimestamp
+  ) {
+    throw new Error("treasury vesting timestamps are invalid");
+  }
+  const elapsed = timestamp - genesisTimestamp;
+  if (elapsed >= TREASURY_VESTING_MS) return TREASURY_ALLOCATION;
+  return (
+    TREASURY_ALLOCATION * BigInt(elapsed)
+  ) / BigInt(TREASURY_VESTING_MS);
+}
 
 export function scheduledEpochBudget(epoch) {
   if (!Number.isSafeInteger(epoch) || epoch < 0) {

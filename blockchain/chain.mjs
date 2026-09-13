@@ -1,21 +1,33 @@
 import {
   ATOMIC_UNITS,
+  MAX_BLOCK_BYTES,
+  MAX_DECIMAL_DIGITS,
+  MAX_FUTURE_DRIFT_MS,
+  MAX_PROGRESS_REWARDS_PER_BLOCK,
   MAX_SUPPLY,
+  MAX_TRANSACTIONS_PER_BLOCK,
+  MAX_VALIDATORS,
   MINING_POOL,
   PROTOCOL_VERSION,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
   scheduledEpochBudget,
+  vestedTreasuryAtTimestamp,
 } from "./constants.mjs";
 import {
   addressFromPublicKey,
+  canonicalJson,
   hashObject,
   signObject,
   verifyObject,
 } from "./crypto.mjs";
 
 function parseAtomic(value, field) {
-  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) {
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_DECIMAL_DIGITS ||
+    !/^(0|[1-9][0-9]*)$/.test(value)
+  ) {
     throw new Error(`${field} must be an unsigned decimal string`);
   }
   return BigInt(value);
@@ -32,22 +44,33 @@ function unsignedTransaction(transaction) {
   return unsigned;
 }
 
-export function createTransfer({ wallet, recipient, amount, nonce, fee = "0" }) {
+export function createTransfer({
+  wallet,
+  networkId,
+  recipient,
+  amount,
+  nonce,
+  fee = "0",
+}) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
     fee: String(fee),
+    networkId,
     nonce,
     publicKey: wallet.publicKey,
     recipient,
     sender: wallet.address,
     type: "transfer",
   };
-  return { ...transaction, signature: signObject(transaction, wallet) };
+  return {
+    ...transaction,
+    signature: signObject(transaction, wallet, "TRANSFER"),
+  };
 }
 
 export function transactionId(transaction) {
-  return hashObject(transaction);
+  return hashObject(transaction, "TRANSACTION_ID");
 }
 
 function unsignedBlock(block) {
@@ -56,13 +79,13 @@ function unsignedBlock(block) {
 }
 
 export function blockHash(block) {
-  return hashObject(unsignedBlock(block));
+  return hashObject(unsignedBlock(block), "BLOCK");
 }
 
 export function voteForBlock(block, validatorWallet) {
   const hash = blockHash(block);
   return {
-    signature: signObject({ blockHash: hash }, validatorWallet),
+    signature: signObject({ blockHash: hash }, validatorWallet, "BLOCK_VOTE"),
     validator: validatorWallet.address,
   };
 }
@@ -76,6 +99,9 @@ export function finalizeBlock(block, validatorWallets) {
 
 export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) {
   if (!Array.isArray(claims) || claims.length === 0) return [];
+  if (claims.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
+    throw new Error("too many progress rewards in one block");
+  }
   const fingerprints = new Set();
   const normalized = claims.map((claim) => {
     if (typeof claim.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(claim.fingerprint)) {
@@ -94,6 +120,7 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
   const budget = [scheduledEpochBudget(epoch), remaining].reduce((a, b) =>
     a < b ? a : b,
   );
+  if (budget === 0n) throw new Error("no mining budget remains for this epoch");
   const totalScore = normalized.reduce(
     (total, claim) => total + BigInt(claim.score),
     0n,
@@ -119,79 +146,122 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
 }
 
 export class NirChain {
-  constructor({ networkId, validators, treasuryAddress }) {
-    if (!networkId || validators.length < 4) {
+  #balances;
+  #blocks;
+  #mined;
+  #networkId;
+  #nonces;
+  #quorum;
+  #rewardedProofs;
+  #treasuryAddress;
+  #genesisTimestamp;
+  #validatorOrder;
+  #validators;
+
+  constructor({ networkId, validators, treasuryAddress, genesisTimestamp = Date.now() }) {
+    if (
+      typeof networkId !== "string" ||
+      networkId.length === 0 ||
+      Buffer.byteLength(networkId) > 64 ||
+      !Array.isArray(validators) ||
+      validators.length < 4 ||
+      validators.length > MAX_VALIDATORS
+    ) {
       throw new Error("network id and at least four validators are required");
     }
-    this.networkId = networkId;
-    this.validators = new Map();
+    if (
+      !Number.isSafeInteger(genesisTimestamp) ||
+      genesisTimestamp < 0 ||
+      genesisTimestamp > Date.now() + MAX_FUTURE_DRIFT_MS
+    ) {
+      throw new Error("invalid genesis timestamp");
+    }
+    this.#networkId = networkId;
+    this.#genesisTimestamp = genesisTimestamp;
+    this.#treasuryAddress = treasuryAddress;
+    this.#validators = new Map();
     for (const validator of validators) {
       if (validator.algorithm !== SIGNATURE_ALGORITHM) {
         throw new Error("all validators must use ML-DSA-65");
       }
+      if (
+        typeof validator.publicKey !== "string" ||
+        validator.publicKey.length > 4_000
+      ) {
+        throw new Error("validator public key exceeds limits");
+      }
       if (addressFromPublicKey(validator.publicKey) !== validator.address) {
         throw new Error("validator address does not match public key");
       }
-      if (this.validators.has(validator.address)) {
+      if (this.#validators.has(validator.address)) {
         throw new Error("validator addresses must be unique");
       }
-      this.validators.set(validator.address, validator.publicKey);
+      this.#validators.set(validator.address, validator.publicKey);
     }
-    this.validatorOrder = [...this.validators.keys()].sort();
-    this.quorum = Math.floor((this.validatorOrder.length * 2) / 3) + 1;
+    this.#validatorOrder = [...this.#validators.keys()].sort();
+    this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
     assertAddress(treasuryAddress, "treasury address");
-    this.balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
-    this.nonces = new Map();
-    this.rewardedProofs = new Set();
-    this.mined = 0n;
-    this.genesis = {
+    this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
+    this.#nonces = new Map();
+    this.#rewardedProofs = new Set();
+    this.#mined = 0n;
+    const genesis = {
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
+      genesisTimestamp,
       networkId,
       protocolVersion: PROTOCOL_VERSION,
-      validators: this.validatorOrder,
+      validators: this.#validatorOrder,
     };
-    this.blocks = [
+    this.#blocks = [
       {
         certificate: [],
-        hash: hashObject(this.genesis),
+        hash: hashObject(genesis, "GENESIS"),
         height: 0,
         networkId,
         previousHash: "0".repeat(64),
         progressRewards: [],
         protocolVersion: PROTOCOL_VERSION,
-        timestamp: 0,
+        timestamp: genesisTimestamp,
         transactions: [],
       },
     ];
   }
 
   get height() {
-    return this.blocks.length - 1;
+    return this.#blocks.length - 1;
   }
 
   get issued() {
-    return TREASURY_ALLOCATION + this.mined;
+    return TREASURY_ALLOCATION + this.#mined;
   }
 
   balance(address) {
-    return this.balances.get(address) ?? 0n;
+    return this.#balances.get(address) ?? 0n;
   }
 
   nextNonce(address) {
-    return this.nonces.get(address) ?? 0;
+    return this.#nonces.get(address) ?? 0;
+  }
+
+  get tipHash() {
+    return this.#blocks.at(-1).hash;
+  }
+
+  get networkId() {
+    return this.#networkId;
   }
 
   expectedProposer(height) {
-    return this.validatorOrder[height % this.validatorOrder.length];
+    return this.#validatorOrder[height % this.#validatorOrder.length];
   }
 
   buildBlock({ transactions = [], rewardClaims = [], timestamp = Date.now() }) {
     const height = this.height + 1;
-    const remaining = MINING_POOL - this.mined;
+    const remaining = MINING_POOL - this.#mined;
     return {
       height,
-      networkId: this.networkId,
-      previousHash: this.blocks.at(-1).hash,
+      networkId: this.#networkId,
+      previousHash: this.#blocks.at(-1).hash,
       progressRewards: allocateProgressRewards(
         height - 1,
         rewardClaims,
@@ -206,24 +276,50 @@ export class NirChain {
 
   #verifyCertificate(block) {
     if (block.hash !== blockHash(block)) throw new Error("block hash mismatch");
+    if (
+      !Array.isArray(block.certificate) ||
+      block.certificate.length > this.#validators.size
+    ) {
+      throw new Error("invalid finality certificate size");
+    }
     const voters = new Set();
     for (const vote of block.certificate ?? []) {
       if (voters.has(vote.validator)) throw new Error("duplicate validator vote");
-      const publicKey = this.validators.get(vote.validator);
+      const publicKey = this.#validators.get(vote.validator);
       if (!publicKey) throw new Error("vote from unknown validator");
-      if (!verifyObject({ blockHash: block.hash }, vote.signature, publicKey)) {
+      if (
+        typeof vote.signature !== "string" ||
+        vote.signature.length > 7_000 ||
+        !verifyObject(
+          { blockHash: block.hash },
+          vote.signature,
+          publicKey,
+          "BLOCK_VOTE",
+        )
+      ) {
         throw new Error("invalid validator signature");
       }
       voters.add(vote.validator);
     }
-    if (voters.size < this.quorum) throw new Error("finality quorum not reached");
+    if (voters.size < this.#quorum) throw new Error("finality quorum not reached");
     if (!voters.has(block.proposer)) throw new Error("proposer did not sign block");
   }
 
-  #applyTransfer(transaction, balances, nonces, proposer) {
+  #applyTransfer(transaction, balances, nonces, proposer, timestamp) {
     if (transaction.type !== "transfer") throw new Error("unknown transaction type");
     if (transaction.algorithm !== SIGNATURE_ALGORITHM) {
       throw new Error("transaction is not post-quantum signed");
+    }
+    if (transaction.networkId !== this.#networkId) {
+      throw new Error("transaction belongs to another network");
+    }
+    if (
+      typeof transaction.publicKey !== "string" ||
+      transaction.publicKey.length > 4_000 ||
+      typeof transaction.signature !== "string" ||
+      transaction.signature.length > 7_000
+    ) {
+      throw new Error("transaction cryptographic material exceeds limits");
     }
     if (addressFromPublicKey(transaction.publicKey) !== transaction.sender) {
       throw new Error("sender address does not match public key");
@@ -233,6 +329,7 @@ export class NirChain {
       unsignedTransaction(transaction),
       transaction.signature,
       transaction.publicKey,
+      "TRANSFER",
     )) {
       throw new Error("invalid transaction signature");
     }
@@ -246,6 +343,15 @@ export class NirChain {
     if (amount === 0n) throw new Error("transfer amount must be positive");
     const senderBalance = balances.get(transaction.sender) ?? 0n;
     if (senderBalance < amount + fee) throw new Error("insufficient balance");
+    if (transaction.sender === this.#treasuryAddress) {
+      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
+        this.#genesisTimestamp,
+        timestamp,
+      );
+      if (senderBalance - amount - fee < locked) {
+        throw new Error("treasury funds are still vesting");
+      }
+    }
     balances.set(transaction.sender, senderBalance - amount - fee);
     balances.set(transaction.recipient, (balances.get(transaction.recipient) ?? 0n) + amount);
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
@@ -253,13 +359,28 @@ export class NirChain {
   }
 
   appendBlock(block) {
-    const previous = this.blocks.at(-1);
-    if (block.networkId !== this.networkId) throw new Error("wrong network id");
+    const previous = this.#blocks.at(-1);
+    if (block.networkId !== this.#networkId) throw new Error("wrong network id");
     if (block.protocolVersion !== PROTOCOL_VERSION) throw new Error("wrong protocol version");
     if (block.height !== previous.height + 1) throw new Error("unexpected block height");
     if (block.previousHash !== previous.hash) throw new Error("broken hash chain");
     if (!Number.isSafeInteger(block.timestamp) || block.timestamp < previous.timestamp) {
       throw new Error("invalid block timestamp");
+    }
+    if (block.timestamp > Date.now() + MAX_FUTURE_DRIFT_MS) {
+      throw new Error("block timestamp is too far in the future");
+    }
+    if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards)) {
+      throw new Error("block collections are invalid");
+    }
+    if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
+      throw new Error("too many transactions in one block");
+    }
+    if (block.progressRewards.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
+      throw new Error("too many progress rewards in one block");
+    }
+    if (Buffer.byteLength(canonicalJson(unsignedBlock(block))) > MAX_BLOCK_BYTES) {
+      throw new Error("block exceeds the byte-size limit");
     }
     if (block.proposer !== this.expectedProposer(block.height)) {
       throw new Error("unexpected block proposer");
@@ -269,15 +390,18 @@ export class NirChain {
     const expectedRewards = allocateProgressRewards(
       block.height - 1,
       block.progressRewards.map(({ amount: _amount, ...claim }) => claim),
-      MINING_POOL - this.mined,
+      MINING_POOL - this.#mined,
     );
-    if (hashObject(expectedRewards) !== hashObject(block.progressRewards)) {
+    if (
+      hashObject(expectedRewards, "REWARD_ALLOCATION") !==
+      hashObject(block.progressRewards, "REWARD_ALLOCATION")
+    ) {
       throw new Error("invalid progress reward allocation");
     }
 
-    const balances = new Map(this.balances);
-    const nonces = new Map(this.nonces);
-    const rewardedProofs = new Set(this.rewardedProofs);
+    const balances = new Map(this.#balances);
+    const nonces = new Map(this.#nonces);
+    const rewardedProofs = new Set(this.#rewardedProofs);
     let newlyMined = 0n;
     for (const reward of block.progressRewards) {
       if (rewardedProofs.has(reward.fingerprint)) {
@@ -288,18 +412,28 @@ export class NirChain {
       newlyMined += amount;
       balances.set(reward.recipient, (balances.get(reward.recipient) ?? 0n) + amount);
     }
-    if (TREASURY_ALLOCATION + this.mined + newlyMined > MAX_SUPPLY) {
+    if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
       throw new Error("hard supply cap exceeded");
     }
+    const transactionIds = new Set();
     for (const transaction of block.transactions) {
-      this.#applyTransfer(transaction, balances, nonces, block.proposer);
+      const id = transactionId(transaction);
+      if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
+      transactionIds.add(id);
+      this.#applyTransfer(
+        transaction,
+        balances,
+        nonces,
+        block.proposer,
+        block.timestamp,
+      );
     }
 
-    this.balances = balances;
-    this.nonces = nonces;
-    this.rewardedProofs = rewardedProofs;
-    this.mined += newlyMined;
-    this.blocks.push(block);
+    this.#balances = balances;
+    this.#nonces = nonces;
+    this.#rewardedProofs = rewardedProofs;
+    this.#mined += newlyMined;
+    this.#blocks.push(structuredClone(block));
     return block.hash;
   }
 }
