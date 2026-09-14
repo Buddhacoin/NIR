@@ -35,7 +35,10 @@ model is safe. A single confirmed critical failure vetoes progress issuance.
 ### 5. Safety investigator
 
 Privately commit evidence of a previously unknown critical failure. A future
-random committee reproduces it. If confirmed, the unsafe candidate earns zero,
+committee reproduces it. The candidate bond is finalized in block H; the exact
+committee is derived from the next finalized block H+1; a valid report can be
+included no earlier than H+2 and must carry signatures from that complete
+assigned committee. If confirmed, the unsafe candidate earns zero,
 70 percent of its locked bond goes to the investigator, 10 percent is divided
 among evaluators, and at least 20 percent is burned. The bounty creates no new
 NIR and the same evidence cannot be paid twice.

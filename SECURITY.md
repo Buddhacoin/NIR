@@ -25,6 +25,8 @@ or an exploit against a live third-party system in a public issue.
   economically negative even across several addresses;
 - candidate bonds, safety settlements, payouts, evidence replay protection, and
   burned supply persisted as atomic chain state;
+- safety committees derived after candidate commitment from a later finalized
+  block, with consensus rejecting receipts from any substituted evaluator set;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - reward epochs advance only on accepted progress and are rate-limited;
@@ -49,11 +51,12 @@ or an exploit against a live third-party system in a public issue.
    committed model in the declared environment.
 3. **Energy is self-reported.** Hardware attestation and independent metering do
    not exist yet.
-4. **Operator security is not yet connected to consensus.** The prototype can
-   verify multiple external credentials and slash provable double-signing, but
-   genesis still accepts self-asserted operator IDs. Committee selection also
-   needs an on-chain commitment followed by future unbiasable randomness before
-   it can authorize issuance.
+4. **Operator identity and randomness are not production-ready.** The prototype
+   can verify multiple external credentials and slash provable double-signing,
+   but genesis still accepts self-asserted operator IDs. Safety committee
+   assignment now follows an on-chain commitment and a future finalized block,
+   but the block hash is biasable by its producer. Production needs an
+   unbiasable distributed beacon or multi-party commit/reveal construction.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.

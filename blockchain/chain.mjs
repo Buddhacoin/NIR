@@ -27,6 +27,7 @@ import {
   verifyObject,
 } from "./crypto.mjs";
 import { CapabilityMemory } from "./memory.mjs";
+import { selectOperatorCommittee } from "./operators.mjs";
 import {
   calculateSafetySettlement,
   safetyFailurePayload,
@@ -78,6 +79,7 @@ function operatorRegistry(entries, role) {
       throw new Error(`${role} member addresses and operators must be unique`);
     }
     registry.set(member.address, {
+      address: member.address,
       operatorId: member.operatorId,
       publicKey: member.publicKey,
     });
@@ -549,6 +551,12 @@ export class NirChain {
     return this.#rewardEpoch;
   }
 
+  assignedSafetyEvaluators(candidateId) {
+    const candidate = this.#candidateBonds.get(candidateId);
+    if (!candidate?.committee) throw new Error("candidate safety committee is not assigned");
+    return [...candidate.committee];
+  }
+
   prepareProgressEvaluation(evaluation) {
     const report = this.#capabilityMemory.assess(evaluation);
     return {
@@ -642,6 +650,9 @@ export class NirChain {
     if (safetyEvidence.has(payload.evidenceHash)) throw new Error("safety evidence was already settled");
     const candidate = candidateBonds.get(payload.candidateId);
     if (!candidate) throw new Error("safety claim has no locked candidate bond");
+    if (!Array.isArray(candidate.committee)) {
+      throw new Error("candidate safety committee is not assigned yet");
+    }
     if (!Array.isArray(claim.attestations) || claim.attestations.length > this.#evaluators.size) {
       throw new Error("invalid safety attestation count");
     }
@@ -656,6 +667,12 @@ export class NirChain {
       evaluators.add(attestation.evaluator);
     }
     if (evaluators.size < this.#evaluationQuorum) throw new Error("safety evaluation quorum not reached");
+    const assigned = [...candidate.committee].sort();
+    const signed = [...evaluators].sort();
+    if (
+      signed.length !== assigned.length ||
+      signed.some((address, index) => address !== assigned[index])
+    ) throw new Error("safety receipt was not signed by the assigned committee");
     const settlement = calculateSafetySettlement({
       candidate,
       candidateId: payload.candidateId,
@@ -810,7 +827,7 @@ export class NirChain {
     nonces.set(transaction.sender, expectedNonce + 1);
   }
 
-  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp) {
+  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp, height) {
     if (transaction.type !== "candidate-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM) {
       throw new Error("candidate bond transaction is invalid");
     }
@@ -840,7 +857,12 @@ export class NirChain {
     balances.set(transaction.sender, senderBalance - bond - fee);
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
-    candidateBonds.set(transaction.candidateId, { bond, submitter: transaction.sender });
+    candidateBonds.set(transaction.candidateId, {
+      bond,
+      committedHeight: height,
+      committee: null,
+      submitter: transaction.sender,
+    });
   }
 
   appendBlock(block) {
@@ -955,9 +977,28 @@ export class NirChain {
       if (transaction.type === "transfer") {
         this.#applyTransfer(transaction, balances, nonces, block.proposer, block.timestamp);
       } else if (transaction.type === "candidate-bond") {
-        this.#applyCandidateBond(transaction, balances, nonces, candidateBonds, block.proposer, block.timestamp);
+        this.#applyCandidateBond(
+          transaction, balances, nonces, candidateBonds, block.proposer,
+          block.timestamp, block.height,
+        );
       } else {
         throw new Error("unknown transaction type");
+      }
+    }
+
+    for (const [candidateId, candidate] of candidateBonds) {
+      if (candidate.committee === null && candidate.committedHeight < block.height) {
+        candidateBonds.set(candidateId, {
+          ...candidate,
+          assignedHeight: block.height,
+          committee: selectOperatorCommittee({
+            registry: this.#evaluators,
+            randomness: block.hash,
+            context: { candidateId, committedHeight: candidate.committedHeight },
+            size: this.#evaluationQuorum,
+          }).map(({ address }) => address),
+          randomness: block.hash,
+        });
       }
     }
 

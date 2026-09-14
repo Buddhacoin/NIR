@@ -146,12 +146,14 @@ collusion. Penalizing coordinated fraud needs an objective fraud proof or an
 explicit dispute process; a simple majority accusation is not sufficient.
 
 Candidate safety bonds are now locked by signed ledger transactions. A later
-block may settle a critical-failure claim only under a genesis-approved policy
-and a quorum of ML-DSA-65 evaluator receipts. Every validator recomputes the
-70/10/20 reporter/evaluator/burn allocation; supplied payout amounts are not
-trusted. Settled evidence and consumed candidate bonds cannot be replayed. The
-configured quorum must still be replaced by the future-random committee before
-this mechanism is suitable for a public testnet.
+finalized block assigns the complete safety committee, and only that committee
+may sign a critical-failure claim under a genesis-approved policy. Every
+validator recomputes the assignment and the 70/10/20
+reporter/evaluator/burn allocation; supplied committee members and payout
+amounts are not trusted. Settled evidence and consumed candidate bonds cannot
+be replayed. The current assignment seed is the future block hash. It must be
+replaced or strengthened with a distributed, unbiasable randomness protocol
+before this mechanism is suitable for a public testnet.
 
 ## 5. World capability memory
 
