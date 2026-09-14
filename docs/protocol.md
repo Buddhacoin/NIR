@@ -115,6 +115,8 @@ grading is not reliable.
 - **Benchmark gaming:** rotating task families and out-of-distribution tests.
 - **Energy fraud:** signed hardware telemetry plus statistical and spot audits.
 - **Safety regression:** a safety floor can reject a proof regardless of gain.
+- **Critical danger:** one critical failure in any independent run vetoes
+  issuance; only safety policies committed in genesis are valid.
 - **Tiny-test farming:** minimum absolute gain and breadth thresholds.
 - **Whale control:** asset ownership does not equal evaluator or governance
   control; selection must not be purely stake-weighted.

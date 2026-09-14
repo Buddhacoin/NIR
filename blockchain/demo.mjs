@@ -8,6 +8,7 @@ import {
   formatNir,
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
+import { SAFETY_POLICY_V1_COMMITMENT } from "./constants.mjs";
 
 const validators = Array.from({ length: 4 }, generateWallet);
 const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -30,6 +31,7 @@ const chain = new NirChain({
   ],
   genesisTimestamp,
   networkId: "nir-localnet-1",
+  safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
   validators: validators.map((wallet, index) => ({
     ...publicWallet(wallet),
     operatorId: `validator-${index}`,
@@ -68,6 +70,8 @@ const evaluation = chain.prepareProgressEvaluation({
   generalityBps: 10_000,
   reproducibilityBps: 10_000,
   safetyBps: 10_000,
+  safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+  criticalSafetyPass: true,
   candidateEnergyWh: 720,
   baselineEnergyWh: 1_000,
   energyAttested: true,

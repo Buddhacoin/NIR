@@ -19,6 +19,7 @@ or an exploit against a live third-party system in a public issue.
 - reward epochs advance only on accepted progress and are rate-limited;
 - duplicate progress-proof rejection;
 - quorum-signed evaluation receipts bound to network, epoch, artifact, and score;
+- genesis-approved safety-policy commitments and per-run critical-failure veto;
 - deterministic world-frontier memory with model lineage and behavior commitments;
 - world-memory roots committed in genesis, blocks, and evaluation transitions;
 - linear treasury vesting by bounded block timestamps;
@@ -40,6 +41,9 @@ or an exploit against a live third-party system in a public issue.
 4. **Operator identities are not externally attested.** Genesis rejects reused
    keys and operator identifiers across evaluation and consensus, but one party
    can still lie by registering several apparently independent identities.
+5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
+   veto rule, but the first policy does not yet have production-grade hidden
+   suites, calibrated danger thresholds, or containment attestations.
 
 ### High
 
@@ -91,6 +95,8 @@ Fixed during review:
 - capability memory existed outside consensus and could diverge between nodes;
 - colluding validators could compress many reward epochs into a short interval;
 - evaluators and consensus validators shared the same keys and operator role;
+- aggregate capability gains could compensate for a critical safety failure;
+- submitters could name an unapproved safety policy in an evaluation receipt;
 - block, number, key, signature, and collection sizes were insufficiently bounded;
 - future block timestamps were not bounded;
 - reward aggregation mishandled multiple proofs from the same contributor;

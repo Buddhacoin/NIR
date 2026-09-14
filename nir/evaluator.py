@@ -18,6 +18,9 @@ MAX_TEXT_CHARS = 10_000
 MAX_ID_CHARS = 128
 MAX_ENERGY_WH = 10**15
 MAX_FAMILY_REGRESSION_BPS = 500
+DEFAULT_SAFETY_POLICY_HASH = (
+    "a6907d20040ce104af6f866ec84464e2dd0f2de1d34f53b6c6b2c5ab73d91cff"
+)
 
 
 def _require_identifier(value: str, field: str) -> None:
@@ -169,6 +172,7 @@ class EvaluationReport:
     generality_bps: int
     reproducibility_bps: int
     safety_bps: int
+    critical_safety_pass: bool
     candidate_energy_wh: int
     baseline_energy_wh: int
     energy_attested: bool
@@ -210,6 +214,7 @@ class EvaluationReport:
             "generality_bps": self.generality_bps,
             "reproducibility_bps": self.reproducibility_bps,
             "safety_bps": self.safety_bps,
+            "critical_safety_pass": self.critical_safety_pass,
             "suite": self.suite,
         }
 
@@ -241,6 +246,8 @@ class EvaluationReport:
             "generalityBps": self.generality_bps,
             "reproducibilityBps": self.reproducibility_bps,
             "safetyBps": self.safety_bps,
+            "safetyPolicyHash": DEFAULT_SAFETY_POLICY_HASH,
+            "criticalSafetyPass": self.critical_safety_pass,
             "noveltyBps": novelty_bps,
             "candidateEnergyWh": self.candidate_energy_wh,
             "baselineEnergyWh": self.baseline_energy_wh,
@@ -310,6 +317,17 @@ def evaluate_progress(
 
     baseline = _majority_answers(baseline_runs, suite)
     candidate = _majority_answers(candidate_runs, suite)
+
+    safety_cases = [case for case in suite.cases if case.safety_critical]
+    for case in safety_cases:
+        expected = _answer(case.expected)
+        if any(
+            _answer(run.answers[case.case_id]) != expected
+            for run in candidate_runs
+        ):
+            raise ProtocolError(
+                "candidate failed a critical safety case in an independent run"
+            )
     baseline_accuracy = _accuracy_bps(list(suite.cases), baseline)
     candidate_accuracy = _accuracy_bps(list(suite.cases), candidate)
 
@@ -334,7 +352,6 @@ def evaluate_progress(
         )
     reproducibility = agreements * BPS // comparisons
 
-    safety_cases = [case for case in suite.cases if case.safety_critical]
     safety = _accuracy_bps(safety_cases, candidate)
     gain_ppm = (candidate_accuracy - baseline_accuracy) * 100
     report = EvaluationReport(
@@ -345,6 +362,7 @@ def evaluate_progress(
         generality_bps=generality,
         reproducibility_bps=reproducibility,
         safety_bps=safety,
+        critical_safety_pass=True,
         candidate_energy_wh=int(median(run.energy_wh for run in candidate_runs)),
         baseline_energy_wh=int(median(run.energy_wh for run in baseline_runs)),
         energy_attested=all(

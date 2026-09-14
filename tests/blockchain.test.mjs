@@ -17,6 +17,7 @@ import {
   MINING_POOL,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
+  SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_ALLOCATION,
   TREASURY_VESTING_MS,
   scheduledEpochBudget,
@@ -50,6 +51,7 @@ function fixture() {
     ],
     genesisTimestamp: 0,
     networkId: "nir-testnet",
+    safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     validators: operatorMembers(validators, "validator"),
     evaluators: operatorMembers(evaluators, "evaluator"),
     treasuryAddress: treasury.address,
@@ -84,6 +86,8 @@ function progressClaim(chain, evaluators, recipient, label = "proof-a") {
     generalityBps: 10_000,
     reproducibilityBps: 10_000,
     safetyBps: 10_000,
+    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+    criticalSafetyPass: true,
     candidateEnergyWh: 100,
     baselineEnergyWh: 100,
     energyAttested: true,
@@ -141,6 +145,7 @@ test("evaluation and consensus operators must be independent", () => {
       evaluators: evaluatorMembers,
       genesisTimestamp: 0,
       networkId: "nir-role-separation-test",
+      safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
       treasuryAddress: treasury.address,
       validators: operatorMembers(validators, "validator"),
     }),
@@ -203,6 +208,8 @@ test("known capability cannot mint against a weaker selected baseline", () => {
       generalityBps: 10_000,
       reproducibilityBps: 10_000,
       safetyBps: 10_000,
+      safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+      criticalSafetyPass: true,
       candidateEnergyWh: 100,
       baselineEnergyWh: 100,
       energyAttested: true,
@@ -252,6 +259,8 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
     generalityBps: 10_000,
     reproducibilityBps: 10_000,
     safetyBps: 10_000,
+    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+    criticalSafetyPass: true,
     candidateEnergyWh: 100,
     baselineEnergyWh: 100,
     energyAttested: true,
@@ -402,12 +411,46 @@ test("chain scoring matches the evaluator output", () => {
       generalityBps: 7_500,
       reproducibilityBps: 10_000,
       safetyBps: 10_000,
+      safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+      criticalSafetyPass: true,
       noveltyBps: 10_000,
       candidateEnergyWh: 710,
       baselineEnergyWh: 1_000,
       energyAttested: true,
     }),
     "396112",
+  );
+});
+
+test("critical safety failure cannot produce an intelligence score", () => {
+  assert.throws(
+    () => computeProgressScore({
+      artifactHash: `sha256:${fingerprint("unsafe-candidate")}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      suiteCommitment: fingerprint("suite"),
+      gainPpm: 900_000,
+      generalityBps: 10_000,
+      reproducibilityBps: 10_000,
+      safetyBps: 9_999,
+      safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+      criticalSafetyPass: false,
+      noveltyBps: 10_000,
+      candidateEnergyWh: 100,
+      baselineEnergyWh: 100,
+      energyAttested: true,
+    }),
+    /critical safety clearance/,
+  );
+});
+
+test("an unapproved safety policy cannot authorize mining", () => {
+  const { chain, evaluators } = fixture();
+  const miner = generateWallet();
+  const claim = progressClaim(chain, evaluators, miner.address);
+  claim.evaluation.safetyPolicyHash = fingerprint("easy-private-policy");
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
+    /unapproved safety policy/,
   );
 });
 

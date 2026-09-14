@@ -146,6 +146,12 @@ export function computeProgressScore(evaluation) {
   assertMetric(evaluation.generalityBps, "generality");
   assertMetric(evaluation.reproducibilityBps, "reproducibility", 6_667);
   assertMetric(evaluation.safetyBps, "safety", 8_000);
+  if (
+    evaluation.criticalSafetyPass !== true ||
+    !/^[0-9a-f]{64}$/.test(evaluation.safetyPolicyHash ?? "")
+  ) {
+    throw new Error("critical safety clearance is missing or invalid");
+  }
   assertMetric(evaluation.noveltyBps, "novelty");
   if (
     !Number.isSafeInteger(evaluation.candidateEnergyWh) ||
@@ -304,6 +310,7 @@ export class NirChain {
   #quorum;
   #rewardEpoch;
   #rewardedProofs;
+  #safetyPolicies;
   #treasuryAddress;
   #genesisTimestamp;
   #validatorOrder;
@@ -315,6 +322,7 @@ export class NirChain {
     evaluators,
     treasuryAddress,
     capabilityReferences,
+    safetyPolicyCommitments,
     genesisTimestamp = Date.now(),
   }) {
     if (
@@ -359,6 +367,18 @@ export class NirChain {
     this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
     this.#mined = 0n;
     this.#capabilityMemory = new CapabilityMemory(capabilityReferences);
+    if (
+      !Array.isArray(safetyPolicyCommitments) ||
+      safetyPolicyCommitments.length === 0 ||
+      safetyPolicyCommitments.length > 32 ||
+      safetyPolicyCommitments.some(
+        (commitment) => !/^[0-9a-f]{64}$/.test(commitment),
+      ) ||
+      new Set(safetyPolicyCommitments).size !== safetyPolicyCommitments.length
+    ) {
+      throw new Error("genesis safety policies are invalid");
+    }
+    this.#safetyPolicies = new Set(safetyPolicyCommitments);
     const genesis = {
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
@@ -369,6 +389,7 @@ export class NirChain {
       genesisTimestamp,
       networkId,
       protocolVersion: PROTOCOL_VERSION,
+      safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
       validators: this.#validatorOrder.map((address) => ({
         address,
         operatorId: this.#validators.get(address).operatorId,
@@ -442,6 +463,9 @@ export class NirChain {
     }
     if (claim.evaluation.challengeEpoch !== epoch) {
       throw new Error("progress challenge belongs to another epoch");
+    }
+    if (!this.#safetyPolicies.has(claim.evaluation.safetyPolicyHash)) {
+      throw new Error("progress evaluation uses an unapproved safety policy");
     }
     assertAddress(claim.recipient, "reward recipient");
     const novelty = capabilityMemory.assess(claim.evaluation);

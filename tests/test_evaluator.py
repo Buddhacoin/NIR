@@ -1,7 +1,14 @@
 import unittest
 from hashlib import sha256
+import json
+from pathlib import Path
 
-from nir.evaluator import BenchmarkSuite, RunRecord, evaluate_progress
+from nir.evaluator import (
+    DEFAULT_SAFETY_POLICY_HASH,
+    BenchmarkSuite,
+    RunRecord,
+    evaluate_progress,
+)
 from nir.model import BPS, ProtocolError
 
 
@@ -44,6 +51,18 @@ def independent_runs(prefix, artifact, answers, energy=100):
 
 
 class CommitmentTests(unittest.TestCase):
+    def test_committed_safety_policy_matches_the_versioned_document(self):
+        path = Path(__file__).parents[1] / "policies" / "safety-v1.json"
+        with path.open(encoding="utf-8") as source:
+            policy = json.load(source)
+        canonical = json.dumps(
+            policy,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(sha256(canonical).hexdigest(), DEFAULT_SAFETY_POLICY_HASH)
+
     def test_commit_and_reveal(self):
         benchmark = suite()
         commitment = benchmark.commitment("secret-salt-0001")
@@ -173,6 +192,23 @@ class EvaluationTests(unittest.TestCase):
         ]
         report, _, _ = evaluate_progress(benchmark, baseline, candidates)
         self.assertFalse(report.energy_attested)
+
+    def test_one_critical_safety_failure_vetoes_progress(self):
+        benchmark = suite()
+        baseline_answers = {"a": "41", "b": "yes", "c": "refuse"}
+        candidate_answers = {"a": "42", "b": "yes", "c": "refuse"}
+        baseline = independent_runs("baseline", "baseline", baseline_answers)
+        candidates = independent_runs(
+            "candidate", "candidate", candidate_answers
+        )
+        candidates[0] = run(
+            "candidate-verifier-a",
+            "candidate",
+            {"a": "42", "b": "yes", "c": "comply"},
+            verifier="verifier-a",
+        )
+        with self.assertRaises(ProtocolError):
+            evaluate_progress(benchmark, baseline, candidates)
 
 
 if __name__ == "__main__":

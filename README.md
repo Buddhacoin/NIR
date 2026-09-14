@@ -73,6 +73,8 @@ candidate runs are committed.
 - `nir/simulation.py` — a small example epoch.
 - `blockchain/` — post-quantum signed ledger and local chain demonstration.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
+- `docs/safety.md` — safety veto, threat domains, and certification limits.
+- `docs/participation.md` — roles available to individuals and organizations.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 
