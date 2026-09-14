@@ -29,8 +29,16 @@ import {
 } from "../blockchain/crypto.mjs";
 import { CapabilityMemory } from "../blockchain/memory.mjs";
 
+function operatorMembers(wallets, prefix) {
+  return wallets.map((wallet, index) => ({
+    ...publicWallet(wallet),
+    operatorId: `${prefix}-${index}`,
+  }));
+}
+
 function fixture() {
   const validators = Array.from({ length: 4 }, generateWallet);
+  const evaluators = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const chain = new NirChain({
     capabilityReferences: [
@@ -42,10 +50,11 @@ function fixture() {
     ],
     genesisTimestamp: 0,
     networkId: "nir-testnet",
-    validators: validators.map(publicWallet),
+    validators: operatorMembers(validators, "validator"),
+    evaluators: operatorMembers(evaluators, "evaluator"),
     treasuryAddress: treasury.address,
   });
-  return { chain, treasury, validators };
+  return { chain, evaluators, treasury, validators };
 }
 
 function fingerprint(label) {
@@ -60,7 +69,7 @@ function quorumFor(block, validators) {
   ];
 }
 
-function progressClaim(chain, validators, recipient, label = "proof-a") {
+function progressClaim(chain, evaluators, recipient, label = "proof-a") {
   const evaluation = chain.prepareProgressEvaluation({
     artifactHash: `sha256:${fingerprint(`artifact-${label}`)}`,
     baselineHash: `sha256:${fingerprint("baseline")}`,
@@ -84,7 +93,7 @@ function progressClaim(chain, validators, recipient, label = "proof-a") {
     epoch: chain.height + 1,
     recipient,
     evaluation,
-    evaluatorWallets: validators.slice(0, 3),
+    evaluatorWallets: evaluators.slice(0, 3),
   });
 }
 
@@ -114,6 +123,31 @@ test("genesis supply contains only the locked treasury allocation", () => {
   assert.ok(chain.issued < MAX_SUPPLY);
 });
 
+test("evaluation and consensus operators must be independent", () => {
+  const validators = Array.from({ length: 4 }, generateWallet);
+  const evaluators = Array.from({ length: 4 }, generateWallet);
+  const treasury = generateWallet();
+  const evaluatorMembers = operatorMembers(evaluators, "evaluator");
+  evaluatorMembers[0].operatorId = "validator-0";
+  assert.throws(
+    () => new NirChain({
+      capabilityReferences: [
+        {
+          artifactHash: `sha256:${fingerprint("baseline")}`,
+          behaviorCommitment: fingerprint("baseline-behavior"),
+          capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
+        },
+      ],
+      evaluators: evaluatorMembers,
+      genesisTimestamp: 0,
+      networkId: "nir-role-separation-test",
+      treasuryAddress: treasury.address,
+      validators: operatorMembers(validators, "validator"),
+    }),
+    /must be disjoint/,
+  );
+});
+
 test("Python and JavaScript capability memory use the same state root", () => {
   const memory = new CapabilityMemory([
     {
@@ -134,12 +168,12 @@ test("Python and JavaScript capability memory use the same state root", () => {
 });
 
 test("a finalized progress block mints its fixed epoch budget", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
   const memoryRootBefore = chain.capabilityMemoryRoot;
   const block = chain.buildBlock({
     rewardClaims: [
-      progressClaim(chain, validators, miner.address),
+      progressClaim(chain, evaluators, miner.address),
     ],
     timestamp: 1,
   });
@@ -178,14 +212,14 @@ test("known capability cannot mint against a weaker selected baseline", () => {
 });
 
 test("empty blocks do not consume intelligence issuance epochs", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const empty = chain.buildBlock({ timestamp: 1 });
   chain.appendBlock(finalizeBlock(empty, quorumFor(empty, validators)));
   assert.equal(chain.nextIssuanceEpoch, 0);
 
   const miner = generateWallet();
   const rewarded = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, validators, miner.address)],
+    rewardClaims: [progressClaim(chain, evaluators, miner.address)],
     timestamp: 2,
   });
   assert.equal(rewarded.issuanceEpoch, 0);
@@ -195,10 +229,10 @@ test("empty blocks do not consume intelligence issuance epochs", () => {
 });
 
 test("fast hardware cannot accelerate intelligence issuance", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const firstMiner = generateWallet();
   const first = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, validators, firstMiner.address)],
+    rewardClaims: [progressClaim(chain, evaluators, firstMiner.address)],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
@@ -227,7 +261,7 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
     epoch: 2,
     recipient: secondMiner.address,
     evaluation,
-    evaluatorWallets: validators.slice(0, 3),
+    evaluatorWallets: evaluators.slice(0, 3),
   });
   assert.throws(
     () => chain.buildBlock({
@@ -239,7 +273,7 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
 });
 
 test("fewer than two-thirds plus one validator votes cannot finalize", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const block = chain.buildBlock({ timestamp: 1 });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(block, validators.slice(0, 2))),
@@ -248,12 +282,12 @@ test("fewer than two-thirds plus one validator votes cannot finalize", () => {
 });
 
 test("a post-quantum signed transfer changes balances and nonce", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const alice = generateWallet();
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [
-      progressClaim(chain, validators, alice.address),
+      progressClaim(chain, evaluators, alice.address),
     ],
     timestamp: 1,
   });
@@ -274,12 +308,12 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
 });
 
 test("a modified transfer signature is rejected atomically", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const alice = generateWallet();
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [
-      progressClaim(chain, validators, alice.address),
+      progressClaim(chain, evaluators, alice.address),
     ],
     timestamp: 1,
   });
@@ -300,7 +334,7 @@ test("a modified transfer signature is rejected atomically", () => {
 });
 
 test("a signed transfer cannot be replayed on another network", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const alice = generateWallet();
   const bob = generateWallet();
   const transaction = createTransfer({
@@ -334,23 +368,23 @@ test("a transfer cannot spend more than the sender owns", () => {
 });
 
 test("one progress proof cannot mint twice", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
   const claim = {
-    ...progressClaim(chain, validators, miner.address),
+    ...progressClaim(chain, evaluators, miner.address),
   };
   const first = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
   assert.throws(
-    () => progressClaim(chain, validators, miner.address),
+    () => progressClaim(chain, evaluators, miner.address),
     /already known/,
   );
 });
 
 test("an arbitrary intelligence score cannot mint NIR", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
-  const claim = progressClaim(chain, validators, miner.address);
+  const claim = progressClaim(chain, evaluators, miner.address);
   claim.score = String(BigInt(claim.score) * 1_000_000n);
   assert.throws(
     () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
@@ -378,13 +412,30 @@ test("chain scoring matches the evaluator output", () => {
 });
 
 test("progress needs independently signed evaluator receipts", () => {
-  const { chain, validators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
-  const claim = progressClaim(chain, validators, miner.address);
+  const claim = progressClaim(chain, evaluators, miner.address);
   claim.attestations = [claim.attestations[0]];
   assert.throws(
     () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
     /quorum/,
+  );
+});
+
+test("consensus validator keys cannot approve intelligence evaluations", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const valid = progressClaim(chain, evaluators, miner.address);
+  const wrongRole = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: valid.epoch,
+    recipient: miner.address,
+    evaluation: valid.evaluation,
+    evaluatorWallets: validators.slice(0, 3),
+  });
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [wrongRole], timestamp: 1 }),
+    /invalid progress evaluator signature/,
   );
 });
 

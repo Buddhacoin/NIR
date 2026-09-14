@@ -22,6 +22,9 @@ Raw compute never creates money by itself. Rewards are shared among accepted
 contributions according to their verified progress score, with an efficiency
 adjustment for the energy used.
 
+Evaluation and block finality use separate ML-DSA-65 key registries. Their
+operator identities must be unique and disjoint in the genesis configuration.
+
 ## Monetary draft
 
 - Hard cap: **21,000,000 NIR**.

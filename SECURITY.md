@@ -13,6 +13,7 @@ or an exploit against a live third-party system in a public issue.
 - SHA3-256 block hashes and full 256-bit address identifiers;
 - domain-separated signatures and hashes;
 - `2N/3 + 1` quorum certificates with unique validator votes;
+- disjoint evaluator and consensus key/operator registries;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - reward epochs advance only on accepted progress and are rate-limited;
@@ -36,8 +37,9 @@ or an exploit against a live third-party system in a public issue.
    committed model in the declared environment.
 3. **Energy is self-reported.** Hardware attestation and independent metering do
    not exist yet.
-4. **Verifier identities are not Sybil-resistant.** Three valid keys can still
-   be controlled by one party.
+4. **Operator identities are not externally attested.** Genesis rejects reused
+   keys and operator identifiers across evaluation and consensus, but one party
+   can still lie by registering several apparently independent identities.
 
 ### High
 
@@ -88,6 +90,7 @@ Fixed during review:
 - empty blocks could consume issuance epochs and accelerate reward reduction;
 - capability memory existed outside consensus and could diverge between nodes;
 - colluding validators could compress many reward epochs into a short interval;
+- evaluators and consensus validators shared the same keys and operator role;
 - block, number, key, signature, and collection sizes were insufficiently bounded;
 - future block timestamps were not bounded;
 - reward aggregation mishandled multiple proofs from the same contributor;

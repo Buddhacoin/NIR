@@ -10,6 +10,7 @@ import {
 import { generateWallet, publicWallet } from "./crypto.mjs";
 
 const validators = Array.from({ length: 4 }, generateWallet);
+const evaluators = Array.from({ length: 4 }, generateWallet);
 const founder = generateWallet();
 const alice = generateWallet();
 const bob = generateWallet();
@@ -29,7 +30,14 @@ const chain = new NirChain({
   ],
   genesisTimestamp,
   networkId: "nir-localnet-1",
-  validators: validators.map(publicWallet),
+  validators: validators.map((wallet, index) => ({
+    ...publicWallet(wallet),
+    operatorId: `validator-${index}`,
+  })),
+  evaluators: evaluators.map((wallet, index) => ({
+    ...publicWallet(wallet),
+    operatorId: `evaluator-${index}`,
+  })),
   treasuryAddress: founder.address,
 });
 
@@ -69,7 +77,7 @@ const progressClaim = createProgressClaim({
   epoch: 1,
   recipient: alice.address,
   evaluation,
-  evaluatorWallets: validators.slice(0, 3),
+  evaluatorWallets: evaluators.slice(0, 3),
 });
 const rewardBlock = chain.buildBlock({
   rewardClaims: [progressClaim],

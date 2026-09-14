@@ -108,6 +108,9 @@ grading is not reliable.
   revealed after the epoch.
 - **Evaluator capture:** random selection, heterogeneous operators, bonds, and
   conflicting-result slashing.
+- **Role capture:** evaluation and block-finality keys belong to disjoint
+  operator registries; production admission must prove that those operators are
+  independently controlled.
 - **Duplicate work:** artifact and lineage fingerprints prevent repeated claims.
 - **Benchmark gaming:** rotating task families and out-of-distribution tests.
 - **Energy fraud:** signed hardware telemetry plus statistical and spot audits.

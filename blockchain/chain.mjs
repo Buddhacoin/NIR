@@ -41,6 +41,43 @@ function assertAddress(address, field) {
   }
 }
 
+function operatorRegistry(entries, role) {
+  if (
+    !Array.isArray(entries) ||
+    entries.length < 4 ||
+    entries.length > MAX_VALIDATORS
+  ) {
+    throw new Error(`${role} registry requires four to ${MAX_VALIDATORS} members`);
+  }
+  const registry = new Map();
+  const operatorIds = new Set();
+  for (const member of entries) {
+    if (member.algorithm !== SIGNATURE_ALGORITHM) {
+      throw new Error(`all ${role} members must use ML-DSA-65`);
+    }
+    if (
+      typeof member.publicKey !== "string" ||
+      member.publicKey.length > 4_000 ||
+      typeof member.operatorId !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(member.operatorId)
+    ) {
+      throw new Error(`${role} member key or operator id is invalid`);
+    }
+    if (addressFromPublicKey(member.publicKey) !== member.address) {
+      throw new Error(`${role} member address does not match public key`);
+    }
+    if (registry.has(member.address) || operatorIds.has(member.operatorId)) {
+      throw new Error(`${role} member addresses and operators must be unique`);
+    }
+    registry.set(member.address, {
+      operatorId: member.operatorId,
+      publicKey: member.publicKey,
+    });
+    operatorIds.add(member.operatorId);
+  }
+  return registry;
+}
+
 function unsignedTransaction(transaction) {
   const { signature: _signature, ...unsigned } = transaction;
   return unsigned;
@@ -257,6 +294,9 @@ export class NirChain {
   #balances;
   #blocks;
   #capabilityMemory;
+  #evaluationQuorum;
+  #evaluatorOrder;
+  #evaluators;
   #mined;
   #lastRewardTimestamp;
   #networkId;
@@ -272,6 +312,7 @@ export class NirChain {
   constructor({
     networkId,
     validators,
+    evaluators,
     treasuryAddress,
     capabilityReferences,
     genesisTimestamp = Date.now(),
@@ -280,11 +321,9 @@ export class NirChain {
       typeof networkId !== "string" ||
       networkId.length === 0 ||
       Buffer.byteLength(networkId) > 64 ||
-      !Array.isArray(validators) ||
-      validators.length < 4 ||
-      validators.length > MAX_VALIDATORS
+      !Array.isArray(validators)
     ) {
-      throw new Error("network id and at least four validators are required");
+      throw new Error("network id and validator registry are required");
     }
     if (
       !Number.isSafeInteger(genesisTimestamp) ||
@@ -296,27 +335,22 @@ export class NirChain {
     this.#networkId = networkId;
     this.#genesisTimestamp = genesisTimestamp;
     this.#treasuryAddress = treasuryAddress;
-    this.#validators = new Map();
-    for (const validator of validators) {
-      if (validator.algorithm !== SIGNATURE_ALGORITHM) {
-        throw new Error("all validators must use ML-DSA-65");
-      }
-      if (
-        typeof validator.publicKey !== "string" ||
-        validator.publicKey.length > 4_000
-      ) {
-        throw new Error("validator public key exceeds limits");
-      }
-      if (addressFromPublicKey(validator.publicKey) !== validator.address) {
-        throw new Error("validator address does not match public key");
-      }
-      if (this.#validators.has(validator.address)) {
-        throw new Error("validator addresses must be unique");
-      }
-      this.#validators.set(validator.address, validator.publicKey);
+    this.#validators = operatorRegistry(validators, "validator");
+    this.#evaluators = operatorRegistry(evaluators, "evaluator");
+    const validatorOperators = new Set(
+      [...this.#validators.values()].map(({ operatorId }) => operatorId),
+    );
+    if (
+      [...this.#evaluators.entries()].some(([address, { operatorId }]) =>
+        this.#validators.has(address) || validatorOperators.has(operatorId),
+      )
+    ) {
+      throw new Error("consensus and evaluation keys and operators must be disjoint");
     }
     this.#validatorOrder = [...this.#validators.keys()].sort();
     this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
+    this.#evaluatorOrder = [...this.#evaluators.keys()].sort();
+    this.#evaluationQuorum = Math.floor((this.#evaluatorOrder.length * 2) / 3) + 1;
     assertAddress(treasuryAddress, "treasury address");
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
     this.#nonces = new Map();
@@ -328,10 +362,17 @@ export class NirChain {
     const genesis = {
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
+      evaluators: this.#evaluatorOrder.map((address) => ({
+        address,
+        operatorId: this.#evaluators.get(address).operatorId,
+      })),
       genesisTimestamp,
       networkId,
       protocolVersion: PROTOCOL_VERSION,
-      validators: this.#validatorOrder,
+      validators: this.#validatorOrder.map((address) => ({
+        address,
+        operatorId: this.#validators.get(address).operatorId,
+      })),
     };
     this.#blocks = [
       {
@@ -431,15 +472,15 @@ export class NirChain {
       if (evaluators.has(attestation.evaluator)) {
         throw new Error("duplicate progress evaluator");
       }
-      const publicKey = this.#validators.get(attestation.evaluator);
+      const evaluator = this.#evaluators.get(attestation.evaluator);
       if (
-        !publicKey ||
+        !evaluator ||
         typeof attestation.signature !== "string" ||
         attestation.signature.length > 7_000 ||
         !verifyObject(
           payload,
           attestation.signature,
-          publicKey,
+          evaluator.publicKey,
           "PROGRESS_RECEIPT",
         )
       ) {
@@ -447,7 +488,7 @@ export class NirChain {
       }
       evaluators.add(attestation.evaluator);
     }
-    if (evaluators.size < this.#quorum) {
+    if (evaluators.size < this.#evaluationQuorum) {
       throw new Error("progress evaluation quorum not reached");
     }
     capabilityMemory.accept(claim.evaluation);
@@ -496,15 +537,15 @@ export class NirChain {
     const voters = new Set();
     for (const vote of block.certificate ?? []) {
       if (voters.has(vote.validator)) throw new Error("duplicate validator vote");
-      const publicKey = this.#validators.get(vote.validator);
-      if (!publicKey) throw new Error("vote from unknown validator");
+      const validator = this.#validators.get(vote.validator);
+      if (!validator) throw new Error("vote from unknown validator");
       if (
         typeof vote.signature !== "string" ||
         vote.signature.length > 7_000 ||
         !verifyObject(
           { blockHash: block.hash },
           vote.signature,
-          publicKey,
+          validator.publicKey,
           "BLOCK_VOTE",
         )
       ) {

@@ -12,6 +12,7 @@ identically.
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - deterministic round-robin block proposers;
 - finality certificates requiring at least `floor(2N/3) + 1` validator votes;
+- separate evaluator and consensus registries with disjoint operator identities;
 - fixed per-epoch progress-reward budgets and the 21 million NIR hard cap;
 - a ten-minute minimum interval between intelligence-reward blocks;
 - proportional reward allocation from proof scores;
@@ -32,9 +33,11 @@ monetary cap. Empty blocks do not consume issuance epochs. The chain does not
 rerun an AI model inside block validation. Production still needs a transport
 that creates receipts directly from reproducible evaluator executions.
 
-Validator identities in this version are configured at genesis. This is not yet
-permissionless consensus and has no Sybil-resistance, validator rotation,
-slashing, fork recovery, or peer-to-peer transport.
+Validator and evaluator identities in this version are configured at genesis,
+and one configured operator cannot occupy both roles. This is not yet
+permissionless consensus: operator identifiers are self-asserted, and there is
+no external identity attestation, rotation, slashing, fork recovery, or
+peer-to-peer transport.
 
 ## Run
 
