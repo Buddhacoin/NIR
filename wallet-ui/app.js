@@ -47,7 +47,7 @@ const setTheme = (theme) => {
   themeButton.setAttribute("aria-label", theme === "light" ? "Включить тёмную тему" : "Включить дневную тему");
   localStorage.setItem("nir-theme", theme);
 };
-setTheme(localStorage.getItem("nir-theme") || "dark");
+setTheme(localStorage.getItem("nir-theme") || "light");
 themeButton.onclick = () => setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
 
 const networkButton = document.querySelector(".network");

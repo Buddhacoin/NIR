@@ -50,9 +50,12 @@ or an exploit against a live third-party system in a public issue.
 
 ### Critical
 
-1. **No distributed consensus protocol.** Validators run in one local process.
-   There is no network transport, consensus round, locked quorum certificate,
-   fork recovery, or equivocation evidence.
+1. **No production distributed consensus protocol.** A localhost prototype now
+   separates four validator keys into independent processes, independently
+   executes proposals, persists anti-equivocation decisions, and collects a
+   remote quorum certificate. It still has a single coordinator and no
+   authenticated peer transport, locked rounds, view changes, fork recovery,
+   catch-up protocol, peer discovery, or partition-tested liveness.
 2. **Evaluator execution is not yet remotely attested.** Receipts are signed and
    scores are recomputed, but the chain cannot prove the signer actually ran the
    committed model in the declared environment.
@@ -90,8 +93,10 @@ or an exploit against a live third-party system in a public issue.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.
-4. There is no mempool, transaction admission policy, peer reputation, rate
-   limiting, or denial-of-service protection at the network boundary.
+4. The multi-process coordinator has a bounded in-memory mempool with duplicate
+   rejection, but no durable or gossiped mempool, fee-priority admission, peer
+   reputation, rate limiting, or denial-of-service protection at the network
+   boundary.
 5. There has been no independent audit, formal verification, or adversarial
    public testnet.
 

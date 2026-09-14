@@ -58,6 +58,8 @@ export function createNodeHttpServer(node) {
         return send(response, 200, {
           height: node.height, networkId: node.networkId, status: "ready",
           tipHash: node.tipHash, valueMode: "valueless-devnet",
+          ...(node.consensusMode ? { consensusMode: node.consensusMode } : {}),
+          ...(Number.isSafeInteger(node.mempoolSize) ? { mempoolSize: node.mempoolSize } : {}),
         }, origin);
       }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
@@ -71,12 +73,15 @@ export function createNodeHttpServer(node) {
       }
       if (request.method === "POST" && url.pathname === "/v1/transactions") {
         const body = await readBody(request);
-        return send(response, 202, node.submitTransaction(body), origin);
+        return send(response, 202, await node.submitTransaction(body), origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/faucet") {
         const { recipient, amount } = await readBody(request);
         if (!ADDRESS.test(recipient ?? "")) throw new Error("recipient is invalid");
-        return send(response, 202, node.faucet(recipient, amount), origin);
+        return send(response, 202, await node.faucet(recipient, amount), origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/blocks/produce" && node.produceBlock) {
+        return send(response, 202, await node.produceBlock(), origin);
       }
       return send(response, 404, { error: "not found" }, origin);
     } catch (error) {

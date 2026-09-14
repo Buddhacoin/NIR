@@ -1,0 +1,97 @@
+import assert from "node:assert/strict";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { createTransfer, NirChain } from "../blockchain/chain.mjs";
+import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
+import { generateWallet } from "../blockchain/crypto.mjs";
+import {
+  DistributedCoordinator,
+  initializeDistributedDevnet,
+  ValidatorReplica,
+} from "../blockchain/distributed-node.mjs";
+import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+
+async function listen(server) {
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+async function close(server) {
+  if (server.listening) await new Promise((resolve) => server.close(resolve));
+}
+
+test("independent HTTP validator replicas finalize with one peer offline", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-distributed-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const servers = replicas.map(createValidatorHttpServer);
+  try {
+    const urls = await Promise.all(servers.map(listen));
+    let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    const funded = await coordinator.faucet(alice.address);
+    assert.equal(funded.votes, 4);
+    assert.equal(funded.committedPeers, 4);
+
+    const transfer = createTransfer({
+      amount: (2n * ATOMIC_UNITS).toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    });
+    assert.throws(() => coordinator.submitTransaction({
+      ...transfer, amount: (3n * ATOMIC_UNITS).toString(),
+    }), /invalid transaction signature/);
+    assert.equal(coordinator.mempoolSize, 0);
+    assert.equal(coordinator.submitTransaction(transfer).status, "queued");
+    assert.equal(coordinator.mempoolSize, 1);
+
+    const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
+    const mirror = new NirChain(genesis);
+    const firstBlock = JSON.parse(readFileSync(
+      join(layout.coordinatorDirectory, "blocks", "000000000001.json"), "utf8"));
+    mirror.appendBlock(firstBlock);
+    const forged = { ...transfer, amount: (3n * ATOMIC_UNITS).toString() };
+    const invalidProposal = mirror.buildBlock({
+      timestamp: firstBlock.timestamp + 1,
+      transactions: [forged],
+    });
+    assert.throws(() => replicas[0].vote(invalidProposal), /invalid transaction signature/);
+    const nextProposer = mirror.expectedProposer(2);
+    const offlineIndex = replicas.findIndex(({ address }) => address !== nextProposer);
+    await close(servers[offlineIndex]);
+
+    const finalized = await coordinator.produceBlock();
+    assert.equal(finalized.votes, 3);
+    assert.equal(finalized.committedPeers, 3);
+    assert.equal(coordinator.account(bob.address).atomicBalance, (2n * ATOMIC_UNITS).toString());
+    assert.equal(coordinator.mempoolSize, 0);
+
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    assert.equal(coordinator.height, 2);
+    assert.equal(coordinator.account(bob.address).atomicBalance, (2n * ATOMIC_UNITS).toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("a validator persists its vote and refuses restart equivocation", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-vote-test-"));
+  try {
+    const layout = initializeDistributedDevnet(join(temporary, "network"));
+    let replica = new ValidatorReplica(layout.validatorDirectories[0]);
+    const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
+    const chain = new NirChain(genesis);
+    const first = chain.buildBlock({ timestamp: 1 });
+    const second = chain.buildBlock({ timestamp: 2 });
+    replica.vote(first);
+    assert.throws(() => replica.vote(second), /refuses to equivocate/);
+    replica = new ValidatorReplica(layout.validatorDirectories[0]);
+    assert.throws(() => replica.vote(second), /refuses to equivocate/);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});

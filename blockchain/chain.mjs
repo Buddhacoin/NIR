@@ -439,6 +439,7 @@ export class NirChain {
   #safetyPolicies;
   #treasuryAddress;
   #genesisTimestamp;
+  #genesisConfig;
   #validatorOrder;
   #validators;
 
@@ -468,6 +469,16 @@ export class NirChain {
       throw new Error("invalid genesis timestamp");
     }
     this.#networkId = networkId;
+    this.#genesisConfig = structuredClone({
+      beaconAuthorities,
+      capabilityReferences,
+      evaluators,
+      genesisTimestamp,
+      networkId,
+      safetyPolicyCommitments,
+      treasuryAddress,
+      validators,
+    });
     this.#genesisTimestamp = genesisTimestamp;
     this.#treasuryAddress = treasuryAddress;
     this.#validators = operatorRegistry(validators, "validator");
@@ -1046,6 +1057,21 @@ export class NirChain {
   }
 
   appendBlock(block) {
+    return this.#applyBlock(block, true);
+  }
+
+  validateProposal(block) {
+    if (block?.hash !== undefined || block?.certificate !== undefined) {
+      throw new Error("proposal must not contain finality fields");
+    }
+    const fork = new NirChain(this.#genesisConfig);
+    for (const finalized of this.#blocks.slice(1)) fork.appendBlock(finalized);
+    const candidate = { ...structuredClone(block), hash: blockHash(block), certificate: [] };
+    fork.#applyBlock(candidate, false);
+    return candidate.hash;
+  }
+
+  #applyBlock(block, verifyCertificate) {
     const previous = this.#blocks.at(-1);
     if (block.networkId !== this.#networkId) throw new Error("wrong network id");
     if (block.protocolVersion !== PROTOCOL_VERSION) throw new Error("wrong protocol version");
@@ -1089,7 +1115,11 @@ export class NirChain {
       block.height === this.#pendingValidatorRotation.activationHeight
       ? this.#validators
       : null;
-    this.#verifyCertificate(block, blockValidators, transitionValidators);
+    if (verifyCertificate) {
+      this.#verifyCertificate(block, blockValidators, transitionValidators);
+    } else if (block.hash !== blockHash(block)) {
+      throw new Error("block hash mismatch");
+    }
 
     const capabilityMemory = this.#capabilityMemory.clone();
     for (const claim of block.progressRewards) {

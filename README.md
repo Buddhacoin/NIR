@@ -136,6 +136,8 @@ candidate runs are committed.
 - `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
 - `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
 - `blockchain/node-store.mjs` — atomic block files and verified restart replay.
+- `blockchain/distributed-node.mjs` — separate validators, mempool, and remote quorum coordinator.
+- `blockchain/validator-service.mjs` — one-key validator RPC with durable anti-equivocation votes.
 - `wallet-ui/` — installable wallet/PWA and browser-extension interface preview.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
@@ -148,6 +150,7 @@ candidate runs are committed.
 - `docs/top-chains-study.md` — lessons from leading independent networks and NIR's three-lane architecture.
 - `docs/beacon.md` — independent beacon deployment and aggregation runbook.
 - `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.
+- `docs/network.md` — multi-process devnet startup and remaining consensus boundary.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 
@@ -184,6 +187,11 @@ npm run wallet:preview
 
 The complete wallet-to-wallet command flow and RPC reference are in
 `docs/node.md`.
+
+For the newer multi-process mode, where the coordinator has no validator keys,
+follow `docs/network.md`. It runs four validator replicas, queues transactions
+in a mempool, independently executes proposals, and requires a remote
+`2N/3 + 1` finality certificate.
 
 To try the current local mining flow:
 

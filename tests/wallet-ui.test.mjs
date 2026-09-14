@@ -22,10 +22,18 @@ test("visible secondary controls have actions", () => {
   }
 });
 
-test("bottom navigation meets the prototype readability targets", () => {
-  assert.match(styles, /min-height:68px/);
-  assert.match(styles, /font-size:14px/);
-  assert.match(styles, /font-weight:650/);
+test("bottom navigation is a compact readable dock", () => {
+  assert.match(styles, /nav \{ position: fixed/);
+  assert.match(styles, /width: min\(410px, calc\(100% - 24px\)\)/);
+  assert.match(styles, /nav button \{[^}]*min-height: 56px/s);
+  assert.match(html, />Главная<\/span>/);
+});
+
+test("wallet uses a neutral monochrome interface", () => {
+  assert.match(styles, /--bg: #f6f6f6/);
+  assert.match(styles, /--bg: #080808/);
+  assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
+  assert.match(html, /class="brand-logo">N</);
 });
 
 test("wallet reports the local node connection state", () => {
