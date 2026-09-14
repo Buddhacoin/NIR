@@ -409,6 +409,8 @@ export class NirChain {
   #quorum;
   #rewardEpoch;
   #rewardedProofs;
+  #randomnessFaults;
+  #validatorFaults;
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
@@ -465,6 +467,8 @@ export class NirChain {
     this.#candidateBonds = new Map();
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
+    this.#randomnessFaults = new Map();
+    this.#validatorFaults = new Map();
     this.#safetyEvidence = new Set();
     this.#rewardEpoch = 0;
     this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
@@ -559,6 +563,15 @@ export class NirChain {
     const candidate = this.#candidateBonds.get(candidateId);
     if (!candidate?.committee) throw new Error("candidate safety committee is not assigned");
     return [...candidate.committee];
+  }
+
+  validatorRandomnessFaults(address) {
+    return this.#validatorFaults.get(address) ?? 0;
+  }
+
+  randomnessFault(candidateId) {
+    const fault = this.#randomnessFaults.get(candidateId);
+    return fault ? structuredClone(fault) : null;
   }
 
   prepareProgressEvaluation(evaluation) {
@@ -956,6 +969,8 @@ export class NirChain {
       randomnessReveals: new Map(candidate.randomnessReveals),
     }]));
     const safetyEvidence = new Set(this.#safetyEvidence);
+    const randomnessFaults = new Map(this.#randomnessFaults);
+    const validatorFaults = new Map(this.#validatorFaults);
     let newlyBurned = 0n;
     const expectedSafetySettlements = block.safetySettlements.map(({ settlement: _settlement, ...claim }) => ({
       ...claim,
@@ -1060,6 +1075,25 @@ export class NirChain {
           }).map(({ address }) => address),
           randomness,
         });
+      } else if (candidate.committee === null && block.height >= candidate.committedHeight + 3 &&
+          candidate.randomnessCommits.size >= this.#quorum) {
+        const nonRevealers = [...candidate.randomnessCommits.keys()]
+          .filter((address) => !candidate.randomnessReveals.has(address)).sort();
+        if (nonRevealers.length > 0) {
+          const fault = {
+            candidateId,
+            committedHeight: candidate.committedHeight,
+            detectedHeight: block.height,
+            nonRevealers,
+            reason: "committed randomness contribution was not revealed",
+          };
+          randomnessFaults.set(candidateId, fault);
+          for (const address of nonRevealers) {
+            validatorFaults.set(address, (validatorFaults.get(address) ?? 0) + 1);
+          }
+          balances.set(candidate.submitter, (balances.get(candidate.submitter) ?? 0n) + candidate.bond);
+          candidateBonds.delete(candidateId);
+        }
       }
     }
 
@@ -1068,6 +1102,8 @@ export class NirChain {
     this.#candidateBonds = candidateBonds;
     this.#nonces = nonces;
     this.#rewardedProofs = rewardedProofs;
+    this.#randomnessFaults = randomnessFaults;
+    this.#validatorFaults = validatorFaults;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;

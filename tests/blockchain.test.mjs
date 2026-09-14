@@ -547,6 +547,46 @@ test("validators cannot approve a forged safety payout amount", () => {
   assert.equal(chain.burned, 0n);
 });
 
+test("a missing randomness reveal records validator fault and refunds candidate bond", () => {
+  const { chain, evaluators, validators } = fixture();
+  const submitter = generateWallet();
+  const candidateId = fingerprint("withheld-randomness-candidate");
+  const rewardBlock = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, submitter.address, "fund-withholding")],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const funded = chain.balance(submitter.address);
+  const bond = createCandidateBond({
+    wallet: submitter, networkId: chain.networkId, candidateId,
+    amount: "1000000000", nonce: 0,
+  });
+  const bondBlock = chain.buildBlock({ transactions: [bond], timestamp: 2 });
+  chain.appendBlock(finalizeBlock(bondBlock, quorumFor(bondBlock, validators)));
+  const contributors = validators.slice(0, 3).map((wallet, index) => ({
+    secret: fingerprint(`withhold-${index}`), wallet,
+  }));
+  const commitBlock = chain.buildBlock({
+    randomnessCommits: contributors.map(({ secret, wallet }) => createRandomnessCommit({
+      wallet, networkId: chain.networkId, candidateId, secret,
+    })), timestamp: 3,
+  });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  const revealBlock = chain.buildBlock({
+    randomnessReveals: contributors.slice(0, 2).map(({ secret, wallet }) => createRandomnessReveal({
+      wallet, networkId: chain.networkId, candidateId, secret,
+    })), timestamp: 4,
+  });
+  chain.appendBlock(finalizeBlock(revealBlock, quorumFor(revealBlock, validators)));
+  const timeoutBlock = chain.buildBlock({ timestamp: 5 });
+  chain.appendBlock(finalizeBlock(timeoutBlock, quorumFor(timeoutBlock, validators)));
+
+  assert.deepEqual(chain.randomnessFault(candidateId).nonRevealers, [contributors[2].wallet.address]);
+  assert.equal(chain.validatorRandomnessFaults(contributors[2].wallet.address), 1);
+  assert.equal(chain.balance(submitter.address), funded - MIN_TRANSFER_FEE);
+  assert.throws(() => chain.assignedSafetyEvaluators(candidateId), /not assigned/);
+});
+
 test("a modified transfer signature is rejected atomically", () => {
   const { chain, evaluators, validators } = fixture();
   const alice = generateWallet();

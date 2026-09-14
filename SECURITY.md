@@ -28,6 +28,8 @@ or an exploit against a live third-party system in a public issue.
 - safety committees derived after candidate commitment from a validator-quorum
   commit/reveal round, with consensus rejecting unmatched reveals and receipts
   from any substituted evaluator set;
+- deterministic non-reveal fault records and candidate-bond refunds when a
+  committed randomness round is sabotaged;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - reward epochs advance only on accepted progress and are rate-limited;
@@ -57,8 +59,10 @@ or an exploit against a live third-party system in a public issue.
    but genesis still accepts self-asserted operator IDs. Safety committee
    assignment now uses an on-chain validator-quorum commit/reveal round. Its
    last revealer can still withhold after seeing other reveals, creating a
-   liveness and limited selection-bias attack. Production needs enforceable
-   non-reveal penalties and an unbiasable audited fallback beacon.
+   liveness and limited selection-bias attack. The chain detects non-revealers
+   and refunds affected candidate bonds, but it cannot confiscate a validator
+   bond until validator registration and stake custody are consensus state.
+   Production also needs an unbiasable audited fallback beacon.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.

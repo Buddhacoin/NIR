@@ -50,8 +50,11 @@ Candidate safety bonds, randomness commitments and reveals, committee
 assignments, and critical-failure settlements are consensus state. No single
 block producer supplies the seed. The current commit/reveal construction still
 has a last-revealer liveness and bias risk: a contributor can withhold its reveal
-after seeing others. Production needs non-reveal penalties and an independently
-audited fallback randomness beacon.
+after seeing others. The chain now records each committed non-revealer as an
+objective fault and refunds the candidate bond after the deadline, preventing
+indefinite candidate-fund lockup. Production still needs validator bonds,
+economic slashing, suspension/rotation rules, and an independently audited
+fallback randomness beacon.
 
 ## Run
 

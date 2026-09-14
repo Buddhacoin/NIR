@@ -11,6 +11,9 @@
     "mine:demo": "node blockchain/demo.mjs",
     "vault:create": "node blockchain/vault-cli.mjs create",
     "vault:verify": "node blockchain/vault-cli.mjs verify",
+    "wallet:create": "node blockchain/wallet-cli.mjs create",
+    "wallet:address": "node blockchain/wallet-cli.mjs address",
+    "wallet:sign": "node blockchain/wallet-cli.mjs sign",
     "test:chain": "node --test tests/*.test.mjs"
   }
 }

@@ -44,6 +44,11 @@ assigned committee. If confirmed, the unsafe candidate earns zero,
 among evaluators, and at least 20 percent is burned. The bounty creates no new
 NIR and the same evidence cannot be paid twice.
 
+If a randomness contributor commits and then misses its reveal deadline, every
+node records the signer as a non-revealer and returns the candidate bond. Once
+validator bonds are part of chain state, that objective record will authorize a
+validator penalty; the current prototype does not yet confiscate such a bond.
+
 ### 6. Fraud challenger
 
 Submit objective evidence of double-signing, a forged execution receipt,

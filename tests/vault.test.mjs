@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,6 +7,8 @@ import test from "node:test";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { createMultisigRecoveryManifest, decryptWallet, encryptWallet } from "../blockchain/vault.mjs";
 import { createVaultSet, verifyVaultSet } from "../blockchain/vault-files.mjs";
+import { createWalletFile, signWalletTransfer, walletPublicInfo } from "../blockchain/wallet-files.mjs";
+import { verifyObject } from "../blockchain/crypto.mjs";
 
 test("an encrypted vault restores the exact post-quantum wallet", () => {
   const wallet = generateWallet();
@@ -60,5 +62,31 @@ test("offline vault set creation writes restricted files and verifies recovery",
     assert.throws(() => createVaultSet({ directory, passwords }));
   } finally {
     rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("native wallet file is private and signs a network-bound transfer", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-test-"));
+  const path = join(directory, "personal.nirvault.json");
+  const recipient = generateWallet();
+  try {
+    const created = createWalletFile({ path, password: "personal-wallet-password-long" });
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+    assert.equal(walletPublicInfo(path).address, created.address);
+    const transaction = signWalletTransfer({
+      path, password: "personal-wallet-password-long", networkId: "nir-testnet",
+      recipient: recipient.address, amount: "250000000", nonce: 0,
+    });
+    const { signature, ...payload } = transaction;
+    assert.equal(verifyObject(payload, signature, JSON.parse(readFileSync(path, "utf8")).publicKey, "TRANSFER"), true);
+    assert.equal(transaction.sender, created.address);
+    assert.equal(JSON.stringify(transaction).includes("privateKey"), false);
+    assert.throws(() => createWalletFile({ path, password: "different-password-long" }));
+    const corrupted = JSON.parse(readFileSync(path, "utf8"));
+    corrupted.address = recipient.address;
+    writeFileSync(path, JSON.stringify(corrupted));
+    assert.throws(() => walletPublicInfo(path), /not a NIR wallet vault/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

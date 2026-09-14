@@ -6,11 +6,11 @@ NIR is a monetary protocol in which new currency is issued for
 This repository is the first executable protocol sketch. It is deliberately
 not a tradable token, investment product, wallet, or mainnet.
 
-NIR requires a native wallet because its addresses, ML-DSA-65 signatures,
-network rules, encrypted vaults, and multisignature recovery are not compatible
-with Ethereum wallets. The repository already contains the cryptographic vault
-core; a reviewed desktop/mobile wallet and hardware-key integration are still
-future work.
+NIR is an independent layer-one blockchain, not a token issued by another
+network. It requires a native wallet for its addresses, ML-DSA-65 signatures,
+network rules, encrypted vaults, and multisignature recovery. The repository
+already contains the cryptographic vault core; a reviewed desktop/mobile wallet
+and hardware-key integration are still future work.
 
 ## Core idea
 
@@ -80,7 +80,7 @@ vulnerabilities cannot become a minting strategy.
 - Holding NIR does not automatically grant protocol governance power.
 
 The genesis allocation is assigned to explicit post-quantum NIR addresses; it
-does not unlock into an exchange or an Ethereum wallet. The current demo uses a
+does not unlock into an exchange or a wallet from another network. The current demo uses a
 temporary key. Before a public network, founder custody and the protocol
 treasury must use disclosed, independently recoverable multisignature vaults.
 
@@ -130,6 +130,7 @@ candidate runs are committed.
 - `nir/simulation.py` — a small example epoch.
 - `blockchain/` — post-quantum signed ledger and local chain demonstration.
 - `blockchain/vault.mjs` — encrypted key vault and multisignature recovery manifest.
+- `blockchain/wallet-files.mjs` — native encrypted wallet file and transaction signing.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.
@@ -137,6 +138,7 @@ candidate runs are committed.
 - `docs/privacy.md` — selective disclosure goals and regulatory constraints.
 - `docs/value.md` — properties required for durable monetary value.
 - `docs/governance.md` — where the ledger lives and how rules can safely evolve.
+- `docs/wallet.md` — current native-wallet commands and production requirements.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 
