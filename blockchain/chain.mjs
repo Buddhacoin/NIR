@@ -1,6 +1,7 @@
 import {
   ATOMIC_UNITS,
   MAX_BLOCK_BYTES,
+  MAX_CONSENSUS_ROUND,
   MAX_DECIMAL_DIGITS,
   MAX_FUTURE_DRIFT_MS,
   MAX_MULTISIG_MEMBERS,
@@ -357,6 +358,18 @@ export function voteForBlock(block, validatorWallet) {
   };
 }
 
+function roundTimeoutPayload({ networkId, height, previousHash, nextRound }) {
+  return { height, networkId, nextRound, previousHash };
+}
+
+export function timeoutForRound(fields, validatorWallet) {
+  const payload = roundTimeoutPayload(fields);
+  return {
+    signature: signObject(payload, validatorWallet, "ROUND_TIMEOUT"),
+    validator: validatorWallet.address,
+  };
+}
+
 export function finalizeBlock(block, validatorWallets) {
   const certificate = validatorWallets.map((wallet) =>
     voteForBlock(block, wallet),
@@ -646,9 +659,12 @@ export class NirChain {
     };
   }
 
-  expectedProposer(height) {
+  expectedProposer(height, round = 0) {
     const order = this.#validatorsForHeight(height).map(({ address }) => address);
-    return order[height % order.length];
+    if (!Number.isSafeInteger(round) || round < 0 || round > MAX_CONSENSUS_ROUND) {
+      throw new Error("consensus round is outside protocol limits");
+    }
+    return order[(height + round) % order.length];
   }
 
   #validatorsForHeight(height) {
@@ -776,7 +792,7 @@ export class NirChain {
   buildBlock({
     transactions = [], rewardClaims = [], safetyClaims = [],
     randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [],
-    validatorRotation = null, timestamp = Date.now(),
+    validatorRotation = null, timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
@@ -829,8 +845,10 @@ export class NirChain {
       safetySettlements,
       validatorRotation: scheduledRotation,
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
-      proposer: this.expectedProposer(height),
+      proposer: this.expectedProposer(height, round),
       protocolVersion: PROTOCOL_VERSION,
+      round,
+      roundCertificate,
       timestamp,
       transactions,
     };
@@ -875,6 +893,35 @@ export class NirChain {
       if (previousVotes < previousQuorum) throw new Error("old-set transition quorum not reached");
     }
     if (!voters.has(block.proposer)) throw new Error("proposer did not sign block");
+  }
+
+  #verifyRoundCertificate(block, validators) {
+    if (!Number.isSafeInteger(block.round) || block.round < 0 || block.round > MAX_CONSENSUS_ROUND) {
+      throw new Error("invalid consensus round");
+    }
+    if (block.round === 0) {
+      if (block.roundCertificate !== null) throw new Error("round zero cannot carry a timeout certificate");
+      return;
+    }
+    if (!Array.isArray(block.roundCertificate) || block.roundCertificate.length > validators.size) {
+      throw new Error("invalid round timeout certificate size");
+    }
+    const payload = roundTimeoutPayload({
+      height: block.height, networkId: block.networkId,
+      nextRound: block.round, previousHash: block.previousHash,
+    });
+    const signers = new Set();
+    for (const vote of block.roundCertificate) {
+      const validator = validators.get(vote.validator);
+      if (!validator || signers.has(vote.validator) ||
+          typeof vote.signature !== "string" || vote.signature.length > 7_000 ||
+          !verifyObject(payload, vote.signature, validator.publicKey, "ROUND_TIMEOUT")) {
+        throw new Error("invalid or duplicate round timeout vote");
+      }
+      signers.add(vote.validator);
+    }
+    const quorum = Math.floor((validators.size * 2) / 3) + 1;
+    if (signers.size < quorum) throw new Error("round timeout quorum not reached");
   }
 
   #verifyFallbackBeacon(claim, candidateId, round) {
@@ -1091,6 +1138,7 @@ export class NirChain {
     const blockValidatorMembers = this.#validatorsForHeight(block.height);
     const blockValidators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
     const blockQuorum = Math.floor((blockValidators.size * 2) / 3) + 1;
+    this.#verifyRoundCertificate(block, blockValidators);
     if (block.randomnessCommits.length > blockValidators.size ||
         block.randomnessReveals.length > blockValidators.size ||
         block.fallbackBeacons.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
@@ -1108,7 +1156,7 @@ export class NirChain {
     if (Buffer.byteLength(canonicalJson(unsignedBlock(block))) > MAX_BLOCK_BYTES) {
       throw new Error("block exceeds the byte-size limit");
     }
-    if (block.proposer !== this.expectedProposer(block.height)) {
+    if (block.proposer !== this.expectedProposer(block.height, block.round)) {
       throw new Error("unexpected block proposer");
     }
     const transitionValidators = this.#pendingValidatorRotation &&

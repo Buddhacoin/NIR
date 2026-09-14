@@ -15,6 +15,7 @@ import {
   NirChain,
   quoteTransferFee,
   transactionId,
+  timeoutForRound,
   voteForBlock,
 } from "./chain.mjs";
 import {
@@ -116,6 +117,7 @@ export function initializeDistributedDevnet(
     const validatorDirectory = join(root, "validators", `validator-${index}`);
     mkdirSync(join(validatorDirectory, "blocks"), { recursive: true, mode: 0o700 });
     mkdirSync(join(validatorDirectory, "votes"), { mode: 0o700 });
+    mkdirSync(join(validatorDirectory, "timeouts"), { mode: 0o700 });
     writeExclusive(join(validatorDirectory, "genesis.json"), genesis, 0o644);
     writeExclusive(join(validatorDirectory, "VALIDATOR-KEY.json"), wallet);
     writeExclusive(join(validatorDirectory, "AUTHORIZED-COORDINATOR.json"), publicWallet(coordinator), 0o644);
@@ -166,6 +168,8 @@ function proposalFields(block) {
     fallbackBeacons: block.fallbackBeacons,
     randomnessCommits: block.randomnessCommits,
     randomnessReveals: block.randomnessReveals,
+    round: block.round,
+    roundCertificate: block.roundCertificate,
     rewardClaims: [],
     safetyClaims: [],
     timestamp: block.timestamp,
@@ -211,7 +215,8 @@ export class ValidatorReplica {
 
   vote(block) {
     if (block.networkId !== this.networkId || block.height !== this.height + 1 ||
-        block.previousHash !== this.tipHash || block.proposer !== this.#chain.expectedProposer(block.height)) {
+        block.previousHash !== this.tipHash ||
+        block.proposer !== this.#chain.expectedProposer(block.height, block.round)) {
       throw new Error("proposal does not extend the validator state");
     }
     const rebuilt = this.#chain.buildBlock(proposalFields(block));
@@ -230,6 +235,26 @@ export class ValidatorReplica {
     }
     const vote = voteForBlock(block, this.#wallet);
     writeExclusive(decisionPath, { blockHash: hash, vote });
+    return vote;
+  }
+
+  timeout({ height, previousHash, nextRound }) {
+    if (height !== this.height + 1 || previousHash !== this.tipHash ||
+        !Number.isSafeInteger(nextRound) || nextRound < 1) {
+      throw new Error("timeout request does not extend the validator state");
+    }
+    const votePath = join(this.#directory, "votes", `${String(height).padStart(12, "0")}.json`);
+    try {
+      readJson(votePath);
+      throw new Error("validator cannot time out after voting at this height");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const timeoutPath = join(this.#directory, "timeouts",
+      `${String(height).padStart(12, "0")}-${String(nextRound).padStart(2, "0")}.json`);
+    try { return readJson(timeoutPath).vote; } catch (error) { if (error.code !== "ENOENT") throw error; }
+    const vote = timeoutForRound({ networkId: this.networkId, height, previousHash, nextRound }, this.#wallet);
+    writeExclusive(timeoutPath, { height, nextRound, previousHash, vote });
     return vote;
   }
 
@@ -349,11 +374,32 @@ export class DistributedCoordinator {
   async produceBlock() {
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("mempool is empty");
-    const proposal = this.#chain.buildBlock({ transactions, timestamp: Date.now() });
     const syncResults = await Promise.allSettled(this.#peers.map((_, index) =>
       this.#synchronizePeer(index)));
     const available = syncResults.map((result, index) => result.status === "fulfilled" ? index : -1)
       .filter((index) => index >= 0);
+    const height = this.height + 1;
+    let round = 0;
+    let roundCertificate = null;
+    const firstProposer = this.#chain.expectedProposer(height, round);
+    const firstProposerIndex = this.#validators.findIndex(({ address }) => address === firstProposer);
+    if (!available.includes(firstProposerIndex)) {
+      round = 1;
+      const timeoutRequest = { height, previousHash: this.tipHash, nextRound: round };
+      const timeoutResults = await Promise.allSettled(available.map((index) =>
+        this.#request(index, "/v1/timeouts", timeoutRequest)));
+      const timeouts = timeoutResults.filter(({ status }) => status === "fulfilled")
+        .map(({ value }) => value.timeout);
+      const uniqueTimeouts = new Map(timeouts.map((vote) => [vote.validator, vote]));
+      const timeoutQuorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+      if (uniqueTimeouts.size < timeoutQuorum) {
+        throw new Error(`round timeout quorum not reached (${uniqueTimeouts.size}/${timeoutQuorum})`);
+      }
+      roundCertificate = [...uniqueTimeouts.values()];
+    }
+    const proposal = this.#chain.buildBlock({
+      transactions, timestamp: Date.now(), round, roundCertificate,
+    });
     const results = await Promise.allSettled(available.map((index) =>
       this.#request(index, "/v1/proposals", proposal)));
     const votes = results.filter(({ status }) => status === "fulfilled").map(({ value }) => value.vote);
@@ -372,6 +418,7 @@ export class DistributedCoordinator {
       blockHash: block.hash,
       committedPeers: commits.filter(({ status }) => status === "fulfilled").length,
       height: block.height,
+      round: block.round,
       transactions: transactions.map(transactionId),
       votes: uniqueVotes.size,
       synchronizedPeers: syncResults.filter(({ status, value }) => status === "fulfilled" && value > 0).length,

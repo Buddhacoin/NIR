@@ -115,9 +115,48 @@ test("a validator persists its vote and refuses restart equivocation", () => {
     const second = chain.buildBlock({ timestamp: 2 });
     replica.vote(first);
     assert.throws(() => replica.vote(second), /refuses to equivocate/);
+    assert.throws(() => replica.timeout({
+      height: 1, previousHash: chain.tipHash, nextRound: 1,
+    }), /cannot time out after voting/);
     replica = new ValidatorReplica(layout.validatorDirectories[0]);
     assert.throws(() => replica.vote(second), /refuses to equivocate/);
   } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("a quorum timeout safely replaces an offline proposer", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-round-failover-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const servers = replicas.map(createValidatorHttpServer);
+  try {
+    const urls = await Promise.all(servers.map((server) => listen(server)));
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    await coordinator.faucet(alice.address);
+    const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
+    const mirror = new NirChain(genesis);
+    mirror.appendBlock(JSON.parse(readFileSync(
+      join(layout.coordinatorDirectory, "blocks", "000000000001.json"), "utf8")));
+    const offlineProposer = mirror.expectedProposer(2, 0);
+    const offlineIndex = replicas.findIndex(({ address }) => address === offlineProposer);
+    await close(servers[offlineIndex]);
+    coordinator.submitTransaction(createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    }));
+    const finalized = await coordinator.produceBlock();
+    assert.equal(finalized.round, 1);
+    assert.equal(finalized.votes, 3);
+    const block = JSON.parse(readFileSync(
+      join(layout.coordinatorDirectory, "blocks", "000000000002.json"), "utf8"));
+    assert.equal(block.proposer, mirror.expectedProposer(2, 1));
+    assert.equal(block.roundCertificate.length, 3);
+    assert.equal(coordinator.account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });
   }
 });

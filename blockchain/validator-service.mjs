@@ -45,6 +45,12 @@ export function createValidatorHttpServer(validator) {
         const result = { vote: validator.vote(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
+      if (request.method === "POST" && url.pathname === "/v1/timeouts") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = { timeout: validator.timeout(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
       if (request.method === "POST" && url.pathname === "/v1/blocks") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorize(auth, request.method, url.pathname, payload);
