@@ -156,6 +156,13 @@ contributor is honest, but a last revealer can still withhold and delay or bias
 completion. Non-reveal slashing and an audited fallback beacon are required
 before this mechanism is suitable for a public testnet.
 
+The validator-staking state engine now defines a draft minimum bond of 10 NIR
+and burns one percent of the remaining validator bond for a proven randomness
+non-reveal. Evidence is replay-protected. These are test parameters, not final
+economics. The next integration must fund and register these bonds through
+signed ledger transactions and invoke the penalty from the chain's existing
+non-reveal fault record.
+
 ## 5. World capability memory
 
 NIR does not reward possession of knowledge already demonstrated by existing

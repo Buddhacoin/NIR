@@ -131,6 +131,8 @@ candidate runs are committed.
 - `blockchain/` — post-quantum signed ledger and local chain demonstration.
 - `blockchain/vault.mjs` — encrypted key vault and multisignature recovery manifest.
 - `blockchain/wallet-files.mjs` — native encrypted wallet file and transaction signing.
+- `blockchain/validator-staking.mjs` — bonded eligibility and replay-protected non-reveal penalties.
+- `wallet-ui/` — installable wallet/PWA and browser-extension interface preview.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.

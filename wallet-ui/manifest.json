@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "NIR Wallet Preview",
+  "version": "0.1.0",
+  "description": "Interface preview for the native NIR wallet",
+  "action": { "default_popup": "index.html", "default_title": "NIR Wallet" },
+  "permissions": []
+}

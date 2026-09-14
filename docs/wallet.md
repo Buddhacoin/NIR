@@ -26,3 +26,17 @@ The consumer wallet should eventually provide receive/send screens, QR and
 human-readable payment requests, exact fee and percentage display, transaction
 simulation, address-book warnings, chain synchronization, signed updates,
 hardware-key support, multisignature recovery, and optional selective privacy.
+
+## Visual preview
+
+`wallet-ui/` contains the first responsive interface and an installable PWA
+manifest. It can also be loaded as an unpacked browser-extension preview through
+its Manifest V3 file. The preview intentionally has no website permissions and
+does not handle secret keys: the audited wallet bridge, chain synchronization,
+and transaction broadcast must be implemented before those buttons become live.
+
+Run `npm run wallet:preview` and open `http://localhost:8765` to inspect it. A
+packaged desktop download will wrap the same reviewed interface. During
+development, Chromium browsers can load `wallet-ui/` as an unpacked extension;
+publishing a signed extension package must wait until key isolation and the node
+connection have been independently audited.
