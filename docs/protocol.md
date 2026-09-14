@@ -152,9 +152,13 @@ policy. Every validator recomputes the assignment and the 70/10/20
 reporter/evaluator/burn allocation; supplied committee members and payout
 amounts are not trusted. Settled evidence and consumed candidate bonds cannot
 be replayed. The current multi-party seed is unpredictable when at least one
-contributor is honest, but a last revealer can still withhold and delay or bias
-completion. Non-reveal slashing and an audited fallback beacon are required
-before this mechanism is suitable for a public testnet.
+contributor is honest, but a last revealer can still withhold. At the timeout,
+the chain can combine available reveals with a fresh value signed by more than
+two thirds of a separate genesis beacon-authority registry. Beacon identities
+must be disjoint from validators and evaluators. This prevents one wealthy
+validator from predicting the fallback committee before deciding to withhold;
+the missing reveal is still slashed. Production needs independent beacon
+implementations, transport, monitoring, and an external audit.
 
 The chain now accepts signed validator-bond transactions, locks their balance,
 and requires the draft 10 NIR minimum before accepting a randomness commitment.
@@ -162,7 +166,9 @@ For a proven non-reveal, every validator burns one percent of the offender's
 remaining bond, records the fault, and refunds the candidate bond. Falling below
 the minimum removes eligibility for later randomness rounds. These are test
 parameters, not final economics. Validator exit delays and safe operator
-rotation remain to be designed.
+rotation for consensus finality remains to be designed. Randomness eligibility
+already follows the on-chain bond: a validator below the minimum is excluded
+until it tops up through a new signed bond transaction.
 
 ## 5. World capability memory
 

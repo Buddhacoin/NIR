@@ -37,7 +37,7 @@ import {
 } from "../blockchain/crypto.mjs";
 import { CapabilityMemory } from "../blockchain/memory.mjs";
 import { createSafetyFailureClaim } from "../blockchain/safety-bounty.mjs";
-import { createRandomnessCommit, createRandomnessReveal } from "../blockchain/operators.mjs";
+import { createFallbackBeacon, createRandomnessCommit, createRandomnessReveal } from "../blockchain/operators.mjs";
 import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 
 function operatorMembers(wallets, prefix) {
@@ -50,6 +50,7 @@ function operatorMembers(wallets, prefix) {
 function fixture() {
   const validators = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
+  const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const chain = new NirChain({
     capabilityReferences: [
@@ -59,6 +60,7 @@ function fixture() {
         capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
       },
     ],
+    beaconAuthorities: operatorMembers(beaconAuthorities, "beacon"),
     genesisTimestamp: 0,
     networkId: "nir-testnet",
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
@@ -66,7 +68,7 @@ function fixture() {
     evaluators: operatorMembers(evaluators, "evaluator"),
     treasuryAddress: treasury.address,
   });
-  return { chain, evaluators, treasury, validators };
+  return { beaconAuthorities, chain, evaluators, treasury, validators };
 }
 
 function fingerprint(label) {
@@ -186,6 +188,7 @@ test("genesis supply contains only the locked treasury allocation", () => {
 test("evaluation and consensus operators must be independent", () => {
   const validators = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
+  const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const evaluatorMembers = operatorMembers(evaluators, "evaluator");
   evaluatorMembers[0].operatorId = "validator-0";
@@ -198,6 +201,7 @@ test("evaluation and consensus operators must be independent", () => {
           capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
         },
       ],
+      beaconAuthorities: operatorMembers(beaconAuthorities, "beacon"),
       evaluators: evaluatorMembers,
       genesisTimestamp: 0,
       networkId: "nir-role-separation-test",
@@ -569,8 +573,8 @@ test("validators cannot approve a forged safety payout amount", () => {
   assert.equal(chain.burned, 0n);
 });
 
-test("a missing randomness reveal records validator fault and refunds candidate bond", () => {
-  const { chain, evaluators, validators } = fixture();
+test("a fallback beacon assigns the committee and slashes a missing revealer", () => {
+  const { beaconAuthorities, chain, evaluators, validators } = fixture();
   const submitter = generateWallet();
   const candidateId = fingerprint("withheld-randomness-candidate");
   const rewardBlock = chain.buildBlock({
@@ -612,7 +616,25 @@ test("a missing randomness reveal records validator fault and refunds candidate 
     })), timestamp: bondTimestamp + 2,
   });
   chain.appendBlock(finalizeBlock(revealBlock, quorumFor(revealBlock, validators)));
-  const timeoutBlock = chain.buildBlock({ timestamp: bondTimestamp + 3 });
+  const timeoutHeight = chain.height + 1;
+  const insufficientBeaconBlock = chain.buildBlock({
+    fallbackBeacons: [createFallbackBeacon({
+      authorityWallets: beaconAuthorities.slice(0, 2), networkId: chain.networkId,
+      candidateId, round: timeoutHeight, value: fingerprint("insufficient-fallback-round"),
+    })],
+    timestamp: bondTimestamp + 3,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(insufficientBeaconBlock, quorumFor(insufficientBeaconBlock, validators))),
+    /fallback beacon quorum not reached/,
+  );
+  const timeoutBlock = chain.buildBlock({
+    fallbackBeacons: [createFallbackBeacon({
+      authorityWallets: beaconAuthorities.slice(0, 3), networkId: chain.networkId,
+      candidateId, round: timeoutHeight, value: fingerprint("independent-fallback-round"),
+    })],
+    timestamp: bondTimestamp + 3,
+  });
   chain.appendBlock(finalizeBlock(timeoutBlock, quorumFor(timeoutBlock, validators)));
 
   assert.deepEqual(chain.randomnessFault(candidateId).nonRevealers, [contributors[2].wallet.address]);
@@ -622,8 +644,8 @@ test("a missing randomness reveal records validator fault and refunds candidate 
     MIN_VALIDATOR_BOND - (MIN_VALIDATOR_BOND / 100n),
   );
   assert.equal(chain.burned, MIN_VALIDATOR_BOND / 100n);
-  assert.equal(chain.balance(submitter.address), funded - MIN_TRANSFER_FEE);
-  assert.throws(() => chain.assignedSafetyEvaluators(candidateId), /not assigned/);
+  assert.equal(chain.balance(submitter.address), funded - 1000000000n - MIN_TRANSFER_FEE);
+  assert.equal(chain.assignedSafetyEvaluators(candidateId).length, 3);
 });
 
 test("a modified transfer signature is rejected atomically", () => {

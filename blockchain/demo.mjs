@@ -12,6 +12,7 @@ import { SAFETY_POLICY_V1_COMMITMENT } from "./constants.mjs";
 
 const validators = Array.from({ length: 4 }, generateWallet);
 const evaluators = Array.from({ length: 4 }, generateWallet);
+const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
 const founder = generateWallet();
 const alice = generateWallet();
 const bob = generateWallet();
@@ -20,6 +21,9 @@ const baselineArtifact = `sha256:${createHash("sha256")
   .update("baseline")
   .digest("hex")}`;
 const chain = new NirChain({
+  beaconAuthorities: beaconAuthorities.map((wallet, index) => ({
+    ...publicWallet(wallet), operatorId: `beacon-${index}`,
+  })),
   capabilityReferences: [
     {
       artifactHash: baselineArtifact,

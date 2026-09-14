@@ -28,6 +28,19 @@ export function createRandomnessReveal({ wallet, networkId, candidateId, secret 
   return { ...payload, signature: signObject(payload, wallet, "RANDOMNESS_REVEAL") };
 }
 
+export function createFallbackBeacon({ authorityWallets, networkId, candidateId, round, value }) {
+  if (!Array.isArray(authorityWallets) || !HASH.test(candidateId ?? "") || !HASH.test(value ?? "") ||
+      !Number.isSafeInteger(round) || round < 1) throw new Error("fallback beacon input is invalid");
+  const payload = { candidateId, networkId, round, value };
+  return {
+    ...payload,
+    attestations: authorityWallets.map((wallet) => ({
+      authority: wallet.address,
+      signature: signObject(payload, wallet, "FALLBACK_RANDOMNESS_BEACON"),
+    })),
+  };
+}
+
 export function combineRandomnessReveals({ networkId, candidateId, commitments, reveals, quorum }) {
   if (!(commitments instanceof Map) || !(reveals instanceof Map) || !HASH.test(candidateId ?? "") ||
       !Number.isSafeInteger(quorum) || quorum < 2 || reveals.size < quorum) {

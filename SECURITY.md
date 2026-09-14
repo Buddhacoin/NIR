@@ -61,8 +61,10 @@ or an exploit against a live third-party system in a public issue.
    last revealer can still withhold after seeing other reveals, creating a
    liveness and limited selection-bias attack. The chain detects non-revealers
    and refunds affected candidate bonds. Validator bonds and one-percent
-   non-reveal burns are now consensus state, but withdrawal delay, operator
-   rotation, and an unbiasable audited fallback beacon are still missing.
+   non-reveal burns are now consensus state. A disjoint authority quorum can
+   supply a signed fallback value, but those authorities and their data
+   transport are still configured locally and unaudited. Withdrawal delay and
+   finality-validator rotation are also missing.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.

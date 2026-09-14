@@ -55,8 +55,12 @@ objective fault and refunds the candidate bond after the deadline, preventing
 indefinite candidate-fund lockup. Signed validator-bond transactions lock real
 ledger balances; only sufficiently bonded validators may commit randomness, and
 one percent of a non-revealer's remaining bond is burned automatically.
-Production still needs withdrawal delays, suspension/rotation rules, and an
-independently audited fallback randomness beacon.
+When a reveal is missing, a fallback value requires a greater-than-two-thirds
+quorum from a separate genesis registry whose identities cannot overlap
+validators or evaluators. The chain combines that value with every available
+reveal and assigns the committee while still slashing the non-revealer.
+Production still needs withdrawal delays, finality-validator rotation, and
+independently operated and audited beacon services.
 
 ## Run
 

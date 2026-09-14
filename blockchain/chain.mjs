@@ -410,6 +410,8 @@ export class NirChain {
   #candidateBonds;
   #capabilityMemory;
   #evaluationQuorum;
+  #beaconAuthorities;
+  #beaconQuorum;
   #evaluatorOrder;
   #evaluators;
   #mined;
@@ -436,6 +438,7 @@ export class NirChain {
     treasuryAddress,
     capabilityReferences,
     safetyPolicyCommitments,
+    beaconAuthorities,
     genesisTimestamp = Date.now(),
   }) {
     if (
@@ -458,6 +461,7 @@ export class NirChain {
     this.#treasuryAddress = treasuryAddress;
     this.#validators = operatorRegistry(validators, "validator");
     this.#evaluators = operatorRegistry(evaluators, "evaluator");
+    this.#beaconAuthorities = operatorRegistry(beaconAuthorities, "beacon authority");
     const validatorOperators = new Set(
       [...this.#validators.values()].map(({ operatorId }) => operatorId),
     );
@@ -468,10 +472,19 @@ export class NirChain {
     ) {
       throw new Error("consensus and evaluation keys and operators must be disjoint");
     }
+    const occupiedOperators = new Set([
+      ...[...this.#validators.values()].map(({ operatorId }) => operatorId),
+      ...[...this.#evaluators.values()].map(({ operatorId }) => operatorId),
+    ]);
+    if ([...this.#beaconAuthorities.entries()].some(([address, { operatorId }]) =>
+      this.#validators.has(address) || this.#evaluators.has(address) || occupiedOperators.has(operatorId))) {
+      throw new Error("beacon authorities must be independent from chain operators");
+    }
     this.#validatorOrder = [...this.#validators.keys()].sort();
     this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
     this.#evaluatorOrder = [...this.#evaluators.keys()].sort();
     this.#evaluationQuorum = Math.floor((this.#evaluatorOrder.length * 2) / 3) + 1;
+    this.#beaconQuorum = Math.floor((this.#beaconAuthorities.size * 2) / 3) + 1;
     assertAddress(treasuryAddress, "treasury address");
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
     this.#burned = 0n;
@@ -500,6 +513,7 @@ export class NirChain {
     this.#safetyPolicies = new Set(safetyPolicyCommitments);
     const genesis = {
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
+      beaconAuthorities: [...this.#beaconAuthorities.values()].map(({ address, operatorId }) => ({ address, operatorId })),
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
       evaluators: this.#evaluatorOrder.map((address) => ({
         address,
@@ -718,7 +732,7 @@ export class NirChain {
 
   buildBlock({
     transactions = [], rewardClaims = [], safetyClaims = [],
-    randomnessCommits = [], randomnessReveals = [], timestamp = Date.now(),
+    randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [], timestamp = Date.now(),
   }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
@@ -752,6 +766,7 @@ export class NirChain {
       networkId: this.#networkId,
       previousHash: this.#blocks.at(-1).hash,
       progressRewards,
+      fallbackBeacons,
       randomnessCommits,
       randomnessReveals,
       safetySettlements,
@@ -792,6 +807,26 @@ export class NirChain {
     }
     if (voters.size < this.#quorum) throw new Error("finality quorum not reached");
     if (!voters.has(block.proposer)) throw new Error("proposer did not sign block");
+  }
+
+  #verifyFallbackBeacon(claim, candidateId, round) {
+    const payload = { candidateId, networkId: this.#networkId, round, value: claim?.value };
+    if (claim?.candidateId !== candidateId || claim?.networkId !== this.#networkId ||
+        claim?.round !== round || !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
+        !Array.isArray(claim.attestations) || claim.attestations.length > this.#beaconAuthorities.size) {
+      throw new Error("fallback beacon is invalid");
+    }
+    const signers = new Set();
+    for (const attestation of claim.attestations) {
+      const authority = this.#beaconAuthorities.get(attestation.authority);
+      if (!authority || signers.has(attestation.authority) ||
+          !verifyObject(payload, attestation.signature, authority.publicKey, "FALLBACK_RANDOMNESS_BEACON")) {
+        throw new Error("fallback beacon signature is invalid or duplicated");
+      }
+      signers.add(attestation.authority);
+    }
+    if (signers.size < this.#beaconQuorum) throw new Error("fallback beacon quorum not reached");
+    return claim.value;
   }
 
   #applyTransfer(transaction, balances, nonces, proposer, timestamp) {
@@ -938,11 +973,12 @@ export class NirChain {
     }
     if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) ||
         !Array.isArray(block.safetySettlements) || !Array.isArray(block.randomnessCommits) ||
-        !Array.isArray(block.randomnessReveals)) {
+        !Array.isArray(block.randomnessReveals) || !Array.isArray(block.fallbackBeacons)) {
       throw new Error("block collections are invalid");
     }
     if (block.randomnessCommits.length > this.#validators.size ||
-        block.randomnessReveals.length > this.#validators.size) {
+        block.randomnessReveals.length > this.#validators.size ||
+        block.fallbackBeacons.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
       throw new Error("too many randomness contributions");
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
@@ -1095,6 +1131,14 @@ export class NirChain {
       candidate.randomnessReveals.set(contribution.contributor, contribution.secret);
     }
 
+    const fallbackBeacons = new Map();
+    for (const claim of block.fallbackBeacons) {
+      const candidate = candidateBonds.get(claim.candidateId);
+      if (!candidate || fallbackBeacons.has(claim.candidateId) ||
+          block.height !== candidate.committedHeight + 3) throw new Error("fallback beacon target is invalid");
+      fallbackBeacons.set(claim.candidateId, this.#verifyFallbackBeacon(claim, claim.candidateId, block.height));
+    }
+
     for (const [candidateId, candidate] of candidateBonds) {
       if (candidate.committee === null && candidate.randomnessReveals.size >= this.#quorum) {
         const randomness = combineRandomnessReveals({
@@ -1135,8 +1179,28 @@ export class NirChain {
             validatorBonds.set(address, currentBond - penalty);
             newlyBurned += penalty;
           }
-          balances.set(candidate.submitter, (balances.get(candidate.submitter) ?? 0n) + candidate.bond);
-          candidateBonds.delete(candidateId);
+          const fallbackValue = fallbackBeacons.get(candidateId);
+          if (fallbackValue) {
+            const randomness = hashObject({
+              candidateId,
+              fallbackValue,
+              reveals: [...candidate.randomnessReveals.entries()].sort(([a], [b]) => a.localeCompare(b)),
+            }, "FALLBACK_RANDOMNESS");
+            candidateBonds.set(candidateId, {
+              ...candidate,
+              assignedHeight: block.height,
+              committee: selectOperatorCommittee({
+                registry: this.#evaluators, randomness,
+                context: { candidateId, committedHeight: candidate.committedHeight },
+                size: this.#evaluationQuorum,
+              }).map(({ address }) => address),
+              randomness,
+              randomnessSource: "fallback-beacon",
+            });
+          } else {
+            balances.set(candidate.submitter, (balances.get(candidate.submitter) ?? 0n) + candidate.bond);
+            candidateBonds.delete(candidateId);
+          }
         }
       }
     }
