@@ -26,6 +26,14 @@ before disclosure, independently reproduced, severity-scored, and deduplicated.
 Otherwise participants could repeatedly report the same issue or deliberately
 create vulnerable artifacts to farm rewards.
 
+The safety-penalty prototype makes deliberate vulnerability farming a losing
+strategy even when several addresses secretly belong to one coalition. A
+confirmed critical failure creates no currency: 70 percent of the candidate's
+bond goes to the reporter, 10 percent to independent evaluators, and at least
+20 percent is burned. Therefore a coalition controlling the submitter, reporter,
+and evaluators can recover at most 80 percent of its own bond before execution
+costs and transaction fees.
+
 The current core sends an intelligence reward to the accepted contribution
 recipient and sends transaction fees to the block proposer. A multi-role reward
 split is a design proposal and is not yet a consensus rule. Address-based caps

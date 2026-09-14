@@ -86,6 +86,8 @@ fee is burned remain consensus decisions.
 Wallets must present the fee both as NIR and as a percentage of the transfer.
 The consensus fee itself is resource-based rather than value-based: moving a
 large balance does not consume proportionally more network capacity.
+The wallet quote marks fees above 0.1 percent for explicit confirmation; a one
+percent fee is never silently accepted as a normal payment setting.
 
 ## Run the prototype
 
@@ -125,6 +127,7 @@ candidate runs are committed.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.
+- `docs/mining.md` — plain-language mining roles and intended user flow.
 - `docs/governance.md` — where the ledger lives and how rules can safely evolve.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
@@ -137,6 +140,16 @@ Node.js 26+ is required for native ML-DSA-65 signatures.
 npm run test:chain
 npm run demo:chain
 ```
+
+To try the current local mining flow:
+
+```bash
+npm run mine:demo
+```
+
+This command uses valueless local units. It does not mine tradeable NIR or join
+a public network. The seven production roles and their intended one-screen user
+flow are explained in `docs/mining.md`.
 
 ## Offline vault prototype
 

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "demo:chain": "node blockchain/demo.mjs",
+    "mine:demo": "node blockchain/demo.mjs",
     "vault:create": "node blockchain/vault-cli.mjs create",
     "vault:verify": "node blockchain/vault-cli.mjs verify",
     "test:chain": "node --test tests/*.test.mjs"

@@ -117,6 +117,9 @@ grading is not reliable.
 - **Safety regression:** a safety floor can reject a proof regardless of gain.
 - **Critical danger:** one critical failure in any independent run vetoes
   issuance; only safety policies committed in genesis are valid.
+- **Deliberate vulnerability farming:** a confirmed unsafe candidate receives
+  no issuance; its bond funds a bounded bounty and at least 20 percent is burned,
+  so a submitter/reporter/evaluator coalition cannot profit from its own defect.
 - **Tiny-test farming:** minimum absolute gain and breadth thresholds.
 - **Whale control:** asset ownership does not equal evaluator or governance
   control; selection must not be purely stake-weighted.

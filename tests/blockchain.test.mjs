@@ -13,6 +13,7 @@ import {
   formatFeePercent,
   formatNir,
   multisigAddress,
+  quoteTransferFee,
 } from "../blockchain/chain.mjs";
 import {
   MAX_FUTURE_DRIFT_MS,
@@ -348,6 +349,8 @@ test("a transfer below the consensus fee floor is rejected", () => {
 test("wallet fee display reports an exact conservative percentage", () => {
   assert.equal(formatFeePercent("100000000", "1000"), "0.001000%");
   assert.equal(formatFeePercent("300000000", "1000"), "0.000334%");
+  assert.equal(quoteTransferFee("100000000", "1000").requiresExplicitConfirmation, false);
+  assert.equal(quoteTransferFee("100000000", "1000000").requiresExplicitConfirmation, true);
 });
 
 test("a two-of-three post-quantum vault can spend only with its threshold", () => {

@@ -833,3 +833,15 @@ export function formatFeePercent(amount, fee) {
   const fraction = (scaled % 1_000_000n).toString().padStart(6, "0");
   return `${whole}.${fraction}%`;
 }
+
+export function quoteTransferFee(amount, fee) {
+  const atomicAmount = parseAtomic(String(amount), "amount");
+  const atomicFee = parseAtomic(String(fee), "fee");
+  if (atomicAmount === 0n) throw new Error("amount must be positive");
+  return {
+    amount: atomicFee.toString(),
+    percent: formatFeePercent(atomicAmount.toString(), atomicFee.toString()),
+    requiresExplicitConfirmation: atomicFee * 10_000n > atomicAmount * 10n,
+    warningThresholdPercent: "0.100000%",
+  };
+}

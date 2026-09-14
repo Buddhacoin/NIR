@@ -20,6 +20,9 @@ or an exploit against a live third-party system in a public issue.
 - an operator-security prototype with credentials from two independent
   authorities, minimum bonds, unique committee selection, and double-sign
   evidence;
+- a zero-issuance safety-bounty settlement that burns at least 20 percent of an
+  unsafe candidate's bond, making self-reported vulnerability farming
+  economically negative even across several addresses;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - reward epochs advance only on accepted progress and are rate-limited;
@@ -52,6 +55,10 @@ or an exploit against a live third-party system in a public issue.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.
+6. **Safety penalties are not yet ledger state.** The settlement prototype
+   conserves and burns an abstract locked bond, but candidate bond locking,
+   committee-approved evidence, balance transfers, and burns are not yet
+   persisted and replayed by `NirChain`.
 
 ### High
 
