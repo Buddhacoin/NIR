@@ -4,20 +4,6 @@ NIR mining means producing or verifying a measurable contribution. It does not
 mean leaving a computer to guess hashes for currency. Running the current demo
 does not create valuable NIR; the public mining network does not exist yet.
 
-## Bitcoin comparison
-
-Bitcoin mining repeatedly hashes a candidate block while changing a nonce and
-other mutable data. A block succeeds when its hash is below the current target.
-The search is deliberately expensive and probabilistic; verification is cheap.
-Its protocol purpose is useful: it orders transactions, resists double spends,
-and makes history expensive to rewrite. The hash search itself does not solve a
-separate scientific or engineering problem.
-
-NIR separates those functions. Validators finalize payments, while progress
-participants earn from reproducible capability, efficiency, safety, benchmark,
-or fraud evidence. Randomness assigns evaluators after the contribution is
-committed; randomness does not replace proof of a useful result.
-
 ## Choose a role
 
 ### 1. Capability author
@@ -95,3 +81,44 @@ npm run mine:demo
 It constructs signed local blocks and evaluation receipts. It does not connect
 to peers, perform real model training, earn exchangeable currency, or register
 the computer as a production operator.
+
+## Connecting today
+
+There is currently no public NIR testnet to connect to. The repository has no
+bootstrap peer address, public job queue, faucet, mining pool, or downloadable
+production miner. Anyone claiming to sell access or promising mining income at
+this stage is not operating an official NIR service.
+
+For developers, the current local sequence is:
+
+```bash
+git clone https://github.com/Buddhacoin/NIR.git
+cd NIR
+npm run test:chain
+npm run mine:demo
+```
+
+The repository is currently private, so cloning also requires explicit GitHub
+access. Non-technical participation begins only with a signed desktop release
+and public testnet.
+
+## Connecting after testnet launch
+
+The application will need a published network manifest containing the network
+identifier, genesis hash, protocol version, signed release hash, and several
+independent bootstrap peers. A person will then:
+
+1. download the signed application from more than one published source;
+2. verify the release signature automatically;
+3. select `NIR testnet` and verify its displayed genesis fingerprint;
+4. create an encrypted vault or open an existing one;
+5. synchronize headers and independently validate the chain;
+6. request valueless test units from the faucet if a role requires a bond;
+7. choose a role and pass its local hardware preflight;
+8. register the role key and external operator credentials where required;
+9. receive assignments only after their commitments are finalized;
+10. submit signed results and watch the challenge window.
+
+Exact server names, ports, genesis hashes, and download URLs do not exist yet
+and must never be invented in advance. They will be published and committed in
+the testnet network manifest.

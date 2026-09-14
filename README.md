@@ -128,6 +128,8 @@ candidate runs are committed.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.
 - `docs/mining.md` — plain-language mining roles and intended user flow.
+- `docs/privacy.md` — selective disclosure goals and regulatory constraints.
+- `docs/value.md` — properties required for durable monetary value.
 - `docs/governance.md` — where the ledger lives and how rules can safely evolve.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.

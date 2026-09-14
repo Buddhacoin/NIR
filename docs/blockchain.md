@@ -25,6 +25,8 @@ identically.
 - consensus validation of lineage, behavior novelty, and marginal frontier gain;
 - permanent rejection of already rewarded proof fingerprints;
 - ten-year linear treasury vesting by bounded block timestamps;
+- signed candidate-bond transactions and consensus-recomputed critical-safety
+  settlements with reporter/evaluator payouts and permanent supply burns;
 - domain-separated signatures and hashes;
 - limits on block bytes, transactions, rewards, and numeric inputs.
 
@@ -39,8 +41,11 @@ that creates receipts directly from reproducible evaluator executions.
 Validator and evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. This is not yet
 permissionless consensus: operator identifiers are self-asserted, and there is
-no external identity attestation, rotation, slashing, fork recovery, or
-peer-to-peer transport.
+no consensus-connected external identity attestation, operator rotation,
+random evaluator assignment, evaluator-equivocation slashing, fork recovery,
+or peer-to-peer transport. Candidate safety bonds and their critical-failure
+settlements are consensus state, but they currently rely on the configured
+evaluator quorum rather than a future-randomly assigned committee.
 
 ## Run
 

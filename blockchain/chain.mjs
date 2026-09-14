@@ -7,6 +7,7 @@ import {
   MIN_TRANSFER_FEE,
   MIN_REWARD_INTERVAL_MS,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
+  MAX_SAFETY_SETTLEMENTS_PER_BLOCK,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
   MAX_VALIDATORS,
@@ -26,6 +27,10 @@ import {
   verifyObject,
 } from "./crypto.mjs";
 import { CapabilityMemory } from "./memory.mjs";
+import {
+  calculateSafetySettlement,
+  safetyFailurePayload,
+} from "./safety-bounty.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -127,6 +132,31 @@ export function createTransfer({
   return {
     ...transaction,
     signature: signObject(transaction, wallet, "TRANSFER"),
+  };
+}
+
+export function createCandidateBond({
+  wallet,
+  networkId,
+  candidateId,
+  amount,
+  nonce,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    amount: String(amount),
+    candidateId,
+    fee: String(fee),
+    networkId,
+    nonce,
+    publicKey: wallet.publicKey,
+    sender: wallet.address,
+    type: "candidate-bond",
+  };
+  return {
+    ...transaction,
+    signature: signObject(transaction, wallet, "CANDIDATE_BOND"),
   };
 }
 
@@ -360,6 +390,8 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
 export class NirChain {
   #balances;
   #blocks;
+  #burned;
+  #candidateBonds;
   #capabilityMemory;
   #evaluationQuorum;
   #evaluatorOrder;
@@ -371,6 +403,7 @@ export class NirChain {
   #quorum;
   #rewardEpoch;
   #rewardedProofs;
+  #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
   #genesisTimestamp;
@@ -422,8 +455,11 @@ export class NirChain {
     this.#evaluationQuorum = Math.floor((this.#evaluatorOrder.length * 2) / 3) + 1;
     assertAddress(treasuryAddress, "treasury address");
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
+    this.#burned = 0n;
+    this.#candidateBonds = new Map();
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
+    this.#safetyEvidence = new Set();
     this.#rewardEpoch = 0;
     this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
     this.#mined = 0n;
@@ -465,6 +501,7 @@ export class NirChain {
         networkId,
         previousHash: "0".repeat(64),
         progressRewards: [],
+        safetySettlements: [],
         protocolVersion: PROTOCOL_VERSION,
         timestamp: genesisTimestamp,
         transactions: [],
@@ -478,6 +515,14 @@ export class NirChain {
 
   get issued() {
     return TREASURY_ALLOCATION + this.#mined;
+  }
+
+  get burned() {
+    return this.#burned;
+  }
+
+  get circulatingSupply() {
+    return this.issued - this.#burned;
   }
 
   balance(address) {
@@ -548,7 +593,7 @@ export class NirChain {
     }
     if (
       !Array.isArray(claim.attestations) ||
-      claim.attestations.length > this.#validators.size
+      claim.attestations.length > this.#evaluators.size
     ) {
       throw new Error("invalid progress attestation count");
     }
@@ -579,7 +624,51 @@ export class NirChain {
     capabilityMemory.accept(claim.evaluation);
   }
 
-  buildBlock({ transactions = [], rewardClaims = [], timestamp = Date.now() }) {
+  #verifySafetyClaim(claim, epoch, candidateBonds, safetyEvidence) {
+    const payload = safetyFailurePayload({
+      networkId: claim.networkId,
+      epoch: claim.epoch,
+      candidateId: claim.candidateId,
+      evidenceHash: claim.evidenceHash,
+      reporter: claim.reporter,
+      safetyPolicyHash: claim.safetyPolicyHash,
+    });
+    if (payload.networkId !== this.#networkId || payload.epoch !== epoch) {
+      throw new Error("safety receipt belongs to another network or epoch");
+    }
+    if (!this.#safetyPolicies.has(payload.safetyPolicyHash)) {
+      throw new Error("safety failure uses an unapproved safety policy");
+    }
+    if (safetyEvidence.has(payload.evidenceHash)) throw new Error("safety evidence was already settled");
+    const candidate = candidateBonds.get(payload.candidateId);
+    if (!candidate) throw new Error("safety claim has no locked candidate bond");
+    if (!Array.isArray(claim.attestations) || claim.attestations.length > this.#evaluators.size) {
+      throw new Error("invalid safety attestation count");
+    }
+    const evaluators = new Set();
+    for (const attestation of claim.attestations) {
+      if (evaluators.has(attestation.evaluator)) throw new Error("duplicate safety evaluator");
+      const evaluator = this.#evaluators.get(attestation.evaluator);
+      if (
+        !evaluator || typeof attestation.signature !== "string" || attestation.signature.length > 7_000 ||
+        !verifyObject(payload, attestation.signature, evaluator.publicKey, "SAFETY_FAILURE_RECEIPT")
+      ) throw new Error("invalid safety evaluator signature");
+      evaluators.add(attestation.evaluator);
+    }
+    if (evaluators.size < this.#evaluationQuorum) throw new Error("safety evaluation quorum not reached");
+    const settlement = calculateSafetySettlement({
+      candidate,
+      candidateId: payload.candidateId,
+      evidenceHash: payload.evidenceHash,
+      evaluatorAddresses: [...evaluators],
+      reporter: payload.reporter,
+    });
+    candidateBonds.delete(payload.candidateId);
+    safetyEvidence.add(payload.evidenceHash);
+    return settlement;
+  }
+
+  buildBlock({ transactions = [], rewardClaims = [], safetyClaims = [], timestamp = Date.now() }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
     const progressRewards = allocateProgressRewards(
@@ -597,12 +686,22 @@ export class NirChain {
     for (const claim of progressRewards) {
       this.#verifyProgressClaim(claim, height, stagedMemory);
     }
+    if (!Array.isArray(safetyClaims) || safetyClaims.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
+      throw new Error("too many safety settlements in one block");
+    }
+    const stagedBonds = new Map(this.#candidateBonds);
+    const stagedEvidence = new Set(this.#safetyEvidence);
+    const safetySettlements = safetyClaims.map((claim) => ({
+      ...structuredClone(claim),
+      settlement: this.#verifySafetyClaim(claim, height, stagedBonds, stagedEvidence),
+    }));
     return {
       capabilityMemoryRoot: stagedMemory.stateRoot,
       height,
       networkId: this.#networkId,
       previousHash: this.#blocks.at(-1).hash,
       progressRewards,
+      safetySettlements,
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
       proposer: this.expectedProposer(height),
       protocolVersion: PROTOCOL_VERSION,
@@ -711,6 +810,39 @@ export class NirChain {
     nonces.set(transaction.sender, expectedNonce + 1);
   }
 
+  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp) {
+    if (transaction.type !== "candidate-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM) {
+      throw new Error("candidate bond transaction is invalid");
+    }
+    if (transaction.networkId !== this.#networkId) throw new Error("transaction belongs to another network");
+    if (!/^[0-9a-f]{64}$/.test(transaction.candidateId ?? "") || candidateBonds.has(transaction.candidateId)) {
+      throw new Error("candidate bond id is invalid or duplicated");
+    }
+    if (
+      typeof transaction.publicKey !== "string" || transaction.publicKey.length > 4_000 ||
+      typeof transaction.signature !== "string" || transaction.signature.length > 7_000 ||
+      addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+      !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, "CANDIDATE_BOND")
+    ) throw new Error("invalid candidate bond signature");
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce < 0) throw new Error("invalid transaction nonce");
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    const bond = parseAtomic(transaction.amount, "candidate bond");
+    const fee = parseAtomic(transaction.fee, "fee");
+    if (bond === 0n) throw new Error("candidate bond must be positive");
+    if (fee < MIN_TRANSFER_FEE) throw new Error("transfer fee is below the protocol minimum");
+    const senderBalance = balances.get(transaction.sender) ?? 0n;
+    if (senderBalance < bond + fee) throw new Error("insufficient balance");
+    if (transaction.sender === this.#treasuryAddress) {
+      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+      if (senderBalance - bond - fee < locked) throw new Error("treasury funds are still vesting");
+    }
+    balances.set(transaction.sender, senderBalance - bond - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    candidateBonds.set(transaction.candidateId, { bond, submitter: transaction.sender });
+  }
+
   appendBlock(block) {
     const previous = this.#blocks.at(-1);
     if (block.networkId !== this.#networkId) throw new Error("wrong network id");
@@ -723,7 +855,7 @@ export class NirChain {
     if (block.timestamp > Date.now() + MAX_FUTURE_DRIFT_MS) {
       throw new Error("block timestamp is too far in the future");
     }
-    if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards)) {
+    if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) || !Array.isArray(block.safetySettlements)) {
       throw new Error("block collections are invalid");
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
@@ -731,6 +863,9 @@ export class NirChain {
     }
     if (block.progressRewards.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
       throw new Error("too many progress rewards in one block");
+    }
+    if (block.safetySettlements.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
+      throw new Error("too many safety settlements in one block");
     }
     if (Buffer.byteLength(canonicalJson(unsignedBlock(block))) > MAX_BLOCK_BYTES) {
       throw new Error("block exceeds the byte-size limit");
@@ -776,6 +911,29 @@ export class NirChain {
     const balances = new Map(this.#balances);
     const nonces = new Map(this.#nonces);
     const rewardedProofs = new Set(this.#rewardedProofs);
+    const candidateBonds = new Map(this.#candidateBonds);
+    const safetyEvidence = new Set(this.#safetyEvidence);
+    let newlyBurned = 0n;
+    const expectedSafetySettlements = block.safetySettlements.map(({ settlement: _settlement, ...claim }) => ({
+      ...claim,
+      settlement: this.#verifySafetyClaim(claim, block.height, candidateBonds, safetyEvidence),
+    }));
+    if (
+      hashObject(expectedSafetySettlements, "SAFETY_SETTLEMENTS") !==
+      hashObject(block.safetySettlements, "SAFETY_SETTLEMENTS")
+    ) throw new Error("invalid safety settlement allocation");
+    for (const { settlement } of expectedSafetySettlements) {
+      const reporterAmount = parseAtomic(settlement.reporterReward.amount, "safety reporter reward");
+      balances.set(
+        settlement.reporterReward.recipient,
+        (balances.get(settlement.reporterReward.recipient) ?? 0n) + reporterAmount,
+      );
+      for (const reward of settlement.evaluatorRewards) {
+        const amount = parseAtomic(reward.amount, "safety evaluator reward");
+        balances.set(reward.recipient, (balances.get(reward.recipient) ?? 0n) + amount);
+      }
+      newlyBurned += parseAtomic(settlement.burned, "burned safety penalty");
+    }
     let newlyMined = 0n;
     for (const reward of block.progressRewards) {
       if (rewardedProofs.has(reward.fingerprint)) {
@@ -794,18 +952,21 @@ export class NirChain {
       const id = transactionId(transaction);
       if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
       transactionIds.add(id);
-      this.#applyTransfer(
-        transaction,
-        balances,
-        nonces,
-        block.proposer,
-        block.timestamp,
-      );
+      if (transaction.type === "transfer") {
+        this.#applyTransfer(transaction, balances, nonces, block.proposer, block.timestamp);
+      } else if (transaction.type === "candidate-bond") {
+        this.#applyCandidateBond(transaction, balances, nonces, candidateBonds, block.proposer, block.timestamp);
+      } else {
+        throw new Error("unknown transaction type");
+      }
     }
 
     this.#balances = balances;
+    this.#burned += newlyBurned;
+    this.#candidateBonds = candidateBonds;
     this.#nonces = nonces;
     this.#rewardedProofs = rewardedProofs;
+    this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;
     if (block.progressRewards.length > 0) {

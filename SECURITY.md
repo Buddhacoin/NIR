@@ -23,6 +23,8 @@ or an exploit against a live third-party system in a public issue.
 - a zero-issuance safety-bounty settlement that burns at least 20 percent of an
   unsafe candidate's bond, making self-reported vulnerability farming
   economically negative even across several addresses;
+- candidate bonds, safety settlements, payouts, evidence replay protection, and
+  burned supply persisted as atomic chain state;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - reward epochs advance only on accepted progress and are rate-limited;
@@ -55,10 +57,6 @@ or an exploit against a live third-party system in a public issue.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.
-6. **Safety penalties are not yet ledger state.** The settlement prototype
-   conserves and burns an abstract locked bond, but candidate bond locking,
-   committee-approved evidence, balance transfers, and burns are not yet
-   persisted and replayed by `NirChain`.
 
 ### High
 
@@ -71,7 +69,8 @@ or an exploit against a live third-party system in a public issue.
 2. Ledger state is not persisted transactionally and cannot recover from disk
    corruption or an interrupted write.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
-   and network-layer anonymity are not implemented.
+   viewing keys, payment disclosures, and network-layer privacy are not
+   implemented. No post-quantum shielded-proof construction has been selected.
 4. There is no mempool, transaction admission policy, peer reputation, rate
    limiting, or denial-of-service protection at the network boundary.
 5. There has been no independent audit, formal verification, or adversarial

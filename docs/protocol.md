@@ -145,6 +145,14 @@ Identical incorrect votes do not, by themselves, cryptographically prove
 collusion. Penalizing coordinated fraud needs an objective fraud proof or an
 explicit dispute process; a simple majority accusation is not sufficient.
 
+Candidate safety bonds are now locked by signed ledger transactions. A later
+block may settle a critical-failure claim only under a genesis-approved policy
+and a quorum of ML-DSA-65 evaluator receipts. Every validator recomputes the
+70/10/20 reporter/evaluator/burn allocation; supplied payout amounts are not
+trusted. Settled evidence and consumed candidate bonds cannot be replayed. The
+configured quorum must still be replaced by the future-random committee before
+this mechanism is suitable for a public testnet.
+
 ## 5. World capability memory
 
 NIR does not reward possession of knowledge already demonstrated by existing
@@ -179,7 +187,8 @@ Before any public testnet, the project must specify:
 2. reproducible execution environments;
 3. energy attestation hardware and audit rules;
 4. evaluator selection without stake capture;
-5. privacy architecture for payments and model submissions;
+5. post-quantum selective-privacy architecture, viewing keys, and payment
+   disclosures for payments and model submissions;
 6. post-quantum signature and zero-knowledge proof choices;
 7. treasury vesting, spending transparency, and founder allocation;
 8. applicable securities, payments, sanctions, tax, and privacy law.

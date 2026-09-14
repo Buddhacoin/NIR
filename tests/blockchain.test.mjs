@@ -6,6 +6,7 @@ import {
   NirChain,
   allocateProgressRewards,
   computeProgressScore,
+  createCandidateBond,
   createProgressClaim,
   createTransfer,
   createMultisigTransfer,
@@ -34,6 +35,7 @@ import {
   verifyObject,
 } from "../blockchain/crypto.mjs";
 import { CapabilityMemory } from "../blockchain/memory.mjs";
+import { createSafetyFailureClaim } from "../blockchain/safety-bounty.mjs";
 
 function operatorMembers(wallets, prefix) {
   return wallets.map((wallet, index) => ({
@@ -395,6 +397,98 @@ test("an unknown signer cannot join a multisignature transfer", () => {
     amount: "1",
     nonce: 0,
   }), /unknown or duplicated/);
+});
+
+test("candidate bonds, safety payouts, and burns are consensus state", () => {
+  const { chain, evaluators, validators } = fixture();
+  const submitter = generateWallet();
+  const reporter = generateWallet();
+  const candidateId = fingerprint("bonded-unsafe-candidate");
+  const rewardBlock = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, submitter.address, "fund-bond")],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+
+  const bond = createCandidateBond({
+    wallet: submitter,
+    networkId: chain.networkId,
+    candidateId,
+    amount: "1000000000",
+    nonce: 0,
+  });
+  const bondBlock = chain.buildBlock({ transactions: [bond], timestamp: 2 });
+  chain.appendBlock(finalizeBlock(bondBlock, quorumFor(bondBlock, validators)));
+
+  const claim = createSafetyFailureClaim({
+    networkId: chain.networkId,
+    epoch: 3,
+    candidateId,
+    evidenceHash: fingerprint("bonded-critical-evidence"),
+    reporter: reporter.address,
+    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+    evaluatorWallets: evaluators.slice(0, 3),
+  });
+  const safetyBlock = chain.buildBlock({ safetyClaims: [claim], timestamp: 3 });
+  chain.appendBlock(finalizeBlock(safetyBlock, quorumFor(safetyBlock, validators)));
+  assert.equal(chain.balance(reporter.address), 700000000n);
+  assert.equal(chain.burned, 200000001n);
+  assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
+  const replay = createSafetyFailureClaim({
+    networkId: chain.networkId,
+    epoch: 4,
+    candidateId,
+    evidenceHash: fingerprint("bonded-critical-evidence"),
+    reporter: reporter.address,
+    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+    evaluatorWallets: evaluators.slice(0, 3),
+  });
+  assert.throws(
+    () => chain.buildBlock({ safetyClaims: [replay], timestamp: 4 }),
+    /already settled|no locked candidate bond/,
+  );
+});
+
+test("validators cannot approve a forged safety payout amount", () => {
+  const { chain, evaluators, validators } = fixture();
+  const submitter = generateWallet();
+  const reporter = generateWallet();
+  const candidateId = fingerprint("forged-payout-candidate");
+  const rewardBlock = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, submitter.address, "fund-forgery")],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const bond = createCandidateBond({
+    wallet: submitter, networkId: chain.networkId, candidateId,
+    amount: "1000000000", nonce: 0,
+  });
+  const bondBlock = chain.buildBlock({ transactions: [bond], timestamp: 2 });
+  chain.appendBlock(finalizeBlock(bondBlock, quorumFor(bondBlock, validators)));
+  const unapproved = createSafetyFailureClaim({
+    networkId: chain.networkId, epoch: 3, candidateId,
+    evidenceHash: fingerprint("unapproved-policy-evidence"), reporter: reporter.address,
+    safetyPolicyHash: fingerprint("attacker-policy"),
+    evaluatorWallets: evaluators.slice(0, 3),
+  });
+  assert.throws(
+    () => chain.buildBlock({ safetyClaims: [unapproved], timestamp: 3 }),
+    /unapproved safety policy/,
+  );
+  const claim = createSafetyFailureClaim({
+    networkId: chain.networkId, epoch: 3, candidateId,
+    evidenceHash: fingerprint("forged-payout-evidence"), reporter: reporter.address,
+    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+    evaluatorWallets: evaluators.slice(0, 3),
+  });
+  const forged = chain.buildBlock({ safetyClaims: [claim], timestamp: 3 });
+  forged.safetySettlements[0].settlement.reporterReward.amount = "1000000000";
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(forged, quorumFor(forged, validators))),
+    /invalid safety settlement allocation/,
+  );
+  assert.equal(chain.balance(reporter.address), 0n);
+  assert.equal(chain.burned, 0n);
 });
 
 test("a modified transfer signature is rejected atomically", () => {
