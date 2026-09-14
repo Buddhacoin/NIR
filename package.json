@@ -16,6 +16,8 @@
     "wallet:sign": "node blockchain/wallet-cli.mjs sign",
     "beacon:serve": "node blockchain/beacon-service.mjs",
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
+    "node:init-dev": "node blockchain/node-cli.mjs init-dev",
+    "node:serve": "node blockchain/node-cli.mjs serve",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
     "test:chain": "node --test tests/*.test.mjs"
   }

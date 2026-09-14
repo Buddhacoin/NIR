@@ -134,6 +134,8 @@ candidate runs are committed.
 - `blockchain/validator-staking.mjs` — bonded eligibility and replay-protected non-reveal penalties.
 - `blockchain/validator-rotation.mjs` — delayed, bonded finality-set rotation safety rules.
 - `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
+- `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
+- `blockchain/node-store.mjs` — atomic block files and verified restart replay.
 - `wallet-ui/` — installable wallet/PWA and browser-extension interface preview.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
@@ -145,6 +147,7 @@ candidate runs are committed.
 - `docs/wallet.md` — current native-wallet commands and production requirements.
 - `docs/top-chains-study.md` — lessons from leading independent networks and NIR's three-lane architecture.
 - `docs/beacon.md` — independent beacon deployment and aggregation runbook.
+- `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 
@@ -156,6 +159,31 @@ Node.js 26+ is required for native ML-DSA-65 signatures.
 npm run test:chain
 npm run demo:chain
 ```
+
+## Run the persistent local node
+
+Create a new valueless development network once, then start its localhost RPC:
+
+```bash
+npm run node:init-dev -- .nir-devnet
+npm run node:serve -- .nir-devnet
+```
+
+The node stores finalized blocks, verifies the full chain again after restart,
+and exposes account, fee, transaction, and faucet endpoints at
+`http://127.0.0.1:8787`. Its four development validators currently run inside
+one process, so this is a persistence and wallet-integration milestone rather
+than a distributed public network. The generated `DEVNET-KEYS.json` contains
+unencrypted, valueless test keys and must never be funded or exposed.
+
+Open the wallet preview in a second terminal:
+
+```bash
+npm run wallet:preview
+```
+
+The complete wallet-to-wallet command flow and RPC reference are in
+`docs/node.md`.
 
 To try the current local mining flow:
 

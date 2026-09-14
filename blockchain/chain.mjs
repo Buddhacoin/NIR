@@ -586,6 +586,10 @@ export class NirChain {
     return this.#blocks.at(-1).hash;
   }
 
+  blocks() {
+    return structuredClone(this.#blocks);
+  }
+
   get networkId() {
     return this.#networkId;
   }

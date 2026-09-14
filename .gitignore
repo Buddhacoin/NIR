@@ -4,3 +4,5 @@ __pycache__/
 .ruff_cache/
 .venv/
 .DS_Store
+DEVNET-KEYS.json
+.nir-devnet/

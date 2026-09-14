@@ -27,3 +27,11 @@ test("bottom navigation meets the prototype readability targets", () => {
   assert.match(styles, /font-size:14px/);
   assert.match(styles, /font-weight:650/);
 });
+
+test("wallet reports the local node connection state", () => {
+  assert.match(script, /127\.0\.0\.1:8787\/health/);
+  assert.match(script, /networkButton\.classList\.add\("connected"\)/);
+  assert.match(script, /networkButton\.classList\.add\("offline"\)/);
+  assert.match(styles, /\.network\.connected/);
+  assert.match(styles, /\.network\.offline/);
+});

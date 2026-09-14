@@ -50,6 +50,29 @@ const setTheme = (theme) => {
 setTheme(localStorage.getItem("nir-theme") || "dark");
 themeButton.onclick = () => setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
 
+const networkButton = document.querySelector(".network");
+async function refreshNodeStatus() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const response = await fetch("http://127.0.0.1:8787/health", { signal: controller.signal });
+    if (!response.ok) throw new Error("node unavailable");
+    const status = await response.json();
+    networkButton.textContent = `● Connected · h${status.height}`;
+    networkButton.classList.add("connected");
+    networkButton.classList.remove("offline");
+    messages.network = ["NIR node подключён", `${status.networkId}, высота ${status.height}. Режим: тестовые единицы без реальной стоимости.`];
+  } catch {
+    networkButton.textContent = "○ Node offline";
+    networkButton.classList.add("offline");
+    networkButton.classList.remove("connected");
+    messages.network = ["NIR node не подключён", "Запустите локальный узел на 127.0.0.1:8787. Кошелёк повторит проверку после обновления страницы."];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+refreshNodeStatus();
+
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   navigator.serviceWorker.register("./sw.js");
 }

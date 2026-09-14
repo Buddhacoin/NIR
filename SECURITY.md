@@ -67,8 +67,9 @@ or an exploit against a live third-party system in a public issue.
    runnable authority service persists decisions to resist restart equivocation,
    but independent organizations have not deployed or audited it. Finality sets
    rotate with delayed activation and a joint transition certificate, but bond
-   withdrawal delays, partition testing and durable chain-state persistence are
-   still missing.
+   withdrawal delays and partition testing are still missing. A valueless local
+   node now persists finalized blocks and verifies them by replay after restart;
+   production database recovery and multi-node durability are still missing.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.
@@ -82,8 +83,10 @@ or an exploit against a live third-party system in a public issue.
    cryptographic audit.
    The terminal tool suppresses echo and refuses passwords from arguments, but
    the JavaScript runtime can still retain secret material in process memory.
-2. Ledger state is not persisted transactionally and cannot recover from disk
-   corruption or an interrupted write.
+2. The local node persists each finalized block with a temporary-file rename and
+   verifies the complete journal on restart. It still lacks a production
+   database, checksummed snapshots, pruning, backup coordination, and automatic
+   recovery from disk corruption or a failed write after in-memory finality.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.
