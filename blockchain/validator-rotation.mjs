@@ -2,7 +2,8 @@ import { addressFromPublicKey, hashObject } from "./crypto.mjs";
 import { MAX_VALIDATORS, SIGNATURE_ALGORITHM } from "./constants.mjs";
 import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 
-const MIN_SET_SIZE = 4;
+export const MIN_VALIDATOR_SET_SIZE = 4;
+export const MIN_ROTATION_DELAY_BLOCKS = 5;
 
 function normalizeMember(member, bonds) {
   if (!member || member.algorithm !== SIGNATURE_ALGORITHM ||
@@ -23,7 +24,7 @@ function normalizeMember(member, bonds) {
 }
 
 export function normalizeValidatorSet(members, bonds) {
-  if (!Array.isArray(members) || members.length < MIN_SET_SIZE || members.length > MAX_VALIDATORS ||
+  if (!Array.isArray(members) || members.length < MIN_VALIDATOR_SET_SIZE || members.length > MAX_VALIDATORS ||
       !(bonds instanceof Map)) throw new Error("validator set size is invalid");
   const normalized = members.map((member) => normalizeMember(member, bonds))
     .sort((a, b) => a.address.localeCompare(b.address));
@@ -46,7 +47,7 @@ export function scheduleValidatorRotation({ current, proposed, bonds, currentHei
   const oldSet = normalizeValidatorSet(current, bonds);
   const nextSet = normalizeValidatorSet(proposed, bonds);
   if (!Number.isSafeInteger(currentHeight) || !Number.isSafeInteger(activationHeight) ||
-      activationHeight < currentHeight + 5) throw new Error("validator rotation delay is too short");
+      activationHeight < currentHeight + MIN_ROTATION_DELAY_BLOCKS) throw new Error("validator rotation delay is too short");
   const oldAddresses = new Set(oldSet.map(({ address }) => address));
   const overlap = nextSet.filter(({ address }) => oldAddresses.has(address)).length;
   if (overlap * 3 < Math.min(oldSet.length, nextSet.length)) {

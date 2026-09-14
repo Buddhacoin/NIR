@@ -28,17 +28,22 @@ export function createRandomnessReveal({ wallet, networkId, candidateId, secret 
   return { ...payload, signature: signObject(payload, wallet, "RANDOMNESS_REVEAL") };
 }
 
-export function createFallbackBeacon({ authorityWallets, networkId, candidateId, round, value }) {
-  if (!Array.isArray(authorityWallets) || !HASH.test(candidateId ?? "") || !HASH.test(value ?? "") ||
+export function createFallbackBeaconShare({ wallet, networkId, candidateId, round, value }) {
+  if (!wallet || !HASH.test(candidateId ?? "") || !HASH.test(value ?? "") ||
+      !Number.isSafeInteger(round) || round < 1) throw new Error("fallback beacon share input is invalid");
+  const payload = { authority: wallet.address, candidateId, networkId, round, value };
+  return { ...payload, signature: signObject(payload, wallet, "FALLBACK_RANDOMNESS_SHARE") };
+}
+
+export function createFallbackBeacon({ shares, networkId, candidateId, round }) {
+  if (!Array.isArray(shares) || !HASH.test(candidateId ?? "") ||
       !Number.isSafeInteger(round) || round < 1) throw new Error("fallback beacon input is invalid");
-  const payload = { candidateId, networkId, round, value };
-  return {
-    ...payload,
-    attestations: authorityWallets.map((wallet) => ({
-      authority: wallet.address,
-      signature: signObject(payload, wallet, "FALLBACK_RANDOMNESS_BEACON"),
-    })),
-  };
+  const attestations = shares.map((share) => ({
+    authority: share.authority, signature: share.signature, value: share.value,
+  })).sort((a, b) => a.authority.localeCompare(b.authority));
+  const value = hashObject({ candidateId, networkId, round, shares: attestations.map(({ authority, value }) => ({ authority, value })) },
+    "FALLBACK_RANDOMNESS_SHARES");
+  return { candidateId, networkId, round, value, attestations };
 }
 
 export function combineRandomnessReveals({ networkId, candidateId, commitments, reveals, quorum }) {

@@ -51,7 +51,8 @@ non-conflicting lanes in parallel later, but all results commit to one state roo
 
 ## Priority order
 
-1. Finish rotating BFT finality and independently operated randomness beacons.
+1. Deploy the implemented beacon service with independent operators and audit
+   finality rotation, including withdrawal delays and long network partitions.
 2. Add a state root, snapshots and a light-client proof format.
 3. Add sponsored transactions so a new user can receive and spend NIR without
    first acquiring fee funds.

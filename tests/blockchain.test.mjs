@@ -37,7 +37,12 @@ import {
 } from "../blockchain/crypto.mjs";
 import { CapabilityMemory } from "../blockchain/memory.mjs";
 import { createSafetyFailureClaim } from "../blockchain/safety-bounty.mjs";
-import { createFallbackBeacon, createRandomnessCommit, createRandomnessReveal } from "../blockchain/operators.mjs";
+import {
+  createFallbackBeacon,
+  createFallbackBeaconShare,
+  createRandomnessCommit,
+  createRandomnessReveal,
+} from "../blockchain/operators.mjs";
 import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 
 function operatorMembers(wallets, prefix) {
@@ -619,8 +624,10 @@ test("a fallback beacon assigns the committee and slashes a missing revealer", (
   const timeoutHeight = chain.height + 1;
   const insufficientBeaconBlock = chain.buildBlock({
     fallbackBeacons: [createFallbackBeacon({
-      authorityWallets: beaconAuthorities.slice(0, 2), networkId: chain.networkId,
-      candidateId, round: timeoutHeight, value: fingerprint("insufficient-fallback-round"),
+      shares: beaconAuthorities.slice(0, 2).map((wallet, index) => createFallbackBeaconShare({
+        wallet, networkId: chain.networkId, candidateId, round: timeoutHeight,
+        value: fingerprint(`insufficient-fallback-round-${index}`),
+      })), networkId: chain.networkId, candidateId, round: timeoutHeight,
     })],
     timestamp: bondTimestamp + 3,
   });
@@ -630,11 +637,19 @@ test("a fallback beacon assigns the committee and slashes a missing revealer", (
   );
   const timeoutBlock = chain.buildBlock({
     fallbackBeacons: [createFallbackBeacon({
-      authorityWallets: beaconAuthorities.slice(0, 3), networkId: chain.networkId,
-      candidateId, round: timeoutHeight, value: fingerprint("independent-fallback-round"),
+      shares: beaconAuthorities.slice(0, 3).map((wallet, index) => createFallbackBeaconShare({
+        wallet, networkId: chain.networkId, candidateId, round: timeoutHeight,
+        value: fingerprint(`independent-fallback-round-${index}`),
+      })), networkId: chain.networkId, candidateId, round: timeoutHeight,
     })],
     timestamp: bondTimestamp + 3,
   });
+  const forgedAggregate = structuredClone(timeoutBlock);
+  forgedAggregate.fallbackBeacons[0].value = fingerprint("aggregator-chosen-value");
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(forgedAggregate, quorumFor(forgedAggregate, validators))),
+    /fallback beacon aggregate is invalid/,
+  );
   chain.appendBlock(finalizeBlock(timeoutBlock, quorumFor(timeoutBlock, validators)));
 
   assert.deepEqual(chain.randomnessFault(candidateId).nonRevealers, [contributors[2].wallet.address]);

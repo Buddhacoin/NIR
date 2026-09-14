@@ -153,22 +153,28 @@ reporter/evaluator/burn allocation; supplied committee members and payout
 amounts are not trusted. Settled evidence and consumed candidate bonds cannot
 be replayed. The current multi-party seed is unpredictable when at least one
 contributor is honest, but a last revealer can still withhold. At the timeout,
-the chain can combine available reveals with a fresh value signed by more than
-two thirds of a separate genesis beacon-authority registry. Beacon identities
+the chain combines available reveals with independently generated shares signed
+by more than two thirds of a separate genesis beacon-authority registry. Every
+node verifies the shares and hashes them into one deterministic fallback value,
+so the aggregator cannot choose it. Beacon identities
 must be disjoint from validators and evaluators. This prevents one wealthy
 validator from predicting the fallback committee before deciding to withhold;
-the missing reveal is still slashed. Production needs independent beacon
-implementations, transport, monitoring, and an external audit.
+the missing reveal is still slashed. A separately deployable service and
+aggregation tool now provide the transport boundary. Production still needs
+operators on independent infrastructure, monitoring, failure exercises and an
+external audit.
 
 The chain now accepts signed validator-bond transactions, locks their balance,
 and requires the draft 10 NIR minimum before accepting a randomness commitment.
 For a proven non-reveal, every validator burns one percent of the offender's
 remaining bond, records the fault, and refunds the candidate bond. Falling below
 the minimum removes eligibility for later randomness rounds. These are test
-parameters, not final economics. Validator exit delays and safe operator
-rotation for consensus finality remains to be designed. Randomness eligibility
-already follows the on-chain bond: a validator below the minimum is excluded
-until it tops up through a new signed bond transaction.
+parameters, not final economics. Finality membership can now rotate through an
+old-quorum-certified schedule: every member must be registered and bonded,
+activation is delayed by at least five blocks, and at least one third of the old
+set must remain. From the activation height, only the new set can propose and
+certify blocks; the first such block needs quorum certificates from both sets.
+Validator exits and bond-withdrawal delays remain unfinished.
 
 ## 5. World capability memory
 

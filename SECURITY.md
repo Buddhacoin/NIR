@@ -30,6 +30,10 @@ or an exploit against a live third-party system in a public issue.
   from any substituted evaluator set;
 - deterministic non-reveal fault records and candidate-bond refunds when a
   committed randomness round is sabotaged;
+- fallback randomness assembled from independently signed authority shares,
+  with the aggregate recomputed by every node;
+- delayed bonded finality-set rotation, including a joint old/new quorum on the
+  activation block;
 - atomic state transitions, account nonces, and balance checks;
 - deterministic issuance with a 21 million NIR hard cap;
 - reward epochs advance only on accepted progress and are rate-limited;
@@ -58,23 +62,24 @@ or an exploit against a live third-party system in a public issue.
    can verify multiple external credentials and slash provable double-signing,
    but genesis still accepts self-asserted operator IDs. Safety committee
    assignment now uses an on-chain validator-quorum commit/reveal round. Its
-   last revealer can still withhold after seeing other reveals, creating a
-   liveness and limited selection-bias attack. The chain detects non-revealers
-   and refunds affected candidate bonds. Validator bonds and one-percent
-   non-reveal burns are now consensus state. A disjoint authority quorum can
-   supply a signed fallback value, but those authorities and their data
-   transport are still configured locally and unaudited. Withdrawal delay and
-   finality-validator rotation are also missing.
+   last revealer can still withhold after seeing other reveals. The chain detects
+   and penalizes this, then combines independently signed fallback shares. A
+   runnable authority service persists decisions to resist restart equivocation,
+   but independent organizations have not deployed or audited it. Finality sets
+   rotate with delayed activation and a joint transition certificate, but bond
+   withdrawal delays, partition testing and durable chain-state persistence are
+   still missing.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.
 
 ### High
 
-1. Private keys exist as unencrypted in-memory demo objects. There is no wallet,
-   hardware-key support, secure password-entry application, memory locking, or
-   secure erasure. The encrypted vault and recovery-manifest primitives have
-   not received an independent cryptographic audit.
+1. Private keys exist as unencrypted in-memory demo objects after a vault is
+   unlocked. The native CLI wallet and interface preview do not yet provide
+   hardware-key support, memory locking, or secure erasure. The encrypted vault
+   and recovery-manifest primitives have not received an independent
+   cryptographic audit.
    The terminal tool suppresses echo and refuses passwords from arguments, but
    the JavaScript runtime can still retain secret material in process memory.
 2. Ledger state is not persisted transactionally and cannot recover from disk

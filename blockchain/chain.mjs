@@ -37,6 +37,11 @@ import {
   safetyFailurePayload,
 } from "./safety-bounty.mjs";
 import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
+import {
+  activeValidatorSet,
+  scheduleValidatorRotation,
+  validatorSetId,
+} from "./validator-rotation.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -85,6 +90,7 @@ function operatorRegistry(entries, role) {
     }
     registry.set(member.address, {
       address: member.address,
+      algorithm: member.algorithm,
       operatorId: member.operatorId,
       publicKey: member.publicKey,
     });
@@ -167,12 +173,15 @@ export function createCandidateBond({
   };
 }
 
-export function createValidatorBond({ wallet, networkId, amount, nonce, fee = MIN_TRANSFER_FEE.toString() }) {
+export function createValidatorBond({
+  wallet, networkId, amount, nonce, operatorId, fee = MIN_TRANSFER_FEE.toString(),
+}) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount), fee: String(fee), networkId, nonce,
     publicKey: wallet.publicKey, sender: wallet.address, type: "validator-bond",
   };
+  if (operatorId !== undefined) transaction.operatorId = operatorId;
   return { ...transaction, signature: signObject(transaction, wallet, "VALIDATOR_BOND") };
 }
 
@@ -424,6 +433,8 @@ export class NirChain {
   #randomnessFaults;
   #validatorFaults;
   #validatorBonds;
+  #registeredValidators;
+  #pendingValidatorRotation;
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
@@ -494,6 +505,8 @@ export class NirChain {
     this.#randomnessFaults = new Map();
     this.#validatorFaults = new Map();
     this.#validatorBonds = new Map();
+    this.#registeredValidators = new Map(this.#validators);
+    this.#pendingValidatorRotation = null;
     this.#safetyEvidence = new Set();
     this.#rewardEpoch = 0;
     this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
@@ -597,6 +610,12 @@ export class NirChain {
 
   validatorBond(address) { return this.#validatorBonds.get(address) ?? 0n; }
 
+  get validatorSetId() { return validatorSetId([...this.#validators.values()].sort((a, b) => a.address.localeCompare(b.address))); }
+
+  get pendingValidatorRotation() {
+    return this.#pendingValidatorRotation ? structuredClone(this.#pendingValidatorRotation) : null;
+  }
+
   randomnessFault(candidateId) {
     const fault = this.#randomnessFaults.get(candidateId);
     return fault ? structuredClone(fault) : null;
@@ -613,7 +632,16 @@ export class NirChain {
   }
 
   expectedProposer(height) {
-    return this.#validatorOrder[height % this.#validatorOrder.length];
+    const order = this.#validatorsForHeight(height).map(({ address }) => address);
+    return order[height % order.length];
+  }
+
+  #validatorsForHeight(height) {
+    return activeValidatorSet({
+      current: [...this.#validators.values()].sort((a, b) => a.address.localeCompare(b.address)),
+      pending: this.#pendingValidatorRotation,
+      height,
+    });
   }
 
   #verifyProgressClaim(claim, epoch, capabilityMemory) {
@@ -732,7 +760,8 @@ export class NirChain {
 
   buildBlock({
     transactions = [], rewardClaims = [], safetyClaims = [],
-    randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [], timestamp = Date.now(),
+    randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [],
+    validatorRotation = null, timestamp = Date.now(),
   }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
@@ -760,6 +789,19 @@ export class NirChain {
       ...structuredClone(claim),
       settlement: this.#verifySafetyClaim(claim, height, stagedBonds, stagedEvidence),
     }));
+    let scheduledRotation = null;
+    if (validatorRotation !== null) {
+      if (this.#pendingValidatorRotation) throw new Error("a validator rotation is already pending");
+      const proposed = (validatorRotation.validators ?? []).map(({ address }) => {
+        const member = this.#registeredValidators.get(address);
+        if (!member) throw new Error("proposed validator is not registered");
+        return member;
+      });
+      scheduledRotation = scheduleValidatorRotation({
+        current: [...this.#validators.values()], proposed, bonds: this.#validatorBonds,
+        currentHeight: this.height, activationHeight: validatorRotation.activationHeight,
+      });
+    }
     return {
       capabilityMemoryRoot: stagedMemory.stateRoot,
       height,
@@ -770,6 +812,7 @@ export class NirChain {
       randomnessCommits,
       randomnessReveals,
       safetySettlements,
+      validatorRotation: scheduledRotation,
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
       proposer: this.expectedProposer(height),
       protocolVersion: PROTOCOL_VERSION,
@@ -778,18 +821,21 @@ export class NirChain {
     };
   }
 
-  #verifyCertificate(block) {
+  #verifyCertificate(block, validators, previousValidators = null) {
+    const acceptedValidators = previousValidators
+      ? new Map([...previousValidators, ...validators])
+      : validators;
     if (block.hash !== blockHash(block)) throw new Error("block hash mismatch");
     if (
       !Array.isArray(block.certificate) ||
-      block.certificate.length > this.#validators.size
+      block.certificate.length > acceptedValidators.size
     ) {
       throw new Error("invalid finality certificate size");
     }
     const voters = new Set();
     for (const vote of block.certificate ?? []) {
       if (voters.has(vote.validator)) throw new Error("duplicate validator vote");
-      const validator = this.#validators.get(vote.validator);
+      const validator = acceptedValidators.get(vote.validator);
       if (!validator) throw new Error("vote from unknown validator");
       if (
         typeof vote.signature !== "string" ||
@@ -805,12 +851,18 @@ export class NirChain {
       }
       voters.add(vote.validator);
     }
-    if (voters.size < this.#quorum) throw new Error("finality quorum not reached");
+    const quorum = Math.floor((validators.size * 2) / 3) + 1;
+    const votesInSet = [...voters].filter((address) => validators.has(address)).length;
+    if (votesInSet < quorum) throw new Error("finality quorum not reached");
+    if (previousValidators) {
+      const previousQuorum = Math.floor((previousValidators.size * 2) / 3) + 1;
+      const previousVotes = [...voters].filter((address) => previousValidators.has(address)).length;
+      if (previousVotes < previousQuorum) throw new Error("old-set transition quorum not reached");
+    }
     if (!voters.has(block.proposer)) throw new Error("proposer did not sign block");
   }
 
   #verifyFallbackBeacon(claim, candidateId, round) {
-    const payload = { candidateId, networkId: this.#networkId, round, value: claim?.value };
     if (claim?.candidateId !== candidateId || claim?.networkId !== this.#networkId ||
         claim?.round !== round || !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
         !Array.isArray(claim.attestations) || claim.attestations.length > this.#beaconAuthorities.size) {
@@ -819,13 +871,25 @@ export class NirChain {
     const signers = new Set();
     for (const attestation of claim.attestations) {
       const authority = this.#beaconAuthorities.get(attestation.authority);
+      const payload = {
+        authority: attestation.authority, candidateId, networkId: this.#networkId,
+        round, value: attestation.value,
+      };
       if (!authority || signers.has(attestation.authority) ||
-          !verifyObject(payload, attestation.signature, authority.publicKey, "FALLBACK_RANDOMNESS_BEACON")) {
+          !/^[0-9a-f]{64}$/.test(attestation.value ?? "") ||
+          !verifyObject(payload, attestation.signature, authority.publicKey, "FALLBACK_RANDOMNESS_SHARE")) {
         throw new Error("fallback beacon signature is invalid or duplicated");
       }
       signers.add(attestation.authority);
     }
     if (signers.size < this.#beaconQuorum) throw new Error("fallback beacon quorum not reached");
+    const expectedValue = hashObject({
+      candidateId, networkId: this.#networkId, round,
+      shares: [...claim.attestations]
+        .map(({ authority, value }) => ({ authority, value }))
+        .sort((a, b) => a.authority.localeCompare(b.authority)),
+    }, "FALLBACK_RANDOMNESS_SHARES");
+    if (claim.value !== expectedValue) throw new Error("fallback beacon aggregate is invalid");
     return claim.value;
   }
 
@@ -938,13 +1002,31 @@ export class NirChain {
     });
   }
 
-  #applyValidatorBond(transaction, balances, nonces, validatorBonds, proposer) {
-    const validator = this.#validators.get(transaction.sender);
+  #applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, proposer) {
+    let validator = registeredValidators.get(transaction.sender);
     if (transaction.type !== "validator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
-        transaction.networkId !== this.#networkId || !validator ||
+        transaction.networkId !== this.#networkId ||
         addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
         !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, "VALIDATOR_BOND")) {
       throw new Error("validator bond transaction is invalid");
+    }
+    if (!validator) {
+      if (typeof transaction.operatorId !== "string" ||
+          !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId) ||
+          registeredValidators.size >= MAX_VALIDATORS ||
+          this.#evaluators.has(transaction.sender) || this.#beaconAuthorities.has(transaction.sender) ||
+          [...registeredValidators.values(), ...this.#evaluators.values(), ...this.#beaconAuthorities.values()]
+            .some(({ operatorId }) => operatorId === transaction.operatorId)) {
+        throw new Error("new validator operator id is invalid or duplicated");
+      }
+      validator = {
+        address: transaction.sender, algorithm: transaction.algorithm,
+        operatorId: transaction.operatorId, publicKey: transaction.publicKey,
+      };
+      registeredValidators.set(transaction.sender, validator);
+    } else if (validator.publicKey !== transaction.publicKey ||
+        (transaction.operatorId !== undefined && transaction.operatorId !== validator.operatorId)) {
+      throw new Error("validator identity does not match its registration");
     }
     const expectedNonce = nonces.get(transaction.sender) ?? 0;
     if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
@@ -976,8 +1058,11 @@ export class NirChain {
         !Array.isArray(block.randomnessReveals) || !Array.isArray(block.fallbackBeacons)) {
       throw new Error("block collections are invalid");
     }
-    if (block.randomnessCommits.length > this.#validators.size ||
-        block.randomnessReveals.length > this.#validators.size ||
+    const blockValidatorMembers = this.#validatorsForHeight(block.height);
+    const blockValidators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
+    const blockQuorum = Math.floor((blockValidators.size * 2) / 3) + 1;
+    if (block.randomnessCommits.length > blockValidators.size ||
+        block.randomnessReveals.length > blockValidators.size ||
         block.fallbackBeacons.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
       throw new Error("too many randomness contributions");
     }
@@ -996,7 +1081,11 @@ export class NirChain {
     if (block.proposer !== this.expectedProposer(block.height)) {
       throw new Error("unexpected block proposer");
     }
-    this.#verifyCertificate(block);
+    const transitionValidators = this.#pendingValidatorRotation &&
+      block.height === this.#pendingValidatorRotation.activationHeight
+      ? this.#validators
+      : null;
+    this.#verifyCertificate(block, blockValidators, transitionValidators);
 
     const capabilityMemory = this.#capabilityMemory.clone();
     for (const claim of block.progressRewards) {
@@ -1043,6 +1132,28 @@ export class NirChain {
     const randomnessFaults = new Map(this.#randomnessFaults);
     const validatorFaults = new Map(this.#validatorFaults);
     const validatorBonds = new Map(this.#validatorBonds);
+    const registeredValidators = new Map(this.#registeredValidators);
+    let scheduledRotation = null;
+    if (block.validatorRotation !== null) {
+      if (this.#pendingValidatorRotation) throw new Error("a validator rotation is already pending");
+      if (!block.validatorRotation || !Array.isArray(block.validatorRotation.validators)) {
+        throw new Error("validator rotation is invalid");
+      }
+      const proposed = block.validatorRotation.validators.map(({ address }) => {
+        const member = registeredValidators.get(address);
+        if (!member) throw new Error("proposed validator is not registered");
+        return member;
+      });
+      scheduledRotation = scheduleValidatorRotation({
+        current: [...this.#validators.values()], proposed, bonds: validatorBonds,
+        currentHeight: previous.height,
+        activationHeight: block.validatorRotation.activationHeight,
+      });
+      if (hashObject(scheduledRotation, "VALIDATOR_ROTATION") !==
+          hashObject(block.validatorRotation, "VALIDATOR_ROTATION")) {
+        throw new Error("validator rotation does not match registered consensus state");
+      }
+    }
     let newlyBurned = 0n;
     const expectedSafetySettlements = block.safetySettlements.map(({ settlement: _settlement, ...claim }) => ({
       ...claim,
@@ -1090,7 +1201,7 @@ export class NirChain {
           block.timestamp, block.height,
         );
       } else if (transaction.type === "validator-bond") {
-        this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, block.proposer);
+        this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, block.proposer);
       } else {
         throw new Error("unknown transaction type");
       }
@@ -1098,7 +1209,7 @@ export class NirChain {
 
     for (const contribution of block.randomnessCommits) {
       const candidate = candidateBonds.get(contribution.candidateId);
-      const validator = this.#validators.get(contribution.contributor);
+      const validator = blockValidators.get(contribution.contributor);
       const payload = {
         candidateId: contribution.candidateId, commitment: contribution.commitment,
         contributor: contribution.contributor, networkId: contribution.networkId,
@@ -1115,7 +1226,7 @@ export class NirChain {
 
     for (const contribution of block.randomnessReveals) {
       const candidate = candidateBonds.get(contribution.candidateId);
-      const validator = this.#validators.get(contribution.contributor);
+      const validator = blockValidators.get(contribution.contributor);
       const payload = {
         candidateId: contribution.candidateId, contributor: contribution.contributor,
         networkId: contribution.networkId, secret: contribution.secret,
@@ -1140,12 +1251,12 @@ export class NirChain {
     }
 
     for (const [candidateId, candidate] of candidateBonds) {
-      if (candidate.committee === null && candidate.randomnessReveals.size >= this.#quorum) {
+      if (candidate.committee === null && candidate.randomnessReveals.size >= blockQuorum) {
         const randomness = combineRandomnessReveals({
           networkId: this.#networkId, candidateId,
           commitments: candidate.randomnessCommits,
           reveals: candidate.randomnessReveals,
-          quorum: this.#quorum,
+          quorum: blockQuorum,
         });
         candidateBonds.set(candidateId, {
           ...candidate,
@@ -1159,7 +1270,7 @@ export class NirChain {
           randomness,
         });
       } else if (candidate.committee === null && block.height >= candidate.committedHeight + 3 &&
-          candidate.randomnessCommits.size >= this.#quorum) {
+          candidate.randomnessCommits.size >= blockQuorum) {
         const nonRevealers = [...candidate.randomnessCommits.keys()]
           .filter((address) => !candidate.randomnessReveals.has(address)).sort();
         if (nonRevealers.length > 0) {
@@ -1213,6 +1324,7 @@ export class NirChain {
     this.#randomnessFaults = randomnessFaults;
     this.#validatorFaults = validatorFaults;
     this.#validatorBonds = validatorBonds;
+    this.#registeredValidators = registeredValidators;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;
@@ -1220,6 +1332,13 @@ export class NirChain {
       this.#rewardEpoch += 1;
       this.#lastRewardTimestamp = block.timestamp;
     }
+    if (this.#pendingValidatorRotation && block.height >= this.#pendingValidatorRotation.activationHeight) {
+      this.#validators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
+      this.#validatorOrder = blockValidatorMembers.map(({ address }) => address);
+      this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
+      this.#pendingValidatorRotation = null;
+    }
+    if (scheduledRotation) this.#pendingValidatorRotation = scheduledRotation;
     this.#blocks.push(structuredClone(block));
     return block.hash;
   }

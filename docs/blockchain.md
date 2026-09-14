@@ -55,14 +55,17 @@ objective fault and refunds the candidate bond after the deadline, preventing
 indefinite candidate-fund lockup. Signed validator-bond transactions lock real
 ledger balances; only sufficiently bonded validators may commit randomness, and
 one percent of a non-revealer's remaining bond is burned automatically.
-When a reveal is missing, a fallback value requires a greater-than-two-thirds
-quorum from a separate genesis registry whose identities cannot overlap
-validators or evaluators. The chain combines that value with every available
-reveal and assigns the committee while still slashing the non-revealer.
-Production still needs withdrawal delays and independently operated and audited
-beacon services. The validator-set rotation primitive now enforces bonded
-members, five-block activation notice and at least one-third overlap; its next
-step is integration into block state and finality-certificate verification.
+When a reveal is missing, independently generated shares require a
+greater-than-two-thirds quorum from a separate genesis registry whose identities
+cannot overlap validators or evaluators. The chain verifies and combines those
+shares with every available reveal while still slashing the non-revealer.
+Finality-set rotation is part of block state and certificate verification. A
+rotation is certified by the old set, requires bonded registered members, gives
+at least five blocks of notice, preserves at least one-third overlap, and switches
+proposers and voters exactly at its activation height. The activation block
+requires both an old-set quorum and a new-set quorum. Production still needs
+validator withdrawal delays and independently operated, monitored and audited
+beacon deployments; the runnable service is documented in [beacon.md](beacon.md).
 
 The design review of leading independent networks and the resulting three-lane
 NIR architecture are documented in [top-chains-study.md](top-chains-study.md).

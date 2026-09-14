@@ -133,6 +133,7 @@ candidate runs are committed.
 - `blockchain/wallet-files.mjs` — native encrypted wallet file and transaction signing.
 - `blockchain/validator-staking.mjs` — bonded eligibility and replay-protected non-reveal penalties.
 - `blockchain/validator-rotation.mjs` — delayed, bonded finality-set rotation safety rules.
+- `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
 - `wallet-ui/` — installable wallet/PWA and browser-extension interface preview.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
@@ -143,6 +144,7 @@ candidate runs are committed.
 - `docs/governance.md` — where the ledger lives and how rules can safely evolve.
 - `docs/wallet.md` — current native-wallet commands and production requirements.
 - `docs/top-chains-study.md` — lessons from leading independent networks and NIR's three-lane architecture.
+- `docs/beacon.md` — independent beacon deployment and aggregation runbook.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 
