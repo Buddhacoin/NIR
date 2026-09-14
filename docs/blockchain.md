@@ -12,6 +12,7 @@ identically.
 - a consensus-enforced minimum transfer fee of 0.00001000 NIR, paid to the
   block proposer;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
+- native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;
 - finality certificates requiring at least `floor(2N/3) + 1` validator votes;
 - separate evaluator and consensus registries with disjoint operator identities;

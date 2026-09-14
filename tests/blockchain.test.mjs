@@ -8,8 +8,10 @@ import {
   computeProgressScore,
   createProgressClaim,
   createTransfer,
+  createMultisigTransfer,
   finalizeBlock,
   formatNir,
+  multisigAddress,
 } from "../blockchain/chain.mjs";
 import {
   MAX_FUTURE_DRIFT_MS,
@@ -340,6 +342,50 @@ test("a transfer below the consensus fee floor is rejected", () => {
     /below the protocol minimum/,
   );
   assert.equal(chain.balance(bob.address), 0n);
+});
+
+test("a two-of-three post-quantum vault can spend only with its threshold", () => {
+  const { chain, evaluators, validators } = fixture();
+  const members = Array.from({ length: 3 }, generateWallet);
+  const memberPublicKeys = members.map(({ publicKey }) => publicKey);
+  const vaultAddress = multisigAddress(memberPublicKeys, 2);
+  const recipient = generateWallet();
+  const rewardBlock = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, vaultAddress)],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+
+  const insufficient = createMultisigTransfer({
+    signerWallets: members.slice(0, 1), memberPublicKeys, threshold: 2,
+    networkId: chain.networkId, recipient: recipient.address, amount: "100000000", nonce: 0,
+  });
+  const rejected = chain.buildBlock({ transactions: [insufficient], timestamp: 2 });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(rejected, quorumFor(rejected, validators))),
+    /threshold not reached/,
+  );
+
+  const authorized = createMultisigTransfer({
+    signerWallets: [members[0], members[2]], memberPublicKeys, threshold: 2,
+    networkId: chain.networkId, recipient: recipient.address, amount: "100000000", nonce: 0,
+  });
+  const accepted = chain.buildBlock({ transactions: [authorized], timestamp: 2 });
+  chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, validators)));
+  assert.equal(chain.balance(recipient.address), 100000000n);
+});
+
+test("an unknown signer cannot join a multisignature transfer", () => {
+  const members = Array.from({ length: 3 }, generateWallet);
+  assert.throws(() => createMultisigTransfer({
+    signerWallets: [members[0], generateWallet()],
+    memberPublicKeys: members.map(({ publicKey }) => publicKey),
+    threshold: 2,
+    networkId: "nir-testnet",
+    recipient: generateWallet().address,
+    amount: "1",
+    nonce: 0,
+  }), /unknown or duplicated/);
 });
 
 test("a modified transfer signature is rejected atomically", () => {

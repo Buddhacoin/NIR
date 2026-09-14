@@ -6,6 +6,8 @@ export const MINING_POOL = MAX_SUPPLY - TREASURY_ALLOCATION;
 export const INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
 export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
+export const MULTISIG_ALGORITHM = "ml-dsa-65-multisig";
+export const MAX_MULTISIG_MEMBERS = 16;
 export const PROTOCOL_VERSION = 1;
 export const SAFETY_POLICY_V1_COMMITMENT =
   "a6907d20040ce104af6f866ec84464e2dd0f2de1d34f53b6c6b2c5ab73d91cff";

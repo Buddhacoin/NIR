@@ -10,6 +10,9 @@ or an exploit against a live third-party system in a public issue.
 ## Security properties implemented
 
 - ML-DSA-65 signatures for transactions and validator votes;
+- native threshold ML-DSA-65 transaction authorization;
+- AES-256-GCM encrypted key vaults using scrypt-derived keys and public backup
+  manifests that contain no encrypted or private key material;
 - SHA3-256 block hashes and full 256-bit address identifiers;
 - domain-separated signatures and hashes;
 - `2N/3 + 1` quorum certificates with unique validator votes;
@@ -53,7 +56,9 @@ or an exploit against a live third-party system in a public issue.
 ### High
 
 1. Private keys exist as unencrypted in-memory demo objects. There is no wallet,
-   hardware-key support, backup, recovery, or secure erasure.
+   hardware-key support, secure password-entry application, memory locking, or
+   secure erasure. The encrypted vault and recovery-manifest primitives have
+   not received an independent cryptographic audit.
 2. Ledger state is not persisted transactionally and cannot recover from disk
    corruption or an interrupted write.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,

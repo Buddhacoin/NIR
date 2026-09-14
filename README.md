@@ -117,6 +117,7 @@ candidate runs are committed.
 - `nir/genesis.py` — command-line commit/reveal demonstrator.
 - `nir/simulation.py` — a small example epoch.
 - `blockchain/` — post-quantum signed ledger and local chain demonstration.
+- `blockchain/vault.mjs` — encrypted key vault and multisignature recovery manifest.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.

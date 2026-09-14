@@ -3,6 +3,7 @@ import {
   MAX_BLOCK_BYTES,
   MAX_DECIMAL_DIGITS,
   MAX_FUTURE_DRIFT_MS,
+  MAX_MULTISIG_MEMBERS,
   MIN_TRANSFER_FEE,
   MIN_REWARD_INTERVAL_MS,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
@@ -10,6 +11,7 @@ import {
   MAX_TRANSACTIONS_PER_BLOCK,
   MAX_VALIDATORS,
   MINING_POOL,
+  MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
@@ -80,8 +82,27 @@ function operatorRegistry(entries, role) {
 }
 
 function unsignedTransaction(transaction) {
-  const { signature: _signature, ...unsigned } = transaction;
+  const { signature: _signature, signatures: _signatures, ...unsigned } = transaction;
   return unsigned;
+}
+
+function multisigDescriptor(memberPublicKeys, threshold) {
+  if (
+    !Array.isArray(memberPublicKeys) || memberPublicKeys.length < 2 ||
+    memberPublicKeys.length > MAX_MULTISIG_MEMBERS ||
+    !Number.isSafeInteger(threshold) || threshold < 2 || threshold > memberPublicKeys.length ||
+    memberPublicKeys.some((key) => typeof key !== "string" || key.length > 4_000) ||
+    new Set(memberPublicKeys).size !== memberPublicKeys.length
+  ) throw new Error("multisignature descriptor is invalid");
+  return {
+    algorithm: SIGNATURE_ALGORITHM,
+    memberPublicKeys: [...memberPublicKeys].sort(),
+    threshold,
+  };
+}
+
+export function multisigAddress(memberPublicKeys, threshold) {
+  return `nir1${hashObject(multisigDescriptor(memberPublicKeys, threshold), "MULTISIG_ADDRESS")}`;
 }
 
 export function createTransfer({
@@ -107,6 +128,45 @@ export function createTransfer({
     ...transaction,
     signature: signObject(transaction, wallet, "TRANSFER"),
   };
+}
+
+export function createMultisigTransfer({
+  signerWallets,
+  memberPublicKeys,
+  threshold,
+  networkId,
+  recipient,
+  amount,
+  nonce,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const descriptor = multisigDescriptor(memberPublicKeys, threshold);
+  const transaction = {
+    algorithm: MULTISIG_ALGORITHM,
+    amount: String(amount),
+    fee: String(fee),
+    memberPublicKeys: descriptor.memberPublicKeys,
+    networkId,
+    nonce,
+    recipient,
+    sender: multisigAddress(descriptor.memberPublicKeys, threshold),
+    threshold,
+    type: "transfer",
+  };
+  const allowed = new Set(descriptor.memberPublicKeys);
+  const seen = new Set();
+  const signatures = [];
+  for (const wallet of signerWallets ?? []) {
+    if (!allowed.has(wallet.publicKey) || seen.has(wallet.publicKey)) {
+      throw new Error("multisignature signer is unknown or duplicated");
+    }
+    seen.add(wallet.publicKey);
+    signatures.push({
+      publicKey: wallet.publicKey,
+      signature: signObject(transaction, wallet, "TRANSFER"),
+    });
+  }
+  return { ...transaction, signatures };
 }
 
 export function transactionId(transaction) {
@@ -584,31 +644,44 @@ export class NirChain {
 
   #applyTransfer(transaction, balances, nonces, proposer, timestamp) {
     if (transaction.type !== "transfer") throw new Error("unknown transaction type");
-    if (transaction.algorithm !== SIGNATURE_ALGORITHM) {
+    if (![SIGNATURE_ALGORITHM, MULTISIG_ALGORITHM].includes(transaction.algorithm)) {
       throw new Error("transaction is not post-quantum signed");
     }
     if (transaction.networkId !== this.#networkId) {
       throw new Error("transaction belongs to another network");
     }
-    if (
-      typeof transaction.publicKey !== "string" ||
-      transaction.publicKey.length > 4_000 ||
-      typeof transaction.signature !== "string" ||
-      transaction.signature.length > 7_000
-    ) {
-      throw new Error("transaction cryptographic material exceeds limits");
-    }
-    if (addressFromPublicKey(transaction.publicKey) !== transaction.sender) {
-      throw new Error("sender address does not match public key");
-    }
     assertAddress(transaction.recipient, "transfer recipient");
-    if (!verifyObject(
-      unsignedTransaction(transaction),
-      transaction.signature,
-      transaction.publicKey,
-      "TRANSFER",
-    )) {
-      throw new Error("invalid transaction signature");
+    const unsigned = unsignedTransaction(transaction);
+    if (transaction.algorithm === SIGNATURE_ALGORITHM) {
+      if (
+        typeof transaction.publicKey !== "string" || transaction.publicKey.length > 4_000 ||
+        typeof transaction.signature !== "string" || transaction.signature.length > 7_000
+      ) throw new Error("transaction cryptographic material exceeds limits");
+      if (addressFromPublicKey(transaction.publicKey) !== transaction.sender) {
+        throw new Error("sender address does not match public key");
+      }
+      if (!verifyObject(unsigned, transaction.signature, transaction.publicKey, "TRANSFER")) {
+        throw new Error("invalid transaction signature");
+      }
+    } else {
+      const descriptor = multisigDescriptor(transaction.memberPublicKeys, transaction.threshold);
+      if (multisigAddress(descriptor.memberPublicKeys, descriptor.threshold) !== transaction.sender) {
+        throw new Error("sender address does not match multisignature descriptor");
+      }
+      if (!Array.isArray(transaction.signatures) || transaction.signatures.length > descriptor.memberPublicKeys.length) {
+        throw new Error("multisignature collection is invalid");
+      }
+      const allowed = new Set(descriptor.memberPublicKeys);
+      const signers = new Set();
+      for (const approval of transaction.signatures) {
+        if (
+          !allowed.has(approval.publicKey) || signers.has(approval.publicKey) ||
+          typeof approval.signature !== "string" || approval.signature.length > 7_000 ||
+          !verifyObject(unsigned, approval.signature, approval.publicKey, "TRANSFER")
+        ) throw new Error("invalid multisignature approval");
+        signers.add(approval.publicKey);
+      }
+      if (signers.size < descriptor.threshold) throw new Error("multisignature threshold not reached");
     }
     if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce < 0) {
       throw new Error("invalid transaction nonce");

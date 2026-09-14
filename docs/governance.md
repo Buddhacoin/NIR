@@ -72,6 +72,14 @@ the protocol treasury should use a separate transparent multisignature with
 published spending records. No private key or recovery phrase belongs in the
 repository.
 
+The prototype now supports native M-of-N ML-DSA-65 accounts. Each member key can
+be stored in a separate AES-256-GCM encrypted vault whose key is derived with
+scrypt. A public recovery manifest commits to the expected encrypted backups
+without containing their ciphertext or private keys. A recommended founder
+layout is two signatures out of three independently stored vaults. This is not
+yet a substitute for audited hardware-wallet integration, secure password
+entry, tested inheritance procedures, or an offline signing application.
+
 ## Transaction fees
 
 Every transfer now pays a consensus-enforced minimum of 0.00001000 NIR to the
