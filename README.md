@@ -78,9 +78,10 @@ does not unlock into an exchange or an Ethereum wallet. The current demo uses a
 temporary key. Before a public network, founder custody and the protocol
 treasury must use disclosed, independently recoverable multisignature vaults.
 
-Transfers already support a fee paid to the block proposer. A production fee
-market, minimum anti-spam fee, fee sponsorship for ordinary users, and whether
-part of each fee is burned remain consensus decisions.
+Every transfer pays a consensus-enforced minimum fee of **0.00001000 NIR** to
+the block proposer, and a sender may offer more for priority. Dynamic congestion
+pricing, fee sponsorship for ordinary users, and whether part of a future base
+fee is burned remain consensus decisions.
 
 ## Run the prototype
 

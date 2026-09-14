@@ -9,6 +9,8 @@ identically.
 - SHA3-256 content-addressed blocks, full 256-bit account addresses, and
   previous-block linkage;
 - account balances, sequential nonces, fees, and atomic block application;
+- a consensus-enforced minimum transfer fee of 0.00001000 NIR, paid to the
+  block proposer;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - deterministic round-robin block proposers;
 - finality certificates requiring at least `floor(2N/3) + 1` validator votes;

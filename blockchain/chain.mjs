@@ -3,6 +3,7 @@ import {
   MAX_BLOCK_BYTES,
   MAX_DECIMAL_DIGITS,
   MAX_FUTURE_DRIFT_MS,
+  MIN_TRANSFER_FEE,
   MIN_REWARD_INTERVAL_MS,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
   MAX_SUPPLY,
@@ -89,7 +90,7 @@ export function createTransfer({
   recipient,
   amount,
   nonce,
-  fee = "0",
+  fee = MIN_TRANSFER_FEE.toString(),
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
@@ -617,6 +618,9 @@ export class NirChain {
     const amount = parseAtomic(transaction.amount, "amount");
     const fee = parseAtomic(transaction.fee, "fee");
     if (amount === 0n) throw new Error("transfer amount must be positive");
+    if (fee < MIN_TRANSFER_FEE) {
+      throw new Error("transfer fee is below the protocol minimum");
+    }
     const senderBalance = balances.get(transaction.sender) ?? 0n;
     if (senderBalance < amount + fee) throw new Error("insufficient balance");
     if (transaction.sender === this.#treasuryAddress) {

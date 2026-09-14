@@ -74,10 +74,10 @@ repository.
 
 ## Transaction fees
 
-The current transfer format includes an optional fee paid to the block
-proposer. It does not yet implement a mandatory base fee or dynamic congestion
-pricing. Before a public network, fees must deter spam without making small
-payments unusable. Candidate mechanisms include a small dynamically adjusted
-base fee, an optional priority tip, and sponsored transactions for users who do
-not yet hold NIR. Burning or routing the base component to a security pool is a
+Every transfer now pays a consensus-enforced minimum of 0.00001000 NIR to the
+block proposer. A sender may offer more for priority. This establishes an
+anti-spam floor, but it is not yet dynamic congestion pricing. Before a public
+network, load tests must determine whether the floor should adjust gradually
+with block demand and how users without NIR can use sponsored transactions.
+Burning or routing a future base component to a security pool is a
 monetary-policy decision and is not implemented.

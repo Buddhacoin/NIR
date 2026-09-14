@@ -15,6 +15,7 @@ import {
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
+  MIN_TRANSFER_FEE,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
   SAFETY_POLICY_V1_COMMITMENT,
@@ -316,6 +317,31 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
   assert.equal(chain.nextNonce(alice.address), 1);
 });
 
+test("a transfer below the consensus fee floor is rejected", () => {
+  const { chain, evaluators, validators } = fixture();
+  const alice = generateWallet();
+  const bob = generateWallet();
+  const rewardBlock = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, alice.address)],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const transaction = createTransfer({
+    wallet: alice,
+    networkId: chain.networkId,
+    recipient: bob.address,
+    amount: "1",
+    nonce: 0,
+    fee: (MIN_TRANSFER_FEE - 1n).toString(),
+  });
+  const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(block, quorumFor(block, validators))),
+    /below the protocol minimum/,
+  );
+  assert.equal(chain.balance(bob.address), 0n);
+});
+
 test("a modified transfer signature is rejected atomically", () => {
   const { chain, evaluators, validators } = fixture();
   const alice = generateWallet();
@@ -542,7 +568,7 @@ test("treasury vesting unlocks only the elapsed linear share", () => {
     wallet: second.treasury,
     networkId: second.chain.networkId,
     recipient: recipient.address,
-    amount: (TREASURY_ALLOCATION / 2n).toString(),
+    amount: (TREASURY_ALLOCATION / 2n - MIN_TRANSFER_FEE).toString(),
     nonce: 0,
   });
   const accepted = second.chain.buildBlock({
@@ -552,7 +578,10 @@ test("treasury vesting unlocks only the elapsed linear share", () => {
   second.chain.appendBlock(
     finalizeBlock(accepted, quorumFor(accepted, second.validators)),
   );
-  assert.equal(second.chain.balance(recipient.address), TREASURY_ALLOCATION / 2n);
+  assert.equal(
+    second.chain.balance(recipient.address),
+    TREASURY_ALLOCATION / 2n - MIN_TRANSFER_FEE,
+  );
 });
 
 test("blocks too far in the future are rejected", () => {
