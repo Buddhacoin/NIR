@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
-  OperatorBondBook, createAttestedRegistry, createOperatorCredential,
+  OperatorBondBook, ProgressAdmissionBook, createAttestedRegistry, createOperatorCredential,
   proveOperatorEquivocation, selectOperatorCommittee, signOperatorStatement,
 } from "../blockchain/operators.mjs";
 
@@ -55,6 +55,34 @@ test("committee selection is deterministic, unique, and context-bound", () => {
   assert.deepEqual(first, selectOperatorCommittee(args));
   assert.equal(new Set(first.map(({ address }) => address)).size, 3);
   assert.notDeepEqual(first, selectOperatorCommittee({ ...args, context: { artifact: fingerprint("model-b"), epoch: 12 } }));
+});
+
+test("a candidate is fixed before future randomness assigns its evaluators", () => {
+  const { networkId, registry } = fixture();
+  const recipient = generateWallet();
+  const admission = new ProgressAdmissionBook({ networkId, registry, committeeSize: 3 });
+  const commitmentHash = admission.commit({
+    artifactHash: `sha256:${fingerprint("candidate")}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    committedEpoch: 20,
+    recipient: recipient.address,
+    suiteCommitment: fingerprint("suite"),
+  });
+  assert.throws(() => admission.assign({
+    commitmentHash, randomness: fingerprint("same-epoch"), randomnessEpoch: 20,
+  }), /future committee randomness/);
+  const committee = admission.assign({
+    commitmentHash, randomness: fingerprint("future-epoch"), randomnessEpoch: 21,
+  });
+  assert.equal(admission.verifyAssignedEvaluators({
+    commitmentHash, evaluatorAddresses: committee.map(({ address }) => address),
+  }), true);
+  assert.equal(admission.verifyAssignedEvaluators({
+    commitmentHash, evaluatorAddresses: committee.slice(0, 2).map(({ address }) => address),
+  }), false);
+  assert.throws(() => admission.assign({
+    commitmentHash, randomness: fingerprint("later"), randomnessEpoch: 22,
+  }), /already assigned/);
 });
 
 test("two incompatible signed statements slash the operator bond once", () => {

@@ -131,6 +131,13 @@ randomness is safe only when it becomes available after the complete candidate
 commitment is final. Consequently this component must not authorize issuance
 until an on-chain commit/future-randomness/evaluate state machine is connected.
 
+The local operator module now enforces this ordering as an admission state
+machine: an artifact, baseline, suite, recipient, and epoch are committed first;
+only randomness from a later epoch can assign the complete evaluator committee;
+the assignment cannot be replaced, shortened, or duplicated. The remaining
+network step is to derive that randomness from a distributed beacon or a
+commit/reveal contribution from many operators and persist admissions in blocks.
+
 Identical incorrect votes do not, by themselves, cryptographically prove
 collusion. Penalizing coordinated fraud needs an objective fraud proof or an
 explicit dispute process; a simple majority accusation is not sufficient.

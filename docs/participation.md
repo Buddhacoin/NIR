@@ -17,6 +17,15 @@ generators, reproducibility work, and security findings can be contributions.
 The protocol must measure their outcome rather than reward raw activity, or it
 will create spam markets.
 
+Safe progress and safety discovery are separate proof markets. A laboratory's
+candidate receives a progress reward only after clearing the approved safety
+policy. An investigator who reproduces a critical failure can receive a
+bounded bounty from a pre-funded security pool or objectively slashed bonds;
+the unsafe candidate receives no issuance. Security reports must be committed
+before disclosure, independently reproduced, severity-scored, and deduplicated.
+Otherwise participants could repeatedly report the same issue or deliberately
+create vulnerable artifacts to farm rewards.
+
 The current core sends an intelligence reward to the accepted contribution
 recipient and sends transaction fees to the block proposer. A multi-role reward
 split is a design proposal and is not yet a consensus rule. Address-based caps

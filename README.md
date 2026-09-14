@@ -25,6 +25,41 @@ adjustment for the energy used.
 Evaluation and block finality use separate ML-DSA-65 key registries. Their
 operator identities must be unique and disjoint in the genesis configuration.
 
+## Why organizations use NIR
+
+An organization does not participate only for newly issued NIR. An accepted
+proof can provide:
+
+- independently reproducible evidence that a model or method is better;
+- a versioned safety clearance recognized by an open evaluator network;
+- a way to license verified capability without publishing private weights;
+- reputation and eligibility for customers that require independent evidence;
+- NIR for a contribution that moves the measured world frontier.
+
+These benefits have value only if users, AI services, and buyers demand the
+verification network. A token cannot manufacture adoption by itself.
+
+## Ways people can earn
+
+NIR must not become money only laboratories can issue. The protocol is being
+designed around distinct, measurable contributions:
+
+- authors prove a new capability or a real efficiency improvement;
+- independent compute operators reproduce a submitted result;
+- challenge authors create fresh, objectively gradable tasks;
+- safety evaluators verify that a candidate clears an approved policy;
+- safety investigators prove a previously unknown critical failure;
+- fraud challengers prove forged evaluation, duplicated lineage, or
+  double-signing;
+- node operators validate and relay ordinary payments.
+
+Positive capability proofs and vulnerability discoveries are different reward
+classes. A laboratory can earn for safe progress. An investigator can earn a
+bounded security bounty for a reproducible failure even though the unsafe
+model itself receives no progress reward. Bounties must come from a declared
+security pool or slashed bonds, not unbounded new issuance, so manufacturing
+vulnerabilities cannot become a minting strategy.
+
 ## Monetary draft
 
 - Hard cap: **21,000,000 NIR**.
@@ -37,6 +72,15 @@ operator identities must be unique and disjoint in the genesis configuration.
   not advance this counter. Rewarded blocks must be at least ten minutes apart,
   and the hard cap always wins.
 - Holding NIR does not automatically grant protocol governance power.
+
+The genesis allocation is assigned to explicit post-quantum NIR addresses; it
+does not unlock into an exchange or an Ethereum wallet. The current demo uses a
+temporary key. Before a public network, founder custody and the protocol
+treasury must use disclosed, independently recoverable multisignature vaults.
+
+Transfers already support a fee paid to the block proposer. A production fee
+market, minimum anti-spam fee, fee sponsorship for ordinary users, and whether
+part of each fee is burned remain consensus decisions.
 
 ## Run the prototype
 
@@ -75,6 +119,7 @@ candidate runs are committed.
 - `docs/blockchain.md` — implemented consensus rules and current trust boundary.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.
+- `docs/governance.md` — where the ledger lives and how rules can safely evolve.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 

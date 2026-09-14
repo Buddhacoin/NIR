@@ -94,6 +94,72 @@ export function selectOperatorCommittee({ registry, randomness, context, size })
     .map(({ rank: _rank, ...operator }) => operator);
 }
 
+export class ProgressAdmissionBook {
+  #committeeSize;
+  #entries;
+  #networkId;
+  #registry;
+
+  constructor({ networkId, registry, committeeSize }) {
+    if (typeof networkId !== "string" || networkId.length < 1) {
+      throw new Error("admission network id is invalid");
+    }
+    if (!(registry instanceof Map) || registry.size < 4) {
+      throw new Error("admission registry is invalid");
+    }
+    if (!Number.isSafeInteger(committeeSize) || committeeSize < 3 || committeeSize > registry.size) {
+      throw new Error("admission committee size is invalid");
+    }
+    this.#networkId = networkId;
+    this.#registry = registry;
+    this.#committeeSize = committeeSize;
+    this.#entries = new Map();
+  }
+
+  commit({ artifactHash, baselineHash, suiteCommitment, recipient, committedEpoch }) {
+    if (
+      !/^sha256:[0-9a-f]{64}$/.test(artifactHash ?? "") ||
+      !/^sha256:[0-9a-f]{64}$/.test(baselineHash ?? "") ||
+      !HASH.test(suiteCommitment ?? "") || !ADDRESS.test(recipient ?? "") ||
+      !Number.isSafeInteger(committedEpoch) || committedEpoch < 0
+    ) throw new Error("candidate commitment is invalid");
+    const payload = {
+      artifactHash, baselineHash, committedEpoch, networkId: this.#networkId,
+      recipient, suiteCommitment,
+    };
+    const commitmentHash = hashObject(payload, "CANDIDATE_ADMISSION");
+    if (this.#entries.has(commitmentHash)) throw new Error("candidate is already committed");
+    this.#entries.set(commitmentHash, { payload, assignment: null });
+    return commitmentHash;
+  }
+
+  assign({ commitmentHash, randomness, randomnessEpoch }) {
+    const entry = this.#entries.get(commitmentHash);
+    if (!entry) throw new Error("candidate commitment is unknown");
+    if (
+      entry.assignment || !HASH.test(randomness ?? "") ||
+      !Number.isSafeInteger(randomnessEpoch) || randomnessEpoch <= entry.payload.committedEpoch
+    ) throw new Error("future committee randomness is invalid or already assigned");
+    const committee = selectOperatorCommittee({
+      registry: this.#registry,
+      randomness,
+      context: { commitmentHash, randomnessEpoch },
+      size: this.#committeeSize,
+    });
+    entry.assignment = { committee, randomness, randomnessEpoch };
+    return structuredClone(committee);
+  }
+
+  verifyAssignedEvaluators({ commitmentHash, evaluatorAddresses }) {
+    const assignment = this.#entries.get(commitmentHash)?.assignment;
+    if (!assignment || !Array.isArray(evaluatorAddresses)) return false;
+    const actual = [...new Set(evaluatorAddresses)].sort();
+    const expected = assignment.committee.map(({ address }) => address).sort();
+    return actual.length === evaluatorAddresses.length && actual.length === expected.length &&
+      actual.every((address, index) => address === expected[index]);
+  }
+}
+
 function unsignedStatement(statement) {
   const { signature: _signature, ...payload } = statement;
   return payload;
