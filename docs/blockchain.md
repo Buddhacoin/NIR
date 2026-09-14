@@ -59,8 +59,13 @@ When a reveal is missing, a fallback value requires a greater-than-two-thirds
 quorum from a separate genesis registry whose identities cannot overlap
 validators or evaluators. The chain combines that value with every available
 reveal and assigns the committee while still slashing the non-revealer.
-Production still needs withdrawal delays, finality-validator rotation, and
-independently operated and audited beacon services.
+Production still needs withdrawal delays and independently operated and audited
+beacon services. The validator-set rotation primitive now enforces bonded
+members, five-block activation notice and at least one-third overlap; its next
+step is integration into block state and finality-certificate verification.
+
+The design review of leading independent networks and the resulting three-lane
+NIR architecture are documented in [top-chains-study.md](top-chains-study.md).
 
 ## Run
 

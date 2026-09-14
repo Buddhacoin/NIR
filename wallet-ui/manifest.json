@@ -3,6 +3,7 @@
   "name": "NIR Wallet Preview",
   "version": "0.1.0",
   "description": "Interface preview for the native NIR wallet",
-  "action": { "default_popup": "index.html", "default_title": "NIR Wallet" },
+  "action": { "default_popup": "index.html", "default_title": "NIR Wallet", "default_icon": "nir-coin-icon.png" },
+  "icons": { "16": "nir-coin-icon.png", "48": "nir-coin-icon.png", "128": "nir-coin-icon.png" },
   "permissions": []
 }
