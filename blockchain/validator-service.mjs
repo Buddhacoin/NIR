@@ -26,7 +26,10 @@ function readBody(request) {
   });
 }
 
-export function createValidatorHttpServer(validator) {
+export function createValidatorHttpServer(validator, options = {}) {
+  const shouldRejectProposal = typeof options.shouldRejectProposal === "function"
+    ? options.shouldRejectProposal
+    : () => false;
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://validator.local");
@@ -42,6 +45,7 @@ export function createValidatorHttpServer(validator) {
       if (request.method === "POST" && url.pathname === "/v1/proposals") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        if (shouldRejectProposal(payload)) throw new Error("proposal rejected by local round policy");
         const result = { vote: validator.vote(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }

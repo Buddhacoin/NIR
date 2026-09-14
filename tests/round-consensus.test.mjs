@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { finalizeBlock, NirChain, timeoutForRound } from "../blockchain/chain.mjs";
+import { blockHash, finalizeBlock, NirChain, timeoutForRound } from "../blockchain/chain.mjs";
 import { initializeDistributedDevnet } from "../blockchain/distributed-node.mjs";
 
 test("round-one blocks require a quorum timeout certificate", () => {
@@ -23,11 +23,14 @@ test("round-one blocks require a quorum timeout certificate", () => {
       /round timeout quorum/);
 
     const chain = new NirChain(genesis);
+    const value = chain.buildBlock({ timestamp: 1 });
     const timeoutFields = {
-      height: 1, networkId: chain.networkId, nextRound: 1, previousHash: chain.tipHash,
+      blockHash: blockHash(value), height: 1, networkId: chain.networkId,
+      nextRound: 1, previousHash: chain.tipHash,
     };
     const certificate = wallets.slice(0, 3).map((wallet) => timeoutForRound(timeoutFields, wallet));
     const block = chain.buildBlock({ timestamp: 1, round: 1, roundCertificate: certificate });
+    assert.equal(blockHash(block), blockHash(value));
     const proposer = wallets.find(({ address }) => address === block.proposer);
     const signers = [proposer, ...wallets.filter(({ address }) =>
       address !== block.proposer).slice(0, 2)];

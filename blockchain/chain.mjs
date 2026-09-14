@@ -342,7 +342,14 @@ export function createProgressClaim({
 }
 
 function unsignedBlock(block) {
-  const { certificate: _certificate, hash: _hash, ...unsigned } = block;
+  const {
+    certificate: _certificate,
+    hash: _hash,
+    proposer: _proposer,
+    round: _round,
+    roundCertificate: _roundCertificate,
+    ...unsigned
+  } = block;
   return unsigned;
 }
 
@@ -358,8 +365,8 @@ export function voteForBlock(block, validatorWallet) {
   };
 }
 
-function roundTimeoutPayload({ networkId, height, previousHash, nextRound }) {
-  return { height, networkId, nextRound, previousHash };
+function roundTimeoutPayload({ blockHash: valueHash, networkId, height, previousHash, nextRound }) {
+  return { blockHash: valueHash, height, networkId, nextRound, previousHash };
 }
 
 export function timeoutForRound(fields, validatorWallet) {
@@ -845,6 +852,7 @@ export class NirChain {
       safetySettlements,
       validatorRotation: scheduledRotation,
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
+      feeRecipient: this.expectedProposer(height, 0),
       proposer: this.expectedProposer(height, round),
       protocolVersion: PROTOCOL_VERSION,
       round,
@@ -907,7 +915,7 @@ export class NirChain {
       throw new Error("invalid round timeout certificate size");
     }
     const payload = roundTimeoutPayload({
-      height: block.height, networkId: block.networkId,
+      blockHash: blockHash(block), height: block.height, networkId: block.networkId,
       nextRound: block.round, previousHash: block.previousHash,
     });
     const signers = new Set();
@@ -1159,6 +1167,9 @@ export class NirChain {
     if (block.proposer !== this.expectedProposer(block.height, block.round)) {
       throw new Error("unexpected block proposer");
     }
+    if (block.feeRecipient !== this.expectedProposer(block.height, 0)) {
+      throw new Error("unexpected block fee recipient");
+    }
     const transitionValidators = this.#pendingValidatorRotation &&
       block.height === this.#pendingValidatorRotation.activationHeight
       ? this.#validators
@@ -1276,14 +1287,14 @@ export class NirChain {
       if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
       transactionIds.add(id);
       if (transaction.type === "transfer") {
-        this.#applyTransfer(transaction, balances, nonces, block.proposer, block.timestamp);
+        this.#applyTransfer(transaction, balances, nonces, block.feeRecipient, block.timestamp);
       } else if (transaction.type === "candidate-bond") {
         this.#applyCandidateBond(
-          transaction, balances, nonces, candidateBonds, block.proposer,
+          transaction, balances, nonces, candidateBonds, block.feeRecipient,
           block.timestamp, block.height,
         );
       } else if (transaction.type === "validator-bond") {
-        this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, block.proposer);
+        this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, block.feeRecipient);
       } else {
         throw new Error("unknown transaction type");
       }

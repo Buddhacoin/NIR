@@ -6,8 +6,8 @@ key, its own verified chain journal, and a durable vote record.
 
 ## Create the network
 
-This round-certificate milestone uses protocol version 2. Recreate any earlier
-valueless development network instead of attempting to reuse version-1 blocks.
+The multi-round certificate format uses protocol version 3. Recreate any earlier
+valueless development network instead of attempting to reuse older blocks.
 
 ```bash
 npm run network:init-dev -- .nir-network
@@ -57,10 +57,15 @@ order. A conflicting tip or a peer claiming a future height is rejected.
 
 If the deterministic proposer is unreachable before anyone votes, the remaining
 validators persistently sign a height- and tip-bound timeout. A `2N/3 + 1`
-timeout certificate advances the block to round one and selects the next
-validator as proposer. Consensus verifies that certificate inside the block.
-A validator that has already voted at the height refuses to sign a timeout;
-this preserves safety instead of silently creating two finalizable blocks.
+timeout certificate advances the block to the next round and selects the next
+validator as proposer. Consensus verifies every certificate inside the block.
+A timeout is bound to the immutable block-value hash. A validator that already
+voted may advance rounds only for that same value and refuses to unlock a
+different one.
+
+Round metadata and finality evidence do not change that value hash. Transaction
+fees use the deterministic round-zero fee recipient for the height, so replacing
+a failed proposer cannot alter balances or create a competing execution result.
 
 The development faucet both queues and finalizes its transfer so the wallet can
 still use it as one action.
@@ -77,8 +82,8 @@ still use it as one action.
   votes at the next height;
 - request mutation, stale requests, nonce replay, and forged peer responses are
   rejected cryptographically.
-- an offline proposer is replaced only after a signed quorum timeout, and a
-  validator cannot time out a height after casting a block vote.
+- an offline or non-responsive proposer is replaced only after a signed quorum
+  timeout, while an existing vote remains locked to the same block value.
 
 ## Remaining production boundary
 
@@ -87,9 +92,8 @@ Application-layer control messages now have pinned mutual signatures, but the
 coordinator is still the only proposal and transaction ingress. Transport is
 not confidential, coordinator-key rotation is not governed on-chain, peer URLs
 are static, and catch-up has no snapshot or fork-choice protocol. The mempool is
-not persisted or gossiped. The prototype supports a safety-first initial timeout
-and one leader change, but not repeated rounds with proof-of-lock-change. A
-partially voted round can therefore halt instead of risking conflicting
-finality. There is no decentralized transaction ingress, fork recovery, peer
-discovery, or network-partition simulation yet. Test keys are plaintext and
-have no monetary value.
+not persisted or gossiped. Repeated rounds preserve the same execution value and
+rotate the proposer through quorum timeout certificates, but lock discovery
+between competing coordinators is not implemented. There is no decentralized
+transaction ingress, fork recovery, peer discovery, or network-partition
+simulation yet. Test keys are plaintext and have no monetary value.

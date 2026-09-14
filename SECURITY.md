@@ -56,11 +56,11 @@ or an exploit against a live third-party system in a public issue.
    remote quorum certificate. Coordinator calls and validator responses now use
    pinned, replay-resistant ML-DSA identities, and lagging replicas can replay
    missing finalized blocks before voting. It still has a single coordinator,
-   no transport confidentiality or governed coordinator-key rotation,
-   multi-round proof-of-lock-change, fork recovery, snapshot sync, peer
-   discovery, or partition-tested liveness. A first-round proposer can now be
-   replaced by an on-chain quorum timeout certificate, but a partially voted
-   round halts safely rather than attempting an unsafe second change.
+   no transport confidentiality or governed coordinator-key rotation, lock
+   discovery between competing coordinators, fork recovery, snapshot sync, peer
+   discovery, or partition-tested liveness. Proposers now rotate over repeated
+   on-chain quorum timeout certificates while votes stay bound to one immutable
+   execution-value hash.
 2. **Evaluator execution is not yet remotely attested.** Receipts are signed and
    scores are recomputed, but the chain cannot prove the signer actually ran the
    committed model in the declared environment.

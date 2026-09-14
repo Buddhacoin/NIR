@@ -20,6 +20,7 @@ import {
 } from "./chain.mjs";
 import {
   ATOMIC_UNITS,
+  MAX_CONSENSUS_ROUND,
   MAX_TRANSACTIONS_PER_BLOCK,
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
@@ -238,23 +239,43 @@ export class ValidatorReplica {
     return vote;
   }
 
-  timeout({ height, previousHash, nextRound }) {
-    if (height !== this.height + 1 || previousHash !== this.tipHash ||
-        !Number.isSafeInteger(nextRound) || nextRound < 1) {
+  timeout({ proposal, nextRound }) {
+    if (!proposal || proposal.height !== this.height + 1 || proposal.previousHash !== this.tipHash ||
+        !Number.isSafeInteger(nextRound) || nextRound !== proposal.round + 1) {
       throw new Error("timeout request does not extend the validator state");
     }
+    const rebuilt = this.#chain.buildBlock(proposalFields(proposal));
+    if (canonicalJson(rebuilt) !== canonicalJson(proposal)) {
+      throw new Error("timeout proposal is not deterministic for this state");
+    }
+    this.#chain.validateProposal(proposal);
+    const height = proposal.height;
+    const previousHash = proposal.previousHash;
+    const lockedBlockHash = blockHash(proposal);
     const votePath = join(this.#directory, "votes", `${String(height).padStart(12, "0")}.json`);
     try {
-      readJson(votePath);
-      throw new Error("validator cannot time out after voting at this height");
+      const decision = readJson(votePath);
+      if (decision.blockHash !== lockedBlockHash) {
+        throw new Error("validator refuses to unlock a different block value");
+      }
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
     const timeoutPath = join(this.#directory, "timeouts",
       `${String(height).padStart(12, "0")}-${String(nextRound).padStart(2, "0")}.json`);
-    try { return readJson(timeoutPath).vote; } catch (error) { if (error.code !== "ENOENT") throw error; }
-    const vote = timeoutForRound({ networkId: this.networkId, height, previousHash, nextRound }, this.#wallet);
-    writeExclusive(timeoutPath, { height, nextRound, previousHash, vote });
+    try {
+      const decision = readJson(timeoutPath);
+      if (decision.blockHash !== lockedBlockHash) {
+        throw new Error("validator refuses a conflicting timeout at this round");
+      }
+      return decision.vote;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const vote = timeoutForRound({
+      blockHash: lockedBlockHash, networkId: this.networkId, height, previousHash, nextRound,
+    }, this.#wallet);
+    writeExclusive(timeoutPath, { blockHash: lockedBlockHash, height, nextRound, previousHash, vote });
     return vote;
   }
 
@@ -378,14 +399,26 @@ export class DistributedCoordinator {
       this.#synchronizePeer(index)));
     const available = syncResults.map((result, index) => result.status === "fulfilled" ? index : -1)
       .filter((index) => index >= 0);
-    const height = this.height + 1;
     let round = 0;
     let roundCertificate = null;
-    const firstProposer = this.#chain.expectedProposer(height, round);
-    const firstProposerIndex = this.#validators.findIndex(({ address }) => address === firstProposer);
-    if (!available.includes(firstProposerIndex)) {
-      round = 1;
-      const timeoutRequest = { height, previousHash: this.tipHash, nextRound: round };
+    let proposal;
+    let uniqueVotes;
+    while (round <= MAX_CONSENSUS_ROUND) {
+      proposal = this.#chain.buildBlock({
+        transactions, timestamp: proposal?.timestamp ?? Date.now(), round, roundCertificate,
+      });
+      const results = await Promise.allSettled(available.map((index) =>
+        this.#request(index, "/v1/proposals", proposal)));
+      const votes = results.filter(({ status }) => status === "fulfilled")
+        .map(({ value }) => value.vote);
+      uniqueVotes = new Map(votes.map((vote) => [vote.validator, vote]));
+      const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+      if (uniqueVotes.size >= quorum && uniqueVotes.has(proposal.proposer)) break;
+      if (round === MAX_CONSENSUS_ROUND) {
+        throw new Error(`remote finality quorum not reached (${uniqueVotes.size}/${quorum})`);
+      }
+      const nextRound = round + 1;
+      const timeoutRequest = { proposal, nextRound };
       const timeoutResults = await Promise.allSettled(available.map((index) =>
         this.#request(index, "/v1/timeouts", timeoutRequest)));
       const timeouts = timeoutResults.filter(({ status }) => status === "fulfilled")
@@ -396,17 +429,7 @@ export class DistributedCoordinator {
         throw new Error(`round timeout quorum not reached (${uniqueTimeouts.size}/${timeoutQuorum})`);
       }
       roundCertificate = [...uniqueTimeouts.values()];
-    }
-    const proposal = this.#chain.buildBlock({
-      transactions, timestamp: Date.now(), round, roundCertificate,
-    });
-    const results = await Promise.allSettled(available.map((index) =>
-      this.#request(index, "/v1/proposals", proposal)));
-    const votes = results.filter(({ status }) => status === "fulfilled").map(({ value }) => value.vote);
-    const uniqueVotes = new Map(votes.map((vote) => [vote.validator, vote]));
-    const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
-    if (uniqueVotes.size < quorum || !uniqueVotes.has(proposal.proposer)) {
-      throw new Error(`remote finality quorum not reached (${uniqueVotes.size}/${quorum})`);
+      round = nextRound;
     }
     const block = { ...proposal, hash: blockHash(proposal), certificate: [...uniqueVotes.values()] };
     this.#chain.appendBlock(block);

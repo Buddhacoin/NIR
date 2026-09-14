@@ -115,9 +115,10 @@ test("a validator persists its vote and refuses restart equivocation", () => {
     const second = chain.buildBlock({ timestamp: 2 });
     replica.vote(first);
     assert.throws(() => replica.vote(second), /refuses to equivocate/);
-    assert.throws(() => replica.timeout({
-      height: 1, previousHash: chain.tipHash, nextRound: 1,
-    }), /cannot time out after voting/);
+    const timeout = replica.timeout({ proposal: first, nextRound: 1 });
+    assert.equal(timeout.validator, replica.address);
+    assert.throws(() => replica.timeout({ proposal: second, nextRound: 1 }),
+      /unlock a different block value/);
     replica = new ValidatorReplica(layout.validatorDirectories[0]);
     assert.throws(() => replica.vote(second), /refuses to equivocate/);
   } finally {
@@ -155,6 +156,32 @@ test("a quorum timeout safely replaces an offline proposer", async () => {
     assert.equal(block.proposer, mirror.expectedProposer(2, 1));
     assert.equal(block.roundCertificate.length, 3);
     assert.equal(coordinator.account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the same block value survives two failed proposer rounds", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-multiround-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    shouldRejectProposal: (proposal) => proposal.round < 2 && proposal.proposer === replica.address,
+  }));
+  try {
+    const urls = await Promise.all(servers.map((server) => listen(server)));
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const recipient = generateWallet();
+    const finalized = await coordinator.faucet(recipient.address);
+    assert.equal(finalized.round, 2);
+    assert.equal(finalized.votes, 4);
+    assert.equal(finalized.committedPeers, 4);
+    const block = JSON.parse(readFileSync(
+      join(layout.coordinatorDirectory, "blocks", "000000000001.json"), "utf8"));
+    assert.equal(block.round, 2);
+    assert.equal(block.roundCertificate.length, 4);
+    assert.equal(coordinator.account(recipient.address).atomicBalance, (10n * ATOMIC_UNITS).toString());
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });
