@@ -4,6 +4,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -119,6 +120,7 @@ export function initializeDistributedDevnet(
     mkdirSync(join(validatorDirectory, "blocks"), { recursive: true, mode: 0o700 });
     mkdirSync(join(validatorDirectory, "votes"), { mode: 0o700 });
     mkdirSync(join(validatorDirectory, "timeouts"), { mode: 0o700 });
+    mkdirSync(join(validatorDirectory, "mempool"), { mode: 0o700 });
     writeExclusive(join(validatorDirectory, "genesis.json"), genesis, 0o644);
     writeExclusive(join(validatorDirectory, "VALIDATOR-KEY.json"), wallet);
     writeExclusive(join(validatorDirectory, "AUTHORIZED-COORDINATOR.json"), publicWallet(coordinator), 0o644);
@@ -126,6 +128,9 @@ export function initializeDistributedDevnet(
   });
   const validatorUrls = validators.map((_, index) =>
     `http://127.0.0.1:${firstValidatorPort + index}`);
+  for (const validatorDirectory of validatorDirectories) {
+    writeExclusive(join(validatorDirectory, "PEERS.json"), validatorUrls, 0o644);
+  }
   writeExclusive(join(root, "network.json"), {
     coordinatorDirectory,
     networkId,
@@ -139,6 +144,10 @@ export class TransactionMempool {
   #transactions = new Map();
 
   get size() { return this.#transactions.size; }
+
+  has(id) { return this.#transactions.has(id); }
+
+  values() { return this.take(this.#transactions.size); }
 
   add(transaction) {
     if (!transaction || typeof transaction !== "object" || Array.isArray(transaction)) {
@@ -185,16 +194,26 @@ export class ValidatorReplica {
   #wallet;
   #coordinator;
   #seenNonces = new Map();
+  #validatorNonces = new Map();
+  #validators;
+  #mempool = new TransactionMempool();
+  #peerUrls;
 
   constructor(directory) {
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
     this.#wallet = readJson(join(this.#directory, "VALIDATOR-KEY.json"));
     this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
-    const member = readJson(join(this.#directory, "genesis.json")).validators
+    const genesis = readJson(join(this.#directory, "genesis.json"));
+    this.#validators = genesis.validators;
+    this.#peerUrls = readJson(join(this.#directory, "PEERS.json"));
+    const member = genesis.validators
       .find(({ address }) => address === this.#wallet.address);
     if (!member || member.publicKey !== this.#wallet.publicKey) {
       throw new Error("validator key does not belong to this network");
+    }
+    for (const name of readdirSync(join(this.#directory, "mempool")).sort()) {
+      if (/^[0-9a-f]{64}\.json$/.test(name)) this.#mempool.add(readJson(join(this.#directory, "mempool", name)));
     }
   }
 
@@ -202,6 +221,8 @@ export class ValidatorReplica {
   get height() { return this.#chain.height; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
+  get mempoolSize() { return this.#mempool.size; }
+  get peerUrls() { return [...this.#peerUrls]; }
 
   authorize(auth, method, path, body) {
     return verifyPeerRequest({
@@ -212,6 +233,47 @@ export class ValidatorReplica {
 
   authenticateResponse(requestNonce, result) {
     return createPeerResponse({ networkId: this.networkId, requestNonce, result, wallet: this.#wallet });
+  }
+
+  authorizeValidator(auth, method, path, body) {
+    const peer = this.#validators.find(({ address }) => address === auth?.signer);
+    if (!peer) throw new Error("gossip signer is not a network validator");
+    if (!this.#validatorNonces.has(peer.address)) this.#validatorNonces.set(peer.address, new Map());
+    return verifyPeerRequest({
+      auth, body, method, networkId: this.networkId, path,
+      seenNonces: this.#validatorNonces.get(peer.address), trustedPeer: peer,
+    });
+  }
+
+  createValidatorRequest(path, body) {
+    return createPeerRequest({ body, networkId: this.networkId, path, wallet: this.#wallet });
+  }
+
+  verifyValidatorResponse(index, auth, requestNonce, result) {
+    return verifyPeerResponse({
+      auth, networkId: this.networkId, requestNonce, result, trustedPeer: this.#validators[index],
+    });
+  }
+
+  peerAddress(index) { return this.#validators[index]?.address; }
+
+  pendingTransactions() { return this.#mempool.values(); }
+
+  submitTransaction(transaction) {
+    const id = transactionId(transaction);
+    if (this.#mempool.has(id)) return { status: "known", transactionId: id };
+    this.#mempool.add(transaction);
+    try {
+      const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
+      this.#chain.validateProposal(this.#chain.buildBlock({
+        transactions: this.#mempool.take(), timestamp,
+      }));
+      writeExclusive(join(this.#directory, "mempool", `${id}.json`), transaction, 0o600);
+      return { status: "queued", transactionId: id };
+    } catch (error) {
+      this.#mempool.remove([transaction]);
+      throw error;
+    }
   }
 
   vote(block) {
@@ -287,6 +349,10 @@ export class ValidatorReplica {
     }
     this.#chain.appendBlock(block);
     persistBlock(this.#directory, block);
+    this.#mempool.remove(block.transactions);
+    for (const transaction of block.transactions) {
+      rmSync(join(this.#directory, "mempool", `${transactionId(transaction)}.json`), { force: true });
+    }
     return { height: this.height, status: "committed" };
   }
 }
@@ -354,11 +420,14 @@ export class DistributedCoordinator {
     return quoteTransferFee(String(amount), String(fee));
   }
 
-  submitTransaction(transaction) {
-    const id = this.#mempool.add(transaction);
+  #queueLocal(transaction) {
+    const id = transactionId(transaction);
+    if (this.#mempool.has(id)) return { status: "known", transactionId: id };
+    this.#mempool.add(transaction);
     try {
+      const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
       const proposal = this.#chain.buildBlock({
-        transactions: this.#mempool.take(), timestamp: Date.now(),
+        transactions: this.#mempool.take(), timestamp,
       });
       this.#chain.validateProposal(proposal);
     } catch (error) {
@@ -366,6 +435,19 @@ export class DistributedCoordinator {
       throw error;
     }
     return { status: "queued", transactionId: id };
+  }
+
+  async submitTransaction(transaction) {
+    const queued = this.#queueLocal(transaction);
+    const relays = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#request(index, "/v1/mempool/transactions", transaction)));
+    const relayedPeers = relays.filter(({ status }) => status === "fulfilled").length;
+    const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+    if (relayedPeers < quorum) {
+      if (queued.status === "queued") this.#mempool.remove([transaction]);
+      throw new Error(`transaction durability quorum not reached (${relayedPeers}/${quorum})`);
+    }
+    return { ...queued, relayedPeers };
   }
 
   async #request(index, path, value) {
@@ -392,7 +474,33 @@ export class DistributedCoordinator {
     return missing.length;
   }
 
+  async #recoverPeerTransactions() {
+    const responses = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#request(index, "/v1/mempool", {})));
+    const recovered = new Map();
+    for (const response of responses) {
+      if (response.status !== "fulfilled") continue;
+      for (const transaction of response.value.transactions ?? []) {
+        recovered.set(transactionId(transaction), transaction);
+      }
+    }
+    const ordered = [...recovered.values()].sort((a, b) =>
+      String(a.sender).localeCompare(String(b.sender)) ||
+      (Number.isSafeInteger(a.nonce) && Number.isSafeInteger(b.nonce) ? a.nonce - b.nonce : 0) ||
+      transactionId(a).localeCompare(transactionId(b)));
+    let added = 0;
+    for (const transaction of ordered) {
+      try {
+        if (this.#queueLocal(transaction).status === "queued") added += 1;
+      } catch {
+        // A Byzantine peer cannot make the coordinator accept an invalid pending transaction.
+      }
+    }
+    return added;
+  }
+
   async produceBlock() {
+    await this.#recoverPeerTransactions();
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("mempool is empty");
     const syncResults = await Promise.allSettled(this.#peers.map((_, index) =>
@@ -460,7 +568,7 @@ export class DistributedCoordinator {
       wallet: this.#treasury, networkId: this.networkId, recipient,
       amount: atomic.toString(), nonce: this.#chain.nextNonce(this.#treasury.address),
     });
-    const queued = this.submitTransaction(transaction);
+    const queued = await this.submitTransaction(transaction);
     return { ...queued, ...(await this.produceBlock()) };
   }
 }

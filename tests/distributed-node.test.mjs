@@ -52,11 +52,14 @@ test("independent HTTP validator replicas finalize with one peer offline", async
       amount: (2n * ATOMIC_UNITS).toString(), networkId: coordinator.networkId,
       nonce: 0, recipient: bob.address, wallet: alice,
     });
-    assert.throws(() => coordinator.submitTransaction({
+    await assert.rejects(() => coordinator.submitTransaction({
       ...transfer, amount: (3n * ATOMIC_UNITS).toString(),
     }), /invalid transaction signature/);
     assert.equal(coordinator.mempoolSize, 0);
-    assert.equal(coordinator.submitTransaction(transfer).status, "queued");
+    const queued = await coordinator.submitTransaction(transfer);
+    assert.equal(queued.status, "queued");
+    assert.equal(queued.relayedPeers, 4);
+    assert.deepEqual(replicas.map(({ mempoolSize }) => mempoolSize), [1, 1, 1, 1]);
     assert.equal(coordinator.mempoolSize, 1);
 
     const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
@@ -74,6 +77,8 @@ test("independent HTTP validator replicas finalize with one peer offline", async
     const offlineIndex = replicas.findIndex(({ address }) => address !== nextProposer);
     await close(servers[offlineIndex]);
 
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    assert.equal(coordinator.mempoolSize, 0);
     const finalized = await coordinator.produceBlock();
     assert.equal(finalized.votes, 3);
     assert.equal(finalized.committedPeers, 3);
@@ -88,7 +93,7 @@ test("independent HTTP validator replicas finalize with one peer offline", async
       amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
       nonce: 1, recipient: bob.address, wallet: alice,
     });
-    coordinator.submitTransaction(secondTransfer);
+    await coordinator.submitTransaction(secondTransfer);
     const caughtUp = await coordinator.produceBlock();
     assert.equal(caughtUp.synchronizedPeers, 1);
     assert.equal(caughtUp.votes, 4);
@@ -144,7 +149,7 @@ test("a quorum timeout safely replaces an offline proposer", async () => {
     const offlineProposer = mirror.expectedProposer(2, 0);
     const offlineIndex = replicas.findIndex(({ address }) => address === offlineProposer);
     await close(servers[offlineIndex]);
-    coordinator.submitTransaction(createTransfer({
+    await coordinator.submitTransaction(createTransfer({
       amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
       nonce: 0, recipient: bob.address, wallet: alice,
     }));
@@ -182,6 +187,45 @@ test("the same block value survives two failed proposer rounds", async () => {
     assert.equal(block.round, 2);
     assert.equal(block.roundCertificate.length, 4);
     assert.equal(coordinator.account(recipient.address).atomicBalance, (10n * ATOMIC_UNITS).toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("one validator ingress gossips and persists a transaction for coordinator recovery", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-gossip-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  let urls = [];
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    peerUrls: () => urls,
+  }));
+  try {
+    urls = await Promise.all(servers.map((server) => listen(server)));
+    let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    await coordinator.faucet(alice.address);
+    const transaction = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    });
+    const response = await fetch(`${urls[0]}/v1/transactions`, {
+      body: JSON.stringify(transaction), headers: { "content-type": "application/json" }, method: "POST",
+    });
+    assert.equal(response.status, 202);
+    assert.equal((await response.json()).gossipedPeers, 3);
+    assert.deepEqual(replicas.map(({ mempoolSize }) => mempoolSize), [1, 1, 1, 1]);
+    const restartedReplica = new ValidatorReplica(layout.validatorDirectories[1]);
+    assert.equal(restartedReplica.mempoolSize, 1);
+
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    assert.equal(coordinator.mempoolSize, 0);
+    const finalized = await coordinator.produceBlock();
+    assert.equal(finalized.height, 2);
+    assert.equal(coordinator.account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+    assert.deepEqual(replicas.map(({ mempoolSize }) => mempoolSize), [0, 0, 0, 0]);
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

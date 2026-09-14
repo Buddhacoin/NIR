@@ -55,7 +55,9 @@ or an exploit against a live third-party system in a public issue.
    executes proposals, persists anti-equivocation decisions, and collects a
    remote quorum certificate. Coordinator calls and validator responses now use
    pinned, replay-resistant ML-DSA identities, and lagging replicas can replay
-   missing finalized blocks before voting. It still has a single coordinator,
+   missing finalized blocks before voting. Validator transaction ingress now
+   uses authenticated gossip and durable local pools that a restarted
+   coordinator can recover. It still has a single block-assembly coordinator,
    no transport confidentiality or governed coordinator-key rotation, lock
    discovery between competing coordinators, fork recovery, snapshot sync, peer
    discovery, or partition-tested liveness. Proposers now rotate over repeated
@@ -98,10 +100,11 @@ or an exploit against a live third-party system in a public issue.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.
-4. The multi-process coordinator has a bounded in-memory mempool with duplicate
-   rejection, but no durable or gossiped mempool, fee-priority admission, peer
-   reputation, rate limiting, or denial-of-service protection at the network
-   boundary.
+4. Validator mempools are bounded, disk-backed, authenticated during gossip,
+   independently revalidated, and protected by a basic per-source ingress rate
+   limit. They still lack fee-priority admission, peer reputation, adaptive
+   denial-of-service controls, privacy-preserving origin handling, and robust
+   behavior behind load balancers or changing network addresses.
 5. There has been no independent audit, formal verification, or adversarial
    public testnet.
 

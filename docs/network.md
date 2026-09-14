@@ -70,6 +70,23 @@ a failed proposer cannot alter balances or create a competing execution result.
 The development faucet both queues and finalizes its transfer so the wallet can
 still use it as one action.
 
+## Transaction ingress and gossip
+
+A signed transaction may be sent to `POST /v1/transactions` on any validator,
+not only to the coordinator. The receiving validator executes it against its
+current state and pending queue, writes it to its private disk journal, and
+gossips it to the other configured validators with validator-authenticated
+requests. Duplicate transactions are idempotent. Invalid signatures, conflicting
+nonces, a full pool, an aggregate proposal over the block-size limit, and more
+than 20 public submissions per source address per minute are rejected before
+gossip.
+
+Coordinator ingress also requires a validator durability quorum. A fresh
+coordinator process starts with an empty in-memory pool, queries the signed
+validator pools, deterministically orders recovered transactions, executes them
+again, and ignores invalid data supplied by a Byzantine peer. Finalized
+transactions are removed from every validator's durable pool.
+
 ## Faults covered by the integration test
 
 - validator keys never enter coordinator memory;
@@ -84,16 +101,19 @@ still use it as one action.
   rejected cryptographically.
 - an offline or non-responsive proposer is replaced only after a signed quorum
   timeout, while an existing vote remains locked to the same block value.
+- one-validator transaction ingress reaches the other replicas, survives a
+  replica and coordinator restart, and is independently revalidated before use.
 
 ## Remaining production boundary
 
 This is a multi-process localhost consensus prototype, not production BFT.
 Application-layer control messages now have pinned mutual signatures, but the
-coordinator is still the only proposal and transaction ingress. Transport is
+coordinator is still the only block-assembly service. Transport is
 not confidential, coordinator-key rotation is not governed on-chain, peer URLs
-are static, and catch-up has no snapshot or fork-choice protocol. The mempool is
-not persisted or gossiped. Repeated rounds preserve the same execution value and
+are static, and catch-up has no snapshot or fork-choice protocol. Validator
+mempools are disk-backed and gossiped over a static full mesh. Repeated rounds preserve the same execution value and
 rotate the proposer through quorum timeout certificates, but lock discovery
 between competing coordinators is not implemented. There is no decentralized
-transaction ingress, fork recovery, peer discovery, or network-partition
-simulation yet. Test keys are plaintext and have no monetary value.
+block assembly, fork recovery, peer discovery, production-grade adaptive
+denial-of-service defense, or network-partition simulation yet. Test keys are
+plaintext and have no monetary value.
