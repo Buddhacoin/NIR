@@ -123,6 +123,18 @@ grading is not reliable.
 - **Quantum migration:** addresses and signatures need crypto-agility from
   genesis, with versioned post-quantum signature suites and migration paths.
 
+The operator-security prototype requires two independently signed external
+credentials for every operator, a minimum bond, deterministic committee
+selection, and replay-protected evidence that can confiscate a bond when one
+operator signs two incompatible statements for the same slot. Committee
+randomness is safe only when it becomes available after the complete candidate
+commitment is final. Consequently this component must not authorize issuance
+until an on-chain commit/future-randomness/evaluate state machine is connected.
+
+Identical incorrect votes do not, by themselves, cryptographically prove
+collusion. Penalizing coordinated fraud needs an objective fraud proof or an
+explicit dispute process; a simple majority accusation is not sufficient.
+
 ## 5. World capability memory
 
 NIR does not reward possession of knowledge already demonstrated by existing
