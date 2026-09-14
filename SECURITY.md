@@ -60,9 +60,9 @@ or an exploit against a live third-party system in a public issue.
    assignment now uses an on-chain validator-quorum commit/reveal round. Its
    last revealer can still withhold after seeing other reveals, creating a
    liveness and limited selection-bias attack. The chain detects non-revealers
-   and refunds affected candidate bonds, but it cannot confiscate a validator
-   bond until validator registration and stake custody are consensus state.
-   Production also needs an unbiasable audited fallback beacon.
+   and refunds affected candidate bonds. Validator bonds and one-percent
+   non-reveal burns are now consensus state, but withdrawal delay, operator
+   rotation, and an unbiasable audited fallback beacon are still missing.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.

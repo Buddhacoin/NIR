@@ -46,8 +46,9 @@ NIR and the same evidence cannot be paid twice.
 
 If a randomness contributor commits and then misses its reveal deadline, every
 node records the signer as a non-revealer and returns the candidate bond. Once
-validator bonds are part of chain state, that objective record will authorize a
-validator penalty; the current prototype does not yet confiscate such a bond.
+the validator has registered its signed on-chain bond, that objective record
+burns one percent of its remaining bond. A balance below the required minimum
+cannot contribute to later randomness rounds.
 
 ### 6. Fraud challenger
 

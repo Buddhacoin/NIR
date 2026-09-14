@@ -52,9 +52,11 @@ block producer supplies the seed. The current commit/reveal construction still
 has a last-revealer liveness and bias risk: a contributor can withhold its reveal
 after seeing others. The chain now records each committed non-revealer as an
 objective fault and refunds the candidate bond after the deadline, preventing
-indefinite candidate-fund lockup. Production still needs validator bonds,
-economic slashing, suspension/rotation rules, and an independently audited
-fallback randomness beacon.
+indefinite candidate-fund lockup. Signed validator-bond transactions lock real
+ledger balances; only sufficiently bonded validators may commit randomness, and
+one percent of a non-revealer's remaining bond is burned automatically.
+Production still needs withdrawal delays, suspension/rotation rules, and an
+independently audited fallback randomness beacon.
 
 ## Run
 

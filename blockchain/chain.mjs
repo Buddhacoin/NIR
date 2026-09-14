@@ -36,6 +36,7 @@ import {
   calculateSafetySettlement,
   safetyFailurePayload,
 } from "./safety-bounty.mjs";
+import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -164,6 +165,15 @@ export function createCandidateBond({
     ...transaction,
     signature: signObject(transaction, wallet, "CANDIDATE_BOND"),
   };
+}
+
+export function createValidatorBond({ wallet, networkId, amount, nonce, fee = MIN_TRANSFER_FEE.toString() }) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    amount: String(amount), fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, type: "validator-bond",
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "VALIDATOR_BOND") };
 }
 
 export function createMultisigTransfer({
@@ -411,6 +421,7 @@ export class NirChain {
   #rewardedProofs;
   #randomnessFaults;
   #validatorFaults;
+  #validatorBonds;
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
@@ -469,6 +480,7 @@ export class NirChain {
     this.#rewardedProofs = new Set();
     this.#randomnessFaults = new Map();
     this.#validatorFaults = new Map();
+    this.#validatorBonds = new Map();
     this.#safetyEvidence = new Set();
     this.#rewardEpoch = 0;
     this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
@@ -568,6 +580,8 @@ export class NirChain {
   validatorRandomnessFaults(address) {
     return this.#validatorFaults.get(address) ?? 0;
   }
+
+  validatorBond(address) { return this.#validatorBonds.get(address) ?? 0n; }
 
   randomnessFault(candidateId) {
     const fault = this.#randomnessFaults.get(candidateId);
@@ -889,6 +903,27 @@ export class NirChain {
     });
   }
 
+  #applyValidatorBond(transaction, balances, nonces, validatorBonds, proposer) {
+    const validator = this.#validators.get(transaction.sender);
+    if (transaction.type !== "validator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId || !validator ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, "VALIDATOR_BOND")) {
+      throw new Error("validator bond transaction is invalid");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    const amount = parseAtomic(transaction.amount, "validator bond");
+    const fee = parseAtomic(transaction.fee, "fee");
+    if (amount === 0n || fee < MIN_TRANSFER_FEE) throw new Error("validator bond or fee is below minimum");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (balance < amount + fee) throw new Error("insufficient balance");
+    balances.set(transaction.sender, balance - amount - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    validatorBonds.set(transaction.sender, (validatorBonds.get(transaction.sender) ?? 0n) + amount);
+  }
+
   appendBlock(block) {
     const previous = this.#blocks.at(-1);
     if (block.networkId !== this.#networkId) throw new Error("wrong network id");
@@ -971,6 +1006,7 @@ export class NirChain {
     const safetyEvidence = new Set(this.#safetyEvidence);
     const randomnessFaults = new Map(this.#randomnessFaults);
     const validatorFaults = new Map(this.#validatorFaults);
+    const validatorBonds = new Map(this.#validatorBonds);
     let newlyBurned = 0n;
     const expectedSafetySettlements = block.safetySettlements.map(({ settlement: _settlement, ...claim }) => ({
       ...claim,
@@ -1017,6 +1053,8 @@ export class NirChain {
           transaction, balances, nonces, candidateBonds, block.proposer,
           block.timestamp, block.height,
         );
+      } else if (transaction.type === "validator-bond") {
+        this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, block.proposer);
       } else {
         throw new Error("unknown transaction type");
       }
@@ -1031,7 +1069,8 @@ export class NirChain {
       };
       if (!candidate || candidate.committee !== null || block.height !== candidate.committedHeight + 1 ||
           contribution.networkId !== this.#networkId || !/^[0-9a-f]{64}$/.test(contribution.commitment ?? "") ||
-          !validator || candidate.randomnessCommits.has(contribution.contributor) ||
+          !validator || (validatorBonds.get(contribution.contributor) ?? 0n) < MIN_VALIDATOR_BOND ||
+          candidate.randomnessCommits.has(contribution.contributor) ||
           !verifyObject(payload, contribution.signature, validator.publicKey, "RANDOMNESS_COMMIT")) {
         throw new Error("invalid or duplicate randomness commitment");
       }
@@ -1090,6 +1129,11 @@ export class NirChain {
           randomnessFaults.set(candidateId, fault);
           for (const address of nonRevealers) {
             validatorFaults.set(address, (validatorFaults.get(address) ?? 0) + 1);
+            const currentBond = validatorBonds.get(address) ?? 0n;
+            const proportional = (currentBond * NON_REVEAL_SLASH_BPS) / 10_000n;
+            const penalty = proportional > 0n ? proportional : 1n;
+            validatorBonds.set(address, currentBond - penalty);
+            newlyBurned += penalty;
           }
           balances.set(candidate.submitter, (balances.get(candidate.submitter) ?? 0n) + candidate.bond);
           candidateBonds.delete(candidateId);
@@ -1104,6 +1148,7 @@ export class NirChain {
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;
     this.#validatorFaults = validatorFaults;
+    this.#validatorBonds = validatorBonds;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;
