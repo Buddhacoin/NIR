@@ -6,6 +6,12 @@ NIR is a monetary protocol in which new currency is issued for
 This repository is the first executable protocol sketch. It is deliberately
 not a tradable token, investment product, wallet, or mainnet.
 
+NIR requires a native wallet because its addresses, ML-DSA-65 signatures,
+network rules, encrypted vaults, and multisignature recovery are not compatible
+with Ethereum wallets. The repository already contains the cryptographic vault
+core; a reviewed desktop/mobile wallet and hardware-key integration are still
+future work.
+
 ## Core idea
 
 A candidate contribution competes against a frozen baseline on hidden tests.

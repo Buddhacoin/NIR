@@ -27,8 +27,9 @@ identically.
 - ten-year linear treasury vesting by bounded block timestamps;
 - signed candidate-bond transactions and consensus-recomputed critical-safety
   settlements with reporter/evaluator payouts and permanent supply burns;
-- deterministic safety-committee assignment from the first finalized block
-  after a candidate bond, with settlement restricted to that exact committee;
+- deterministic safety-committee assignment from a validator-quorum
+  commit/reveal round after a candidate bond, with settlement restricted to
+  that exact committee;
 - domain-separated signatures and hashes;
 - limits on block bytes, transactions, rewards, and numeric inputs.
 
@@ -45,11 +46,12 @@ and one configured operator cannot occupy both roles. This is not yet
 permissionless consensus: operator identifiers are self-asserted, and there is
 no consensus-connected external identity attestation, operator rotation,
 evaluator-equivocation slashing, fork recovery, or peer-to-peer transport.
-Candidate safety bonds, future-block committee assignments, and
-critical-failure settlements are consensus state. The present committee seed is
-the next finalized block hash; it is deterministic but not yet an unbiasable
-distributed-randomness source, because a block producer can influence candidate
-block contents before finalization.
+Candidate safety bonds, randomness commitments and reveals, committee
+assignments, and critical-failure settlements are consensus state. No single
+block producer supplies the seed. The current commit/reveal construction still
+has a last-revealer liveness and bias risk: a contributor can withhold its reveal
+after seeing others. Production needs non-reveal penalties and an independently
+audited fallback randomness beacon.
 
 ## Run
 

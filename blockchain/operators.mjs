@@ -5,6 +5,43 @@ const HASH = /^[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const OPERATOR_ID = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 
+export function randomnessCommitment({ networkId, candidateId, secret }) {
+  if (typeof networkId !== "string" || !HASH.test(candidateId ?? "") || !HASH.test(secret ?? "")) {
+    throw new Error("randomness contribution is invalid");
+  }
+  return hashObject({ candidateId, networkId, secret }, "RANDOMNESS_COMMITMENT");
+}
+
+export function createRandomnessCommit({ wallet, networkId, candidateId, secret }) {
+  const payload = {
+    candidateId,
+    commitment: randomnessCommitment({ networkId, candidateId, secret }),
+    contributor: wallet.address,
+    networkId,
+  };
+  return { ...payload, signature: signObject(payload, wallet, "RANDOMNESS_COMMIT") };
+}
+
+export function createRandomnessReveal({ wallet, networkId, candidateId, secret }) {
+  randomnessCommitment({ networkId, candidateId, secret });
+  const payload = { candidateId, contributor: wallet.address, networkId, secret };
+  return { ...payload, signature: signObject(payload, wallet, "RANDOMNESS_REVEAL") };
+}
+
+export function combineRandomnessReveals({ networkId, candidateId, commitments, reveals, quorum }) {
+  if (!(commitments instanceof Map) || !(reveals instanceof Map) || !HASH.test(candidateId ?? "") ||
+      !Number.isSafeInteger(quorum) || quorum < 2 || reveals.size < quorum) {
+    throw new Error("randomness reveal quorum not reached");
+  }
+  const contributions = [...reveals.entries()].map(([address, secret]) => {
+    if (commitments.get(address) !== randomnessCommitment({
+      networkId, candidateId, secret,
+    })) throw new Error("randomness reveal does not match commitment");
+    return { address, secret };
+  }).sort((a, b) => a.address.localeCompare(b.address));
+  return hashObject({ candidateId, contributions }, "DISTRIBUTED_RANDOMNESS");
+}
+
 function unsignedCredential(credential) {
   const { signature: _signature, ...payload } = credential;
   return payload;

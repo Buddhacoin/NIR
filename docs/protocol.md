@@ -146,13 +146,14 @@ collusion. Penalizing coordinated fraud needs an objective fraud proof or an
 explicit dispute process; a simple majority accusation is not sufficient.
 
 Candidate safety bonds are now locked by signed ledger transactions. A later
-finalized block assigns the complete safety committee, and only that committee
-may sign a critical-failure claim under a genesis-approved policy. Every
-validator recomputes the assignment and the 70/10/20
+validator-quorum commit/reveal round assigns the complete safety committee, and
+only that committee may sign a critical-failure claim under a genesis-approved
+policy. Every validator recomputes the assignment and the 70/10/20
 reporter/evaluator/burn allocation; supplied committee members and payout
 amounts are not trusted. Settled evidence and consumed candidate bonds cannot
-be replayed. The current assignment seed is the future block hash. It must be
-replaced or strengthened with a distributed, unbiasable randomness protocol
+be replayed. The current multi-party seed is unpredictable when at least one
+contributor is honest, but a last revealer can still withhold and delay or bias
+completion. Non-reveal slashing and an audited fallback beacon are required
 before this mechanism is suitable for a public testnet.
 
 ## 5. World capability memory

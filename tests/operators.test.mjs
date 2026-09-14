@@ -4,7 +4,8 @@ import test from "node:test";
 
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
-  OperatorBondBook, ProgressAdmissionBook, createAttestedRegistry, createOperatorCredential,
+  OperatorBondBook, ProgressAdmissionBook, combineRandomnessReveals,
+  createAttestedRegistry, createOperatorCredential, randomnessCommitment,
   proveOperatorEquivocation, selectOperatorCommittee, signOperatorStatement,
 } from "../blockchain/operators.mjs";
 
@@ -55,6 +56,27 @@ test("committee selection is deterministic, unique, and context-bound", () => {
   assert.deepEqual(first, selectOperatorCommittee(args));
   assert.equal(new Set(first.map(({ address }) => address)).size, 3);
   assert.notDeepEqual(first, selectOperatorCommittee({ ...args, context: { artifact: fingerprint("model-b"), epoch: 12 } }));
+});
+
+test("distributed randomness requires a quorum of matching committed reveals", () => {
+  const networkId = "nir-randomness-test";
+  const candidateId = fingerprint("candidate-randomness");
+  const addresses = Array.from({ length: 3 }, () => generateWallet().address).sort();
+  const secrets = addresses.map((_, index) => fingerprint(`secret-${index}`));
+  const commitments = new Map(addresses.map((address, index) => [address,
+    randomnessCommitment({ networkId, candidateId, secret: secrets[index] })]));
+  const reveals = new Map(addresses.map((address, index) => [address, secrets[index]]));
+  const seed = combineRandomnessReveals({ networkId, candidateId, commitments, reveals, quorum: 3 });
+  assert.match(seed, /^[0-9a-f]{64}$/);
+  assert.throws(() => combineRandomnessReveals({
+    networkId, candidateId, commitments,
+    reveals: new Map([...reveals].slice(0, 2)), quorum: 3,
+  }), /quorum not reached/);
+  const forged = new Map(reveals);
+  forged.set(addresses[0], fingerprint("forged-secret"));
+  assert.throws(() => combineRandomnessReveals({
+    networkId, candidateId, commitments, reveals: forged, quorum: 3,
+  }), /does not match commitment/);
 });
 
 test("a candidate is fixed before future randomness assigns its evaluators", () => {

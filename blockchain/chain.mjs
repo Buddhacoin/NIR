@@ -27,7 +27,11 @@ import {
   verifyObject,
 } from "./crypto.mjs";
 import { CapabilityMemory } from "./memory.mjs";
-import { selectOperatorCommittee } from "./operators.mjs";
+import {
+  combineRandomnessReveals,
+  randomnessCommitment,
+  selectOperatorCommittee,
+} from "./operators.mjs";
 import {
   calculateSafetySettlement,
   safetyFailurePayload,
@@ -685,7 +689,10 @@ export class NirChain {
     return settlement;
   }
 
-  buildBlock({ transactions = [], rewardClaims = [], safetyClaims = [], timestamp = Date.now() }) {
+  buildBlock({
+    transactions = [], rewardClaims = [], safetyClaims = [],
+    randomnessCommits = [], randomnessReveals = [], timestamp = Date.now(),
+  }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
     const progressRewards = allocateProgressRewards(
@@ -718,6 +725,8 @@ export class NirChain {
       networkId: this.#networkId,
       previousHash: this.#blocks.at(-1).hash,
       progressRewards,
+      randomnessCommits,
+      randomnessReveals,
       safetySettlements,
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
       proposer: this.expectedProposer(height),
@@ -861,6 +870,8 @@ export class NirChain {
       bond,
       committedHeight: height,
       committee: null,
+      randomnessCommits: new Map(),
+      randomnessReveals: new Map(),
       submitter: transaction.sender,
     });
   }
@@ -877,8 +888,14 @@ export class NirChain {
     if (block.timestamp > Date.now() + MAX_FUTURE_DRIFT_MS) {
       throw new Error("block timestamp is too far in the future");
     }
-    if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) || !Array.isArray(block.safetySettlements)) {
+    if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) ||
+        !Array.isArray(block.safetySettlements) || !Array.isArray(block.randomnessCommits) ||
+        !Array.isArray(block.randomnessReveals)) {
       throw new Error("block collections are invalid");
+    }
+    if (block.randomnessCommits.length > this.#validators.size ||
+        block.randomnessReveals.length > this.#validators.size) {
+      throw new Error("too many randomness contributions");
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
       throw new Error("too many transactions in one block");
@@ -933,7 +950,11 @@ export class NirChain {
     const balances = new Map(this.#balances);
     const nonces = new Map(this.#nonces);
     const rewardedProofs = new Set(this.#rewardedProofs);
-    const candidateBonds = new Map(this.#candidateBonds);
+    const candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
+      ...candidate,
+      randomnessCommits: new Map(candidate.randomnessCommits),
+      randomnessReveals: new Map(candidate.randomnessReveals),
+    }]));
     const safetyEvidence = new Set(this.#safetyEvidence);
     let newlyBurned = 0n;
     const expectedSafetySettlements = block.safetySettlements.map(({ settlement: _settlement, ...claim }) => ({
@@ -986,18 +1007,58 @@ export class NirChain {
       }
     }
 
+    for (const contribution of block.randomnessCommits) {
+      const candidate = candidateBonds.get(contribution.candidateId);
+      const validator = this.#validators.get(contribution.contributor);
+      const payload = {
+        candidateId: contribution.candidateId, commitment: contribution.commitment,
+        contributor: contribution.contributor, networkId: contribution.networkId,
+      };
+      if (!candidate || candidate.committee !== null || block.height !== candidate.committedHeight + 1 ||
+          contribution.networkId !== this.#networkId || !/^[0-9a-f]{64}$/.test(contribution.commitment ?? "") ||
+          !validator || candidate.randomnessCommits.has(contribution.contributor) ||
+          !verifyObject(payload, contribution.signature, validator.publicKey, "RANDOMNESS_COMMIT")) {
+        throw new Error("invalid or duplicate randomness commitment");
+      }
+      candidate.randomnessCommits.set(contribution.contributor, contribution.commitment);
+    }
+
+    for (const contribution of block.randomnessReveals) {
+      const candidate = candidateBonds.get(contribution.candidateId);
+      const validator = this.#validators.get(contribution.contributor);
+      const payload = {
+        candidateId: contribution.candidateId, contributor: contribution.contributor,
+        networkId: contribution.networkId, secret: contribution.secret,
+      };
+      if (!candidate || candidate.committee !== null || block.height !== candidate.committedHeight + 2 ||
+          contribution.networkId !== this.#networkId || !validator ||
+          candidate.randomnessReveals.has(contribution.contributor) ||
+          candidate.randomnessCommits.get(contribution.contributor) !== randomnessCommitment({
+            networkId: this.#networkId, candidateId: contribution.candidateId, secret: contribution.secret,
+          }) || !verifyObject(payload, contribution.signature, validator.publicKey, "RANDOMNESS_REVEAL")) {
+        throw new Error("invalid or unmatched randomness reveal");
+      }
+      candidate.randomnessReveals.set(contribution.contributor, contribution.secret);
+    }
+
     for (const [candidateId, candidate] of candidateBonds) {
-      if (candidate.committee === null && candidate.committedHeight < block.height) {
+      if (candidate.committee === null && candidate.randomnessReveals.size >= this.#quorum) {
+        const randomness = combineRandomnessReveals({
+          networkId: this.#networkId, candidateId,
+          commitments: candidate.randomnessCommits,
+          reveals: candidate.randomnessReveals,
+          quorum: this.#quorum,
+        });
         candidateBonds.set(candidateId, {
           ...candidate,
           assignedHeight: block.height,
           committee: selectOperatorCommittee({
             registry: this.#evaluators,
-            randomness: block.hash,
+            randomness,
             context: { candidateId, committedHeight: candidate.committedHeight },
             size: this.#evaluationQuorum,
           }).map(({ address }) => address),
-          randomness: block.hash,
+          randomness,
         });
       }
     }

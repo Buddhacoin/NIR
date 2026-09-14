@@ -36,6 +36,7 @@ import {
 } from "../blockchain/crypto.mjs";
 import { CapabilityMemory } from "../blockchain/memory.mjs";
 import { createSafetyFailureClaim } from "../blockchain/safety-bounty.mjs";
+import { createRandomnessCommit, createRandomnessReveal } from "../blockchain/operators.mjs";
 
 function operatorMembers(wallets, prefix) {
   return wallets.map((wallet, index) => ({
@@ -84,6 +85,26 @@ function assignedEvaluatorWallets(chain, candidateId, evaluators) {
     assert.ok(wallet, "assigned evaluator must exist in the genesis registry");
     return wallet;
   });
+}
+
+function finalizeRandomness(chain, candidateId, validators, timestamp) {
+  const contributors = validators.slice(0, 3).map((wallet, index) => ({
+    secret: fingerprint(`${candidateId}-random-${index}`), wallet,
+  }));
+  const commitBlock = chain.buildBlock({
+    randomnessCommits: contributors.map(({ secret, wallet }) => createRandomnessCommit({
+      wallet, networkId: chain.networkId, candidateId, secret,
+    })),
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  const revealBlock = chain.buildBlock({
+    randomnessReveals: contributors.map(({ secret, wallet }) => createRandomnessReveal({
+      wallet, networkId: chain.networkId, candidateId, secret,
+    })),
+    timestamp: timestamp + 1,
+  });
+  chain.appendBlock(finalizeBlock(revealBlock, quorumFor(revealBlock, validators)));
 }
 
 function progressClaim(chain, evaluators, recipient, label = "proof-a") {
@@ -432,8 +453,7 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
     () => chain.assignedSafetyEvaluators(candidateId),
     /committee is not assigned/,
   );
-  const assignmentBlock = chain.buildBlock({ timestamp: 3 });
-  chain.appendBlock(finalizeBlock(assignmentBlock, quorumFor(assignmentBlock, validators)));
+  finalizeRandomness(chain, candidateId, validators, 3);
   const assignedEvaluators = assignedEvaluatorWallets(chain, candidateId, evaluators);
 
   const unassignedEvaluator = evaluators.find(
@@ -442,7 +462,7 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
   const wrongCommittee = [assignedEvaluators[0], assignedEvaluators[1], unassignedEvaluator];
   const wrongClaim = createSafetyFailureClaim({
     networkId: chain.networkId,
-    epoch: 4,
+    epoch: 5,
     candidateId,
     evidenceHash: fingerprint("wrong-committee-evidence"),
     reporter: reporter.address,
@@ -450,25 +470,11 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
     evaluatorWallets: wrongCommittee,
   });
   assert.throws(
-    () => chain.buildBlock({ safetyClaims: [wrongClaim], timestamp: 4 }),
+    () => chain.buildBlock({ safetyClaims: [wrongClaim], timestamp: 5 }),
     /assigned committee/,
   );
 
   const claim = createSafetyFailureClaim({
-    networkId: chain.networkId,
-    epoch: 4,
-    candidateId,
-    evidenceHash: fingerprint("bonded-critical-evidence"),
-    reporter: reporter.address,
-    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
-    evaluatorWallets: assignedEvaluators,
-  });
-  const safetyBlock = chain.buildBlock({ safetyClaims: [claim], timestamp: 4 });
-  chain.appendBlock(finalizeBlock(safetyBlock, quorumFor(safetyBlock, validators)));
-  assert.equal(chain.balance(reporter.address), 700000000n);
-  assert.equal(chain.burned, 200000001n);
-  assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
-  const replay = createSafetyFailureClaim({
     networkId: chain.networkId,
     epoch: 5,
     candidateId,
@@ -477,8 +483,22 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
     safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
     evaluatorWallets: assignedEvaluators,
   });
+  const safetyBlock = chain.buildBlock({ safetyClaims: [claim], timestamp: 5 });
+  chain.appendBlock(finalizeBlock(safetyBlock, quorumFor(safetyBlock, validators)));
+  assert.equal(chain.balance(reporter.address), 700000000n);
+  assert.equal(chain.burned, 200000001n);
+  assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
+  const replay = createSafetyFailureClaim({
+    networkId: chain.networkId,
+    epoch: 6,
+    candidateId,
+    evidenceHash: fingerprint("bonded-critical-evidence"),
+    reporter: reporter.address,
+    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+    evaluatorWallets: assignedEvaluators,
+  });
   assert.throws(
-    () => chain.buildBlock({ safetyClaims: [replay], timestamp: 5 }),
+    () => chain.buildBlock({ safetyClaims: [replay], timestamp: 6 }),
     /already settled|no locked candidate bond/,
   );
 });
@@ -499,26 +519,25 @@ test("validators cannot approve a forged safety payout amount", () => {
   });
   const bondBlock = chain.buildBlock({ transactions: [bond], timestamp: 2 });
   chain.appendBlock(finalizeBlock(bondBlock, quorumFor(bondBlock, validators)));
-  const assignmentBlock = chain.buildBlock({ timestamp: 3 });
-  chain.appendBlock(finalizeBlock(assignmentBlock, quorumFor(assignmentBlock, validators)));
+  finalizeRandomness(chain, candidateId, validators, 3);
   const assignedEvaluators = assignedEvaluatorWallets(chain, candidateId, evaluators);
   const unapproved = createSafetyFailureClaim({
-    networkId: chain.networkId, epoch: 4, candidateId,
+    networkId: chain.networkId, epoch: 5, candidateId,
     evidenceHash: fingerprint("unapproved-policy-evidence"), reporter: reporter.address,
     safetyPolicyHash: fingerprint("attacker-policy"),
     evaluatorWallets: assignedEvaluators,
   });
   assert.throws(
-    () => chain.buildBlock({ safetyClaims: [unapproved], timestamp: 4 }),
+    () => chain.buildBlock({ safetyClaims: [unapproved], timestamp: 5 }),
     /unapproved safety policy/,
   );
   const claim = createSafetyFailureClaim({
-    networkId: chain.networkId, epoch: 4, candidateId,
+    networkId: chain.networkId, epoch: 5, candidateId,
     evidenceHash: fingerprint("forged-payout-evidence"), reporter: reporter.address,
     safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
     evaluatorWallets: assignedEvaluators,
   });
-  const forged = chain.buildBlock({ safetyClaims: [claim], timestamp: 4 });
+  const forged = chain.buildBlock({ safetyClaims: [claim], timestamp: 5 });
   forged.safetySettlements[0].settlement.reporterReward.amount = "1000000000";
   assert.throws(
     () => chain.appendBlock(finalizeBlock(forged, quorumFor(forged, validators))),
