@@ -83,6 +83,10 @@ the block proposer, and a sender may offer more for priority. Dynamic congestion
 pricing, fee sponsorship for ordinary users, and whether part of a future base
 fee is burned remain consensus decisions.
 
+Wallets must present the fee both as NIR and as a percentage of the transfer.
+The consensus fee itself is resource-based rather than value-based: moving a
+large balance does not consume proportionally more network capacity.
+
 ## Run the prototype
 
 Requires Python 3.11+ and has no third-party dependencies.
@@ -133,6 +137,23 @@ Node.js 26+ is required for native ML-DSA-65 signatures.
 npm run test:chain
 npm run demo:chain
 ```
+
+## Offline vault prototype
+
+Run these commands only on a trusted offline machine. The destination directory
+must not already exist. Passwords are read without echo and are never accepted
+as command-line arguments or environment variables.
+
+```bash
+npm run vault:create -- /absolute/path/to/new-founder-vault
+npm run vault:verify -- /absolute/path/to/new-founder-vault
+```
+
+Creation produces three separately encrypted guardian files and one public-data
+recovery manifest for a two-of-three NIR address. Store the three files and
+their distinct passwords in separate physical locations. Do not commit them to
+Git, cloud-sync the complete set, or use this unaudited prototype for assets of
+real value.
 
 ## Non-negotiable design constraints
 

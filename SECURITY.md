@@ -59,6 +59,8 @@ or an exploit against a live third-party system in a public issue.
    hardware-key support, secure password-entry application, memory locking, or
    secure erasure. The encrypted vault and recovery-manifest primitives have
    not received an independent cryptographic audit.
+   The terminal tool suppresses echo and refuses passwords from arguments, but
+   the JavaScript runtime can still retain secret material in process memory.
 2. Ledger state is not persisted transactionally and cannot recover from disk
    corruption or an interrupted write.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,

@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { createMultisigRecoveryManifest, decryptWallet, encryptWallet } from "../blockchain/vault.mjs";
+import { createVaultSet, verifyVaultSet } from "../blockchain/vault-files.mjs";
 
 test("an encrypted vault restores the exact post-quantum wallet", () => {
   const wallet = generateWallet();
@@ -29,4 +33,32 @@ test("a recovery manifest identifies three separate backups without private keys
   assert.equal(manifest.threshold, 2);
   assert.equal(JSON.stringify(manifest).includes("ciphertext"), false);
   assert.equal(JSON.stringify(manifest).includes("privateKey"), false);
+});
+
+test("offline vault set creation writes restricted files and verifies recovery", () => {
+  const parent = mkdtempSync(join(tmpdir(), "nir-vault-test-"));
+  const directory = join(parent, "founder-vault");
+  const passwords = [
+    "guardian-one-password-long",
+    "guardian-two-password-long",
+    "guardian-three-password-long",
+  ];
+  try {
+    const manifest = createVaultSet({ directory, passwords });
+    assert.equal(statSync(directory).mode & 0o777, 0o700);
+    for (const { file } of manifest.files) {
+      assert.equal(statSync(join(directory, file)).mode & 0o777, 0o600);
+    }
+    assert.equal(statSync(join(directory, "recovery-manifest.json")).mode & 0o777, 0o600);
+    assert.deepEqual(verifyVaultSet({ directory, passwords }), {
+      address: manifest.address,
+      threshold: 2,
+      verified: true,
+    });
+    const publicManifest = readFileSync(join(directory, "recovery-manifest.json"), "utf8");
+    assert.equal(publicManifest.includes("ciphertext"), false);
+    assert.throws(() => createVaultSet({ directory, passwords }));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
 });

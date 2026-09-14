@@ -89,3 +89,8 @@ network, load tests must determine whether the floor should adjust gradually
 with block demand and how users without NIR can use sponsored transactions.
 Burning or routing a future base component to a security pool is a
 monetary-policy decision and is not implemented.
+
+Wallet interfaces must also display the exact fee as a percentage of the amount
+and warn when it exceeds a user-selected ceiling. Percentage is a presentation
+and consumer-protection measure, not the consensus formula: network cost follows
+transaction bytes and congestion rather than the monetary value transferred.

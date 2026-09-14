@@ -822,3 +822,14 @@ export function formatNir(atomic) {
   const fraction = (atomic % ATOMIC_UNITS).toString().padStart(8, "0");
   return `${whole}.${fraction} NIR`;
 }
+
+export function formatFeePercent(amount, fee) {
+  const atomicAmount = parseAtomic(String(amount), "amount");
+  const atomicFee = parseAtomic(String(fee), "fee");
+  if (atomicAmount === 0n) throw new Error("amount must be positive");
+  // Six decimal places of percentage, rounded up so the UI never understates cost.
+  const scaled = (atomicFee * 100_000_000n + atomicAmount - 1n) / atomicAmount;
+  const whole = scaled / 1_000_000n;
+  const fraction = (scaled % 1_000_000n).toString().padStart(6, "0");
+  return `${whole}.${fraction}%`;
+}

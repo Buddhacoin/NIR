@@ -10,6 +10,7 @@ import {
   createTransfer,
   createMultisigTransfer,
   finalizeBlock,
+  formatFeePercent,
   formatNir,
   multisigAddress,
 } from "../blockchain/chain.mjs";
@@ -342,6 +343,11 @@ test("a transfer below the consensus fee floor is rejected", () => {
     /below the protocol minimum/,
   );
   assert.equal(chain.balance(bob.address), 0n);
+});
+
+test("wallet fee display reports an exact conservative percentage", () => {
+  assert.equal(formatFeePercent("100000000", "1000"), "0.001000%");
+  assert.equal(formatFeePercent("300000000", "1000"), "0.000334%");
 });
 
 test("a two-of-three post-quantum vault can spend only with its threshold", () => {
