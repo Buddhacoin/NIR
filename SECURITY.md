@@ -57,9 +57,11 @@ or an exploit against a live third-party system in a public issue.
    pinned, replay-resistant ML-DSA identities, and lagging replicas can replay
    missing finalized blocks before voting. Validator transaction ingress now
    uses authenticated gossip and durable local pools that a restarted
-   coordinator can recover. It still has a single block-assembly coordinator,
+   coordinator can recover. The elected validator can now assemble a normal
+   block, gather peer votes, and broadcast finality without the coordinator.
+   Leader-timeout orchestration still depends on the legacy coordinator, with
    no transport confidentiality or governed coordinator-key rotation, lock
-   discovery between competing coordinators, fork recovery, snapshot sync, peer
+   discovery between competing producers, fork recovery, snapshot sync, peer
    discovery, or partition-tested liveness. Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable
    execution-value hash.

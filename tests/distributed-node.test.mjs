@@ -231,3 +231,47 @@ test("one validator ingress gossips and persists a transaction for coordinator r
     rmSync(temporary, { recursive: true, force: true });
   }
 });
+
+test("the elected validator assembles and finalizes a block without the coordinator", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-producer-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  let urls = [];
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    peerUrls: () => urls,
+  }));
+  try {
+    urls = await Promise.all(servers.map((server) => listen(server)));
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    await coordinator.faucet(alice.address);
+    const transaction = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    });
+    const ingress = await fetch(`${urls[0]}/v1/transactions`, {
+      body: JSON.stringify(transaction), headers: { "content-type": "application/json" }, method: "POST",
+    });
+    assert.equal(ingress.status, 202);
+    const proposer = replicas[0].expectedProposer();
+    const proposerIndex = replicas.findIndex(({ address }) => address === proposer);
+    const nonProposerIndex = (proposerIndex + 1) % replicas.length;
+    const rejected = await fetch(`${urls[nonProposerIndex]}/v1/blocks/produce`, { method: "POST" });
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error, /not the proposer/);
+
+    const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
+    assert.equal(produced.status, 202);
+    const result = await produced.json();
+    assert.equal(result.height, 2);
+    assert.equal(result.votes, 4);
+    assert.equal(result.committedPeers, 4);
+    assert.deepEqual(replicas.map(({ height }) => height), [2, 2, 2, 2]);
+    assert.deepEqual(replicas.map(({ mempoolSize }) => mempoolSize), [0, 0, 0, 0]);
+    assert.equal(replicas[0].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});

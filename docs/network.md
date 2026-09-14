@@ -87,6 +87,21 @@ validator pools, deterministically orders recovered transactions, executes them
 again, and ignores invalid data supplied by a Byzantine peer. Finalized
 transactions are removed from every validator's durable pool.
 
+## Validator-led block production
+
+The round-zero proposer can assemble a block directly from its durable pool:
+
+```bash
+curl -X POST http://127.0.0.1:8791/v1/blocks/produce
+```
+
+Use the URL of the validator reported as the expected proposer. A non-proposer
+refuses the request. The proposer independently builds the deterministic block,
+votes for it, sends a validator-authenticated proposal to its peers, collects a
+`2N/3 + 1` certificate including its own vote, commits locally, and broadcasts
+the finalized block. Peers independently execute both the proposal and final
+certificate. The coordinator is not involved in this normal block path.
+
 ## Faults covered by the integration test
 
 - validator keys never enter coordinator memory;
@@ -103,17 +118,21 @@ transactions are removed from every validator's durable pool.
   timeout, while an existing vote remains locked to the same block value.
 - one-validator transaction ingress reaches the other replicas, survives a
   replica and coordinator restart, and is independently revalidated before use.
+- the elected validator assembles, certifies, and broadcasts a normal block
+  while a non-proposer is unable to initiate one.
 
 ## Remaining production boundary
 
 This is a multi-process localhost consensus prototype, not production BFT.
-Application-layer control messages now have pinned mutual signatures, but the
-coordinator is still the only block-assembly service. Transport is
+Application-layer control messages now have pinned mutual signatures, and
+round-zero blocks can be assembled by the elected validator. Transport is
 not confidential, coordinator-key rotation is not governed on-chain, peer URLs
 are static, and catch-up has no snapshot or fork-choice protocol. Validator
-mempools are disk-backed and gossiped over a static full mesh. Repeated rounds preserve the same execution value and
-rotate the proposer through quorum timeout certificates, but lock discovery
-between competing coordinators is not implemented. There is no decentralized
-block assembly, fork recovery, peer discovery, production-grade adaptive
-denial-of-service defense, or network-partition simulation yet. Test keys are
-plaintext and have no monetary value.
+mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
+preserve the same execution value and rotate the proposer through quorum timeout
+certificates, but lock discovery
+between competing producers is not implemented. Leader timeout orchestration is
+still implemented by the legacy coordinator rather than validator P2P messages.
+There is no validator-to-validator catch-up, fork recovery, peer discovery,
+production-grade adaptive denial-of-service defense, or network-partition
+simulation yet. Test keys are plaintext and have no monetary value.

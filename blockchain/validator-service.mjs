@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 
+import { transactionId } from "./chain.mjs";
+
 function send(response, status, value) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
@@ -38,6 +40,30 @@ async function gossipRequest(validator, index, url, path, payload) {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? `gossip peer returned ${response.status}`);
   return validator.verifyValidatorResponse(index, body.auth, auth.nonce, body.result);
+}
+
+async function produceValidatorBlock(validator, urls) {
+  const proposal = validator.buildProposal();
+  if (proposal.proposer !== validator.address) {
+    throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
+  }
+  const ownVote = validator.vote(proposal);
+  const responses = await Promise.allSettled(urls.map((peer, index) =>
+    gossipRequest(validator, index, peer, "/v1/p2p/proposals", proposal)));
+  const votes = [ownVote, ...responses
+    .filter(({ status, value }) => status === "fulfilled" && value)
+    .map(({ value }) => value.vote)];
+  const block = validator.finalizeProposal(proposal, votes);
+  const broadcasts = await Promise.allSettled(urls.map((peer, index) =>
+    gossipRequest(validator, index, peer, "/v1/p2p/blocks", block)));
+  return {
+    blockHash: block.hash,
+    committedPeers: 1 + broadcasts.filter(({ status, value }) => status === "fulfilled" && value).length,
+    height: block.height,
+    round: block.round,
+    transactions: block.transactions.map(transactionId),
+    votes: new Set(block.certificate.map(({ validator: address }) => address)).size,
+  };
 }
 
 export function createValidatorHttpServer(validator, options = {}) {
@@ -90,6 +116,24 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.submitTransaction(payload);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/proposals") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        if (auth.signer !== payload.proposer) throw new Error("proposal was not sent by its proposer");
+        const result = { vote: validator.vote(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/blocks") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = validator.commit(payload);
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/blocks/produce") {
+        consumeIngress(request.socket.remoteAddress ?? "unknown");
+        const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        return send(response, 202, await produceValidatorBlock(validator, urls));
       }
       if (request.method === "POST" && url.pathname === "/v1/mempool/transactions") {
         const { auth, payload } = await readBody(request);

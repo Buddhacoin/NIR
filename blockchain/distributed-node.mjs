@@ -223,6 +223,12 @@ export class ValidatorReplica {
   get tipHash() { return this.#chain.tipHash; }
   get mempoolSize() { return this.#mempool.size; }
   get peerUrls() { return [...this.#peerUrls]; }
+  get validatorCount() { return this.#validators.length; }
+
+  account(address) {
+    if (!ADDRESS.test(address)) throw new Error("address is invalid");
+    return { address, atomicBalance: this.#chain.balance(address).toString() };
+  }
 
   authorize(auth, method, path, body) {
     return verifyPeerRequest({
@@ -258,6 +264,28 @@ export class ValidatorReplica {
   peerAddress(index) { return this.#validators[index]?.address; }
 
   pendingTransactions() { return this.#mempool.values(); }
+
+  expectedProposer(height = this.height + 1, round = 0) {
+    return this.#chain.expectedProposer(height, round);
+  }
+
+  buildProposal() {
+    const transactions = this.#mempool.take();
+    if (transactions.length === 0) throw new Error("validator mempool is empty");
+    const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
+    return this.#chain.buildBlock({ transactions, timestamp });
+  }
+
+  finalizeProposal(proposal, votes) {
+    const uniqueVotes = new Map((votes ?? []).map((vote) => [vote.validator, vote]));
+    const quorum = Math.floor((this.#validators.length * 2) / 3) + 1;
+    if (uniqueVotes.size < quorum || !uniqueVotes.has(proposal.proposer)) {
+      throw new Error(`validator finality quorum not reached (${uniqueVotes.size}/${quorum})`);
+    }
+    const block = { ...proposal, hash: blockHash(proposal), certificate: [...uniqueVotes.values()] };
+    this.commit(block);
+    return block;
+  }
 
   submitTransaction(transaction) {
     const id = transactionId(transaction);
