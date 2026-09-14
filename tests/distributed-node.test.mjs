@@ -14,13 +14,17 @@ import {
 } from "../blockchain/distributed-node.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 
-async function listen(server) {
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+async function listen(server, port = 0) {
+  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
   return `http://127.0.0.1:${server.address().port}`;
 }
 
 async function close(server) {
-  if (server.listening) await new Promise((resolve) => server.close(resolve));
+  if (server.listening) {
+    const closed = new Promise((resolve) => server.close(resolve));
+    server.closeAllConnections?.();
+    await closed;
+  }
 }
 
 test("independent HTTP validator replicas finalize with one peer offline", async () => {
@@ -29,8 +33,15 @@ test("independent HTTP validator replicas finalize with one peer offline", async
   const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
   const servers = replicas.map(createValidatorHttpServer);
   try {
-    const urls = await Promise.all(servers.map(listen));
+    const urls = await Promise.all(servers.map((server) => listen(server)));
     let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const unsigned = await fetch(`${urls[0]}/v1/blocks`, {
+      body: JSON.stringify({ payload: {} }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(unsigned.status, 400);
+    assert.match((await unsigned.json()).error, /authentication is required/);
     const alice = generateWallet();
     const bob = generateWallet();
     const funded = await coordinator.faucet(alice.address);
@@ -69,9 +80,24 @@ test("independent HTTP validator replicas finalize with one peer offline", async
     assert.equal(coordinator.account(bob.address).atomicBalance, (2n * ATOMIC_UNITS).toString());
     assert.equal(coordinator.mempoolSize, 0);
 
+    replicas[offlineIndex] = new ValidatorReplica(layout.validatorDirectories[offlineIndex]);
+    servers[offlineIndex] = createValidatorHttpServer(replicas[offlineIndex]);
+    urls[offlineIndex] = await listen(servers[offlineIndex]);
     coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
-    assert.equal(coordinator.height, 2);
-    assert.equal(coordinator.account(bob.address).atomicBalance, (2n * ATOMIC_UNITS).toString());
+    const secondTransfer = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 1, recipient: bob.address, wallet: alice,
+    });
+    coordinator.submitTransaction(secondTransfer);
+    const caughtUp = await coordinator.produceBlock();
+    assert.equal(caughtUp.synchronizedPeers, 1);
+    assert.equal(caughtUp.votes, 4);
+    assert.equal(replicas[offlineIndex].height, 3);
+    assert.equal(coordinator.account(bob.address).atomicBalance, (3n * ATOMIC_UNITS).toString());
+
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    assert.equal(coordinator.height, 3);
+    assert.equal(coordinator.account(bob.address).atomicBalance, (3n * ATOMIC_UNITS).toString());
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

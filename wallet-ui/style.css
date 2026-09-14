@@ -16,28 +16,28 @@ body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 50% -
 button { color: inherit; font: inherit; cursor: pointer; touch-action: manipulation; transition: transform .16s ease, background .16s ease, border-color .16s ease, box-shadow .16s ease; }
 button:active { transform: scale(.96); }
 button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-.shell { width: min(470px, 100%); min-height: 100vh; margin: auto; padding: 24px 20px 120px; }
+.shell { width: min(470px, 100%); min-height: 100vh; margin: auto; padding: 20px 20px 116px; }
 header, .title { display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; gap: 10px; align-items: center; font-size: 19px; letter-spacing: 3px; }
-.brand-logo { display: grid; place-items: center; width: 38px; height: 38px; border: 1.5px solid var(--text); border-radius: 50%; background: var(--surface); color: var(--text); font-size: 17px; font-weight: 800; letter-spacing: 0; }
+.brand-logo { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; }
 .header-actions { display: flex; align-items: center; gap: 7px; }
 .header-actions button, .title button { min-height: 40px; border: 1px solid var(--border); background: #ffffffd9; color: var(--text); border-radius: 20px; padding: 8px 13px; box-shadow: 0 3px 12px #0000000a; backdrop-filter: blur(16px); }
 .network.connected { color: #157542; }
 .network.offline { color: var(--muted); }
 #theme { width: 40px; padding: 0; font-size: 16px; }
-.balance { padding: 64px 0 38px; text-align: center; }
+.balance { padding: 30px 0 26px; text-align: center; }
 .balance p, .balance span, .empty p { color: var(--muted); }
-.balance h1 { margin: 10px 0; font-size: 44px; letter-spacing: -2.2px; line-height: 1; }
+.balance h1 { margin: 9px 0; font-size: 40px; font-weight: 480; letter-spacing: -1.7px; line-height: 1; }
 .balance small { color: var(--muted); font-size: 15px; letter-spacing: 0; }
 .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; }
 .actions button { padding: 15px 6px 14px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); box-shadow: 0 8px 24px #0000000a; font-size: 14px; font-weight: 650; }
 .actions button:hover { border-color: #d4d4d6; box-shadow: 0 12px 28px #00000010; }
 .actions i { display: grid; place-items: center; width: 42px; height: 42px; margin: 0 auto 9px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-soft); color: var(--text); font-style: normal; }
 .actions svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.card { min-height: 248px; margin-top: 22px; padding: 20px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: 0 14px 40px #0000000a; }
+.card { min-height: 218px; margin-top: 18px; padding: 20px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: 0 14px 40px #0000000a; }
 h2 { font-size: 18px; }
 .title button span { font-size: 18px; vertical-align: -1px; }
-.empty { padding: 38px 10px 24px; text-align: center; }
+.empty { padding: 24px 10px 12px; text-align: center; }
 .empty div { display: grid; place-items: center; width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 15px; background: var(--surface-soft); color: var(--muted); }
 .empty svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .empty p { font-size: 14px; line-height: 1.5; }

@@ -9,3 +9,4 @@ DEVNET-KEYS.json
 .nir-network/
 TREASURY-DEV-KEY.json
 VALIDATOR-KEY.json
+COORDINATOR-KEY.json

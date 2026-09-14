@@ -36,7 +36,9 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo">N</);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=15"/);
+  assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
+  assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
 });
 
 test("wallet reports the local node connection state", () => {

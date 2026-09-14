@@ -24,6 +24,12 @@ import {
   SAFETY_POLICY_V1_COMMITMENT,
 } from "./constants.mjs";
 import { canonicalJson, generateWallet, publicWallet } from "./crypto.mjs";
+import {
+  createPeerRequest,
+  createPeerResponse,
+  verifyPeerRequest,
+  verifyPeerResponse,
+} from "./peer-auth.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -91,6 +97,7 @@ export function initializeDistributedDevnet(
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
+  const coordinator = generateWallet();
   const genesis = {
     beaconAuthorities: members(beacons, "beacon"),
     capabilityReferences: [referenceCapability()],
@@ -103,6 +110,7 @@ export function initializeDistributedDevnet(
   };
   writeExclusive(join(coordinatorDirectory, "genesis.json"), genesis, 0o644);
   writeExclusive(join(coordinatorDirectory, "TREASURY-DEV-KEY.json"), treasury);
+  writeExclusive(join(coordinatorDirectory, "COORDINATOR-KEY.json"), coordinator);
 
   const validatorDirectories = validators.map((wallet, index) => {
     const validatorDirectory = join(root, "validators", `validator-${index}`);
@@ -110,6 +118,7 @@ export function initializeDistributedDevnet(
     mkdirSync(join(validatorDirectory, "votes"), { mode: 0o700 });
     writeExclusive(join(validatorDirectory, "genesis.json"), genesis, 0o644);
     writeExclusive(join(validatorDirectory, "VALIDATOR-KEY.json"), wallet);
+    writeExclusive(join(validatorDirectory, "AUTHORIZED-COORDINATOR.json"), publicWallet(coordinator), 0o644);
     return validatorDirectory;
   });
   const validatorUrls = validators.map((_, index) =>
@@ -169,11 +178,14 @@ export class ValidatorReplica {
   #chain;
   #directory;
   #wallet;
+  #coordinator;
+  #seenNonces = new Map();
 
   constructor(directory) {
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
     this.#wallet = readJson(join(this.#directory, "VALIDATOR-KEY.json"));
+    this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
     const member = readJson(join(this.#directory, "genesis.json")).validators
       .find(({ address }) => address === this.#wallet.address);
     if (!member || member.publicKey !== this.#wallet.publicKey) {
@@ -185,6 +197,17 @@ export class ValidatorReplica {
   get height() { return this.#chain.height; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
+
+  authorize(auth, method, path, body) {
+    return verifyPeerRequest({
+      auth, body, method, networkId: this.networkId, path,
+      seenNonces: this.#seenNonces, trustedPeer: this.#coordinator,
+    });
+  }
+
+  authenticateResponse(requestNonce, result) {
+    return createPeerResponse({ networkId: this.networkId, requestNonce, result, wallet: this.#wallet });
+  }
 
   vote(block) {
     if (block.networkId !== this.networkId || block.height !== this.height + 1 ||
@@ -222,16 +245,26 @@ export class ValidatorReplica {
   }
 }
 
-async function peerRequest(url, path, value) {
+async function peerStatus(url) {
+  const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3_000) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? `validator returned ${response.status}`);
+  return body;
+}
+
+async function peerRequest(url, path, value, { networkId, peer, wallet }) {
+  const auth = createPeerRequest({ body: value, networkId, path, wallet });
   const response = await fetch(`${url}${path}`, {
-    body: JSON.stringify(value),
+    body: JSON.stringify({ auth, payload: value }),
     headers: { "content-type": "application/json" },
     method: "POST",
     signal: AbortSignal.timeout(3_000),
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? `validator returned ${response.status}`);
-  return body;
+  return verifyPeerResponse({
+    auth: body.auth, networkId, requestNonce: auth.nonce, result: body.result, trustedPeer: peer,
+  });
 }
 
 export class DistributedCoordinator {
@@ -240,15 +273,19 @@ export class DistributedCoordinator {
   #mempool = new TransactionMempool();
   #peers;
   #treasury;
+  #wallet;
+  #validators;
 
   constructor(directory, validatorUrls) {
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
     this.#treasury = readJson(join(this.#directory, "TREASURY-DEV-KEY.json"));
+    this.#wallet = readJson(join(this.#directory, "COORDINATOR-KEY.json"));
     if (!Array.isArray(validatorUrls) || validatorUrls.length < 4) {
       throw new Error("four validator peer URLs are required");
     }
     this.#peers = [...validatorUrls];
+    this.#validators = readJson(join(this.#directory, "genesis.json")).validators;
   }
 
   get consensusMode() { return "remote-validator-quorum"; }
@@ -285,12 +322,40 @@ export class DistributedCoordinator {
     return { status: "queued", transactionId: id };
   }
 
+  async #request(index, path, value) {
+    return peerRequest(this.#peers[index], path, value, {
+      networkId: this.networkId, peer: this.#validators[index], wallet: this.#wallet,
+    });
+  }
+
+  async #synchronizePeer(index) {
+    const status = await peerStatus(this.#peers[index]);
+    const expected = this.#validators[index];
+    if (status.address !== expected.address || status.networkId !== this.networkId) {
+      throw new Error("validator health identity does not match the configured peer");
+    }
+    if (!Number.isSafeInteger(status.height) || status.height < 0 || status.height > this.height) {
+      throw new Error("validator height is incompatible with coordinator state");
+    }
+    if (status.height === this.height) {
+      if (status.tipHash !== this.tipHash) throw new Error("validator tip conflicts with coordinator state");
+      return 0;
+    }
+    const missing = this.#chain.blocks().filter(({ height }) => height > status.height);
+    for (const block of missing) await this.#request(index, "/v1/blocks", block);
+    return missing.length;
+  }
+
   async produceBlock() {
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("mempool is empty");
     const proposal = this.#chain.buildBlock({ transactions, timestamp: Date.now() });
-    const results = await Promise.allSettled(this.#peers.map((url) =>
-      peerRequest(url, "/v1/proposals", proposal)));
+    const syncResults = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#synchronizePeer(index)));
+    const available = syncResults.map((result, index) => result.status === "fulfilled" ? index : -1)
+      .filter((index) => index >= 0);
+    const results = await Promise.allSettled(available.map((index) =>
+      this.#request(index, "/v1/proposals", proposal)));
     const votes = results.filter(({ status }) => status === "fulfilled").map(({ value }) => value.vote);
     const uniqueVotes = new Map(votes.map((vote) => [vote.validator, vote]));
     const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
@@ -301,14 +366,15 @@ export class DistributedCoordinator {
     this.#chain.appendBlock(block);
     persistBlock(this.#directory, block);
     this.#mempool.remove(transactions);
-    const commits = await Promise.allSettled(this.#peers.map((url) =>
-      peerRequest(url, "/v1/blocks", block)));
+    const commits = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#request(index, "/v1/blocks", block)));
     return {
       blockHash: block.hash,
       committedPeers: commits.filter(({ status }) => status === "fulfilled").length,
       height: block.height,
       transactions: transactions.map(transactionId),
       votes: uniqueVotes.size,
+      synchronizedPeers: syncResults.filter(({ status, value }) => status === "fulfilled" && value > 0).length,
     };
   }
 

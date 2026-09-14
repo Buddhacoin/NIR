@@ -13,6 +13,8 @@ npm run network:init-dev -- .nir-network
 The command creates a coordinator directory and four validator directories.
 Every validator receives the same public genesis but only its own private key.
 The coordinator receives no validator private key.
+It receives a separate operational ML-DSA-65 identity. Validators pin only its
+public identity and reject unsigned, altered, stale, or replayed control calls.
 
 ## Start four validators
 
@@ -43,6 +45,13 @@ isolated chain copy, and signs only if the result is valid. The coordinator
 requires `2N/3 + 1` unique votes including the expected proposer, appends the
 finalized block, and broadcasts it to validator replicas.
 
+Every proposal and finalized-block request is signed by the coordinator and
+bound to its network, HTTP route, body hash, timestamp, and one-time nonce.
+Every validator response is independently signed and checked against the public
+validator identity in genesis. Before asking for a new vote, the coordinator
+checks each replica's height and streams any missing quorum-finalized blocks in
+order. A conflicting tip or a peer claiming a future height is rejected.
+
 The development faucet both queues and finalizes its transfer so the wallet can
 still use it as one action.
 
@@ -54,12 +63,18 @@ still use it as one action.
 - a validator stores its vote before returning it and refuses a conflicting
   block at the same height, including after restart;
 - coordinator balances and blocks survive restart and verified replay.
+- a validator that misses a finalized block catches up after restart before it
+  votes at the next height;
+- request mutation, stale requests, nonce replay, and forged peer responses are
+  rejected cryptographically.
 
 ## Remaining production boundary
 
 This is a multi-process localhost consensus prototype, not production BFT.
-Peer connections are not mutually authenticated, the coordinator is still the
-only proposal and transaction ingress, the mempool is not persisted or gossiped,
-and an offline validator has no catch-up protocol. There are no locked consensus
-rounds, timeouts, view changes, fork recovery, peer discovery, or network
-partition simulation yet. Test keys are plaintext and have no monetary value.
+Application-layer control messages now have pinned mutual signatures, but the
+coordinator is still the only proposal and transaction ingress. Transport is
+not confidential, coordinator-key rotation is not governed on-chain, peer URLs
+are static, and catch-up has no snapshot or fork-choice protocol. The mempool is
+not persisted or gossiped. There are no locked consensus rounds, timeouts, view
+changes, fork recovery, peer discovery, or network-partition simulation yet.
+Test keys are plaintext and have no monetary value.

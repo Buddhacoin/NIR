@@ -40,10 +40,16 @@ export function createValidatorHttpServer(validator) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/proposals") {
-        return send(response, 200, { vote: validator.vote(await readBody(request)) });
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = { vote: validator.vote(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/blocks") {
-        return send(response, 200, validator.commit(await readBody(request)));
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = validator.commit(payload);
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       return send(response, 404, { error: "not found" });
     } catch (error) {
