@@ -75,7 +75,9 @@ or an exploit against a live third-party system in a public issue.
    is still no transport confidentiality or governed coordinator-key rotation,
    fork recovery, checkpoint/snapshot sync, or peer discovery. Deterministic
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
-   but randomized adversarial schedules and a formal safety/liveness proof remain.
+   and 512 seeded schedules exercise delayed, dropped, reordered, and replayed
+   votes from an equivocating proposer. Broader stateful fuzzing and a formal
+   safety/liveness proof remain.
    Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable
    execution-value hash.

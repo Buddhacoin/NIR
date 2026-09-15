@@ -158,6 +158,13 @@ it downloads the missing block, verifies the certificate and state transition,
 and converges to the same tip. These deterministic schedules test the quorum
 invariants but are not a formal proof over every asynchronous message schedule.
 
+A second deterministic fault test explores 512 seeded schedules in which a
+Byzantine elected proposer signs two different values while honest vote messages
+are delayed, reordered, dropped, and replayed. Honest validators persist their
+first lock, duplicate deliveries never add voting weight, and every candidate
+certificate is checked by a fresh chain instance. No explored schedule can
+finalize both values. The seed makes every failure exactly reproducible.
+
 ## Faults covered by the integration test
 
 - validator keys never enter coordinator memory;
@@ -187,6 +194,8 @@ invariants but are not a formal proof over every asynchronous message schedule.
 - a `2+2` partition produces no block on either side and converges after healing;
 - a `3+1` partition permits one majority block while the isolated validator
   cannot fork and later catches up from the verified chain.
+- 512 reproducible adversarial schedules cannot turn delayed, lost, reordered,
+  or replayed votes into two conflicting finality certificates.
 
 ## Remaining production boundary
 
