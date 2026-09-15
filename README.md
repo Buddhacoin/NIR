@@ -3,14 +3,135 @@
 NIR is a monetary protocol in which new currency is issued for
 **verified progress in machine intelligence**, not for raw computation alone.
 
-This repository is the first executable protocol sketch. It is deliberately
-not a tradable token, investment product, wallet, or mainnet.
+This repository contains the executable protocol, local network, command-line
+tools, and wallet preview. It does not represent a launched public mainnet or a
+tradable asset.
 
 NIR is an independent layer-one blockchain, not a token issued by another
 network. It requires a native wallet for its addresses, ML-DSA-65 signatures,
 network rules, encrypted vaults, and multisignature recovery. The repository
 already contains the cryptographic vault core; a reviewed desktop/mobile wallet
 and hardware-key integration are still future work.
+
+## Why NIR exists
+
+Ordinary AI markets pay for usage whether an answer is correct, novel, or safe.
+NIR is designed to make independently verified intelligence progress a scarce,
+publicly auditable economic event. A successful claim must outperform a frozen
+baseline on fresh hidden tasks, reproduce across independent evaluators, add a
+new capability to the world memory, and clear an approved safety policy before
+the protocol can issue a reward.
+
+The intended advantages are:
+
+- **useful issuance:** new NIR is tied to verified capability or efficiency
+  progress instead of raw resource consumption;
+- **hard scarcity:** consensus enforces a maximum of 21,000,000 NIR;
+- **independent base layer:** NIR does not depend on Ethereum, Solana, TON, a
+  bridge custodian, or another chain's fee market;
+- **post-quantum accounts:** transfers, vaults, validator votes, evaluator
+  receipts, and network authentication use ML-DSA-65 signatures;
+- **safety as an economic role:** safe progress may earn a reward, while a
+  reproducible critical failure can earn a bounded bounty from the candidate's
+  bond; an unsafe model cannot mint an intelligence reward;
+- **access beyond AI laboratories:** people may contribute fresh challenges,
+  independent reproduction, safety research, fraud evidence, or network service;
+- **fail-closed finality:** without a two-thirds-plus-one quorum, the network
+  stops rather than accepting conflicting histories;
+- **one auditable history:** every node can replay monetary, mining, safety,
+  randomness, slashing, and validator-rotation rules from genesis.
+
+## What is implemented now
+
+| Capability | Current repository status |
+|---|---|
+| Independent NIR ledger and 8-decimal balances | Implemented and tested |
+| 21 million cap and ten-year treasury vesting | Enforced by consensus |
+| Minimum transfer fee and wallet fee quote | Enforced by consensus |
+| ML-DSA-65 wallets and signed transfers | Implemented |
+| Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
+| Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
+| Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
+| Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
+| P2P finality, leader replacement, durable pacemaker, lock recovery, and catch-up | Implemented for the local devnet |
+| Partition and adversarial message testing | `2+2`, `3+1`, plus 512 seeded schedules |
+| Installable browser/PWA wallet interface | Interactive local testnet preview |
+| Public mainnet or exchange-listed NIR | Not launched |
+
+Nothing in the local faucet, demo mining flow, or wallet preview has monetary
+value. Mainnet requires independent operators, external cryptographic and
+consensus audits, production networking, remotely attested evaluator execution,
+hardware-backed energy evidence, and a public launch process.
+
+## Who uses NIR and how
+
+| Participant | Contribution | Verifiable benefit |
+|---|---|---|
+| AI developer or laboratory | Submit a committed model or method against a frozen baseline | Independent progress and safety evidence; eligible NIR reward |
+| Compute operator | Reproduce an evaluation in the declared environment | Reproduction payment and operator reputation |
+| Challenge author | Supply fresh, objectively gradable hidden tasks | Challenge reward when the task is accepted and useful |
+| Safety investigator | Prove a new reproducible critical failure | Bounded bounty from bonded funds |
+| Fraud challenger | Prove forged evidence, duplicated lineage, or equivocation | Slashed-funds reward |
+| Validator | Bond funds, verify state transitions, relay and finalize blocks | Transaction fees and protocol-defined validator incentives |
+| Everyday user | Hold, receive, and send NIR with the native wallet | Direct use of the independent currency; no AI training required |
+
+Organizations gain more than a mining payout: a successful NIR proof can become
+portable evidence that a system improved, remained safe under a declared policy,
+and was reproduced without publishing private model weights. That evidence can
+support licensing, procurement, reputation, and access to customers that require
+independent verification.
+
+## Planned platform capabilities
+
+NIR is designed to grow without turning its monetary core into an unrestricted
+application runtime at genesis:
+
+- **native user-created assets:** a constrained Pay-lane standard for creating,
+  minting within a declared cap, transferring, and burning other currencies;
+  child assets remain separate from NIR, pay fees in NIR, and receive no mining
+  or governance rights;
+- **sponsored payments:** a service may pay the network fee so a new user can
+  receive and spend funds before acquiring NIR for gas;
+- **state proofs and light clients:** wallets verify balances and finalized
+  headers without trusting one RPC provider;
+- **parallel lanes:** Pay, Proof, and Control operations declare state access so
+  independent work can execute concurrently;
+- **shard-ready messages:** account and proof messages retain deterministic
+  commitments so dynamic split/merge scaling can be considered after the single
+  chain is proven under public load;
+- **selective privacy:** auditable viewing permissions are a research target,
+  contingent on post-quantum security and legal review.
+
+Dynamic sharding and per-account asset storage are lessons worth studying from
+TON; explicit account access and standard token mints are useful lessons from
+Solana. They are roadmap inputs, not claims that NIR already matches those mature
+networks. The engineering comparison and adoption order are in
+[`docs/top-chains-study.md`](docs/top-chains-study.md).
+
+## Start using the local prototype
+
+1. Install Python 3.11+ and Node.js 26+.
+2. Run all consensus and evaluation tests:
+
+   ```bash
+   python3 -m unittest discover -s tests -v
+   npm run test:chain
+   ```
+
+3. Start the persistent valueless node and wallet preview:
+
+   ```bash
+   npm run node:init-dev -- .nir-devnet
+   npm run node:serve -- .nir-devnet
+   # In another terminal:
+   npm run wallet:preview
+   ```
+
+4. For four independent validator processes, follow
+   [`docs/network.md`](docs/network.md).
+5. For contribution roles and the intended mining workflow, read
+   [`docs/mining.md`](docs/mining.md). For wallet and transfer commands, read
+   [`docs/wallet.md`](docs/wallet.md) and [`docs/node.md`](docs/node.md).
 
 ## Core idea
 
@@ -153,6 +274,8 @@ candidate runs are committed.
 - `docs/network.md` — multi-process devnet startup and remaining consensus boundary.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
+- `tests/network-partition.test.mjs` — real HTTP `2+2` and `3+1` partition recovery tests.
+- `tests/adversarial-consensus.test.mjs` — seeded delay, loss, reorder, replay, and equivocation schedules.
 
 ## Run the blockchain core
 
