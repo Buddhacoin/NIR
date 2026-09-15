@@ -7,16 +7,21 @@ const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
 function group(round, count, marker) {
-  return { count, proposal: { marker, round } };
+  return {
+    certified: true,
+    count,
+    prepareCertificate: [{ validator: marker }],
+    proposal: { marker, round },
+  };
 }
 
-test("round zero lock recovery needs an honest-intersection threshold", () => {
+test("one reported prepare certificate is sufficient regardless of round", () => {
   assert.equal(selectHighestCertifiedProposal(new Map([
-    [HASH_A, group(0, 1, "solo")],
-  ]), 4), null);
-  assert.equal(selectHighestCertifiedProposal(new Map([
-    [HASH_A, group(0, 2, "supported")],
-  ]), 4).marker, "supported");
+    [HASH_A, group(0, 1, "prepare-qc")],
+  ]), 4).proposal.marker, "prepare-qc");
+  assert.throws(() => selectHighestCertifiedProposal(new Map([
+    [HASH_A, { ...group(0, 1, "unverified"), certified: false }],
+  ]), 4), /lock group is invalid/);
 });
 
 test("the highest certified round wins over more reports from an older round", () => {
@@ -24,8 +29,8 @@ test("the highest certified round wins over more reports from an older round", (
     [HASH_A, group(0, 3, "old")],
     [HASH_B, group(2, 1, "highest-certificate")],
   ]), 4);
-  assert.equal(selected.marker, "highest-certificate");
-  assert.equal(selected.round, 2);
+  assert.equal(selected.proposal.marker, "highest-certificate");
+  assert.equal(selected.proposal.round, 2);
 });
 
 test("conflicting values at the same highest certified round fail closed", () => {

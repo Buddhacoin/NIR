@@ -6,7 +6,7 @@ key, its own verified chain journal, and a durable vote record.
 
 ## Create the network
 
-The multi-round certificate format uses protocol version 3. Recreate any earlier
+The two-phase finality certificate format uses protocol version 4. Recreate any earlier
 valueless development network instead of attempting to reuse older blocks.
 
 ```bash
@@ -45,8 +45,9 @@ or conflicting transaction is rejected immediately. `POST /v1/blocks/produce`
 creates a proposal. Each validator rebuilds
 the deterministic proposal, independently executes all state transitions on an
 isolated chain copy, and signs only if the result is valid. The coordinator
-requires `2N/3 + 1` unique votes including the expected proposer, appends the
-finalized block, and broadcasts it to validator replicas.
+first requires `2N/3 + 1` unique prepare votes, then asks validators to sign the
+exact prepare-certificate hash. Only a second `2N/3 + 1` commit quorum finalizes
+the block, which is then broadcast to validator replicas.
 
 Every proposal and finalized-block request is signed by the coordinator and
 bound to its network, HTTP route, body hash, timestamp, and one-time nonce.
@@ -59,9 +60,10 @@ If the deterministic proposer is unreachable before anyone votes, the remaining
 validators persistently sign a height- and tip-bound timeout. A `2N/3 + 1`
 timeout certificate advances the block to the next round and selects the next
 validator as proposer. Consensus verifies every certificate inside the block.
-A timeout is bound to the immutable block-value hash. A validator that already
-voted may advance rounds only for that same value and refuses to unlock a
-different one.
+A timeout is bound to the immutable block-value hash. An isolated prepare vote
+prevents equivocation only within its round. A commit vote is a durable lock:
+later proposers must recover its complete prepare certificate and may advance
+only the same value to a newer round.
 
 Round metadata and finality evidence do not change that value hash. Transaction
 fees use the deterministic round-zero fee recipient for the height, so replacing
@@ -158,7 +160,9 @@ from its durable pool during replay.
 The integration suite runs real validator HTTP servers with per-validator peer
 views. In a `2+2` split, neither side reaches three-of-four finality or timeout
 quorum, so all replicas remain on the last common block. After the link heals,
-the original signed locks are discovered and one common value finalizes.
+an existing certified lock is recovered; when neither side formed one, the
+original proposer replays its persisted round proposal and one common value
+finalizes.
 
 In a `3+1` split, the three-validator side can finalize exactly one value. The
 isolated validator cannot create a conflicting certificate; after reconnection
@@ -167,10 +171,11 @@ and converges to the same tip. These deterministic schedules test the quorum
 invariants but are not a formal proof over every asynchronous message schedule.
 
 A second deterministic fault test explores 512 seeded schedules in which a
-Byzantine elected proposer signs two different values while honest vote messages
+Byzantine elected proposer signs two different values while honest prepare messages
 are delayed, reordered, dropped, and replayed. Honest validators persist their
-first lock, duplicate deliveries never add voting weight, and every candidate
-certificate is checked by a fresh chain instance. No explored schedule can
+per-round prepare decisions, commit only after a prepare quorum, duplicate
+deliveries never add voting weight, and every candidate certificate is checked
+by a fresh chain instance. No explored schedule can
 finalize both values. The seed makes every failure exactly reproducible.
 
 ## Faults covered by the integration test
@@ -201,6 +206,8 @@ finalize both values. The seed makes every failure exactly reproducible.
   replacing it with a different value from its local mempool.
 - highest-certificate selection prefers the greatest proven round and rejects
   ambiguous same-round certificates instead of depending on message order.
+- split prepare votes do not become durable locks and cannot deadlock the next
+  quorum-certified round;
 - a `2+2` partition produces no block on either side and converges after healing;
 - a `3+1` partition permits one majority block while the isolated validator
   cannot fork and later catches up from the verified chain.
@@ -214,15 +221,14 @@ Application-layer control messages now have pinned mutual signatures, and
 round-zero blocks can be assembled by the elected validator. Transport is
 not confidential, coordinator-key rotation is not governed on-chain, peer URLs
 are static, and catch-up is sequential with no snapshot or fork-choice protocol.
-Validator mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
-preserve the same execution value and rotate the proposer through
-validator-to-validator quorum timeout certificates. Signed lock discovery
-recovers partially voted values and applies a deterministic highest-certificate
-rule. Consensus still uses one voting phase: a validator must preserve its first
-vote in case a certificate formed elsewhere. A Byzantine proposer that splits
-honest first votes can therefore stop liveness. A production protocol needs
-separate prepare and commit certificates before those locks can be safely
-released. The durable exponential localhost pacemaker still lacks
+Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
+rounds preserve the same execution value and rotate the proposer through
+validator-to-validator quorum timeout certificates. Consensus now has distinct
+prepare and commit phases. Commit signatures bind the exact prepare certificate;
+signed lock discovery transfers that certificate to a replacement proposer and
+applies a deterministic highest-certificate rule. Split prepare votes remain
+round-local and do not deadlock a later certified round. The durable exponential
+localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,

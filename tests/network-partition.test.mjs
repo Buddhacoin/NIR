@@ -94,7 +94,7 @@ test("a two-two partition cannot finalize either competing view and recovers aft
       method: "POST",
     });
     assert.equal(firstAttempt.status, 400);
-    assert.match((await firstAttempt.json()).error, /finality quorum not reached/);
+    assert.match((await firstAttempt.json()).error, /prepare quorum not reached/);
     const secondAttempt = await fetch(`${network.urls[secondGroup[0]]}/v1/blocks/produce`, {
       method: "POST",
     });
@@ -107,8 +107,9 @@ test("a two-two partition cannot finalize either competing view and recovers aft
     const healed = await fetch(`${network.urls[proposerIndex]}/v1/blocks/produce`, {
       method: "POST",
     });
-    assert.equal(healed.status, 202);
-    assert.equal((await healed.json()).height, 2);
+    const healedResult = await healed.json();
+    assert.equal(healed.status, 202, healedResult.error);
+    assert.equal(healedResult.height, 2);
     assert.deepEqual(network.replicas.map(({ height }) => height), [2, 2, 2, 2]);
     assert.equal(new Set(network.replicas.map(({ tipHash }) => tipHash)).size, 1);
     assert.equal(network.replicas[0].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());

@@ -98,11 +98,11 @@ async function discoverLockedProposal(validator, urls) {
     if (report.status !== "fulfilled" || report.value.lock === null) continue;
     try {
       const expected = validator.peerAddress(report.value.index);
-      const proposal = validator.validateLockedProposal(report.value.lock, expected);
-      const hash = blockHash(proposal);
-      const group = groups.get(hash) ?? { count: 0, proposal };
+      const candidate = validator.validateLockedProposal(report.value.lock, expected);
+      const hash = blockHash(candidate.proposal);
+      const group = groups.get(hash) ?? { certified: true, count: 0, ...candidate };
       group.count += 1;
-      if (proposal.round > group.proposal.round) group.proposal = proposal;
+      if (candidate.proposal.round > group.proposal.round) Object.assign(group, candidate);
       groups.set(hash, group);
     } catch {
       // An invalid or forged lock report cannot influence proposal selection.
@@ -111,15 +111,29 @@ async function discoverLockedProposal(validator, urls) {
   return selectHighestCertifiedProposal(groups, validator.validatorCount);
 }
 
-async function finalizeValidatorProposal(validator, urls, proposal) {
+async function finalizeValidatorProposal(validator, urls, proposal, recoveredPrepare = null) {
   if (proposal.proposer !== validator.address) throw new Error("proposal producer is not its elected proposer");
-  const ownVote = validator.vote(proposal);
-  const responses = await Promise.allSettled(urls.map((peer, index) =>
-    gossipRequest(validator, index, peer, "/v1/p2p/proposals", proposal)));
-  const votes = [ownVote, ...responses
+  let prepareCertificate;
+  if (recoveredPrepare) {
+    prepareCertificate = validator.prepareCertificate(proposal, recoveredPrepare);
+  } else {
+    const ownPrepare = validator.vote(proposal);
+    const responses = await Promise.allSettled(urls.map((peer, index) =>
+      gossipRequest(validator, index, peer, "/v1/p2p/proposals", proposal)));
+    const prepares = [ownPrepare, ...responses
+      .filter(({ status, value }) => status === "fulfilled" && value)
+      .map(({ value }) => value.vote)];
+    prepareCertificate = validator.prepareCertificate(proposal, prepares);
+  }
+  const ownCommit = validator.commitVote(proposal, prepareCertificate);
+  const commitResponses = await Promise.allSettled(urls.map((peer, index) =>
+    gossipRequest(validator, index, peer, "/v1/p2p/commits", {
+      prepareCertificate, proposal,
+    })));
+  const commits = [ownCommit, ...commitResponses
     .filter(({ status, value }) => status === "fulfilled" && value)
     .map(({ value }) => value.vote)];
-  const block = validator.finalizeProposal(proposal, votes);
+  const block = validator.finalizeProposal(proposal, prepareCertificate, commits);
   const broadcasts = await Promise.allSettled(urls.map((peer, index) =>
     gossipRequest(validator, index, peer, "/v1/p2p/blocks", block)));
   return {
@@ -128,6 +142,8 @@ async function finalizeValidatorProposal(validator, urls, proposal) {
     height: block.height,
     round: block.round,
     transactions: block.transactions.map(transactionId),
+    commits: new Set(block.certificate.map(({ validator: address }) => address)).size,
+    prepares: new Set(block.prepareCertificate.map(({ validator: address }) => address)).size,
     votes: new Set(block.certificate.map(({ validator: address }) => address)).size,
   };
 }
@@ -181,7 +197,9 @@ async function timeoutProposal(validator, urls, proposal, baseMs, maximumMs) {
 
 async function produceValidatorBlock(validator, urls, baseMs, maximumMs) {
   await synchronizeValidator(validator, urls);
-  let proposal = await discoverLockedProposal(validator, urls) ?? validator.buildProposal();
+  const recovered = await discoverLockedProposal(validator, urls);
+  let prepareCertificate = recovered?.prepareCertificate ?? null;
+  let proposal = recovered?.proposal ?? validator.preparedProposal(0)?.proposal ?? validator.buildProposal();
   while (proposal.proposer !== validator.address) {
     if (await proposerIsReachable(validator, urls, proposal.proposer)) {
       throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
@@ -192,11 +210,12 @@ async function produceValidatorBlock(validator, urls, baseMs, maximumMs) {
     if (proposal.proposer !== validator.address &&
         await proposerIsReachable(validator, urls, proposal.proposer)) {
       return gossipRequest(
-        validator, proposerIndex, urls[proposerIndex], "/v1/p2p/produce", { proposal },
+        validator, proposerIndex, urls[proposerIndex], "/v1/p2p/produce",
+        { prepareCertificate, proposal },
       );
     }
   }
-  return finalizeValidatorProposal(validator, urls, proposal);
+  return finalizeValidatorProposal(validator, urls, proposal, prepareCertificate);
 }
 
 export function createValidatorHttpServer(validator, options = {}) {
@@ -264,6 +283,17 @@ export function createValidatorHttpServer(validator, options = {}) {
         const result = { vote: validator.vote(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/commits") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        if (auth.signer !== payload.proposal.proposer) {
+          throw new Error("commit certificate was not sent by its proposer");
+        }
+        const result = {
+          vote: validator.commitVote(payload.proposal, payload.prepareCertificate),
+        };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
       if (request.method === "POST" && url.pathname === "/v1/p2p/locks") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
@@ -289,7 +319,9 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
-        const result = await finalizeValidatorProposal(validator, urls, payload.proposal);
+        const result = await finalizeValidatorProposal(
+          validator, urls, payload.proposal, payload.prepareCertificate ?? null,
+        );
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/blocks") {
@@ -333,6 +365,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = validator.authorize(auth, request.method, url.pathname, payload);
         if (shouldRejectProposal(payload)) throw new Error("proposal rejected by local round policy");
         const result = { vote: validator.vote(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/commits") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = {
+          vote: validator.commitVote(payload.proposal, payload.prepareCertificate),
+        };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/timeouts") {

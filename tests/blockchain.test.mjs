@@ -355,6 +355,21 @@ test("fewer than two-thirds plus one validator votes cannot finalize", () => {
   );
 });
 
+test("commit votes cannot replace or bypass the prepare certificate", () => {
+  const { chain, validators } = fixture();
+  const block = chain.buildBlock({ timestamp: 1 });
+  const finalized = finalizeBlock(block, quorumFor(block, validators));
+  assert.throws(() => chain.appendBlock({
+    ...finalized,
+    prepareCertificate: finalized.prepareCertificate.slice(0, 2),
+  }), /prepare quorum/);
+  assert.throws(() => chain.appendBlock({
+    ...finalized,
+    certificate: finalized.prepareCertificate,
+  }), /validator signature/);
+  assert.equal(chain.height, 0);
+});
+
 test("a post-quantum signed transfer changes balances and nonce", () => {
   const { chain, evaluators, validators } = fixture();
   const alice = generateWallet();

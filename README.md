@@ -53,8 +53,8 @@ The intended advantages are:
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
 | Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
-| P2P finality, leader replacement, durable pacemaker, highest-certificate lock recovery, and catch-up | Implemented for the local devnet |
-| Partition and adversarial message testing | `2+2`, `3+1`, plus 512 seeded schedules |
+| Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
+| Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, plus 512 seeded schedules |
 | Installable browser/PWA wallet interface | Interactive local testnet preview |
 | Public mainnet or exchange-listed NIR | Not launched |
 

@@ -67,19 +67,20 @@ or an exploit against a live third-party system in a public issue.
    replacement proposer without the coordinator. Durable timeout observations
    now survive restart, back off exponentially by round, and require a second
    failed probe before signing. This is not yet a latency-adaptive production
-   pacemaker and has not been partition-tested. Replacement leaders query
-   authenticated, vote-backed peer locks and deterministically recover the most
-   reported valid value only after `N - quorum + 1` distinct proofs, so a lone
-   Byzantine lock cannot choose it. View change now selects the greatest
-   certified round and fails closed on conflicting values at the same greatest
-   round. The remaining structural liveness gap is one-phase voting: safely
-   unlocking split first votes requires separate prepare and commit
-   certificates. There
+   pacemaker. Replacement leaders query authenticated peer locks. Every accepted
+   report contains a verified prepare quorum plus the reporting validator's
+   commit signature, so an uncorroborated claim cannot choose a value. View
+   change selects the greatest certified round and fails closed on conflicting
+   values at the same greatest round. Finality now uses separate prepare and
+   commit certificates; commit signatures bind the exact prepare certificate,
+   while split prepare votes remain round-local and can safely move to a later
+   certified round. There
    is still no transport confidentiality or governed coordinator-key rotation,
    fork recovery, checkpoint/snapshot sync, or peer discovery. Deterministic
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
-   and 512 seeded schedules exercise delayed, dropped, reordered, and replayed
-   votes from an equivocating proposer. Broader stateful fuzzing and a formal
+   a split-prepare regression verifies later-round liveness, and 512 seeded
+   schedules exercise delayed, dropped, reordered, and replayed messages from
+   an equivocating proposer. Broader stateful fuzzing and a formal
    safety/liveness proof remain.
    Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable

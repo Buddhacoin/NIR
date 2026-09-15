@@ -345,6 +345,7 @@ function unsignedBlock(block) {
   const {
     certificate: _certificate,
     hash: _hash,
+    prepareCertificate: _prepareCertificate,
     proposer: _proposer,
     round: _round,
     roundCertificate: _roundCertificate,
@@ -357,10 +358,28 @@ export function blockHash(block) {
   return hashObject(unsignedBlock(block), "BLOCK");
 }
 
-export function voteForBlock(block, validatorWallet) {
+export function prepareVoteForBlock(block, validatorWallet) {
   const hash = blockHash(block);
   return {
-    signature: signObject({ blockHash: hash }, validatorWallet, "BLOCK_VOTE"),
+    signature: signObject({ blockHash: hash }, validatorWallet, "BLOCK_PREPARE"),
+    validator: validatorWallet.address,
+  };
+}
+
+export const voteForBlock = prepareVoteForBlock;
+
+export function prepareCertificateHash(certificate) {
+  const ordered = [...certificate].sort((left, right) =>
+    left.validator.localeCompare(right.validator));
+  return hashObject(ordered, "PREPARE_CERTIFICATE");
+}
+
+export function commitVoteForBlock(block, prepareCertificate, validatorWallet) {
+  return {
+    signature: signObject({
+      blockHash: blockHash(block),
+      prepareCertificateHash: prepareCertificateHash(prepareCertificate),
+    }, validatorWallet, "BLOCK_COMMIT"),
     validator: validatorWallet.address,
   };
 }
@@ -378,10 +397,11 @@ export function timeoutForRound(fields, validatorWallet) {
 }
 
 export function finalizeBlock(block, validatorWallets) {
+  const prepareCertificate = validatorWallets.map((wallet) =>
+    prepareVoteForBlock(block, wallet));
   const certificate = validatorWallets.map((wallet) =>
-    voteForBlock(block, wallet),
-  );
-  return { ...block, hash: blockHash(block), certificate };
+    commitVoteForBlock(block, prepareCertificate, wallet));
+  return { ...block, hash: blockHash(block), prepareCertificate, certificate };
 }
 
 export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) {
@@ -867,12 +887,34 @@ export class NirChain {
       ? new Map([...previousValidators, ...validators])
       : validators;
     if (block.hash !== blockHash(block)) throw new Error("block hash mismatch");
-    if (
-      !Array.isArray(block.certificate) ||
-      block.certificate.length > acceptedValidators.size
-    ) {
+    if (!Array.isArray(block.prepareCertificate) ||
+        block.prepareCertificate.length > acceptedValidators.size ||
+        !Array.isArray(block.certificate) || block.certificate.length > acceptedValidators.size) {
       throw new Error("invalid finality certificate size");
     }
+    const prepareVoters = new Set();
+    for (const vote of block.prepareCertificate) {
+      const validator = acceptedValidators.get(vote.validator);
+      if (!validator || prepareVoters.has(vote.validator) ||
+          typeof vote.signature !== "string" || vote.signature.length > 7_000 ||
+          !verifyObject({ blockHash: block.hash }, vote.signature, validator.publicKey, "BLOCK_PREPARE")) {
+        throw new Error("invalid or duplicate prepare vote");
+      }
+      prepareVoters.add(vote.validator);
+    }
+    const quorum = Math.floor((validators.size * 2) / 3) + 1;
+    const preparesInSet = [...prepareVoters].filter((address) => validators.has(address)).length;
+    if (preparesInSet < quorum) throw new Error("prepare quorum not reached");
+    if (previousValidators) {
+      const previousQuorum = Math.floor((previousValidators.size * 2) / 3) + 1;
+      const previousPrepares = [...prepareVoters]
+        .filter((address) => previousValidators.has(address)).length;
+      if (previousPrepares < previousQuorum) throw new Error("old-set prepare quorum not reached");
+    }
+    const commitPayload = {
+      blockHash: block.hash,
+      prepareCertificateHash: prepareCertificateHash(block.prepareCertificate),
+    };
     const voters = new Set();
     for (const vote of block.certificate ?? []) {
       if (voters.has(vote.validator)) throw new Error("duplicate validator vote");
@@ -882,17 +924,16 @@ export class NirChain {
         typeof vote.signature !== "string" ||
         vote.signature.length > 7_000 ||
         !verifyObject(
-          { blockHash: block.hash },
+          commitPayload,
           vote.signature,
           validator.publicKey,
-          "BLOCK_VOTE",
+          "BLOCK_COMMIT",
         )
       ) {
         throw new Error("invalid validator signature");
       }
       voters.add(vote.validator);
     }
-    const quorum = Math.floor((validators.size * 2) / 3) + 1;
     const votesInSet = [...voters].filter((address) => validators.has(address)).length;
     if (votesInSet < quorum) throw new Error("finality quorum not reached");
     if (previousValidators) {
@@ -900,7 +941,6 @@ export class NirChain {
       const previousVotes = [...voters].filter((address) => previousValidators.has(address)).length;
       if (previousVotes < previousQuorum) throw new Error("old-set transition quorum not reached");
     }
-    if (!voters.has(block.proposer)) throw new Error("proposer did not sign block");
   }
 
   #verifyRoundCertificate(block, validators) {
@@ -1121,7 +1161,9 @@ export class NirChain {
     }
     const fork = new NirChain(this.#genesisConfig);
     for (const finalized of this.#blocks.slice(1)) fork.appendBlock(finalized);
-    const candidate = { ...structuredClone(block), hash: blockHash(block), certificate: [] };
+    const candidate = {
+      ...structuredClone(block), certificate: [], hash: blockHash(block), prepareCertificate: [],
+    };
     fork.#applyBlock(candidate, false);
     return candidate.hash;
   }

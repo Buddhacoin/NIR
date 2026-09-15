@@ -118,12 +118,26 @@ test("a validator persists its vote and refuses restart equivocation", () => {
     const chain = new NirChain(genesis);
     const first = chain.buildBlock({ timestamp: 1 });
     const second = chain.buildBlock({ timestamp: 2 });
-    replica.vote(first);
+    const peers = layout.validatorDirectories.slice(1, 3)
+      .map((directory) => new ValidatorReplica(directory));
+    const alternatePeer = new ValidatorReplica(layout.validatorDirectories[3]);
+    const prepares = [replica.vote(first), ...peers.map((peer) => peer.vote(first))];
+    assert.equal(replica.lockedProposal(), null);
+    const prepareCertificate = replica.prepareCertificate(first, prepares);
+    replica.commitVote(first, prepareCertificate);
     const lock = replica.lockedProposal();
-    assert.equal(blockHash(replica.validateLockedProposal(lock, replica.address)), blockHash(first));
+    assert.equal(blockHash(replica.validateLockedProposal(lock, replica.address).proposal), blockHash(first));
     assert.throws(() => replica.validateLockedProposal({
       ...lock, proposal: { ...lock.proposal, timestamp: 2 },
     }, replica.address), /lock proof is invalid|not deterministic/);
+    const alternateCertificate = replica.prepareCertificate(first, [
+      replica.vote(first), peers[0].vote(first), alternatePeer.vote(first),
+    ]);
+    const alternateCommit = replica.commitVote(first, alternateCertificate);
+    assert.notEqual(alternateCommit.signature, lock.vote.signature);
+    assert.equal(blockHash(replica.validateLockedProposal(
+      replica.lockedProposal(), replica.address,
+    ).proposal), blockHash(first));
     assert.throws(() => replica.vote(second), /refuses to equivocate/);
     const timeout = replica.timeout({ proposal: first, nextRound: 1 });
     assert.equal(timeout.validator, replica.address);
@@ -148,6 +162,39 @@ test("a validator persists its round timer across restart", () => {
     replica = new ValidatorReplica(layout.validatorDirectories[0]);
     assert.equal(replica.observeRoundTimeout(request, 100, 1_040), 60);
     assert.equal(replica.observeRoundTimeout(request, 100, 1_100), 0);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("split prepares do not deadlock the next certified round", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-split-prepare-test-"));
+  try {
+    const layout = initializeDistributedDevnet(join(temporary, "network"));
+    const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+    const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
+    const chain = new NirChain(genesis);
+    const first = chain.buildBlock({ timestamp: 1 });
+    const competing = chain.buildBlock({ timestamp: 2 });
+
+    replicas[0].vote(first);
+    replicas[1].vote(first);
+    replicas[2].vote(competing);
+    assert.ok(replicas.slice(0, 3).every((replica) => replica.lockedProposal() === null));
+
+    const timeouts = replicas.slice(0, 3).map((replica) =>
+      replica.timeout({ proposal: first, nextRound: 1 }));
+    const advanced = replicas[0].advanceProposal(first, 1, timeouts);
+    const prepares = replicas.slice(0, 3).map((replica) => replica.vote(advanced));
+    const prepareCertificate = replicas[0].prepareCertificate(advanced, prepares);
+    const commits = replicas.slice(0, 3).map((replica) =>
+      replica.commitVote(advanced, prepareCertificate));
+    const finalized = replicas[0].finalizeProposal(advanced, prepareCertificate, commits);
+
+    assert.equal(finalized.round, 1);
+    assert.equal(finalized.prepareCertificate.length, 3);
+    assert.equal(finalized.certificate.length, 3);
+    assert.equal(blockHash(finalized), blockHash(first));
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -452,9 +499,11 @@ test("a replacement proposer recovers a partially voted value from peer locks", 
     const lockPeerIndex = replicas.findIndex((_, index) =>
       index !== offlineIndex && index !== replacementIndex && index !== initiatorIndex);
     const locked = replicas[offlineIndex].buildProposal();
-    replicas[offlineIndex].vote(locked);
-    replicas[replacementIndex].vote(locked);
-    replicas[lockPeerIndex].vote(locked);
+    const prepares = [offlineIndex, replacementIndex, lockPeerIndex]
+      .map((index) => replicas[index].vote(locked));
+    const prepareCertificate = replicas[replacementIndex].prepareCertificate(locked, prepares);
+    replicas[replacementIndex].commitVote(locked, prepareCertificate);
+    replicas[lockPeerIndex].commitVote(locked, prepareCertificate);
     await close(servers[offlineIndex]);
 
     const conflictingLocalTransaction = createTransfer({
@@ -463,8 +512,8 @@ test("a replacement proposer recovers a partially voted value from peer locks", 
     });
     replicas[initiatorIndex].submitTransaction(conflictingLocalTransaction);
     const produced = await fetch(`${urls[initiatorIndex]}/v1/blocks/produce`, { method: "POST" });
-    assert.equal(produced.status, 202);
     const result = await produced.json();
+    assert.equal(produced.status, 202, result.error);
     assert.equal(result.round, 1);
     const block = replicas[replacementIndex].blocksAfter(2, 1)[0];
     assert.equal(blockHash(block), blockHash(locked));

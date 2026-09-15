@@ -11,11 +11,13 @@ import { join, resolve } from "node:path";
 
 import {
   blockHash,
+  commitVoteForBlock,
   createTransfer,
   formatNir,
   NirChain,
   quoteTransferFee,
   transactionId,
+  prepareCertificateHash,
   timeoutForRound,
   voteForBlock,
 } from "./chain.mjs";
@@ -42,6 +44,15 @@ function writeExclusive(path, value, mode = 0o600) {
     encoding: "utf8", flag: "wx", mode,
   });
   chmodSync(path, mode);
+}
+
+function writeAtomic(path, value, mode = 0o600) {
+  const temporary = `${path}.next`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: "utf8", flag: "w", mode,
+  });
+  chmodSync(temporary, mode);
+  renameSync(temporary, path);
 }
 
 function readJson(path) {
@@ -118,7 +129,8 @@ export function initializeDistributedDevnet(
   const validatorDirectories = validators.map((wallet, index) => {
     const validatorDirectory = join(root, "validators", `validator-${index}`);
     mkdirSync(join(validatorDirectory, "blocks"), { recursive: true, mode: 0o700 });
-    mkdirSync(join(validatorDirectory, "votes"), { mode: 0o700 });
+    mkdirSync(join(validatorDirectory, "commits"), { mode: 0o700 });
+    mkdirSync(join(validatorDirectory, "prepares"), { mode: 0o700 });
     mkdirSync(join(validatorDirectory, "timeouts"), { mode: 0o700 });
     mkdirSync(join(validatorDirectory, "mempool"), { mode: 0o700 });
     writeExclusive(join(validatorDirectory, "genesis.json"), genesis, 0o644);
@@ -300,13 +312,68 @@ export class ValidatorReplica {
     return advanced;
   }
 
-  finalizeProposal(proposal, votes) {
+  prepareCertificate(proposal, votes) {
+    const rebuilt = this.#chain.buildBlock(proposalFields(proposal));
+    if (canonicalJson(rebuilt) !== canonicalJson(proposal)) {
+      throw new Error("prepare proposal is not deterministic for this state");
+    }
+    this.#chain.validateProposal(proposal);
     const uniqueVotes = new Map((votes ?? []).map((vote) => [vote.validator, vote]));
     const quorum = Math.floor((this.#validators.length * 2) / 3) + 1;
-    if (uniqueVotes.size < quorum || !uniqueVotes.has(proposal.proposer)) {
-      throw new Error(`validator finality quorum not reached (${uniqueVotes.size}/${quorum})`);
+    if (uniqueVotes.size < quorum) {
+      throw new Error(`validator prepare quorum not reached (${uniqueVotes.size}/${quorum})`);
     }
-    const block = { ...proposal, hash: blockHash(proposal), certificate: [...uniqueVotes.values()] };
+    const hash = blockHash(proposal);
+    for (const vote of uniqueVotes.values()) {
+      const member = this.#validators.find(({ address }) => address === vote.validator);
+      if (!member || !verifyObject({ blockHash: hash }, vote.signature, member.publicKey, "BLOCK_PREPARE")) {
+        throw new Error("validator prepare signature is invalid");
+      }
+    }
+    return [...uniqueVotes.values()].sort((left, right) =>
+      left.validator.localeCompare(right.validator));
+  }
+
+  commitVote(proposal, prepareCertificate) {
+    const verified = this.prepareCertificate(proposal, prepareCertificate);
+    const hash = blockHash(proposal);
+    const certificateHash = prepareCertificateHash(verified);
+    const decisionPath = join(this.#directory, "commits",
+      `${String(proposal.height).padStart(12, "0")}.json`);
+    try {
+      const decision = readJson(decisionPath);
+      if (decision.blockHash !== hash) throw new Error("validator refuses a conflicting commit");
+      const existingCertificateHash = decision.prepareCertificateHash ??
+        prepareCertificateHash(decision.prepareCertificate);
+      if (existingCertificateHash === certificateHash) return decision.vote;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const vote = commitVoteForBlock(proposal, verified, this.#wallet);
+    writeAtomic(decisionPath, {
+      blockHash: hash,
+      prepareCertificate: verified,
+      prepareCertificateHash: certificateHash,
+      proposal,
+      vote,
+    });
+    return vote;
+  }
+
+  finalizeProposal(proposal, prepareCertificate, votes) {
+    const verifiedPrepare = this.prepareCertificate(proposal, prepareCertificate);
+    const uniqueVotes = new Map((votes ?? []).map((vote) => [vote.validator, vote]));
+    const quorum = Math.floor((this.#validators.length * 2) / 3) + 1;
+    if (uniqueVotes.size < quorum) {
+      throw new Error(`validator commit quorum not reached (${uniqueVotes.size}/${quorum})`);
+    }
+    const block = {
+      ...proposal,
+      certificate: [...uniqueVotes.values()].sort((left, right) =>
+        left.validator.localeCompare(right.validator)),
+      hash: blockHash(proposal),
+      prepareCertificate: verifiedPrepare,
+    };
     this.commit(block);
     return block;
   }
@@ -340,7 +407,8 @@ export class ValidatorReplica {
     }
     this.#chain.validateProposal(block);
     const hash = blockHash(block);
-    const decisionPath = join(this.#directory, "votes", `${String(block.height).padStart(12, "0")}.json`);
+    const decisionPath = join(this.#directory, "prepares",
+      `${String(block.height).padStart(12, "0")}-${String(block.round).padStart(2, "0")}.json`);
     try {
       const decision = readJson(decisionPath);
       if (decision.blockHash !== hash) throw new Error("validator refuses to equivocate at this height");
@@ -353,13 +421,29 @@ export class ValidatorReplica {
     return vote;
   }
 
+  preparedProposal(round = 0) {
+    if (!Number.isSafeInteger(round) || round < 0 || round > MAX_CONSENSUS_ROUND) {
+      throw new Error("prepare round is invalid");
+    }
+    const decisionPath = join(this.#directory, "prepares",
+      `${String(this.height + 1).padStart(12, "0")}-${String(round).padStart(2, "0")}.json`);
+    try {
+      const decision = readJson(decisionPath);
+      return structuredClone({ proposal: decision.proposal, vote: decision.vote });
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
   lockedProposal() {
-    const decisionPath = join(this.#directory, "votes",
+    const decisionPath = join(this.#directory, "commits",
       `${String(this.height + 1).padStart(12, "0")}.json`);
     try {
       const decision = readJson(decisionPath);
       return {
         blockHash: decision.blockHash,
+        prepareCertificate: decision.prepareCertificate ?? null,
         proposal: decision.proposal ?? null,
         vote: decision.vote,
       };
@@ -372,10 +456,16 @@ export class ValidatorReplica {
   validateLockedProposal(lock, expectedValidator) {
     if (lock === null) return null;
     const member = this.#validators.find(({ address }) => address === expectedValidator);
-    if (!member || !lock?.proposal || lock.vote?.validator !== expectedValidator ||
-        lock.blockHash !== blockHash(lock.proposal) ||
-        !verifyObject({ blockHash: lock.blockHash }, lock.vote.signature, member.publicKey, "BLOCK_VOTE")) {
+    if (!member || !lock?.proposal || !Array.isArray(lock.prepareCertificate) ||
+        lock.vote?.validator !== expectedValidator || lock.blockHash !== blockHash(lock.proposal)) {
       throw new Error("peer lock proof is invalid");
+    }
+    const verifiedPrepare = this.prepareCertificate(lock.proposal, lock.prepareCertificate);
+    if (!verifyObject({
+      blockHash: lock.blockHash,
+      prepareCertificateHash: prepareCertificateHash(verifiedPrepare),
+    }, lock.vote.signature, member.publicKey, "BLOCK_COMMIT")) {
+      throw new Error("peer lock commit proof is invalid");
     }
     if (lock.proposal.height !== this.height + 1 || lock.proposal.previousHash !== this.tipHash) {
       throw new Error("peer lock does not extend the validator state");
@@ -385,7 +475,10 @@ export class ValidatorReplica {
       throw new Error("peer lock proposal is not deterministic");
     }
     this.#chain.validateProposal(lock.proposal);
-    return structuredClone(lock.proposal);
+    return structuredClone({
+      prepareCertificate: verifiedPrepare,
+      proposal: lock.proposal,
+    });
   }
 
   timeout({ proposal, nextRound }) {
@@ -401,7 +494,7 @@ export class ValidatorReplica {
     const height = proposal.height;
     const previousHash = proposal.previousHash;
     const lockedBlockHash = blockHash(proposal);
-    const votePath = join(this.#directory, "votes", `${String(height).padStart(12, "0")}.json`);
+    const votePath = join(this.#directory, "commits", `${String(height).padStart(12, "0")}.json`);
     try {
       const decision = readJson(votePath);
       if (decision.blockHash !== lockedBlockHash) {
@@ -441,7 +534,8 @@ export class ValidatorReplica {
     }
     this.#chain.validateProposal(proposal);
     const blockHashValue = blockHash(proposal);
-    const votePath = join(this.#directory, "votes", `${String(proposal.height).padStart(12, "0")}.json`);
+    const votePath = join(this.#directory, "commits",
+      `${String(proposal.height).padStart(12, "0")}.json`);
     try {
       const decision = readJson(votePath);
       if (decision.blockHash !== blockHashValue) {
@@ -671,19 +765,38 @@ export class DistributedCoordinator {
       roundCertificate = [...uniqueTimeouts.values()];
       round = nextRound;
     }
-    const block = { ...proposal, hash: blockHash(proposal), certificate: [...uniqueVotes.values()] };
+    const prepareCertificate = [...uniqueVotes.values()].sort((left, right) =>
+      left.validator.localeCompare(right.validator));
+    const commitResults = await Promise.allSettled(available.map((index) =>
+      this.#request(index, "/v1/commits", { prepareCertificate, proposal })));
+    const commits = commitResults.filter(({ status }) => status === "fulfilled")
+      .map(({ value }) => value.vote);
+    const uniqueCommits = new Map(commits.map((vote) => [vote.validator, vote]));
+    const commitQuorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+    if (uniqueCommits.size < commitQuorum || !uniqueCommits.has(proposal.proposer)) {
+      throw new Error(`remote commit quorum not reached (${uniqueCommits.size}/${commitQuorum})`);
+    }
+    const block = {
+      ...proposal,
+      certificate: [...uniqueCommits.values()].sort((left, right) =>
+        left.validator.localeCompare(right.validator)),
+      hash: blockHash(proposal),
+      prepareCertificate,
+    };
     this.#chain.appendBlock(block);
     persistBlock(this.#directory, block);
     this.#mempool.remove(transactions);
-    const commits = await Promise.allSettled(this.#peers.map((_, index) =>
+    const broadcasts = await Promise.allSettled(this.#peers.map((_, index) =>
       this.#request(index, "/v1/blocks", block)));
     return {
       blockHash: block.hash,
-      committedPeers: commits.filter(({ status }) => status === "fulfilled").length,
+      committedPeers: broadcasts.filter(({ status }) => status === "fulfilled").length,
       height: block.height,
       round: block.round,
       transactions: transactions.map(transactionId),
-      votes: uniqueVotes.size,
+      commits: uniqueCommits.size,
+      prepares: uniqueVotes.size,
+      votes: uniqueCommits.size,
       synchronizedPeers: syncResults.filter(({ status, value }) => status === "fulfilled" && value > 0).length,
     };
   }

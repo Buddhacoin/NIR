@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { blockHash, NirChain, voteForBlock } from "../blockchain/chain.mjs";
+import {
+  blockHash,
+  commitVoteForBlock,
+  NirChain,
+  voteForBlock,
+} from "../blockchain/chain.mjs";
 import { initializeDistributedDevnet } from "../blockchain/distributed-node.mjs";
 
 function randomSource(seed) {
@@ -73,10 +78,18 @@ test("512 delayed, dropped, reordered, and replayed schedules cannot finalize co
       for (const value of ["first", "second"]) {
         if (votes[value].size < 3) continue;
         const proposal = proposals[value];
+        const prepareCertificate = [...votes[value].values()];
+        const certificate = prepareCertificate.map(({ validator }) =>
+          commitVoteForBlock(
+            proposal,
+            prepareCertificate,
+            wallets.find(({ address }) => address === validator),
+          ));
         const block = {
           ...proposal,
-          certificate: [...votes[value].values()],
+          certificate,
           hash: blockHash(proposal),
+          prepareCertificate,
         };
         const verifier = new NirChain(genesis);
         verifier.appendBlock(block);

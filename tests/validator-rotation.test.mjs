@@ -100,9 +100,9 @@ test("the finalized chain activates a scheduled set and rejects old-set certific
   }
   const activationBlock = chain.buildBlock({ timestamp: TREASURY_VESTING_MS + 7 });
   assert.throws(() => chain.appendBlock(finalizeBlock(activationBlock, oldWallets.slice(0, 3))),
-    /unknown validator|finality quorum|proposer did not sign/);
+    /unknown validator|prepare quorum|finality quorum|proposer did not sign/);
   assert.throws(() => chain.appendBlock(finalizeBlock(activationBlock, quorum(activationBlock, nextWallets))),
-    /old-set transition quorum/);
+    /old-set (prepare|transition) quorum/);
   const transitionSigners = [...new Map([
     ...oldWallets.slice(0, 3),
     ...quorum(activationBlock, nextWallets),
