@@ -129,6 +129,14 @@ value. The most reported eligible value is selected deterministically. This lets
 a replacement leader recover a partially voted value even when its own mempool
 differs. Pending transactions outside that value remain queued for a later block.
 
+View change now applies one explicit highest-certificate rule. Eligible values
+are ordered by their certified consensus round, never by arrival time or local
+mempool preference. A later-round proposal outranks any round-zero lock because
+its embedded timeout certificate already proves a validator quorum. Two
+different values claiming the same highest certified round cause a fail-closed
+error. For round zero, which has no embedded timeout certificate, recovery still
+requires `N - quorum + 1` independent lock proofs.
+
 ## Validator catch-up
 
 A validator that was offline can synchronize directly from the other validators:
@@ -191,6 +199,8 @@ finalize both values. The seed makes every failure exactly reproducible.
   failed reachability check after the waiting window.
 - a replacement leader recovers a cryptographically proven peer lock instead of
   replacing it with a different value from its local mempool.
+- highest-certificate selection prefers the greatest proven round and rejects
+  ambiguous same-round certificates instead of depending on message order.
 - a `2+2` partition produces no block on either side and converges after healing;
 - a `3+1` partition permits one majority block while the isolated validator
   cannot fork and later catches up from the verified chain.
@@ -207,8 +217,12 @@ are static, and catch-up is sequential with no snapshot or fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
 preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates. Signed lock discovery
-recovers partially voted values, but it is not yet a formal highest-certificate
-view-change protocol. The durable exponential localhost pacemaker still lacks
+recovers partially voted values and applies a deterministic highest-certificate
+rule. Consensus still uses one voting phase: a validator must preserve its first
+vote in case a certificate formed elsewhere. A Byzantine proposer that splits
+honest first votes can therefore stop liveness. A production protocol needs
+separate prepare and commit certificates before those locks can be safely
+released. The durable exponential localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,

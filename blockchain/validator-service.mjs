@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 
 import { blockHash, transactionId } from "./chain.mjs";
+import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -107,12 +108,7 @@ async function discoverLockedProposal(validator, urls) {
       // An invalid or forged lock report cannot influence proposal selection.
     }
   }
-  const quorum = Math.floor((validator.validatorCount * 2) / 3) + 1;
-  const safeLockThreshold = validator.validatorCount - quorum + 1;
-  return [...groups.entries()]
-    .filter(([, group]) => group.count >= safeLockThreshold)
-    .sort(([firstHash, first], [secondHash, second]) =>
-      second.count - first.count || firstHash.localeCompare(secondHash))[0]?.[1].proposal ?? null;
+  return selectHighestCertifiedProposal(groups, validator.validatorCount);
 }
 
 async function finalizeValidatorProposal(validator, urls, proposal) {

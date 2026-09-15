@@ -70,8 +70,11 @@ or an exploit against a live third-party system in a public issue.
    pacemaker and has not been partition-tested. Replacement leaders query
    authenticated, vote-backed peer locks and deterministically recover the most
    reported valid value only after `N - quorum + 1` distinct proofs, so a lone
-   Byzantine lock cannot choose it. This is not yet a formal
-   highest-certificate view-change proof. There
+   Byzantine lock cannot choose it. View change now selects the greatest
+   certified round and fails closed on conflicting values at the same greatest
+   round. The remaining structural liveness gap is one-phase voting: safely
+   unlocking split first votes requires separate prepare and commit
+   certificates. There
    is still no transport confidentiality or governed coordinator-key rotation,
    fork recovery, checkpoint/snapshot sync, or peer discovery. Deterministic
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
