@@ -393,6 +393,51 @@ export class ValidatorReplica {
     return vote;
   }
 
+  observeRoundTimeout({ proposal, nextRound }, delayMs, now = Date.now()) {
+    if (!proposal || proposal.height !== this.height + 1 || proposal.previousHash !== this.tipHash ||
+        !Number.isSafeInteger(nextRound) || nextRound !== proposal.round + 1 ||
+        !Number.isSafeInteger(delayMs) || delayMs < 1 || delayMs > 30_000 ||
+        !Number.isSafeInteger(now) || now < 0) {
+      throw new Error("round timeout observation is invalid");
+    }
+    const rebuilt = this.#chain.buildBlock(proposalFields(proposal));
+    if (canonicalJson(rebuilt) !== canonicalJson(proposal)) {
+      throw new Error("timeout proposal is not deterministic for this state");
+    }
+    this.#chain.validateProposal(proposal);
+    const blockHashValue = blockHash(proposal);
+    const votePath = join(this.#directory, "votes", `${String(proposal.height).padStart(12, "0")}.json`);
+    try {
+      const decision = readJson(votePath);
+      if (decision.blockHash !== blockHashValue) {
+        throw new Error("validator refuses to time out a different locked value");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const observationPath = join(this.#directory, "timeouts",
+      `${String(proposal.height).padStart(12, "0")}-${String(nextRound).padStart(2, "0")}-observed.json`);
+    let observedAt = now;
+    try {
+      const observation = readJson(observationPath);
+      if (observation.blockHash !== blockHashValue || observation.nextRound !== nextRound ||
+          !Number.isSafeInteger(observation.observedAt) || observation.observedAt < 0) {
+        throw new Error("validator refuses a conflicting timeout observation");
+      }
+      observedAt = observation.observedAt;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      writeExclusive(observationPath, {
+        blockHash: blockHashValue,
+        height: proposal.height,
+        nextRound,
+        observedAt,
+        previousHash: proposal.previousHash,
+      });
+    }
+    return Math.max(0, observedAt + delayMs - now);
+  }
+
   commit(block) {
     if (block.height <= this.height) {
       const existing = this.#chain.blocks().find(({ height }) => height === block.height);

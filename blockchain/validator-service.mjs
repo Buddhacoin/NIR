@@ -116,9 +116,26 @@ async function proposerIsReachable(validator, urls, address) {
   }
 }
 
-async function timeoutProposal(validator, urls, proposal) {
+function roundDelay(round, baseMs, maximumMs) {
+  return Math.min(maximumMs, baseMs * (2 ** Math.min(round, 16)));
+}
+
+async function waitForRoundTimeout(validator, request, baseMs, maximumMs) {
+  const delayMs = roundDelay(request.proposal.round, baseMs, maximumMs);
+  let remaining = validator.observeRoundTimeout(request, delayMs);
+  while (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remaining));
+    remaining = validator.observeRoundTimeout(request, delayMs);
+  }
+}
+
+async function timeoutProposal(validator, urls, proposal, baseMs, maximumMs) {
   const nextRound = proposal.round + 1;
   const request = { proposal, nextRound };
+  await waitForRoundTimeout(validator, request, baseMs, maximumMs);
+  if (await proposerIsReachable(validator, urls, proposal.proposer)) {
+    throw new Error("elected proposer recovered before the timeout elapsed");
+  }
   const ownTimeout = validator.timeout(request);
   const responses = await Promise.allSettled(urls.map((peer, index) =>
     gossipRequest(validator, index, peer, "/v1/p2p/timeouts", request)));
@@ -133,14 +150,14 @@ async function timeoutProposal(validator, urls, proposal) {
   return validator.advanceProposal(proposal, nextRound, [...uniqueTimeouts.values()]);
 }
 
-async function produceValidatorBlock(validator, urls) {
+async function produceValidatorBlock(validator, urls, baseMs, maximumMs) {
   await synchronizeValidator(validator, urls);
   let proposal = validator.buildProposal();
   while (proposal.proposer !== validator.address) {
     if (await proposerIsReachable(validator, urls, proposal.proposer)) {
       throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
     }
-    proposal = await timeoutProposal(validator, urls, proposal);
+    proposal = await timeoutProposal(validator, urls, proposal, baseMs, maximumMs);
     const proposerIndex = Array.from({ length: validator.validatorCount })
       .findIndex((_, index) => validator.peerAddress(index) === proposal.proposer);
     if (proposal.proposer !== validator.address &&
@@ -158,6 +175,13 @@ export function createValidatorHttpServer(validator, options = {}) {
     ? options.shouldRejectProposal
     : () => false;
   const peerUrls = options.peerUrls ?? (() => validator.peerUrls);
+  const roundTimeoutMs = options.roundTimeoutMs ?? 250;
+  const maxRoundTimeoutMs = options.maxRoundTimeoutMs ?? 2_000;
+  if (!Number.isSafeInteger(roundTimeoutMs) || roundTimeoutMs < 1 || roundTimeoutMs > 2_000 ||
+      !Number.isSafeInteger(maxRoundTimeoutMs) || maxRoundTimeoutMs < roundTimeoutMs ||
+      maxRoundTimeoutMs > 2_000) {
+    throw new Error("validator round timeout configuration is invalid");
+  }
   const ingressWindows = new Map();
   const consumeIngress = (address, now = Date.now()) => {
     const current = ingressWindows.get(address);
@@ -218,6 +242,10 @@ export function createValidatorHttpServer(validator, options = {}) {
         if (await proposerIsReachable(validator, urls, payload?.proposal?.proposer)) {
           throw new Error("refusing timeout while the elected proposer is reachable");
         }
+        await waitForRoundTimeout(validator, payload, roundTimeoutMs, maxRoundTimeoutMs);
+        if (await proposerIsReachable(validator, urls, payload?.proposal?.proposer)) {
+          throw new Error("elected proposer recovered before the timeout elapsed");
+        }
         const result = { timeout: validator.timeout(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
@@ -248,7 +276,9 @@ export function createValidatorHttpServer(validator, options = {}) {
       if (request.method === "POST" && url.pathname === "/v1/blocks/produce") {
         consumeIngress(request.socket.remoteAddress ?? "unknown");
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
-        return send(response, 202, await produceValidatorBlock(validator, urls));
+        return send(response, 202, await produceValidatorBlock(
+          validator, urls, roundTimeoutMs, maxRoundTimeoutMs,
+        ));
       }
       if (request.method === "POST" && url.pathname === "/v1/mempool/transactions") {
         const { auth, payload } = await readBody(request);

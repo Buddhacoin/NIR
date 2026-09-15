@@ -110,6 +110,14 @@ the next-round form of that exact value and hands it to the newly elected
 proposer over an authenticated P2P request. The replacement proposer gathers
 the finality votes and broadcasts the block without coordinator participation.
 
+The localhost pacemaker does not sign immediately after one failed probe. Each
+validator durably records when it first observed the failed round, waits for an
+exponentially increasing round window, and probes the proposer again before
+signing. The observation survives validator restart, preventing a process
+restart from resetting or bypassing the timer. Development defaults start at
+250 ms and double by round up to 2 seconds; these are test-network timings, not
+production network parameters.
+
 ## Validator catch-up
 
 A validator that was offline can synchronize directly from the other validators:
@@ -148,6 +156,8 @@ from its durable pool during replay.
   participation and independently verifies the missing finality certificate.
 - three live validators independently detect an offline proposer, certify the
   timeout, and delegate the unchanged value to the next elected proposer.
+- timeout observations survive restart, increase by round, and require a second
+  failed reachability check after the waiting window.
 
 ## Remaining production boundary
 
@@ -159,8 +169,9 @@ are static, and catch-up is sequential with no snapshot or fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
 preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates, but lock discovery between
-competing producers is not implemented. The localhost reachability probe is not
-yet a production adaptive pacemaker.
+competing producers is not implemented. The durable exponential localhost
+pacemaker still lacks latency sampling, authenticated transport sessions, clock
+discipline, and production-calibrated timeout governance.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,
 production-grade adaptive denial-of-service defense, or network-partition
 simulation yet. Test keys are plaintext and have no monetary value.

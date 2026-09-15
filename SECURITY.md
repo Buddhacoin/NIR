@@ -64,8 +64,10 @@ or an exploit against a live third-party system in a public issue.
    state transition without the coordinator.
    Validator peers now independently test leader reachability, gather a signed
    timeout quorum, preserve the locked value, and delegate production to the
-   replacement proposer without the coordinator. The reachability probe is not
-   yet an adaptive production pacemaker and has not been partition-tested. There
+   replacement proposer without the coordinator. Durable timeout observations
+   now survive restart, back off exponentially by round, and require a second
+   failed probe before signing. This is not yet a latency-adaptive production
+   pacemaker and has not been partition-tested. There
    is still no transport confidentiality or governed coordinator-key rotation,
    lock discovery between competing producers, fork recovery,
    checkpoint/snapshot sync, peer discovery, or partition-tested liveness.

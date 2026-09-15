@@ -131,6 +131,23 @@ test("a validator persists its vote and refuses restart equivocation", () => {
   }
 });
 
+test("a validator persists its round timer across restart", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-pacemaker-test-"));
+  try {
+    const layout = initializeDistributedDevnet(join(temporary, "network"));
+    let replica = new ValidatorReplica(layout.validatorDirectories[0]);
+    const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
+    const proposal = new NirChain(genesis).buildBlock({ timestamp: 1 });
+    const request = { proposal, nextRound: 1 };
+    assert.equal(replica.observeRoundTimeout(request, 100, 1_000), 100);
+    replica = new ValidatorReplica(layout.validatorDirectories[0]);
+    assert.equal(replica.observeRoundTimeout(request, 100, 1_040), 60);
+    assert.equal(replica.observeRoundTimeout(request, 100, 1_100), 0);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("a quorum timeout safely replaces an offline proposer", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-round-failover-test-"));
   const layout = initializeDistributedDevnet(join(temporary, "network"));
@@ -350,6 +367,8 @@ test("validators replace an offline proposer without coordinator consensus calls
   let urls = [];
   const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
     peerUrls: () => urls,
+    roundTimeoutMs: 10,
+    maxRoundTimeoutMs: 40,
   }));
   try {
     urls = await Promise.all(servers.map((server) => listen(server)));
