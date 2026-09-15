@@ -119,12 +119,26 @@ export function initializeDistributedDevnet(
   const beacons = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const coordinator = generateWallet();
+  const validatorUrls = validators.map((_, index) =>
+    `http://127.0.0.1:${firstValidatorPort + index}`);
+  const peerRegistry = createPeerRegistry({
+    activationHeight: 0,
+    epoch: 0,
+    networkId,
+    peers: validators.map((validator, index) => ({
+      transport: publicWallet(validatorTransports[index]),
+      url: validatorUrls[index],
+      validatorAddress: validator.address,
+    })),
+    previousRegistryHash: EMPTY_PEER_REGISTRY_HASH,
+  }, validators);
   const genesis = {
     beaconAuthorities: members(beacons, "beacon"),
     capabilityReferences: [referenceCapability()],
     evaluators: members(evaluators, "evaluator"),
     genesisTimestamp: 0,
     networkId,
+    peerRegistry,
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: treasury.address,
     validators: members(validators, "validator"),
@@ -145,19 +159,6 @@ export function initializeDistributedDevnet(
     writeExclusive(join(validatorDirectory, "AUTHORIZED-COORDINATOR.json"), publicWallet(coordinator), 0o644);
     return validatorDirectory;
   });
-  const validatorUrls = validators.map((_, index) =>
-    `http://127.0.0.1:${firstValidatorPort + index}`);
-  const peerRegistry = createPeerRegistry({
-    activationHeight: 0,
-    epoch: 0,
-    networkId,
-    peers: validators.map((validator, index) => ({
-      transport: publicWallet(validatorTransports[index]),
-      url: validatorUrls[index],
-      validatorAddress: validator.address,
-    })),
-    previousRegistryHash: EMPTY_PEER_REGISTRY_HASH,
-  }, validators);
   for (let index = 0; index < validatorDirectories.length; index += 1) {
     const validatorDirectory = validatorDirectories[index];
     writeExclusive(join(validatorDirectory, "PEERS.json"), validatorUrls, 0o644);
@@ -211,6 +212,7 @@ export class TransactionMempool {
 function proposalFields(block) {
   return {
     fallbackBeacons: block.fallbackBeacons,
+    peerRegistryUpdate: block.peerRegistryUpdate,
     randomnessCommits: block.randomnessCommits,
     randomnessReveals: block.randomnessReveals,
     round: block.round,
@@ -265,6 +267,9 @@ export class ValidatorReplica {
       if (verified.activationHeight <= this.#chain.height) registry = verified;
     }
     if (!registry) throw new Error("peer registry has no active version");
+    if (peerRegistryHash(registry) !== this.#chain.peerRegistryHash) {
+      throw new Error("local peer registry does not match finalized chain state");
+    }
     const registryByValidator = new Map(registry.peers.map((peer) =>
       [peer.validatorAddress, peer]));
     this.#peerUrls = this.#validators.map(({ address }) => registryByValidator.get(address).url);

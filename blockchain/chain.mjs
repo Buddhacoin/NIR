@@ -38,6 +38,7 @@ import {
   safetyFailurePayload,
 } from "./safety-bounty.mjs";
 import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
+import { peerRegistryHash, verifyPeerRegistry } from "./peer-registry.mjs";
 import {
   activeValidatorSet,
   scheduleValidatorRotation,
@@ -475,6 +476,7 @@ export class NirChain {
   #validatorBonds;
   #registeredValidators;
   #pendingValidatorRotation;
+  #peerRegistry;
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
@@ -491,6 +493,7 @@ export class NirChain {
     capabilityReferences,
     safetyPolicyCommitments,
     beaconAuthorities,
+    peerRegistry = null,
     genesisTimestamp = Date.now(),
   }) {
     if (
@@ -515,6 +518,7 @@ export class NirChain {
       evaluators,
       genesisTimestamp,
       networkId,
+      peerRegistry,
       safetyPolicyCommitments,
       treasuryAddress,
       validators,
@@ -558,6 +562,11 @@ export class NirChain {
     this.#validatorBonds = new Map();
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorRotation = null;
+    this.#peerRegistry = peerRegistry === null ? null : verifyPeerRegistry(peerRegistry, {
+      currentHeight: 0,
+      networkId,
+      validators: [...this.#validators.values()],
+    });
     this.#safetyEvidence = new Set();
     this.#rewardEpoch = 0;
     this.#lastRewardTimestamp = genesisTimestamp - MIN_REWARD_INTERVAL_MS;
@@ -585,6 +594,7 @@ export class NirChain {
       })),
       genesisTimestamp,
       networkId,
+      peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
       protocolVersion: PROTOCOL_VERSION,
       safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
       validators: this.#validatorOrder.map((address) => ({
@@ -599,6 +609,7 @@ export class NirChain {
         hash: hashObject(genesis, "GENESIS"),
         height: 0,
         networkId,
+        peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
         previousHash: "0".repeat(64),
         progressRewards: [],
         safetySettlements: [],
@@ -669,6 +680,10 @@ export class NirChain {
 
   get pendingValidatorRotation() {
     return this.#pendingValidatorRotation ? structuredClone(this.#pendingValidatorRotation) : null;
+  }
+
+  get peerRegistryHash() {
+    return this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64);
   }
 
   randomnessFault(candidateId) {
@@ -819,7 +834,8 @@ export class NirChain {
   buildBlock({
     transactions = [], rewardClaims = [], safetyClaims = [],
     randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [],
-    validatorRotation = null, timestamp = Date.now(), round = 0, roundCertificate = null,
+    validatorRotation = null, peerRegistryUpdate = null,
+    timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
     const height = this.height + 1;
     const remaining = MINING_POOL - this.#mined;
@@ -860,10 +876,25 @@ export class NirChain {
         currentHeight: this.height, activationHeight: validatorRotation.activationHeight,
       });
     }
+    if (validatorRotation !== null && peerRegistryUpdate !== null) {
+      throw new Error("validator and peer registry rotations require separate blocks");
+    }
+    const nextPeerRegistry = peerRegistryUpdate === null ? this.#peerRegistry :
+      verifyPeerRegistry(peerRegistryUpdate, {
+        currentHeight: height,
+        networkId: this.#networkId,
+        previousRegistry: this.#peerRegistry,
+        validators: [...this.#validators.values()],
+      });
+    if (peerRegistryUpdate !== null && nextPeerRegistry.activationHeight !== height) {
+      throw new Error("peer registry must activate at its containing block height");
+    }
     return {
       capabilityMemoryRoot: stagedMemory.stateRoot,
       height,
       networkId: this.#networkId,
+      peerRegistryHash: nextPeerRegistry ? peerRegistryHash(nextPeerRegistry) : "0".repeat(64),
+      peerRegistryUpdate: nextPeerRegistry === this.#peerRegistry ? null : nextPeerRegistry,
       previousHash: this.#blocks.at(-1).hash,
       progressRewards,
       fallbackBeacons,
@@ -1222,6 +1253,27 @@ export class NirChain {
       throw new Error("block hash mismatch");
     }
 
+    if (block.validatorRotation !== null && block.peerRegistryUpdate !== null) {
+      throw new Error("validator and peer registry rotations require separate blocks");
+    }
+    let nextPeerRegistry = this.#peerRegistry;
+    if (block.peerRegistryUpdate !== null) {
+      nextPeerRegistry = verifyPeerRegistry(block.peerRegistryUpdate, {
+        currentHeight: block.height,
+        networkId: this.#networkId,
+        previousRegistry: this.#peerRegistry,
+        validators: [...this.#validators.values()],
+      });
+      if (nextPeerRegistry.activationHeight !== block.height) {
+        throw new Error("peer registry must activate at its containing block height");
+      }
+    }
+    const expectedPeerRegistryHash = nextPeerRegistry
+      ? peerRegistryHash(nextPeerRegistry) : "0".repeat(64);
+    if (block.peerRegistryHash !== expectedPeerRegistryHash) {
+      throw new Error("block peer registry commitment is invalid");
+    }
+
     const capabilityMemory = this.#capabilityMemory.clone();
     for (const claim of block.progressRewards) {
       this.#verifyProgressClaim(claim, block.height, capabilityMemory);
@@ -1460,6 +1512,7 @@ export class NirChain {
     this.#validatorFaults = validatorFaults;
     this.#validatorBonds = validatorBonds;
     this.#registeredValidators = registeredValidators;
+    this.#peerRegistry = nextPeerRegistry;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;

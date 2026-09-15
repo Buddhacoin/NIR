@@ -25,7 +25,7 @@ Required before inviting unknown operators:
 
 - TLS termination and certificate operations, automatic peer discovery, and
   production denial-of-service controls; quorum-signed endpoint and transport
-  identity rotation is implemented but still needs on-chain rollback protection;
+  identity rotation with on-chain rollback protection is implemented;
 - a production database with atomic recovery, checksummed snapshots, backups,
   pruning, and catch-up from multiple peers;
 - reproducible signed releases, monitoring, incident response, and a documented

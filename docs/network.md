@@ -6,7 +6,7 @@ key, its own verified chain journal, and a durable vote record.
 
 ## Create the network
 
-The two-phase finality certificate format uses protocol version 4. Recreate any earlier
+The peer-registry commitment format uses protocol version 5. Recreate any earlier
 valueless development network instead of attempting to reuse older blocks.
 
 ```bash
@@ -30,9 +30,14 @@ previous version. Every version must cover the complete validator set and carry
 `2N/3 + 1` consensus-validator approvals. A node rejects minority-approved,
 modified, premature, skipped, or wrong-network registries. On restart it verifies
 the complete history and selects the latest version active at its chain height.
+The active registry hash is committed in genesis and every block. A registry
+rotation is carried inside its activation block, receives normal prepare and
+commit finality, and becomes consensus state. Replacing the local history with
+an older valid file therefore prevents the validator from starting rather than
+silently redirecting its peers.
 Public endpoints must use HTTPS; plaintext HTTP is accepted only for loopback
-development addresses. Native TLS termination, on-chain anchoring of the latest
-registry hash, and a distributed signing ceremony remain production work.
+development addresses. Native TLS termination and a distributed signing
+ceremony remain production work.
 
 ## Start four validators
 
@@ -241,7 +246,8 @@ Application-layer control messages now have pinned mutual signatures using
 separate rotatable transport identities, and
 round-zero blocks can be assembled by the elected validator. Transport is
 not confidential on the built-in localhost HTTP server, coordinator-key rotation
-is not governed on-chain, peer registry history is not anchored on-chain, and
+is not governed on-chain, validator-set/peer-registry rotation is not yet one
+atomic transition, and
 catch-up is sequential with no snapshot or fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through

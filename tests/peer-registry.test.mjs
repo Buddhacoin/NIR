@@ -142,9 +142,6 @@ test("validators activate a quorum-signed transport rotation after chain height 
       join(layout.validatorDirectories[0], "PEER-REGISTRY.json"), "utf8",
     ));
     const chain = new NirChain(genesis);
-    const block = finalizeBlock(chain.buildBlock({ timestamp: 1 }), consensusWallets.slice(0, 3));
-    replicas.forEach((replica) => replica.commit(block));
-
     const newTransports = Array.from({ length: 4 }, generateWallet);
     const rotated = createPeerRegistry({
       activationHeight: 1,
@@ -157,6 +154,16 @@ test("validators activate a quorum-signed transport rotation after chain height 
       })),
       previousRegistryHash: peerRegistryHash(initial),
     }, consensusWallets.slice(0, 3));
+    const proposal = chain.buildBlock({
+      peerRegistryUpdate: rotated, timestamp: 1,
+    });
+    assert.throws(() => chain.validateProposal({
+      ...proposal, peerRegistryHash: "0".repeat(64),
+    }), /peer registry commitment/);
+    const block = finalizeBlock(proposal, consensusWallets.slice(0, 3));
+    replicas.forEach((replica) => replica.commit(block));
+    assert.throws(() => new ValidatorReplica(layout.validatorDirectories[0]),
+      /does not match finalized chain state/);
     layout.validatorDirectories.forEach((directory, index) => {
       writeFileSync(join(directory, "PEER-REGISTRIES.json"),
         `${JSON.stringify([initial, rotated], null, 2)}\n`, { mode: 0o600 });
