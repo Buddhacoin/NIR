@@ -265,6 +265,14 @@ export class ValidatorReplica {
 
   pendingTransactions() { return this.#mempool.values(); }
 
+  blocksAfter(fromHeight, limit = 8) {
+    if (!Number.isSafeInteger(fromHeight) || fromHeight < 1 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 8) {
+      throw new Error("block range request is invalid");
+    }
+    return this.#chain.blocks().filter(({ height }) => height >= fromHeight).slice(0, limit);
+  }
+
   expectedProposer(height = this.height + 1, round = 0) {
     return this.#chain.expectedProposer(height, round);
   }

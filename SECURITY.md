@@ -59,9 +59,12 @@ or an exploit against a live third-party system in a public issue.
    uses authenticated gossip and durable local pools that a restarted
    coordinator can recover. The elected validator can now assemble a normal
    block, gather peer votes, and broadcast finality without the coordinator.
+   Restarted validators can also fetch bounded, mutually authenticated block
+   ranges from validator peers and independently replay every certificate and
+   state transition without the coordinator.
    Leader-timeout orchestration still depends on the legacy coordinator, with
    no transport confidentiality or governed coordinator-key rotation, lock
-   discovery between competing producers, fork recovery, snapshot sync, peer
+   discovery between competing producers, fork recovery, checkpoint/snapshot sync, peer
    discovery, or partition-tested liveness. Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable
    execution-value hash.

@@ -42,7 +42,48 @@ async function gossipRequest(validator, index, url, path, payload) {
   return validator.verifyValidatorResponse(index, body.auth, auth.nonce, body.result);
 }
 
+async function peerHealth(validator, index, url) {
+  if (validator.peerAddress(index) === validator.address) return null;
+  const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3_000) });
+  const body = await response.json();
+  if (!response.ok || body.address !== validator.peerAddress(index) ||
+      body.networkId !== validator.networkId || !Number.isSafeInteger(body.height)) {
+    throw new Error("peer health identity or height is invalid");
+  }
+  return body;
+}
+
+async function synchronizeValidator(validator, urls) {
+  const statuses = await Promise.allSettled(urls.map((url, index) =>
+    peerHealth(validator, index, url)));
+  const candidates = statuses.map((result, index) => ({
+    height: result.status === "fulfilled" && result.value ? result.value.height : -1,
+    index,
+  })).filter(({ height }) => height > validator.height).sort((a, b) => b.height - a.height);
+  let syncedBlocks = 0;
+  for (const candidate of candidates) {
+    try {
+      while (validator.height < candidate.height) {
+        const result = await gossipRequest(
+          validator, candidate.index, urls[candidate.index], "/v1/p2p/blocks/range",
+          { fromHeight: validator.height + 1, limit: 8 },
+        );
+        if (!result || !Array.isArray(result.blocks) || result.blocks.length === 0) break;
+        for (const block of result.blocks) {
+          validator.commit(block);
+          syncedBlocks += 1;
+        }
+      }
+      if (validator.height >= candidate.height) break;
+    } catch {
+      // Try the next independently authenticated peer.
+    }
+  }
+  return { height: validator.height, syncedBlocks, tipHash: validator.tipHash };
+}
+
 async function produceValidatorBlock(validator, urls) {
+  await synchronizeValidator(validator, urls);
   const proposal = validator.buildProposal();
   if (proposal.proposer !== validator.address) {
     throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
@@ -129,6 +170,17 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.commit(payload);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/blocks/range") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = { blocks: validator.blocksAfter(payload.fromHeight, payload.limit) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/sync") {
+        consumeIngress(request.socket.remoteAddress ?? "unknown");
+        const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        return send(response, 200, await synchronizeValidator(validator, urls));
       }
       if (request.method === "POST" && url.pathname === "/v1/blocks/produce") {
         consumeIngress(request.socket.remoteAddress ?? "unknown");

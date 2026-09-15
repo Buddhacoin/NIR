@@ -275,3 +275,58 @@ test("the elected validator assembles and finalizes a block without the coordina
     rmSync(temporary, { recursive: true, force: true });
   }
 });
+
+test("a restarted validator catches up from authenticated validator peers", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-sync-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  let urls = [];
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    peerUrls: () => urls,
+  }));
+  try {
+    urls = await Promise.all(servers.map((server) => listen(server)));
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    await coordinator.faucet(alice.address);
+    const transaction = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    });
+    const ingress = await fetch(`${urls[0]}/v1/transactions`, {
+      body: JSON.stringify(transaction), headers: { "content-type": "application/json" }, method: "POST",
+    });
+    assert.equal(ingress.status, 202);
+
+    const proposer = replicas[0].expectedProposer();
+    const proposerIndex = replicas.findIndex(({ address }) => address === proposer);
+    const offlineIndex = replicas.findIndex(({ address }, index) =>
+      index !== proposerIndex && address !== proposer);
+    await close(servers[offlineIndex]);
+
+    const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
+    assert.equal(produced.status, 202);
+    const result = await produced.json();
+    assert.equal(result.height, 2);
+    assert.equal(result.votes, 3);
+    assert.equal(result.committedPeers, 3);
+    assert.equal(replicas[offlineIndex].height, 1);
+
+    replicas[offlineIndex] = new ValidatorReplica(layout.validatorDirectories[offlineIndex]);
+    servers[offlineIndex] = createValidatorHttpServer(replicas[offlineIndex], {
+      peerUrls: () => urls,
+    });
+    urls[offlineIndex] = await listen(servers[offlineIndex]);
+    const synchronized = await fetch(`${urls[offlineIndex]}/v1/sync`, { method: "POST" });
+    assert.equal(synchronized.status, 200);
+    const syncResult = await synchronized.json();
+    assert.equal(syncResult.syncedBlocks, 1);
+    assert.equal(syncResult.height, 2);
+    assert.equal(replicas[offlineIndex].mempoolSize, 0);
+    assert.equal(replicas[offlineIndex].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
