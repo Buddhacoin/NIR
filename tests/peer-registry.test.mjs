@@ -25,6 +25,7 @@ function validators(wallets) {
 
 function peers(consensusWallets, transportWallets, prefix = "node") {
   return consensusWallets.map((wallet, index) => ({
+    tlsCertificateSha256: `${index}`.repeat(64),
     transport: publicWallet(transportWallets[index]),
     url: `https://${prefix}-${index}.nir.example:9443`,
     validatorAddress: wallet.address,
@@ -81,7 +82,8 @@ test("a quorum-authorized peer registry rotates endpoints and separate transport
     activationHeight: 11,
     epoch: 1,
     networkId: "nir-peer-registry-test",
-    peers: [{ ...peers(consensusWallets, secondTransports)[0], url: "http://public.example" },
+    peers: [{ ...peers(consensusWallets, secondTransports)[0],
+      tlsCertificateSha256: null, url: "http://public.example" },
       ...peers(consensusWallets, secondTransports).slice(1)],
     previousRegistryHash: peerRegistryHash(initial),
   }, consensusWallets.slice(0, 3)), /require HTTPS/);

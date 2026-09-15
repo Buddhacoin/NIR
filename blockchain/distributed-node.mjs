@@ -41,6 +41,7 @@ import {
   peerRegistryHash,
   verifyPeerRegistry,
 } from "./peer-registry.mjs";
+import { requestJson } from "./http-client.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -106,8 +107,15 @@ function loadChain(directory) {
 
 export function initializeDistributedDevnet(
   directory,
-  { networkId = "nir-distributed-devnet", firstValidatorPort = 8791 } = {},
+  {
+    networkId = "nir-distributed-devnet",
+    firstValidatorPort = 8791,
+    tlsCertificateSha256 = null,
+  } = {},
 ) {
+  if (tlsCertificateSha256 !== null && !/^[0-9a-f]{64}$/.test(tlsCertificateSha256)) {
+    throw new Error("development TLS certificate pin is invalid");
+  }
   const root = resolve(directory);
   const coordinatorDirectory = join(root, "coordinator");
   mkdirSync(root, { mode: 0o700 });
@@ -120,12 +128,13 @@ export function initializeDistributedDevnet(
   const treasury = generateWallet();
   const coordinator = generateWallet();
   const validatorUrls = validators.map((_, index) =>
-    `http://127.0.0.1:${firstValidatorPort + index}`);
+    `${tlsCertificateSha256 === null ? "http" : "https"}://127.0.0.1:${firstValidatorPort + index}`);
   const peerRegistry = createPeerRegistry({
     activationHeight: 0,
     epoch: 0,
     networkId,
     peers: validators.map((validator, index) => ({
+      tlsCertificateSha256,
       transport: publicWallet(validatorTransports[index]),
       url: validatorUrls[index],
       validatorAddress: validator.address,
@@ -236,6 +245,7 @@ export class ValidatorReplica {
   #mempool = new TransactionMempool();
   #peerUrls;
   #peerTransports;
+  #peerTlsPins;
   #transportWallet;
 
   constructor(directory) {
@@ -275,6 +285,8 @@ export class ValidatorReplica {
     this.#peerUrls = this.#validators.map(({ address }) => registryByValidator.get(address).url);
     this.#peerTransports = this.#validators.map(({ address }) =>
       registryByValidator.get(address).transport);
+    this.#peerTlsPins = this.#validators.map(({ address }) =>
+      registryByValidator.get(address).tlsCertificateSha256);
     this.#transportWallet = readJson(join(this.#directory, "TRANSPORT-KEY.json"));
     const member = genesis.validators
       .find(({ address }) => address === this.#wallet.address);
@@ -350,6 +362,7 @@ export class ValidatorReplica {
   }
 
   peerAddress(index) { return this.#validators[index]?.address; }
+  peerTlsCertificateSha256(index) { return this.#peerTlsPins[index] ?? null; }
 
   pendingTransactions() { return this.#mempool.values(); }
 
@@ -659,25 +672,25 @@ export class ValidatorReplica {
   }
 }
 
-async function peerStatus(url) {
-  const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3_000) });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? `validator returned ${response.status}`);
-  return body;
+async function peerStatus(url, tlsCertificateSha256 = null) {
+  const response = await requestJson(`${url}/health`, { tlsCertificateSha256 });
+  if (!response.ok) throw new Error(response.body.error ?? `validator returned ${response.status}`);
+  return response.body;
 }
 
-async function peerRequest(url, path, value, { networkId, peer, wallet }) {
+async function peerRequest(url, path, value, {
+  networkId, peer, tlsCertificateSha256 = null, wallet,
+}) {
   const auth = createPeerRequest({ body: value, networkId, path, wallet });
-  const response = await fetch(`${url}${path}`, {
-    body: JSON.stringify({ auth, payload: value }),
-    headers: { "content-type": "application/json" },
+  const response = await requestJson(`${url}${path}`, {
+    body: { auth, payload: value },
     method: "POST",
-    signal: AbortSignal.timeout(3_000),
+    tlsCertificateSha256,
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? `validator returned ${response.status}`);
+  if (!response.ok) throw new Error(response.body.error ?? `validator returned ${response.status}`);
   return verifyPeerResponse({
-    auth: body.auth, networkId, requestNonce: auth.nonce, result: body.result, trustedPeer: peer,
+    auth: response.body.auth, networkId, requestNonce: auth.nonce,
+    result: response.body.result, trustedPeer: peer,
   });
 }
 
@@ -686,6 +699,7 @@ export class DistributedCoordinator {
   #directory;
   #mempool = new TransactionMempool();
   #peers;
+  #peerTlsPins;
   #treasury;
   #wallet;
   #validators;
@@ -699,7 +713,12 @@ export class DistributedCoordinator {
       throw new Error("four validator peer URLs are required");
     }
     this.#peers = [...validatorUrls];
-    this.#validators = readJson(join(this.#directory, "genesis.json")).validators;
+    const genesis = readJson(join(this.#directory, "genesis.json"));
+    this.#validators = genesis.validators;
+    const registryByValidator = new Map((genesis.peerRegistry?.peers ?? []).map((peer) =>
+      [peer.validatorAddress, peer]));
+    this.#peerTlsPins = this.#validators.map(({ address }) =>
+      registryByValidator.get(address)?.tlsCertificateSha256 ?? null);
   }
 
   get consensusMode() { return "remote-validator-quorum"; }
@@ -754,12 +773,15 @@ export class DistributedCoordinator {
 
   async #request(index, path, value) {
     return peerRequest(this.#peers[index], path, value, {
-      networkId: this.networkId, peer: this.#validators[index], wallet: this.#wallet,
+      networkId: this.networkId,
+      peer: this.#validators[index],
+      tlsCertificateSha256: this.#peerTlsPins[index],
+      wallet: this.#wallet,
     });
   }
 
   async #synchronizePeer(index) {
-    const status = await peerStatus(this.#peers[index]);
+    const status = await peerStatus(this.#peers[index], this.#peerTlsPins[index]);
     const expected = this.#validators[index];
     if (status.address !== expected.address || status.networkId !== this.networkId) {
       throw new Error("validator health identity does not match the configured peer");

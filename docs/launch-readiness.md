@@ -23,9 +23,10 @@ has market value.
 
 Required before inviting unknown operators:
 
-- TLS termination and certificate operations, automatic peer discovery, and
-  production denial-of-service controls; quorum-signed endpoint and transport
-  identity rotation with on-chain rollback protection is implemented;
+- automated certificate issuance, renewal and revocation, automatic peer
+  discovery, and production denial-of-service controls; pinned TLS 1.3 plus
+  quorum-signed endpoint and transport-identity rotation with on-chain rollback
+  protection are implemented;
 - a production database with atomic recovery, checksummed snapshots, backups,
   pruning, and catch-up from multiple peers;
 - reproducible signed releases, monitoring, incident response, and a documented

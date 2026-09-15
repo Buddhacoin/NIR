@@ -33,6 +33,17 @@ function normalizeTransport(identity) {
   };
 }
 
+function normalizeTlsPin(value, url) {
+  const encrypted = new URL(url).protocol === "https:";
+  if (encrypted && !/^[0-9a-f]{64}$/.test(value ?? "")) {
+    throw new Error("HTTPS peer endpoint requires a SHA-256 certificate pin");
+  }
+  if (!encrypted && value !== null && value !== undefined) {
+    throw new Error("plaintext peer endpoint cannot declare a TLS certificate pin");
+  }
+  return encrypted ? value : null;
+}
+
 function registryPayload({ activationHeight, epoch, networkId, peers, previousRegistryHash }) {
   if (typeof networkId !== "string" || networkId.length < 3 || networkId.length > 128 ||
       !Number.isSafeInteger(epoch) || epoch < 0 || epoch > MAX_REGISTRY_EPOCH ||
@@ -49,6 +60,7 @@ function registryPayload({ activationHeight, epoch, networkId, peers, previousRe
     }
     const url = normalizedUrl(peer.url);
     const transport = normalizeTransport(peer.transport);
+    const tlsCertificateSha256 = normalizeTlsPin(peer.tlsCertificateSha256, url);
     if (transport.address === peer.validatorAddress) {
       throw new Error("consensus and transport identities must be separate");
     }
@@ -57,7 +69,7 @@ function registryPayload({ activationHeight, epoch, networkId, peers, previousRe
     }
     transportAddresses.add(transport.address);
     urls.add(url);
-    return { transport, url, validatorAddress: peer.validatorAddress };
+    return { tlsCertificateSha256, transport, url, validatorAddress: peer.validatorAddress };
   }).sort((left, right) => left.validatorAddress.localeCompare(right.validatorAddress));
   if (new Set(normalizedPeers.map(({ validatorAddress }) => validatorAddress)).size !==
       normalizedPeers.length) throw new Error("peer validator addresses must be unique");

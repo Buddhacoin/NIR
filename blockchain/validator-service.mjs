@@ -1,7 +1,9 @@
-import { createServer } from "node:http";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 
 import { blockHash, transactionId } from "./chain.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
+import { requestJson } from "./http-client.mjs";
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -32,21 +34,23 @@ function readBody(request) {
 async function gossipRequest(validator, index, url, path, payload) {
   if (validator.peerAddress(index) === validator.address) return null;
   const auth = validator.createValidatorRequest(path, payload);
-  const response = await fetch(`${url}${path}`, {
-    body: JSON.stringify({ auth, payload }),
-    headers: { "content-type": "application/json" },
+  const response = await requestJson(`${url}${path}`, {
+    body: { auth, payload },
     method: "POST",
-    signal: AbortSignal.timeout(3_000),
+    tlsCertificateSha256: validator.peerTlsCertificateSha256(index),
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? `gossip peer returned ${response.status}`);
-  return validator.verifyValidatorResponse(index, body.auth, auth.nonce, body.result);
+  if (!response.ok) throw new Error(response.body.error ?? `gossip peer returned ${response.status}`);
+  return validator.verifyValidatorResponse(
+    index, response.body.auth, auth.nonce, response.body.result,
+  );
 }
 
 async function peerHealth(validator, index, url) {
   if (validator.peerAddress(index) === validator.address) return null;
-  const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3_000) });
-  const body = await response.json();
+  const response = await requestJson(`${url}/health`, {
+    tlsCertificateSha256: validator.peerTlsCertificateSha256(index),
+  });
+  const body = response.body;
   if (!response.ok || body.address !== validator.peerAddress(index) ||
       body.networkId !== validator.networkId || !Number.isSafeInteger(body.height)) {
     throw new Error("peer health identity or height is invalid");
@@ -245,6 +249,14 @@ export function createValidatorHttpServer(validator, options = {}) {
       }
     }
   };
+  const tls = options.tls ?? null;
+  if (tls !== null && (typeof tls.key !== "string" && !Buffer.isBuffer(tls.key) ||
+      typeof tls.cert !== "string" && !Buffer.isBuffer(tls.cert))) {
+    throw new Error("validator TLS key and certificate are required");
+  }
+  const createServer = tls === null
+    ? (handler) => createHttpServer(handler)
+    : (handler) => createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: "TLSv1.3" }, handler);
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://validator.local");

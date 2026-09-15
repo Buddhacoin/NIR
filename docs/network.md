@@ -36,8 +36,32 @@ commit finality, and becomes consensus state. Replacing the local history with
 an older valid file therefore prevents the validator from starting rather than
 silently redirecting its peers.
 Public endpoints must use HTTPS; plaintext HTTP is accepted only for loopback
-development addresses. Native TLS termination and a distributed signing
-ceremony remain production work.
+development addresses. The validator can terminate TLS 1.3 directly. P2P and
+coordinator clients compare the live DER-certificate SHA-256 fingerprint and
+validity period with the value committed by consensus. Automated certificate
+renewal and a distributed registry-signing ceremony remain production work.
+
+## Start an encrypted local network
+
+A self-signed certificate costs nothing and is sufficient for a pinned local
+testnet. Generate one development certificate:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout .nir-dev-key.pem -out .nir-dev-cert.pem -days 30 \
+  -subj "/CN=localhost"
+chmod 600 .nir-dev-key.pem
+export NIR_TLS_KEY_PATH="$PWD/.nir-dev-key.pem"
+export NIR_TLS_CERT_PATH="$PWD/.nir-dev-cert.pem"
+npm run network:init-dev -- .nir-network
+```
+
+Keep both environment variables set when starting each validator. Initialization
+derives the certificate fingerprint and commits it to the genesis peer registry;
+the private key itself is never written into genesis or a block. The single
+shared certificate above is only for localhost development. Independent public
+operators must use separate keys and approve their registry entries before the
+activation block is finalized.
 
 ## Start four validators
 
@@ -243,11 +267,11 @@ finalize both values. The seed makes every failure exactly reproducible.
 
 This is a multi-process localhost consensus prototype, not production BFT.
 Application-layer control messages now have pinned mutual signatures using
-separate rotatable transport identities, and
+separate rotatable transport identities and optional pinned TLS 1.3, and
 round-zero blocks can be assembled by the elected validator. Transport is
-not confidential on the built-in localhost HTTP server, coordinator-key rotation
-is not governed on-chain, validator-set/peer-registry rotation is not yet one
-atomic transition, and
+remain plaintext only when the loopback development mode is deliberately used.
+Automated certificate lifecycle and coordinator-key rotation are not governed
+on-chain, validator-set/peer-registry rotation is not yet one atomic transition, and
 catch-up is sequential with no snapshot or fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
