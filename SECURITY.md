@@ -80,8 +80,10 @@ or an exploit against a live third-party system in a public issue.
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
    a split-prepare regression verifies later-round liveness, and 512 seeded
    schedules exercise delayed, dropped, reordered, and replayed messages from
-   an equivocating proposer. Broader stateful fuzzing and a formal
-   safety/liveness proof remain.
+   an equivocating proposer. Multi-height stateful schedules additionally mix
+   partitions, replay, corrupted signatures, journal-backed restarts, full-chain
+   replay, and delayed joint-quorum validator rotations. Coverage-guided fuzzing,
+   independent review, and a formal safety/liveness proof remain.
    Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable
    execution-value hash.

@@ -213,6 +213,11 @@ finalize both values. The seed makes every failure exactly reproducible.
   cannot fork and later catches up from the verified chain.
 - 512 reproducible adversarial schedules cannot turn delayed, lost, reordered,
   or replayed votes into two conflicting finality certificates.
+- stateful seeded schedules repeatedly finalize across eight heights while
+  mixing split prepares, delivery loss, replay, signature corruption, and real
+  validator-process reconstruction from durable journals.
+- randomized validator-set histories exercise delayed activation, joint old/new
+  certificates, stale-set rejection, corrupted commits, and full chain replay.
 
 ## Remaining production boundary
 
@@ -232,6 +237,6 @@ localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,
-production-grade adaptive denial-of-service defense, broad randomized fault
-testing, or formal consensus proof yet. Test keys are plaintext and have no
+production-grade adaptive denial-of-service defense, coverage-guided or
+unbounded randomized fault testing, or formal consensus proof yet. Test keys are plaintext and have no
 monetary value.
