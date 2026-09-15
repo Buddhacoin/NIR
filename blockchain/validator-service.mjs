@@ -274,32 +274,42 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.submitTransaction(payload);
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/proposals") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
-        if (auth.signer !== payload.proposer) throw new Error("proposal was not sent by its proposer");
+        if (validator.validatorAddressForPeerSigner(auth.signer) !== payload.proposer) {
+          throw new Error("proposal was not sent by its proposer");
+        }
         const result = { vote: validator.vote(payload) };
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/commits") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
-        if (auth.signer !== payload.proposal.proposer) {
+        if (validator.validatorAddressForPeerSigner(auth.signer) !== payload.proposal.proposer) {
           throw new Error("commit certificate was not sent by its proposer");
         }
         const result = {
           vote: validator.commitVote(payload.proposal, payload.prepareCertificate),
         };
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/locks") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         if (payload?.height !== validator.height + 1) throw new Error("lock height is invalid");
         const result = { lock: validator.lockedProposal() };
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/timeouts") {
         const { auth, payload } = await readBody(request);
@@ -313,7 +323,9 @@ export function createValidatorHttpServer(validator, options = {}) {
           throw new Error("elected proposer recovered before the timeout elapsed");
         }
         const result = { timeout: validator.timeout(payload) };
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/produce") {
         const { auth, payload } = await readBody(request);
@@ -322,19 +334,25 @@ export function createValidatorHttpServer(validator, options = {}) {
         const result = await finalizeValidatorProposal(
           validator, urls, payload.proposal, payload.prepareCertificate ?? null,
         );
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/blocks") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.commit(payload);
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/blocks/range") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { blocks: validator.blocksAfter(payload.fromHeight, payload.limit) };
-        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/sync") {
         consumeIngress(request.socket.remoteAddress ?? "unknown");

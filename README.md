@@ -54,6 +54,7 @@ The intended advantages are:
 | Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
 | Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
+| Quorum-signed peer registry and separate rotatable transport identities | Implemented; external TLS termination and on-chain registry anchoring remain |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, and multi-height stateful fuzzing |
 | Installable browser/PWA wallet interface | Interactive local testnet preview |
 | Public mainnet or exchange-listed NIR | Not launched |

@@ -19,6 +19,21 @@ The coordinator receives no validator private key.
 It receives a separate operational ML-DSA-65 identity. Validators pin only its
 public identity and reject unsigned, altered, stale, or replayed control calls.
 
+Initialization also creates a separate ML-DSA-65 transport identity for each
+validator and a quorum-signed `PEER-REGISTRIES.json`. Consensus keys continue to
+sign prepare, commit, and timeout votes; transport keys authenticate P2P HTTP
+requests and responses only. Compromising a transport key therefore does not
+grant authority to finalize a block.
+
+Registry versions are ordered by epoch, activation height, and the hash of the
+previous version. Every version must cover the complete validator set and carry
+`2N/3 + 1` consensus-validator approvals. A node rejects minority-approved,
+modified, premature, skipped, or wrong-network registries. On restart it verifies
+the complete history and selects the latest version active at its chain height.
+Public endpoints must use HTTPS; plaintext HTTP is accepted only for loopback
+development addresses. Native TLS termination, on-chain anchoring of the latest
+registry hash, and a distributed signing ceremony remain production work.
+
 ## Start four validators
 
 Run each command in a separate terminal:
@@ -222,10 +237,12 @@ finalize both values. The seed makes every failure exactly reproducible.
 ## Remaining production boundary
 
 This is a multi-process localhost consensus prototype, not production BFT.
-Application-layer control messages now have pinned mutual signatures, and
+Application-layer control messages now have pinned mutual signatures using
+separate rotatable transport identities, and
 round-zero blocks can be assembled by the elected validator. Transport is
-not confidential, coordinator-key rotation is not governed on-chain, peer URLs
-are static, and catch-up is sequential with no snapshot or fork-choice protocol.
+not confidential on the built-in localhost HTTP server, coordinator-key rotation
+is not governed on-chain, peer registry history is not anchored on-chain, and
+catch-up is sequential with no snapshot or fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates. Consensus now has distinct

@@ -23,8 +23,9 @@ has market value.
 
 Required before inviting unknown operators:
 
-- encrypted validator transport, peer discovery, peer identity rotation, and
-  denial-of-service controls;
+- TLS termination and certificate operations, automatic peer discovery, and
+  production denial-of-service controls; quorum-signed endpoint and transport
+  identity rotation is implemented but still needs on-chain rollback protection;
 - a production database with atomic recovery, checksummed snapshots, backups,
   pruning, and catch-up from multiple peers;
 - reproducible signed releases, monitoring, incident response, and a documented

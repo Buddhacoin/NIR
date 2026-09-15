@@ -15,6 +15,8 @@ or an exploit against a live third-party system in a public issue.
   manifests that contain no encrypted or private key material;
 - SHA3-256 block hashes and full 256-bit address identifiers;
 - domain-separated signatures and hashes;
+- consensus keys separated from P2P transport identities, with a quorum-signed,
+  hash-linked peer registry and height-gated transport-key/endpoint rotation;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -75,7 +77,10 @@ or an exploit against a live third-party system in a public issue.
    commit certificates; commit signatures bind the exact prepare certificate,
    while split prepare votes remain round-local and can safely move to a later
    certified round. There
-   is still no transport confidentiality or governed coordinator-key rotation,
+   Non-loopback entries in the signed peer registry must use HTTPS, but the node
+   does not yet terminate TLS itself. Registry history is not yet anchored in
+   consensus state, so protection against rollback of a validator's local
+   registry files still depends on host integrity. There is still no governed coordinator-key rotation,
    fork recovery, checkpoint/snapshot sync, or peer discovery. Deterministic
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
    a split-prepare regression verifies later-round liveness, and 512 seeded

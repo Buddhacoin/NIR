@@ -35,6 +35,12 @@ import {
   verifyPeerRequest,
   verifyPeerResponse,
 } from "./peer-auth.mjs";
+import {
+  createPeerRegistry,
+  EMPTY_PEER_REGISTRY_HASH,
+  peerRegistryHash,
+  verifyPeerRegistry,
+} from "./peer-registry.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -108,6 +114,7 @@ export function initializeDistributedDevnet(
   mkdirSync(coordinatorDirectory, { recursive: true, mode: 0o700 });
   mkdirSync(join(coordinatorDirectory, "blocks"), { mode: 0o700 });
   const validators = Array.from({ length: 4 }, generateWallet);
+  const validatorTransports = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
@@ -140,12 +147,28 @@ export function initializeDistributedDevnet(
   });
   const validatorUrls = validators.map((_, index) =>
     `http://127.0.0.1:${firstValidatorPort + index}`);
-  for (const validatorDirectory of validatorDirectories) {
+  const peerRegistry = createPeerRegistry({
+    activationHeight: 0,
+    epoch: 0,
+    networkId,
+    peers: validators.map((validator, index) => ({
+      transport: publicWallet(validatorTransports[index]),
+      url: validatorUrls[index],
+      validatorAddress: validator.address,
+    })),
+    previousRegistryHash: EMPTY_PEER_REGISTRY_HASH,
+  }, validators);
+  for (let index = 0; index < validatorDirectories.length; index += 1) {
+    const validatorDirectory = validatorDirectories[index];
     writeExclusive(join(validatorDirectory, "PEERS.json"), validatorUrls, 0o644);
+    writeExclusive(join(validatorDirectory, "PEER-REGISTRY.json"), peerRegistry, 0o644);
+    writeExclusive(join(validatorDirectory, "PEER-REGISTRIES.json"), [peerRegistry], 0o644);
+    writeExclusive(join(validatorDirectory, "TRANSPORT-KEY.json"), validatorTransports[index]);
   }
   writeExclusive(join(root, "network.json"), {
     coordinatorDirectory,
     networkId,
+    peerRegistryHash: peerRegistryHash(peerRegistry),
     validatorDirectories,
     validatorUrls,
   }, 0o644);
@@ -210,6 +233,8 @@ export class ValidatorReplica {
   #validators;
   #mempool = new TransactionMempool();
   #peerUrls;
+  #peerTransports;
+  #transportWallet;
 
   constructor(directory) {
     this.#directory = resolve(directory);
@@ -218,11 +243,43 @@ export class ValidatorReplica {
     this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
     const genesis = readJson(join(this.#directory, "genesis.json"));
     this.#validators = genesis.validators;
-    this.#peerUrls = readJson(join(this.#directory, "PEERS.json"));
+    let registryHistory;
+    try {
+      registryHistory = readJson(join(this.#directory, "PEER-REGISTRIES.json"));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      registryHistory = [readJson(join(this.#directory, "PEER-REGISTRY.json"))];
+    }
+    if (!Array.isArray(registryHistory) || registryHistory.length < 1 ||
+        registryHistory.length > 1_024) throw new Error("peer registry history is invalid");
+    let previousRegistry = null;
+    let registry = null;
+    for (const candidate of registryHistory) {
+      const verified = verifyPeerRegistry(candidate, {
+        currentHeight: Math.max(this.#chain.height, candidate?.activationHeight ?? 0),
+        networkId: this.#chain.networkId,
+        previousRegistry,
+        validators: this.#validators,
+      });
+      previousRegistry = verified;
+      if (verified.activationHeight <= this.#chain.height) registry = verified;
+    }
+    if (!registry) throw new Error("peer registry has no active version");
+    const registryByValidator = new Map(registry.peers.map((peer) =>
+      [peer.validatorAddress, peer]));
+    this.#peerUrls = this.#validators.map(({ address }) => registryByValidator.get(address).url);
+    this.#peerTransports = this.#validators.map(({ address }) =>
+      registryByValidator.get(address).transport);
+    this.#transportWallet = readJson(join(this.#directory, "TRANSPORT-KEY.json"));
     const member = genesis.validators
       .find(({ address }) => address === this.#wallet.address);
     if (!member || member.publicKey !== this.#wallet.publicKey) {
       throw new Error("validator key does not belong to this network");
+    }
+    const ownTransport = registryByValidator.get(this.#wallet.address).transport;
+    if (ownTransport.address !== this.#transportWallet.address ||
+        ownTransport.publicKey !== this.#transportWallet.publicKey) {
+      throw new Error("validator transport key does not belong to the active peer registry");
     }
     for (const name of readdirSync(join(this.#directory, "mempool")).sort()) {
       if (/^[0-9a-f]{64}\.json$/.test(name)) this.#mempool.add(readJson(join(this.#directory, "mempool", name)));
@@ -253,8 +310,14 @@ export class ValidatorReplica {
     return createPeerResponse({ networkId: this.networkId, requestNonce, result, wallet: this.#wallet });
   }
 
+  authenticateValidatorResponse(requestNonce, result) {
+    return createPeerResponse({
+      networkId: this.networkId, requestNonce, result, wallet: this.#transportWallet,
+    });
+  }
+
   authorizeValidator(auth, method, path, body) {
-    const peer = this.#validators.find(({ address }) => address === auth?.signer);
+    const peer = this.#peerTransports.find(({ address }) => address === auth?.signer);
     if (!peer) throw new Error("gossip signer is not a network validator");
     if (!this.#validatorNonces.has(peer.address)) this.#validatorNonces.set(peer.address, new Map());
     return verifyPeerRequest({
@@ -264,13 +327,21 @@ export class ValidatorReplica {
   }
 
   createValidatorRequest(path, body) {
-    return createPeerRequest({ body, networkId: this.networkId, path, wallet: this.#wallet });
+    return createPeerRequest({
+      body, networkId: this.networkId, path, wallet: this.#transportWallet,
+    });
   }
 
   verifyValidatorResponse(index, auth, requestNonce, result) {
     return verifyPeerResponse({
-      auth, networkId: this.networkId, requestNonce, result, trustedPeer: this.#validators[index],
+      auth, networkId: this.networkId, requestNonce, result,
+      trustedPeer: this.#peerTransports[index],
     });
+  }
+
+  validatorAddressForPeerSigner(signer) {
+    const index = this.#peerTransports.findIndex(({ address }) => address === signer);
+    return index < 0 ? null : this.#validators[index].address;
   }
 
   peerAddress(index) { return this.#validators[index]?.address; }
