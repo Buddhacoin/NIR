@@ -57,6 +57,7 @@ The intended advantages are:
 | Signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally |
 | Bounded public ingress, request sizes, connections, headers, and timeouts | Implemented locally; production DDoS edge protection remains |
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |
+| Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, and AI memory | Committed in genesis and every protocol-v6 block |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, and multi-height stateful fuzzing |
 | Installable browser/PWA wallet interface | Interactive local testnet preview |
 | Public mainnet or exchange-listed NIR | Not launched |
@@ -262,6 +263,7 @@ candidate runs are committed.
 - `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
 - `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
 - `blockchain/node-store.mjs` — atomic block files and verified restart replay.
+- `blockchain/block-store.mjs` — fsync-backed redundant journals, checkpoints, and public backups.
 - `blockchain/distributed-node.mjs` — separate validators, mempool, and remote quorum coordinator.
 - `blockchain/validator-service.mjs` — one-key validator RPC with durable anti-equivocation votes.
 - `blockchain/consensus-view.mjs` — fail-closed highest-certificate selection for validator view changes.

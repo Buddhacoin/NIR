@@ -44,6 +44,12 @@ balances survive replay.
 
 ## Storage recovery and backups
 
+Each protocol-v6 block commits a deterministic root covering balances, nonces,
+issuance, burns, candidate and validator bonds, recorded faults, validator-set
+transitions, the peer registry, safety evidence, and world capability memory.
+This is the trust anchor required for future fast state snapshots; the current
+node still performs full replay and does not import snapshots yet.
+
 Each accepted block is first verified on an isolated chain copy. The node then
 writes and `fsync`s a redundant block copy, the primary block, and two copies of
 `STORE-CHECKPOINT.json` before replacing its live in-memory state. Each

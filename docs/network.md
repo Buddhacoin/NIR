@@ -6,7 +6,7 @@ key, its own verified chain journal, and a durable vote record.
 
 ## Create the network
 
-The peer-registry commitment format uses protocol version 5. Recreate any earlier
+The full-state commitment format uses protocol version 6. Recreate any earlier
 valueless development network instead of attempting to reuse older blocks.
 
 ```bash

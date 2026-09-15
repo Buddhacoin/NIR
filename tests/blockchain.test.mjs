@@ -390,8 +390,11 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
     nonce: 0,
     fee: "1000",
   });
+  const beforeTransferRoot = chain.stateRoot;
   const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
+  assert.notEqual(block.stateRoot, beforeTransferRoot);
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  assert.equal(chain.stateRoot, block.stateRoot);
   assert.equal(chain.balance(bob.address), 125_000_000n);
   assert.equal(chain.nextNonce(alice.address), 1);
 });
@@ -953,6 +956,18 @@ test("a block cannot claim a false world capability memory root", () => {
   block.capabilityMemoryRoot = fingerprint("false-world-memory");
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   assert.throws(() => chain.appendBlock(finalized), /capability memory root/);
+});
+
+test("a finalized block cannot claim a false complete state root", () => {
+  const { chain, validators } = fixture();
+  const before = chain.stateRoot;
+  const block = chain.buildBlock({ timestamp: 1 });
+  assert.match(block.stateRoot, /^[0-9a-f]{64}$/);
+  block.stateRoot = fingerprint("false-complete-state");
+  const finalized = finalizeBlock(block, quorumFor(block, validators));
+  assert.throws(() => chain.appendBlock(finalized), /state root/);
+  assert.equal(chain.stateRoot, before);
+  assert.equal(chain.height, 0);
 });
 
 test("the same validator vote cannot be counted twice", () => {

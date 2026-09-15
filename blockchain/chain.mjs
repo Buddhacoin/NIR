@@ -101,6 +101,30 @@ function operatorRegistry(entries, role) {
   return registry;
 }
 
+function normalizedStateValue(value) {
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Map) {
+    return [...value.entries()]
+      .sort(([left], [right]) => String(left).localeCompare(String(right)))
+      .map(([key, entry]) => [key, normalizedStateValue(entry)]);
+  }
+  if (value instanceof Set) {
+    return [...value].map(normalizedStateValue)
+      .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+  }
+  if (Array.isArray(value)) return value.map(normalizedStateValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, normalizedStateValue(entry)]));
+  }
+  return value;
+}
+
+function chainStateRoot(state) {
+  return hashObject(normalizedStateValue(state), "CHAIN_STATE_V1");
+}
+
 function unsignedTransaction(transaction) {
   const { signature: _signature, signatures: _signatures, ...unsigned } = transaction;
   return unsigned;
@@ -584,6 +608,7 @@ export class NirChain {
       throw new Error("genesis safety policies are invalid");
     }
     this.#safetyPolicies = new Set(safetyPolicyCommitments);
+    const stateRoot = this.#stateRoot();
     const genesis = {
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
       beaconAuthorities: [...this.#beaconAuthorities.values()].map(({ address, operatorId }) => ({ address, operatorId })),
@@ -597,6 +622,7 @@ export class NirChain {
       peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
       protocolVersion: PROTOCOL_VERSION,
       safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
+      stateRoot,
       validators: this.#validatorOrder.map((address) => ({
         address,
         operatorId: this.#validators.get(address).operatorId,
@@ -613,6 +639,7 @@ export class NirChain {
         previousHash: "0".repeat(64),
         progressRewards: [],
         safetySettlements: [],
+        stateRoot,
         protocolVersion: PROTOCOL_VERSION,
         timestamp: genesisTimestamp,
         transactions: [],
@@ -658,6 +685,32 @@ export class NirChain {
 
   get capabilityMemoryRoot() {
     return this.#capabilityMemory.stateRoot;
+  }
+
+  get stateRoot() { return this.#stateRoot(); }
+
+  #stateRoot(overrides = {}) {
+    return chainStateRoot({
+      balances: overrides.balances ?? this.#balances,
+      burned: overrides.burned ?? this.#burned,
+      candidateBonds: overrides.candidateBonds ?? this.#candidateBonds,
+      capabilityMemoryRoot: overrides.capabilityMemoryRoot ?? this.#capabilityMemory.stateRoot,
+      lastRewardTimestamp: overrides.lastRewardTimestamp ?? this.#lastRewardTimestamp,
+      mined: overrides.mined ?? this.#mined,
+      nonces: overrides.nonces ?? this.#nonces,
+      pendingValidatorRotation:
+        overrides.pendingValidatorRotation === undefined
+          ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
+      peerRegistry: overrides.peerRegistry === undefined ? this.#peerRegistry : overrides.peerRegistry,
+      randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
+      registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
+      rewardEpoch: overrides.rewardEpoch ?? this.#rewardEpoch,
+      rewardedProofs: overrides.rewardedProofs ?? this.#rewardedProofs,
+      safetyEvidence: overrides.safetyEvidence ?? this.#safetyEvidence,
+      validatorBonds: overrides.validatorBonds ?? this.#validatorBonds,
+      validatorFaults: overrides.validatorFaults ?? this.#validatorFaults,
+      validators: overrides.validators ?? this.#validators,
+    });
   }
 
   get nextIssuanceEpoch() {
@@ -889,7 +942,7 @@ export class NirChain {
     if (peerRegistryUpdate !== null && nextPeerRegistry.activationHeight !== height) {
       throw new Error("peer registry must activate at its containing block height");
     }
-    return {
+    const proposal = {
       capabilityMemoryRoot: stagedMemory.stateRoot,
       height,
       networkId: this.#networkId,
@@ -911,6 +964,25 @@ export class NirChain {
       timestamp,
       transactions,
     };
+    const provisional = { ...proposal, stateRoot: "0".repeat(64) };
+    const simulation = {
+      ...provisional,
+      certificate: [],
+      hash: blockHash(provisional),
+      prepareCertificate: [],
+      proposer: this.expectedProposer(height, 0),
+      round: 0,
+      roundCertificate: null,
+    };
+    try {
+      const trial = this.fork();
+      trial.#applyBlock(simulation, false, false);
+      return { ...proposal, stateRoot: trial.stateRoot };
+    } catch {
+      // An assembler may still return an invalid proposal for diagnostic and
+      // adversarial tests; validators will reject it before trusting this root.
+      return provisional;
+    }
   }
 
   #verifyCertificate(block, validators, previousValidators = null) {
@@ -1204,7 +1276,7 @@ export class NirChain {
     return candidate.hash;
   }
 
-  #applyBlock(block, verifyCertificate) {
+  #applyBlock(block, verifyCertificate, verifyStateRoot = true) {
     const previous = this.#blocks.at(-1);
     if (block.networkId !== this.#networkId) throw new Error("wrong network id");
     if (block.protocolVersion !== PROTOCOL_VERSION) throw new Error("wrong protocol version");
@@ -1508,6 +1580,41 @@ export class NirChain {
       }
     }
 
+    let validatorsAfter = this.#validators;
+    let validatorOrderAfter = this.#validatorOrder;
+    let pendingValidatorRotationAfter = this.#pendingValidatorRotation;
+    if (pendingValidatorRotationAfter &&
+        block.height >= pendingValidatorRotationAfter.activationHeight) {
+      validatorsAfter = new Map(blockValidatorMembers.map((member) => [member.address, member]));
+      validatorOrderAfter = blockValidatorMembers.map(({ address }) => address);
+      pendingValidatorRotationAfter = null;
+    }
+    if (scheduledRotation) pendingValidatorRotationAfter = scheduledRotation;
+    const rewardEpochAfter = this.#rewardEpoch + (block.progressRewards.length > 0 ? 1 : 0);
+    const lastRewardTimestampAfter = block.progressRewards.length > 0
+      ? block.timestamp : this.#lastRewardTimestamp;
+    const expectedStateRoot = this.#stateRoot({
+      balances,
+      burned: this.#burned + newlyBurned,
+      candidateBonds,
+      capabilityMemoryRoot: capabilityMemory.stateRoot,
+      lastRewardTimestamp: lastRewardTimestampAfter,
+      mined: this.#mined + newlyMined,
+      nonces,
+      pendingValidatorRotation: pendingValidatorRotationAfter,
+      peerRegistry: nextPeerRegistry,
+      randomnessFaults,
+      registeredValidators,
+      rewardEpoch: rewardEpochAfter,
+      rewardedProofs,
+      safetyEvidence,
+      validatorBonds,
+      validatorFaults,
+      validators: validatorsAfter,
+    });
+    if (verifyStateRoot && block.stateRoot !== expectedStateRoot) {
+      throw new Error("block state root is invalid");
+    }
     this.#balances = balances;
     this.#burned += newlyBurned;
     this.#candidateBonds = candidateBonds;
@@ -1521,17 +1628,12 @@ export class NirChain {
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;
-    if (block.progressRewards.length > 0) {
-      this.#rewardEpoch += 1;
-      this.#lastRewardTimestamp = block.timestamp;
-    }
-    if (this.#pendingValidatorRotation && block.height >= this.#pendingValidatorRotation.activationHeight) {
-      this.#validators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
-      this.#validatorOrder = blockValidatorMembers.map(({ address }) => address);
-      this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
-      this.#pendingValidatorRotation = null;
-    }
-    if (scheduledRotation) this.#pendingValidatorRotation = scheduledRotation;
+    this.#rewardEpoch = rewardEpochAfter;
+    this.#lastRewardTimestamp = lastRewardTimestampAfter;
+    this.#validators = validatorsAfter;
+    this.#validatorOrder = validatorOrderAfter;
+    this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
+    this.#pendingValidatorRotation = pendingValidatorRotationAfter;
     this.#blocks.push(structuredClone(block));
     return block.hash;
   }

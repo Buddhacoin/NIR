@@ -25,6 +25,9 @@ or an exploit against a live third-party system in a public issue.
   headers, request duration, and keep-alive time;
 - fsync-backed block persistence with checksummed checkpoints, redundant journal
   copies, verified startup repair, and private-key-free chain backup exports;
+- a deterministic full-state root in genesis and every block, covering balances,
+  nonces, issuance, burns, candidate and validator bonds, faults, validator-set
+  transitions, peer registry, safety evidence, and capability-memory state;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -142,6 +145,8 @@ or an exploit against a live third-party system in a public issue.
    Key-free portable chain exports support backups to a separate device. This
    still lacks a production database, fast state snapshots, pruning, remote
    backup coordination, multi-peer snapshot recovery, and restore monitoring.
+   Protocol version 6 commits the complete deterministic state root needed to
+   authenticate those future snapshots, but snapshot import is not implemented.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.

@@ -30,7 +30,8 @@ Required before inviting unknown operators:
 - a production database with fast state snapshots, pruning, remote backup
   coordination, and snapshot catch-up from multiple peers; fsync-backed block
   writes, checksummed journal checkpoints, local redundancy, verified repair,
-  and key-free portable chain backups are implemented;
+  key-free portable chain backups, and a full consensus-state root in every
+  protocol-v6 block are implemented;
 - reproducible signed releases, monitoring, incident response, and a documented
   testnet reset policy;
 - versioned protocol upgrades governed by an on-chain activation rule;

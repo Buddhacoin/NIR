@@ -22,6 +22,8 @@ identically.
 - ML-DSA-65-signed evaluation receipts bound to network and epoch;
 - on-chain recomputation of progress scores;
 - a world-capability memory root committed by genesis and every block;
+- a complete deterministic state root committed by genesis and every protocol-v6
+  block, covering monetary, mining, safety, randomness, validator, and peer state;
 - consensus validation of lineage, behavior novelty, and marginal frontier gain;
 - permanent rejection of already rewarded proof fingerprints;
 - ten-year linear treasury vesting by bounded block timestamps;
@@ -69,6 +71,26 @@ beacon deployments; the runnable service is documented in [beacon.md](beacon.md)
 
 The design review of leading independent networks and the resulting three-lane
 NIR architecture are documented in [top-chains-study.md](top-chains-study.md).
+
+## State commitment and snapshots
+
+`stateRoot` binds every validator to the same balances, nonces, issued and
+burned supply, reward epoch, rewarded proofs, candidate bonds, randomness
+records, safety evidence, validator bonds and faults, active and pending
+validator sets, peer registry, and world-capability memory root. Collections are
+normalized and sorted before domain-separated hashing, so insertion order cannot
+produce different roots.
+
+The root is calculated from the post-block state and included in the immutable
+block value before prepare and commit signatures are collected. A validator
+recomputes it during execution and rejects a quorum-signed block whose claimed
+root is false. Round replacement does not change the state root or execution
+value.
+
+This commitment is the prerequisite for authenticated fast snapshots. Snapshot
+serialization, quorum checkpoint selection, import, and pruning are deliberately
+not enabled yet; accepting an uncommitted local state file would weaken full
+replay rather than improve it.
 
 ## Run
 

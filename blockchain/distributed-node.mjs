@@ -216,6 +216,7 @@ function proposalFields(block) {
     roundCertificate: block.roundCertificate,
     rewardClaims: [],
     safetyClaims: [],
+    stateRoot: block.stateRoot,
     timestamp: block.timestamp,
     transactions: block.transactions,
     validatorRotation: block.validatorRotation,
