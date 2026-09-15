@@ -82,12 +82,8 @@ async function synchronizeValidator(validator, urls) {
   return { height: validator.height, syncedBlocks, tipHash: validator.tipHash };
 }
 
-async function produceValidatorBlock(validator, urls) {
-  await synchronizeValidator(validator, urls);
-  const proposal = validator.buildProposal();
-  if (proposal.proposer !== validator.address) {
-    throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
-  }
+async function finalizeValidatorProposal(validator, urls, proposal) {
+  if (proposal.proposer !== validator.address) throw new Error("proposal producer is not its elected proposer");
   const ownVote = validator.vote(proposal);
   const responses = await Promise.allSettled(urls.map((peer, index) =>
     gossipRequest(validator, index, peer, "/v1/p2p/proposals", proposal)));
@@ -105,6 +101,56 @@ async function produceValidatorBlock(validator, urls) {
     transactions: block.transactions.map(transactionId),
     votes: new Set(block.certificate.map(({ validator: address }) => address)).size,
   };
+}
+
+async function proposerIsReachable(validator, urls, address) {
+  const index = Array.from({ length: validator.validatorCount })
+    .findIndex((_, candidate) => validator.peerAddress(candidate) === address);
+  if (index < 0) throw new Error("expected proposer is not in the validator set");
+  if (address === validator.address) return true;
+  try {
+    await peerHealth(validator, index, urls[index]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function timeoutProposal(validator, urls, proposal) {
+  const nextRound = proposal.round + 1;
+  const request = { proposal, nextRound };
+  const ownTimeout = validator.timeout(request);
+  const responses = await Promise.allSettled(urls.map((peer, index) =>
+    gossipRequest(validator, index, peer, "/v1/p2p/timeouts", request)));
+  const timeouts = [ownTimeout, ...responses
+    .filter(({ status, value }) => status === "fulfilled" && value)
+    .map(({ value }) => value.timeout)];
+  const uniqueTimeouts = new Map(timeouts.map((vote) => [vote.validator, vote]));
+  const quorum = Math.floor((validator.validatorCount * 2) / 3) + 1;
+  if (uniqueTimeouts.size < quorum) {
+    throw new Error(`round timeout quorum not reached (${uniqueTimeouts.size}/${quorum})`);
+  }
+  return validator.advanceProposal(proposal, nextRound, [...uniqueTimeouts.values()]);
+}
+
+async function produceValidatorBlock(validator, urls) {
+  await synchronizeValidator(validator, urls);
+  let proposal = validator.buildProposal();
+  while (proposal.proposer !== validator.address) {
+    if (await proposerIsReachable(validator, urls, proposal.proposer)) {
+      throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
+    }
+    proposal = await timeoutProposal(validator, urls, proposal);
+    const proposerIndex = Array.from({ length: validator.validatorCount })
+      .findIndex((_, index) => validator.peerAddress(index) === proposal.proposer);
+    if (proposal.proposer !== validator.address &&
+        await proposerIsReachable(validator, urls, proposal.proposer)) {
+      return gossipRequest(
+        validator, proposerIndex, urls[proposerIndex], "/v1/p2p/produce", { proposal },
+      );
+    }
+  }
+  return finalizeValidatorProposal(validator, urls, proposal);
 }
 
 export function createValidatorHttpServer(validator, options = {}) {
@@ -163,6 +209,23 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         if (auth.signer !== payload.proposer) throw new Error("proposal was not sent by its proposer");
         const result = { vote: validator.vote(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/timeouts") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        if (await proposerIsReachable(validator, urls, payload?.proposal?.proposer)) {
+          throw new Error("refusing timeout while the elected proposer is reachable");
+        }
+        const result = { timeout: validator.timeout(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/produce") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        const result = await finalizeValidatorProposal(validator, urls, payload.proposal);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/blocks") {

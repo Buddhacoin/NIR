@@ -102,6 +102,14 @@ votes for it, sends a validator-authenticated proposal to its peers, collects a
 the finalized block. Peers independently execute both the proposal and final
 certificate. The coordinator is not involved in this normal block path.
 
+If that proposer is unreachable, any live validator can initiate the same
+endpoint. Every timeout signer independently probes the elected proposer and
+refuses to sign while it is reachable. Once `2N/3 + 1` validators sign the
+height-, tip-, round-, and value-bound timeout, the initiating validator builds
+the next-round form of that exact value and hands it to the newly elected
+proposer over an authenticated P2P request. The replacement proposer gathers
+the finality votes and broadcasts the block without coordinator participation.
+
 ## Validator catch-up
 
 A validator that was offline can synchronize directly from the other validators:
@@ -138,6 +146,8 @@ from its durable pool during replay.
   while a non-proposer is unable to initiate one.
 - a restarted validator catches up from another validator without coordinator
   participation and independently verifies the missing finality certificate.
+- three live validators independently detect an offline proposer, certify the
+  timeout, and delegate the unchanged value to the next elected proposer.
 
 ## Remaining production boundary
 
@@ -145,12 +155,12 @@ This is a multi-process localhost consensus prototype, not production BFT.
 Application-layer control messages now have pinned mutual signatures, and
 round-zero blocks can be assembled by the elected validator. Transport is
 not confidential, coordinator-key rotation is not governed on-chain, peer URLs
-are static, and catch-up is sequential with no snapshot or fork-choice protocol. Validator
-mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
-preserve the same execution value and rotate the proposer through quorum timeout
-certificates, but lock discovery
-between competing producers is not implemented. Leader timeout orchestration is
-still implemented by the legacy coordinator rather than validator P2P messages.
+are static, and catch-up is sequential with no snapshot or fork-choice protocol.
+Validator mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
+preserve the same execution value and rotate the proposer through
+validator-to-validator quorum timeout certificates, but lock discovery between
+competing producers is not implemented. The localhost reachability probe is not
+yet a production adaptive pacemaker.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,
 production-grade adaptive denial-of-service defense, or network-partition
 simulation yet. Test keys are plaintext and have no monetary value.

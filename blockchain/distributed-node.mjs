@@ -284,6 +284,22 @@ export class ValidatorReplica {
     return this.#chain.buildBlock({ transactions, timestamp });
   }
 
+  advanceProposal(proposal, nextRound, roundCertificate) {
+    if (!proposal || !Number.isSafeInteger(nextRound) || nextRound !== proposal.round + 1) {
+      throw new Error("next consensus round is invalid");
+    }
+    const advanced = this.#chain.buildBlock({
+      ...proposalFields(proposal),
+      round: nextRound,
+      roundCertificate,
+    });
+    this.#chain.validateProposal(advanced);
+    if (blockHash(advanced) !== blockHash(proposal)) {
+      throw new Error("round advance changed the locked block value");
+    }
+    return advanced;
+  }
+
   finalizeProposal(proposal, votes) {
     const uniqueVotes = new Map((votes ?? []).map((vote) => [vote.validator, vote]));
     const quorum = Math.floor((this.#validators.length * 2) / 3) + 1;

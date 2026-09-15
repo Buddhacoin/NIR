@@ -260,6 +260,18 @@ test("the elected validator assembles and finalizes a block without the coordina
     const rejected = await fetch(`${urls[nonProposerIndex]}/v1/blocks/produce`, { method: "POST" });
     assert.equal(rejected.status, 400);
     assert.match((await rejected.json()).error, /not the proposer/);
+    const prematureProposal = replicas[nonProposerIndex].buildProposal();
+    const timeoutPayload = { proposal: prematureProposal, nextRound: 1 };
+    const timeoutAuth = replicas[nonProposerIndex]
+      .createValidatorRequest("/v1/p2p/timeouts", timeoutPayload);
+    const timeoutTarget = [0, 1, 2, 3]
+      .find((index) => index !== nonProposerIndex && index !== proposerIndex);
+    const prematureTimeout = await fetch(`${urls[timeoutTarget]}/v1/p2p/timeouts`, {
+      body: JSON.stringify({ auth: timeoutAuth, payload: timeoutPayload }),
+      headers: { "content-type": "application/json" }, method: "POST",
+    });
+    assert.equal(prematureTimeout.status, 400);
+    assert.match((await prematureTimeout.json()).error, /proposer is reachable/);
 
     const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
     assert.equal(produced.status, 202);
@@ -325,6 +337,56 @@ test("a restarted validator catches up from authenticated validator peers", asyn
     assert.equal(syncResult.height, 2);
     assert.equal(replicas[offlineIndex].mempoolSize, 0);
     assert.equal(replicas[offlineIndex].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("validators replace an offline proposer without coordinator consensus calls", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-failover-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  let urls = [];
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    peerUrls: () => urls,
+  }));
+  try {
+    urls = await Promise.all(servers.map((server) => listen(server)));
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    await coordinator.faucet(alice.address);
+    const transaction = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    });
+    const ingress = await fetch(`${urls[0]}/v1/transactions`, {
+      body: JSON.stringify(transaction), headers: { "content-type": "application/json" }, method: "POST",
+    });
+    assert.equal(ingress.status, 202);
+
+    const roundZeroProposer = replicas[0].expectedProposer(2, 0);
+    const roundOneProposer = replicas[0].expectedProposer(2, 1);
+    const offlineIndex = replicas.findIndex(({ address }) => address === roundZeroProposer);
+    const replacementIndex = replicas.findIndex(({ address }) => address === roundOneProposer);
+    const initiatorIndex = replicas.findIndex((_, index) =>
+      index !== offlineIndex && index !== replacementIndex);
+    await close(servers[offlineIndex]);
+
+    const produced = await fetch(`${urls[initiatorIndex]}/v1/blocks/produce`, { method: "POST" });
+    assert.equal(produced.status, 202);
+    const result = await produced.json();
+    assert.equal(result.height, 2);
+    assert.equal(result.round, 1);
+    assert.equal(result.votes, 3);
+    assert.equal(result.committedPeers, 3);
+    assert.equal(replicas[offlineIndex].height, 1);
+    assert.ok(replicas.every(({ height }, index) => index === offlineIndex || height === 2));
+    const committed = replicas[replacementIndex].blocksAfter(2, 1)[0];
+    assert.equal(committed.proposer, roundOneProposer);
+    assert.equal(committed.roundCertificate.length, 3);
+    assert.equal(replicas[initiatorIndex].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

@@ -62,10 +62,14 @@ or an exploit against a live third-party system in a public issue.
    Restarted validators can also fetch bounded, mutually authenticated block
    ranges from validator peers and independently replay every certificate and
    state transition without the coordinator.
-   Leader-timeout orchestration still depends on the legacy coordinator, with
-   no transport confidentiality or governed coordinator-key rotation, lock
-   discovery between competing producers, fork recovery, checkpoint/snapshot sync, peer
-   discovery, or partition-tested liveness. Proposers now rotate over repeated
+   Validator peers now independently test leader reachability, gather a signed
+   timeout quorum, preserve the locked value, and delegate production to the
+   replacement proposer without the coordinator. The reachability probe is not
+   yet an adaptive production pacemaker and has not been partition-tested. There
+   is still no transport confidentiality or governed coordinator-key rotation,
+   lock discovery between competing producers, fork recovery,
+   checkpoint/snapshot sync, peer discovery, or partition-tested liveness.
+   Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable
    execution-value hash.
 2. **Evaluator execution is not yet remotely attested.** Receipts are signed and
