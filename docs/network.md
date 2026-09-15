@@ -145,6 +145,19 @@ Block production performs this catch-up automatically before creating a new
 proposal. Transactions finalized while a validator was offline are removed
 from its durable pool during replay.
 
+## Network partition behavior
+
+The integration suite runs real validator HTTP servers with per-validator peer
+views. In a `2+2` split, neither side reaches three-of-four finality or timeout
+quorum, so all replicas remain on the last common block. After the link heals,
+the original signed locks are discovered and one common value finalizes.
+
+In a `3+1` split, the three-validator side can finalize exactly one value. The
+isolated validator cannot create a conflicting certificate; after reconnection
+it downloads the missing block, verifies the certificate and state transition,
+and converges to the same tip. These deterministic schedules test the quorum
+invariants but are not a formal proof over every asynchronous message schedule.
+
 ## Faults covered by the integration test
 
 - validator keys never enter coordinator memory;
@@ -171,6 +184,9 @@ from its durable pool during replay.
   failed reachability check after the waiting window.
 - a replacement leader recovers a cryptographically proven peer lock instead of
   replacing it with a different value from its local mempool.
+- a `2+2` partition produces no block on either side and converges after healing;
+- a `3+1` partition permits one majority block while the isolated validator
+  cannot fork and later catches up from the verified chain.
 
 ## Remaining production boundary
 
@@ -187,5 +203,6 @@ view-change protocol. The durable exponential localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,
-production-grade adaptive denial-of-service defense, or network-partition
-simulation yet. Test keys are plaintext and have no monetary value.
+production-grade adaptive denial-of-service defense, broad randomized fault
+testing, or formal consensus proof yet. Test keys are plaintext and have no
+monetary value.
