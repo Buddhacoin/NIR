@@ -21,6 +21,7 @@
     "network:init-dev": "node blockchain/network-cli.mjs init-dev",
     "network:validator": "node blockchain/network-cli.mjs serve-validator",
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",
+    "network:discover": "node blockchain/network-cli.mjs discover",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
     "test:chain": "node --test tests/*.test.mjs"
   }

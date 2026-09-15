@@ -4,6 +4,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { blockHash, transactionId } from "./chain.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
+import { IngressLimiter } from "./ingress-limiter.mjs";
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -234,21 +235,12 @@ export function createValidatorHttpServer(validator, options = {}) {
       maxRoundTimeoutMs > 2_000) {
     throw new Error("validator round timeout configuration is invalid");
   }
-  const ingressWindows = new Map();
-  const consumeIngress = (address, now = Date.now()) => {
-    const current = ingressWindows.get(address);
-    const window = !current || now - current.startedAt >= 60_000
-      ? { count: 0, startedAt: now }
-      : current;
-    if (window.count >= 20) throw new Error("transaction ingress rate limit exceeded");
-    window.count += 1;
-    ingressWindows.set(address, window);
-    if (ingressWindows.size > 1_024) {
-      for (const [key, value] of ingressWindows) {
-        if (now - value.startedAt >= 60_000) ingressWindows.delete(key);
-      }
-    }
-  };
+  const ingressLimiter = options.ingressLimiter ?? new IngressLimiter();
+  if (typeof ingressLimiter.consume !== "function") {
+    throw new Error("validator ingress limiter is invalid");
+  }
+  const consumeIngress = (request) =>
+    ingressLimiter.consume(request.socket.remoteAddress ?? "unknown");
   const tls = options.tls ?? null;
   if (tls !== null && (typeof tls.key !== "string" && !Buffer.isBuffer(tls.key) ||
       typeof tls.cert !== "string" && !Buffer.isBuffer(tls.cert))) {
@@ -257,7 +249,7 @@ export function createValidatorHttpServer(validator, options = {}) {
   const createServer = tls === null
     ? (handler) => createHttpServer(handler)
     : (handler) => createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: "TLSv1.3" }, handler);
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://validator.local");
       if (request.method === "GET" && url.pathname === "/health") {
@@ -270,8 +262,12 @@ export function createValidatorHttpServer(validator, options = {}) {
           mempoolSize: validator.mempoolSize,
         });
       }
+      if (request.method === "GET" && url.pathname === "/v1/discovery") {
+        consumeIngress(request);
+        return send(response, 200, validator.peerAnnouncement());
+      }
       if (request.method === "POST" && url.pathname === "/v1/transactions") {
-        consumeIngress(request.socket.remoteAddress ?? "unknown");
+        consumeIngress(request);
         const payload = await readBody(request);
         const result = validator.submitTransaction(payload);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
@@ -367,12 +363,12 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/sync") {
-        consumeIngress(request.socket.remoteAddress ?? "unknown");
+        consumeIngress(request);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         return send(response, 200, await synchronizeValidator(validator, urls));
       }
       if (request.method === "POST" && url.pathname === "/v1/blocks/produce") {
-        consumeIngress(request.socket.remoteAddress ?? "unknown");
+        consumeIngress(request);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         return send(response, 202, await produceValidatorBlock(
           validator, urls, roundTimeoutMs, maxRoundTimeoutMs,
@@ -422,4 +418,14 @@ export function createValidatorHttpServer(validator, options = {}) {
       return send(response, 400, { error: error.message });
     }
   });
+  const maxConnections = options.maxConnections ?? 128;
+  if (!Number.isSafeInteger(maxConnections) || maxConnections < 4 || maxConnections > 10_000) {
+    throw new Error("validator connection limit is invalid");
+  }
+  server.maxConnections = maxConnections;
+  server.maxHeadersCount = 64;
+  server.headersTimeout = 5_000;
+  server.requestTimeout = 10_000;
+  server.keepAliveTimeout = 2_000;
+  return server;
 }

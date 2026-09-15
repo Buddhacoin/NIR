@@ -42,6 +42,7 @@ import {
   verifyPeerRegistry,
 } from "./peer-registry.mjs";
 import { requestJson } from "./http-client.mjs";
+import { createPeerAnnouncement } from "./peer-discovery.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -246,6 +247,7 @@ export class ValidatorReplica {
   #peerUrls;
   #peerTransports;
   #peerTlsPins;
+  #peerRegistry;
   #transportWallet;
 
   constructor(directory) {
@@ -280,6 +282,7 @@ export class ValidatorReplica {
     if (peerRegistryHash(registry) !== this.#chain.peerRegistryHash) {
       throw new Error("local peer registry does not match finalized chain state");
     }
+    this.#peerRegistry = registry;
     const registryByValidator = new Map(registry.peers.map((peer) =>
       [peer.validatorAddress, peer]));
     this.#peerUrls = this.#validators.map(({ address }) => registryByValidator.get(address).url);
@@ -331,6 +334,15 @@ export class ValidatorReplica {
     return createPeerResponse({
       networkId: this.networkId, requestNonce, result, wallet: this.#transportWallet,
     });
+  }
+
+  peerAnnouncement() {
+    return createPeerAnnouncement({
+      height: this.height,
+      networkId: this.networkId,
+      registry: this.#peerRegistry,
+      tipHash: this.tipHash,
+    }, this.#transportWallet);
   }
 
   authorizeValidator(auth, method, path, body) {

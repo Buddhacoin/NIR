@@ -20,6 +20,9 @@ or an exploit against a live third-party system in a public issue.
   height-gated transport-key/endpoint rotation;
 - built-in TLS 1.3 validator serving and certificate-pinned HTTPS clients, with
   certificate fingerprints governed by the finalized peer registry;
+- signed peer discovery bound to the active on-chain registry commitment;
+- bounded token-bucket ingress, request and response bodies, connections,
+  headers, request duration, and keep-alive time;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -79,14 +82,17 @@ or an exploit against a live third-party system in a public issue.
    values at the same greatest round. Finality now uses separate prepare and
    commit certificates; commit signatures bind the exact prepare certificate,
    while split prepare votes remain round-local and can safely move to a later
-   certified round. There
+   certified round.
    Non-loopback entries in the signed peer registry must use HTTPS. The node can
    terminate TLS 1.3 itself, and clients verify the exact certificate fingerprint
    and validity period. The active registry hash is committed
    in genesis and every block; a node rejects a local registry rollback that no
    longer matches finalized state. Automated certificate issuance and renewal,
    revocation operations, and governed coordinator-key rotation remain.
-   fork recovery, checkpoint/snapshot sync, or peer discovery. Deterministic
+   A joining node can query a trusted seed for a signed peer registry and rejects
+   any response whose hash is not anchored in its local chain checkpoint. It
+   does not yet score or fail over across multiple seeds automatically. There is
+   no fork recovery or checkpoint/snapshot sync. Deterministic
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
    a split-prepare regression verifies later-round liveness, and 512 seeded
    schedules exercise delayed, dropped, reordered, and replayed messages from

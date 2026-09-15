@@ -11,6 +11,8 @@ import {
 import { createNodeHttpServer } from "./node-service.mjs";
 import { createValidatorHttpServer } from "./validator-service.mjs";
 import { certificateSha256 } from "./http-client.mjs";
+import { discoverPeers } from "./peer-discovery.mjs";
+import { peerRegistryHash } from "./peer-registry.mjs";
 
 const [command, directory, parameter = "", portText = ""] = process.argv.slice(2);
 
@@ -60,8 +62,21 @@ try {
     createNodeHttpServer(node).listen(port, "127.0.0.1", () => {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);
     });
+  } else if (command === "discover" && directory && parameter) {
+    const genesis = JSON.parse(readFileSync(directory, "utf8"));
+    const seedOrigin = new URL(parameter).origin;
+    const seed = genesis.peerRegistry?.peers?.find(({ url }) => url === seedOrigin);
+    if (!seed) throw new Error("seed URL is not trusted by the genesis peer registry");
+    const announcement = await discoverPeers({
+      expectedNetworkId: genesis.networkId,
+      expectedRegistryHash: peerRegistryHash(genesis.peerRegistry),
+      seedUrl: seedOrigin,
+      tlsCertificateSha256: seed.tlsCertificateSha256,
+      trustedTransport: seed.transport,
+    });
+    console.log(JSON.stringify(announcement, null, 2));
   } else {
-    throw new Error("usage: init-dev <new-dir> | serve-validator <dir> [port] | serve-coordinator <dir> <peer-urls> [port]");
+    throw new Error("usage: init-dev <new-dir> | serve-validator <dir> [port] | serve-coordinator <dir> <peer-urls> [port] | discover <genesis.json> <seed-url>");
   }
 } catch (error) {
   console.error(`Network operation failed: ${error.message}`);

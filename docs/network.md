@@ -41,6 +41,30 @@ coordinator clients compare the live DER-certificate SHA-256 fingerprint and
 validity period with the value committed by consensus. Automated certificate
 renewal and a distributed registry-signing ceremony remain production work.
 
+## Discover peers without trusting a website
+
+The genesis file is the trust anchor. It contains the first quorum-approved peer
+registry, transport public keys, and TLS certificate fingerprints. A running
+validator exposes `GET /v1/discovery`; the returned registry, height, and tip are
+signed with that validator's separate transport key. The client accepts it only
+when the signer is a trusted seed and the registry hash matches its local chain
+checkpoint.
+
+With a validator running at the URL already recorded in genesis:
+
+```bash
+npm run network:discover -- \
+  .nir-network/validators/validator-0/genesis.json \
+  http://127.0.0.1:8791
+```
+
+The output is a verified peer list, not a list trusted merely because an HTTP
+server supplied it. A changed endpoint, transport key, certificate pin, network
+identifier, or registry entry changes the committed hash and is rejected. After
+an on-chain registry rotation, a joining node must first synchronize finalized
+blocks from a checkpoint it already trusts; discovery cannot safely invent a
+new trust root.
+
 ## Start an encrypted local network
 
 A self-signed certificate costs nothing and is sufficient for a pinned local
@@ -123,9 +147,19 @@ not only to the coordinator. The receiving validator executes it against its
 current state and pending queue, writes it to its private disk journal, and
 gossips it to the other configured validators with validator-authenticated
 requests. Duplicate transactions are idempotent. Invalid signatures, conflicting
-nonces, a full pool, an aggregate proposal over the block-size limit, and more
-than 20 public submissions per source address per minute are rejected before
-gossip.
+nonces, a full pool, an aggregate proposal over the block-size limit, and public
+traffic that exhausts the per-source token bucket are rejected before gossip.
+The default bucket permits a burst of 20 requests and continuously refills at 20
+requests per minute. Discovery, transaction submission, manual synchronization,
+and manual block-production requests share that budget. The identity table is
+bounded, so fabricated source addresses cannot grow validator memory without
+limit.
+
+Validator servers also cap simultaneous connections, header count, body and
+response size, request duration, and keep-alive time. These application limits
+reduce inexpensive resource-exhaustion attacks. Public operators still need
+independent rate limiting, monitoring, and network-level denial-of-service
+protection in front of geographically separate nodes.
 
 Coordinator ingress also requires a validator durability quorum. A fresh
 coordinator process starts with an empty in-memory pool, queries the signed
@@ -283,7 +317,7 @@ round-local and do not deadlock a later certified round. The durable exponential
 localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
-There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,
+There is no fork recovery, checkpoint/snapshot synchronization,
 production-grade adaptive denial-of-service defense, coverage-guided or
 unbounded randomized fault testing, or formal consensus proof yet. Test keys are plaintext and have no
 monetary value.
