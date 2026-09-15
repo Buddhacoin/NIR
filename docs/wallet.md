@@ -22,6 +22,12 @@ user to type `SIGN`. Password input is hidden and is not accepted through an
 argument or environment variable. The resulting signed transaction contains no
 private key.
 
+Use a randomly generated passphrase of at least six unrelated words and keep
+the recovery copies offline in separate places. The software rejects very short
+or excessively large passwords and malformed encrypted fields, but a memorable
+weak password can still be guessed; the current vault is not a substitute for
+a reviewed hardware key.
+
 The consumer wallet should eventually provide receive/send screens, QR and
 human-readable payment requests, exact fee and percentage display, transaction
 simulation, address-book warnings, chain synchronization, signed updates,

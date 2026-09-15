@@ -25,6 +25,32 @@ test("wrong passwords and modified vaults fail with the same closed error", () =
   assert.throws(() => decryptWallet(modified, "another-long-test-password"), /integrity check is invalid/);
 });
 
+test("vault parsing rejects malformed and oversized cryptographic fields", () => {
+  const password = "bounded-vault-parser-password";
+  const vault = encryptWallet(generateWallet(), password);
+  for (const mutate of [
+    (copy) => { copy.cipher.tag = Buffer.alloc(15).toString("base64"); },
+    (copy) => { copy.cipher.iv += "="; },
+    (copy) => { copy.kdf.salt = "not base64"; },
+    (copy) => { copy.cipher.ciphertext = Buffer.alloc(16_385).toString("base64"); },
+  ]) {
+    const malformed = structuredClone(vault);
+    mutate(malformed);
+    assert.throws(() => decryptWallet(malformed, password), /integrity check is invalid/);
+  }
+});
+
+test("vault creation validates password bounds and the complete wallet key pair", () => {
+  assert.throws(() => encryptWallet(generateWallet(), "too-short"), /12 to 1024/);
+  assert.throws(() => encryptWallet(generateWallet(), "x".repeat(1_025)), /12 to 1024/);
+  const wallet = generateWallet();
+  const unrelated = generateWallet();
+  assert.throws(() => encryptWallet({ ...wallet, privateKey: unrelated.privateKey },
+    "mismatched-key-pair-password"), /key pair does not match/);
+  assert.throws(() => encryptWallet({ ...wallet, address: unrelated.address },
+    "mismatched-address-password"), /address does not match/);
+});
+
 test("a recovery manifest identifies three separate backups without private keys", () => {
   const vaults = Array.from({ length: 3 }, (_, index) =>
     encryptWallet(generateWallet(), `separate-password-${index}-long`, { label: `Guardian ${index + 1}` }),

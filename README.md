@@ -280,6 +280,7 @@ candidate runs are committed.
 - `docs/beacon.md` — independent beacon deployment and aggregation runbook.
 - `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.
 - `docs/network.md` — multi-process devnet startup and remaining consensus boundary.
+- `docs/quantum-security.md` — exact post-quantum guarantees, attack surfaces, and migration plan.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `tests/test_model.py` — invariant tests.
 - `tests/network-partition.test.mjs` — real HTTP `2+2` and `3+1` partition recovery tests.

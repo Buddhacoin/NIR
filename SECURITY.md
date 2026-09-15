@@ -12,7 +12,9 @@ or an exploit against a live third-party system in a public issue.
 - ML-DSA-65 signatures for transactions and validator votes;
 - native threshold ML-DSA-65 transaction authorization;
 - AES-256-GCM encrypted key vaults using scrypt-derived keys and public backup
-  manifests that contain no encrypted or private key material;
+  manifests that contain no encrypted or private key material; vault parsing
+  enforces canonical encodings and strict sizes, validates the complete key
+  pair before encryption, and clears the derived AES key buffer after use;
 - SHA3-256 block hashes and full 256-bit address identifiers;
 - domain-separated signatures and hashes;
 - consensus keys separated from P2P transport identities, with a quorum-signed,
@@ -21,6 +23,9 @@ or an exploit against a live third-party system in a public issue.
 - built-in TLS 1.3 validator serving and certificate-pinned HTTPS clients, with
   certificate fingerprints governed by the finalized peer registry;
 - signed peer discovery bound to the active on-chain registry commitment;
+- ML-DSA-authenticated health and synchronization responses for both
+  coordinator-to-validator and validator-to-validator traffic; public health
+  JSON is monitoring information and is never a consensus input;
 - bounded token-bucket ingress, request and response bodies, connections,
   headers, request duration, and keep-alive time;
 - fsync-backed block persistence with checksummed checkpoints, redundant journal
@@ -138,6 +143,8 @@ or an exploit against a live third-party system in a public issue.
    cryptographic audit.
    The terminal tool suppresses echo and refuses passwords from arguments, but
    the JavaScript runtime can still retain secret material in process memory.
+   Password-derived encryption is only as resistant as the chosen passphrase;
+   the 12-character input floor is not a claim of 128-bit entropy.
 2. Nodes verify a finalized block on an isolated state copy before synchronously
    persisting redundant journals and checksummed checkpoints, then replace live
    memory. Startup automatically repairs one damaged copy after full consensus
@@ -166,6 +173,15 @@ quantum computers. SHA3-256 remains relevant in the quantum model, although
 Grover-style search reduces its ideal preimage margin to roughly 128 bits. NIR
 keeps the complete 256-bit hash in addresses rather than truncating it.
 
+NIR's current TLS 1.3 certificate keys are conventional and do not provide
+post-quantum confidentiality. A future quantum adversary could recover such a
+TLS private key or decrypt recorded sessions. Consensus control messages remain
+authenticated at the application layer with ML-DSA-65, including health and
+synchronization state, so breaking TLS alone must not authorize a vote, block,
+peer-registry change, or fabricated replica state. Never send model weights,
+vault material, or other long-lived secrets over the current transport. Hybrid
+or post-quantum TLS key establishment is required before production.
+
 This does not make NIR "quantum-proof." A future algorithmic break, software
 bug, weak random-number generator, leaked endpoint key, compromised build, or
 validator takeover can bypass sound mathematics. Before a testnet, NIR needs:
@@ -175,6 +191,9 @@ validator takeover can bypass sound mathematics. Before a testnet, NIR needs:
 - known-answer and cross-implementation tests against FIPS 204 vectors;
 - constant-time and side-channel review of the runtime implementation;
 - reproducible builds and signed release artifacts.
+
+The detailed layer-by-layer model is documented in
+[`docs/quantum-security.md`](docs/quantum-security.md).
 
 ## Audit log
 

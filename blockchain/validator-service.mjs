@@ -48,11 +48,8 @@ async function gossipRequest(validator, index, url, path, payload) {
 
 async function peerHealth(validator, index, url) {
   if (validator.peerAddress(index) === validator.address) return null;
-  const response = await requestJson(`${url}/health`, {
-    tlsCertificateSha256: validator.peerTlsCertificateSha256(index),
-  });
-  const body = response.body;
-  if (!response.ok || body.address !== validator.peerAddress(index) ||
+  const body = await gossipRequest(validator, index, url, "/v1/p2p/health", {});
+  if (body.address !== validator.peerAddress(index) ||
       body.networkId !== validator.networkId || !Number.isSafeInteger(body.height)) {
     throw new Error("peer health identity or height is invalid");
   }
@@ -284,6 +281,32 @@ export function createValidatorHttpServer(validator, options = {}) {
         const result = validator.submitTransaction(payload);
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/health") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = {
+          address: validator.address,
+          height: validator.height,
+          networkId: validator.networkId,
+          tipHash: validator.tipHash,
+        };
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/health") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = {
+          address: validator.address,
+          height: validator.height,
+          networkId: validator.networkId,
+          tipHash: validator.tipHash,
+        };
+        return send(response, 200, {
+          result, auth: validator.authenticateResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/proposals") {

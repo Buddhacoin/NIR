@@ -123,6 +123,10 @@ Every validator response is independently signed and checked against the public
 validator identity in genesis. Before asking for a new vote, the coordinator
 checks each replica's height and streams any missing quorum-finalized blocks in
 order. A conflicting tip or a peer claiming a future height is rejected.
+The coordinator obtains that height and tip through signed `POST /v1/health`;
+validators use the separately authorized signed `POST /v1/p2p/health`. The
+public `GET /health` endpoint is only for human and monitoring diagnostics and
+must never drive synchronization, proposer selection, or finality.
 
 If the deterministic proposer is unreachable before anyone votes, the remaining
 validators persistently sign a height- and tip-bound timeout. A `2N/3 + 1`

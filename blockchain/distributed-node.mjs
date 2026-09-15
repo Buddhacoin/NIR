@@ -674,12 +674,6 @@ export class ValidatorReplica {
   }
 }
 
-async function peerStatus(url, tlsCertificateSha256 = null) {
-  const response = await requestJson(`${url}/health`, { tlsCertificateSha256 });
-  if (!response.ok) throw new Error(response.body.error ?? `validator returned ${response.status}`);
-  return response.body;
-}
-
 async function peerRequest(url, path, value, {
   networkId, peer, tlsCertificateSha256 = null, wallet,
 }) {
@@ -783,7 +777,7 @@ export class DistributedCoordinator {
   }
 
   async #synchronizePeer(index) {
-    const status = await peerStatus(this.#peers[index], this.#peerTlsPins[index]);
+    const status = await this.#request(index, "/v1/health", {});
     const expected = this.#validators[index];
     if (status.address !== expected.address || status.networkId !== this.networkId) {
       throw new Error("validator health identity does not match the configured peer");
