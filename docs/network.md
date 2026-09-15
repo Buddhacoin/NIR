@@ -306,11 +306,13 @@ finalize both values. The seed makes every failure exactly reproducible.
 This is a multi-process localhost consensus prototype, not production BFT.
 Application-layer control messages now have pinned mutual signatures using
 separate rotatable transport identities and optional pinned TLS 1.3, and
-round-zero blocks can be assembled by the elected validator. Transport is
-remain plaintext only when the loopback development mode is deliberately used.
+round-zero blocks can be assembled by the elected validator. Transport remains
+plaintext only when the loopback development mode is deliberately used.
 Automated certificate lifecycle and coordinator-key rotation are not governed
 on-chain, validator-set/peer-registry rotation is not yet one atomic transition, and
-catch-up is sequential with no snapshot or fork-choice protocol.
+catch-up is sequential. A quorum-authenticated snapshot format now exists, but
+network snapshot exchange, trusted checkpoint selection, import, and pruning
+are not yet connected to catch-up; there is no fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates. Consensus now has distinct
@@ -321,7 +323,7 @@ round-local and do not deadlock a later certified round. The durable exponential
 localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
-There is no fork recovery, checkpoint/snapshot synchronization,
+There is no fork recovery or network snapshot synchronization,
 production-grade adaptive denial-of-service defense, coverage-guided or
 unbounded randomized fault testing, or formal consensus proof yet. Test keys are plaintext and have no
 monetary value.

@@ -58,6 +58,29 @@ function memoryRoot(records, behaviors) {
   return createHash("sha256").update(canonicalJson(payload)).digest("hex");
 }
 
+export function capabilityMemorySnapshotRoot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.records) || !Array.isArray(snapshot.behaviors) ||
+      snapshot.records.length === 0 || snapshot.records.length > 100_000 ||
+      snapshot.behaviors.length !== snapshot.records.length ||
+      new Set(snapshot.behaviors).size !== snapshot.behaviors.length) {
+    throw new Error("capability memory snapshot is invalid");
+  }
+  const records = new Map();
+  for (const entry of snapshot.records) {
+    if (!Array.isArray(entry) || entry.length !== 2 || records.has(entry[0])) {
+      throw new Error("capability memory snapshot records are invalid");
+    }
+    requireDigest(entry[0], "snapshot artifact", true);
+    records.set(entry[0], validatedScores(entry[1]));
+  }
+  const behaviors = new Set();
+  for (const behavior of snapshot.behaviors) {
+    requireDigest(behavior, "snapshot behavior");
+    behaviors.add(behavior);
+  }
+  return memoryRoot(records, behaviors);
+}
+
 export class CapabilityMemory {
   #behaviors;
   #records;
@@ -105,6 +128,15 @@ export class CapabilityMemory {
 
   get stateRoot() {
     return memoryRoot(this.#records, this.#behaviors);
+  }
+
+  snapshot() {
+    return {
+      behaviors: [...this.#behaviors].sort(),
+      records: [...this.#records.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([artifact, scores]) => [artifact, structuredClone(scores)]),
+    };
   }
 
   get frontier() {

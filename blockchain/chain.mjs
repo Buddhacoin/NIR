@@ -121,7 +121,7 @@ function normalizedStateValue(value) {
   return value;
 }
 
-function chainStateRoot(state) {
+export function computeChainStateRoot(state) {
   return hashObject(normalizedStateValue(state), "CHAIN_STATE_V1");
 }
 
@@ -690,7 +690,7 @@ export class NirChain {
   get stateRoot() { return this.#stateRoot(); }
 
   #stateRoot(overrides = {}) {
-    return chainStateRoot({
+    return computeChainStateRoot({
       balances: overrides.balances ?? this.#balances,
       burned: overrides.burned ?? this.#burned,
       candidateBonds: overrides.candidateBonds ?? this.#candidateBonds,
@@ -711,6 +711,31 @@ export class NirChain {
       validatorFaults: overrides.validatorFaults ?? this.#validatorFaults,
       validators: overrides.validators ?? this.#validators,
     });
+  }
+
+  consensusSnapshot() {
+    return {
+      capabilityMemory: this.#capabilityMemory.snapshot(),
+      state: normalizedStateValue({
+        balances: this.#balances,
+        burned: this.#burned,
+        candidateBonds: this.#candidateBonds,
+        capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
+        lastRewardTimestamp: this.#lastRewardTimestamp,
+        mined: this.#mined,
+        nonces: this.#nonces,
+        pendingValidatorRotation: this.#pendingValidatorRotation,
+        peerRegistry: this.#peerRegistry,
+        randomnessFaults: this.#randomnessFaults,
+        registeredValidators: this.#registeredValidators,
+        rewardEpoch: this.#rewardEpoch,
+        rewardedProofs: this.#rewardedProofs,
+        safetyEvidence: this.#safetyEvidence,
+        validatorBonds: this.#validatorBonds,
+        validatorFaults: this.#validatorFaults,
+        validators: this.#validators,
+      }),
+    };
   }
 
   get nextIssuanceEpoch() {

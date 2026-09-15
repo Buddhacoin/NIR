@@ -33,6 +33,9 @@ or an exploit against a live third-party system in a public issue.
 - a deterministic full-state root in genesis and every block, covering balances,
   nonces, issuance, burns, candidate and validator bonds, faults, validator-set
   transitions, peer registry, safety evidence, and capability-memory state;
+- canonical full-state snapshot serialization with a separate content hash,
+  recomputed state and capability-memory roots, active-set binding, and unique
+  `2N/3 + 1` ML-DSA validator attestations;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -150,10 +153,11 @@ or an exploit against a live third-party system in a public issue.
    memory. Startup automatically repairs one damaged copy after full consensus
    replay, advances stale checkpoints, and fails closed if both copies are lost.
    Key-free portable chain exports support backups to a separate device. This
-   still lacks a production database, fast state snapshots, pruning, remote
+   still lacks a production database, fast snapshot import, pruning, remote
    backup coordination, multi-peer snapshot recovery, and restore monitoring.
-   Protocol version 6 commits the complete deterministic state root needed to
-   authenticate those future snapshots, but snapshot import is not implemented.
+   Protocol version 6 commits the complete deterministic state root. Canonical
+   snapshot export and quorum verification are implemented, but snapshot import
+   and multi-peer selection are not.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.

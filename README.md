@@ -58,6 +58,7 @@ The intended advantages are:
 | Bounded public ingress, request sizes, connections, headers, and timeouts | Implemented locally; production DDoS edge protection remains |
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |
 | Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, and AI memory | Committed in genesis and every protocol-v6 block |
+| Canonical state snapshots with ML-DSA validator quorum | Serialization and fail-closed verification implemented; fast import and pruning remain |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, and multi-height stateful fuzzing |
 | Installable browser/PWA wallet interface | Interactive local testnet preview |
 | Public mainnet or exchange-listed NIR | Not launched |
