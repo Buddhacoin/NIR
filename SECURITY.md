@@ -23,6 +23,8 @@ or an exploit against a live third-party system in a public issue.
 - signed peer discovery bound to the active on-chain registry commitment;
 - bounded token-bucket ingress, request and response bodies, connections,
   headers, request duration, and keep-alive time;
+- fsync-backed block persistence with checksummed checkpoints, redundant journal
+  copies, verified startup repair, and private-key-free chain backup exports;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -133,10 +135,13 @@ or an exploit against a live third-party system in a public issue.
    cryptographic audit.
    The terminal tool suppresses echo and refuses passwords from arguments, but
    the JavaScript runtime can still retain secret material in process memory.
-2. The local node persists each finalized block with a temporary-file rename and
-   verifies the complete journal on restart. It still lacks a production
-   database, checksummed snapshots, pruning, backup coordination, and automatic
-   recovery from disk corruption or a failed write after in-memory finality.
+2. Nodes verify a finalized block on an isolated state copy before synchronously
+   persisting redundant journals and checksummed checkpoints, then replace live
+   memory. Startup automatically repairs one damaged copy after full consensus
+   replay, advances stale checkpoints, and fails closed if both copies are lost.
+   Key-free portable chain exports support backups to a separate device. This
+   still lacks a production database, fast state snapshots, pruning, remote
+   backup coordination, multi-peer snapshot recovery, and restore monitoring.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.

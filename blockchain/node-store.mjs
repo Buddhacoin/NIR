@@ -2,8 +2,6 @@ import {
   chmodSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -22,10 +20,10 @@ import {
   SAFETY_POLICY_V1_COMMITMENT,
 } from "./constants.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
+import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
-const BLOCKS_DIRECTORY = "blocks";
 
 function writeExclusive(path, value, mode = 0o600) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {
@@ -49,7 +47,6 @@ function referenceCapability() {
 export function initializeDevnet(directory, { networkId = "nir-local-devnet" } = {}) {
   const root = resolve(directory);
   mkdirSync(root, { mode: 0o700 });
-  mkdirSync(join(root, BLOCKS_DIRECTORY), { mode: 0o700 });
   const validators = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
@@ -66,11 +63,8 @@ export function initializeDevnet(directory, { networkId = "nir-local-devnet" } =
   };
   writeExclusive(join(root, CONFIG_FILE), genesis, 0o644);
   writeExclusive(join(root, DEV_KEYS_FILE), { treasury, validators }, 0o600);
+  initializeBlockStore(root, new NirChain(genesis));
   return { directory: root, networkId, treasuryAddress: treasury.address };
-}
-
-function blockPath(root, height) {
-  return join(root, BLOCKS_DIRECTORY, `${String(height).padStart(12, "0")}.json`);
 }
 
 function loadJson(path) {
@@ -98,16 +92,7 @@ export class PersistentDevNode {
           !this.#config.validators.some((member) => member.address === wallet.address && member.publicKey === wallet.publicKey))) {
       throw new Error("devnet validator keys do not match genesis");
     }
-    this.#chain = new NirChain(this.#config);
-    const files = readdirSync(join(this.#root, BLOCKS_DIRECTORY))
-      .filter((name) => /^[0-9]{12}\.json$/.test(name)).sort();
-    for (const [index, name] of files.entries()) {
-      const expectedHeight = index + 1;
-      if (name !== `${String(expectedHeight).padStart(12, "0")}.json`) {
-        throw new Error("persistent block journal is not contiguous");
-      }
-      this.#chain.appendBlock(loadJson(join(this.#root, BLOCKS_DIRECTORY, name)));
-    }
+    ({ chain: this.#chain } = loadBlockStore(this.#root, this.#config));
   }
 
   get networkId() { return this.#chain.networkId; }
@@ -143,11 +128,10 @@ export class PersistentDevNode {
   #commit(transactions) {
     const block = this.#chain.buildBlock({ transactions, timestamp: Date.now() });
     const finalized = finalizeBlock(block, validatorQuorum(block, this.#keys.validators));
-    this.#chain.appendBlock(finalized);
-    const target = blockPath(this.#root, finalized.height);
-    const temporary = `${target}.tmp`;
-    writeExclusive(temporary, finalized);
-    renameSync(temporary, target);
+    const verified = this.#chain.fork();
+    verified.appendBlock(finalized);
+    persistBlock(this.#root, finalized, verified);
+    this.#chain = verified;
     return { blockHash: finalized.hash, height: finalized.height };
   }
 

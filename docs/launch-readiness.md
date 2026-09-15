@@ -27,8 +27,10 @@ Required before inviting unknown operators:
   selection, and production denial-of-service controls; signed seed discovery,
   bounded application ingress, pinned TLS 1.3, and quorum-signed endpoint and
   transport-identity rotation with on-chain rollback protection are implemented;
-- a production database with atomic recovery, checksummed snapshots, backups,
-  pruning, and catch-up from multiple peers;
+- a production database with fast state snapshots, pruning, remote backup
+  coordination, and snapshot catch-up from multiple peers; fsync-backed block
+  writes, checksummed journal checkpoints, local redundancy, verified repair,
+  and key-free portable chain backups are implemented;
 - reproducible signed releases, monitoring, incident response, and a documented
   testnet reset policy;
 - versioned protocol upgrades governed by an on-chain activation rule;

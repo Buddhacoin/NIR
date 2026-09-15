@@ -1186,12 +1186,17 @@ export class NirChain {
     return this.#applyBlock(block, true);
   }
 
+  fork() {
+    const fork = new NirChain(this.#genesisConfig);
+    for (const finalized of this.#blocks.slice(1)) fork.appendBlock(finalized);
+    return fork;
+  }
+
   validateProposal(block) {
     if (block?.hash !== undefined || block?.certificate !== undefined) {
       throw new Error("proposal must not contain finality fields");
     }
-    const fork = new NirChain(this.#genesisConfig);
-    for (const finalized of this.#blocks.slice(1)) fork.appendBlock(finalized);
+    const fork = this.fork();
     const candidate = {
       ...structuredClone(block), certificate: [], hash: blockHash(block), prepareCertificate: [],
     };

@@ -18,6 +18,8 @@
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "node:init-dev": "node blockchain/node-cli.mjs init-dev",
     "node:serve": "node blockchain/node-cli.mjs serve",
+    "node:backup": "node blockchain/node-cli.mjs backup",
+    "node:verify-backup": "node blockchain/node-cli.mjs verify-backup",
     "network:init-dev": "node blockchain/network-cli.mjs init-dev",
     "network:validator": "node blockchain/network-cli.mjs serve-validator",
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",

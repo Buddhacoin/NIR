@@ -1,8 +1,9 @@
 # Persistent local NIR node
 
 The current node is a **valueless localhost devnet**, not mainnet software. It
-persists finalized blocks, replays and verifies the complete journal on restart,
-and exposes the first wallet-facing RPC.
+persists finalized blocks in two local copies, synchronizes writes to disk,
+maintains checksummed checkpoints, replays every consensus transition on
+restart, and exposes the first wallet-facing RPC.
 
 ## Start a fresh devnet
 
@@ -41,11 +42,40 @@ The integration suite performs this entire flow automatically and then creates
 a new node process state from disk. A modified signature is rejected and both
 balances survive replay.
 
+## Storage recovery and backups
+
+Each accepted block is first verified on an isolated chain copy. The node then
+writes and `fsync`s a redundant block copy, the primary block, and two copies of
+`STORE-CHECKPOINT.json` before replacing its live in-memory state. Each
+checkpoint commits to the network, height, tip, block hashes, and exact SHA-256
+digest of every journal file.
+
+At startup the node compares both checkpoints and both copies of every block,
+then replays the selected data through normal consensus validation. A corrupt or
+missing primary file is repaired only from a redundant copy that passes that
+replay. A checkpoint left behind by a crash is advanced from later valid journal
+entries. If both copies of a committed height are unavailable or invalid, the
+node stops instead of silently rolling back.
+
+Create a portable public-chain backup in a new directory:
+
+```bash
+npm run node:backup -- /absolute/path/nir-local-node /separate/disk/nir-backup
+npm run node:verify-backup -- /separate/disk/nir-backup
+```
+
+The export contains genesis, blocks, redundant copies, and checkpoints. It
+deliberately excludes `DEVNET-KEYS.json` and cannot spend funds. The destination
+must not already exist, preventing an accidental overwrite. For real operation,
+store copies on a different device and test restoration regularly; two folders
+on one disk do not protect against loss of that disk.
+
 ## Production gaps
 
-This node uses one process holding four development validator keys to construct
-a quorum certificate. Production still requires peer-to-peer transport,
-independent validator processes, a mempool, consensus rounds, fork recovery,
-transactional database snapshots, authentication/rate limiting, metrics and
-adversarial network testing. The block journal is a persistence prototype, not
-a production database.
+The simple node uses one process holding four development validator keys; the
+separate multi-process network is documented in `docs/network.md`. The durable
+journal now detects and repairs several partial-write and corruption cases, but
+it is not a production database. Production still requires state snapshots that
+avoid replaying the full history, pruning with archival guarantees, multiple
+remote backup targets, authenticated snapshot download from several peers,
+continuous restore drills, metrics, and independent storage review.

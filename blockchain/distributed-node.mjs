@@ -22,6 +22,11 @@ import {
   voteForBlock,
 } from "./chain.mjs";
 import {
+  initializeBlockStore,
+  loadBlockStore,
+  persistBlock,
+} from "./block-store.mjs";
+import {
   ATOMIC_UNITS,
   MAX_CONSENSUS_ROUND,
   MAX_TRANSACTIONS_PER_BLOCK,
@@ -81,29 +86,9 @@ function referenceCapability() {
   };
 }
 
-function blockFile(directory, height) {
-  return join(directory, "blocks", `${String(height).padStart(12, "0")}.json`);
-}
-
-function persistBlock(directory, block) {
-  const target = blockFile(directory, block.height);
-  const temporary = `${target}.tmp`;
-  writeExclusive(temporary, block);
-  renameSync(temporary, target);
-}
-
 function loadChain(directory) {
   const genesis = readJson(join(directory, "genesis.json"));
-  const chain = new NirChain(genesis);
-  const files = readdirSync(join(directory, "blocks"))
-    .filter((name) => /^[0-9]{12}\.json$/.test(name)).sort();
-  for (const [index, name] of files.entries()) {
-    if (name !== `${String(index + 1).padStart(12, "0")}.json`) {
-      throw new Error("persistent block journal is not contiguous");
-    }
-    chain.appendBlock(readJson(join(directory, "blocks", name)));
-  }
-  return { chain, genesis };
+  return { ...loadBlockStore(directory, genesis), genesis };
 }
 
 export function initializeDistributedDevnet(
@@ -156,6 +141,7 @@ export function initializeDistributedDevnet(
   writeExclusive(join(coordinatorDirectory, "genesis.json"), genesis, 0o644);
   writeExclusive(join(coordinatorDirectory, "TREASURY-DEV-KEY.json"), treasury);
   writeExclusive(join(coordinatorDirectory, "COORDINATOR-KEY.json"), coordinator);
+  initializeBlockStore(coordinatorDirectory, new NirChain(genesis));
 
   const validatorDirectories = validators.map((wallet, index) => {
     const validatorDirectory = join(root, "validators", `validator-${index}`);
@@ -167,6 +153,7 @@ export function initializeDistributedDevnet(
     writeExclusive(join(validatorDirectory, "genesis.json"), genesis, 0o644);
     writeExclusive(join(validatorDirectory, "VALIDATOR-KEY.json"), wallet);
     writeExclusive(join(validatorDirectory, "AUTHORIZED-COORDINATOR.json"), publicWallet(coordinator), 0o644);
+    initializeBlockStore(validatorDirectory, new NirChain(genesis));
     return validatorDirectory;
   });
   for (let index = 0; index < validatorDirectories.length; index += 1) {
@@ -674,8 +661,10 @@ export class ValidatorReplica {
       if (existing?.hash === block.hash) return { height: this.height, status: "known" };
       throw new Error("committed block conflicts with validator state");
     }
-    this.#chain.appendBlock(block);
-    persistBlock(this.#directory, block);
+    const verified = this.#chain.fork();
+    verified.appendBlock(block);
+    persistBlock(this.#directory, block, verified);
+    this.#chain = verified;
     this.#mempool.remove(block.transactions);
     for (const transaction of block.transactions) {
       rmSync(join(this.#directory, "mempool", `${transactionId(transaction)}.json`), { force: true });
@@ -893,8 +882,10 @@ export class DistributedCoordinator {
       hash: blockHash(proposal),
       prepareCertificate,
     };
-    this.#chain.appendBlock(block);
-    persistBlock(this.#directory, block);
+    const verified = this.#chain.fork();
+    verified.appendBlock(block);
+    persistBlock(this.#directory, block, verified);
+    this.#chain = verified;
     this.#mempool.remove(transactions);
     const broadcasts = await Promise.allSettled(this.#peers.map((_, index) =>
       this.#request(index, "/v1/blocks", block)));
