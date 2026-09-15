@@ -26,7 +26,7 @@ import {
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
 } from "./constants.mjs";
-import { canonicalJson, generateWallet, publicWallet } from "./crypto.mjs";
+import { canonicalJson, generateWallet, publicWallet, verifyObject } from "./crypto.mjs";
 import {
   createPeerRequest,
   createPeerResponse,
@@ -349,8 +349,43 @@ export class ValidatorReplica {
       if (error.code !== "ENOENT") throw error;
     }
     const vote = voteForBlock(block, this.#wallet);
-    writeExclusive(decisionPath, { blockHash: hash, vote });
+    writeExclusive(decisionPath, { blockHash: hash, proposal: block, vote });
     return vote;
+  }
+
+  lockedProposal() {
+    const decisionPath = join(this.#directory, "votes",
+      `${String(this.height + 1).padStart(12, "0")}.json`);
+    try {
+      const decision = readJson(decisionPath);
+      return {
+        blockHash: decision.blockHash,
+        proposal: decision.proposal ?? null,
+        vote: decision.vote,
+      };
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  validateLockedProposal(lock, expectedValidator) {
+    if (lock === null) return null;
+    const member = this.#validators.find(({ address }) => address === expectedValidator);
+    if (!member || !lock?.proposal || lock.vote?.validator !== expectedValidator ||
+        lock.blockHash !== blockHash(lock.proposal) ||
+        !verifyObject({ blockHash: lock.blockHash }, lock.vote.signature, member.publicKey, "BLOCK_VOTE")) {
+      throw new Error("peer lock proof is invalid");
+    }
+    if (lock.proposal.height !== this.height + 1 || lock.proposal.previousHash !== this.tipHash) {
+      throw new Error("peer lock does not extend the validator state");
+    }
+    const rebuilt = this.#chain.buildBlock(proposalFields(lock.proposal));
+    if (canonicalJson(rebuilt) !== canonicalJson(lock.proposal)) {
+      throw new Error("peer lock proposal is not deterministic");
+    }
+    this.#chain.validateProposal(lock.proposal);
+    return structuredClone(lock.proposal);
   }
 
   timeout({ proposal, nextRound }) {

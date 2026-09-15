@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createTransfer, NirChain } from "../blockchain/chain.mjs";
+import { blockHash, createTransfer, NirChain, transactionId } from "../blockchain/chain.mjs";
 import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {
@@ -119,6 +119,11 @@ test("a validator persists its vote and refuses restart equivocation", () => {
     const first = chain.buildBlock({ timestamp: 1 });
     const second = chain.buildBlock({ timestamp: 2 });
     replica.vote(first);
+    const lock = replica.lockedProposal();
+    assert.equal(blockHash(replica.validateLockedProposal(lock, replica.address)), blockHash(first));
+    assert.throws(() => replica.validateLockedProposal({
+      ...lock, proposal: { ...lock.proposal, timestamp: 2 },
+    }, replica.address), /lock proof is invalid|not deterministic/);
     assert.throws(() => replica.vote(second), /refuses to equivocate/);
     const timeout = replica.timeout({ proposal: first, nextRound: 1 });
     assert.equal(timeout.validator, replica.address);
@@ -406,6 +411,68 @@ test("validators replace an offline proposer without coordinator consensus calls
     assert.equal(committed.proposer, roundOneProposer);
     assert.equal(committed.roundCertificate.length, 3);
     assert.equal(replicas[initiatorIndex].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("a replacement proposer recovers a partially voted value from peer locks", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-lock-recovery-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  let urls = [];
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    peerUrls: () => urls,
+    roundTimeoutMs: 10,
+    maxRoundTimeoutMs: 40,
+  }));
+  try {
+    urls = await Promise.all(servers.map((server) => listen(server)));
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const alice = generateWallet();
+    const bob = generateWallet();
+    const charlie = generateWallet();
+    await coordinator.faucet(alice.address);
+    const first = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 0, recipient: bob.address, wallet: alice,
+    });
+    const ingress = await fetch(`${urls[0]}/v1/transactions`, {
+      body: JSON.stringify(first), headers: { "content-type": "application/json" }, method: "POST",
+    });
+    assert.equal(ingress.status, 202);
+
+    const roundZeroProposer = replicas[0].expectedProposer(2, 0);
+    const roundOneProposer = replicas[0].expectedProposer(2, 1);
+    const offlineIndex = replicas.findIndex(({ address }) => address === roundZeroProposer);
+    const replacementIndex = replicas.findIndex(({ address }) => address === roundOneProposer);
+    const initiatorIndex = replicas.findIndex((_, index) =>
+      index !== offlineIndex && index !== replacementIndex);
+    const lockPeerIndex = replicas.findIndex((_, index) =>
+      index !== offlineIndex && index !== replacementIndex && index !== initiatorIndex);
+    const locked = replicas[offlineIndex].buildProposal();
+    replicas[offlineIndex].vote(locked);
+    replicas[replacementIndex].vote(locked);
+    replicas[lockPeerIndex].vote(locked);
+    await close(servers[offlineIndex]);
+
+    const conflictingLocalTransaction = createTransfer({
+      amount: ATOMIC_UNITS.toString(), networkId: coordinator.networkId,
+      nonce: 1, recipient: charlie.address, wallet: alice,
+    });
+    replicas[initiatorIndex].submitTransaction(conflictingLocalTransaction);
+    const produced = await fetch(`${urls[initiatorIndex]}/v1/blocks/produce`, { method: "POST" });
+    assert.equal(produced.status, 202);
+    const result = await produced.json();
+    assert.equal(result.round, 1);
+    const block = replicas[replacementIndex].blocksAfter(2, 1)[0];
+    assert.equal(blockHash(block), blockHash(locked));
+    assert.equal(block.transactions.length, 1);
+    assert.equal(transactionId(block.transactions[0]), transactionId(first));
+    assert.equal(replicas[initiatorIndex].mempoolSize, 1);
+    assert.equal(replicas[initiatorIndex].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+    assert.equal(replicas[initiatorIndex].account(charlie.address).atomicBalance, "0");
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

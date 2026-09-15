@@ -67,10 +67,13 @@ or an exploit against a live third-party system in a public issue.
    replacement proposer without the coordinator. Durable timeout observations
    now survive restart, back off exponentially by round, and require a second
    failed probe before signing. This is not yet a latency-adaptive production
-   pacemaker and has not been partition-tested. There
+   pacemaker and has not been partition-tested. Replacement leaders query
+   authenticated, vote-backed peer locks and deterministically recover the most
+   reported valid value only after `N - quorum + 1` distinct proofs, so a lone
+   Byzantine lock cannot choose it. This is not yet a formal
+   highest-certificate view-change proof. There
    is still no transport confidentiality or governed coordinator-key rotation,
-   lock discovery between competing producers, fork recovery,
-   checkpoint/snapshot sync, peer discovery, or partition-tested liveness.
+   fork recovery, checkpoint/snapshot sync, peer discovery, or partition-tested liveness.
    Proposers now rotate over repeated
    on-chain quorum timeout certificates while votes stay bound to one immutable
    execution-value hash.

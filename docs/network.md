@@ -118,6 +118,17 @@ restart from resetting or bypassing the timer. Development defaults start at
 250 ms and double by round up to 2 seconds; these are test-network timings, not
 production network parameters.
 
+Before building a fresh value, a validator asks every peer for its persisted
+vote lock. Each report contains the original proposal and its validator's
+ML-DSA vote; the receiver verifies the signer, value hash, round certificate,
+deterministic block fields, height, and parent locally. Invalid reports are
+ignored. Reports are grouped by immutable value hash. A group must contain at
+least `N - quorum + 1` distinct validator votes, guaranteeing an honest signer
+under the fault model; one Byzantine validator cannot dictate the recovered
+value. The most reported eligible value is selected deterministically. This lets
+a replacement leader recover a partially voted value even when its own mempool
+differs. Pending transactions outside that value remain queued for a later block.
+
 ## Validator catch-up
 
 A validator that was offline can synchronize directly from the other validators:
@@ -158,6 +169,8 @@ from its durable pool during replay.
   timeout, and delegate the unchanged value to the next elected proposer.
 - timeout observations survive restart, increase by round, and require a second
   failed reachability check after the waiting window.
+- a replacement leader recovers a cryptographically proven peer lock instead of
+  replacing it with a different value from its local mempool.
 
 ## Remaining production boundary
 
@@ -168,10 +181,11 @@ not confidential, coordinator-key rotation is not governed on-chain, peer URLs
 are static, and catch-up is sequential with no snapshot or fork-choice protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated rounds
 preserve the same execution value and rotate the proposer through
-validator-to-validator quorum timeout certificates, but lock discovery between
-competing producers is not implemented. The durable exponential localhost
-pacemaker still lacks latency sampling, authenticated transport sessions, clock
-discipline, and production-calibrated timeout governance.
+validator-to-validator quorum timeout certificates. Signed lock discovery
+recovers partially voted values, but it is not yet a formal highest-certificate
+view-change protocol. The durable exponential localhost pacemaker still lacks
+latency sampling, authenticated transport sessions, clock discipline, and
+production-calibrated timeout governance.
 There is no fork recovery, peer discovery, checkpoint/snapshot synchronization,
 production-grade adaptive denial-of-service defense, or network-partition
 simulation yet. Test keys are plaintext and have no monetary value.

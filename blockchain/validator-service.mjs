@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-import { transactionId } from "./chain.mjs";
+import { blockHash, transactionId } from "./chain.mjs";
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -82,6 +82,39 @@ async function synchronizeValidator(validator, urls) {
   return { height: validator.height, syncedBlocks, tipHash: validator.tipHash };
 }
 
+async function discoverLockedProposal(validator, urls) {
+  const reports = await Promise.allSettled(urls.map(async (peer, index) => {
+    if (validator.peerAddress(index) === validator.address) {
+      return { index, lock: validator.lockedProposal() };
+    }
+    const result = await gossipRequest(validator, index, peer, "/v1/p2p/locks", {
+      height: validator.height + 1,
+    });
+    return { index, lock: result.lock };
+  }));
+  const groups = new Map();
+  for (const report of reports) {
+    if (report.status !== "fulfilled" || report.value.lock === null) continue;
+    try {
+      const expected = validator.peerAddress(report.value.index);
+      const proposal = validator.validateLockedProposal(report.value.lock, expected);
+      const hash = blockHash(proposal);
+      const group = groups.get(hash) ?? { count: 0, proposal };
+      group.count += 1;
+      if (proposal.round > group.proposal.round) group.proposal = proposal;
+      groups.set(hash, group);
+    } catch {
+      // An invalid or forged lock report cannot influence proposal selection.
+    }
+  }
+  const quorum = Math.floor((validator.validatorCount * 2) / 3) + 1;
+  const safeLockThreshold = validator.validatorCount - quorum + 1;
+  return [...groups.entries()]
+    .filter(([, group]) => group.count >= safeLockThreshold)
+    .sort(([firstHash, first], [secondHash, second]) =>
+      second.count - first.count || firstHash.localeCompare(secondHash))[0]?.[1].proposal ?? null;
+}
+
 async function finalizeValidatorProposal(validator, urls, proposal) {
   if (proposal.proposer !== validator.address) throw new Error("proposal producer is not its elected proposer");
   const ownVote = validator.vote(proposal);
@@ -152,7 +185,7 @@ async function timeoutProposal(validator, urls, proposal, baseMs, maximumMs) {
 
 async function produceValidatorBlock(validator, urls, baseMs, maximumMs) {
   await synchronizeValidator(validator, urls);
-  let proposal = validator.buildProposal();
+  let proposal = await discoverLockedProposal(validator, urls) ?? validator.buildProposal();
   while (proposal.proposer !== validator.address) {
     if (await proposerIsReachable(validator, urls, proposal.proposer)) {
       throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
@@ -233,6 +266,13 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         if (auth.signer !== payload.proposer) throw new Error("proposal was not sent by its proposer");
         const result = { vote: validator.vote(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/locks") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        if (payload?.height !== validator.height + 1) throw new Error("lock height is invalid");
+        const result = { lock: validator.lockedProposal() };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/timeouts") {
