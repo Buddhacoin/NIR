@@ -40,8 +40,11 @@ request is printed in the terminal; the user must type `SIGN` and then enter the
 vault password. The password is never accepted through HTTP, command arguments,
 or environment variables, and the response contains only the signed transaction.
 
-The bridge deliberately has no broadcast endpoint. Review and submission to a
-node remain separate actions, limiting the damage from a compromised interface.
+The bridge deliberately has no broadcast endpoint. The wallet UI can pair with
+it, read the public address, show the node balance, calculate a fee, review an
+exact transfer, and request a terminal-confirmed signature. It displays the
+signed JSON but does not submit it to a node. Review and submission remain
+separate actions, limiting the damage from a compromised interface.
 The session token is not a recovery secret: it expires when the bridge process
 stops, should be pasted only into the intended local UI, and must never be put
 in a URL. Close the terminal process when finished.
