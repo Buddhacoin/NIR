@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" type="image/png" href="nir-coin-icon.png?v=17">
-  <link rel="stylesheet" href="style.css?v=17"><title>NIR Wallet</title>
+  <link rel="icon" type="image/png" href="nir-coin-icon.png?v=18">
+  <link rel="stylesheet" href="style.css?v=18"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
-    <header><div class="brand"><img class="brand-logo" src="nir-coin-icon.png?v=17" alt="NIR"><b>NIR</b></div><div class="header-actions"><button id="theme" aria-label="Сменить тему">☀</button><button class="network" data-action="network">● Local testnet</button></div></header>
+    <header><div class="brand"><img class="brand-logo" src="nir-coin-icon.png?v=18" alt="NIR"><b>NIR</b></div><div class="header-actions"><button id="theme" aria-label="Сменить тему">☀</button><button class="network" data-action="network">● Local testnet</button></div></header>
     <section class="balance"><p>Общий баланс</p><h1><span id="balance-value">0.00000000</span> <small>NIR</small></h1><span id="wallet-state">Тестовая сеть · реальные средства отключены</span></section>
     <section class="actions">
       <button data-action="receive"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14m0 0 5-5m-5 5-5-5"/></svg></i>Получить</button><button data-action="send"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m0 0 5 5m-5-5-5 5"/></svg></i>Отправить</button><button data-action="mine"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="M18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg></i>Майнинг</button>
@@ -20,10 +20,10 @@
   <dialog id="bridge-panel">
     <button class="close" data-close="bridge-panel" aria-label="Закрыть">×</button>
     <h2>Подключить vault</h2>
-    <p>Запустите локальный bridge и вставьте временный session token. Пароль кошелька вводится только в терминале.</p>
+    <p>Запустите локальный bridge и введите одноразовый восьмизначный код. Пароль кошелька вводится только в терминале.</p>
     <form id="bridge-form">
       <label>Адрес bridge<input id="bridge-url" inputmode="url" value="http://127.0.0.1:8788" required></label>
-      <label>Session token<input id="bridge-token" type="password" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" required></label>
+      <label>Одноразовый код<input id="bridge-code" inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" autocomplete="one-time-code" spellcheck="false" required></label>
       <p class="form-status" id="bridge-status" role="status"></p>
       <button class="primary" type="submit">Подключить</button>
     </form>
@@ -50,5 +50,5 @@
     </section>
     <p class="form-status" id="send-status" role="status"></p>
   </dialog>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body></html>

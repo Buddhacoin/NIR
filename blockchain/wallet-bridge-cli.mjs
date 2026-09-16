@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import process from "node:process";
 
 import { createWalletBridgeServer } from "./wallet-bridge.mjs";
@@ -37,8 +37,10 @@ try {
   }
   const wallet = walletPublicInfo(vaultPath);
   const sessionToken = randomBytes(32).toString("hex");
+  const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
   const server = createWalletBridgeServer({
     origin,
+    pairingCode,
     sessionToken,
     vaultPath,
     authorize: async (intent) => {
@@ -58,7 +60,7 @@ try {
     console.log(`NIR wallet bridge for ${wallet.address}`);
     console.log(`Listening only on http://127.0.0.1:${port}`);
     console.log(`Allowed origin: ${origin}`);
-    console.log(`Session token: ${sessionToken}`);
+    console.log(`One-time pairing code: ${pairingCode} (expires in 2 minutes)`);
     console.log("Keep this terminal open. Every signature still requires confirmation and password.");
   });
 } catch (error) {

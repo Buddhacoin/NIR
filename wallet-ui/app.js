@@ -60,6 +60,26 @@ async function bridgeRequest(path, options = {}) {
   }
 }
 
+async function pairBridge(url, code) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(`${url}/v1/pair`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const result = await response.json();
+    if (!response.ok || !/^[0-9a-f]{64}$/.test(result.sessionToken ?? "")) {
+      throw new Error(result.error || "Bridge вернул неверный session token.");
+    }
+    return result.sessionToken;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function parseNir(value) {
   const match = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,8}))?$/.exec(value.trim());
   if (!match) throw new Error("Введите положительную сумму, не более 8 знаков после точки.");
@@ -95,28 +115,29 @@ async function refreshAccount() {
 function openBridgePanel() {
   bridgeStatus.textContent = "";
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
-  document.querySelector("#bridge-token").value = "";
+  document.querySelector("#bridge-code").value = "";
   bridgePanel.showModal();
 }
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   bridgeStatus.textContent = "Подключение…";
-  const tokenInput = document.querySelector("#bridge-token");
+  const codeInput = document.querySelector("#bridge-code");
   try {
     const url = exactLoopbackUrl(document.querySelector("#bridge-url").value);
-    const token = tokenInput.value.trim();
-    if (!/^[0-9a-f]{64}$/.test(token)) throw new Error("Session token должен содержать 64 шестнадцатеричных символа.");
+    const code = codeInput.value.trim();
+    if (!/^[0-9]{8}$/.test(code)) throw new Error("Введите восьмизначный одноразовый код.");
+    const token = await pairBridge(url, code);
     bridgeSession = { token, url };
     walletInfo = await bridgeRequest("/v1/wallet");
-    tokenInput.value = "";
+    codeInput.value = "";
     bridgeStatus.textContent = `Подключён ${walletInfo.address.slice(0, 16)}…`;
     await refreshAccount();
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
     bridgeSession = null;
     walletInfo = null;
-    tokenInput.value = "";
+    codeInput.value = "";
     bridgeStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   }
 });

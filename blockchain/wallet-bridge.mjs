@@ -65,19 +65,32 @@ function authorized(request, sessionToken) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function sameSecret(leftValue, rightValue) {
+  const left = Buffer.from(leftValue);
+  const right = Buffer.from(rightValue);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
 export function createWalletBridgeServer({
   authorize,
   origin,
+  pairingCode,
+  pairingLifetimeMs = 120_000,
   sessionToken,
   vaultPath,
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
-      !/^[0-9a-f]{64}$/.test(sessionToken ?? "")) {
+      !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
+      (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
+      !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
   }
   const seen = new Set();
   let pending = false;
+  let pairingAttempts = 0;
+  let pairingAvailable = pairingCode !== undefined;
+  const pairingDeadline = Date.now() + pairingLifetimeMs;
   const server = createServer(async (request, response) => {
     const requestOrigin = request.headers.origin;
     const host = request.headers.host ?? "";
@@ -96,11 +109,31 @@ export function createWalletBridgeServer({
       });
       response.end(); return;
     }
+    const url = new URL(request.url, "http://bridge.local");
+    if (request.method === "POST" && url.pathname === "/v1/pair") {
+      try {
+        if (!pairingAvailable || Date.now() > pairingDeadline || pairingAttempts >= 5) {
+          pairingAvailable = false;
+          throw new Error("pairing is unavailable; restart the bridge");
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("pairing requests require application/json");
+        }
+        pairingAttempts += 1;
+        const body = await readBody(request);
+        if (typeof body.code !== "string" || !sameSecret(body.code, pairingCode)) {
+          throw new Error("pairing code is invalid");
+        }
+        pairingAvailable = false;
+        return send(response, 200, { sessionToken }, origin);
+      } catch (error) {
+        return send(response, 400, { error: error.message }, origin);
+      }
+    }
     if (!authorized(request, sessionToken)) {
       return send(response, 401, { error: "bridge session is not authorized" }, origin);
     }
     try {
-      const url = new URL(request.url, "http://bridge.local");
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
       }

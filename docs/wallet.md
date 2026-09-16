@@ -32,8 +32,11 @@ npm run wallet:bridge -- \
   /absolute/path/personal.nirvault.json 8788 http://127.0.0.1:8765
 ```
 
-At startup it prints a random one-session token. The browser must present that
-token to read the public wallet identity or request a signature. The bridge
+At startup it prints a random eight-digit pairing code that expires after two
+minutes. The exact wallet origin can exchange it once for a random session token;
+the UI keeps that token only in memory. Five failed attempts disable pairing
+until the bridge is restarted. The browser must present the token to read the
+public wallet identity or request a signature. The bridge
 binds only to `127.0.0.1`, checks the exact `Origin` and loopback `Host`, permits
 only one pending confirmation, and rejects reuse of a request ID. Every signing
 request is printed in the terminal; the user must type `SIGN` and then enter the
@@ -47,9 +50,14 @@ signed JSON first. A separate button can submit it only after a fresh node
 health check reports `valueless-devnet` and the signed network ID matches the
 node. Signing never submits automatically. Review and submission remain
 separate actions, limiting the damage from a compromised interface.
-The session token is not a recovery secret: it expires when the bridge process
-stops, should be pasted only into the intended local UI, and must never be put
-in a URL. Close the terminal process when finished.
+The pairing code and session token are not recovery secrets. Neither belongs in
+a URL or persistent browser storage. Close the terminal process when finished.
+
+The automated integration suite repeats the complete valueless path across real
+loopback HTTP boundaries: public wallet discovery, faucet funding, account and
+fee lookup, bridge signing, separate node submission, final balance checks, and
+replay rejection. It uses temporary keys and does not replace a browser security
+review or external audit.
 
 For an unpacked extension, pass its exact stable
 `chrome-extension://<32-character-id>` origin instead. Do not allow a wildcard

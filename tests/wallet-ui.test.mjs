@@ -36,13 +36,15 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=17"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=18"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {
-  assert.match(html, /id="bridge-token" type="password"/);
+  assert.match(html, /id="bridge-code"[^>]*pattern="\[0-9\]\{8\}"/);
+  assert.match(script, /pairBridge\(url, code\)/);
+  assert.match(script, /fetch\(`\$\{url\}\/v1\/pair`/);
   assert.match(script, /x-nir-bridge-token/);
   assert.match(script, /bridgeSession = \{ token, url \}/);
   assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(token|bridge)/i);

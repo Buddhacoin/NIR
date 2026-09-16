@@ -156,3 +156,72 @@ test("wallet bridge serializes confirmations so prompts cannot overlap", async (
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("wallet bridge exchanges a short-lived one-time code for one in-memory session", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-pair-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-bridge-password-long" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "9".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    origin,
+    pairingCode: "12345678",
+    sessionToken: token,
+    vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const wrong = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "00000000" }), method: "POST",
+    });
+    assert.equal(wrong.status, 400);
+    assert.match((await wrong.json()).error, /invalid/);
+    const paired = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "12345678" }), method: "POST",
+    });
+    assert.equal(paired.status, 200);
+    assert.deepEqual(await paired.json(), { sessionToken: token });
+    const reused = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "12345678" }), method: "POST",
+    });
+    assert.equal(reused.status, 400);
+    assert.match((await reused.json()).error, /unavailable/);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wallet bridge disables pairing after five incorrect attempts", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-attempt-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-bridge-password-long" });
+  const origin = "http://127.0.0.1:8765";
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    origin,
+    pairingCode: "87654321",
+    sessionToken: "6".repeat(64),
+    vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const rejected = await request(`${base}/v1/pair`, origin, "", {
+        body: JSON.stringify({ code: "00000000" }), method: "POST",
+      });
+      assert.equal(rejected.status, 400);
+    }
+    const locked = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "87654321" }), method: "POST",
+    });
+    assert.equal(locked.status, 400);
+    assert.match((await locked.json()).error, /unavailable/);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

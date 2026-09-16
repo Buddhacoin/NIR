@@ -21,7 +21,10 @@ Implemented and continuously tested:
   activation-block binding and one-block journal-tail replay;
 - a local wallet preview and valueless mining demonstration;
 - a loopback-only, exact-origin wallet bridge with per-request terminal approval,
-  encrypted-vault password entry, replay protection, and no broadcast authority.
+  encrypted-vault password entry, replay protection, and no broadcast authority;
+- an end-to-end HTTP test that creates a vault, funds it with valueless faucet
+  units, obtains a fee quote, signs through the bridge, submits separately,
+  finalizes a block, checks both balances, and rejects transaction replay.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR
 has market value.
