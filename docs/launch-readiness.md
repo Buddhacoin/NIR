@@ -40,8 +40,9 @@ Required before inviting unknown operators:
   writes, checksummed journal checkpoints, local redundancy, verified repair,
   key-free portable chain backups, and a full consensus-state root in every
   protocol-v7 block are implemented;
-- reproducible signed releases, monitoring, incident response, and a documented
-  testnet reset policy;
+- reproducible binary builds, monitoring, incident response, and a documented
+  testnet reset policy; deterministic post-quantum signed source manifests and
+  verification are implemented locally;
 - versioned protocol upgrades governed by an on-chain activation rule;
 - at least four validator and fallback-beacon operators controlled by genuinely
   independent organizations;
