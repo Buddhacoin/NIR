@@ -39,6 +39,7 @@ import {
 } from "./safety-bounty.mjs";
 import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
 import { peerRegistryHash, verifyPeerRegistry } from "./peer-registry.mjs";
+import { verifyValidatorOnboarding } from "./validator-onboarding.mjs";
 import {
   activeValidatorSet,
   scheduleValidatorRotation,
@@ -1063,6 +1064,18 @@ export class NirChain {
         current: [...this.#validators.values()], proposed, bonds: this.#validatorBonds,
         currentHeight: this.height, activationHeight: validatorRotation.activationHeight,
       });
+      if (this.#peerRegistry) {
+        const onboarding = verifyValidatorOnboarding(validatorRotation.onboarding, {
+          activationHeight: scheduledRotation.activationHeight,
+          currentPeerRegistry: this.#peerRegistry,
+          currentValidators: [...this.#validators.values()],
+          networkId: this.#networkId,
+          nextValidators: scheduledRotation.validators,
+        });
+        scheduledRotation = { ...scheduledRotation, onboarding };
+      } else if (validatorRotation.onboarding != null) {
+        throw new Error("validator onboarding requires an active peer registry");
+      }
     }
     if (validatorRotation !== null && peerRegistryUpdate !== null) {
       throw new Error("validator and peer registry rotations require separate blocks");
@@ -1571,6 +1584,18 @@ export class NirChain {
         currentHeight: previous.height,
         activationHeight: block.validatorRotation.activationHeight,
       });
+      if (this.#peerRegistry) {
+        const onboarding = verifyValidatorOnboarding(block.validatorRotation.onboarding, {
+          activationHeight: scheduledRotation.activationHeight,
+          currentPeerRegistry: this.#peerRegistry,
+          currentValidators: [...this.#validators.values()],
+          networkId: this.#networkId,
+          nextValidators: scheduledRotation.validators,
+        });
+        scheduledRotation = { ...scheduledRotation, onboarding };
+      } else if (block.validatorRotation.onboarding != null) {
+        throw new Error("validator onboarding requires an active peer registry");
+      }
       if (hashObject(scheduledRotation, "VALIDATOR_ROTATION") !==
           hashObject(block.validatorRotation, "VALIDATOR_ROTATION")) {
         throw new Error("validator rotation does not match registered consensus state");

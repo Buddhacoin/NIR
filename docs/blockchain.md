@@ -22,7 +22,7 @@ identically.
 - ML-DSA-65-signed evaluation receipts bound to network and epoch;
 - on-chain recomputation of progress scores;
 - a world-capability memory root committed by genesis and every block;
-- a complete deterministic state root committed by genesis and every protocol-v6
+- a complete deterministic state root committed by genesis and every protocol-v7
   block, covering monetary, mining, safety, randomness, validator, and peer state;
 - consensus validation of lineage, behavior novelty, and marginal frontier gain;
 - permanent rejection of already rewarded proof fingerprints;
@@ -156,6 +156,19 @@ operators need a pre-activation, mutually authenticated endpoint-registration
 workflow so their commit and handoff votes are reachable before activation.
 The local devnet still starts with a static four-validator transport topology,
 so it must not be presented as a complete live operator replacement workflow.
+
+Protocol v7 adds the consensus commitment for that workflow. When a chain has
+an active peer registry, a validator-rotation proposal must carry a canonical
+onboarding certificate for the exact future set. It binds activation height,
+old and new set identifiers, HTTPS origins, TLS certificate pins, and separate
+ML-DSA transport identities. The current set must approve it with `2N/3 + 1`;
+every future validator must accept with its consensus key; and every advertised
+transport key must prove possession. Duplicate endpoints, reused transport
+identities, public plaintext origins, mutation, missing acceptance, and changes
+to an overlapping validator's live endpoint fail closed. The certificate is
+stored inside the pending rotation and therefore covered by every subsequent
+state root. Atomic replacement of the runtime peer map at activation is the
+next integration step.
 
 ## Run
 

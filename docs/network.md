@@ -378,6 +378,14 @@ activation block, and reloaded on restart. Pre-activation onboarding of new
 operators into the authenticated P2P topology and operator-run production
 recovery drills remain; there is no fork-choice protocol.
 
+Protocol v7 also requires a pre-activation onboarding certificate in any
+validator rotation on a network with an active peer registry. This prevents a
+rotation from naming unreachable or unconsenting operators: all future
+consensus keys and transport keys prove possession, while the current validator
+quorum authorizes the exact endpoint set. Existing protocol-v6 development
+state must be recreated; this repository has no public mainnet history requiring
+a migration.
+
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates. Consensus now has distinct

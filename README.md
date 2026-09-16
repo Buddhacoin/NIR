@@ -55,9 +55,10 @@ The intended advantages are:
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
 | Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
 | Signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally |
+| Pre-activation validator onboarding | Protocol-v7 commitment verifies old quorum, every new consensus key, every transport key, TLS pins, and endpoint uniqueness; atomic activation wiring remains |
 | Bounded public ingress, request sizes, connections, headers, and timeouts | Implemented locally; production DDoS edge protection remains |
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |
-| Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, and AI memory | Committed in genesis and every protocol-v6 block |
+| Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, onboarding, and AI memory | Committed in genesis and every protocol-v7 block |
 | Canonical state snapshots with ML-DSA validator quorum | Authenticated fast catch-up, commit-bound dual-quorum handoffs, durable handoff history, tail replay, portable backup, and two-stage pruning implemented locally |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, and multi-height stateful fuzzing |
 | Installable browser/PWA wallet interface | Interactive local testnet preview |

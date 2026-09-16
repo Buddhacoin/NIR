@@ -33,7 +33,7 @@ Required before inviting unknown operators:
   remote backup coordination remains; fsync-backed block
   writes, checksummed journal checkpoints, local redundancy, verified repair,
   key-free portable chain backups, and a full consensus-state root in every
-  protocol-v6 block are implemented;
+  protocol-v7 block are implemented;
 - reproducible signed releases, monitoring, incident response, and a documented
   testnet reset policy;
 - versioned protocol upgrades governed by an on-chain activation rule;

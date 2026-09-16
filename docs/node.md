@@ -44,7 +44,7 @@ balances survive replay.
 
 ## Storage recovery and backups
 
-Each protocol-v6 block commits a deterministic root covering balances, nonces,
+Each protocol-v7 block commits a deterministic root covering balances, nonces,
 issuance, burns, candidate and validator bonds, recorded faults, validator-set
 transitions, the peer registry, safety evidence, and world capability memory.
 This is the trust anchor required for future fast state snapshots; the current
