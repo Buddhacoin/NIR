@@ -33,7 +33,7 @@ The intended advantages are:
   account pays its fee; both post-quantum signatures, both nonces, the amount,
   recipient and network are consensus-bound, so the sponsor never controls the
   sender's funds;
-- **resource-credit path:** the next Pay-lane upgrade will let locked NIR create
+- **resource-credit path:** the Pay lane lets locked NIR create
   renewable transfer capacity that the owner can use or sponsor for customers;
   ordinary NIR fees remain the fallback when credits are exhausted;
 - **post-quantum accounts:** transfers, vaults, validator votes, evaluator
@@ -56,6 +56,7 @@ The intended advantages are:
 | 21 million cap and ten-year treasury vesting | Enforced by consensus |
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
 | Sponsored transfer fees | Two-party post-quantum authorization and independent replay protection implemented |
+| Transfer Credits from locked NIR | Protocol-v18 stake, block-epoch renewal, exact-transfer sponsorship, and per-block capacity limit implemented; delegation allowances, unstaking, wallet controls, and calibrated production parameters remain |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer review, terminal-confirmed signing without browser key access, and a separate valueless-testnet-only submit step; implemented locally |
@@ -112,10 +113,10 @@ application runtime at genesis:
   or governance rights;
 - **sponsored payments:** a service may pay the network fee so a new user can
   receive and spend funds before acquiring NIR for gas;
-- **Transfer Credits:** staked NIR will produce a bounded, renewable Pay-lane
+- **Transfer Credits:** locked NIR produces a bounded, renewable Pay-lane
   quota. Credits are usage rights, not transferable money and not new NIR;
-  delegation will authorize a merchant or wallet service to sponsor a user's
-  transfer without gaining custody of that user's balance;
+  a merchant or wallet service can sponsor an exact user-signed transfer with
+  its own second signature without gaining custody of the user's balance;
 - **state proofs and light clients:** wallets verify balances and finalized
   headers without trusting one RPC provider;
 - **parallel lanes:** Pay, Proof, and Control operations declare state access so
@@ -275,10 +276,12 @@ does not unlock into an exchange or a wallet from another network. The current d
 temporary key. Before a public network, founder custody and the protocol
 treasury must use disclosed, independently recoverable multisignature vaults.
 
-Every transfer pays a consensus-enforced minimum fee of **0.00001000 NIR** to
-the block proposer, and a sender may offer more for priority. Dynamic congestion
-pricing, fee sponsorship for ordinary users, and whether part of a future base
-fee is burned remain consensus decisions.
+Every fee-paid transfer pays a consensus-enforced minimum of **0.00001000 NIR**
+to the block proposer, and a sender may offer more for priority. Protocol v18
+also permits a bounded number of zero-fee transfers to consume renewable
+Transfer Credits backed by locked NIR. Dynamic congestion pricing, validator
+compensation for credit traffic, and whether part of a future base fee is burned
+remain consensus decisions.
 
 Wallets must present the fee both as NIR and as a percentage of the transfer.
 The consensus fee itself is resource-based rather than value-based: moving a

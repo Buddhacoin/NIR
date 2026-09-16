@@ -119,6 +119,24 @@ Protocol v16 adds deterministic timeout faults and safe same-round rotation.
 Protocol v17 turns those state-rooted faults into native bond burns and disables
 an under-bonded offender from future epoch committees.
 
+### Transfer Credits
+
+Protocol v18 adds a Pay-lane resource separate from money. A signed
+`credit-stake` transaction locks NIR. Every complete 100 NIR unit supplies ten
+ordinary-transfer credits per 720-block epoch. A sender can consume its own
+credit, or a distinct sponsor can bind one of its credits to the complete
+sender-signed transfer with the existing second post-quantum signature and
+independent nonce. Credit-paid transfers carry zero NIR fee; all other transfers
+still satisfy the minimum fee. Consensus permits at most 100 credit-paid
+transfers in one block, so stake cannot purchase unbounded free ingress.
+
+Credits are state-rooted usage rights, cannot be transferred as money, do not
+increase supply, and reset lazily by block height rather than validator-chosen
+time. The present values are testnet parameters. Withdrawal, standing delegated
+allowances and validator compensation for credit traffic remain required before
+mainnet; until delayed unstaking exists, `credit-stake` must be treated as
+locked indefinitely.
+
 ### Draft score
 
 For an accepted proof `p`:

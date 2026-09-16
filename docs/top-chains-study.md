@@ -52,21 +52,22 @@ non-conflicting lanes in parallel later, but all results commit to one state roo
 ## Transfer Credits
 
 NIR should adapt TRON's strongest payment idea without copying its governance.
-A separate Pay-lane stake locks native NIR and earns a deterministic quota of
-Transfer Credits per block epoch. One ordinary transfer consumes a published
-number of credits; more expensive future operations consume more. Credits:
+A separate Pay-lane stake now locks native NIR and earns a deterministic quota
+of Transfer Credits per block epoch. Protocol v18 implements one credit per
+ordinary transfer, exact-transaction sponsorship, epoch renewal and a separate
+per-block limit. More expensive future operations will require separate costs.
+Credits:
 
 - replenish up to a cap and cannot be sold as a second currency;
 - never increase the 21 million NIR supply;
-- can be delegated by a signed, revocable allowance without transferring the
-  underlying NIR;
-- can sponsor only the exact sender-authorized transaction, reusing NIR's
+- can currently sponsor only the exact sender-authorized transaction, reusing NIR's
   existing two-signature fee-payer protection;
 - fall back to the normal NIR fee when allowance or quota is insufficient;
 - use block-height epochs rather than wall-clock time, preventing timestamp
   manipulation from manufacturing quota.
 
-The unresolved economic question is validator compensation for credit-paid
+Standing revocable delegation is not implemented yet. The unresolved economic
+question is validator compensation for credit-paid
 traffic. Mainnet must not call a transfer “free” while silently shifting an
 unbounded cost to operators. The safe implementation order is metering and
 delegation first, then public load measurements, followed by a capped formula
@@ -100,8 +101,8 @@ base monetary chain is mature.
 1. Deploy the implemented beacon service with independent operators and audit
    finality rotation, including withdrawal delays and long network partitions.
 2. Add a state root, snapshots and a light-client proof format.
-3. Add Transfer Credit staking, delegation, and a separately bounded block
-   quota; sponsored transactions are already implemented.
+3. Audit implemented Transfer Credit staking and bounded block quota; then add
+   delayed unstaking, revocable delegation allowances and wallet controls.
 4. Add declared state-access lists and parallel replay benchmarks.
 5. Research post-quantum selective privacy with auditable viewing permissions.
 6. Specify and audit the constrained native asset registry.

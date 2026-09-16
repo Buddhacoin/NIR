@@ -7,6 +7,8 @@ import {
   allocateProgressRewards,
   computeProgressScore,
   createBeaconBond,
+  createCreditStake,
+  createCreditTransfer,
   createCandidateBond,
   createProgressCommitment,
   createValidatorBond,
@@ -33,6 +35,8 @@ import {
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_ALLOCATION,
   TREASURY_VESTING_MS,
+  TRANSFER_CREDIT_STAKE_UNIT,
+  TRANSFER_CREDITS_PER_STAKE_UNIT,
   scheduledEpochBudget,
 } from "../blockchain/constants.mjs";
 import {
@@ -1096,6 +1100,76 @@ test("a fee sponsor can pay for an exact transfer without controlling its funds"
   assert.throws(
     () => chain.appendBlock(finalizeBlock(replay, quorumFor(replay, validators))),
     /nonce/,
+  );
+});
+
+test("locked NIR supplies bounded renewable credits for sponsored transfers", () => {
+  const { chain, treasury, validators } = fixture();
+  const sponsor = generateWallet();
+  const alice = generateWallet();
+  const bob = generateWallet();
+  const timestamp = TREASURY_VESTING_MS;
+  const funding = [
+    createTransfer({
+      wallet: treasury, networkId: chain.networkId, recipient: sponsor.address,
+      amount: (TRANSFER_CREDIT_STAKE_UNIT + MIN_TRANSFER_FEE).toString(), nonce: 0,
+    }),
+    createTransfer({
+      wallet: treasury, networkId: chain.networkId, recipient: alice.address,
+      amount: "100", nonce: 1,
+    }),
+  ];
+  const fundingBlock = chain.buildBlock({ transactions: funding, timestamp });
+  chain.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
+  const stake = createCreditStake({
+    wallet: sponsor, networkId: chain.networkId,
+    amount: TRANSFER_CREDIT_STAKE_UNIT.toString(), nonce: 0,
+  });
+  const stakeBlock = chain.buildBlock({ transactions: [stake], timestamp });
+  chain.appendBlock(finalizeBlock(stakeBlock, quorumFor(stakeBlock, validators)));
+  assert.equal(chain.creditStake(sponsor.address), TRANSFER_CREDIT_STAKE_UNIT);
+  assert.equal(chain.transferCredits(sponsor.address), BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT));
+
+  const sponsorBalance = chain.balance(sponsor.address);
+  const transfer = createSponsoredTransfer({
+    wallet: alice,
+    sponsorWallet: sponsor,
+    networkId: chain.networkId,
+    recipient: bob.address,
+    amount: "25",
+    nonce: 0,
+    sponsorNonce: 1,
+    useCredits: true,
+  });
+  const block = chain.buildBlock({ transactions: [transfer], timestamp });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  assert.equal(chain.balance(alice.address), 75n);
+  assert.equal(chain.balance(bob.address), 25n);
+  assert.equal(chain.balance(sponsor.address), sponsorBalance);
+  assert.equal(
+    chain.transferCredits(sponsor.address),
+    BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT - 1),
+  );
+  assert.equal(
+    chain.transferCredits(sponsor.address, 721),
+    BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT),
+  );
+
+  const forgedFree = createCreditTransfer({
+    wallet: alice, networkId: chain.networkId, recipient: bob.address,
+    amount: "1", nonce: 1,
+  });
+  const rejected = chain.buildBlock({ transactions: [forgedFree], timestamp });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(rejected, quorumFor(rejected, validators))),
+    /quota is exhausted/,
+  );
+  const overCapacity = chain.buildBlock({
+    transactions: Array.from({ length: 101 }, () => forgedFree), timestamp,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(overCapacity, quorumFor(overCapacity, validators))),
+    /too many credit-paid transfers/,
   );
 });
 

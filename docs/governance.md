@@ -82,11 +82,12 @@ entry, tested inheritance procedures, or an offline signing application.
 
 ## Transaction fees
 
-Every transfer now pays a consensus-enforced minimum of 0.00001000 NIR to the
-block proposer. A sender may offer more for priority. This establishes an
-anti-spam floor, but it is not yet dynamic congestion pricing. Before a public
-network, load tests must determine whether the floor should adjust gradually
-with block demand and how users without NIR can use sponsored transactions.
+Every fee-paid transfer pays a consensus-enforced minimum of 0.00001000 NIR to
+the block proposer. A sender may offer more for priority. Protocol v18 also
+allows a separately capped set of transfers to consume Transfer Credits backed
+by locked NIR. These rules establish deterministic anti-spam limits, but they
+are not yet dynamic congestion pricing. Before a public network, load tests must
+determine whether the floor and credit quota should adjust gradually with demand.
 Burning or routing a future base component to a security pool is a
 monetary-policy decision and is not implemented.
 

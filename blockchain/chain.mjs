@@ -3,6 +3,7 @@ import {
   BEACON_NON_REVEAL_SLASH_BPS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   MAX_BLOCK_BYTES,
+  MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_CONSENSUS_ROUND,
   MAX_DECIMAL_DIGITS,
   MAX_FUTURE_DRIFT_MS,
@@ -20,6 +21,9 @@ import {
   PROTOCOL_VERSION,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
+  TRANSFER_CREDIT_EPOCH_BLOCKS,
+  TRANSFER_CREDIT_STAKE_UNIT,
+  TRANSFER_CREDITS_PER_STAKE_UNIT,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
 } from "./constants.mjs";
@@ -196,6 +200,7 @@ export function createSponsoredTransfer({
   nonce,
   sponsorNonce,
   fee = MIN_TRANSFER_FEE.toString(),
+  useCredits = false,
 }) {
   if (!sponsorWallet || sponsorWallet.address === wallet?.address) {
     throw new Error("a sponsored transfer requires a distinct fee payer");
@@ -203,7 +208,7 @@ export function createSponsoredTransfer({
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
-    fee: String(fee),
+    fee: useCredits ? "0" : String(fee),
     feePayer: sponsorWallet.address,
     feePayerAlgorithm: SIGNATURE_ALGORITHM,
     feePayerNonce: sponsorNonce,
@@ -215,6 +220,7 @@ export function createSponsoredTransfer({
     sender: wallet.address,
     type: "transfer",
   };
+  if (useCredits) transaction.resource = "transfer-credit";
   const signed = {
     ...transaction,
     signature: signObject(transaction, wallet, "TRANSFER"),
@@ -223,6 +229,22 @@ export function createSponsoredTransfer({
     ...signed,
     feePayerSignature: signObject(signed, sponsorWallet, "SPONSORED_TRANSFER"),
   };
+}
+
+export function createCreditTransfer({ wallet, networkId, recipient, amount, nonce }) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    amount: String(amount),
+    fee: "0",
+    networkId,
+    nonce,
+    publicKey: wallet.publicKey,
+    recipient,
+    resource: "transfer-credit",
+    sender: wallet.address,
+    type: "transfer",
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "TRANSFER") };
 }
 
 export function progressCandidateId({
@@ -301,6 +323,17 @@ export function createBeaconBond({
     publicKey: wallet.publicKey, sender: wallet.address, type: "beacon-bond",
   };
   return { ...transaction, signature: signObject(transaction, wallet, "BEACON_BOND") };
+}
+
+export function createCreditStake({
+  wallet, networkId, amount, nonce, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    amount: String(amount), fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, type: "credit-stake",
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "CREDIT_STAKE") };
 }
 
 export function createMultisigTransfer({
@@ -608,6 +641,8 @@ export class NirChain {
   #burned;
   #candidateBonds;
   #capabilityMemory;
+  #creditStakes;
+  #creditUsage;
   #evaluationQuorum;
   #epochRandomness;
   #beaconAuthorities;
@@ -718,6 +753,8 @@ export class NirChain {
     this.#beaconFaults = new Map();
     this.#burned = 0n;
     this.#candidateBonds = new Map();
+    this.#creditStakes = new Map();
+    this.#creditUsage = new Map();
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
     this.#randomnessFaults = new Map();
@@ -842,6 +879,19 @@ export class NirChain {
         randomnessReveals: snapshotEntries(candidate.randomnessReveals, "randomness reveals"),
       });
     }
+    const creditStakes = snapshotEntries(state.creditStakes, "credit stakes");
+    for (const [address, value] of creditStakes) {
+      assertAddress(address, "credit stake address");
+      creditStakes.set(address, snapshotAtomic(value, "credit stake"));
+    }
+    const creditUsage = snapshotEntries(state.creditUsage, "credit usage");
+    for (const [address, value] of creditUsage) {
+      assertAddress(address, "credit usage address");
+      if (!value || !Number.isSafeInteger(value.epoch) || value.epoch < 0 ||
+          !Number.isSafeInteger(value.spent) || value.spent < 0) {
+        throw new Error("credit usage snapshot is invalid");
+      }
+    }
     const progressCommitments = snapshotEntries(
       state.progressCommitments,
       "progress commitments",
@@ -922,6 +972,8 @@ export class NirChain {
     chain.#burned = snapshotAtomic(state.burned, "burned supply");
     chain.#candidateBonds = candidateBonds;
     chain.#capabilityMemory = memory;
+    chain.#creditStakes = creditStakes;
+    chain.#creditUsage = creditUsage;
     chain.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: chain.#networkId,
       registry: chain.#beaconAuthorities,
@@ -1009,6 +1061,8 @@ export class NirChain {
       burned: overrides.burned ?? this.#burned,
       candidateBonds: overrides.candidateBonds ?? this.#candidateBonds,
       capabilityMemoryRoot: overrides.capabilityMemoryRoot ?? this.#capabilityMemory.stateRoot,
+      creditStakes: overrides.creditStakes ?? this.#creditStakes,
+      creditUsage: overrides.creditUsage ?? this.#creditUsage,
       epochRandomness: overrides.epochRandomness ?? this.#epochRandomness.snapshot(),
       lastRewardTimestamp: overrides.lastRewardTimestamp ?? this.#lastRewardTimestamp,
       mined: overrides.mined ?? this.#mined,
@@ -1040,6 +1094,8 @@ export class NirChain {
         burned: this.#burned,
         candidateBonds: this.#candidateBonds,
         capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
+        creditStakes: this.#creditStakes,
+        creditUsage: this.#creditUsage,
         epochRandomness: this.#epochRandomness.snapshot(),
         lastRewardTimestamp: this.#lastRewardTimestamp,
         mined: this.#mined,
@@ -1101,6 +1157,17 @@ export class NirChain {
   beaconBond(address) { return this.#beaconBonds.get(address) ?? 0n; }
   beaconFaultCount(address) { return this.#beaconFaults.get(address) ?? 0; }
   get beaconBondingActive() { return this.#beaconBondingActive; }
+  creditStake(address) { return this.#creditStakes.get(address) ?? 0n; }
+
+  transferCredits(address, height = this.height + 1) {
+    if (!Number.isSafeInteger(height) || height < 1) throw new Error("credit height is invalid");
+    const units = this.creditStake(address) / TRANSFER_CREDIT_STAKE_UNIT;
+    const allowance = units * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT);
+    const epoch = Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+    const usage = this.#creditUsage.get(address);
+    const spent = usage?.epoch === epoch ? BigInt(usage.spent) : 0n;
+    return allowance > spent ? allowance - spent : 0n;
+  }
 
   get validatorSetId() { return validatorSetId([...this.#validators.values()].sort((a, b) => a.address.localeCompare(b.address))); }
 
@@ -1579,7 +1646,20 @@ export class NirChain {
     return claim.value;
   }
 
-  #applyTransfer(transaction, balances, nonces, proposer, timestamp) {
+  #consumeTransferCredit(address, height, creditStakes, creditUsage) {
+    const stake = creditStakes.get(address) ?? 0n;
+    const allowance = (stake / TRANSFER_CREDIT_STAKE_UNIT) *
+      BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT);
+    const epoch = Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+    const previous = creditUsage.get(address);
+    const spent = previous?.epoch === epoch ? previous.spent : 0;
+    if (allowance <= BigInt(spent)) throw new Error("transfer credit quota is exhausted");
+    creditUsage.set(address, { epoch, spent: spent + 1 });
+  }
+
+  #applyTransfer(
+    transaction, balances, nonces, proposer, timestamp, height, creditStakes, creditUsage,
+  ) {
     if (transaction.type !== "transfer") throw new Error("unknown transaction type");
     if (![SIGNATURE_ALGORITHM, MULTISIG_ALGORITHM].includes(transaction.algorithm)) {
       throw new Error("transaction is not post-quantum signed");
@@ -1627,8 +1707,12 @@ export class NirChain {
     if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
     const amount = parseAtomic(transaction.amount, "amount");
     const fee = parseAtomic(transaction.fee, "fee");
+    const creditPaid = transaction.resource === "transfer-credit";
+    if (transaction.resource !== undefined && !creditPaid) {
+      throw new Error("unknown transfer resource");
+    }
     if (amount === 0n) throw new Error("transfer amount must be positive");
-    if (fee < MIN_TRANSFER_FEE) {
+    if ((!creditPaid && fee < MIN_TRANSFER_FEE) || (creditPaid && fee !== 0n)) {
       throw new Error("transfer fee is below the protocol minimum");
     }
     const senderBalance = balances.get(transaction.sender) ?? 0n;
@@ -1666,7 +1750,9 @@ export class NirChain {
         throw new Error("unexpected fee payer nonce");
       }
       feePayerBalance = balances.get(transaction.feePayer) ?? 0n;
-      if (senderBalance < amount || feePayerBalance < fee) throw new Error("insufficient balance");
+      if (senderBalance < amount || (!creditPaid && feePayerBalance < fee)) {
+        throw new Error("insufficient balance");
+      }
     } else if (senderBalance < amount + fee) {
       throw new Error("insufficient balance");
     }
@@ -1679,20 +1765,30 @@ export class NirChain {
         throw new Error("treasury funds are still vesting");
       }
     }
-    if (sponsored && transaction.feePayer === this.#treasuryAddress) {
+    if (sponsored && !creditPaid && transaction.feePayer === this.#treasuryAddress) {
       const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
         this.#genesisTimestamp,
         timestamp,
       );
       if (feePayerBalance - fee < locked) throw new Error("treasury funds are still vesting");
     }
+    if (creditPaid) {
+      this.#consumeTransferCredit(
+        sponsored ? transaction.feePayer : transaction.sender,
+        height,
+        creditStakes,
+        creditUsage,
+      );
+    }
     balances.set(transaction.sender, senderBalance - amount - (sponsored ? 0n : fee));
     balances.set(transaction.recipient, (balances.get(transaction.recipient) ?? 0n) + amount);
     if (sponsored) {
-      balances.set(transaction.feePayer, (balances.get(transaction.feePayer) ?? 0n) - fee);
+      if (!creditPaid) {
+        balances.set(transaction.feePayer, (balances.get(transaction.feePayer) ?? 0n) - fee);
+      }
       nonces.set(transaction.feePayer, expectedFeePayerNonce + 1);
     }
-    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    if (!creditPaid) balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
   }
 
@@ -1865,6 +1961,34 @@ export class NirChain {
     beaconBonds.set(transaction.sender, (beaconBonds.get(transaction.sender) ?? 0n) + amount);
   }
 
+  #applyCreditStake(transaction, balances, nonces, creditStakes, proposer, timestamp) {
+    if (transaction.type !== "credit-stake" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, "CREDIT_STAKE")) {
+      throw new Error("credit stake transaction is invalid");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const amount = parseAtomic(transaction.amount, "credit stake");
+    const fee = parseAtomic(transaction.fee, "fee");
+    if (amount === 0n || fee < MIN_TRANSFER_FEE) {
+      throw new Error("credit stake or fee is below minimum");
+    }
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (balance < amount + fee) throw new Error("insufficient balance");
+    if (transaction.sender === this.#treasuryAddress) {
+      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+      if (balance - amount - fee < locked) throw new Error("treasury funds are still vesting");
+    }
+    balances.set(transaction.sender, balance - amount - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    creditStakes.set(transaction.sender, (creditStakes.get(transaction.sender) ?? 0n) + amount);
+  }
+
   appendBlock(block) {
     return this.#applyBlock(block, true);
   }
@@ -1882,6 +2006,9 @@ export class NirChain {
       randomnessCommits: new Map(candidate.randomnessCommits),
       randomnessReveals: new Map(candidate.randomnessReveals),
     }]));
+    fork.#creditStakes = new Map(this.#creditStakes);
+    fork.#creditUsage = new Map([...this.#creditUsage]
+      .map(([address, usage]) => [address, { ...usage }]));
     fork.#capabilityMemory = this.#capabilityMemory.clone();
     fork.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: this.#networkId,
@@ -1953,6 +2080,10 @@ export class NirChain {
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
       throw new Error("too many transactions in one block");
+    }
+    if (block.transactions.filter(({ resource }) => resource === "transfer-credit").length >
+        MAX_CREDIT_TRANSFERS_PER_BLOCK) {
+      throw new Error("too many credit-paid transfers in one block");
     }
     if (block.progressRewards.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
       throw new Error("too many progress rewards in one block");
@@ -2066,6 +2197,9 @@ export class NirChain {
     let beaconBondingActive = this.#beaconBondingActive;
     const beaconBonds = new Map(this.#beaconBonds);
     const beaconFaults = new Map(this.#beaconFaults);
+    const creditStakes = new Map(this.#creditStakes);
+    const creditUsage = new Map([...this.#creditUsage]
+      .map(([address, usage]) => [address, { ...usage }]));
     const nonces = new Map(this.#nonces);
     const rewardedProofs = new Set(this.#rewardedProofs);
     const candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
@@ -2168,7 +2302,10 @@ export class NirChain {
       if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
       transactionIds.add(id);
       if (transaction.type === "transfer") {
-        this.#applyTransfer(transaction, balances, nonces, block.feeRecipient, block.timestamp);
+        this.#applyTransfer(
+          transaction, balances, nonces, block.feeRecipient, block.timestamp,
+          block.height, creditStakes, creditUsage,
+        );
       } else if (transaction.type === "candidate-bond") {
         this.#applyCandidateBond(
           transaction, balances, nonces, candidateBonds, block.feeRecipient,
@@ -2187,6 +2324,10 @@ export class NirChain {
       } else if (transaction.type === "beacon-bond") {
         this.#applyBeaconBond(
           transaction, balances, nonces, beaconBonds, block.feeRecipient, epochRandomness,
+        );
+      } else if (transaction.type === "credit-stake") {
+        this.#applyCreditStake(
+          transaction, balances, nonces, creditStakes, block.feeRecipient, block.timestamp,
         );
       } else {
         throw new Error("unknown transaction type");
@@ -2391,6 +2532,8 @@ export class NirChain {
       burned: this.#burned + newlyBurned,
       candidateBonds,
       capabilityMemoryRoot: capabilityMemory.stateRoot,
+      creditStakes,
+      creditUsage,
       epochRandomness: epochRandomness.snapshot(),
       lastRewardTimestamp: lastRewardTimestampAfter,
       mined: this.#mined + newlyMined,
@@ -2416,6 +2559,8 @@ export class NirChain {
     this.#beaconFaults = beaconFaults;
     this.#burned += newlyBurned;
     this.#candidateBonds = candidateBonds;
+    this.#creditStakes = creditStakes;
+    this.#creditUsage = creditUsage;
     this.#nonces = nonces;
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;
