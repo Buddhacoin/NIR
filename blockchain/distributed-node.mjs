@@ -23,6 +23,7 @@ import {
 } from "./chain.mjs";
 import {
   initializeBlockStore,
+  installBlockStoreSnapshot,
   loadBlockStore,
   persistBlock,
 } from "./block-store.mjs";
@@ -52,6 +53,7 @@ import { installStateSnapshot } from "./snapshot-store.mjs";
 import {
   MAX_SNAPSHOT_BYTES,
   createStateSnapshot,
+  mergeStateSnapshotCandidates,
   verifyStateSnapshot,
   verifyStateSnapshotCandidate,
 } from "./state-snapshot.mjs";
@@ -233,6 +235,7 @@ function proposalFields(block) {
 export class ValidatorReplica {
   #chain;
   #directory;
+  #genesis;
   #wallet;
   #coordinator;
   #seenNonces = new Map();
@@ -251,6 +254,7 @@ export class ValidatorReplica {
     this.#wallet = readJson(join(this.#directory, "VALIDATOR-KEY.json"));
     this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
     const genesis = readJson(join(this.#directory, "genesis.json"));
+    this.#genesis = genesis;
     this.#validators = genesis.validators;
     let registryHistory;
     try {
@@ -387,6 +391,28 @@ export class ValidatorReplica {
       throw new Error("snapshot attestation does not match local finalized state");
     }
     return candidate.attestations[0];
+  }
+
+  installStateSnapshotCandidates(candidates) {
+    const trustAnchor = {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#validators,
+    };
+    const merged = mergeStateSnapshotCandidates(candidates, trustAnchor);
+    if (merged.verified.height <= this.height) {
+      throw new Error("state snapshot does not advance the validator");
+    }
+    const installed = installBlockStoreSnapshot(
+      this.#directory, this.#genesis, merged.snapshot,
+      { trustedValidators: this.#validators },
+    );
+    this.#chain = installed.chain;
+    return {
+      height: this.height,
+      snapshotHash: installed.snapshotHash,
+      stateRoot: installed.stateRoot,
+      tipHash: this.tipHash,
+    };
   }
 
   blocksAfter(fromHeight, limit = 8) {

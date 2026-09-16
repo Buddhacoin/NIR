@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { blockHash, createTransfer, NirChain, transactionId } from "../blockchain/chain.mjs";
+import { blockHash, createTransfer, finalizeBlock, NirChain, transactionId } from "../blockchain/chain.mjs";
 import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {
@@ -451,6 +451,51 @@ test("a restarted validator catches up from authenticated validator peers", asyn
     assert.equal(syncResult.height, 2);
     assert.equal(replicas[offlineIndex].mempoolSize, 0);
     assert.equal(replicas[offlineIndex].account(bob.address).atomicBalance, ATOMIC_UNITS.toString());
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("a far-behind validator fast-syncs from a quorum snapshot before tail replay", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-validator-fast-sync-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const wallets = layout.validatorDirectories.map((directory) =>
+    JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"), "utf8")));
+  const genesis = JSON.parse(readFileSync(
+    join(layout.coordinatorDirectory, "genesis.json"), "utf8",
+  ));
+  const source = new NirChain(genesis);
+  for (let height = 1; height <= 17; height += 1) {
+    const block = finalizeBlock(source.buildBlock({ timestamp: height }), wallets);
+    source.appendBlock(block);
+    for (const replica of replicas.slice(0, 3)) replica.commit(block);
+  }
+  assert.throws(() => replicas[3].installStateSnapshotCandidates([
+    replicas[0].stateSnapshotCandidate(), replicas[1].stateSnapshotCandidate(),
+  ]), /candidate quorum is not reached/);
+  assert.equal(replicas[3].height, 0);
+  let urls = [];
+  const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
+    peerUrls: () => urls,
+  }));
+  try {
+    urls = await Promise.all(servers.map((server) => listen(server)));
+    const response = await fetch(`${urls[3]}/v1/sync`, { method: "POST" });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.snapshotHeight, 17);
+    assert.equal(result.syncedBlocks, 0);
+    assert.equal(result.tipHash, source.tipHash);
+    assert.equal(replicas[3].height, 17);
+    assert.equal(existsSync(join(
+      layout.validatorDirectories[3], "snapshots", "STATE-SNAPSHOT.json",
+    )), true);
+
+    const restarted = new ValidatorReplica(layout.validatorDirectories[3]);
+    assert.equal(restarted.height, 17);
+    assert.equal(restarted.tipHash, source.tipHash);
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

@@ -134,6 +134,14 @@ channel, while snapshot approvals use the validator consensus keys. The
 coordinator retries another full-state source when the first cannot obtain a
 quorum.
 
+A validator that is at least 16 blocks behind now requests snapshot candidates
+over the replay-protected validator transport from every reachable peer. It
+installs only one identical state carrying unique finality signatures from the
+normal `2N/3 + 1` quorum, then resumes ordinary certificate verification for
+any remaining tail blocks. Minority, stale, malformed, and conflicting
+candidates cannot advance its state; when no snapshot quorum exists, the node
+falls back to sequential finalized-block replay.
+
 The handoff format and verifier are implemented and adversarially tested. The
 remaining integration boundary is automatic creation and durable distribution
 of each handoff by the old and new validator processes at the actual activation

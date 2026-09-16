@@ -5,6 +5,9 @@ import { blockHash, transactionId } from "./chain.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
 import { IngressLimiter } from "./ingress-limiter.mjs";
+import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
+
+const SNAPSHOT_CATCHUP_THRESHOLD = 16;
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -32,12 +35,13 @@ function readBody(request) {
   });
 }
 
-async function gossipRequest(validator, index, url, path, payload) {
+async function gossipRequest(validator, index, url, path, payload, maxResponseBytes = undefined) {
   if (validator.peerAddress(index) === validator.address) return null;
   const auth = validator.createValidatorRequest(path, payload);
   const response = await requestJson(`${url}${path}`, {
     body: { auth, payload },
     method: "POST",
+    maxResponseBytes,
     tlsCertificateSha256: validator.peerTlsCertificateSha256(index),
   });
   if (!response.ok) throw new Error(response.body.error ?? `gossip peer returned ${response.status}`);
@@ -64,6 +68,23 @@ async function synchronizeValidator(validator, urls) {
     index,
   })).filter(({ height }) => height > validator.height).sort((a, b) => b.height - a.height);
   let syncedBlocks = 0;
+  let snapshotHeight = null;
+  if ((candidates[0]?.height ?? validator.height) - validator.height >= SNAPSHOT_CATCHUP_THRESHOLD) {
+    const snapshots = await Promise.allSettled(urls.map((url, index) =>
+      gossipRequest(
+        validator, index, url, "/v1/p2p/snapshots/candidate", {},
+        MAX_SNAPSHOT_BYTES + 64 * 1024,
+      )));
+    try {
+      const accepted = snapshots
+        .filter(({ status, value }) => status === "fulfilled" && value?.snapshot)
+        .map(({ value }) => value.snapshot);
+      const installed = validator.installStateSnapshotCandidates(accepted);
+      snapshotHeight = installed.height;
+    } catch {
+      // A missing or conflicting snapshot quorum falls back to full block replay.
+    }
+  }
   for (const candidate of candidates) {
     try {
       while (validator.height < candidate.height) {
@@ -82,7 +103,7 @@ async function synchronizeValidator(validator, urls) {
       // Try the next independently authenticated peer.
     }
   }
-  return { height: validator.height, syncedBlocks, tipHash: validator.tipHash };
+  return { height: validator.height, snapshotHeight, syncedBlocks, tipHash: validator.tipHash };
 }
 
 async function discoverLockedProposal(validator, urls) {
@@ -381,6 +402,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { blocks: validator.blocksAfter(payload.fromHeight, payload.limit) };
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/snapshots/candidate") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = { snapshot: validator.stateSnapshotCandidate() };
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });

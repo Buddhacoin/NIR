@@ -29,8 +29,8 @@ Required before inviting unknown operators:
   transport-identity rotation with on-chain rollback protection are implemented;
 - a production database and operational recovery drills around the implemented
   quorum snapshots, tail replay, two-stage pruning, and portable backups;
-  automated snapshot catch-up from multiple peers and remote backup
-  coordination remain; fsync-backed block
+  authenticated snapshot catch-up from multiple peers is implemented, while
+  remote backup coordination remains; fsync-backed block
   writes, checksummed journal checkpoints, local redundancy, verified repair,
   key-free portable chain backups, and a full consensus-state root in every
   protocol-v6 block are implemented;

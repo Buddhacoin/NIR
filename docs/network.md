@@ -340,9 +340,12 @@ and catch-up is sequential. A quorum-authenticated snapshot format, signed RPC,
 authenticated source collection, typed restore, and atomic redundant staging
 now exist. Dual-quorum rotation handoff verification, journal-tail replay,
 joining-node installation, portable pruned backups, and two-stage pruning are
-implemented locally. Automatic handoff production at activation, multi-peer
-snapshot download by a joining validator, and operator-run production recovery
-drills remain; there is no fork-choice protocol.
+implemented locally. Validators more than 16 blocks behind also collect
+authenticated snapshot candidates from peers, require matching finality quorum,
+install the checkpoint, and replay the remaining tail; failed quorum safely
+falls back to block-by-block replay. Automatic handoff production at activation
+and operator-run production recovery drills remain; there is no fork-choice
+protocol.
 
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
