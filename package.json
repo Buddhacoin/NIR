@@ -31,6 +31,8 @@
     "release:create": "node blockchain/release-cli.mjs create",
     "release:sign": "node blockchain/release-cli.mjs sign",
     "release:verify": "node blockchain/release-cli.mjs verify",
+    "release:build": "node blockchain/release-cli.mjs build",
+    "release:verify-artifact": "node blockchain/release-cli.mjs verify-artifact",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
     "test:chain": "node --test --test-concurrency=1 tests/*.test.mjs"
   }

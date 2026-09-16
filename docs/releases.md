@@ -6,9 +6,11 @@ digest, and executable bit. The complete manifest is then signed with ML-DSA-65.
 Changing one byte, changing file mode, adding or removing a tracked file, using
 a symlink, or presenting another signing identity makes verification fail.
 
-This protects source distribution. It does not yet prove that a desktop binary
-was reproducibly built from that source; deterministic packaged wallet and node
-builds remain a separate launch gate.
+This protects source distribution. NIR also has a deterministic `.nirpkg`
+container for the wallet and node source payloads. It is byte-identical when
+built from the same signed revision and binds every embedded file back to that
+manifest. Native macOS, Windows, Linux, and browser-store packages are not yet
+reproducible and remain a separate launch gate.
 
 ## Create a dedicated release key
 
@@ -56,3 +58,28 @@ Verification checks the ML-DSA-65 signature, trusted address, Git revision,
 complete tracked path set, sizes, modes, and file digests. A valid signature
 does not replace code review, independent builds, malware scanning, external
 audits, or a multi-party release ceremony.
+
+## Build reproducible NIR packages
+
+After source verification, build either recipe twice on separate clean machines:
+
+```bash
+npm run release:build -- \
+  wallet . signed-release.json nir1TRUSTED_RELEASE_ADDRESS wallet.nirpkg
+
+npm run release:build -- \
+  node . signed-release.json nir1TRUSTED_RELEASE_ADDRESS node.nirpkg
+```
+
+Verify a package without trusting the machine that built it:
+
+```bash
+npm run release:verify-artifact -- \
+  wallet.nirpkg signed-release.json nir1TRUSTED_RELEASE_ADDRESS
+```
+
+The wallet recipe includes `wallet-ui/`; the node recipe includes `blockchain/`
+and `package.json`. The canonical JSON container has no timestamps, host paths,
+file-order ambiguity, compression metadata, or network-fetched dependencies.
+Its `artifactHash` must match across independent builders. `.nirpkg` is an
+auditable release container, not yet a click-to-install desktop application.

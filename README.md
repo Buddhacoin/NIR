@@ -60,7 +60,7 @@ The intended advantages are:
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |
 | Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, onboarding, and AI memory | Committed in genesis and every protocol-v7 block |
 | Canonical state snapshots with ML-DSA validator quorum | Two ordered rotations, activation-bound snapshot restore, short tail replay, portable backup, and two-stage pruning are tested locally |
-| Post-quantum signed source releases | Clean Git revision, complete tracked file set, bytes, sizes, and executable modes are bound and locally verified; reproducible binaries remain |
+| Post-quantum signed releases | Clean Git revision and complete tracked file set are bound; deterministic wallet/node `.nirpkg` artifacts are locally verified; native installers remain |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, multi-height fuzzing, and live validator rotation |
 | Installable browser/PWA wallet interface | Interactive local testnet preview |
 | Public mainnet or exchange-listed NIR | Not launched |
@@ -266,6 +266,7 @@ candidate runs are committed.
 - `blockchain/validator-handoff.mjs` — old/new quorum trust handoffs for verifying snapshots across rotations.
 - `blockchain/validator-topology-history.mjs` — genesis-rooted pairing of each handoff with its mutually signed endpoints, TLS pins, and transport identities.
 - `blockchain/release-manifest.mjs` — deterministic source manifests and ML-DSA-65 release verification.
+- `blockchain/release-artifact.mjs` — byte-reproducible wallet and node package containers bound to signed sources.
 - `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
 - `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
 - `blockchain/node-store.mjs` — atomic block files and verified restart replay.

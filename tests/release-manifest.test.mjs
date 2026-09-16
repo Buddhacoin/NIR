@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -14,6 +15,12 @@ import test from "node:test";
 
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {
+  artifactPaths,
+  createReleaseArtifact,
+  serializeReleaseArtifact,
+  verifyReleaseArtifact,
+} from "../blockchain/release-artifact.mjs";
+import {
   createReleaseManifest,
   signReleaseManifest,
   verifyReleaseFiles,
@@ -23,10 +30,17 @@ import {
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "nir-release-test-"));
+  mkdirSync(join(root, "blockchain"));
+  mkdirSync(join(root, "wallet-ui"));
   writeFileSync(join(root, "README.md"), "NIR release\n");
   writeFileSync(join(root, "node.mjs"), "console.log('nir');\n");
+  writeFileSync(join(root, "package.json"), '{"version":"0.2.0"}\n');
+  writeFileSync(join(root, "blockchain", "node.mjs"), "export const node = true;\n");
+  writeFileSync(join(root, "wallet-ui", "index.html"), "<h1>NIR</h1>\n");
   chmodSync(join(root, "node.mjs"), 0o755);
-  const paths = ["README.md", "node.mjs"];
+  const paths = [
+    "README.md", "blockchain/node.mjs", "node.mjs", "package.json", "wallet-ui/index.html",
+  ];
   const manifest = createReleaseManifest(root, paths, {
     releaseVersion: "0.2.0",
     sourceRevision: "a".repeat(40),
@@ -41,7 +55,8 @@ test("a post-quantum release signature binds revision, file bytes, and executabl
     const envelope = signReleaseManifest(values.manifest, wallet);
     const verified = verifySignedRelease(envelope, { trustedAddress: wallet.address });
     assert.equal(verified.manifest.manifestHash, values.manifest.manifestHash);
-    assert.equal(verifyReleaseFiles(values.root, verified.manifest, values.paths).files.length, 2);
+    assert.equal(verifyReleaseFiles(values.root, verified.manifest, values.paths).files.length,
+      values.paths.length);
     assert.throws(() => verifySignedRelease(envelope, {
       trustedAddress: generateWallet().address,
     }), /not trusted/);
@@ -99,5 +114,36 @@ test("release CLI derives a manifest only from a clean tracked revision", () => 
     assert.match(dirty.stderr, /must be clean/);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reproducible packages are byte-identical and bound to signed sources", () => {
+  const values = fixture();
+  try {
+    const nodePaths = artifactPaths("node", values.paths);
+    const first = createReleaseArtifact(values.root, nodePaths, {
+      kind: "node", sourceManifest: values.manifest,
+    });
+    const second = createReleaseArtifact(values.root, nodePaths, {
+      kind: "node", sourceManifest: values.manifest,
+    });
+    assert.equal(serializeReleaseArtifact(first), serializeReleaseArtifact(second));
+    assert.equal(verifyReleaseArtifact(first, {
+      sourceManifest: values.manifest,
+    }).artifactHash, first.artifactHash);
+    const tampered = structuredClone(first);
+    tampered.entries[0].content = Buffer.from("different").toString("base64");
+    assert.throws(() => verifyReleaseArtifact(tampered, {
+      sourceManifest: values.manifest,
+    }), /digest|hash/);
+    const otherManifest = { ...values.manifest, sourceRevision: "b".repeat(40) };
+    otherManifest.manifestHash = createReleaseManifest(values.root, values.paths, {
+      releaseVersion: "0.2.0", sourceRevision: "b".repeat(40),
+    }).manifestHash;
+    assert.throws(() => verifyReleaseArtifact(first, {
+      sourceManifest: otherManifest,
+    }), /not bound/);
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
   }
 });

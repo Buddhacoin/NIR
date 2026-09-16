@@ -17,6 +17,12 @@ import {
   verifyReleaseFiles,
   verifySignedRelease,
 } from "./release-manifest.mjs";
+import {
+  artifactPaths,
+  createReleaseArtifact,
+  serializeReleaseArtifact,
+  verifyReleaseArtifact,
+} from "./release-artifact.mjs";
 import { decryptWallet } from "./vault.mjs";
 
 function readSecret(prompt) {
@@ -43,9 +49,9 @@ function readSecret(prompt) {
   });
 }
 
-function readBoundedJson(path) {
+function readBoundedJson(path, maximumBytes = 16 * 1024 * 1024) {
   const metadata = lstatSync(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 16 * 1024 * 1024) {
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maximumBytes) {
     throw new Error("release input must be a bounded regular file");
   }
   return JSON.parse(readFileSync(path, "utf8"));
@@ -72,10 +78,14 @@ function requireCleanTrackedTree(root) {
 }
 
 function writeAtomic(path, value) {
+  writeAtomicContents(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeAtomicContents(path, contents) {
   const target = resolve(path);
   const temporary = `${target}.${process.pid}.tmp`;
   try {
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    writeFileSync(temporary, contents, { flag: "wx", mode: 0o600 });
     chmodSync(temporary, 0o644);
     renameSync(temporary, target);
   } finally {
@@ -120,8 +130,33 @@ try {
     }
     verifyReleaseFiles(root, manifest, trackedFiles(root));
     console.log(`Release ${manifest.manifestHash} verified for signer ${signer.address}.`);
+  } else if (command === "build" && args.length === 5) {
+    const [kind, rootValue, envelopePath, trustedAddress, output] = args;
+    const root = resolve(rootValue);
+    requireCleanTrackedTree(root);
+    const envelope = readBoundedJson(envelopePath);
+    const { manifest } = verifySignedRelease(envelope, { trustedAddress });
+    if (manifest.sourceRevision !== revision(root)) {
+      throw new Error("checked-out revision does not match the signed release");
+    }
+    const paths = trackedFiles(root);
+    verifyReleaseFiles(root, manifest, paths);
+    const artifact = createReleaseArtifact(root, artifactPaths(kind, paths), {
+      kind, sourceManifest: manifest,
+    });
+    writeAtomicContents(output, serializeReleaseArtifact(artifact));
+    console.log(`${kind} artifact ${artifact.artifactHash} created.`);
+  } else if (command === "verify-artifact" && args.length === 3) {
+    const [artifactPath, envelopePath, trustedAddress] = args;
+    const { manifest, signer } = verifySignedRelease(readBoundedJson(envelopePath), {
+      trustedAddress,
+    });
+    const artifact = verifyReleaseArtifact(
+      readBoundedJson(artifactPath, 520 * 1024 * 1024), { sourceManifest: manifest },
+    );
+    console.log(`${artifact.kind} artifact ${artifact.artifactHash} verified for ${signer.address}.`);
   } else {
-    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address>");
+    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address>");
   }
 } catch (error) {
   console.error(`Release operation failed: ${error.message}`);
