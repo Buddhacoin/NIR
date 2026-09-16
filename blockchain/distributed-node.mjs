@@ -411,10 +411,22 @@ export class ValidatorReplica {
   }
 
   verifyValidatorResponse(index, auth, requestNonce, result) {
+    return this.verifyValidatorResponseFrom(
+      this.#peerTransports[index], auth, requestNonce, result,
+    );
+  }
+
+  verifyValidatorResponseFrom(peer, auth, requestNonce, result) {
     return verifyPeerResponse({
       auth, networkId: this.networkId, requestNonce, result,
-      trustedPeer: this.#peerTransports[index],
+      trustedPeer: peer,
     });
+  }
+
+  peerDescriptor(index, url = this.#peerUrls[index]) {
+    const entry = this.#transportView[index];
+    if (!entry || typeof url !== "string") throw new Error("validator peer index is invalid");
+    return structuredClone({ ...entry, url });
   }
 
   validatorAddressForPeerSigner(signer) {

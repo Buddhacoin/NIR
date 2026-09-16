@@ -125,6 +125,11 @@ test("validator gossip authenticates with transport keys, not finality keys", ()
     const result = { accepted: true };
     const response = replicas[1].authenticateValidatorResponse(nonce, result);
     assert.deepEqual(replicas[0].verifyValidatorResponse(1, response, nonce, result), result);
+    const frozenPeer = replicas[0].peerDescriptor(1, "http://127.0.0.1:9999");
+    assert.equal(frozenPeer.validatorAddress, replicas[1].address);
+    assert.deepEqual(replicas[0].verifyValidatorResponseFrom(
+      frozenPeer.transport, response, nonce, result,
+    ), result);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

@@ -35,18 +35,26 @@ function readBody(request) {
   });
 }
 
-async function gossipRequest(validator, index, url, path, payload, maxResponseBytes = undefined) {
-  if (validator.peerAddress(index) === validator.address) return null;
+async function gossipPeerRequest(
+  validator, peer, path, payload, maxResponseBytes = undefined,
+) {
+  if (peer.validatorAddress === validator.address) return null;
   const auth = validator.createValidatorRequest(path, payload);
-  const response = await requestJson(`${url}${path}`, {
+  const response = await requestJson(`${peer.url}${path}`, {
     body: { auth, payload },
     method: "POST",
     maxResponseBytes,
-    tlsCertificateSha256: validator.peerTlsCertificateSha256(index),
+    tlsCertificateSha256: peer.tlsCertificateSha256,
   });
   if (!response.ok) throw new Error(response.body.error ?? `gossip peer returned ${response.status}`);
-  return validator.verifyValidatorResponse(
-    index, response.body.auth, auth.nonce, response.body.result,
+  return validator.verifyValidatorResponseFrom(
+    peer.transport, response.body.auth, auth.nonce, response.body.result,
+  );
+}
+
+async function gossipRequest(validator, index, url, path, payload, maxResponseBytes = undefined) {
+  return gossipPeerRequest(
+    validator, validator.peerDescriptor(index, url), path, payload, maxResponseBytes,
   );
 }
 
@@ -138,6 +146,7 @@ async function discoverLockedProposal(validator, urls) {
 
 async function finalizeValidatorProposal(validator, urls, proposal, recoveredPrepare = null) {
   if (proposal.proposer !== validator.address) throw new Error("proposal producer is not its elected proposer");
+  const transitionPeers = urls.map((url, index) => validator.peerDescriptor(index, url));
   let prepareCertificate;
   if (recoveredPrepare) {
     prepareCertificate = validator.prepareCertificate(proposal, recoveredPrepare);
@@ -166,11 +175,11 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
     : validator.assembleValidatorHandoffCandidates(handoffCandidates, proposal);
   const block = validator.finalizeProposal(proposal, prepareCertificate, commits);
   if (handoff) validator.installFinalizedValidatorHandoff(handoff);
-  const broadcasts = await Promise.allSettled(urls.map((peer, index) =>
-    gossipRequest(validator, index, peer, "/v1/p2p/blocks", block)));
+  const broadcasts = await Promise.allSettled(transitionPeers.map((peer) =>
+    gossipPeerRequest(validator, peer, "/v1/p2p/blocks", block)));
   if (handoff) {
-    await Promise.allSettled(urls.map((peer, index) =>
-      gossipRequest(validator, index, peer, "/v1/p2p/handoffs", handoff)));
+    await Promise.allSettled(transitionPeers.map((peer) =>
+      gossipPeerRequest(validator, peer, "/v1/p2p/handoffs", handoff)));
   }
   return {
     blockHash: block.hash,
