@@ -823,12 +823,20 @@ export class NirChain {
       ) {
         throw new Error("progress commitment snapshot is invalid");
       }
-      if (
-        !Array.isArray(commitment.beaconCommittee) ||
-        commitment.beaconCommittee.length !== chain.#beaconQuorum ||
-        new Set(commitment.beaconCommittee).size !== commitment.beaconCommittee.length ||
-        commitment.beaconCommittee.some((address) => !chain.#beaconAuthorities.has(address))
-      ) throw new Error("progress beacon committee snapshot is invalid");
+      const beaconUnassigned = commitment.beaconCommittee === null &&
+        commitment.beaconCommitteeHeight === null && commitment.beaconCommitteeSource === null;
+      const beaconAssigned =
+        Array.isArray(commitment.beaconCommittee) &&
+        commitment.beaconCommittee.length === chain.#beaconQuorum &&
+        new Set(commitment.beaconCommittee).size === commitment.beaconCommittee.length &&
+        commitment.beaconCommittee.every((address) => chain.#beaconAuthorities.has(address)) &&
+        Number.isSafeInteger(commitment.beaconCommitteeHeight) &&
+        commitment.beaconCommitteeHeight > commitment.committedHeight &&
+        commitment.beaconCommitteeHeight <= commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE &&
+        /^[0-9a-f]{64}$/.test(commitment.beaconCommitteeSource ?? "");
+      if (!beaconUnassigned && !beaconAssigned) {
+        throw new Error("progress beacon committee snapshot is invalid");
+      }
       const challengeFields = [
         commitment.beaconValue,
         commitment.challengeHeight,
@@ -1010,6 +1018,9 @@ export class NirChain {
   progressBeaconCommittee(candidateId) {
     const commitment = this.#progressCommitments.get(candidateId);
     if (!commitment) throw new Error("progress commitment is unknown or expired");
+    if (!Array.isArray(commitment.beaconCommittee)) {
+      throw new Error("progress beacon committee is not assigned yet");
+    }
     return [...commitment.beaconCommittee];
   }
 
@@ -1697,16 +1708,9 @@ export class NirChain {
     progressCommitments.set(expectedId, {
       artifactHash: transaction.artifactHash,
       baselineHash: transaction.baselineHash,
-      beaconCommittee: selectOperatorCommittee({
-        registry: this.#beaconAuthorities,
-        randomness: hashObject({
-          candidateId: expectedId,
-          committedHeight: height,
-          networkId: this.#networkId,
-        }, "PROGRESS_BEACON_COMMITTEE"),
-        context: { candidateId: expectedId, committedHeight: height },
-        size: this.#beaconQuorum,
-      }).map(({ address }) => address),
+      beaconCommittee: null,
+      beaconCommitteeHeight: null,
+      beaconCommitteeSource: null,
       beaconValue: null,
       challengeHeight: null,
       challengeSeed: null,
@@ -2035,11 +2039,34 @@ export class NirChain {
       }
     }
 
+    for (const [candidateId, commitment] of progressCommitments) {
+      if (commitment.beaconCommittee === null && block.height > commitment.committedHeight) {
+        const randomness = hashObject({
+          candidateId,
+          networkId: this.#networkId,
+          sourceBlockHash: block.previousHash,
+        }, "PROGRESS_BEACON_COMMITTEE");
+        progressCommitments.set(candidateId, {
+          ...commitment,
+          beaconCommittee: selectOperatorCommittee({
+            registry: this.#beaconAuthorities,
+            randomness,
+            context: { candidateId, sourceBlockHash: block.previousHash },
+            size: this.#beaconQuorum,
+          }).map(({ address }) => address),
+          beaconCommitteeHeight: block.height,
+          beaconCommitteeSource: block.previousHash,
+        });
+      }
+    }
+
     const progressedBeacons = new Set();
     for (const claim of block.progressBeacons) {
       const commitment = progressCommitments.get(claim.candidateId);
       if (
         !commitment ||
+        !Array.isArray(commitment.beaconCommittee) ||
+        block.height <= commitment.beaconCommitteeHeight ||
         commitment.challengeSeed !== null ||
         progressedBeacons.has(claim.candidateId) ||
         block.height <= commitment.committedHeight ||

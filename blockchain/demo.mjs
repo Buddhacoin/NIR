@@ -75,6 +75,8 @@ const admissionBlock = chain.buildBlock({
   timestamp: genesisTimestamp,
 });
 chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock)));
+const assignmentBlock = chain.buildBlock({ timestamp: genesisTimestamp });
+chain.appendBlock(finalizeBlock(assignmentBlock, quorumFor(assignmentBlock)));
 const challengeRound = chain.height + 1;
 const challengeAuthorities = chain.progressBeaconCommittee(admission.candidateId)
   .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));

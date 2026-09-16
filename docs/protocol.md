@@ -79,13 +79,19 @@ from independently operated isolated runners and genuine hardware attestation.
 The chain resolves the bundle against a signed admission in finalized state.
 It independently checks commit-before-challenge ordering and exact equality of
 the artifact, baseline, suite and recipient. A later quorum of the independent
-beacon-authority registry supplies domain-separated entropy. Consensus fixes
-one exact beacon committee for the admission before shares are revealed and
+beacon-authority registry supplies domain-separated entropy. A finalized
+transition after admission uses the commitment-block hash to fix one exact
+beacon committee before shares are revealed and
 requires every member, preventing the aggregator from grinding across signer
 subsets. The canonical aggregate selects the evaluator committee; neither a block proposer nor a
 different evaluator quorum can substitute itself. If the beacon quorum is
 offline, issuance waits: the protocol does not weaken randomness to preserve
 liveness.
+
+This removes candidate-only precomputation, not every source of bias: a
+candidate colluding with the commitment-block proposer may influence that block
+hash. Replacing the selection source with audited post-quantum epoch randomness
+remains a mainnet gate.
 
 ### Draft score
 

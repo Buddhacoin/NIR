@@ -165,6 +165,8 @@ function progressClaim(
   const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
   chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
   const beaconAuthorities = TEST_BEACON_WALLETS.get(chain);
+  const assignmentBlock = chain.buildBlock({ timestamp });
+  chain.appendBlock(finalizeBlock(assignmentBlock, quorumFor(assignmentBlock, validators)));
   const assignedBeacons = chain.progressBeaconCommittee(admission.candidateId)
     .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));
   const round = chain.height + 1;
@@ -329,6 +331,16 @@ test("a progress challenge requires an independent beacon quorum after commitmen
   const commitBlock = chain.buildBlock({ transactions: [admission], timestamp: 0 });
   chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
   assert.notEqual(chain.stateRoot, rootBefore);
+  assert.throws(
+    () => chain.progressChallenge(admission.candidateId),
+    /not available yet/,
+  );
+  assert.throws(
+    () => chain.progressBeaconCommittee(admission.candidateId),
+    /not assigned yet/,
+  );
+  const assignment = chain.buildBlock({ timestamp: 0 });
+  chain.appendBlock(finalizeBlock(assignment, quorumFor(assignment, validators)));
   assert.throws(
     () => chain.progressChallenge(admission.candidateId),
     /not available yet/,
@@ -841,10 +853,11 @@ test("a modified transfer signature is rejected atomically", () => {
     nonce: 0,
   });
   transaction.amount = "2";
+  const heightBefore = chain.height;
   const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   assert.throws(() => chain.appendBlock(finalized), /signature/);
-  assert.equal(chain.height, 3);
+  assert.equal(chain.height, heightBefore);
   assert.equal(chain.balance(bob.address), 0n);
 });
 
