@@ -1077,16 +1077,18 @@ export class NirChain {
         throw new Error("validator onboarding requires an active peer registry");
       }
     }
-    if (validatorRotation !== null && peerRegistryUpdate !== null) {
+    if ((validatorRotation !== null || this.#pendingValidatorRotation) && peerRegistryUpdate !== null) {
       throw new Error("validator and peer registry rotations require separate blocks");
     }
-    const nextPeerRegistry = peerRegistryUpdate === null ? this.#peerRegistry :
+    const activatingOnboarding = this.#pendingValidatorRotation?.activationHeight === height
+      ? this.#pendingValidatorRotation.onboarding ?? null : null;
+    const nextPeerRegistry = activatingOnboarding ?? (peerRegistryUpdate === null ? this.#peerRegistry :
       verifyPeerRegistry(peerRegistryUpdate, {
         currentHeight: height,
         networkId: this.#networkId,
         previousRegistry: this.#peerRegistry,
         validators: [...this.#validators.values()],
-      });
+      }));
     if (peerRegistryUpdate !== null && nextPeerRegistry.activationHeight !== height) {
       throw new Error("peer registry must activate at its containing block height");
     }
@@ -1095,7 +1097,8 @@ export class NirChain {
       height,
       networkId: this.#networkId,
       peerRegistryHash: nextPeerRegistry ? peerRegistryHash(nextPeerRegistry) : "0".repeat(64),
-      peerRegistryUpdate: nextPeerRegistry === this.#peerRegistry ? null : nextPeerRegistry,
+      peerRegistryUpdate: activatingOnboarding || nextPeerRegistry === this.#peerRegistry
+        ? null : nextPeerRegistry,
       previousHash: this.#blocks.at(-1).hash,
       progressRewards,
       fallbackBeacons,
@@ -1501,10 +1504,13 @@ export class NirChain {
       throw new Error("block hash mismatch");
     }
 
-    if (block.validatorRotation !== null && block.peerRegistryUpdate !== null) {
+    if ((block.validatorRotation !== null || this.#pendingValidatorRotation) &&
+        block.peerRegistryUpdate !== null) {
       throw new Error("validator and peer registry rotations require separate blocks");
     }
-    let nextPeerRegistry = this.#peerRegistry;
+    const activatingOnboarding = this.#pendingValidatorRotation?.activationHeight === block.height
+      ? this.#pendingValidatorRotation.onboarding ?? null : null;
+    let nextPeerRegistry = activatingOnboarding ?? this.#peerRegistry;
     if (block.peerRegistryUpdate !== null) {
       nextPeerRegistry = verifyPeerRegistry(block.peerRegistryUpdate, {
         currentHeight: block.height,

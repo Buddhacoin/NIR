@@ -1,5 +1,6 @@
 import { addressFromPublicKey, hashObject, signObject, verifyObject } from "./crypto.mjs";
 import { SIGNATURE_ALGORITHM } from "./constants.mjs";
+import { validatorOnboardingHash } from "./validator-onboarding.mjs";
 
 const ZERO_HASH = "0".repeat(64);
 const MAX_REGISTRY_EPOCH = 1_000_000_000;
@@ -77,6 +78,12 @@ function registryPayload({ activationHeight, epoch, networkId, peers, previousRe
 }
 
 export function peerRegistryHash(registry) {
+  if (registry?.format === "nir-validator-onboarding-v1") {
+    if (registry.onboardingHash !== validatorOnboardingHash(registry)) {
+      throw new Error("active onboarding registry commitment is invalid");
+    }
+    return registry.onboardingHash;
+  }
   return hashObject(registryPayload(registry), "PEER_REGISTRY");
 }
 

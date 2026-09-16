@@ -4,6 +4,21 @@ import { validatorSetId } from "./validator-rotation.mjs";
 
 const FORMAT = "nir-validator-onboarding-v1";
 
+function committedPayload(onboarding) {
+  return {
+    activationHeight: onboarding?.activationHeight,
+    format: onboarding?.format,
+    networkId: onboarding?.networkId,
+    nextSetId: onboarding?.nextSetId,
+    peers: onboarding?.peers,
+    previousSetId: onboarding?.previousSetId,
+  };
+}
+
+export function validatorOnboardingHash(onboarding) {
+  return hashObject(committedPayload(onboarding), "VALIDATOR_ONBOARDING");
+}
+
 function normalizeValidators(validators) {
   if (!Array.isArray(validators) || validators.length < 4 || validators.length > MAX_VALIDATORS) {
     throw new Error("validator onboarding set size is invalid");
@@ -111,7 +126,7 @@ export function createValidatorOnboarding(fields, currentWallets, nextWallets, t
     ...payload,
     currentApprovals: signatures(payload, currentWallets, "ONBOARDING_CURRENT"),
     nextAcceptances: signatures(payload, nextWallets, "ONBOARDING_NEXT"),
-    onboardingHash: hashObject(payload, "VALIDATOR_ONBOARDING"),
+    onboardingHash: validatorOnboardingHash(payload),
     transportProofs: signatures(payload, transportWallets, "ONBOARDING_TRANSPORT"),
   };
 }
@@ -148,7 +163,7 @@ export function verifyValidatorOnboarding(onboarding, {
   });
   if (payload.networkId !== networkId || payload.activationHeight !== activationHeight ||
       unsigned.previousSetId !== payload.previousSetId || unsigned.nextSetId !== payload.nextSetId ||
-      onboardingHash !== hashObject(payload, "VALIDATOR_ONBOARDING")) {
+      onboardingHash !== validatorOnboardingHash(payload)) {
     throw new Error("validator onboarding commitment is invalid");
   }
   if (currentPeerRegistry) {

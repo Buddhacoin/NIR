@@ -4,6 +4,7 @@ import test from "node:test";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
   createValidatorOnboarding,
+  validatorOnboardingHash,
   verifyValidatorOnboarding,
 } from "../blockchain/validator-onboarding.mjs";
 
@@ -44,6 +45,7 @@ test("future validators prove consensus, transport, and endpoint possession befo
   });
   assert.equal(verified.peers.length, 4);
   assert.equal(verified.activationHeight, 20);
+  assert.equal(validatorOnboardingHash(verified), onboarding.onboardingHash);
 });
 
 test("minority approval, missing acceptance, endpoint mutation, and fake transport fail closed", () => {

@@ -167,8 +167,11 @@ transport key must prove possession. Duplicate endpoints, reused transport
 identities, public plaintext origins, mutation, missing acceptance, and changes
 to an overlapping validator's live endpoint fail closed. The certificate is
 stored inside the pending rotation and therefore covered by every subsequent
-state root. Atomic replacement of the runtime peer map at activation is the
-next integration step.
+state root. Its peer registry becomes active atomically in the same block as the
+new finality set; intervening peer-registry updates are forbidden. The remaining
+runtime step is a temporary union transport view before activation so old and
+new operators can exchange activation votes without granting newcomers early
+consensus authority.
 
 ## Run
 

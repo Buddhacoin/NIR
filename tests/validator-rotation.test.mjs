@@ -14,6 +14,8 @@ import {
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
+import { createValidatorOnboarding } from "../blockchain/validator-onboarding.mjs";
+import { createPeerRegistry, EMPTY_PEER_REGISTRY_HASH } from "../blockchain/peer-registry.mjs";
 import {
   activeValidatorSet,
   scheduleValidatorRotation,
@@ -57,7 +59,20 @@ test("the finalized chain activates a scheduled set and rejects old-set certific
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
+  const oldTransports = Array.from({ length: 4 }, generateWallet);
   const current = oldWallets.map((wallet, index) => member(wallet, `old-${index}`));
+  const initialPeerRegistry = createPeerRegistry({
+    activationHeight: 0,
+    epoch: 0,
+    networkId: "nir-rotation-test",
+    peers: oldWallets.map((wallet, index) => ({
+      tlsCertificateSha256: null,
+      transport: publicWallet(oldTransports[index]),
+      url: `http://127.0.0.1:${9300 + index}`,
+      validatorAddress: wallet.address,
+    })),
+    previousRegistryHash: EMPTY_PEER_REGISTRY_HASH,
+  }, oldWallets.slice(0, 3));
   const chain = new NirChain({
     networkId: "nir-rotation-test", validators: current,
     evaluators: evaluators.map((wallet, index) => member(wallet, `evaluator-${index}`)),
@@ -69,6 +84,7 @@ test("the finalized chain activates a scheduled set and rejects old-set certific
       capabilitiesBps: { "reasoning-v1": 1 },
     }],
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
+    peerRegistry: initialPeerRegistry,
   });
   const all = [...oldWallets, ...newWallets];
   const quorum = (block, wallets) => {
@@ -89,8 +105,21 @@ test("the finalized chain activates a scheduled set and rejects old-set certific
 
   const nextWallets = [oldWallets[0], oldWallets[1], ...newWallets];
   const nextMembers = [current[0], current[1], member(newWallets[0], "new-0"), member(newWallets[1], "new-1")];
+  const nextTransports = [oldTransports[0], oldTransports[1], generateWallet(), generateWallet()];
+  const onboarding = createValidatorOnboarding({
+    activationHeight: 7,
+    currentValidators: current,
+    networkId: chain.networkId,
+    nextValidators: nextMembers,
+    peers: nextWallets.map((wallet, index) => ({
+      tlsCertificateSha256: null,
+      transport: publicWallet(nextTransports[index]),
+      url: index < 2 ? `http://127.0.0.1:${9300 + index}` : `http://127.0.0.1:${9400 + index}`,
+      validatorAddress: wallet.address,
+    })),
+  }, oldWallets.slice(0, 3), nextWallets, nextTransports);
   const rotationBlock = chain.buildBlock({
-    validatorRotation: { activationHeight: 7, validators: nextMembers },
+    validatorRotation: { activationHeight: 7, onboarding, validators: nextMembers },
     timestamp: TREASURY_VESTING_MS + 2,
   });
   append(rotationBlock, oldWallets);
@@ -109,5 +138,6 @@ test("the finalized chain activates a scheduled set and rejects old-set certific
   ].map((wallet) => [wallet.address, wallet])).values()];
   chain.appendBlock(finalizeBlock(activationBlock, transitionSigners));
   assert.equal(chain.pendingValidatorRotation, null);
+  assert.equal(chain.peerRegistryHash, onboarding.onboardingHash);
   assert.equal(chain.validatorSetId, validatorSetId(nextMembers.sort((a, b) => a.address.localeCompare(b.address))));
 });
