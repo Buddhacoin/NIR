@@ -76,7 +76,9 @@ const admissionBlock = chain.buildBlock({
 });
 chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock)));
 const challengeRound = chain.height + 1;
-const challengeShares = beaconAuthorities.slice(0, 3).map((wallet, index) =>
+const challengeAuthorities = chain.progressBeaconCommittee(admission.candidateId)
+  .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));
+const challengeShares = challengeAuthorities.map((wallet, index) =>
   createProgressBeaconShare({
     wallet,
     networkId: chain.networkId,

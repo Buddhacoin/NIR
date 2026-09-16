@@ -165,8 +165,10 @@ function progressClaim(
   const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
   chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
   const beaconAuthorities = TEST_BEACON_WALLETS.get(chain);
+  const assignedBeacons = chain.progressBeaconCommittee(admission.candidateId)
+    .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));
   const round = chain.height + 1;
-  const shares = beaconAuthorities.slice(0, 3).map((wallet, index) =>
+  const shares = assignedBeacons.map((wallet, index) =>
     createProgressBeaconShare({
       wallet, networkId: chain.networkId, candidateId: admission.candidateId,
       round, value: fingerprint(`${admission.candidateId}-progress-beacon-${index}`),
@@ -332,7 +334,9 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     /not available yet/,
   );
   const round = chain.height + 1;
-  const shares = beaconAuthorities.map((wallet, index) => createProgressBeaconShare({
+  const assignedBeacons = chain.progressBeaconCommittee(admission.candidateId)
+    .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));
+  const shares = assignedBeacons.map((wallet, index) => createProgressBeaconShare({
     wallet, networkId: chain.networkId, candidateId: admission.candidateId,
     round, value: fingerprint(`challenge-beacon-${index}`),
   }));
@@ -345,10 +349,10 @@ test("a progress challenge requires an independent beacon quorum after commitmen
   });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(insufficient, quorumFor(insufficient, validators))),
-    /quorum not reached/,
+    /progress beacon is invalid/,
   );
   const wrongDomain = createFallbackBeacon({
-    shares: beaconAuthorities.slice(0, 3).map((wallet, index) =>
+    shares: assignedBeacons.map((wallet, index) =>
       createFallbackBeaconShare({
         wallet, networkId: chain.networkId, candidateId: admission.candidateId,
         round, value: fingerprint(`wrong-domain-beacon-${index}`),
@@ -365,8 +369,28 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     () => chain.appendBlock(finalizeBlock(wrongDomainBlock, quorumFor(wrongDomainBlock, validators))),
     /signature is invalid/,
   );
+  const outsider = beaconAuthorities.find((wallet) =>
+    !assignedBeacons.some((assigned) => assigned.address === wallet.address));
+  const substitutedShares = [
+    ...shares.slice(0, -1),
+    createProgressBeaconShare({
+      wallet: outsider, networkId: chain.networkId, candidateId: admission.candidateId,
+      round, value: fingerprint("unassigned-progress-beacon"),
+    }),
+  ];
+  const substituted = chain.buildBlock({
+    progressBeacons: [createProgressBeacon({
+      shares: substitutedShares, networkId: chain.networkId,
+      candidateId: admission.candidateId, round,
+    })],
+    timestamp: 0,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(substituted, quorumFor(substituted, validators))),
+    /signature is invalid/,
+  );
   const validBeacon = createProgressBeacon({
-    shares: shares.slice(0, 3), networkId: chain.networkId,
+    shares, networkId: chain.networkId,
     candidateId: admission.candidateId, round,
   });
   const forgedAggregate = chain.buildBlock({

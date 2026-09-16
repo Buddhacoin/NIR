@@ -170,7 +170,9 @@ The evaluator runner now builds a deterministic, content-addressed proof bundle
 before a reward can be proposed. A signed `progress-commitment` transaction
 first fixes the baseline, candidate, benchmark and recipient in finalized chain
 state. Only after that commitment is final, a post-quantum quorum from the
-separate beacon-authority registry supplies fresh entropy. The chain commits
+separate beacon-authority registry supplies fresh entropy. Each admission has
+one consensus-selected beacon committee; every assigned member must sign, so an
+aggregator cannot choose a favorable signer subset after seeing shares. The chain commits
 the aggregate, derives the challenge seed and deterministically assigns the
 evaluator committee. Beacon shares use a progress-only signature domain, so a
 safety-fallback signature cannot be replayed as an intelligence challenge. The

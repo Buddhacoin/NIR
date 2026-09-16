@@ -10,10 +10,12 @@ Each authority produces its own unpredictable 32-byte share and signs it with
 a separate ML-DSA-65 wallet. Progress and fallback signatures use different
 domains, so a share cannot cross purposes. The chain accepts an aggregate only when more
 than two thirds of the genesis beacon registry signed distinct shares for the
-same network, candidate and round. It deterministically hashes all supplied
-shares, so an aggregator cannot alter a share. A threshold aggregate can still
-choose among valid signer subsets; removing that residual selection bias needs
-a formally reviewed threshold-randomness construction before mainnet.
+same network, candidate and round. For a progress admission, consensus first
+selects one exact committee of that size and requires every selected signature.
+It deterministically hashes those shares, so an aggregator cannot alter a share,
+drop a signer, add a reserve signer, or choose among subsets after disclosure.
+The fallback safety path still accepts any valid quorum and therefore retains
+limited subset choice; it never supplies intelligence-mining challenges.
 
 ## Run one authority
 
@@ -47,7 +49,9 @@ npm run progress-beacon:aggregate -- nir-testnet CANDIDATE_HASH ROUND a.json b.j
 ```
 
 The aggregate itself is not trusted: every full node verifies every authority
-signature, recomputes the aggregate and enforces the on-chain quorum.
+signature, recomputes the aggregate and enforces the on-chain quorum. For
+`progress`, request shares only from the addresses returned by the admission's
+`progressBeaconCommittee`; substituting another registered authority fails.
 
 ## Independence requirements
 
