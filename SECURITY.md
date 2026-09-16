@@ -153,11 +153,13 @@ or an exploit against a live third-party system in a public issue.
    memory. Startup automatically repairs one damaged copy after full consensus
    replay, advances stale checkpoints, and fails closed if both copies are lost.
    Key-free portable chain exports support backups to a separate device. This
-   still lacks a production database, fast snapshot import, pruning, remote
+   still lacks a production database, durable network snapshot installation, pruning, remote
    backup coordination, multi-peer snapshot recovery, and restore monitoring.
    Protocol version 6 commits the complete deterministic state root. Canonical
-   snapshot export and quorum verification are implemented, but snapshot import
-   and multi-peer selection are not.
+   snapshot export, trust-anchored quorum verification, typed in-memory restore,
+   root revalidation, and post-checkpoint block continuation are implemented.
+   Atomic disk installation, validator-rotation proofs, and multi-peer selection
+   are not.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.

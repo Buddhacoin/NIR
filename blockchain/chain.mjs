@@ -477,6 +477,32 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
     .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
 }
 
+function snapshotEntries(value, field) {
+  if (!Array.isArray(value)) throw new Error(`${field} snapshot is invalid`);
+  const result = new Map();
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length !== 2 || result.has(entry[0])) {
+      throw new Error(`${field} snapshot is invalid`);
+    }
+    result.set(entry[0], entry[1]);
+  }
+  return result;
+}
+
+function snapshotAtomic(value, field) {
+  return parseAtomic(value, `${field} snapshot`);
+}
+
+function snapshotInteger(value, field) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${field} snapshot is invalid`);
+  return value;
+}
+
+function snapshotSignedInteger(value, field) {
+  if (!Number.isSafeInteger(value)) throw new Error(`${field} snapshot is invalid`);
+  return value;
+}
+
 export class NirChain {
   #balances;
   #blocks;
@@ -647,8 +673,87 @@ export class NirChain {
     ];
   }
 
+  static fromVerifiedSnapshot(genesisConfig, snapshot) {
+    const chain = new NirChain(genesisConfig);
+    if (!snapshot || snapshot.networkId !== chain.#networkId ||
+        snapshot.checkpoint?.hash !== snapshot.tipHash ||
+        snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
+        computeChainStateRoot(snapshot.state) !== snapshot.stateRoot) {
+      throw new Error("verified snapshot does not match the target chain");
+    }
+    const state = snapshot.state;
+    const balances = snapshotEntries(state.balances, "balances");
+    for (const [address, value] of balances) {
+      assertAddress(address, "snapshot balance address");
+      balances.set(address, snapshotAtomic(value, "balance"));
+    }
+    const nonces = snapshotEntries(state.nonces, "nonces");
+    for (const [address, value] of nonces) {
+      assertAddress(address, "snapshot nonce address");
+      nonces.set(address, snapshotInteger(value, "nonce"));
+    }
+    const validatorBonds = snapshotEntries(state.validatorBonds, "validator bonds");
+    for (const [address, value] of validatorBonds) {
+      assertAddress(address, "snapshot validator bond address");
+      validatorBonds.set(address, snapshotAtomic(value, "validator bond"));
+    }
+    const validatorFaults = snapshotEntries(state.validatorFaults, "validator faults");
+    for (const [address, value] of validatorFaults) {
+      assertAddress(address, "snapshot validator fault address");
+      validatorFaults.set(address, snapshotInteger(value, "validator fault"));
+    }
+    const candidateBonds = snapshotEntries(state.candidateBonds, "candidate bonds");
+    for (const [candidateId, candidate] of candidateBonds) {
+      if (!/^[0-9a-f]{64}$/.test(candidateId) || !candidate ||
+          !Number.isSafeInteger(candidate.committedHeight) || candidate.committedHeight < 0) {
+        throw new Error("candidate bond snapshot is invalid");
+      }
+      candidateBonds.set(candidateId, {
+        ...structuredClone(candidate),
+        bond: snapshotAtomic(candidate.bond, "candidate bond"),
+        randomnessCommits: snapshotEntries(candidate.randomnessCommits, "randomness commits"),
+        randomnessReveals: snapshotEntries(candidate.randomnessReveals, "randomness reveals"),
+      });
+    }
+    const validators = snapshotEntries(state.validators, "validators");
+    const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
+    const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
+    const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    const memory = CapabilityMemory.fromSnapshot(snapshot.capabilityMemory);
+    if (memory.stateRoot !== state.capabilityMemoryRoot) {
+      throw new Error("capability memory snapshot root is invalid");
+    }
+    chain.#balances = balances;
+    chain.#burned = snapshotAtomic(state.burned, "burned supply");
+    chain.#candidateBonds = candidateBonds;
+    chain.#capabilityMemory = memory;
+    chain.#lastRewardTimestamp = snapshotSignedInteger(state.lastRewardTimestamp, "last reward timestamp");
+    chain.#mined = snapshotAtomic(state.mined, "mined supply");
+    chain.#nonces = nonces;
+    chain.#pendingValidatorRotation = structuredClone(state.pendingValidatorRotation);
+    chain.#peerRegistry = structuredClone(state.peerRegistry);
+    chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
+    chain.#registeredValidators = registeredMembers;
+    chain.#rewardEpoch = snapshotInteger(state.rewardEpoch, "reward epoch");
+    if (!Array.isArray(state.rewardedProofs) || !Array.isArray(state.safetyEvidence)) {
+      throw new Error("snapshot replay-protection sets are invalid");
+    }
+    chain.#rewardedProofs = new Set(state.rewardedProofs);
+    chain.#safetyEvidence = new Set(state.safetyEvidence);
+    chain.#validatorBonds = validatorBonds;
+    chain.#validatorFaults = validatorFaults;
+    chain.#validators = validatorMembers;
+    chain.#validatorOrder = [...validatorMembers.keys()].sort();
+    chain.#quorum = Math.floor((chain.#validatorOrder.length * 2) / 3) + 1;
+    chain.#blocks = [structuredClone(snapshot.checkpoint)];
+    if (chain.#stateRoot() !== snapshot.stateRoot) {
+      throw new Error("restored snapshot state root is invalid");
+    }
+    return chain;
+  }
+
   get height() {
-    return this.#blocks.length - 1;
+    return this.#blocks.at(-1).height;
   }
 
   get issued() {
@@ -1285,7 +1390,30 @@ export class NirChain {
 
   fork() {
     const fork = new NirChain(this.#genesisConfig);
-    for (const finalized of this.#blocks.slice(1)) fork.appendBlock(finalized);
+    fork.#balances = new Map(this.#balances);
+    fork.#blocks = structuredClone(this.#blocks);
+    fork.#burned = this.#burned;
+    fork.#candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
+      ...structuredClone(candidate),
+      randomnessCommits: new Map(candidate.randomnessCommits),
+      randomnessReveals: new Map(candidate.randomnessReveals),
+    }]));
+    fork.#capabilityMemory = this.#capabilityMemory.clone();
+    fork.#lastRewardTimestamp = this.#lastRewardTimestamp;
+    fork.#mined = this.#mined;
+    fork.#nonces = new Map(this.#nonces);
+    fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
+    fork.#peerRegistry = structuredClone(this.#peerRegistry);
+    fork.#randomnessFaults = new Map(this.#randomnessFaults);
+    fork.#registeredValidators = new Map(this.#registeredValidators);
+    fork.#rewardEpoch = this.#rewardEpoch;
+    fork.#rewardedProofs = new Set(this.#rewardedProofs);
+    fork.#safetyEvidence = new Set(this.#safetyEvidence);
+    fork.#validatorBonds = new Map(this.#validatorBonds);
+    fork.#validatorFaults = new Map(this.#validatorFaults);
+    fork.#validators = new Map(this.#validators);
+    fork.#validatorOrder = [...this.#validatorOrder];
+    fork.#quorum = this.#quorum;
     return fork;
   }
 

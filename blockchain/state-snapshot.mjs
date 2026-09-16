@@ -1,4 +1,4 @@
-import { computeChainStateRoot } from "./chain.mjs";
+import { NirChain, blockHash, computeChainStateRoot } from "./chain.mjs";
 import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
 import { capabilityMemorySnapshotRoot } from "./memory.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
@@ -14,6 +14,7 @@ function snapshotPayload(chain) {
   }
   return {
     capabilityMemory: exported.capabilityMemory,
+    checkpoint: chain.blocks().at(-1),
     format: FORMAT,
     height: chain.height,
     networkId: chain.networkId,
@@ -38,7 +39,7 @@ export function createStateSnapshot(chain, validatorWallets) {
   };
 }
 
-export function verifyStateSnapshot(snapshot) {
+export function verifyStateSnapshot(snapshot, { expectedNetworkId, trustedValidators } = {}) {
   if (!snapshot || snapshot.format !== FORMAT ||
       !Number.isSafeInteger(snapshot.height) || snapshot.height < 0 ||
       typeof snapshot.networkId !== "string" || snapshot.networkId.length === 0 ||
@@ -48,12 +49,23 @@ export function verifyStateSnapshot(snapshot) {
       Buffer.byteLength(canonicalJson(snapshot)) > MAX_SNAPSHOT_BYTES) {
     throw new Error("state snapshot header is invalid");
   }
+  if (snapshot.networkId !== expectedNetworkId || !Array.isArray(trustedValidators) ||
+      trustedValidators.length < 4 || trustedValidators.length > 128) {
+    throw new Error("state snapshot trust anchor is invalid");
+  }
   const { attestations, snapshotHash, ...payload } = snapshot;
   if (snapshotHash !== hashObject(payload, "STATE_SNAPSHOT")) {
     throw new Error("state snapshot hash is invalid");
   }
   if (computeChainStateRoot(snapshot.state) !== snapshot.stateRoot) {
     throw new Error("state snapshot root is invalid");
+  }
+  if (!snapshot.checkpoint || snapshot.checkpoint.height !== snapshot.height ||
+      snapshot.checkpoint.networkId !== snapshot.networkId ||
+      snapshot.checkpoint.hash !== snapshot.tipHash ||
+      snapshot.checkpoint.stateRoot !== snapshot.stateRoot ||
+      (snapshot.height > 0 && blockHash(snapshot.checkpoint) !== snapshot.tipHash)) {
+    throw new Error("state snapshot checkpoint is invalid");
   }
   const memoryRoot = capabilityMemorySnapshotRoot(snapshot.capabilityMemory);
   if (snapshot.state?.capabilityMemoryRoot !== memoryRoot) {
@@ -63,16 +75,23 @@ export function verifyStateSnapshot(snapshot) {
   if (!Array.isArray(members) || members.length < 4 || members.length > 128) {
     throw new Error("state snapshot validator set is invalid");
   }
-  const validators = new Map();
+  const snapshotValidators = [];
   for (const entry of members) {
     const member = entry?.[1];
     if (!Array.isArray(entry) || entry.length !== 2 || entry[0] !== member?.address ||
-        validators.has(member.address)) throw new Error("state snapshot validator set is invalid");
-    validators.set(member.address, member);
+        snapshotValidators.some(({ address }) => address === member.address)) {
+      throw new Error("state snapshot validator set is invalid");
+    }
+    snapshotValidators.push(member);
   }
-  if (snapshot.validatorSetId !== validatorSetId([...validators.values()])) {
+  const orderedTrusted = [...trustedValidators].sort((left, right) =>
+    left.address.localeCompare(right.address));
+  const trustedSetId = validatorSetId(orderedTrusted);
+  if (snapshot.validatorSetId !== validatorSetId(snapshotValidators) ||
+      snapshot.validatorSetId !== trustedSetId) {
     throw new Error("state snapshot validator set id is invalid");
   }
+  const validators = new Map(orderedTrusted.map((member) => [member.address, member]));
   if (!Array.isArray(attestations) || attestations.length > validators.size) {
     throw new Error("state snapshot attestations are invalid");
   }
@@ -95,4 +114,9 @@ export function verifyStateSnapshot(snapshot) {
     stateRoot: snapshot.stateRoot,
     tipHash: snapshot.tipHash,
   };
+}
+
+export function restoreStateSnapshot(genesisConfig, snapshot, trustAnchor) {
+  verifyStateSnapshot(snapshot, trustAnchor);
+  return NirChain.fromVerifiedSnapshot(genesisConfig, snapshot);
 }

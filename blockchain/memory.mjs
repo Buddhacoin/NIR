@@ -118,6 +118,15 @@ export class CapabilityMemory {
     }
   }
 
+  static fromSnapshot(snapshot) {
+    capabilityMemorySnapshotRoot(snapshot);
+    return new CapabilityMemory([], {
+      token: INTERNAL_CLONE,
+      records: snapshot.records,
+      behaviors: snapshot.behaviors,
+    });
+  }
+
   clone() {
     return new CapabilityMemory([], {
       token: INTERNAL_CLONE,

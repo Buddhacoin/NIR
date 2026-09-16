@@ -92,13 +92,19 @@ capability-memory records. A snapshot commits its height, tip, state root,
 validator-set identifier, and contents under a separate hash, then requires
 `2N/3 + 1` unique ML-DSA approvals from the active finality set. Verification
 recomputes the snapshot hash, complete state root, capability-memory root,
-validator-set identifier, every signature, and quorum. Mutation, minority
-approval, and duplicate votes fail closed.
+validator-set identifier, every signature, and quorum. The trusted validator
+set and network identifier must come from a local finalized checkpoint or
+genesis; a downloaded snapshot is never allowed to declare its own trust
+anchor. Mutation, minority approval, self-signed replacement sets, and duplicate
+votes fail closed.
 
-Fast snapshot import and pruning are deliberately not enabled yet. Import must
-retain a trusted finalized checkpoint, restore every typed state collection,
-and replay the tail after that checkpoint. Accepting a snapshot merely because
-its file hash is valid would weaken full replay rather than improve it.
+The core importer restores every typed consensus collection (`BigInt`, `Map`,
+`Set`, capability memory, validators, bonds, and replay protection), recomputes
+the root, and can validate and append the first block after the checkpoint.
+Network download, durable atomic installation, multi-peer selection, rotation
+proofs between an old trust anchor and a newer validator set, and pruning are
+still deliberately disabled. Accepting a snapshot merely because its file hash
+is valid would weaken full replay rather than improve it.
 
 ## Run
 
