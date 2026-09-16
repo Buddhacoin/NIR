@@ -71,3 +71,6 @@ The admission records the unfinished epoch round and cannot use an already-known
 seed. Committee selection waits until every member of that epoch's fixed
 committee reveals a previously committed share in a later block. A producer can
 censor and delay progress, but its block hash no longer selects the committee.
+If a committed member withholds past eight blocks, the chain records and
+excludes it, erases the incomplete attempt and rotates the same round. It does
+not derive a seed from the surviving subset.

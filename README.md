@@ -208,6 +208,13 @@ completed round atomically rotates its seed and committee. Protocol v15 makes
 every progress admission wait for that later finalized seed before any beacon
 or evaluator committee can be assigned.
 
+Protocol v16 also handles deliberate withholding. Eight blocks after a complete
+commit phase, any assigned member that still has not revealed is recorded in
+the randomness state and excluded. Partial data is discarded and the same
+round rotates to a new fixed committee without producing a seed. Payments keep
+finalizing, while intelligence issuance remains safely paused until a complete
+unbiased round succeeds.
+
 ## Why organizations use NIR
 
 An organization does not participate only for newly issued NIR. An accepted

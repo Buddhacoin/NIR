@@ -105,10 +105,13 @@ export function createEpochRandomnessReveal({ wallet, networkId, round, secret }
 }
 
 export class EpochRandomnessMachine {
+  #attempt = 0;
   #commitHeight = null;
   #commitments = new Map();
   #committee;
   #committeeSize;
+  #excluded = new Set();
+  #lastFault = null;
   #networkId;
   #previousSeed;
   #registry;
@@ -130,7 +133,8 @@ export class EpochRandomnessMachine {
     if (!snapshot || !Number.isSafeInteger(snapshot.round) || snapshot.round < 1 ||
         !HASH.test(snapshot.previousSeed ?? "") ||
         !Array.isArray(snapshot.committee) || !Array.isArray(snapshot.commitments) ||
-        !Array.isArray(snapshot.reveals)) {
+        !Array.isArray(snapshot.reveals) || !Array.isArray(snapshot.excluded) ||
+        !Number.isSafeInteger(snapshot.attempt) || snapshot.attempt < 0) {
       throw new Error("epoch randomness snapshot is invalid");
     }
     const machine = new EpochRandomnessMachine({
@@ -138,6 +142,20 @@ export class EpochRandomnessMachine {
     });
     machine.#round = snapshot.round;
     machine.#previousSeed = snapshot.previousSeed;
+    machine.#attempt = snapshot.attempt;
+    machine.#excluded = new Set(snapshot.excluded);
+    if (machine.#excluded.size !== snapshot.excluded.length ||
+        [...machine.#excluded].some((address) => !registry.has(address))) {
+      throw new Error("epoch randomness snapshot exclusions are invalid");
+    }
+    if (snapshot.lastFault !== null && (
+      !snapshot.lastFault || !Number.isSafeInteger(snapshot.lastFault.attempt) ||
+      !Number.isSafeInteger(snapshot.lastFault.detectedHeight) ||
+      !Number.isSafeInteger(snapshot.lastFault.round) ||
+      !Array.isArray(snapshot.lastFault.nonRevealers) ||
+      snapshot.lastFault.nonRevealers.some((address) => !machine.#excluded.has(address))
+    )) throw new Error("epoch randomness snapshot fault is invalid");
+    machine.#lastFault = structuredClone(snapshot.lastFault);
     machine.#committee = machine.#selectCommittee();
     if (snapshot.committee.length !== machine.#committee.length ||
         snapshot.committee.some((address, index) => address !== machine.#committee[index])) {
@@ -164,10 +182,14 @@ export class EpochRandomnessMachine {
   }
 
   #selectCommittee() {
+    const eligible = new Map([...this.#registry].filter(([address]) => !this.#excluded.has(address)));
+    if (eligible.size < this.#committeeSize) {
+      throw new Error("not enough eligible epoch randomness authorities");
+    }
     return selectOperatorCommittee({
-      registry: this.#registry,
+      registry: eligible,
       randomness: this.#previousSeed,
-      context: { networkId: this.#networkId, round: this.#round },
+      context: { attempt: this.#attempt, networkId: this.#networkId, round: this.#round },
       size: this.#committeeSize,
     }).map(({ address }) => address);
   }
@@ -178,9 +200,12 @@ export class EpochRandomnessMachine {
 
   snapshot() {
     return {
+      attempt: this.#attempt,
       commitHeight: this.#commitHeight,
       commitments: [...this.#commitments.entries()].sort(([left], [right]) => left.localeCompare(right)),
       committee: [...this.#committee],
+      excluded: [...this.#excluded].sort(),
+      lastFault: structuredClone(this.#lastFault),
       previousSeed: this.#previousSeed,
       reveals: [...this.#reveals.entries()].sort(([left], [right]) => left.localeCompare(right)),
       round: this.#round,
@@ -200,6 +225,32 @@ export class EpochRandomnessMachine {
     }
     this.#commitments.set(message.authority, message.commitment);
     if (this.#commitments.size === this.#committee.length) this.#commitHeight = height;
+  }
+
+  expire(height, timeoutBlocks) {
+    if (!Number.isSafeInteger(height) || !Number.isSafeInteger(timeoutBlocks) || timeoutBlocks < 1) {
+      throw new Error("epoch randomness timeout input is invalid");
+    }
+    if (this.#commitHeight === null || height <= this.#commitHeight + timeoutBlocks ||
+        this.#reveals.size === this.#committee.length) return null;
+    const nonRevealers = this.#committee.filter((address) => !this.#reveals.has(address));
+    if (this.#registry.size - this.#excluded.size - nonRevealers.length < this.#committeeSize) {
+      throw new Error("epoch randomness cannot rotate without enough eligible authorities");
+    }
+    for (const address of nonRevealers) this.#excluded.add(address);
+    const fault = {
+      attempt: this.#attempt,
+      detectedHeight: height,
+      nonRevealers: [...nonRevealers].sort(),
+      round: this.#round,
+    };
+    this.#lastFault = fault;
+    this.#attempt += 1;
+    this.#commitHeight = null;
+    this.#commitments = new Map();
+    this.#reveals = new Map();
+    this.#committee = this.#selectCommittee();
+    return fault;
   }
 
   reveal(message, height) {
@@ -230,6 +281,8 @@ export class EpochRandomnessMachine {
     }, "EPOCH_RANDOMNESS_VALUE");
     this.#previousSeed = value;
     this.#round += 1;
+    this.#attempt = 0;
+    this.#excluded = new Set();
     this.#commitHeight = null;
     this.#commitments = new Map();
     this.#reveals = new Map();

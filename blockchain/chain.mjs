@@ -1,5 +1,6 @@
 import {
   ATOMIC_UNITS,
+  EPOCH_REVEAL_TIMEOUT_BLOCKS,
   MAX_BLOCK_BYTES,
   MAX_CONSENSUS_ROUND,
   MAX_DECIMAL_DIGITS,
@@ -1935,6 +1936,7 @@ export class NirChain {
       committeeSize: this.#beaconQuorum,
       snapshot: this.#epochRandomness.snapshot(),
     });
+    epochRandomness.expire(block.height, EPOCH_REVEAL_TIMEOUT_BLOCKS);
     for (const commitment of block.epochRandomnessCommits) {
       epochRandomness.commit(commitment, block.height);
     }

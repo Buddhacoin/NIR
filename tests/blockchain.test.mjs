@@ -20,6 +20,7 @@ import {
   quoteTransferFee,
 } from "../blockchain/chain.mjs";
 import {
+  EPOCH_REVEAL_TIMEOUT_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
@@ -479,6 +480,42 @@ test("finalized blocks advance post-quantum epoch randomness in two phases", () 
   assert.notEqual(chain.stateRoot, rootAfterCommit);
   assert.equal(completed.commitments.length, 0);
   assert.equal(completed.reveals.length, 0);
+});
+
+test("an epoch non-revealer is excluded and the same round safely rotates", () => {
+  const { beaconAuthorities, chain, validators } = fixture();
+  const initial = chain.epochRandomnessStatus();
+  const members = initial.committee.map((address) =>
+    beaconAuthorities.find((wallet) => wallet.address === address));
+  const secrets = members.map((_, index) => fingerprint(`withheld-epoch-${index}`));
+  const commitBlock = chain.buildBlock({
+    epochRandomnessCommits: members.map((wallet, index) => createEpochRandomnessCommit({
+      wallet, networkId: chain.networkId, round: initial.round, secret: secrets[index],
+    })),
+    timestamp: 0,
+  });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  const partialReveal = chain.buildBlock({
+    epochRandomnessReveals: members.slice(0, -1).map((wallet, index) =>
+      createEpochRandomnessReveal({
+        wallet, networkId: chain.networkId, round: initial.round, secret: secrets[index],
+      })),
+    timestamp: 0,
+  });
+  chain.appendBlock(finalizeBlock(partialReveal, quorumFor(partialReveal, validators)));
+  while (chain.height <= commitBlock.height + EPOCH_REVEAL_TIMEOUT_BLOCKS) {
+    const block = chain.buildBlock({ timestamp: 0 });
+    chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  }
+  const rotated = chain.epochRandomnessStatus();
+  const withheld = members.at(-1).address;
+  assert.equal(rotated.round, initial.round);
+  assert.equal(rotated.attempt, 1);
+  assert.deepEqual(rotated.excluded, [withheld]);
+  assert.ok(!rotated.committee.includes(withheld));
+  assert.deepEqual(rotated.lastFault.nonRevealers, [withheld]);
+  assert.equal(rotated.commitments.length, 0);
+  assert.equal(rotated.reveals.length, 0);
 });
 
 test("known capability cannot mint against a weaker selected baseline", () => {

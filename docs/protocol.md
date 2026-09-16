@@ -90,7 +90,10 @@ liveness.
 
 This removes the block hash and its proposer from committee selection. A
 malicious assigned epoch member can stop progress by withholding its reveal,
-but cannot make consensus accept another subset or alternate seed.
+but cannot make consensus accept another subset or alternate seed. Protocol
+v16 limits that stop: after eight later blocks, consensus records every
+non-revealer, excludes it, clears partial contributions and retries the same
+round with a new deterministic committee. No timeout manufactures randomness.
 
 ### Epoch-randomness transition
 
@@ -106,6 +109,8 @@ collections, commits their phase transition to the state root, carries them
 through network proposals, restores them from snapshots, and refuses reveals in
 the commitment height. Protocol v15 binds progress admissions to the unfinished
 round and assigns their beacon committees only after its seed is finalized.
+Protocol v16 adds deterministic timeout faults and safe same-round rotation;
+the fault record is state-rooted and ready to authorize native bond penalties.
 
 ### Draft score
 
