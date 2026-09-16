@@ -118,6 +118,14 @@ repair one damaged copy, rejects conflicting copies and symbolic-link storage,
 and refuses to install an older height over a newer snapshot. This store is not
 yet connected to automatic P2P download or journal pruning.
 
+The distributed devnet now exposes coordinator-authenticated snapshot RPCs.
+One validator supplies the full candidate; every other validator independently
+rebuilds the same snapshot and signs only its height-bound hash. Coordinator
+responses are already authenticated by the existing replay-resistant peer
+channel, while snapshot approvals use the validator consensus keys. The
+coordinator retries another full-state source when the first cannot obtain a
+quorum.
+
 ## Run
 
 ```bash

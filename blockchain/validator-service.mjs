@@ -409,6 +409,18 @@ export function createValidatorHttpServer(validator, options = {}) {
         const result = { transactions: validator.pendingTransactions() };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
+      if (request.method === "POST" && url.pathname === "/v1/snapshots/candidate") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = { snapshot: validator.stateSnapshotCandidate() };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/snapshots/attest") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = { attestation: validator.stateSnapshotAttestation(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
       if (request.method === "POST" && url.pathname === "/v1/proposals") {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorize(auth, request.method, url.pathname, payload);

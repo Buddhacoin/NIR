@@ -12,6 +12,7 @@ import { SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
 import { generateWallet, hashObject, publicWallet, signObject } from "../blockchain/crypto.mjs";
 import {
   createStateSnapshot,
+  mergeStateSnapshotCandidates,
   restoreStateSnapshot,
   verifyStateSnapshot,
 } from "../blockchain/state-snapshot.mjs";
@@ -66,6 +67,20 @@ test("a quorum-authenticated state snapshot matches the finalized state root", (
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,
   });
+});
+
+test("independent single-validator candidates merge only after reaching quorum", () => {
+  const { chain, validatorMembers, validators } = fixture();
+  const candidates = validators.slice(0, 3).map((wallet) =>
+    createStateSnapshot(chain, [wallet]));
+  const merged = mergeStateSnapshotCandidates(candidates, {
+    expectedNetworkId: chain.networkId, trustedValidators: validatorMembers,
+  });
+  assert.equal(merged.snapshot.attestations.length, 3);
+  assert.equal(merged.verified.stateRoot, chain.stateRoot);
+  assert.throws(() => mergeStateSnapshotCandidates(candidates.slice(0, 2), {
+    expectedNetworkId: chain.networkId, trustedValidators: validatorMembers,
+  }), /candidate quorum is not reached/);
 });
 
 test("a verified snapshot restores typed state and accepts the next finalized block", () => {

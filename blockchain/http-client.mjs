@@ -2,7 +2,7 @@ import { createHash, X509Certificate } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 export function certificateSha256(rawCertificate) {
   if (!Buffer.isBuffer(rawCertificate) || rawCertificate.length === 0) {
@@ -16,6 +16,7 @@ export function requestJson(url, {
   method = body === undefined ? "GET" : "POST",
   timeoutMs = 3_000,
   tlsCertificateSha256 = null,
+  maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
 } = {}) {
   const target = new URL(url);
   if (target.protocol !== "http:" && target.protocol !== "https:") {
@@ -23,6 +24,10 @@ export function requestJson(url, {
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     return Promise.reject(new Error("HTTP client timeout is invalid"));
+  }
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 ||
+      maxResponseBytes > 20 * 1024 * 1024) {
+    return Promise.reject(new Error("HTTP response size limit is invalid"));
   }
   if (tlsCertificateSha256 !== null && !/^[0-9a-f]{64}$/.test(tlsCertificateSha256)) {
     return Promise.reject(new Error("TLS certificate pin is invalid"));
@@ -71,7 +76,7 @@ export function requestJson(url, {
       let size = 0;
       response.on("data", (chunk) => {
         size += chunk.length;
-        if (size > MAX_RESPONSE_BYTES) {
+        if (size > maxResponseBytes) {
           response.destroy();
           fail(new Error("HTTP response is too large"));
         } else chunks.push(chunk);

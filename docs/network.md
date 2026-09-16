@@ -301,6 +301,30 @@ finalize both values. The seed makes every failure exactly reproducible.
 - randomized validator-set histories exercise delayed activation, joint old/new
   certificates, stale-set rejection, corrupted commits, and full chain replay.
 
+## Create a quorum snapshot
+
+With the four validators and coordinator running, request a snapshot from the
+localhost coordinator:
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/snapshots/create
+```
+
+The coordinator first synchronizes a finality quorum. It downloads the full
+state from one authenticated validator, then sends only that height and
+`snapshotHash` to the remaining validators. Each validator independently
+rebuilds the candidate from its own finalized state and returns one ML-DSA
+attestation only if both values match. This avoids transferring a potentially
+large snapshot from every validator. A Byzantine first source is discarded if
+it cannot collect the normal `2N/3 + 1` quorum; another authenticated validator
+is tried instead.
+
+The assembled snapshot is fully verified and atomically staged in
+`<coordinator>/snapshots/STATE-SNAPSHOT.json` with a redundant backup. The HTTP
+response contains only its height, hashes, and signature counts, never private
+keys. This local endpoint creates a checkpoint; it does not yet instruct a new
+node to replace its journal or delete history.
+
 ## Remaining production boundary
 
 This is a multi-process localhost consensus prototype, not production BFT.
@@ -309,12 +333,13 @@ separate rotatable transport identities and optional pinned TLS 1.3, and
 round-zero blocks can be assembled by the elected validator. Transport remains
 plaintext only when the loopback development mode is deliberately used.
 Automated certificate lifecycle and coordinator-key rotation are not governed
-on-chain, validator-set/peer-registry rotation is not yet one atomic transition, and
-catch-up is sequential. A quorum-authenticated snapshot format, multi-source
-selection, typed restore, and atomic redundant staging now exist, but snapshot
-RPC, authenticated source collection, validator-rotation proofs, journal-tail
-replay, and pruning are not yet connected to catch-up; there is no fork-choice
-protocol.
+on-chain, validator-set/peer-registry rotation is not yet one atomic transition,
+and catch-up is sequential. A quorum-authenticated snapshot format, signed RPC,
+authenticated source collection, typed restore, and atomic redundant staging
+now exist, but validator-rotation proofs, journal-tail replay, joining-node
+installation, and pruning are not yet connected to catch-up; there is no
+fork-choice protocol.
+
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates. Consensus now has distinct

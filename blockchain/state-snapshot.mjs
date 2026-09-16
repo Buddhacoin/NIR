@@ -39,7 +39,7 @@ export function createStateSnapshot(chain, validatorWallets) {
   };
 }
 
-export function verifyStateSnapshot(snapshot, { expectedNetworkId, trustedValidators } = {}) {
+function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators } = {}) {
   if (!snapshot || snapshot.format !== FORMAT ||
       !Number.isSafeInteger(snapshot.height) || snapshot.height < 0 ||
       typeof snapshot.networkId !== "string" || snapshot.networkId.length === 0 ||
@@ -92,6 +92,20 @@ export function verifyStateSnapshot(snapshot, { expectedNetworkId, trustedValida
     throw new Error("state snapshot validator set id is invalid");
   }
   const validators = new Map(orderedTrusted.map((member) => [member.address, member]));
+  return {
+    attestations,
+    validators,
+    verified: {
+      height: snapshot.height,
+      networkId: snapshot.networkId,
+      snapshotHash,
+      stateRoot: snapshot.stateRoot,
+      tipHash: snapshot.tipHash,
+    },
+  };
+}
+
+function verifySnapshotAttestations(attestations, validators, snapshotHash, minimum) {
   if (!Array.isArray(attestations) || attestations.length > validators.size) {
     throw new Error("state snapshot attestations are invalid");
   }
@@ -105,15 +119,79 @@ export function verifyStateSnapshot(snapshot, { expectedNetworkId, trustedValida
     }
     seen.add(member.address);
   }
-  const quorum = Math.floor((validators.size * 2) / 3) + 1;
-  if (seen.size < quorum) throw new Error("state snapshot quorum is not reached");
-  return {
-    height: snapshot.height,
-    networkId: snapshot.networkId,
-    snapshotHash,
-    stateRoot: snapshot.stateRoot,
-    tipHash: snapshot.tipHash,
-  };
+  if (seen.size < minimum) throw new Error("state snapshot quorum is not reached");
+  return seen;
+}
+
+export function verifyStateSnapshot(snapshot, trustAnchor) {
+  const content = verifySnapshotContent(snapshot, trustAnchor);
+  const quorum = Math.floor((content.validators.size * 2) / 3) + 1;
+  verifySnapshotAttestations(
+    content.attestations, content.validators, content.verified.snapshotHash, quorum,
+  );
+  return content.verified;
+}
+
+export function verifyStateSnapshotCandidate(snapshot, trustAnchor, expectedValidator = null) {
+  const content = verifySnapshotContent(snapshot, trustAnchor);
+  const seen = verifySnapshotAttestations(
+    content.attestations, content.validators, content.verified.snapshotHash, 1,
+  );
+  if (expectedValidator !== null &&
+      (content.attestations.length !== 1 || !seen.has(expectedValidator))) {
+    throw new Error("state snapshot candidate signer is invalid");
+  }
+  return content.verified;
+}
+
+export function mergeStateSnapshotCandidates(candidates, trustAnchor) {
+  if (!Array.isArray(candidates) || candidates.length === 0 || candidates.length > 128) {
+    throw new Error("state snapshot candidates are invalid");
+  }
+  const groups = new Map();
+  for (const snapshot of candidates) {
+    try {
+      const content = verifySnapshotContent(snapshot, trustAnchor);
+      verifySnapshotAttestations(
+        content.attestations, content.validators, content.verified.snapshotHash, 1,
+      );
+      const key = `${content.verified.height}:${content.verified.snapshotHash}`;
+      const group = groups.get(key) ?? {
+        attestations: new Map(), snapshot: structuredClone(snapshot), verified: content.verified,
+      };
+      for (const attestation of content.attestations) {
+        group.attestations.set(attestation.validator, structuredClone(attestation));
+      }
+      groups.set(key, group);
+    } catch {
+      // Invalid or stale validator candidates do not poison an honest quorum.
+    }
+  }
+  const complete = [];
+  for (const group of groups.values()) {
+    const merged = {
+      ...group.snapshot,
+      attestations: [...group.attestations.values()].sort((left, right) =>
+        left.validator.localeCompare(right.validator)),
+    };
+    try {
+      complete.push({ snapshot: merged, verified: verifyStateSnapshot(merged, trustAnchor) });
+    } catch {
+      // A partial group is not a snapshot.
+    }
+  }
+  if (complete.length === 0) throw new Error("state snapshot candidate quorum is not reached");
+  const byHeight = new Map();
+  for (const entry of complete) {
+    const hashes = byHeight.get(entry.verified.height) ?? new Set();
+    hashes.add(entry.verified.snapshotHash);
+    byHeight.set(entry.verified.height, hashes);
+  }
+  for (const hashes of byHeight.values()) {
+    if (hashes.size > 1) throw new Error("conflicting snapshot candidate quorums exist at the same height");
+  }
+  complete.sort((left, right) => right.verified.height - left.verified.height);
+  return complete[0];
 }
 
 export function restoreStateSnapshot(genesisConfig, snapshot, trustAnchor) {

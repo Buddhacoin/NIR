@@ -48,6 +48,13 @@ import {
 } from "./peer-registry.mjs";
 import { requestJson } from "./http-client.mjs";
 import { createPeerAnnouncement } from "./peer-discovery.mjs";
+import { installStateSnapshot } from "./snapshot-store.mjs";
+import {
+  MAX_SNAPSHOT_BYTES,
+  createStateSnapshot,
+  verifyStateSnapshot,
+  verifyStateSnapshotCandidate,
+} from "./state-snapshot.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -366,6 +373,22 @@ export class ValidatorReplica {
 
   pendingTransactions() { return this.#mempool.values(); }
 
+  stateSnapshotCandidate() {
+    return createStateSnapshot(this.#chain, [this.#wallet]);
+  }
+
+  stateSnapshotAttestation({ height, snapshotHash }) {
+    if (!Number.isSafeInteger(height) || height !== this.height ||
+        !/^[0-9a-f]{64}$/.test(snapshotHash ?? "")) {
+      throw new Error("snapshot attestation request is invalid");
+    }
+    const candidate = this.stateSnapshotCandidate();
+    if (candidate.snapshotHash !== snapshotHash) {
+      throw new Error("snapshot attestation does not match local finalized state");
+    }
+    return candidate.attestations[0];
+  }
+
   blocksAfter(fromHeight, limit = 8) {
     if (!Number.isSafeInteger(fromHeight) || fromHeight < 1 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 8) {
@@ -675,12 +698,13 @@ export class ValidatorReplica {
 }
 
 async function peerRequest(url, path, value, {
-  networkId, peer, tlsCertificateSha256 = null, wallet,
+  maxResponseBytes, networkId, peer, tlsCertificateSha256 = null, wallet,
 }) {
   const auth = createPeerRequest({ body: value, networkId, path, wallet });
   const response = await requestJson(`${url}${path}`, {
     body: { auth, payload: value },
     method: "POST",
+    maxResponseBytes,
     tlsCertificateSha256,
   });
   if (!response.ok) throw new Error(response.body.error ?? `validator returned ${response.status}`);
@@ -699,6 +723,7 @@ export class DistributedCoordinator {
   #treasury;
   #wallet;
   #validators;
+  #genesis;
 
   constructor(directory, validatorUrls) {
     this.#directory = resolve(directory);
@@ -710,6 +735,7 @@ export class DistributedCoordinator {
     }
     this.#peers = [...validatorUrls];
     const genesis = readJson(join(this.#directory, "genesis.json"));
+    this.#genesis = genesis;
     this.#validators = genesis.validators;
     const registryByValidator = new Map((genesis.peerRegistry?.peers ?? []).map((peer) =>
       [peer.validatorAddress, peer]));
@@ -770,6 +796,8 @@ export class DistributedCoordinator {
   async #request(index, path, value) {
     return peerRequest(this.#peers[index], path, value, {
       networkId: this.networkId,
+      maxResponseBytes: path === "/v1/snapshots/candidate"
+        ? MAX_SNAPSHOT_BYTES + 64 * 1024 : undefined,
       peer: this.#validators[index],
       tlsCertificateSha256: this.#peerTlsPins[index],
       wallet: this.#wallet,
@@ -894,6 +922,54 @@ export class DistributedCoordinator {
       prepares: uniqueVotes.size,
       votes: uniqueCommits.size,
       synchronizedPeers: syncResults.filter(({ status, value }) => status === "fulfilled" && value > 0).length,
+    };
+  }
+
+  async createSnapshot() {
+    const synchronization = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#synchronizePeer(index)));
+    const synchronized = synchronization.map((result, index) =>
+      result.status === "fulfilled" ? index : -1).filter((index) => index >= 0);
+    const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+    if (synchronized.length < quorum) {
+      throw new Error(`snapshot synchronization quorum not reached (${synchronized.length}/${quorum})`);
+    }
+    const trustAnchor = {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#validators,
+    };
+    let merged = null;
+    for (const candidateIndex of synchronized) {
+      try {
+        const { snapshot } = await this.#request(candidateIndex, "/v1/snapshots/candidate", {});
+        verifyStateSnapshotCandidate(
+          snapshot, trustAnchor, this.#validators[candidateIndex].address,
+        );
+        const requests = await Promise.allSettled(synchronized.map((index) =>
+          this.#request(index, "/v1/snapshots/attest", {
+            height: snapshot.height, snapshotHash: snapshot.snapshotHash,
+          })));
+        const attestations = requests.filter(({ status }) => status === "fulfilled")
+          .map(({ value }) => value.attestation);
+        const assembled = { ...snapshot, attestations };
+        const verified = verifyStateSnapshot(assembled, trustAnchor);
+        merged = { snapshot: assembled, verified };
+        break;
+      } catch {
+        // Try another independently authenticated validator as the state source.
+      }
+    }
+    if (!merged) throw new Error("snapshot candidate quorum is not reached");
+    const installed = installStateSnapshot(
+      join(this.#directory, "snapshots"), this.#genesis, merged.snapshot, trustAnchor,
+    );
+    return {
+      height: installed.height,
+      signedValidators: merged.snapshot.attestations.length,
+      snapshotHash: installed.snapshotHash,
+      stateRoot: installed.stateRoot,
+      synchronizedValidators: synchronized.length,
+      tipHash: installed.tipHash,
     };
   }
 

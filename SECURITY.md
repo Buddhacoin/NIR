@@ -39,6 +39,9 @@ or an exploit against a live third-party system in a public issue.
 - multi-source snapshot agreement with same-height conflict detection, atomic
   redundant staging, verified repair, size and symlink limits, and rollback
   protection;
+- coordinator-authenticated snapshot candidate and hash-attestation RPCs where
+  each validator rebuilds local state before signing and only one peer transfers
+  the full bounded snapshot;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -162,8 +165,9 @@ or an exploit against a live third-party system in a public issue.
    snapshot export, trust-anchored quorum verification, typed in-memory restore,
    root revalidation, and post-checkpoint block continuation are implemented.
    Multi-source selection and atomic redundant disk staging are implemented.
-   Snapshot RPC, authenticated source collection, validator-rotation proofs,
-   journal-tail integration, and pruning are not.
+   Signed snapshot RPC and authenticated source collection are implemented.
+   Joining-node installation, validator-rotation proofs, journal-tail
+   integration, and pruning are not.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.

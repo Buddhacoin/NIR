@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,6 +13,7 @@ import {
   ValidatorReplica,
 } from "../blockchain/distributed-node.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 
 async function listen(server, port = 0) {
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
@@ -104,6 +105,50 @@ test("independent HTTP validator replicas finalize with one peer offline", async
     assert.equal(coordinator.height, 3);
     assert.equal(coordinator.account(bob.address).atomicBalance, (3n * ATOMIC_UNITS).toString());
   } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("validators independently attest one snapshot and the coordinator stages its quorum", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-distributed-snapshot-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const servers = replicas.map(createValidatorHttpServer);
+  let coordinatorServer = null;
+  try {
+    const urls = await Promise.all(servers.map((server) => listen(server)));
+    const unsigned = await fetch(`${urls[0]}/v1/snapshots/candidate`, {
+      body: JSON.stringify({ payload: {} }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(unsigned.status, 400);
+    assert.match((await unsigned.json()).error, /authentication is required/);
+
+    let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    coordinatorServer = createNodeHttpServer(coordinator);
+    const coordinatorUrl = await listen(coordinatorServer);
+    const response = await fetch(`${coordinatorUrl}/v1/snapshots/create`, { method: "POST" });
+    assert.equal(response.status, 201);
+    const result = await response.json();
+    assert.equal(result.height, 0);
+    assert.equal(result.signedValidators, 4);
+    assert.equal(result.synchronizedValidators, 4);
+    const primary = join(layout.coordinatorDirectory, "snapshots", "STATE-SNAPSHOT.json");
+    const backup = join(layout.coordinatorDirectory, "snapshots", "STATE-SNAPSHOT.backup.json");
+    assert.equal(existsSync(primary), true);
+    assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+    assert.equal(JSON.parse(readFileSync(primary, "utf8")).attestations.length, 4);
+
+    await close(servers[3]);
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const degraded = await coordinator.createSnapshot();
+    assert.equal(degraded.snapshotHash, result.snapshotHash);
+    assert.equal(degraded.signedValidators, 3);
+    assert.equal(degraded.synchronizedValidators, 3);
+  } finally {
+    if (coordinatorServer) await close(coordinatorServer);
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });
   }

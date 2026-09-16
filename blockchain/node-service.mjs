@@ -83,6 +83,9 @@ export function createNodeHttpServer(node) {
       if (request.method === "POST" && url.pathname === "/v1/blocks/produce" && node.produceBlock) {
         return send(response, 202, await node.produceBlock(), origin);
       }
+      if (request.method === "POST" && url.pathname === "/v1/snapshots/create" && node.createSnapshot) {
+        return send(response, 201, await node.createSnapshot(), origin);
+      }
       return send(response, 404, { error: "not found" }, origin);
     } catch (error) {
       return send(response, 400, { error: error.message }, origin);
