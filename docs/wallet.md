@@ -43,7 +43,9 @@ or environment variables, and the response contains only the signed transaction.
 The bridge deliberately has no broadcast endpoint. The wallet UI can pair with
 it, read the public address, show the node balance, calculate a fee, review an
 exact transfer, and request a terminal-confirmed signature. It displays the
-signed JSON but does not submit it to a node. Review and submission remain
+signed JSON first. A separate button can submit it only after a fresh node
+health check reports `valueless-devnet` and the signed network ID matches the
+node. Signing never submits automatically. Review and submission remain
 separate actions, limiting the damage from a compromised interface.
 The session token is not a recovery secret: it expires when the bridge process
 stops, should be pasted only into the intended local UI, and must never be put

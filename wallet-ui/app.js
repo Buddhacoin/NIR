@@ -21,6 +21,7 @@ let bridgeSession = null;
 let walletInfo = null;
 let networkInfo = null;
 let pendingIntent = null;
+let signedTransaction = null;
 
 function showMessage(key, copy = null) {
   const [title, defaultCopy] = messages[key];
@@ -132,6 +133,10 @@ function openSend() {
   document.querySelector("#signed-result").hidden = true;
   sendStatus.textContent = "";
   pendingIntent = null;
+  signedTransaction = null;
+  const submitButton = document.querySelector("#submit-signed");
+  submitButton.disabled = false;
+  submitButton.hidden = false;
   sendPanel.showModal();
 }
 
@@ -188,6 +193,7 @@ document.querySelector("#request-signature").onclick = async () => {
       body: JSON.stringify(pendingIntent),
     });
     document.querySelector("#signed-json").value = JSON.stringify(result.transaction, null, 2);
+    signedTransaction = result.transaction;
     document.querySelector("#send-review").hidden = true;
     document.querySelector("#signed-result").hidden = false;
     sendStatus.textContent = "Подписано. Автоматическая отправка намеренно отключена.";
@@ -196,6 +202,38 @@ document.querySelector("#request-signature").onclick = async () => {
     sendStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   } finally {
     signButton.disabled = false;
+  }
+};
+
+document.querySelector("#submit-signed").onclick = async () => {
+  if (!signedTransaction) return;
+  const submitButton = document.querySelector("#submit-signed");
+  submitButton.disabled = true;
+  sendStatus.textContent = "Повторная проверка тестовой сети…";
+  try {
+    const healthResponse = await fetch(`${NODE_URL}/health`);
+    if (!healthResponse.ok) throw new Error("Локальный узел не отвечает.");
+    const currentNetwork = await healthResponse.json();
+    if (currentNetwork.valueMode !== "valueless-devnet") {
+      throw new Error("Отправка разрешена только в сети без реальной стоимости.");
+    }
+    if (currentNetwork.networkId !== signedTransaction.networkId) {
+      throw new Error("Сеть узла не совпадает с сетью подписанной транзакции.");
+    }
+    const response = await fetch(`${NODE_URL}/v1/transactions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(signedTransaction),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Узел отклонил транзакцию.");
+    sendStatus.textContent = `Принято local testnet · ${result.transactionId ?? result.status}`;
+    submitButton.hidden = true;
+    signedTransaction = null;
+    await refreshNodeStatus();
+  } catch (error) {
+    sendStatus.textContent = error.message;
+    submitButton.disabled = false;
   }
 };
 

@@ -36,7 +36,7 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=16"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=17"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
 });
@@ -49,7 +49,7 @@ test("wallet pairs with a local bridge without exposing or persisting secrets", 
   assert.doesNotMatch(html + script, /privateKey/);
 });
 
-test("wallet reviews a transfer and signs without automatic broadcast", () => {
+test("wallet reviews and signs before a separate testnet-only broadcast", () => {
   for (const field of ["review-recipient", "review-amount", "review-fee", "review-network"]) {
     assert.match(html, new RegExp(`id="${field}"`));
   }
@@ -57,7 +57,10 @@ test("wallet reviews a transfer and signs without automatic broadcast", () => {
   assert.match(script, /bridgeRequest\("\/v1\/sign"/);
   assert.match(script, /signButton\.disabled = true/);
   assert.match(script, /signButton\.disabled = false/);
-  assert.doesNotMatch(script, /fetch\(`\$\{NODE_URL\}\/v1\/transactions/);
+  assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
+  assert.match(script, /currentNetwork\.valueMode !== "valueless-devnet"/);
+  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /fetch\(`\$\{NODE_URL\}\/v1\/transactions/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
 });
 

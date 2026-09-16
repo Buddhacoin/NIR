@@ -50,7 +50,7 @@ The intended advantages are:
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
-| Local wallet signing bridge and UI pairing | Exact-origin, in-memory session token, fee/transfer review, and terminal-confirmed signing without browser key access or automatic broadcast; implemented locally |
+| Local wallet signing bridge and UI pairing | Exact-origin, in-memory session token, fee/transfer review, terminal-confirmed signing without browser key access, and a separate valueless-testnet-only submit step; implemented locally |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
 | Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
