@@ -82,6 +82,114 @@ export function combineRandomnessReveals({ networkId, candidateId, commitments, 
   return hashObject({ candidateId, contributions }, "DISTRIBUTED_RANDOMNESS");
 }
 
+export function epochRandomnessCommitment({ networkId, round, secret }) {
+  if (typeof networkId !== "string" || !Number.isSafeInteger(round) || round < 1 ||
+      !HASH.test(secret ?? "")) throw new Error("epoch randomness commitment input is invalid");
+  return hashObject({ networkId, round, secret }, "EPOCH_RANDOMNESS_COMMITMENT");
+}
+
+export function createEpochRandomnessCommit({ wallet, networkId, round, secret }) {
+  const payload = {
+    authority: wallet.address,
+    commitment: epochRandomnessCommitment({ networkId, round, secret }),
+    networkId,
+    round,
+  };
+  return { ...payload, signature: signObject(payload, wallet, "EPOCH_RANDOMNESS_COMMIT") };
+}
+
+export function createEpochRandomnessReveal({ wallet, networkId, round, secret }) {
+  epochRandomnessCommitment({ networkId, round, secret });
+  const payload = { authority: wallet.address, networkId, round, secret };
+  return { ...payload, signature: signObject(payload, wallet, "EPOCH_RANDOMNESS_REVEAL") };
+}
+
+export class EpochRandomnessMachine {
+  #commitHeight = null;
+  #commitments = new Map();
+  #committee;
+  #committeeSize;
+  #networkId;
+  #previousSeed;
+  #registry;
+  #reveals = new Map();
+  #round = 1;
+
+  constructor({ networkId, registry, committeeSize, genesisSeed }) {
+    if (!(registry instanceof Map) || !HASH.test(genesisSeed ?? "")) {
+      throw new Error("epoch randomness configuration is invalid");
+    }
+    this.#networkId = networkId;
+    this.#registry = registry;
+    this.#committeeSize = committeeSize;
+    this.#previousSeed = genesisSeed;
+    this.#committee = this.#selectCommittee();
+  }
+
+  #selectCommittee() {
+    return selectOperatorCommittee({
+      registry: this.#registry,
+      randomness: this.#previousSeed,
+      context: { networkId: this.#networkId, round: this.#round },
+      size: this.#committeeSize,
+    }).map(({ address }) => address);
+  }
+
+  get round() { return this.#round; }
+  get previousSeed() { return this.#previousSeed; }
+  committee() { return [...this.#committee]; }
+
+  commit(message, height) {
+    if (!Number.isSafeInteger(height) || height < 1 || message?.networkId !== this.#networkId ||
+        message?.round !== this.#round || !this.#committee.includes(message.authority) ||
+        !HASH.test(message.commitment ?? "") || this.#commitments.has(message.authority)) {
+      throw new Error("epoch randomness commit is invalid or duplicated");
+    }
+    const operator = this.#registry.get(message.authority);
+    const { signature, ...payload } = message;
+    if (!operator || !verifyObject(payload, signature, operator.publicKey, "EPOCH_RANDOMNESS_COMMIT")) {
+      throw new Error("epoch randomness commit signature is invalid");
+    }
+    this.#commitments.set(message.authority, message.commitment);
+    if (this.#commitments.size === this.#committee.length) this.#commitHeight = height;
+  }
+
+  reveal(message, height) {
+    if (this.#commitHeight === null || !Number.isSafeInteger(height) || height <= this.#commitHeight ||
+        message?.networkId !== this.#networkId || message?.round !== this.#round ||
+        !this.#committee.includes(message.authority) || this.#reveals.has(message.authority) ||
+        !HASH.test(message.secret ?? "")) {
+      throw new Error("epoch randomness reveal is premature, invalid, or duplicated");
+    }
+    const operator = this.#registry.get(message.authority);
+    const { signature, ...payload } = message;
+    if (!operator || !verifyObject(payload, signature, operator.publicKey, "EPOCH_RANDOMNESS_REVEAL")) {
+      throw new Error("epoch randomness reveal signature is invalid");
+    }
+    if (this.#commitments.get(message.authority) !== epochRandomnessCommitment({
+      networkId: this.#networkId, round: this.#round, secret: message.secret,
+    })) throw new Error("epoch randomness reveal does not match commitment");
+    this.#reveals.set(message.authority, message.secret);
+    if (this.#reveals.size !== this.#committee.length) return null;
+    const completedRound = this.#round;
+    const value = hashObject({
+      networkId: this.#networkId,
+      previousSeed: this.#previousSeed,
+      round: completedRound,
+      reveals: [...this.#reveals.entries()]
+        .map(([authority, secret]) => ({ authority, secret }))
+        .sort((left, right) => left.authority.localeCompare(right.authority)),
+    }, "EPOCH_RANDOMNESS_VALUE");
+    this.#previousSeed = value;
+    this.#round += 1;
+    this.#commitHeight = null;
+    this.#commitments = new Map();
+    this.#reveals = new Map();
+    this.#committee = this.#selectCommittee();
+    return { round: completedRound, value };
+  }
+}
+
 function unsignedCredential(credential) {
   const { signature: _signature, ...payload } = credential;
   return payload;

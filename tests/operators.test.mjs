@@ -4,7 +4,8 @@ import test from "node:test";
 
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
-  OperatorBondBook, ProgressAdmissionBook, combineRandomnessReveals,
+  EpochRandomnessMachine, OperatorBondBook, ProgressAdmissionBook, combineRandomnessReveals,
+  createEpochRandomnessCommit, createEpochRandomnessReveal,
   createAttestedRegistry, createOperatorCredential, randomnessCommitment,
   proveOperatorEquivocation, selectOperatorCommittee, signOperatorStatement,
 } from "../blockchain/operators.mjs";
@@ -77,6 +78,39 @@ test("distributed randomness requires a quorum of matching committed reveals", (
   assert.throws(() => combineRandomnessReveals({
     networkId, candidateId, commitments, reveals: forged, quorum: 3,
   }), /does not match commitment/);
+});
+
+test("epoch randomness is unknowable until every fixed committee member reveals", () => {
+  const { networkId, registry, wallets } = fixture();
+  const machine = new EpochRandomnessMachine({
+    networkId, registry, committeeSize: 3, genesisSeed: fingerprint("epoch-genesis"),
+  });
+  const members = machine.committee().map((address) =>
+    wallets.find((wallet) => wallet.address === address));
+  const secrets = members.map((_, index) => fingerprint(`epoch-secret-${index}`));
+  members.forEach((wallet, index) => machine.commit(createEpochRandomnessCommit({
+    wallet, networkId, round: 1, secret: secrets[index],
+  }), 10));
+  assert.throws(() => machine.reveal(createEpochRandomnessReveal({
+    wallet: members[0], networkId, round: 1, secret: secrets[0],
+  }), 10), /premature/);
+  assert.equal(machine.reveal(createEpochRandomnessReveal({
+    wallet: members[0], networkId, round: 1, secret: secrets[0],
+  }), 11), null);
+  assert.equal(machine.reveal(createEpochRandomnessReveal({
+    wallet: members[1], networkId, round: 1, secret: secrets[1],
+  }), 11), null);
+  assert.equal(machine.previousSeed, fingerprint("epoch-genesis"));
+  assert.throws(() => machine.reveal(createEpochRandomnessReveal({
+    wallet: members[2], networkId, round: 1, secret: fingerprint("forged-secret"),
+  }), 11), /does not match commitment/);
+  const finalized = machine.reveal(createEpochRandomnessReveal({
+    wallet: members[2], networkId, round: 1, secret: secrets[2],
+  }), 11);
+  assert.match(finalized.value, /^[0-9a-f]{64}$/);
+  assert.equal(machine.round, 2);
+  assert.equal(machine.previousSeed, finalized.value);
+  assert.equal(new Set(machine.committee()).size, 3);
 });
 
 test("a candidate is fixed before future randomness assigns its evaluators", () => {

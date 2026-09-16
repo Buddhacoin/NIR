@@ -93,6 +93,18 @@ candidate colluding with the commitment-block proposer may influence that block
 hash. Replacing the selection source with audited post-quantum epoch randomness
 remains a mainnet gate.
 
+### Epoch-randomness transition
+
+The operator module now implements the replacement state machine independently
+of consensus. The previous epoch seed deterministically fixes one committee.
+Every member signs a commitment to a private 32-byte share; reveals are refused
+until all commitments exist in an earlier height. The next seed hashes the
+previous seed and every ordered reveal, and advances only when the exact
+committee is complete. A missing member can stop the round but cannot make the
+protocol accept an alternative subset or a forged reveal. The remaining step
+is serializing this machine in block state and making progress admissions wait
+for a strictly later finalized epoch seed.
+
 ### Draft score
 
 For an accepted proof `p`:

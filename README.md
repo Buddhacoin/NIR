@@ -193,6 +193,14 @@ registries. Their operator identities must be unique and pairwise disjoint in
 the genesis configuration. A block proposer cannot choose a progress challenge
 alone; fewer than the configured beacon quorum cannot create one.
 
+The operator layer also contains the next randomness upgrade as an executable
+state machine: a seed-derived fixed committee first signs commitments to secret
+shares and may reveal only in a later height. The seed advances only after every
+assigned reveal matches its commitment. This removes last-revealer grinding at
+the cost of deliberately halting that randomness round when a member withholds.
+Its signatures and adversarial tests are implemented; connecting the resulting
+epoch seed to consensus state is the next protocol migration.
+
 ## Why organizations use NIR
 
 An organization does not participate only for newly issued NIR. An accepted
