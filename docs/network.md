@@ -380,7 +380,10 @@ assembled into old/new quorums, durably replicated, distributed after the
 activation block, and reloaded on restart. Every handoff is also paired with its
 mutually signed onboarding certificate in an atomic redundant topology journal.
 Catch-up first verifies that genesis-rooted key/topology chain and may then use
-the latest authenticated endpoints for snapshots and block replay. Multi-host
+the latest authenticated endpoints for snapshots and block replay. Responses
+from reachable peers are compared before installation; a valid longer history
+may extend a stale prefix, while divergent valid histories stop recovery.
+Multi-host
 operator ceremonies, independent stable bootstrap services, and operator-run
 production recovery drills remain; there is no fork-choice protocol.
 

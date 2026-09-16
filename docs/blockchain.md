@@ -167,7 +167,10 @@ pins, and transport keys authorized for the next set. A recovering validator
 can authenticate an old reachable peer, verify the complete paired history
 from genesis, and use the newest verified topology for snapshot or block
 catch-up. Shorter histories cannot roll back a topology already trusted on
-disk, and conflicting branches fail closed.
+disk. The node compares all authenticated responses it receives: stale prefixes
+are harmless, malformed histories are ignored, and two cryptographically valid
+but divergent branches fail closed instead of letting response order select a
+network.
 
 Dynamic P2P membership now has a pre-activation, mutually authenticated
 endpoint-registration workflow so new-set commit and handoff votes are

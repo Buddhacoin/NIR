@@ -100,6 +100,45 @@ export function verifyValidatorTopologyHistory({
   };
 }
 
+export function selectValidatorTopologyHistoryCandidates(candidates, context = {}) {
+  if (!Array.isArray(candidates) || candidates.length === 0 || candidates.length > 128) {
+    throw new Error("validator topology candidates are invalid");
+  }
+  const valid = [];
+  for (const candidate of candidates) {
+    try {
+      const handoffs = candidate?.handoffs;
+      const onboardings = candidate?.onboardings;
+      const verified = verifyValidatorTopologyHistory({
+        ...context, handoffs, onboardings,
+      });
+      valid.push({ handoffs: structuredClone(handoffs), onboardings: structuredClone(onboardings), verified });
+    } catch {
+      // One malformed source cannot suppress a valid independently signed history.
+    }
+  }
+  if (valid.length === 0) throw new Error("no valid validator topology candidate exists");
+  valid.sort((left, right) => right.handoffs.length - left.handoffs.length);
+  const selected = valid[0];
+  for (const candidate of valid.slice(1)) {
+    const shared = Math.min(selected.handoffs.length, candidate.handoffs.length);
+    for (let index = 0; index < shared; index += 1) {
+      if (selected.handoffs[index].handoffHash !== candidate.handoffs[index].handoffHash ||
+          selected.onboardings[index].onboardingHash !==
+            candidate.onboardings[index].onboardingHash) {
+        throw new Error("authenticated validator topology candidates conflict");
+      }
+    }
+  }
+  const matchingSources = valid.filter((candidate) =>
+    candidate.handoffs.length === selected.handoffs.length &&
+    candidate.handoffs.every(({ handoffHash }, index) =>
+      handoffHash === selected.handoffs[index].handoffHash &&
+      candidate.onboardings[index].onboardingHash ===
+        selected.onboardings[index].onboardingHash)).length;
+  return { ...selected, matchingSources };
+}
+
 function readCandidate(path, context) {
   try {
     if (!existsSync(path) || lstatSync(path).isSymbolicLink() ||

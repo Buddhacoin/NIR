@@ -60,6 +60,7 @@ import {
 import {
   installValidatorTopology,
   loadValidatorTopologyHistory,
+  selectValidatorTopologyHistoryCandidates,
   verifyValidatorTopologyHistory,
 } from "./validator-topology-history.mjs";
 import {
@@ -621,6 +622,18 @@ export class ValidatorReplica {
       installedHandoffs: installedHandoffs.length - currentHandoffs.length,
       peers: structuredClone(finalTopology.peerRegistry.peers),
       validatorCount: finalTopology.trustedValidators.length,
+    };
+  }
+
+  installValidatorRecoveryHistoryCandidates(candidates) {
+    const selected = selectValidatorTopologyHistoryCandidates(candidates, {
+      genesisPeerRegistry: this.#genesis.peerRegistry,
+      genesisValidators: this.#genesis.validators,
+      networkId: this.networkId,
+    });
+    return {
+      ...this.installValidatorRecoveryHistory(selected),
+      matchingSources: selected.matchingSources,
     };
   }
 

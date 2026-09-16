@@ -11,6 +11,7 @@ import { createValidatorOnboarding } from "../blockchain/validator-onboarding.mj
 import {
   installValidatorTopology,
   loadValidatorTopologyHistory,
+  selectValidatorTopologyHistoryCandidates,
   verifyValidatorTopologyHistory,
 } from "../blockchain/validator-topology-history.mjs";
 
@@ -74,6 +75,14 @@ function fixture() {
     nextValidators: members(third),
     previousValidators: members(second),
   }, second.slice(0, 3), third.slice(0, 3));
+  const conflictingHandoff2 = createValidatorHandoff({
+    activationBlockHash: "e".repeat(64),
+    activationHeight: 20,
+    activationStateRoot: "f".repeat(64),
+    networkId,
+    nextValidators: members(third),
+    previousValidators: members(second),
+  }, second.slice(0, 3), third.slice(0, 3));
   return {
     context: {
       genesisPeerRegistry,
@@ -82,6 +91,7 @@ function fixture() {
       networkId,
     },
     onboardings: [onboarding1, onboarding2],
+    conflictingHandoff2,
     third,
   };
 }
@@ -102,6 +112,35 @@ test("onboarding history advances endpoints through two handoff-bound generation
   assert.throws(() => verifyValidatorTopologyHistory({
     ...values.context, onboardings: tampered,
   }), /commitment|signature/);
+});
+
+test("candidate selection accepts stale prefixes but rejects valid divergent histories", () => {
+  const values = fixture();
+  const selected = selectValidatorTopologyHistoryCandidates([
+    {
+      handoffs: values.context.handoffs.slice(0, 1),
+      onboardings: values.onboardings.slice(0, 1),
+    },
+    { handoffs: values.context.handoffs, onboardings: values.onboardings },
+    { handoffs: [], onboardings: [values.onboardings[0]] },
+  ], {
+    genesisPeerRegistry: values.context.genesisPeerRegistry,
+    genesisValidators: values.context.genesisValidators,
+    networkId: values.context.networkId,
+  });
+  assert.equal(selected.handoffs.length, 2);
+  assert.equal(selected.verified.activationHeight, 20);
+  assert.throws(() => selectValidatorTopologyHistoryCandidates([
+    { handoffs: values.context.handoffs, onboardings: values.onboardings },
+    {
+      handoffs: [values.context.handoffs[0], values.conflictingHandoff2],
+      onboardings: values.onboardings,
+    },
+  ], {
+    genesisPeerRegistry: values.context.genesisPeerRegistry,
+    genesisValidators: values.context.genesisValidators,
+    networkId: values.context.networkId,
+  }), /conflict/);
 });
 
 test("topology history is atomically redundant and repairs one damaged copy", () => {

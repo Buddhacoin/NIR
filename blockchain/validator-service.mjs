@@ -88,12 +88,12 @@ async function discoverRecoveryPeers(validator, peers) {
       Array.isArray(value?.onboardings))
     .map(({ value }) => value)
     .sort((left, right) => right.handoffs.length - left.handoffs.length);
-  for (const history of histories) {
+  if (histories.length > 0) {
     try {
-      const installed = validator.installValidatorRecoveryHistory(history);
+      const installed = validator.installValidatorRecoveryHistoryCandidates(histories);
       return { installedHandoffs: installed.installedHandoffs, peers: installed.peers };
     } catch {
-      // Try another independently authenticated and cryptographically verified history.
+      // Invalid or conflicting histories cannot replace the configured topology.
     }
   }
   return { installedHandoffs: 0, peers };
