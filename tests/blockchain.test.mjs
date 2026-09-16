@@ -8,7 +8,11 @@ import {
   computeProgressScore,
   createBeaconBond,
   createCreditStake,
+  createCreditDelegation,
   createCreditTransfer,
+  createCreditUnstakeClaim,
+  createCreditUnstakeRequest,
+  createDelegatedCreditTransfer,
   createCandidateBond,
   createProgressCommitment,
   createValidatorBond,
@@ -24,6 +28,7 @@ import {
 } from "../blockchain/chain.mjs";
 import {
   BEACON_NON_REVEAL_SLASH_BPS,
+  CREDIT_UNSTAKE_DELAY_BLOCKS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
@@ -1171,6 +1176,93 @@ test("locked NIR supplies bounded renewable credits for sponsored transfers", ()
     () => chain.appendBlock(finalizeBlock(overCapacity, quorumFor(overCapacity, validators))),
     /too many credit-paid transfers/,
   );
+});
+
+test("credit delegation is revocable and stake exits only after the delay", () => {
+  const { chain, treasury, validators } = fixture();
+  const owner = generateWallet();
+  const delegate = generateWallet();
+  const recipient = generateWallet();
+  const timestamp = TREASURY_VESTING_MS;
+  const funding = [
+    createTransfer({
+      wallet: treasury, networkId: chain.networkId, recipient: owner.address,
+      amount: (TRANSFER_CREDIT_STAKE_UNIT + 2n * MIN_TRANSFER_FEE).toString(), nonce: 0,
+    }),
+    createTransfer({
+      wallet: treasury, networkId: chain.networkId, recipient: delegate.address,
+      amount: "10", nonce: 1,
+    }),
+  ];
+  const fundingBlock = chain.buildBlock({ transactions: funding, timestamp });
+  chain.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
+  const stake = createCreditStake({
+    wallet: owner, networkId: chain.networkId,
+    amount: TRANSFER_CREDIT_STAKE_UNIT.toString(), nonce: 0,
+  });
+  const stakeBlock = chain.buildBlock({ transactions: [stake], timestamp });
+  chain.appendBlock(finalizeBlock(stakeBlock, quorumFor(stakeBlock, validators)));
+  const delegation = createCreditDelegation({
+    wallet: owner, delegate: delegate.address, networkId: chain.networkId,
+    limit: 2, nonce: 1,
+  });
+  const delegationBlock = chain.buildBlock({ transactions: [delegation], timestamp });
+  chain.appendBlock(finalizeBlock(delegationBlock, quorumFor(delegationBlock, validators)));
+  const delegated = createDelegatedCreditTransfer({
+    wallet: delegate, creditOwner: owner.address, networkId: chain.networkId,
+    recipient: recipient.address, amount: "1", nonce: 0,
+  });
+  const transferBlock = chain.buildBlock({ transactions: [delegated], timestamp });
+  chain.appendBlock(finalizeBlock(transferBlock, quorumFor(transferBlock, validators)));
+  assert.equal(chain.balance(recipient.address), 1n);
+  assert.equal(chain.creditDelegation(owner.address, delegate.address).spent, 1);
+
+  const revoke = createCreditDelegation({
+    wallet: owner, delegate: delegate.address, networkId: chain.networkId,
+    limit: 0, nonce: 2,
+  });
+  const revokeBlock = chain.buildBlock({ transactions: [revoke], timestamp });
+  chain.appendBlock(finalizeBlock(revokeBlock, quorumFor(revokeBlock, validators)));
+  assert.equal(chain.creditDelegation(owner.address, delegate.address), null);
+  assert.equal(chain.creditStake(owner.address), TRANSFER_CREDIT_STAKE_UNIT - MIN_TRANSFER_FEE);
+  const replay = createDelegatedCreditTransfer({
+    wallet: delegate, creditOwner: owner.address, networkId: chain.networkId,
+    recipient: recipient.address, amount: "1", nonce: 1,
+  });
+  const rejected = chain.buildBlock({ transactions: [replay], timestamp });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(rejected, quorumFor(rejected, validators))),
+    /delegation is missing/,
+  );
+
+  const request = createCreditUnstakeRequest({
+    wallet: owner, networkId: chain.networkId,
+    amount: (TRANSFER_CREDIT_STAKE_UNIT - MIN_TRANSFER_FEE).toString(), nonce: 3,
+  });
+  const requestBlock = chain.buildBlock({ transactions: [request], timestamp });
+  chain.appendBlock(finalizeBlock(requestBlock, quorumFor(requestBlock, validators)));
+  assert.equal(chain.creditStake(owner.address), 0n);
+  const pending = chain.creditUnstake(owner.address);
+  assert.equal(pending.unlockHeight, requestBlock.height + CREDIT_UNSTAKE_DELAY_BLOCKS);
+  const earlyClaim = createCreditUnstakeClaim({
+    wallet: owner, networkId: chain.networkId, nonce: 4,
+  });
+  const earlyBlock = chain.buildBlock({ transactions: [earlyClaim], timestamp });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(earlyBlock, quorumFor(earlyBlock, validators))),
+    /not unlocked/,
+  );
+  while (chain.height + 1 < pending.unlockHeight) {
+    const block = chain.buildBlock({ timestamp });
+    chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  }
+  const claim = createCreditUnstakeClaim({
+    wallet: owner, networkId: chain.networkId, nonce: 4,
+  });
+  const claimBlock = chain.buildBlock({ transactions: [claim], timestamp });
+  chain.appendBlock(finalizeBlock(claimBlock, quorumFor(claimBlock, validators)));
+  assert.equal(chain.creditUnstake(owner.address), null);
+  assert.equal(chain.balance(owner.address), TRANSFER_CREDIT_STAKE_UNIT - 2n * MIN_TRANSFER_FEE);
 });
 
 test("a transfer cannot spend more than the sender owns", () => {

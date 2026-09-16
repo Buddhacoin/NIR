@@ -27,8 +27,8 @@ The intended advantages are:
 - **useful issuance:** new NIR is tied to verified capability or efficiency
   progress instead of raw resource consumption;
 - **hard scarcity:** consensus enforces a maximum of 21,000,000 NIR;
-- **independent base layer:** NIR does not depend on Ethereum, Solana, TON, a
-  bridge custodian, or another chain's fee market;
+- **independent base layer:** NIR has its own ledger, addresses, signatures,
+  monetary rules and fee market;
 - **sponsored payments:** a person may sign an exact transfer while a separate
   account pays its fee; both post-quantum signatures, both nonces, the amount,
   recipient and network are consensus-bound, so the sponsor never controls the
@@ -56,7 +56,7 @@ The intended advantages are:
 | 21 million cap and ten-year treasury vesting | Enforced by consensus |
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
 | Sponsored transfer fees | Two-party post-quantum authorization and independent replay protection implemented |
-| Transfer Credits from locked NIR | Protocol-v18 stake, block-epoch renewal, exact-transfer sponsorship, and per-block capacity limit implemented; delegation allowances, unstaking, wallet controls, and calibrated production parameters remain |
+| Transfer Credits from locked NIR | Protocol-v19 stake, block-epoch renewal, exact-payment sponsorship, revocable delegation, delayed unstaking, and per-block capacity limit implemented; wallet controls and calibrated production parameters remain |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer review, terminal-confirmed signing without browser key access, and a separate valueless-testnet-only submit step; implemented locally |
@@ -83,6 +83,8 @@ consensus audits, production networking, remotely attested evaluator execution,
 hardware-backed energy evidence, and a public launch process.
 The explicit gates for devnet, public testnet, incentivized testnet, and mainnet
 are tracked in [`docs/launch-readiness.md`](docs/launch-readiness.md).
+The ordered product and protocol plan is in [`docs/roadmap.md`](docs/roadmap.md),
+and resource staking instructions are in [`docs/staking.md`](docs/staking.md).
 
 ## Who uses NIR and how
 
@@ -108,11 +110,11 @@ NIR is designed to grow without turning its monetary core into an unrestricted
 application runtime at genesis:
 
 - **native user-created assets:** a constrained Pay-lane standard for creating,
-  minting within a declared cap, transferring, and burning other currencies;
+  minting within a declared cap, transferring, and burning custom assets;
   child assets remain separate from NIR, pay fees in NIR, and receive no mining
   or governance rights;
 - **sponsored payments:** a service may pay the network fee so a new user can
-  receive and spend funds before acquiring NIR for gas;
+  receive and spend funds before acquiring NIR for fees;
 - **Transfer Credits:** locked NIR produces a bounded, renewable Pay-lane
   quota. Credits are usage rights, not transferable money and not new NIR;
   a merchant or wallet service can sponsor an exact user-signed transfer with
@@ -121,17 +123,18 @@ application runtime at genesis:
   headers without trusting one RPC provider;
 - **parallel lanes:** Pay, Proof, and Control operations declare state access so
   independent work can execute concurrently;
+- **programmable applications:** a future deterministic, metered runtime with
+  declared permissions, bounded storage and transaction simulation, isolated
+  from the monetary cap and the payment lane;
 - **shard-ready messages:** account and proof messages retain deterministic
   commitments so dynamic split/merge scaling can be considered after the single
   chain is proven under public load;
 - **selective privacy:** auditable viewing permissions are a research target,
   contingent on post-quantum security and legal review.
 
-Dynamic sharding and per-account asset storage are lessons worth studying from
-TON; explicit account access and standard token mints are useful lessons from
-Solana. They are roadmap inputs, not claims that NIR already matches those mature
-networks. The engineering comparison and adoption order are in
-[`docs/top-chains-study.md`](docs/top-chains-study.md).
+These capabilities are introduced only in the dependency order defined by the
+[`NIR roadmap`](docs/roadmap.md). They are not claims about the current local
+prototype.
 
 ## Start using the local prototype
 
@@ -271,13 +274,12 @@ vulnerabilities cannot become a minting strategy.
   and the hard cap always wins.
 - Holding NIR does not automatically grant protocol governance power.
 
-The genesis allocation is assigned to explicit post-quantum NIR addresses; it
-does not unlock into an exchange or a wallet from another network. The current demo uses a
-temporary key. Before a public network, founder custody and the protocol
+The genesis allocation is assigned to explicit post-quantum NIR addresses. The
+current demo uses a temporary key. Before a public network, founder custody and the protocol
 treasury must use disclosed, independently recoverable multisignature vaults.
 
 Every fee-paid transfer pays a consensus-enforced minimum of **0.00001000 NIR**
-to the block proposer, and a sender may offer more for priority. Protocol v18
+to the block proposer, and a sender may offer more for priority. Protocol v19
 also permits a bounded number of zero-fee transfers to consume renewable
 Transfer Credits backed by locked NIR. Dynamic congestion pricing, validator
 compensation for credit traffic, and whether part of a future base fee is burned
@@ -359,7 +361,8 @@ candidate runs are committed.
 - `docs/value.md` — properties required for durable monetary value.
 - `docs/governance.md` — where the ledger lives and how rules can safely evolve.
 - `docs/wallet.md` — current native-wallet commands and production requirements.
-- `docs/top-chains-study.md` — lessons from leading independent networks and NIR's three-lane architecture.
+- `docs/roadmap.md` — ordered development stages and their measurable exit gates.
+- `docs/staking.md` — resource staking, credit delegation and delayed exit guide.
 - `docs/beacon.md` — independent beacon deployment and aggregation runbook.
 - `docs/releases.md` — offline release signing, trust-anchor publication, and source verification.
 - `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.

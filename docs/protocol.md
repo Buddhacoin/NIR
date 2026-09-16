@@ -121,7 +121,7 @@ an under-bonded offender from future epoch committees.
 
 ### Transfer Credits
 
-Protocol v18 adds a Pay-lane resource separate from money. A signed
+Protocol v18 added a Pay-lane resource separate from money. A signed
 `credit-stake` transaction locks NIR. Every complete 100 NIR unit supplies ten
 ordinary-transfer credits per 720-block epoch. A sender can consume its own
 credit, or a distinct sponsor can bind one of its credits to the complete
@@ -132,10 +132,13 @@ transfers in one block, so stake cannot purchase unbounded free ingress.
 
 Credits are state-rooted usage rights, cannot be transferred as money, do not
 increase supply, and reset lazily by block height rather than validator-chosen
-time. The present values are testnet parameters. Withdrawal, standing delegated
-allowances and validator compensation for credit traffic remain required before
-mainnet; until delayed unstaking exists, `credit-stake` must be treated as
-locked indefinitely.
+time. Protocol v19 adds per-account standing allowances that the stake owner
+can update or revoke, and a two-step exit: active stake stops producing credits
+immediately, then returns after 64 blocks. The exit request pays its fee from
+the exiting stake, so a fully staked account cannot be trapped for lacking a
+liquid fee balance. The present values are test-network parameters. Wallet
+controls and validator compensation for credit traffic remain required before
+mainnet.
 
 ### Draft score
 

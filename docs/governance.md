@@ -66,8 +66,7 @@ one genesis `treasuryAddress` and enforces ten-year linear vesting. The demo
 address is temporary. A production genesis must name permanent post-quantum NIR
 vault addresses and publish their allocation before launch.
 
-An Ethereum/MetaMask address is not compatible with the current native NIR
-ML-DSA address format. Founder custody should use an offline threshold vault;
+Founder custody must use the native NIR ML-DSA address format and an offline threshold vault;
 the protocol treasury should use a separate transparent multisignature with
 published spending records. No private key or recovery phrase belongs in the
 repository.
@@ -83,7 +82,7 @@ entry, tested inheritance procedures, or an offline signing application.
 ## Transaction fees
 
 Every fee-paid transfer pays a consensus-enforced minimum of 0.00001000 NIR to
-the block proposer. A sender may offer more for priority. Protocol v18 also
+the block proposer. A sender may offer more for priority. Protocol v19 also
 allows a separately capped set of transfers to consume Transfer Credits backed
 by locked NIR. These rules establish deterministic anti-spam limits, but they
 are not yet dynamic congestion pricing. Before a public network, load tests must

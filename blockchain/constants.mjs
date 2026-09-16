@@ -8,7 +8,7 @@ export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
 export const MULTISIG_ALGORITHM = "ml-dsa-65-multisig";
 export const MAX_MULTISIG_MEMBERS = 16;
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 export const SAFETY_POLICY_V1_COMMITMENT =
   "a6907d20040ce104af6f866ec84464e2dd0f2de1d34f53b6c6b2c5ab73d91cff";
 export const MAX_TRANSACTIONS_PER_BLOCK = 1_000;
@@ -25,6 +25,8 @@ export const TRANSFER_CREDIT_EPOCH_BLOCKS = 720;
 export const TRANSFER_CREDIT_STAKE_UNIT = 100n * ATOMIC_UNITS;
 export const TRANSFER_CREDITS_PER_STAKE_UNIT = 10;
 export const MAX_CREDIT_TRANSFERS_PER_BLOCK = 100;
+export const MAX_CREDIT_DELEGATIONS_PER_OWNER = 256;
+export const CREDIT_UNSTAKE_DELAY_BLOCKS = 64;
 export const MIN_REWARD_INTERVAL_MS = 600_000;
 export const MIN_TRANSFER_FEE = 1_000n;
 export const MAX_DECIMAL_DIGITS = 32;

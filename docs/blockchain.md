@@ -13,7 +13,7 @@ identically.
   to the block proposer;
 - native fee sponsorship: the sender authorizes the exact payment while a
   distinct post-quantum account authorizes and pays only its exact fee;
-- protocol-v18 Transfer Credits: a separate signed stake locks NIR and creates
+- protocol-v19 Transfer Credits: a separate signed stake locks NIR and creates
   a block-epoch quota for zero-fee transfers; the stake owner may consume a
   credit for an exact transfer through the same two-signature sponsorship path,
   and a separate per-block limit bounds credit-paid traffic;
@@ -50,10 +50,10 @@ transaction under a separate `SPONSORED_TRANSFER` domain. Consensus advances
 both nonces, charges the amount only to the sender and the fee only to the
 sponsor. This allows wallet providers or merchants to onboard a user without
 receiving custody or general signing authority over that user's funds.
-Credit stake and usage are committed to the same state root. Credits are not
-money and do not increase supply. Delayed unstaking, standing delegation
-allowances and production pricing are not implemented yet, so prototype credit
-stake must be treated as indefinitely locked.
+Credit stake, usage, revocable allowances and pending exits are committed to the
+same state root. Credits are not money and do not increase supply. An exit stops
+earning credits immediately and returns after 64 blocks; its fee comes from the
+exiting stake. Production pricing and wallet controls remain unfinished.
 
 ## Trust boundary
 
@@ -112,8 +112,8 @@ requires both an old-set quorum and a new-set quorum. Production still needs
 validator withdrawal delays and independently operated, monitored and audited
 beacon deployments; the runnable service is documented in [beacon.md](beacon.md).
 
-The design review of leading independent networks and the resulting three-lane
-NIR architecture are documented in [top-chains-study.md](top-chains-study.md).
+The ordered development and three-lane NIR architecture are documented in
+[roadmap.md](roadmap.md).
 
 ## State commitment and snapshots
 
