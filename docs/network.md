@@ -310,9 +310,11 @@ round-zero blocks can be assembled by the elected validator. Transport remains
 plaintext only when the loopback development mode is deliberately used.
 Automated certificate lifecycle and coordinator-key rotation are not governed
 on-chain, validator-set/peer-registry rotation is not yet one atomic transition, and
-catch-up is sequential. A quorum-authenticated snapshot format now exists, but
-network snapshot exchange, trusted checkpoint selection, import, and pruning
-are not yet connected to catch-up; there is no fork-choice protocol.
+catch-up is sequential. A quorum-authenticated snapshot format, multi-source
+selection, typed restore, and atomic redundant staging now exist, but snapshot
+RPC, authenticated source collection, validator-rotation proofs, journal-tail
+replay, and pruning are not yet connected to catch-up; there is no fork-choice
+protocol.
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through
 validator-to-validator quorum timeout certificates. Consensus now has distinct

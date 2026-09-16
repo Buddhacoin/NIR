@@ -106,6 +106,18 @@ proofs between an old trust anchor and a newer validator set, and pruning are
 still deliberately disabled. Accepting a snapshot merely because its file hash
 is valid would weaken full replay rather than improve it.
 
+Snapshot selection accepts only unique authenticated source identifiers and
+requires matching data from at least two independent sources. Invalid sources
+are ignored, while two different valid quorum snapshots at the same height fail
+closed because they are evidence of validator equivocation or a broken trust
+assumption. The highest sufficiently replicated snapshot is selected.
+
+The staging store installs a selected snapshot with restricted permissions,
+`fsync`, atomic rename, and primary plus backup copies. Startup verification can
+repair one damaged copy, rejects conflicting copies and symbolic-link storage,
+and refuses to install an older height over a newer snapshot. This store is not
+yet connected to automatic P2P download or journal pruning.
+
 ## Run
 
 ```bash

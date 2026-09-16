@@ -36,6 +36,9 @@ or an exploit against a live third-party system in a public issue.
 - canonical full-state snapshot serialization with a separate content hash,
   recomputed state and capability-memory roots, active-set binding, and unique
   `2N/3 + 1` ML-DSA validator attestations;
+- multi-source snapshot agreement with same-height conflict detection, atomic
+  redundant staging, verified repair, size and symlink limits, and rollback
+  protection;
 - `2N/3 + 1` quorum certificates with unique validator votes;
 - disjoint evaluator and consensus key/operator registries;
 - an operator-security prototype with credentials from two independent
@@ -158,8 +161,9 @@ or an exploit against a live third-party system in a public issue.
    Protocol version 6 commits the complete deterministic state root. Canonical
    snapshot export, trust-anchored quorum verification, typed in-memory restore,
    root revalidation, and post-checkpoint block continuation are implemented.
-   Atomic disk installation, validator-rotation proofs, and multi-peer selection
-   are not.
+   Multi-source selection and atomic redundant disk staging are implemented.
+   Snapshot RPC, authenticated source collection, validator-rotation proofs,
+   journal-tail integration, and pruning are not.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.

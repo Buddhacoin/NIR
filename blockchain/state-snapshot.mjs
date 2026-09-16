@@ -4,7 +4,7 @@ import { capabilityMemorySnapshotRoot } from "./memory.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 
 const FORMAT = "nir-state-snapshot-v1";
-const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
+export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 
 function snapshotPayload(chain) {
   const exported = chain.consensusSnapshot();
@@ -119,4 +119,51 @@ export function verifyStateSnapshot(snapshot, { expectedNetworkId, trustedValida
 export function restoreStateSnapshot(genesisConfig, snapshot, trustAnchor) {
   verifyStateSnapshot(snapshot, trustAnchor);
   return NirChain.fromVerifiedSnapshot(genesisConfig, snapshot);
+}
+
+export function selectStateSnapshot(candidates, trustAnchor, { minimumSources = 2 } = {}) {
+  if (!Array.isArray(candidates) || candidates.length === 0 ||
+      !Number.isSafeInteger(minimumSources) || minimumSources < 2 || minimumSources > 128) {
+    throw new Error("snapshot candidate selection is invalid");
+  }
+  const seenSources = new Set();
+  const groups = new Map();
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate.source !== "string" ||
+        candidate.source.length < 1 || Buffer.byteLength(candidate.source) > 256 ||
+        seenSources.has(candidate.source)) {
+      throw new Error("snapshot sources must be unique canonical identifiers");
+    }
+    seenSources.add(candidate.source);
+    try {
+      const verified = verifyStateSnapshot(candidate.snapshot, trustAnchor);
+      const key = `${verified.height}:${verified.snapshotHash}`;
+      const group = groups.get(key) ?? {
+        snapshot: structuredClone(candidate.snapshot), sources: [], verified,
+      };
+      group.sources.push(candidate.source);
+      groups.set(key, group);
+    } catch {
+      // A Byzantine or stale source cannot prevent selection from enough valid peers.
+    }
+  }
+  const byHeight = new Map();
+  for (const group of groups.values()) {
+    const hashes = byHeight.get(group.verified.height) ?? new Set();
+    hashes.add(group.verified.snapshotHash);
+    byHeight.set(group.verified.height, hashes);
+  }
+  for (const hashes of byHeight.values()) {
+    if (hashes.size > 1) throw new Error("conflicting quorum snapshots exist at the same height");
+  }
+  const eligible = [...groups.values()]
+    .filter(({ sources }) => sources.length >= minimumSources)
+    .sort((left, right) => right.verified.height - left.verified.height);
+  if (eligible.length === 0) throw new Error("no state snapshot has enough independent sources");
+  const selected = eligible[0];
+  return {
+    snapshot: selected.snapshot,
+    sources: [...selected.sources].sort(),
+    verified: structuredClone(selected.verified),
+  };
 }
