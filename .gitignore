@@ -10,3 +10,7 @@ DEVNET-KEYS.json
 TREASURY-DEV-KEY.json
 VALIDATOR-KEY.json
 COORDINATOR-KEY.json
+*.nirvault
+*.nirvault.json
+*.nirkey
+release-key.nir

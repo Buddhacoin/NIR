@@ -1,4 +1,12 @@
-import { chmodSync, closeSync, fchmodSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 
 import { createTransfer } from "./chain.mjs";
@@ -6,7 +14,13 @@ import { addressFromPublicKey, generateWallet } from "./crypto.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 
 function readVault(path) {
-  return JSON.parse(readFileSync(resolve(path), "utf8"));
+  const target = resolve(path);
+  const metadata = lstatSync(target);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 64 * 1024 ||
+      (metadata.mode & 0o077) !== 0) {
+    throw new Error("wallet vault must be a private bounded regular file");
+  }
+  return JSON.parse(readFileSync(target, "utf8"));
 }
 
 export function createWalletFile({ path, password, label = "NIR wallet" }) {
@@ -34,5 +48,12 @@ export function walletPublicInfo(path) {
 
 export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee }) {
   const wallet = decryptWallet(readVault(path), password);
-  return createTransfer({ wallet, networkId, recipient, amount, nonce, ...(fee === undefined ? {} : { fee }) });
+  try {
+    return createTransfer({
+      wallet, networkId, recipient, amount, nonce,
+      ...(fee === undefined ? {} : { fee }),
+    });
+  } finally {
+    wallet.privateKey = "";
+  }
 }

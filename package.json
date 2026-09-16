@@ -14,6 +14,7 @@
     "wallet:create": "node blockchain/wallet-cli.mjs create",
     "wallet:address": "node blockchain/wallet-cli.mjs address",
     "wallet:sign": "node blockchain/wallet-cli.mjs sign",
+    "wallet:bridge": "node blockchain/wallet-bridge-cli.mjs",
     "beacon:serve": "node blockchain/beacon-service.mjs",
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "node:init-dev": "node blockchain/node-cli.mjs init-dev",

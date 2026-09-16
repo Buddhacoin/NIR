@@ -19,7 +19,9 @@ Implemented and continuously tested:
   handoff plus endpoint-topology recovery, restart, and retirement;
 - snapshot recovery across two ordered validator generations, with exact
   activation-block binding and one-block journal-tail replay;
-- a local wallet preview and valueless mining demonstration.
+- a local wallet preview and valueless mining demonstration;
+- a loopback-only, exact-origin wallet bridge with per-request terminal approval,
+  encrypted-vault password entry, replay protection, and no broadcast authority.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR
 has market value.

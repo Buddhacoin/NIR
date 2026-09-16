@@ -22,6 +22,35 @@ user to type `SIGN`. Password input is hidden and is not accepted through an
 argument or environment variable. The resulting signed transaction contains no
 private key.
 
+## Local browser signing bridge
+
+The optional bridge keeps the encrypted vault and decrypted signing operation
+outside the browser. Start it for one exact wallet origin:
+
+```bash
+npm run wallet:bridge -- \
+  /absolute/path/personal.nirvault.json 8788 http://127.0.0.1:8765
+```
+
+At startup it prints a random one-session token. The browser must present that
+token to read the public wallet identity or request a signature. The bridge
+binds only to `127.0.0.1`, checks the exact `Origin` and loopback `Host`, permits
+only one pending confirmation, and rejects reuse of a request ID. Every signing
+request is printed in the terminal; the user must type `SIGN` and then enter the
+vault password. The password is never accepted through HTTP, command arguments,
+or environment variables, and the response contains only the signed transaction.
+
+The bridge deliberately has no broadcast endpoint. Review and submission to a
+node remain separate actions, limiting the damage from a compromised interface.
+The session token is not a recovery secret: it expires when the bridge process
+stops, should be pasted only into the intended local UI, and must never be put
+in a URL. Close the terminal process when finished.
+
+For an unpacked extension, pass its exact stable
+`chrome-extension://<32-character-id>` origin instead. Do not allow a wildcard
+origin. This bridge is locally tested but has not received an external security
+audit and must not yet protect real-value funds.
+
 Use a randomly generated passphrase of at least six unrelated words and keep
 the recovery copies offline in separate places. The software rejects very short
 or excessively large passwords and malformed encrypted fields, but a memorable
@@ -38,8 +67,9 @@ hardware-key support, multisignature recovery, and optional selective privacy.
 `wallet-ui/` contains the first responsive interface and an installable PWA
 manifest. It can also be loaded as an unpacked browser-extension preview through
 its Manifest V3 file. The preview intentionally has no website permissions and
-does not handle secret keys: the audited wallet bridge, chain synchronization,
-and transaction broadcast must be implemented before those buttons become live.
+does not handle secret keys: bridge integration, chain synchronization, and
+reviewed transaction broadcast must be completed before those buttons become
+live.
 
 Run `npm run wallet:preview` and open `http://localhost:8765` to inspect it. A
 packaged desktop download will wrap the same reviewed interface. During
