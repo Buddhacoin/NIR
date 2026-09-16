@@ -16,12 +16,18 @@ import { dirname, join, resolve } from "node:path";
 
 import { NirChain } from "./chain.mjs";
 import { hashObject } from "./crypto.mjs";
+import { installStateSnapshot, loadInstalledStateSnapshot } from "./snapshot-store.mjs";
 
 const BACKUP_DIRECTORY = "block-backups";
 const BLOCKS_DIRECTORY = "blocks";
 const CHECKPOINT_BACKUP_FILE = "STORE-CHECKPOINT.backup.json";
 const CHECKPOINT_FILE = "STORE-CHECKPOINT.json";
-const FORMAT = "nir-block-store-v1";
+const FORMAT_V1 = "nir-block-store-v1";
+const FORMAT = "nir-block-store-v2";
+const SNAPSHOTS_DIRECTORY = "snapshots";
+const PRUNE_DIRECTORY = "prune-quarantine";
+const PRUNE_MANIFEST = "PRUNE-MANIFEST.json";
+const PRUNE_VERIFIED = "PRUNE-VERIFIED.json";
 const BLOCK_NAME = /^[0-9]{12}\.json$/;
 
 function serialized(value) {
@@ -61,12 +67,16 @@ function blockName(height) {
 }
 
 function checkpointPayload(chain) {
-  const blocks = chain.blocks().slice(1).map((block) => {
+  const retained = chain.blocks();
+  const base = retained[0];
+  const blocks = retained.slice(1).map((block) => {
     const contents = serialized(block);
     return { blockHash: block.hash, fileSha256: fileSha256(contents), height: block.height };
   });
   return {
     blocks,
+    baseHash: base.hash,
+    baseHeight: base.height,
     format: FORMAT,
     height: chain.height,
     networkId: chain.networkId,
@@ -80,26 +90,36 @@ function createCheckpoint(chain) {
 }
 
 function verifyCheckpoint(value, networkId) {
-  if (!value || value.format !== FORMAT || value.networkId !== networkId ||
+  if (!value || ![FORMAT, FORMAT_V1].includes(value.format) || value.networkId !== networkId ||
       !Number.isSafeInteger(value.height) || value.height < 0 ||
       !/^[0-9a-f]{64}$/.test(value.tipHash ?? "") ||
-      !Array.isArray(value.blocks) || value.blocks.length !== value.height) {
+      !Array.isArray(value.blocks)) {
     throw new Error("block-store checkpoint header is invalid");
   }
+  const baseHeight = value.format === FORMAT_V1 ? 0 : value.baseHeight;
+  const baseHash = value.format === FORMAT_V1 ? null : value.baseHash;
+  if (!Number.isSafeInteger(baseHeight) || baseHeight < 0 || baseHeight > value.height ||
+      (value.format === FORMAT && !/^[0-9a-f]{64}$/.test(baseHash ?? "")) ||
+      value.blocks.length !== value.height - baseHeight) {
+    throw new Error("block-store checkpoint base is invalid");
+  }
   for (const [index, entry] of value.blocks.entries()) {
-    if (entry?.height !== index + 1 || !/^[0-9a-f]{64}$/.test(entry.blockHash ?? "") ||
+    if (entry?.height !== baseHeight + index + 1 || !/^[0-9a-f]{64}$/.test(entry.blockHash ?? "") ||
         !/^[0-9a-f]{64}$/.test(entry.fileSha256 ?? "")) {
       throw new Error("block-store checkpoint entries are invalid");
     }
   }
-  if (value.height > 0 && value.blocks.at(-1).blockHash !== value.tipHash) {
+  if (value.blocks.length > 0 && value.blocks.at(-1).blockHash !== value.tipHash) {
     throw new Error("block-store checkpoint tip is inconsistent");
+  }
+  if (value.blocks.length === 0 && baseHash !== null && baseHash !== value.tipHash) {
+    throw new Error("block-store checkpoint base tip is inconsistent");
   }
   const { checkpointHash, ...payload } = value;
   if (checkpointHash !== hashObject(payload, "BLOCK_STORE_CHECKPOINT")) {
     throw new Error("block-store checkpoint checksum mismatch");
   }
-  return structuredClone(value);
+  return { ...structuredClone(value), baseHash, baseHeight };
 }
 
 function readCheckpoint(path, networkId) {
@@ -137,7 +157,10 @@ export function initializeBlockStore(directory, chain) {
   writeCheckpoint(root, chain);
 }
 
-export function loadBlockStore(directory, genesis) {
+export function loadBlockStore(directory, genesis, {
+  handoffs = [],
+  trustedValidators = genesis.validators,
+} = {}) {
   const root = resolve(directory);
   mkdirSync(join(root, BLOCKS_DIRECTORY), { recursive: true, mode: 0o700 });
   mkdirSync(join(root, BACKUP_DIRECTORY), { recursive: true, mode: 0o700 });
@@ -163,14 +186,30 @@ export function loadBlockStore(directory, genesis) {
   const lastHeight = heights.reduce(
     (maximum, height) => Math.max(maximum, height), checkpoint?.height ?? 0,
   );
-  let chain = new NirChain(genesis);
-  if (checkpoint?.height === 0 && checkpoint.tipHash !== chain.tipHash) {
+  const trustAnchor = { expectedNetworkId: genesis.networkId, handoffs, trustedValidators };
+  const installed = loadInstalledStateSnapshot(
+    join(root, SNAPSHOTS_DIRECTORY), genesis, trustAnchor,
+  );
+  let chain = installed?.chain ?? new NirChain(genesis);
+  const baseHeight = chain.height;
+  const baseHash = chain.tipHash;
+  if (checkpoint?.baseHeight > 0 && !installed) {
+    throw new Error("block-store snapshot base is missing");
+  }
+  if (checkpoint && checkpoint.baseHeight === baseHeight && checkpoint.baseHash !== null &&
+      checkpoint.baseHash !== baseHash) {
+    throw new Error("block-store checkpoint snapshot base is invalid");
+  }
+  if (checkpoint?.height === 0 && baseHeight === 0 && checkpoint.tipHash !== chain.tipHash) {
     throw new Error("block-store checkpoint genesis tip is invalid");
   }
   let recoveredCopies = 0;
-  for (let height = 1; height <= lastHeight; height += 1) {
+  for (let height = baseHeight + 1; height <= lastHeight; height += 1) {
     const name = blockName(height);
-    const expected = height <= (checkpoint?.height ?? 0) ? checkpoint.blocks[height - 1] : null;
+    const checkpointMatchesBase = checkpoint?.baseHeight === baseHeight &&
+      (checkpoint.baseHash === null || checkpoint.baseHash === baseHash);
+    const expected = checkpointMatchesBase && height <= checkpoint.height
+      ? checkpoint.blocks[height - checkpoint.baseHeight - 1] : null;
     const primary = readCandidate(join(primaryDirectory, name), expected);
     const backup = readCandidate(join(backupDirectory, name), expected);
     const candidates = [primary, backup].filter(Boolean);
@@ -232,13 +271,166 @@ export function persistBlock(directory, block, verifiedChain) {
   writeCheckpoint(root, verifiedChain);
 }
 
-export function exportBlockStoreBackup(directory, destination, genesis) {
-  const source = loadBlockStore(directory, genesis);
+export function installBlockStoreSnapshot(directory, genesis, snapshot, {
+  handoffs = [],
+  trustedValidators = genesis.validators,
+} = {}) {
+  const root = resolve(directory);
+  const trustAnchor = { expectedNetworkId: genesis.networkId, handoffs, trustedValidators };
+  const installed = installStateSnapshot(
+    join(root, SNAPSHOTS_DIRECTORY), genesis, snapshot, trustAnchor,
+  );
+  const loaded = loadBlockStore(root, genesis, { handoffs, trustedValidators });
+  if (loaded.chain.height < installed.height) {
+    throw new Error("installed snapshot did not become the block-store base");
+  }
+  return { ...installed, chain: loaded.chain, recoveredCopies: loaded.recoveredCopies };
+}
+
+function pruningDirectories(root) {
+  const path = join(root, PRUNE_DIRECTORY);
+  if (!existsSync(path)) return [];
+  return readdirSync(path, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(path, entry.name));
+}
+
+function readPruneManifest(path) {
+  try {
+    const value = JSON.parse(readFileSync(join(path, PRUNE_MANIFEST), "utf8"));
+    if (value?.format !== "nir-prune-quarantine-v1" ||
+        !Number.isSafeInteger(value.baseHeight) || value.baseHeight < 1 ||
+        !/^[0-9a-f]{64}$/.test(value.baseHash ?? "") ||
+        !Array.isArray(value.files) || value.files.some((file) =>
+          ![BLOCKS_DIRECTORY, BACKUP_DIRECTORY].includes(file?.folder) ||
+          !BLOCK_NAME.test(file?.name))) throw new Error("invalid");
+    return value;
+  } catch {
+    throw new Error("block pruning manifest is invalid");
+  }
+}
+
+function completeStagedMoves(root, quarantine, manifest) {
+  for (const file of manifest.files) {
+    const source = join(root, file.folder, file.name);
+    const target = join(quarantine, file.folder, file.name);
+    const sourceExists = existsSync(source);
+    const targetExists = existsSync(target);
+    if (sourceExists && targetExists) {
+      if (readFileSync(source, "utf8") !== readFileSync(target, "utf8")) {
+        throw new Error("block pruning copies conflict");
+      }
+      rmSync(source);
+    } else if (sourceExists) {
+      renameSync(source, target);
+    } else if (!targetExists) {
+      throw new Error("a staged pruning block is missing");
+    }
+  }
+  for (const folder of [BLOCKS_DIRECTORY, BACKUP_DIRECTORY]) {
+    syncDirectory(join(root, folder));
+    syncDirectory(join(quarantine, folder));
+  }
+}
+
+export function stageBlockPruning(directory, genesis, options = {}) {
+  const root = resolve(directory);
+  const loaded = loadBlockStore(root, genesis, options);
+  const base = loaded.chain.blocks()[0];
+  if (base.height < 1) throw new Error("block pruning requires an installed state snapshot");
+  const quarantine = join(root, PRUNE_DIRECTORY, `${String(base.height).padStart(12, "0")}-${base.hash}`);
+  if (existsSync(quarantine)) throw new Error("block pruning is already staged for this snapshot");
+  const files = [];
+  for (const folder of [BLOCKS_DIRECTORY, BACKUP_DIRECTORY]) {
+    for (const height of heightsIn(join(root, folder)).filter((value) => value <= base.height)) {
+      files.push({ folder, name: blockName(height) });
+    }
+  }
+  files.sort((left, right) =>
+    `${left.folder}/${left.name}`.localeCompare(`${right.folder}/${right.name}`));
+  for (const folder of [BLOCKS_DIRECTORY, BACKUP_DIRECTORY]) {
+    mkdirSync(join(quarantine, folder), { recursive: true, mode: 0o700 });
+  }
+  const manifest = {
+    baseHash: base.hash,
+    baseHeight: base.height,
+    files,
+    format: "nir-prune-quarantine-v1",
+    networkId: genesis.networkId,
+  };
+  writeAtomic(join(quarantine, PRUNE_MANIFEST), serialized(manifest));
+  completeStagedMoves(root, quarantine, manifest);
+  return { baseHash: base.hash, baseHeight: base.height, movedFiles: files.length, quarantine };
+}
+
+export function verifyStagedBlockPruning(directory, genesis, options = {}) {
+  const root = resolve(directory);
+  const quarantines = pruningDirectories(root);
+  if (quarantines.length === 0) throw new Error("no staged block pruning exists");
+  for (const quarantine of quarantines) {
+    const manifest = readPruneManifest(quarantine);
+    completeStagedMoves(root, quarantine, manifest);
+  }
+  const loaded = loadBlockStore(root, genesis, options);
+  const base = loaded.chain.blocks()[0];
+  for (const quarantine of quarantines) {
+    const manifest = readPruneManifest(quarantine);
+    if (manifest.networkId !== genesis.networkId || manifest.baseHeight !== base.height ||
+        manifest.baseHash !== base.hash) {
+      throw new Error("staged block pruning does not match the verified snapshot base");
+    }
+    writeAtomic(join(quarantine, PRUNE_VERIFIED), serialized({
+      baseHash: base.hash,
+      baseHeight: base.height,
+      checkpointHash: loaded.checkpoint.checkpointHash,
+      format: "nir-prune-verification-v1",
+      networkId: genesis.networkId,
+    }));
+  }
+  return { baseHeight: base.height, quarantines: quarantines.length, verifiedHeight: loaded.chain.height };
+}
+
+export function finalizeBlockPruning(directory, genesis, options = {}) {
+  const root = resolve(directory);
+  const quarantines = pruningDirectories(root);
+  if (quarantines.length === 0) throw new Error("no staged block pruning exists");
+  const loaded = loadBlockStore(root, genesis, options);
+  const base = loaded.chain.blocks()[0];
+  let deletedFiles = 0;
+  for (const quarantine of quarantines) {
+    const manifest = readPruneManifest(quarantine);
+    let verification;
+    try { verification = JSON.parse(readFileSync(join(quarantine, PRUNE_VERIFIED), "utf8")); }
+    catch { throw new Error("block pruning has not passed restart verification"); }
+    if (verification?.format !== "nir-prune-verification-v1" ||
+        verification.networkId !== genesis.networkId ||
+        verification.baseHeight !== manifest.baseHeight || verification.baseHash !== manifest.baseHash ||
+        base.height !== manifest.baseHeight || base.hash !== manifest.baseHash) {
+      throw new Error("block pruning verification is stale or invalid");
+    }
+    deletedFiles += manifest.files.length;
+    rmSync(quarantine, { recursive: true });
+  }
+  syncDirectory(join(root, PRUNE_DIRECTORY));
+  return { baseHeight: base.height, deletedFiles, verifiedHeight: loaded.chain.height };
+}
+
+export function exportBlockStoreBackup(directory, destination, genesis, options = {}) {
+  const source = loadBlockStore(directory, genesis, options);
   const target = resolve(destination);
   mkdirSync(target, { mode: 0o700 });
   writeAtomic(join(target, "genesis.json"), serialized(genesis), 0o644);
-  const backupChain = new NirChain(genesis);
+  let backupChain = new NirChain(genesis);
   initializeBlockStore(target, backupChain);
+  if (source.chain.blocks()[0].height > 0) {
+    const installed = loadInstalledStateSnapshot(
+      join(resolve(directory), SNAPSHOTS_DIRECTORY), genesis,
+      { expectedNetworkId: genesis.networkId, handoffs: options.handoffs ?? [],
+        trustedValidators: options.trustedValidators ?? genesis.validators },
+    );
+    if (!installed) throw new Error("pruned block-store backup requires its installed snapshot");
+    backupChain = installBlockStoreSnapshot(target, genesis, installed.snapshot, options).chain;
+  }
   for (const block of source.chain.blocks().slice(1)) {
     backupChain.appendBlock(block);
     persistBlock(target, block, backupChain);

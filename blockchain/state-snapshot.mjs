@@ -2,6 +2,7 @@ import { NirChain, blockHash, computeChainStateRoot } from "./chain.mjs";
 import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
 import { capabilityMemorySnapshotRoot } from "./memory.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
+import { advanceValidatorTrust } from "./validator-handoff.mjs";
 
 const FORMAT = "nir-state-snapshot-v1";
 export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -132,6 +133,17 @@ export function verifyStateSnapshot(snapshot, trustAnchor) {
   return content.verified;
 }
 
+export function verifyStateSnapshotWithHandoffs(snapshot, trustAnchor) {
+  const { lastHandoff, trustedValidators } = advanceValidatorTrust(trustAnchor);
+  if (lastHandoff && snapshot?.height < lastHandoff.activationHeight) {
+    throw new Error("state snapshot predates its validator handoff");
+  }
+  return verifyStateSnapshot(snapshot, {
+    expectedNetworkId: trustAnchor?.expectedNetworkId,
+    trustedValidators,
+  });
+}
+
 export function verifyStateSnapshotCandidate(snapshot, trustAnchor, expectedValidator = null) {
   const content = verifySnapshotContent(snapshot, trustAnchor);
   const seen = verifySnapshotAttestations(
@@ -196,6 +208,11 @@ export function mergeStateSnapshotCandidates(candidates, trustAnchor) {
 
 export function restoreStateSnapshot(genesisConfig, snapshot, trustAnchor) {
   verifyStateSnapshot(snapshot, trustAnchor);
+  return NirChain.fromVerifiedSnapshot(genesisConfig, snapshot);
+}
+
+export function restoreStateSnapshotWithHandoffs(genesisConfig, snapshot, trustAnchor) {
+  verifyStateSnapshotWithHandoffs(snapshot, trustAnchor);
   return NirChain.fromVerifiedSnapshot(genesisConfig, snapshot);
 }
 

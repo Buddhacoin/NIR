@@ -322,8 +322,10 @@ is tried instead.
 The assembled snapshot is fully verified and atomically staged in
 `<coordinator>/snapshots/STATE-SNAPSHOT.json` with a redundant backup. The HTTP
 response contains only its height, hashes, and signature counts, never private
-keys. This local endpoint creates a checkpoint; it does not yet instruct a new
-node to replace its journal or delete history.
+keys. The block store can install that snapshot as an explicit base, replay
+later journal blocks, survive restart, and prune older blocks through quarantine
+plus a separate restart-verification marker. These library operations are not
+yet exposed as an unauthenticated public administration endpoint.
 
 ## Remaining production boundary
 
@@ -336,9 +338,11 @@ Automated certificate lifecycle and coordinator-key rotation are not governed
 on-chain, validator-set/peer-registry rotation is not yet one atomic transition,
 and catch-up is sequential. A quorum-authenticated snapshot format, signed RPC,
 authenticated source collection, typed restore, and atomic redundant staging
-now exist, but validator-rotation proofs, journal-tail replay, joining-node
-installation, and pruning are not yet connected to catch-up; there is no
-fork-choice protocol.
+now exist. Dual-quorum rotation handoff verification, journal-tail replay,
+joining-node installation, portable pruned backups, and two-stage pruning are
+implemented locally. Automatic handoff production at activation, multi-peer
+snapshot download by a joining validator, and operator-run production recovery
+drills remain; there is no fork-choice protocol.
 
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through

@@ -13,6 +13,16 @@ import {
   loadInstalledStateSnapshot,
 } from "../blockchain/snapshot-store.mjs";
 import { createStateSnapshot, selectStateSnapshot } from "../blockchain/state-snapshot.mjs";
+import {
+  initializeBlockStore,
+  exportBlockStoreBackup,
+  finalizeBlockPruning,
+  installBlockStoreSnapshot,
+  loadBlockStore,
+  persistBlock,
+  stageBlockPruning,
+  verifyStagedBlockPruning,
+} from "../blockchain/block-store.mjs";
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -102,6 +112,74 @@ test("installed snapshots are atomic, redundant, repairable, and rollback protec
     assert.throws(() => installStateSnapshot(root, genesisConfig, first, trustAnchor),
       /rollback is not allowed/);
     assert.equal(loadInstalledStateSnapshot(root, genesisConfig, trustAnchor).chain.height, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a joining node starts at a verified snapshot and replays only the journal tail", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-snapshot-join-"));
+  const { chain, genesisConfig, trustAnchor, validators } = fixture();
+  try {
+    const snapshot = createStateSnapshot(chain, validators.slice(0, 3));
+    initializeBlockStore(root, new NirChain(genesisConfig));
+    const installed = installBlockStoreSnapshot(root, genesisConfig, snapshot, {
+      trustedValidators: trustAnchor.trustedValidators,
+    });
+    assert.equal(installed.chain.height, 1);
+    assert.equal(installed.chain.blocks().length, 1);
+
+    const proposal = chain.buildBlock({ timestamp: 2 });
+    const tail = finalizeBlock(proposal, validators.slice(0, 3));
+    chain.appendBlock(tail);
+    installed.chain.appendBlock(tail);
+    persistBlock(root, tail, installed.chain);
+
+    const restarted = loadBlockStore(root, genesisConfig);
+    assert.equal(restarted.chain.height, 2);
+    assert.equal(restarted.chain.tipHash, chain.tipHash);
+    assert.equal(restarted.chain.stateRoot, chain.stateRoot);
+    assert.equal(restarted.chain.blocks().length, 2);
+    const checkpoint = JSON.parse(readFileSync(join(root, "STORE-CHECKPOINT.json"), "utf8"));
+    assert.equal(checkpoint.baseHeight, 1);
+    assert.equal(checkpoint.blocks.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("old journal blocks are quarantined and deleted only after restart verification", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-snapshot-prune-"));
+  const { chain, genesisConfig, trustAnchor, validators } = fixture();
+  try {
+    const block1 = chain.blocks().at(-1);
+    initializeBlockStore(root, new NirChain(genesisConfig));
+    const replay = new NirChain(genesisConfig);
+    replay.appendBlock(block1);
+    persistBlock(root, block1, replay);
+    const snapshot = createStateSnapshot(chain, validators.slice(0, 3));
+
+    const proposal = chain.buildBlock({ timestamp: 2 });
+    const block2 = finalizeBlock(proposal, validators.slice(0, 3));
+    chain.appendBlock(block2);
+    replay.appendBlock(block2);
+    persistBlock(root, block2, replay);
+    installBlockStoreSnapshot(root, genesisConfig, snapshot);
+
+    const staged = stageBlockPruning(root, genesisConfig);
+    assert.equal(staged.baseHeight, 1);
+    assert.equal(staged.movedFiles, 2);
+    assert.throws(() => finalizeBlockPruning(root, genesisConfig), /restart verification/);
+    assert.equal(loadBlockStore(root, genesisConfig).chain.tipHash, chain.tipHash);
+
+    const verified = verifyStagedBlockPruning(root, genesisConfig);
+    assert.equal(verified.verifiedHeight, 2);
+    const finalized = finalizeBlockPruning(root, genesisConfig);
+    assert.equal(finalized.deletedFiles, 2);
+    assert.equal(loadBlockStore(root, genesisConfig).chain.tipHash, chain.tipHash);
+    const backup = join(root, "portable-backup");
+    exportBlockStoreBackup(root, backup, genesisConfig);
+    assert.equal(loadBlockStore(backup, genesisConfig).chain.tipHash, chain.tipHash);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

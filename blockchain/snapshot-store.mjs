@@ -16,8 +16,8 @@ import { dirname, join, resolve } from "node:path";
 
 import {
   MAX_SNAPSHOT_BYTES,
-  restoreStateSnapshot,
-  verifyStateSnapshot,
+  restoreStateSnapshotWithHandoffs,
+  verifyStateSnapshotWithHandoffs,
 } from "./state-snapshot.mjs";
 
 const PRIMARY = "STATE-SNAPSHOT.json";
@@ -59,8 +59,8 @@ function readCandidate(path, genesisConfig, trustAnchor) {
     if (!existsSync(path) || lstatSync(path).isSymbolicLink() ||
         statSync(path).size > MAX_SNAPSHOT_BYTES) return null;
     const snapshot = JSON.parse(readFileSync(path, "utf8"));
-    const verified = verifyStateSnapshot(snapshot, trustAnchor);
-    const chain = restoreStateSnapshot(genesisConfig, snapshot, trustAnchor);
+    const verified = verifyStateSnapshotWithHandoffs(snapshot, trustAnchor);
+    const chain = restoreStateSnapshotWithHandoffs(genesisConfig, snapshot, trustAnchor);
     return { chain, contents: serialized(snapshot), snapshot, verified };
   } catch {
     return null;
@@ -73,8 +73,8 @@ export function installStateSnapshot(directory, genesisConfig, snapshot, trustAn
     throw new Error("state snapshot directory cannot be a symbolic link");
   }
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  const verified = verifyStateSnapshot(snapshot, trustAnchor);
-  restoreStateSnapshot(genesisConfig, snapshot, trustAnchor);
+  const verified = verifyStateSnapshotWithHandoffs(snapshot, trustAnchor);
+  restoreStateSnapshotWithHandoffs(genesisConfig, snapshot, trustAnchor);
   const paths = [join(root, PRIMARY), join(root, BACKUP)];
   const existing = paths.map((path) => readCandidate(path, genesisConfig, trustAnchor))
     .filter(Boolean).sort((left, right) => right.verified.height - left.verified.height)[0];

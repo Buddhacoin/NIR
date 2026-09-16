@@ -27,8 +27,10 @@ Required before inviting unknown operators:
   selection, and production denial-of-service controls; signed seed discovery,
   bounded application ingress, pinned TLS 1.3, and quorum-signed endpoint and
   transport-identity rotation with on-chain rollback protection are implemented;
-- a production database with fast state snapshots, pruning, remote backup
-  coordination, and snapshot catch-up from multiple peers; fsync-backed block
+- a production database and operational recovery drills around the implemented
+  quorum snapshots, tail replay, two-stage pruning, and portable backups;
+  automated snapshot catch-up from multiple peers and remote backup
+  coordination remain; fsync-backed block
   writes, checksummed journal checkpoints, local redundancy, verified repair,
   key-free portable chain backups, and a full consensus-state root in every
   protocol-v6 block are implemented;

@@ -95,16 +95,21 @@ recomputes the snapshot hash, complete state root, capability-memory root,
 validator-set identifier, every signature, and quorum. The trusted validator
 set and network identifier must come from a local finalized checkpoint or
 genesis; a downloaded snapshot is never allowed to declare its own trust
-anchor. Mutation, minority approval, self-signed replacement sets, and duplicate
-votes fail closed.
+anchor. When validators have rotated, every step is a domain-separated handoff
+signed by `2N/3 + 1` members of both the previous and next sets. Handoffs bind
+the network, activation height, activation block hash, state root, complete next
+membership, and both set identifiers. Heights must increase and each handoff
+must retain the protocol's minimum one-third overlap. Mutation, minority
+approval, skipped links, self-signed replacement sets, and duplicate votes fail
+closed.
 
 The core importer restores every typed consensus collection (`BigInt`, `Map`,
 `Set`, capability memory, validators, bonds, and replay protection), recomputes
-the root, and can validate and append the first block after the checkpoint.
-Network download, durable atomic installation, multi-peer selection, rotation
-proofs between an old trust anchor and a newer validator set, and pruning are
-still deliberately disabled. Accepting a snapshot merely because its file hash
-is valid would weaken full replay rather than improve it.
+the root, and validates the first and every later block after the checkpoint.
+The block-store v2 checkpoint records its explicit snapshot base, so a joining
+node can start at a quorum snapshot and replay only the journal tail. Accepting
+a snapshot merely because its file hash is valid would weaken full replay;
+installation always retains the local network and validator trust anchor.
 
 Snapshot selection accepts only unique authenticated source identifiers and
 requires matching data from at least two independent sources. Invalid sources
@@ -115,8 +120,11 @@ assumption. The highest sufficiently replicated snapshot is selected.
 The staging store installs a selected snapshot with restricted permissions,
 `fsync`, atomic rename, and primary plus backup copies. Startup verification can
 repair one damaged copy, rejects conflicting copies and symbolic-link storage,
-and refuses to install an older height over a newer snapshot. This store is not
-yet connected to automatic P2P download or journal pruning.
+and refuses to install an older height over a newer snapshot. Old journal files
+are pruned in two explicit phases: staging moves only blocks at or below the
+snapshot height into quarantine; a separate restart verification reconstructs
+the tip from snapshot plus tail; only then can finalization delete quarantine.
+Portable public backups preserve the snapshot as well as the remaining tail.
 
 The distributed devnet now exposes coordinator-authenticated snapshot RPCs.
 One validator supplies the full candidate; every other validator independently
@@ -125,6 +133,12 @@ responses are already authenticated by the existing replay-resistant peer
 channel, while snapshot approvals use the validator consensus keys. The
 coordinator retries another full-state source when the first cannot obtain a
 quorum.
+
+The handoff format and verifier are implemented and adversarially tested. The
+remaining integration boundary is automatic creation and durable distribution
+of each handoff by the old and new validator processes at the actual activation
+block. Until that is connected, a network that has rotated validators must not
+claim unattended snapshot bootstrap across that rotation.
 
 ## Run
 
