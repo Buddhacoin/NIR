@@ -117,7 +117,11 @@ export function selectValidatorTopologyHistoryCandidates(candidates, context = {
       // One malformed source cannot suppress a valid independently signed history.
     }
   }
-  if (valid.length === 0) throw new Error("no valid validator topology candidate exists");
+  if (valid.length === 0) {
+    const error = new Error("no valid validator topology candidate exists");
+    error.code = "ERR_NO_VALID_TOPOLOGY";
+    throw error;
+  }
   valid.sort((left, right) => right.handoffs.length - left.handoffs.length);
   const selected = valid[0];
   for (const candidate of valid.slice(1)) {
@@ -126,7 +130,9 @@ export function selectValidatorTopologyHistoryCandidates(candidates, context = {
       if (selected.handoffs[index].handoffHash !== candidate.handoffs[index].handoffHash ||
           selected.onboardings[index].onboardingHash !==
             candidate.onboardings[index].onboardingHash) {
-        throw new Error("authenticated validator topology candidates conflict");
+        const error = new Error("authenticated validator topology candidates conflict");
+        error.code = "ERR_TOPOLOGY_CONFLICT";
+        throw error;
       }
     }
   }

@@ -140,7 +140,14 @@ test("candidate selection accepts stale prefixes but rejects valid divergent his
     genesisPeerRegistry: values.context.genesisPeerRegistry,
     genesisValidators: values.context.genesisValidators,
     networkId: values.context.networkId,
-  }), /conflict/);
+  }), (error) => error.code === "ERR_TOPOLOGY_CONFLICT" && /conflict/.test(error.message));
+  assert.throws(() => selectValidatorTopologyHistoryCandidates([
+    { handoffs: [], onboardings: [values.onboardings[0]] },
+  ], {
+    genesisPeerRegistry: values.context.genesisPeerRegistry,
+    genesisValidators: values.context.genesisValidators,
+    networkId: values.context.networkId,
+  }), (error) => error.code === "ERR_NO_VALID_TOPOLOGY");
 });
 
 test("topology history is atomically redundant and repairs one damaged copy", () => {

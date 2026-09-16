@@ -92,8 +92,9 @@ async function discoverRecoveryPeers(validator, peers) {
     try {
       const installed = validator.installValidatorRecoveryHistoryCandidates(histories);
       return { installedHandoffs: installed.installedHandoffs, peers: installed.peers };
-    } catch {
-      // Invalid or conflicting histories cannot replace the configured topology.
+    } catch (error) {
+      if (error?.code !== "ERR_NO_VALID_TOPOLOGY") throw error;
+      // Authenticated garbage cannot replace the configured topology or block ordinary catch-up.
     }
   }
   return { installedHandoffs: 0, peers };
