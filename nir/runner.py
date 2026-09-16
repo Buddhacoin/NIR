@@ -136,6 +136,7 @@ class EnvironmentManifest:
 class CandidateCommitment:
     network_id: str
     recipient: str
+    candidate_id: str
     artifact_hash: str
     baseline_hash: str
     suite_commitment: str
@@ -147,6 +148,7 @@ class CandidateCommitment:
             commitment = cls(
                 network_id=str(data["network_id"]),
                 recipient=str(data["recipient"]),
+                candidate_id=str(data["candidate_id"]),
                 artifact_hash=str(data["artifact_hash"]),
                 baseline_hash=str(data["baseline_hash"]),
                 suite_commitment=str(data["suite_commitment"]),
@@ -162,6 +164,7 @@ class CandidateCommitment:
             raise ProtocolError("network id is invalid")
         if not self.recipient or len(self.recipient) > 256:
             raise ProtocolError("reward recipient is invalid")
+        _require_digest(self.candidate_id, "candidate id")
         _require_digest(self.artifact_hash, "candidate artifact hash", artifact=True)
         _require_digest(self.baseline_hash, "baseline artifact hash", artifact=True)
         _require_digest(self.suite_commitment, "suite commitment")
@@ -179,6 +182,7 @@ class CandidateCommitment:
         return {
             "artifact_hash": self.artifact_hash,
             "baseline_hash": self.baseline_hash,
+            "candidate_id": self.candidate_id,
             "committed_epoch": self.committed_epoch,
             "network_id": self.network_id,
             "recipient": self.recipient,

@@ -48,11 +48,19 @@ boundary. Production still needs remotely isolated runners whose hardware
 attestations sign these bundle commitments before they become evaluator
 receipts.
 
-`executionBundleHash` is now consensus-required and covered by evaluator
-signatures. The earlier candidate commitment itself is not yet looked up from
-finalized chain state when the progress claim is checked; its epoch is still an
-evaluator-signed assertion. Connecting progress admission to the existing
-candidate registry is therefore the next fail-closed consensus change.
+`executionBundleHash` is consensus-required and covered by evaluator
+signatures. A reward must also reference a signed candidate admission from an
+earlier finalized block. The chain matches its artifact, baseline, suite,
+recipient and height; derives the challenge from the immediately following
+finalized block; and accepts receipts only from the resulting deterministic
+committee. Successful and expired admissions are removed from state.
+
+Admission does not charge NIR, because requiring an existing coin would make
+the first intelligence reward impossible. Spam is bounded by block limits, one
+pending admission per address, a 4,096-entry state cap, and expiry after 1,024
+blocks. Sybil creation is still cheap before NIR circulates, and the next-block
+hash has some proposer-bias risk. Production should move this challenge to the
+independent multi-party beacon and introduce a non-circular anti-spam rule.
 
 Validator and evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. This is not yet
@@ -86,7 +94,8 @@ NIR architecture are documented in [top-chains-study.md](top-chains-study.md).
 ## State commitment and snapshots
 
 `stateRoot` binds every validator to the same balances, nonces, issued and
-burned supply, reward epoch, rewarded proofs, candidate bonds, randomness
+burned supply, reward epoch, rewarded proofs, progress commitments, candidate
+bonds, randomness
 records, safety evidence, validator bonds and faults, active and pending
 validator sets, peer registry, and world-capability memory root. Collections are
 normalized and sorted before domain-separated hashing, so insertion order cannot

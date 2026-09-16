@@ -7,6 +7,7 @@ import {
   allocateProgressRewards,
   computeProgressScore,
   createCandidateBond,
+  createProgressCommitment,
   createValidatorBond,
   createProgressClaim,
   createTransfer,
@@ -134,18 +135,49 @@ function activateRandomnessValidators(chain, validators, funder, timestamp) {
   return timestamp + 2;
 }
 
-function progressClaim(chain, evaluators, recipient, label = "proof-a") {
+function progressClaim(
+  chain,
+  evaluators,
+  validators,
+  submitterWallet,
+  label = "proof-a",
+  recipient = submitterWallet.address,
+) {
+  const artifactHash = `sha256:${fingerprint(`artifact-${label}`)}`;
+  const baselineHash = `sha256:${fingerprint("baseline")}`;
+  const suiteCommitment = fingerprint("hidden-suite-v1");
+  const timestamp = chain.blocks().at(-1).timestamp;
+  const admission = createProgressCommitment({
+    wallet: submitterWallet,
+    networkId: chain.networkId,
+    recipient,
+    artifactHash,
+    baselineHash,
+    suiteCommitment,
+    nonce: chain.nextNonce(submitterWallet.address),
+  });
+  const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
+  chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
+  const challengeBlock = chain.buildBlock({ timestamp });
+  chain.appendBlock(finalizeBlock(challengeBlock, quorumFor(challengeBlock, validators)));
+  const challenge = chain.progressChallenge(admission.candidateId);
+  const assignedEvaluators = challenge.committee.map((address) =>
+    evaluators.find((wallet) => wallet.address === address));
+  const capabilitiesBps = label === "second-frontier"
+    ? { "code-v1": 8_600, "reasoning-v1": 8_400 }
+    : { "code-v1": 8_400, "reasoning-v1": 8_200 };
   const evaluation = chain.prepareProgressEvaluation({
-    artifactHash: `sha256:${fingerprint(`artifact-${label}`)}`,
-    baselineHash: `sha256:${fingerprint("baseline")}`,
+    artifactHash,
+    baselineHash,
+    candidateId: admission.candidateId,
     executionBundleHash: fingerprint(`execution-bundle-${label}`),
-    suiteCommitment: fingerprint("hidden-suite-v1"),
+    suiteCommitment,
     parents: [`sha256:${fingerprint("baseline")}`],
-    committedEpoch: chain.height,
+    committedEpoch: challenge.committedHeight,
     challengeEpoch: chain.height + 1,
-    challengeSeed: fingerprint(`challenge-${chain.height + 1}`),
+    challengeSeed: challenge.challengeSeed,
     behaviorCommitment: fingerprint(`behavior-${label}`),
-    capabilitiesBps: { "code-v1": 8_400, "reasoning-v1": 8_200 },
+    capabilitiesBps,
     gainPpm: 10_000,
     generalityBps: 10_000,
     reproducibilityBps: 10_000,
@@ -161,7 +193,7 @@ function progressClaim(chain, evaluators, recipient, label = "proof-a") {
     epoch: chain.height + 1,
     recipient,
     evaluation,
-    evaluatorWallets: evaluators.slice(0, 3),
+    evaluatorWallets: assignedEvaluators,
   });
 }
 
@@ -244,7 +276,7 @@ test("a finalized progress block mints its fixed epoch budget", () => {
   const memoryRootBefore = chain.capabilityMemoryRoot;
   const block = chain.buildBlock({
     rewardClaims: [
-      progressClaim(chain, evaluators, miner.address),
+      progressClaim(chain, evaluators, validators, miner),
     ],
     timestamp: 1,
   });
@@ -255,6 +287,39 @@ test("a finalized progress block mints its fixed epoch budget", () => {
     chain.capabilityMemoryRoot,
     block.progressRewards[0].evaluation.frontierRootAfter,
   );
+});
+
+test("a progress challenge exists only after the commitment is finalized", () => {
+  const { chain, validators } = fixture();
+  const miner = generateWallet();
+  const admission = createProgressCommitment({
+    wallet: miner,
+    networkId: chain.networkId,
+    recipient: miner.address,
+    artifactHash: `sha256:${fingerprint("challenge-order-candidate")}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    suiteCommitment: fingerprint("challenge-order-suite"),
+    nonce: 0,
+  });
+  assert.throws(
+    () => chain.progressChallenge(admission.candidateId),
+    /unknown or expired/,
+  );
+  const rootBefore = chain.stateRoot;
+  const commitBlock = chain.buildBlock({ transactions: [admission], timestamp: 0 });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  assert.notEqual(chain.stateRoot, rootBefore);
+  assert.throws(
+    () => chain.progressChallenge(admission.candidateId),
+    /not available yet/,
+  );
+  const source = chain.buildBlock({ timestamp: 0 });
+  const finalizedSource = finalizeBlock(source, quorumFor(source, validators));
+  chain.appendBlock(finalizedSource);
+  const challenge = chain.progressChallenge(admission.candidateId);
+  assert.equal(challenge.sourceBlockHash, finalizedSource.hash);
+  assert.equal(challenge.committee.length, 3);
+  assert.equal(new Set(challenge.committee).size, 3);
 });
 
 test("known capability cannot mint against a weaker selected baseline", () => {
@@ -293,7 +358,7 @@ test("empty blocks do not consume intelligence issuance epochs", () => {
 
   const miner = generateWallet();
   const rewarded = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, miner.address)],
+    rewardClaims: [progressClaim(chain, evaluators, validators, miner)],
     timestamp: 2,
   });
   assert.equal(rewarded.issuanceEpoch, 0);
@@ -306,40 +371,19 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
   const { chain, evaluators, validators } = fixture();
   const firstMiner = generateWallet();
   const first = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, firstMiner.address)],
+    rewardClaims: [progressClaim(chain, evaluators, validators, firstMiner)],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
 
   const secondMiner = generateWallet();
-  const evaluation = chain.prepareProgressEvaluation({
-    artifactHash: `sha256:${fingerprint("second-frontier-model")}`,
-    baselineHash: `sha256:${fingerprint("baseline")}`,
-    executionBundleHash: fingerprint("second-frontier-model-bundle"),
-    suiteCommitment: fingerprint("hidden-suite-v1"),
-    parents: [`sha256:${fingerprint("baseline")}`],
-    committedEpoch: 1,
-    challengeEpoch: 2,
-    challengeSeed: fingerprint("challenge-2"),
-    behaviorCommitment: fingerprint("second-frontier-behavior"),
-    capabilitiesBps: { "code-v1": 8_600, "reasoning-v1": 8_400 },
-    gainPpm: 10_000,
-    generalityBps: 10_000,
-    reproducibilityBps: 10_000,
-    safetyBps: 10_000,
-    safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
-    criticalSafetyPass: true,
-    candidateEnergyWh: 100,
-    baselineEnergyWh: 100,
-    energyAttested: true,
-  });
-  const secondClaim = createProgressClaim({
-    networkId: chain.networkId,
-    epoch: 2,
-    recipient: secondMiner.address,
-    evaluation,
-    evaluatorWallets: evaluators.slice(0, 3),
-  });
+  const secondClaim = progressClaim(
+    chain,
+    evaluators,
+    validators,
+    secondMiner,
+    "second-frontier",
+  );
   assert.throws(
     () => chain.buildBlock({
       rewardClaims: [secondClaim],
@@ -379,7 +423,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [
-      progressClaim(chain, evaluators, alice.address),
+      progressClaim(chain, evaluators, validators, alice),
     ],
     timestamp: 1,
   });
@@ -390,7 +434,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
     networkId: chain.networkId,
     recipient: bob.address,
     amount: "125000000",
-    nonce: 0,
+    nonce: chain.nextNonce(alice.address),
     fee: "1000",
   });
   const beforeTransferRoot = chain.stateRoot;
@@ -399,7 +443,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
   assert.equal(chain.stateRoot, block.stateRoot);
   assert.equal(chain.balance(bob.address), 125_000_000n);
-  assert.equal(chain.nextNonce(alice.address), 1);
+  assert.equal(chain.nextNonce(alice.address), 2);
 });
 
 test("a transfer below the consensus fee floor is rejected", () => {
@@ -407,7 +451,7 @@ test("a transfer below the consensus fee floor is rejected", () => {
   const alice = generateWallet();
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, alice.address)],
+    rewardClaims: [progressClaim(chain, evaluators, validators, alice)],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
@@ -416,7 +460,7 @@ test("a transfer below the consensus fee floor is rejected", () => {
     networkId: chain.networkId,
     recipient: bob.address,
     amount: "1",
-    nonce: 0,
+    nonce: chain.nextNonce(alice.address),
     fee: (MIN_TRANSFER_FEE - 1n).toString(),
   });
   const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
@@ -441,7 +485,9 @@ test("a two-of-three post-quantum vault can spend only with its threshold", () =
   const vaultAddress = multisigAddress(memberPublicKeys, 2);
   const recipient = generateWallet();
   const rewardBlock = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, vaultAddress)],
+    rewardClaims: [
+      progressClaim(chain, evaluators, validators, members[0], "proof-a", vaultAddress),
+    ],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
@@ -484,7 +530,7 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
   const reporter = generateWallet();
   const candidateId = fingerprint("bonded-unsafe-candidate");
   const rewardBlock = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, submitter.address, "fund-bond")],
+    rewardClaims: [progressClaim(chain, evaluators, validators, submitter, "fund-bond")],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
@@ -560,7 +606,7 @@ test("validators cannot approve a forged safety payout amount", () => {
   const reporter = generateWallet();
   const candidateId = fingerprint("forged-payout-candidate");
   const rewardBlock = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, submitter.address, "fund-forgery")],
+    rewardClaims: [progressClaim(chain, evaluators, validators, submitter, "fund-forgery")],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
@@ -604,7 +650,7 @@ test("a fallback beacon assigns the committee and slashes a missing revealer", (
   const submitter = generateWallet();
   const candidateId = fingerprint("withheld-randomness-candidate");
   const rewardBlock = chain.buildBlock({
-    rewardClaims: [progressClaim(chain, evaluators, submitter.address, "fund-withholding")],
+    rewardClaims: [progressClaim(chain, evaluators, validators, submitter, "fund-withholding")],
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
@@ -690,7 +736,7 @@ test("a modified transfer signature is rejected atomically", () => {
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [
-      progressClaim(chain, evaluators, alice.address),
+      progressClaim(chain, evaluators, validators, alice),
     ],
     timestamp: 1,
   });
@@ -706,7 +752,7 @@ test("a modified transfer signature is rejected atomically", () => {
   const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   assert.throws(() => chain.appendBlock(finalized), /signature/);
-  assert.equal(chain.height, 1);
+  assert.equal(chain.height, 3);
   assert.equal(chain.balance(bob.address), 0n);
 });
 
@@ -748,12 +794,12 @@ test("one progress proof cannot mint twice", () => {
   const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
   const claim = {
-    ...progressClaim(chain, evaluators, miner.address),
+    ...progressClaim(chain, evaluators, validators, miner),
   };
   const first = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
   assert.throws(
-    () => progressClaim(chain, evaluators, miner.address),
+    () => progressClaim(chain, evaluators, validators, miner),
     /already known/,
   );
 });
@@ -761,7 +807,7 @@ test("one progress proof cannot mint twice", () => {
 test("an arbitrary intelligence score cannot mint NIR", () => {
   const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
-  const claim = progressClaim(chain, evaluators, miner.address);
+  const claim = progressClaim(chain, evaluators, validators, miner);
   claim.score = String(BigInt(claim.score) * 1_000_000n);
   assert.throws(
     () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
@@ -774,6 +820,7 @@ test("chain scoring matches the evaluator output", () => {
     computeProgressScore({
       artifactHash: `sha256:${fingerprint("candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      candidateId: fingerprint("candidate-admission"),
       executionBundleHash: fingerprint("candidate-bundle"),
       suiteCommitment: fingerprint("suite"),
       gainPpm: 375_000,
@@ -817,6 +864,7 @@ test("critical safety failure cannot produce an intelligence score", () => {
     () => computeProgressScore({
       artifactHash: `sha256:${fingerprint("unsafe-candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      candidateId: fingerprint("unsafe-candidate-admission"),
       executionBundleHash: fingerprint("unsafe-candidate-bundle"),
       suiteCommitment: fingerprint("suite"),
       gainPpm: 900_000,
@@ -835,9 +883,9 @@ test("critical safety failure cannot produce an intelligence score", () => {
 });
 
 test("an unapproved safety policy cannot authorize mining", () => {
-  const { chain, evaluators } = fixture();
+  const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
-  const claim = progressClaim(chain, evaluators, miner.address);
+  const claim = progressClaim(chain, evaluators, validators, miner);
   claim.evaluation.safetyPolicyHash = fingerprint("easy-private-policy");
   assert.throws(
     () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
@@ -848,7 +896,7 @@ test("an unapproved safety policy cannot authorize mining", () => {
 test("progress needs independently signed evaluator receipts", () => {
   const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
-  const claim = progressClaim(chain, evaluators, miner.address);
+  const claim = progressClaim(chain, evaluators, validators, miner);
   claim.attestations = [claim.attestations[0]];
   assert.throws(
     () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
@@ -856,10 +904,76 @@ test("progress needs independently signed evaluator receipts", () => {
   );
 });
 
+test("progress must match an earlier finalized on-chain admission", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const valid = progressClaim(chain, evaluators, validators, miner);
+  const forgedEvaluation = {
+    ...valid.evaluation,
+    candidateId: fingerprint("candidate-that-was-never-committed"),
+  };
+  const forged = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: valid.epoch,
+    recipient: miner.address,
+    evaluation: forgedEvaluation,
+    evaluatorWallets: evaluators.slice(0, 3),
+  });
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [forged], timestamp: 1 }),
+    /not committed on chain/,
+  );
+});
+
+test("a committed candidate cannot substitute its artifact after challenge", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const valid = progressClaim(chain, evaluators, validators, miner);
+  const assigned = valid.attestations.map(({ evaluator }) =>
+    evaluators.find((wallet) => wallet.address === evaluator));
+  const forged = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: valid.epoch,
+    recipient: miner.address,
+    evaluation: {
+      ...valid.evaluation,
+      artifactHash: `sha256:${fingerprint("substituted-after-challenge")}`,
+    },
+    evaluatorWallets: assigned,
+  });
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [forged], timestamp: 1 }),
+    /does not match its finalized admission/,
+  );
+});
+
+test("only the post-commit randomly assigned committee can approve progress", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const valid = progressClaim(chain, evaluators, validators, miner);
+  const assignedAddresses = new Set(
+    valid.attestations.map(({ evaluator }) => evaluator),
+  );
+  const assigned = evaluators.filter(({ address }) => assignedAddresses.has(address));
+  const unassigned = evaluators.find(({ address }) => !assignedAddresses.has(address));
+  const wrongCommittee = [assigned[0], assigned[1], unassigned];
+  const forged = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: valid.epoch,
+    recipient: miner.address,
+    evaluation: valid.evaluation,
+    evaluatorWallets: wrongCommittee,
+  });
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [forged], timestamp: 1 }),
+    /assigned committee/,
+  );
+});
+
 test("consensus validator keys cannot approve intelligence evaluations", () => {
   const { chain, evaluators, validators } = fixture();
   const miner = generateWallet();
-  const valid = progressClaim(chain, evaluators, miner.address);
+  const valid = progressClaim(chain, evaluators, validators, miner);
   const wrongRole = createProgressClaim({
     networkId: chain.networkId,
     epoch: valid.epoch,

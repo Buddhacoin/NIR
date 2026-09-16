@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   NirChain,
+  createProgressCommitment,
   createProgressClaim,
   createTransfer,
   finalizeBlock,
@@ -58,15 +59,34 @@ function quorumFor(block) {
 const proofFingerprint = createHash("sha256")
   .update("nir-genesis-proof-1")
   .digest("hex");
+const suiteCommitment = createHash("sha256").update("hidden-suite-v1").digest("hex");
+const admission = createProgressCommitment({
+  wallet: alice,
+  networkId: chain.networkId,
+  recipient: alice.address,
+  artifactHash: `sha256:${proofFingerprint}`,
+  baselineHash: baselineArtifact,
+  suiteCommitment,
+  nonce: chain.nextNonce(alice.address),
+});
+const admissionBlock = chain.buildBlock({
+  transactions: [admission],
+  timestamp: genesisTimestamp,
+});
+chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock)));
+const challengeBlock = chain.buildBlock({ timestamp: genesisTimestamp });
+chain.appendBlock(finalizeBlock(challengeBlock, quorumFor(challengeBlock)));
+const challenge = chain.progressChallenge(admission.candidateId);
 const evaluation = chain.prepareProgressEvaluation({
   artifactHash: `sha256:${proofFingerprint}`,
   baselineHash: baselineArtifact,
+  candidateId: admission.candidateId,
   executionBundleHash: createHash("sha256").update("evaluation-bundle-1").digest("hex"),
-  suiteCommitment: createHash("sha256").update("hidden-suite-v1").digest("hex"),
+  suiteCommitment,
   parents: [baselineArtifact],
-  committedEpoch: 0,
-  challengeEpoch: 1,
-  challengeSeed: createHash("sha256").update("challenge-1").digest("hex"),
+  committedEpoch: challenge.committedHeight,
+  challengeEpoch: chain.height + 1,
+  challengeSeed: challenge.challengeSeed,
   behaviorCommitment: createHash("sha256")
     .update("candidate-behavior")
     .digest("hex"),
@@ -83,10 +103,11 @@ const evaluation = chain.prepareProgressEvaluation({
 });
 const progressClaim = createProgressClaim({
   networkId: chain.networkId,
-  epoch: 1,
+  epoch: chain.height + 1,
   recipient: alice.address,
   evaluation,
-  evaluatorWallets: evaluators.slice(0, 3),
+  evaluatorWallets: challenge.committee.map((address) =>
+    evaluators.find((wallet) => wallet.address === address)),
 });
 const rewardBlock = chain.buildBlock({
   rewardClaims: [progressClaim],

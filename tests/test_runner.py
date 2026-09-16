@@ -72,6 +72,7 @@ class RunnerTests(unittest.TestCase):
         self.commitment = CandidateCommitment(
             network_id="nir-testnet",
             recipient="nir1testrecipient",
+            candidate_id="cd" * 32,
             artifact_hash=artifact_hash(self.candidate_path),
             baseline_hash=artifact_hash(self.baseline_path),
             suite_commitment=self.suite.commitment(self.salt),

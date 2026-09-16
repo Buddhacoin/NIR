@@ -33,6 +33,7 @@ def _evaluate(args: argparse.Namespace) -> dict:
             "chain_evaluation": report.as_chain_evaluation(
                 artifact_hash=candidate_hash,
                 baseline_hash=baseline_hash,
+                candidate_id=args.candidate_id,
                 suite_commitment=args.commitment,
                 execution_bundle_hash=args.bundle_hash,
             ),
@@ -61,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("suite")
     evaluate.add_argument("--salt", required=True)
     evaluate.add_argument("--commitment", required=True)
+    evaluate.add_argument(
+        "--candidate-id",
+        required=True,
+        help="finalized on-chain progress admission id",
+    )
     evaluate.add_argument(
         "--bundle-hash",
         required=True,

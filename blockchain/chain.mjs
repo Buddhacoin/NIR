@@ -63,6 +63,9 @@ function assertAddress(address, field) {
   }
 }
 
+const MAX_PENDING_PROGRESS_COMMITMENTS = 4_096;
+const MAX_PROGRESS_COMMITMENT_AGE = 1_024;
+
 function operatorRegistry(entries, role) {
   if (
     !Array.isArray(entries) ||
@@ -175,6 +178,36 @@ export function createTransfer({
   };
 }
 
+export function progressCandidateId({
+  networkId, sender, recipient, artifactHash, baselineHash, suiteCommitment,
+}) {
+  return hashObject({
+    artifactHash, baselineHash, networkId, recipient, sender, suiteCommitment,
+  }, "PROGRESS_CANDIDATE_ID");
+}
+
+export function createProgressCommitment({
+  wallet, networkId, recipient, artifactHash, baselineHash, suiteCommitment, nonce,
+}) {
+  const candidateId = progressCandidateId({
+    networkId, sender: wallet.address, recipient, artifactHash, baselineHash, suiteCommitment,
+  });
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    artifactHash,
+    baselineHash,
+    candidateId,
+    networkId,
+    nonce,
+    publicKey: wallet.publicKey,
+    recipient,
+    sender: wallet.address,
+    suiteCommitment,
+    type: "progress-commitment",
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "PROGRESS_COMMITMENT") };
+}
+
 export function createCandidateBond({
   wallet,
   networkId,
@@ -266,6 +299,7 @@ export function progressFingerprint(evaluation) {
     {
       artifactHash: evaluation.artifactHash,
       baselineHash: evaluation.baselineHash,
+      candidateId: evaluation.candidateId,
       executionBundleHash: evaluation.executionBundleHash,
       suiteCommitment: evaluation.suiteCommitment,
     },
@@ -279,6 +313,7 @@ export function computeProgressScore(evaluation) {
     evaluation === null ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.artifactHash ?? "") ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.baselineHash ?? "") ||
+    !/^[0-9a-f]{64}$/.test(evaluation.candidateId ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.executionBundleHash ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.suiteCommitment ?? "")
   ) {
@@ -530,6 +565,7 @@ export class NirChain {
   #registeredValidators;
   #pendingValidatorRotation;
   #peerRegistry;
+  #progressCommitments;
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
@@ -615,6 +651,7 @@ export class NirChain {
     this.#validatorBonds = new Map();
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorRotation = null;
+    this.#progressCommitments = new Map();
     this.#peerRegistry = peerRegistry === null ? null : verifyPeerRegistry(peerRegistry, {
       currentHeight: 0,
       networkId,
@@ -718,6 +755,33 @@ export class NirChain {
         randomnessReveals: snapshotEntries(candidate.randomnessReveals, "randomness reveals"),
       });
     }
+    const progressCommitments = snapshotEntries(
+      state.progressCommitments,
+      "progress commitments",
+    );
+    const progressSubmitters = new Set();
+    for (const [candidateId, commitment] of progressCommitments) {
+      if (
+        !/^[0-9a-f]{64}$/.test(candidateId) ||
+        !commitment ||
+        !Number.isSafeInteger(commitment.committedHeight) ||
+        commitment.committedHeight < 1 ||
+        !/^sha256:[0-9a-f]{64}$/.test(commitment.artifactHash ?? "") ||
+        !/^sha256:[0-9a-f]{64}$/.test(commitment.baselineHash ?? "") ||
+        commitment.artifactHash === commitment.baselineHash ||
+        !/^[0-9a-f]{64}$/.test(commitment.suiteCommitment ?? "") ||
+        !/^nir1[0-9a-f]{64}$/.test(commitment.sender ?? "") ||
+        !/^nir1[0-9a-f]{64}$/.test(commitment.recipient ?? "") ||
+        progressSubmitters.has(commitment.sender) ||
+        candidateId !== progressCandidateId({
+          ...commitment,
+          networkId: chain.#networkId,
+        })
+      ) {
+        throw new Error("progress commitment snapshot is invalid");
+      }
+      progressSubmitters.add(commitment.sender);
+    }
     const validators = snapshotEntries(state.validators, "validators");
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
@@ -734,6 +798,7 @@ export class NirChain {
     chain.#mined = snapshotAtomic(state.mined, "mined supply");
     chain.#nonces = nonces;
     chain.#pendingValidatorRotation = structuredClone(state.pendingValidatorRotation);
+    chain.#progressCommitments = progressCommitments;
     chain.#peerRegistry = structuredClone(state.peerRegistry);
     chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
     chain.#registeredValidators = registeredMembers;
@@ -810,6 +875,7 @@ export class NirChain {
         overrides.pendingValidatorRotation === undefined
           ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
       peerRegistry: overrides.peerRegistry === undefined ? this.#peerRegistry : overrides.peerRegistry,
+      progressCommitments: overrides.progressCommitments ?? this.#progressCommitments,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
       registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
       rewardEpoch: overrides.rewardEpoch ?? this.#rewardEpoch,
@@ -834,6 +900,7 @@ export class NirChain {
         nonces: this.#nonces,
         pendingValidatorRotation: this.#pendingValidatorRotation,
         peerRegistry: this.#peerRegistry,
+        progressCommitments: this.#progressCommitments,
         randomnessFaults: this.#randomnessFaults,
         registeredValidators: this.#registeredValidators,
         rewardEpoch: this.#rewardEpoch,
@@ -854,6 +921,32 @@ export class NirChain {
     const candidate = this.#candidateBonds.get(candidateId);
     if (!candidate?.committee) throw new Error("candidate safety committee is not assigned");
     return [...candidate.committee];
+  }
+
+  progressChallenge(candidateId) {
+    const commitment = this.#progressCommitments.get(candidateId);
+    if (!commitment) throw new Error("progress commitment is unknown or expired");
+    const source = this.#blocks.find(
+      ({ height }) => height === commitment.committedHeight + 1,
+    );
+    if (!source) throw new Error("progress challenge is not available yet");
+    const challengeSeed = hashObject(
+      { candidateId, sourceBlockHash: source.hash },
+      "PROGRESS_CHALLENGE",
+    );
+    const committee = selectOperatorCommittee({
+      registry: this.#evaluators,
+      randomness: challengeSeed,
+      context: { candidateId, sourceHeight: source.height },
+      size: this.#evaluationQuorum,
+    }).map(({ address }) => address);
+    return {
+      challengeSeed,
+      committee,
+      committedHeight: commitment.committedHeight,
+      sourceBlockHash: source.hash,
+      sourceHeight: source.height,
+    };
   }
 
   validatorRandomnessFaults(address) {
@@ -919,12 +1012,28 @@ export class NirChain {
     });
   }
 
-  #verifyProgressClaim(claim, epoch, capabilityMemory) {
+  #verifyProgressClaim(claim, epoch, capabilityMemory, progressCommitments) {
     if (claim.networkId !== this.#networkId || claim.epoch !== epoch) {
       throw new Error("progress receipt belongs to another network or epoch");
     }
     if (claim.evaluation.challengeEpoch !== epoch) {
       throw new Error("progress challenge belongs to another epoch");
+    }
+    const candidateId = claim.evaluation.candidateId;
+    const admission = progressCommitments.get(candidateId);
+    if (!admission) throw new Error("progress candidate was not committed on chain");
+    const challenge = this.progressChallenge(candidateId);
+    if (
+      admission.committedHeight >= epoch ||
+      epoch > admission.committedHeight + MAX_PROGRESS_COMMITMENT_AGE ||
+      admission.artifactHash !== claim.evaluation.artifactHash ||
+      admission.baselineHash !== claim.evaluation.baselineHash ||
+      admission.suiteCommitment !== claim.evaluation.suiteCommitment ||
+      admission.recipient !== claim.recipient ||
+      claim.evaluation.committedEpoch !== admission.committedHeight ||
+      claim.evaluation.challengeSeed !== challenge.challengeSeed
+    ) {
+      throw new Error("progress claim does not match its finalized admission");
     }
     if (!this.#safetyPolicies.has(claim.evaluation.safetyPolicyHash)) {
       throw new Error("progress evaluation uses an unapproved safety policy");
@@ -976,6 +1085,14 @@ export class NirChain {
     }
     if (evaluators.size < this.#evaluationQuorum) {
       throw new Error("progress evaluation quorum not reached");
+    }
+    const actualCommittee = [...evaluators].sort();
+    const expectedCommittee = [...challenge.committee].sort();
+    if (
+      actualCommittee.length !== expectedCommittee.length ||
+      !actualCommittee.every((address, index) => address === expectedCommittee[index])
+    ) {
+      throw new Error("progress receipt was not signed by the assigned committee");
     }
     capabilityMemory.accept(claim.evaluation);
   }
@@ -1054,7 +1171,12 @@ export class NirChain {
     }
     const stagedMemory = this.#capabilityMemory.clone();
     for (const claim of progressRewards) {
-      this.#verifyProgressClaim(claim, height, stagedMemory);
+      this.#verifyProgressClaim(
+        claim,
+        height,
+        stagedMemory,
+        this.#progressCommitments,
+      );
     }
     if (!Array.isArray(safetyClaims) || safetyClaims.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
       throw new Error("too many safety settlements in one block");
@@ -1379,6 +1501,60 @@ export class NirChain {
     });
   }
 
+  #applyProgressCommitment(transaction, nonces, progressCommitments, height) {
+    if (
+      transaction.type !== "progress-commitment" ||
+      transaction.algorithm !== SIGNATURE_ALGORITHM ||
+      transaction.networkId !== this.#networkId ||
+      !/^sha256:[0-9a-f]{64}$/.test(transaction.artifactHash ?? "") ||
+      !/^sha256:[0-9a-f]{64}$/.test(transaction.baselineHash ?? "") ||
+      transaction.artifactHash === transaction.baselineHash ||
+      !/^[0-9a-f]{64}$/.test(transaction.suiteCommitment ?? "")
+    ) {
+      throw new Error("progress commitment transaction is invalid");
+    }
+    assertAddress(transaction.sender, "progress submitter");
+    assertAddress(transaction.recipient, "progress recipient");
+    const expectedId = progressCandidateId(transaction);
+    if (
+      transaction.candidateId !== expectedId ||
+      progressCommitments.has(expectedId) ||
+      progressCommitments.size >= MAX_PENDING_PROGRESS_COMMITMENTS ||
+      [...progressCommitments.values()].some(({ sender }) => sender === transaction.sender)
+    ) {
+      throw new Error("progress commitment is duplicated or capacity is exhausted");
+    }
+    if (
+      typeof transaction.publicKey !== "string" ||
+      transaction.publicKey.length > 4_000 ||
+      typeof transaction.signature !== "string" ||
+      transaction.signature.length > 7_000 ||
+      addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+      !verifyObject(
+        unsignedTransaction(transaction),
+        transaction.signature,
+        transaction.publicKey,
+        "PROGRESS_COMMITMENT",
+      )
+    ) {
+      throw new Error("invalid progress commitment signature");
+    }
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce < 0) {
+      throw new Error("invalid transaction nonce");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    nonces.set(transaction.sender, expectedNonce + 1);
+    progressCommitments.set(expectedId, {
+      artifactHash: transaction.artifactHash,
+      baselineHash: transaction.baselineHash,
+      committedHeight: height,
+      recipient: transaction.recipient,
+      sender: transaction.sender,
+      suiteCommitment: transaction.suiteCommitment,
+    });
+  }
+
   #applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, proposer) {
     let validator = registeredValidators.get(transaction.sender);
     if (transaction.type !== "validator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
@@ -1438,6 +1614,7 @@ export class NirChain {
     fork.#nonces = new Map(this.#nonces);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
+    fork.#progressCommitments = new Map(this.#progressCommitments);
     fork.#randomnessFaults = new Map(this.#randomnessFaults);
     fork.#registeredValidators = new Map(this.#registeredValidators);
     fork.#rewardEpoch = this.#rewardEpoch;
@@ -1543,7 +1720,12 @@ export class NirChain {
 
     const capabilityMemory = this.#capabilityMemory.clone();
     for (const claim of block.progressRewards) {
-      this.#verifyProgressClaim(claim, block.height, capabilityMemory);
+      this.#verifyProgressClaim(
+        claim,
+        block.height,
+        capabilityMemory,
+        this.#progressCommitments,
+      );
     }
     if (block.capabilityMemoryRoot !== capabilityMemory.stateRoot) {
       throw new Error("invalid world capability memory root");
@@ -1587,6 +1769,7 @@ export class NirChain {
     const validatorFaults = new Map(this.#validatorFaults);
     const validatorBonds = new Map(this.#validatorBonds);
     const registeredValidators = new Map(this.#registeredValidators);
+    const progressCommitments = new Map(this.#progressCommitments);
     let scheduledRotation = null;
     if (block.validatorRotation !== null) {
       if (this.#pendingValidatorRotation) throw new Error("a validator rotation is already pending");
@@ -1650,6 +1833,7 @@ export class NirChain {
       const amount = parseAtomic(reward.amount, "reward amount");
       newlyMined += amount;
       balances.set(reward.recipient, (balances.get(reward.recipient) ?? 0n) + amount);
+      progressCommitments.delete(reward.evaluation.candidateId);
     }
     if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
       throw new Error("hard supply cap exceeded");
@@ -1666,10 +1850,23 @@ export class NirChain {
           transaction, balances, nonces, candidateBonds, block.feeRecipient,
           block.timestamp, block.height,
         );
+      } else if (transaction.type === "progress-commitment") {
+        this.#applyProgressCommitment(
+          transaction,
+          nonces,
+          progressCommitments,
+          block.height,
+        );
       } else if (transaction.type === "validator-bond") {
         this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, block.feeRecipient);
       } else {
         throw new Error("unknown transaction type");
+      }
+    }
+
+    for (const [candidateId, commitment] of progressCommitments) {
+      if (block.height > commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE) {
+        progressCommitments.delete(candidateId);
       }
     }
 
@@ -1805,6 +2002,7 @@ export class NirChain {
       nonces,
       pendingValidatorRotation: pendingValidatorRotationAfter,
       peerRegistry: nextPeerRegistry,
+      progressCommitments,
       randomnessFaults,
       registeredValidators,
       rewardEpoch: rewardEpochAfter,
@@ -1827,6 +2025,7 @@ export class NirChain {
     this.#validatorBonds = validatorBonds;
     this.#registeredValidators = registeredValidators;
     this.#peerRegistry = nextPeerRegistry;
+    this.#progressCommitments = progressCommitments;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#mined += newlyMined;

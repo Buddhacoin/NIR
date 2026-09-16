@@ -223,12 +223,19 @@ class EvaluationReport:
         *,
         artifact_hash: str,
         baseline_hash: str,
+        candidate_id: str,
         suite_commitment: str,
         execution_bundle_hash: str,
         novelty_bps: int = BPS,
     ) -> dict[str, Any]:
         _require_hash(artifact_hash, "artifact hash")
         _require_hash(baseline_hash, "baseline hash")
+        if len(candidate_id) != 64:
+            raise ProtocolError("candidate id must be a 64-character hash")
+        try:
+            int(candidate_id, 16)
+        except ValueError as error:
+            raise ProtocolError("candidate id contains non-hexadecimal data") from error
         if len(suite_commitment) != 64:
             raise ProtocolError("suite commitment must be a 64-character hash")
         try:
@@ -250,6 +257,7 @@ class EvaluationReport:
         return {
             "artifactHash": artifact_hash,
             "baselineHash": baseline_hash,
+            "candidateId": candidate_id.casefold(),
             "executionBundleHash": execution_bundle_hash.casefold(),
             "suiteCommitment": suite_commitment.casefold(),
             "gainPpm": self.gain_ppm,

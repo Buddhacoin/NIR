@@ -76,10 +76,13 @@ format supplies reproducibility and replay protection, not proof of physical
 execution by itself; production acceptance additionally requires signatures
 from independently operated isolated runners and genuine hardware attestation.
 
-The current chain verifies the mandatory bundle commitment but does not yet
-resolve the bundle's claimed earlier candidate commitment from finalized state.
-Until that admission link is implemented, the evaluator quorum remains trusted
-for commit-before-challenge ordering; the bundle alone cannot prove history.
+The chain resolves the bundle against a signed admission in finalized state.
+It independently checks commit-before-challenge ordering and exact equality of
+the artifact, baseline, suite and recipient. The next finalized block supplies
+the challenge seed and selects the evaluator committee; a different evaluator
+quorum cannot substitute itself. This next-block source closes self-declared
+history but remains more biasable than the independent multi-party beacon used
+by the safety path, so beacon unification remains required before production.
 
 ### Draft score
 

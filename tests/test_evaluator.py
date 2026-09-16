@@ -104,11 +104,13 @@ class EvaluationTests(unittest.TestCase):
         chain_evaluation = report.as_chain_evaluation(
             artifact_hash=candidate_hash,
             baseline_hash=baseline_hash,
+            candidate_id="c" * 64,
             suite_commitment="a" * 64,
             execution_bundle_hash="b" * 64,
         )
         self.assertEqual(chain_evaluation["gainPpm"], report.gain_ppm)
         self.assertEqual(chain_evaluation["artifactHash"], candidate_hash)
+        self.assertEqual(chain_evaluation["candidateId"], "c" * 64)
         self.assertEqual(chain_evaluation["executionBundleHash"], "b" * 64)
 
     def test_missing_answer_fails_closed(self):

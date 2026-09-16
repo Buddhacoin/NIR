@@ -71,7 +71,9 @@ The future desktop miner must reduce participation to these steps:
 4. download a signed container and a committed task;
 5. run a local preflight that estimates time, energy, and maximum loss;
 6. explicitly approve the job;
-7. let the application submit commitments and receipts automatically;
+7. let the application submit the signed on-chain commitment, wait for the
+   next finalized challenge and assigned evaluator committee, then submit the
+   bundle-backed receipts automatically;
 8. see `pending`, `challenged`, `accepted`, or `rejected` with an explanation;
 9. receive a reward only after the challenge window closes.
 
