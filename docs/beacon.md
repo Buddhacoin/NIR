@@ -11,8 +11,8 @@ a separate ML-DSA-65 wallet. Progress and fallback signatures use different
 domains, so a share cannot cross purposes. The chain accepts an aggregate only when more
 than two thirds of the genesis beacon registry signed distinct shares for the
 same network, candidate and round. For a progress admission, a later finalized
-state transition selects one exact committee from the finalized commitment-block
-hash and requires every selected signature.
+epoch-randomness round selects one exact committee from its commit/reveal seed
+and requires every selected signature.
 It deterministically hashes those shares, so an aggregator cannot alter a share,
 drop a signer, add a reserve signer, or choose among subsets after disclosure.
 The fallback safety path still accepts any valid quorum and therefore retains
@@ -67,8 +67,7 @@ failure exercise, and commission an external audit. The repository provides
 the service and verification path; it does not claim that those external
 operators or the audit already exist.
 
-The future selection source prevents the candidate acting alone from choosing a
-committee before admission. The commitment-block proposer can still influence
-that block hash, so collusion-resistant mainnet selection requires an audited
-epoch-randomness protocol rather than treating this intermediate mechanism as a
-perfect unbiased beacon.
+The admission records the unfinished epoch round and cannot use an already-known
+seed. Committee selection waits until every member of that epoch's fixed
+committee reveals a previously committed share in a later block. A producer can
+censor and delay progress, but its block hash no longer selects the committee.

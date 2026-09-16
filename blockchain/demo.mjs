@@ -10,7 +10,12 @@ import {
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import { SAFETY_POLICY_V1_COMMITMENT } from "./constants.mjs";
-import { createProgressBeacon, createProgressBeaconShare } from "./operators.mjs";
+import {
+  createEpochRandomnessCommit,
+  createEpochRandomnessReveal,
+  createProgressBeacon,
+  createProgressBeaconShare,
+} from "./operators.mjs";
 
 const validators = Array.from({ length: 4 }, generateWallet);
 const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -75,8 +80,25 @@ const admissionBlock = chain.buildBlock({
   timestamp: genesisTimestamp,
 });
 chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock)));
-const assignmentBlock = chain.buildBlock({ timestamp: genesisTimestamp });
-chain.appendBlock(finalizeBlock(assignmentBlock, quorumFor(assignmentBlock)));
+const epoch = chain.epochRandomnessStatus();
+const epochMembers = epoch.committee.map((address) =>
+  beaconAuthorities.find((wallet) => wallet.address === address));
+const epochSecrets = epochMembers.map((_, index) =>
+  createHash("sha256").update(`epoch-${epoch.round}-${index}`).digest("hex"));
+const epochCommitBlock = chain.buildBlock({
+  epochRandomnessCommits: epochMembers.map((wallet, index) => createEpochRandomnessCommit({
+    wallet, networkId: chain.networkId, round: epoch.round, secret: epochSecrets[index],
+  })),
+  timestamp: genesisTimestamp,
+});
+chain.appendBlock(finalizeBlock(epochCommitBlock, quorumFor(epochCommitBlock)));
+const epochRevealBlock = chain.buildBlock({
+  epochRandomnessReveals: epochMembers.map((wallet, index) => createEpochRandomnessReveal({
+    wallet, networkId: chain.networkId, round: epoch.round, secret: epochSecrets[index],
+  })),
+  timestamp: genesisTimestamp,
+});
+chain.appendBlock(finalizeBlock(epochRevealBlock, quorumFor(epochRevealBlock)));
 const challengeRound = chain.height + 1;
 const challengeAuthorities = chain.progressBeaconCommittee(admission.candidateId)
   .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));

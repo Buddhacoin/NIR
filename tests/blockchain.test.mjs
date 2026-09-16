@@ -143,6 +143,28 @@ function activateRandomnessValidators(chain, validators, funder, timestamp) {
   return timestamp + 2;
 }
 
+function advanceEpochRandomness(chain, beaconAuthorities, validators, timestamp) {
+  const status = chain.epochRandomnessStatus();
+  const members = status.committee.map((address) =>
+    beaconAuthorities.find((wallet) => wallet.address === address));
+  const secrets = members.map((_, index) =>
+    fingerprint(`epoch-${status.round}-secret-${index}`));
+  const commitBlock = chain.buildBlock({
+    epochRandomnessCommits: members.map((wallet, index) => createEpochRandomnessCommit({
+      wallet, networkId: chain.networkId, round: status.round, secret: secrets[index],
+    })),
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  const revealBlock = chain.buildBlock({
+    epochRandomnessReveals: members.map((wallet, index) => createEpochRandomnessReveal({
+      wallet, networkId: chain.networkId, round: status.round, secret: secrets[index],
+    })),
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(revealBlock, quorumFor(revealBlock, validators)));
+}
+
 function progressClaim(
   chain,
   evaluators,
@@ -167,8 +189,7 @@ function progressClaim(
   const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
   chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
   const beaconAuthorities = TEST_BEACON_WALLETS.get(chain);
-  const assignmentBlock = chain.buildBlock({ timestamp });
-  chain.appendBlock(finalizeBlock(assignmentBlock, quorumFor(assignmentBlock, validators)));
+  advanceEpochRandomness(chain, beaconAuthorities, validators, timestamp);
   const assignedBeacons = chain.progressBeaconCommittee(admission.candidateId)
     .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));
   const round = chain.height + 1;
@@ -341,8 +362,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     () => chain.progressBeaconCommittee(admission.candidateId),
     /not assigned yet/,
   );
-  const assignment = chain.buildBlock({ timestamp: 0 });
-  chain.appendBlock(finalizeBlock(assignment, quorumFor(assignment, validators)));
+  advanceEpochRandomness(chain, beaconAuthorities, validators, 0);
   assert.throws(
     () => chain.progressChallenge(admission.candidateId),
     /not available yet/,

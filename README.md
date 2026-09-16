@@ -169,10 +169,11 @@ adjustment for the energy used.
 The evaluator runner now builds a deterministic, content-addressed proof bundle
 before a reward can be proposed. A signed `progress-commitment` transaction
 first fixes the baseline, candidate, benchmark and recipient in finalized chain
-state. A later finalized transition uses the now-fixed commitment-block hash to
-select one beacon committee; the author cannot know that exact source while
-constructing the admission. Only then does a post-quantum quorum from the
-separate beacon-authority registry supply fresh entropy. Every assigned member
+state and records the currently unfinished randomness round. It cannot receive
+a beacon committee until that exact round completes through on-chain
+post-quantum commit/reveal in later blocks. The final epoch seed selects one
+beacon committee without using a block-producer-controlled hash. Only then does
+a post-quantum quorum from the separate beacon-authority registry supply fresh entropy. Every assigned member
 must sign, so an aggregator cannot choose a favorable signer subset after seeing shares. The chain commits
 the aggregate, derives the challenge seed and deterministically assigns the
 evaluator committee. Beacon shares use a progress-only signature domain, so a
@@ -203,8 +204,9 @@ complete round, committee, phase height, commitments, reveals and seed to every
 state root and validates them during snapshot restoration. Protocol v14 also
 includes signed `epochRandomnessCommits` and `epochRandomnessReveals` in blocks,
 hashes and network proposals. Reveals are accepted only at a later height and a
-completed round atomically rotates its seed and committee. The next migration
-will make progress admissions wait for the resulting strictly later seed.
+completed round atomically rotates its seed and committee. Protocol v15 makes
+every progress admission wait for that later finalized seed before any beacon
+or evaluator committee can be assigned.
 
 ## Why organizations use NIR
 

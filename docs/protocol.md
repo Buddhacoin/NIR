@@ -79,19 +79,18 @@ from independently operated isolated runners and genuine hardware attestation.
 The chain resolves the bundle against a signed admission in finalized state.
 It independently checks commit-before-challenge ordering and exact equality of
 the artifact, baseline, suite and recipient. A later quorum of the independent
-beacon-authority registry supplies domain-separated entropy. A finalized
-transition after admission uses the commitment-block hash to fix one exact
-beacon committee before shares are revealed and
+beacon-authority registry supplies domain-separated entropy. Each admission
+records the currently unfinished epoch-randomness round. Only completion of
+that round in later finalized blocks can fix one exact beacon committee, and
 requires every member, preventing the aggregator from grinding across signer
 subsets. The canonical aggregate selects the evaluator committee; neither a block proposer nor a
 different evaluator quorum can substitute itself. If the beacon quorum is
 offline, issuance waits: the protocol does not weaken randomness to preserve
 liveness.
 
-This removes candidate-only precomputation, not every source of bias: a
-candidate colluding with the commitment-block proposer may influence that block
-hash. Replacing the selection source with audited post-quantum epoch randomness
-remains a mainnet gate.
+This removes the block hash and its proposer from committee selection. A
+malicious assigned epoch member can stop progress by withholding its reveal,
+but cannot make consensus accept another subset or alternate seed.
 
 ### Epoch-randomness transition
 
@@ -102,12 +101,11 @@ until all commitments exist in an earlier height. The next seed hashes the
 previous seed and every ordered reveal, and advances only when the exact
 committee is complete. A missing member can stop the round but cannot make the
 protocol accept an alternative subset or a forged reveal. The remaining step
-is making progress admissions wait for a strictly later finalized epoch seed.
 Protocol v14 accepts signed commitments and reveals as separate block
 collections, commits their phase transition to the state root, carries them
 through network proposals, restores them from snapshots, and refuses reveals in
-the commitment height. The current progress path still uses the intermediate
-future-block selector until the next migration switches its dependency.
+the commitment height. Protocol v15 binds progress admissions to the unfinished
+round and assigns their beacon committees only after its seed is finalized.
 
 ### Draft score
 

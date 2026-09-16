@@ -820,6 +820,7 @@ export class NirChain {
         !commitment ||
         !Number.isSafeInteger(commitment.committedHeight) ||
         commitment.committedHeight < 1 ||
+        !Number.isSafeInteger(commitment.randomnessRound) || commitment.randomnessRound < 1 ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.artifactHash ?? "") ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.baselineHash ?? "") ||
         commitment.artifactHash === commitment.baselineHash ||
@@ -835,7 +836,8 @@ export class NirChain {
         throw new Error("progress commitment snapshot is invalid");
       }
       const beaconUnassigned = commitment.beaconCommittee === null &&
-        commitment.beaconCommitteeHeight === null && commitment.beaconCommitteeSource === null;
+        commitment.beaconCommitteeHeight === null && commitment.beaconCommitteeSource === null &&
+        commitment.beaconRandomnessRound === null;
       const beaconAssigned =
         Array.isArray(commitment.beaconCommittee) &&
         commitment.beaconCommittee.length === chain.#beaconQuorum &&
@@ -844,6 +846,8 @@ export class NirChain {
         Number.isSafeInteger(commitment.beaconCommitteeHeight) &&
         commitment.beaconCommitteeHeight > commitment.committedHeight &&
         commitment.beaconCommitteeHeight <= commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE &&
+        Number.isSafeInteger(commitment.beaconRandomnessRound) &&
+        commitment.beaconRandomnessRound >= commitment.randomnessRound &&
         /^[0-9a-f]{64}$/.test(commitment.beaconCommitteeSource ?? "");
       if (!beaconUnassigned && !beaconAssigned) {
         throw new Error("progress beacon committee snapshot is invalid");
@@ -1687,7 +1691,7 @@ export class NirChain {
     });
   }
 
-  #applyProgressCommitment(transaction, nonces, progressCommitments, height) {
+  #applyProgressCommitment(transaction, nonces, progressCommitments, height, randomnessRound) {
     if (
       transaction.type !== "progress-commitment" ||
       transaction.algorithm !== SIGNATURE_ALGORITHM ||
@@ -1737,11 +1741,13 @@ export class NirChain {
       beaconCommittee: null,
       beaconCommitteeHeight: null,
       beaconCommitteeSource: null,
+      beaconRandomnessRound: null,
       beaconValue: null,
       challengeHeight: null,
       challengeSeed: null,
       committee: null,
       committedHeight: height,
+      randomnessRound,
       recipient: transaction.recipient,
       sender: transaction.sender,
       suiteCommitment: transaction.suiteCommitment,
@@ -2072,6 +2078,7 @@ export class NirChain {
           nonces,
           progressCommitments,
           block.height,
+          epochRandomness.round,
         );
       } else if (transaction.type === "validator-bond") {
         this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, block.feeRecipient);
@@ -2087,22 +2094,21 @@ export class NirChain {
     }
 
     for (const [candidateId, commitment] of progressCommitments) {
-      if (commitment.beaconCommittee === null && block.height > commitment.committedHeight) {
-        const randomness = hashObject({
-          candidateId,
-          networkId: this.#networkId,
-          sourceBlockHash: block.previousHash,
-        }, "PROGRESS_BEACON_COMMITTEE");
+      if (commitment.beaconCommittee === null &&
+          epochRandomness.round > commitment.randomnessRound) {
+        const randomness = epochRandomness.previousSeed;
+        const randomnessRound = epochRandomness.round - 1;
         progressCommitments.set(candidateId, {
           ...commitment,
           beaconCommittee: selectOperatorCommittee({
             registry: this.#beaconAuthorities,
             randomness,
-            context: { candidateId, sourceBlockHash: block.previousHash },
+            context: { candidateId, randomnessRound },
             size: this.#beaconQuorum,
           }).map(({ address }) => address),
           beaconCommitteeHeight: block.height,
-          beaconCommitteeSource: block.previousHash,
+          beaconCommitteeSource: randomness,
+          beaconRandomnessRound: randomnessRound,
         });
       }
     }

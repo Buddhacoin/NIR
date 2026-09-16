@@ -65,9 +65,8 @@ signatures. A reward must also reference a signed candidate admission from an
 earlier finalized block. The chain matches its artifact, baseline, suite,
 recipient and height. After finalization, more than two thirds of a separate
 post-quantum beacon registry must sign domain-separated fresh shares. A
-subsequent finalized transition first assigns their exact committee from the
-now-fixed commitment-block hash, preventing the candidate from selecting it at
-admission time. Their
+strictly later finalized epoch first assigns their exact committee from a
+post-quantum commit/reveal seed that was unknown at admission time. Their
 canonical aggregate derives the challenge and deterministic evaluator
 committee. Successful and expired admissions are removed from state.
 
