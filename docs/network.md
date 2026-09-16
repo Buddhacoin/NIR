@@ -377,17 +377,22 @@ authenticated snapshot candidates from peers, require matching finality quorum,
 install the checkpoint, and replay the remaining tail; failed quorum safely
 falls back to block-by-block replay. Commit-bound handoff candidates are now
 assembled into old/new quorums, durably replicated, distributed after the
-activation block, and reloaded on restart. Multi-host operator ceremonies and
-operator-run production recovery drills remain; there is no fork-choice protocol.
+activation block, and reloaded on restart. Every handoff is also paired with its
+mutually signed onboarding certificate in an atomic redundant topology journal.
+Catch-up first verifies that genesis-rooted key/topology chain and may then use
+the latest authenticated endpoints for snapshots and block replay. Multi-host
+operator ceremonies, independent stable bootstrap services, and operator-run
+production recovery drills remain; there is no fork-choice protocol.
 
 The automated live-rotation rehearsal starts six authenticated HTTP validator
 processes: four current operators and two future-only operators joining a
 four-member next set with two-member overlap. It gossips a transaction across
 the union topology, then takes one old-only and one future-only process offline.
 The four remaining processes still satisfy both quorums and finalize the same
-activation block. The missed newcomer later authenticates to the active set,
-replays the block, downloads and independently verifies the ordered handoff
-history, restarts, and joins the four-member topology. A retired finality key
+activation block. The missed newcomer later authenticates to a reachable peer,
+downloads and independently verifies the paired topology and handoff history,
+uses that recovered trust to replay the block, restarts, and joins the
+four-member topology. A retired finality key
 cannot vote at the next height. This verifies the local protocol path, but does
 not substitute for independent machines, organizations, networks, or an
 external audit.

@@ -160,11 +160,21 @@ restart, this history advances the genesis trust anchor before any snapshot is
 loaded. A damaged copy is repaired; conflicting histories and skipped or
 reordered transitions fail closed.
 
+The corresponding onboarding certificates are kept in a second redundant,
+atomic journal and verified in lockstep with those handoffs. Each generation
+therefore binds both the finality keys and the exact HTTPS origins, certificate
+pins, and transport keys authorized for the next set. A recovering validator
+can authenticate an old reachable peer, verify the complete paired history
+from genesis, and use the newest verified topology for snapshot or block
+catch-up. Shorter histories cannot roll back a topology already trusted on
+disk, and conflicting branches fail closed.
+
 Dynamic P2P membership now has a pre-activation, mutually authenticated
 endpoint-registration workflow so new-set commit and handoff votes are
 reachable before activation. The local devnet generator still starts only a
 static four-validator topology; multi-host deployment, operator ceremonies,
-and hostile-network recovery drills remain production work.
+independent stable bootstrap services, and hostile-network recovery drills
+remain production work.
 
 Protocol v7 adds the consensus commitment for that workflow. When a chain has
 an active peer registry, a validator-rotation proposal must carry a canonical

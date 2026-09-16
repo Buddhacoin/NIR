@@ -16,7 +16,7 @@ Implemented and continuously tested:
   multi-height stateful fuzzing with restarts and validator rotations;
 - a six-process live `4 → 4` validator-rotation rehearsal with pre-activation
   synchronization, simultaneous old/new outages, dual quorums, authenticated
-  handoff recovery, restart, and retirement;
+  handoff plus endpoint-topology recovery, restart, and retirement;
 - snapshot recovery across two ordered validator generations, with exact
   activation-block binding and one-block journal-tail replay;
 - a local wallet preview and valueless mining demonstration.

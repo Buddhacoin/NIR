@@ -7,8 +7,11 @@ import { requestJson } from "./http-client.mjs";
 import { IngressLimiter } from "./ingress-limiter.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
+import { MAX_TOPOLOGY_STORE_BYTES } from "./validator-topology-history.mjs";
 
 const SNAPSHOT_CATCHUP_THRESHOLD = 16;
+const MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES =
+  MAX_HANDOFF_STORE_BYTES + MAX_TOPOLOGY_STORE_BYTES + 64 * 1024;
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -59,19 +62,49 @@ async function gossipRequest(validator, index, url, path, payload, maxResponseBy
   );
 }
 
-async function peerHealth(validator, index, url) {
-  if (validator.peerAddress(index) === validator.address) return null;
-  const body = await gossipRequest(validator, index, url, "/v1/p2p/health", {});
-  if (body.address !== validator.peerAddress(index) ||
+async function peerHealthDescriptor(validator, peer) {
+  if (peer.validatorAddress === validator.address) return null;
+  const body = await gossipPeerRequest(validator, peer, "/v1/p2p/health", {});
+  if (body.address !== peer.validatorAddress ||
       body.networkId !== validator.networkId || !Number.isSafeInteger(body.height)) {
     throw new Error("peer health identity or height is invalid");
   }
   return body;
 }
 
+async function peerHealth(validator, index, url) {
+  return peerHealthDescriptor(validator, validator.peerDescriptor(index, url));
+}
+
+async function discoverRecoveryPeers(validator, peers) {
+  const responses = await Promise.allSettled(peers.map((peer) =>
+    gossipPeerRequest(
+      validator, peer, "/v1/p2p/topologies/history", {},
+      MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES,
+    )));
+  const histories = responses
+    .filter(({ status, value }) => status === "fulfilled" &&
+      Array.isArray(value?.handoffs) && value.handoffs.length > 0 &&
+      Array.isArray(value?.onboardings))
+    .map(({ value }) => value)
+    .sort((left, right) => right.handoffs.length - left.handoffs.length);
+  for (const history of histories) {
+    try {
+      const installed = validator.installValidatorRecoveryHistory(history);
+      return { installedHandoffs: installed.installedHandoffs, peers: installed.peers };
+    } catch {
+      // Try another independently authenticated and cryptographically verified history.
+    }
+  }
+  return { installedHandoffs: 0, peers };
+}
+
 async function synchronizeValidator(validator, urls) {
-  const statuses = await Promise.allSettled(urls.map((url, index) =>
-    peerHealth(validator, index, url)));
+  const configuredPeers = urls.map((url, index) => validator.peerDescriptor(index, url));
+  const recovery = await discoverRecoveryPeers(validator, configuredPeers);
+  const syncPeers = recovery.peers;
+  const statuses = await Promise.allSettled(syncPeers.map((peer) =>
+    peerHealthDescriptor(validator, peer)));
   const candidates = statuses.map((result, index) => ({
     height: result.status === "fulfilled" && result.value ? result.value.height : -1,
     index,
@@ -79,9 +112,9 @@ async function synchronizeValidator(validator, urls) {
   let syncedBlocks = 0;
   let snapshotHeight = null;
   if ((candidates[0]?.height ?? validator.height) - validator.height >= SNAPSHOT_CATCHUP_THRESHOLD) {
-    const snapshots = await Promise.allSettled(urls.map((url, index) =>
-      gossipRequest(
-        validator, index, url, "/v1/p2p/snapshots/candidate", {},
+    const snapshots = await Promise.allSettled(syncPeers.map((peer) =>
+      gossipPeerRequest(
+        validator, peer, "/v1/p2p/snapshots/candidate", {},
         MAX_SNAPSHOT_BYTES + 64 * 1024,
       )));
     try {
@@ -97,8 +130,8 @@ async function synchronizeValidator(validator, urls) {
   for (const candidate of candidates) {
     try {
       while (validator.height < candidate.height) {
-        const result = await gossipRequest(
-          validator, candidate.index, urls[candidate.index], "/v1/p2p/blocks/range",
+        const result = await gossipPeerRequest(
+          validator, syncPeers[candidate.index], "/v1/p2p/blocks/range",
           { fromHeight: validator.height + 1, limit: 8 },
         );
         if (!result || !Array.isArray(result.blocks) || result.blocks.length === 0) break;
@@ -116,13 +149,13 @@ async function synchronizeValidator(validator, urls) {
   const handoffResponses = await Promise.allSettled(activeUrls.map((url, index) =>
     gossipRequest(
       validator, index, url, "/v1/p2p/handoffs/history", {},
-      MAX_HANDOFF_STORE_BYTES + 64 * 1024,
+      MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES,
     )));
   const histories = handoffResponses
     .filter(({ status, value }) => status === "fulfilled" && Array.isArray(value?.handoffs))
     .map(({ value }) => value.handoffs)
     .sort((left, right) => right.length - left.length);
-  let synchronizedHandoffs = 0;
+  let synchronizedHandoffs = recovery.installedHandoffs;
   for (const history of histories) {
     for (const handoff of history) {
       try {
@@ -417,6 +450,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { handoffs: validator.validatorHandoffHistory() };
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/topologies/history") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = validator.validatorTopologyHistory();
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });

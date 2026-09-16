@@ -228,6 +228,9 @@ test("dual-quorum live rotation survives old/new outages and restores a newcomer
     assert.ok(existsSync(join(
       directories[offlineNew], "handoffs", "VALIDATOR-HANDOFFS.json",
     )));
+    assert.ok(existsSync(join(
+      directories[offlineNew], "topologies", "VALIDATOR-TOPOLOGIES.json",
+    )));
 
     const restartedNewcomer = new ValidatorReplica(directories[offlineNew]);
     assert.equal(restartedNewcomer.height, 7);

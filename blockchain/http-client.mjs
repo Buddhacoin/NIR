@@ -26,7 +26,7 @@ export function requestJson(url, {
     return Promise.reject(new Error("HTTP client timeout is invalid"));
   }
   if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 ||
-      maxResponseBytes > 20 * 1024 * 1024) {
+      maxResponseBytes > 40 * 1024 * 1024) {
     return Promise.reject(new Error("HTTP response size limit is invalid"));
   }
   if (tlsCertificateSha256 !== null && !/^[0-9a-f]{64}$/.test(tlsCertificateSha256)) {

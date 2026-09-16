@@ -58,6 +58,11 @@ import {
   loadValidatorHandoffs,
 } from "./validator-handoff-store.mjs";
 import {
+  installValidatorTopology,
+  loadValidatorTopologyHistory,
+  verifyValidatorTopologyHistory,
+} from "./validator-topology-history.mjs";
+import {
   MAX_SNAPSHOT_BYTES,
   createStateSnapshot,
   mergeStateSnapshotCandidates,
@@ -505,11 +510,29 @@ export class ValidatorReplica {
     };
     const history = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor);
     const known = history.handoffs.find(({ handoffHash }) => handoffHash === handoff.handoffHash);
-    if (known) return { handoffHash: handoff.handoffHash, status: "known" };
-    const installed = installValidatorHandoff(
+    const installed = known ? null : installValidatorHandoff(
       join(this.#directory, "handoffs"), handoff, trustAnchor,
     );
-    return { ...installed, status: "installed" };
+    const updatedHistory = known ? history
+      : loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor);
+    const activeRegistry = this.#chain.peerRegistry;
+    if (activeRegistry?.format !== "nir-validator-onboarding-v1" ||
+        activeRegistry.activationHeight !== handoff.activationHeight) {
+      throw new Error("validator handoff has no matching finalized topology");
+    }
+    const topology = installValidatorTopology(
+      join(this.#directory, "topologies"), activeRegistry, {
+        genesisPeerRegistry: this.#genesis.peerRegistry,
+        genesisValidators: this.#genesis.validators,
+        handoffs: updatedHistory.handoffs,
+        networkId: this.networkId,
+      },
+    );
+    return {
+      ...(installed ?? { handoffHash: handoff.handoffHash }),
+      status: known ? "known" : "installed",
+      topologyStatus: topology.status,
+    };
   }
 
   validatorHandoffHistory() {
@@ -519,6 +542,86 @@ export class ValidatorReplica {
     };
     const history = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor);
     return history.handoffs.map((handoff) => structuredClone(handoff));
+  }
+
+  validatorTopologyHistory() {
+    const handoffs = this.validatorHandoffHistory();
+    const history = loadValidatorTopologyHistory(join(this.#directory, "topologies"), {
+      genesisPeerRegistry: this.#genesis.peerRegistry,
+      genesisValidators: this.#genesis.validators,
+      handoffs,
+      networkId: this.networkId,
+    });
+    return {
+      handoffs: handoffs.slice(0, history.onboardings.length),
+      onboardings: history.onboardings.map((onboarding) => structuredClone(onboarding)),
+    };
+  }
+
+  installValidatorRecoveryHistory({ handoffs, onboardings } = {}) {
+    const verified = verifyValidatorTopologyHistory({
+      genesisPeerRegistry: this.#genesis.peerRegistry,
+      genesisValidators: this.#genesis.validators,
+      handoffs,
+      networkId: this.networkId,
+      onboardings,
+    });
+    const handoffTrustAnchor = {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#genesis.validators,
+    };
+    const currentHandoffs = loadValidatorHandoffs(
+      join(this.#directory, "handoffs"), handoffTrustAnchor,
+    ).handoffs;
+    if (handoffs.length < currentHandoffs.length || currentHandoffs.some(
+      ({ handoffHash }, index) => handoffs[index]?.handoffHash !== handoffHash,
+    )) {
+      throw new Error("validator recovery history conflicts with trusted handoffs");
+    }
+    const currentTopology = loadValidatorTopologyHistory(
+      join(this.#directory, "topologies"), {
+        genesisPeerRegistry: this.#genesis.peerRegistry,
+        genesisValidators: this.#genesis.validators,
+        handoffs: currentHandoffs,
+        networkId: this.networkId,
+      },
+    );
+    if (verified.activationHeight < currentTopology.activationHeight) {
+      throw new Error("validator recovery topology would roll back trusted history");
+    }
+    for (const handoff of handoffs) {
+      const history = loadValidatorHandoffs(
+        join(this.#directory, "handoffs"), handoffTrustAnchor,
+      );
+      if (!history.handoffs.some(({ handoffHash }) => handoffHash === handoff.handoffHash)) {
+        installValidatorHandoff(
+          join(this.#directory, "handoffs"), handoff, handoffTrustAnchor,
+        );
+      }
+    }
+    const installedHandoffs = loadValidatorHandoffs(
+      join(this.#directory, "handoffs"), handoffTrustAnchor,
+    ).handoffs;
+    const topologyContext = {
+      genesisPeerRegistry: this.#genesis.peerRegistry,
+      genesisValidators: this.#genesis.validators,
+      handoffs: installedHandoffs,
+      networkId: this.networkId,
+    };
+    for (const onboarding of onboardings) {
+      installValidatorTopology(
+        join(this.#directory, "topologies"), onboarding, topologyContext,
+      );
+    }
+    const finalTopology = loadValidatorTopologyHistory(
+      join(this.#directory, "topologies"), topologyContext,
+    );
+    return {
+      activationHeight: finalTopology.activationHeight,
+      installedHandoffs: installedHandoffs.length - currentHandoffs.length,
+      peers: structuredClone(finalTopology.peerRegistry.peers),
+      validatorCount: finalTopology.trustedValidators.length,
+    };
   }
 
   installStateSnapshotCandidates(candidates) {

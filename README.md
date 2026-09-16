@@ -55,7 +55,7 @@ The intended advantages are:
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
 | Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
 | Signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally |
-| Pre-activation validator onboarding | A six-process `4 → 4` rehearsal proves dual quorums with one old and one new node offline, authenticated handoff recovery, restart, and retirement |
+| Pre-activation validator onboarding | A six-process `4 → 4` rehearsal proves dual quorums with one old and one new node offline, paired key/topology history recovery, restart, and retirement |
 | Bounded public ingress, request sizes, connections, headers, and timeouts | Implemented locally; production DDoS edge protection remains |
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |
 | Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, onboarding, and AI memory | Committed in genesis and every protocol-v7 block |
@@ -263,6 +263,7 @@ candidate runs are committed.
 - `blockchain/validator-staking.mjs` — bonded eligibility and replay-protected non-reveal penalties.
 - `blockchain/validator-rotation.mjs` — delayed, bonded finality-set rotation safety rules.
 - `blockchain/validator-handoff.mjs` — old/new quorum trust handoffs for verifying snapshots across rotations.
+- `blockchain/validator-topology-history.mjs` — genesis-rooted pairing of each handoff with its mutually signed endpoints, TLS pins, and transport identities.
 - `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
 - `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
 - `blockchain/node-store.mjs` — atomic block files and verified restart replay.

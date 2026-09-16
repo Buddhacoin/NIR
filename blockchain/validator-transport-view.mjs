@@ -5,6 +5,7 @@ const SYNC_PATHS = new Set([
   "/v1/p2p/handoffs/history",
   "/v1/p2p/health",
   "/v1/p2p/snapshots/candidate",
+  "/v1/p2p/topologies/history",
 ]);
 
 const ACTIVATION_PATHS = new Map([
