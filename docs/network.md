@@ -327,6 +327,35 @@ later journal blocks, survive restart, and prune older blocks through quarantine
 plus a separate restart-verification marker. These library operations are not
 yet exposed as an unauthenticated public administration endpoint.
 
+### Install and prune from the operator CLI
+
+Stop the target node before changing its checkpoint. Copy a quorum snapshot to
+the machine through the operator's authenticated administration channel, then
+install it locally:
+
+```bash
+npm run node:snapshot-install -- /srv/nir-node /secure/incoming/STATE-SNAPSHOT.json
+```
+
+If the snapshot crosses validator rotations, pass the ordered handoff array as
+the final argument. The file is rooted in the validators from the node's local
+`genesis.json`; the downloaded snapshot cannot choose its own trust anchor.
+
+Old blocks are never deleted by installation. Pruning requires three separate
+commands, with a real node stop/start and health check between the first two:
+
+```bash
+npm run node:prune-stage -- /srv/nir-node
+# restart the node and verify its height, tip hash, and application health
+npm run node:prune-verify -- /srv/nir-node
+npm run node:prune-finalize -- /srv/nir-node
+```
+
+`prune-stage` moves eligible files into quarantine. `prune-verify` reconstructs
+the state from the snapshot and remaining journal before writing a verification
+marker. `prune-finalize` refuses to remove quarantine without that marker.
+These commands read bounded JSON and never accept private key files.
+
 ## Remaining production boundary
 
 This is a multi-process localhost consensus prototype, not production BFT.

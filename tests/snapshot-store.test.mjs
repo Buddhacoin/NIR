@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -180,6 +181,29 @@ test("old journal blocks are quarantined and deleted only after restart verifica
     const backup = join(root, "portable-backup");
     exportBlockStoreBackup(root, backup, genesisConfig);
     assert.equal(loadBlockStore(backup, genesisConfig).chain.tipHash, chain.tipHash);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("operator CLI installs a snapshot and enforces the three pruning phases", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-snapshot-cli-"));
+  const { chain, genesisConfig, validators } = fixture();
+  try {
+    initializeBlockStore(root, new NirChain(genesisConfig));
+    writeFileSync(join(root, "genesis.json"), JSON.stringify(genesisConfig), "utf8");
+    const snapshotPath = join(root, "incoming-snapshot.json");
+    writeFileSync(snapshotPath, JSON.stringify(
+      createStateSnapshot(chain, validators.slice(0, 3)),
+    ), "utf8");
+    const run = (...arguments_) => JSON.parse(execFileSync(process.execPath, [
+      "blockchain/node-cli.mjs", ...arguments_,
+    ], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+    assert.equal(run("snapshot-install", root, snapshotPath).height, 1);
+    assert.equal(run("prune-stage", root).baseHeight, 1);
+    assert.throws(() => run("prune-finalize", root), /restart verification/);
+    assert.equal(run("prune-verify", root).verifiedHeight, 1);
+    assert.equal(run("prune-finalize", root).baseHeight, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
