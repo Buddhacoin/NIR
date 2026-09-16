@@ -224,6 +224,7 @@ class EvaluationReport:
         artifact_hash: str,
         baseline_hash: str,
         suite_commitment: str,
+        execution_bundle_hash: str,
         novelty_bps: int = BPS,
     ) -> dict[str, Any]:
         _require_hash(artifact_hash, "artifact hash")
@@ -236,11 +237,20 @@ class EvaluationReport:
             raise ProtocolError(
                 "suite commitment contains non-hexadecimal data"
             ) from error
+        if len(execution_bundle_hash) != 64:
+            raise ProtocolError("execution bundle hash must be a 64-character hash")
+        try:
+            int(execution_bundle_hash, 16)
+        except ValueError as error:
+            raise ProtocolError(
+                "execution bundle hash contains non-hexadecimal data"
+            ) from error
         if not 0 <= novelty_bps <= BPS:
             raise ProtocolError("novelty must be between 0 and 10000 bps")
         return {
             "artifactHash": artifact_hash,
             "baselineHash": baseline_hash,
+            "executionBundleHash": execution_bundle_hash.casefold(),
             "suiteCommitment": suite_commitment.casefold(),
             "gainPpm": self.gain_ppm,
             "generalityBps": self.generality_bps,

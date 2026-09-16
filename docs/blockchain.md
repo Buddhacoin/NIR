@@ -40,8 +40,19 @@ identically.
 Validators attest identical evaluation metrics and the chain recomputes the
 score, world-memory transition, allocation, uniqueness, signatures, and
 monetary cap. Empty blocks do not consume issuance epochs. The chain does not
-rerun an AI model inside block validation. Production still needs a transport
-that creates receipts directly from reproducible evaluator executions.
+rerun an AI model inside block validation. `nir/runner.py` now creates a
+deterministic proof bundle that binds artifact bytes, a later challenge, the
+runtime manifest, complete independent outputs, resource measurements, and the
+derived report. Its reference adapter reads data only and is not an isolation
+boundary. Production still needs remotely isolated runners whose hardware
+attestations sign these bundle commitments before they become evaluator
+receipts.
+
+`executionBundleHash` is now consensus-required and covered by evaluator
+signatures. The earlier candidate commitment itself is not yet looked up from
+finalized chain state when the progress claim is checked; its epoch is still an
+evaluator-signed assertion. Connecting progress admission to the existing
+candidate registry is therefore the next fail-closed consensus change.
 
 Validator and evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. This is not yet

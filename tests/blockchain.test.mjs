@@ -138,6 +138,7 @@ function progressClaim(chain, evaluators, recipient, label = "proof-a") {
   const evaluation = chain.prepareProgressEvaluation({
     artifactHash: `sha256:${fingerprint(`artifact-${label}`)}`,
     baselineHash: `sha256:${fingerprint("baseline")}`,
+    executionBundleHash: fingerprint(`execution-bundle-${label}`),
     suiteCommitment: fingerprint("hidden-suite-v1"),
     parents: [`sha256:${fingerprint("baseline")}`],
     committedEpoch: chain.height,
@@ -262,6 +263,7 @@ test("known capability cannot mint against a weaker selected baseline", () => {
     () => chain.prepareProgressEvaluation({
       artifactHash: `sha256:${fingerprint("repackaged-known-model")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      executionBundleHash: fingerprint("repackaged-known-model-bundle"),
       suiteCommitment: fingerprint("hidden-suite-v1"),
       parents: [`sha256:${fingerprint("baseline")}`],
       committedEpoch: 0,
@@ -313,6 +315,7 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
   const evaluation = chain.prepareProgressEvaluation({
     artifactHash: `sha256:${fingerprint("second-frontier-model")}`,
     baselineHash: `sha256:${fingerprint("baseline")}`,
+    executionBundleHash: fingerprint("second-frontier-model-bundle"),
     suiteCommitment: fingerprint("hidden-suite-v1"),
     parents: [`sha256:${fingerprint("baseline")}`],
     committedEpoch: 1,
@@ -771,6 +774,7 @@ test("chain scoring matches the evaluator output", () => {
     computeProgressScore({
       artifactHash: `sha256:${fingerprint("candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      executionBundleHash: fingerprint("candidate-bundle"),
       suiteCommitment: fingerprint("suite"),
       gainPpm: 375_000,
       generalityBps: 7_500,
@@ -787,11 +791,33 @@ test("chain scoring matches the evaluator output", () => {
   );
 });
 
+test("progress cannot mint without a committed execution bundle", () => {
+  assert.throws(
+    () => computeProgressScore({
+      artifactHash: `sha256:${fingerprint("candidate")}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      suiteCommitment: fingerprint("suite"),
+      gainPpm: 375_000,
+      generalityBps: 7_500,
+      reproducibilityBps: 10_000,
+      safetyBps: 10_000,
+      safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+      criticalSafetyPass: true,
+      noveltyBps: 10_000,
+      candidateEnergyWh: 710,
+      baselineEnergyWh: 1_000,
+      energyAttested: true,
+    }),
+    /evaluation commitments/,
+  );
+});
+
 test("critical safety failure cannot produce an intelligence score", () => {
   assert.throws(
     () => computeProgressScore({
       artifactHash: `sha256:${fingerprint("unsafe-candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      executionBundleHash: fingerprint("unsafe-candidate-bundle"),
       suiteCommitment: fingerprint("suite"),
       gainPpm: 900_000,
       generalityBps: 10_000,

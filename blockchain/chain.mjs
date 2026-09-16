@@ -266,6 +266,7 @@ export function progressFingerprint(evaluation) {
     {
       artifactHash: evaluation.artifactHash,
       baselineHash: evaluation.baselineHash,
+      executionBundleHash: evaluation.executionBundleHash,
       suiteCommitment: evaluation.suiteCommitment,
     },
     "PROGRESS_FINGERPRINT",
@@ -278,6 +279,7 @@ export function computeProgressScore(evaluation) {
     evaluation === null ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.artifactHash ?? "") ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.baselineHash ?? "") ||
+    !/^[0-9a-f]{64}$/.test(evaluation.executionBundleHash ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.suiteCommitment ?? "")
   ) {
     throw new Error("evaluation commitments are invalid");

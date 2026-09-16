@@ -34,6 +34,7 @@ def _evaluate(args: argparse.Namespace) -> dict:
                 artifact_hash=candidate_hash,
                 baseline_hash=baseline_hash,
                 suite_commitment=args.commitment,
+                execution_bundle_hash=args.bundle_hash,
             ),
             "proof_fingerprint": proof.fingerprint,
             "proof_score": proof.score(),
@@ -60,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("suite")
     evaluate.add_argument("--salt", required=True)
     evaluate.add_argument("--commitment", required=True)
+    evaluate.add_argument(
+        "--bundle-hash",
+        required=True,
+        help="verified nir-evaluation-bundle-v1 commitment",
+    )
     evaluate.add_argument("--baseline", nargs="+", required=True)
     evaluate.add_argument("--candidate", nargs="+", required=True)
     evaluate.add_argument("--contributor", default="genesis-lab")

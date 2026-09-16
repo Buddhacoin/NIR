@@ -64,6 +64,23 @@ attested. The artifact commitment must ultimately cover the model, inference
 configuration, runtime, dependencies, and evaluator harness—not merely model
 weights.
 
+The executable runner format makes that boundary explicit. A candidate is
+content-addressed before the challenge epoch. Each baseline/candidate transcript
+then commits to the same fresh seed and exact environment manifest, and the
+final bundle commits to all outputs and the report. A consumed
+candidate/challenge pair cannot be submitted twice. Local artifact files can be
+rehashed during verification, so replacing a model after evaluation invalidates
+the bundle. `executionBundleHash` is mandatory in the chain evaluation and is
+therefore covered by every evaluator signature and progress fingerprint. This
+format supplies reproducibility and replay protection, not proof of physical
+execution by itself; production acceptance additionally requires signatures
+from independently operated isolated runners and genuine hardware attestation.
+
+The current chain verifies the mandatory bundle commitment but does not yet
+resolve the bundle's claimed earlier candidate commitment from finalized state.
+Until that admission link is implemented, the evaluator quorum remains trusted
+for commit-before-challenge ordering; the bundle alone cannot prove history.
+
 ### Draft score
 
 For an accepted proof `p`:

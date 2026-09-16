@@ -61,6 +61,7 @@ const proofFingerprint = createHash("sha256")
 const evaluation = chain.prepareProgressEvaluation({
   artifactHash: `sha256:${proofFingerprint}`,
   baselineHash: baselineArtifact,
+  executionBundleHash: createHash("sha256").update("evaluation-bundle-1").digest("hex"),
   suiteCommitment: createHash("sha256").update("hidden-suite-v1").digest("hex"),
   parents: [baselineArtifact],
   committedEpoch: 0,

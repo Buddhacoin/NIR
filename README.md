@@ -161,6 +161,19 @@ Raw compute never creates money by itself. Rewards are shared among accepted
 contributions according to their verified progress score, with an efficiency
 adjustment for the energy used.
 
+The evaluator runner now builds a deterministic, content-addressed proof bundle
+before a reward can be proposed. The bundle binds the declared earlier
+baseline and candidate files to a later challenge seed, the revealed benchmark,
+an exact runtime manifest, every independent output, measured resources, and
+the derived report. Artifact substitution, environment substitution, a task
+revealed before commitment, and reuse of the same finalized challenge all fail
+closed. The included data-only adapter is safe for local demonstrations; it
+does not execute untrusted model code. A public network still requires isolated
+remote runners and hardware-backed execution and energy attestations.
+The next consensus step is to make the chain look up that earlier candidate
+commitment from finalized state instead of relying on the evaluator quorum's
+signed assertion about its epoch.
+
 Evaluation and block finality use separate ML-DSA-65 key registries. Their
 operator identities must be unique and disjoint in the genesis configuration.
 
@@ -238,9 +251,16 @@ python3 -m unittest discover -s tests -v
 COMMITMENT=$(python3 -m nir.genesis commit \
   examples/genesis_suite.json --salt nir-genesis-demo)
 
+# The legacy JSON examples do not contain a real runner bundle. This fixed
+# value labels the output simulation-only; public claims must use the verified
+# hash returned by nir.runner.EvaluationBundle.bundle_hash.
+BUNDLE_HASH=$(python3 -c \
+  'import hashlib; print(hashlib.sha256(b"local-demo-only").hexdigest())')
+
 python3 -m nir.genesis evaluate examples/genesis_suite.json \
   --salt nir-genesis-demo \
   --commitment "$COMMITMENT" \
+  --bundle-hash "$BUNDLE_HASH" \
   --baseline examples/baseline.json examples/baseline-2.json \
     examples/baseline-3.json \
   --candidate examples/candidate-1.json examples/candidate-2.json \
@@ -258,6 +278,8 @@ candidate runs are committed.
 - `docs/protocol.md` — protocol and threat-model draft.
 - `nir/model.py` — deterministic scoring and capped emission model.
 - `nir/evaluator.py` — hidden-suite commitment and progress evaluation.
+- `nir/runner.py` — content-addressed execution transcripts, proof bundles, and
+  replay protection for evaluator runners.
 - `nir/memory.py` — world capability frontier, lineage, and novelty registry.
 - `nir/genesis.py` — command-line commit/reveal demonstrator.
 - `nir/simulation.py` — a small example epoch.
