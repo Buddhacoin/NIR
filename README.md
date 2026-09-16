@@ -52,6 +52,7 @@ The intended advantages are:
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer review, terminal-confirmed signing without browser key access, and a separate valueless-testnet-only submit step; implemented locally |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
+| Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
 | Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |

@@ -82,7 +82,22 @@ The wallet recipe includes `wallet-ui/`; the node recipe includes `blockchain/`
 and `package.json`. The canonical JSON container has no timestamps, host paths,
 file-order ambiguity, compression metadata, or network-fetched dependencies.
 Its `artifactHash` must match across independent builders. `.nirpkg` is an
-auditable release container, not yet a click-to-install desktop application.
+auditable release container. A verified wallet package can be installed into a
+new directory without trusting its distributor:
+
+```bash
+npm run release:install-wallet -- \
+  wallet.nirpkg signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /absolute/path/to/new-nir-wallet
+```
+
+The command verifies the post-quantum release signature, trusted signer address,
+source-manifest binding, artifact hash, complete deterministic file set, every
+file digest, and all paths before creating the destination. It refuses an
+existing directory, never follows package symlinks, removes a partial new
+installation after failure, and writes `NIR-INSTALL.json` with the verified
+artifact, source, release, and signer identities. The result is an auditable
+web/extension directory, not yet a click-to-install notarized desktop app.
 
 ## Build the browser extension ZIP
 

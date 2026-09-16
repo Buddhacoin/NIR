@@ -24,7 +24,9 @@ Implemented and continuously tested:
   encrypted-vault password entry, replay protection, and no broadcast authority;
 - an end-to-end HTTP test that creates a vault, funds it with valueless faucet
   units, obtains a fee quote, signs through the bridge, submits separately,
-  finalizes a block, checks both balances, and rejects transaction replay.
+  finalizes a block, checks both balances, and rejects transaction replay;
+- a verified wallet-package installer that refuses existing destinations and
+  writes source, artifact, signer, and release provenance after safe extraction.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR
 has market value.

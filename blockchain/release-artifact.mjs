@@ -1,9 +1,21 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 
 import { canonicalJson, hashObject } from "./crypto.mjs";
-import { verifyReleaseFiles, verifyReleaseManifest } from "./release-manifest.mjs";
+import {
+  verifyReleaseFiles,
+  verifyReleaseManifest,
+  verifySignedRelease,
+} from "./release-manifest.mjs";
 
 const KINDS = new Set(["node", "wallet"]);
 const MAX_ENTRIES = 20_000;
@@ -154,4 +166,52 @@ export function verifyReleaseArtifact(artifact, { sourceManifest } = {}) {
 
 export function serializeReleaseArtifact(artifact) {
   return `${canonicalJson(verifyReleaseArtifact(artifact))}\n`;
+}
+
+export function installWalletArtifact(artifact, targetPath, { signedRelease, trustedAddress } = {}) {
+  const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
+  const verified = verifyReleaseArtifact(artifact, { sourceManifest: manifest });
+  if (verified.kind !== "wallet") throw new Error("wallet installation metadata is invalid");
+  const target = resolve(targetPath);
+  const parent = dirname(target);
+  const parentMetadata = lstatSync(parent);
+  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink() || existsSync(target)) {
+    throw new Error("wallet installation requires a new directory in a regular parent");
+  }
+  mkdirSync(target, { mode: 0o700 });
+  try {
+    for (const entry of verified.entries) {
+      if (!entry.path.startsWith("wallet-ui/")) {
+        throw new Error("wallet package contains a non-wallet path");
+      }
+      const relative = entry.path.slice("wallet-ui/".length);
+      if (!relative) throw new Error("wallet package path is invalid");
+      const destination = join(target, ...relative.split("/"));
+      const directory = dirname(destination);
+      mkdirSync(directory, { recursive: true, mode: 0o755 });
+      const directoryMetadata = lstatSync(directory);
+      if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
+        throw new Error("wallet installation directory is unsafe");
+      }
+      writeFileSync(destination, Buffer.from(entry.content, "base64"), {
+        flag: "wx", mode: entry.executable ? 0o755 : 0o644,
+      });
+      chmodSync(destination, entry.executable ? 0o755 : 0o644);
+    }
+    const provenance = {
+      artifactHash: verified.artifactHash,
+      format: "nir-wallet-install-v1",
+      releaseVersion: verified.releaseVersion,
+      signerAddress: signer.address,
+      sourceManifestHash: verified.sourceManifestHash,
+      sourceRevision: verified.sourceRevision,
+    };
+    writeFileSync(join(target, "NIR-INSTALL.json"), `${canonicalJson(provenance)}\n`, {
+      flag: "wx", mode: 0o644,
+    });
+    return provenance;
+  } catch (error) {
+    rmSync(target, { recursive: true, force: true });
+    throw error;
+  }
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,6 +19,7 @@ import { createDeterministicZip, zipSha3 } from "../blockchain/deterministic-zip
 import {
   artifactPaths,
   createReleaseArtifact,
+  installWalletArtifact,
   serializeReleaseArtifact,
   verifyReleaseArtifact,
 } from "../blockchain/release-artifact.mjs";
@@ -163,4 +165,44 @@ test("browser extension ZIPs have deterministic bytes, metadata, and ordering", 
   assert.throws(() => createDeterministicZip([
     ...entries, { contents: Buffer.from("duplicate"), path: "app.js" },
   ]), /unique/);
+});
+
+test("verified wallet packages install only into a new directory with provenance", () => {
+  const values = fixture();
+  const target = join(values.root, "installed-wallet");
+  try {
+    const wallet = generateWallet();
+    const signedRelease = signReleaseManifest(values.manifest, wallet);
+    const artifact = createReleaseArtifact(
+      values.root, artifactPaths("wallet", values.paths), {
+        kind: "wallet", sourceManifest: values.manifest,
+      },
+    );
+    const provenance = installWalletArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    });
+    assert.equal(readFileSync(join(target, "index.html"), "utf8"), "<h1>NIR</h1>\n");
+    assert.deepEqual(JSON.parse(readFileSync(join(target, "NIR-INSTALL.json"), "utf8")),
+      provenance);
+    assert.equal(provenance.artifactHash, artifact.artifactHash);
+    assert.equal(provenance.signerAddress, wallet.address);
+    const untrustedTarget = join(values.root, "untrusted-wallet");
+    assert.throws(() => installWalletArtifact(artifact, untrustedTarget, {
+      signedRelease, trustedAddress: generateWallet().address,
+    }), /not trusted/);
+    assert.equal(existsSync(untrustedTarget), false);
+    assert.throws(() => installWalletArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /new directory/);
+
+    const tampered = structuredClone(artifact);
+    tampered.entries[0].content = Buffer.from("tampered").toString("base64");
+    const rejectedTarget = join(values.root, "rejected-wallet");
+    assert.throws(() => installWalletArtifact(tampered, rejectedTarget, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /digest|hash/);
+    assert.equal(existsSync(rejectedTarget), false);
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
+  }
 });

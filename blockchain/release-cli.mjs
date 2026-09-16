@@ -22,6 +22,7 @@ import {
 import {
   artifactPaths,
   createReleaseArtifact,
+  installWalletArtifact,
   serializeReleaseArtifact,
   verifyReleaseArtifact,
 } from "./release-artifact.mjs";
@@ -179,6 +180,14 @@ try {
       readBoundedJson(artifactPath, 520 * 1024 * 1024), { sourceManifest: manifest },
     );
     console.log(`${artifact.kind} artifact ${artifact.artifactHash} verified for ${signer.address}.`);
+  } else if (command === "install-wallet" && args.length === 4) {
+    const [artifactPath, envelopePath, trustedAddress, target] = args;
+    const provenance = installWalletArtifact(
+      readBoundedJson(artifactPath, 520 * 1024 * 1024), target, {
+        signedRelease: readBoundedJson(envelopePath), trustedAddress,
+      },
+    );
+    console.log(`Wallet ${provenance.artifactHash} installed at ${resolve(target)}.`);
   } else if (command === "build-extension" && args.length === 4) {
     const [rootValue, envelopePath, trustedAddress, output] = args;
     const root = resolve(rootValue);
@@ -211,7 +220,7 @@ try {
     }
     console.log(`Browser extension ${zipSha3(expected)} verified.`);
   } else {
-    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
+    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:install-wallet <wallet.nirpkg> <signed.json> <trusted-address> <new-directory> | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
   }
 } catch (error) {
   console.error(`Release operation failed: ${error.message}`);
