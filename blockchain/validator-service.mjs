@@ -131,7 +131,9 @@ async function discoverLockedProposal(validator, urls) {
       // An invalid or forged lock report cannot influence proposal selection.
     }
   }
-  return selectHighestCertifiedProposal(groups, validator.validatorCount);
+  return selectHighestCertifiedProposal(
+    groups, validator.validatorCountForHeight(validator.height + 1),
+  );
 }
 
 async function finalizeValidatorProposal(validator, urls, proposal, recoveredPrepare = null) {
@@ -183,7 +185,7 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
 }
 
 async function proposerIsReachable(validator, urls, address) {
-  const index = Array.from({ length: validator.validatorCount })
+  const index = Array.from({ length: validator.peerCount })
     .findIndex((_, candidate) => validator.peerAddress(candidate) === address);
   if (index < 0) throw new Error("expected proposer is not in the validator set");
   if (address === validator.address) return true;
@@ -222,7 +224,7 @@ async function timeoutProposal(validator, urls, proposal, baseMs, maximumMs) {
     .filter(({ status, value }) => status === "fulfilled" && value)
     .map(({ value }) => value.timeout)];
   const uniqueTimeouts = new Map(timeouts.map((vote) => [vote.validator, vote]));
-  const quorum = Math.floor((validator.validatorCount * 2) / 3) + 1;
+  const quorum = Math.floor((validator.validatorCountForHeight(proposal.height) * 2) / 3) + 1;
   if (uniqueTimeouts.size < quorum) {
     throw new Error(`round timeout quorum not reached (${uniqueTimeouts.size}/${quorum})`);
   }
@@ -239,7 +241,7 @@ async function produceValidatorBlock(validator, urls, baseMs, maximumMs) {
       throw new Error(`this validator is not the proposer; expected ${proposal.proposer}`);
     }
     proposal = await timeoutProposal(validator, urls, proposal, baseMs, maximumMs);
-    const proposerIndex = Array.from({ length: validator.validatorCount })
+    const proposerIndex = Array.from({ length: validator.peerCount })
       .findIndex((_, index) => validator.peerAddress(index) === proposal.proposer);
     if (proposal.proposer !== validator.address &&
         await proposerIsReachable(validator, urls, proposal.proposer)) {

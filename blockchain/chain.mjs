@@ -867,12 +867,23 @@ export class NirChain {
       left.address.localeCompare(right.address)).map((member) => structuredClone(member));
   }
 
+  validatorMembersForHeight(height) {
+    if (!Number.isSafeInteger(height) || height < this.height + 1) {
+      throw new Error("validator membership height is invalid");
+    }
+    return this.#validatorsForHeight(height).map((member) => structuredClone(member));
+  }
+
   get pendingValidatorRotation() {
     return this.#pendingValidatorRotation ? structuredClone(this.#pendingValidatorRotation) : null;
   }
 
   get peerRegistryHash() {
     return this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64);
+  }
+
+  get peerRegistry() {
+    return this.#peerRegistry ? structuredClone(this.#peerRegistry) : null;
   }
 
   randomnessFault(candidateId) {

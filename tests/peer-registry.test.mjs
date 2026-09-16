@@ -165,7 +165,7 @@ test("validators activate a quorum-signed transport rotation after chain height 
     const block = finalizeBlock(proposal, consensusWallets.slice(0, 3));
     replicas.forEach((replica) => replica.commit(block));
     assert.throws(() => new ValidatorReplica(layout.validatorDirectories[0]),
-      /does not match finalized chain state/);
+      /does not belong to the authenticated transport view/);
     layout.validatorDirectories.forEach((directory, index) => {
       writeFileSync(join(directory, "PEER-REGISTRIES.json"),
         `${JSON.stringify([initial, rotated], null, 2)}\n`, { mode: 0o600 });

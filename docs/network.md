@@ -364,8 +364,8 @@ separate rotatable transport identities and optional pinned TLS 1.3, and
 round-zero blocks can be assembled by the elected validator. Transport remains
 plaintext only when the loopback development mode is deliberately used.
 Automated certificate lifecycle and coordinator-key rotation are not governed
-on-chain, validator-set/peer-registry rotation is not yet one atomic transition,
-and catch-up is sequential. A quorum-authenticated snapshot format, signed RPC,
+on-chain. Validator-set and peer-registry rotation is atomic, with a restricted
+pre-activation union transport and old/new finality quorums. A quorum-authenticated snapshot format, signed RPC,
 authenticated source collection, typed restore, and atomic redundant staging
 now exist. Dual-quorum rotation handoff verification, journal-tail replay,
 joining-node installation, portable pruned backups, and two-stage pruning are
@@ -374,15 +374,18 @@ authenticated snapshot candidates from peers, require matching finality quorum,
 install the checkpoint, and replay the remaining tail; failed quorum safely
 falls back to block-by-block replay. Commit-bound handoff candidates are now
 assembled into old/new quorums, durably replicated, distributed after the
-activation block, and reloaded on restart. Pre-activation onboarding of new
-operators into the authenticated P2P topology and operator-run production
-recovery drills remain; there is no fork-choice protocol.
+activation block, and reloaded on restart. Multi-host operator ceremonies and
+operator-run production recovery drills remain; there is no fork-choice protocol.
 
 Protocol v7 also requires a pre-activation onboarding certificate in any
 validator rotation on a network with an active peer registry. This prevents a
 rotation from naming unreachable or unconsenting operators: all future
 consensus keys and transport keys prove possession, while the current validator
-quorum authorizes the exact endpoint set. Existing protocol-v6 development
+quorum authorizes the exact endpoint set. Before activation the live service
+admits future-only transports only for state synchronization and messages bound
+to the exact activation height. Both validator sets must prepare and commit that
+block; afterward the service immediately drops retired peers and uses the new
+registry. Existing protocol-v6 development
 state must be recreated; this repository has no public mainnet history requiring
 a migration.
 

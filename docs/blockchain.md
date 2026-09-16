@@ -151,11 +151,11 @@ restart, this history advances the genesis trust anchor before any snapshot is
 loaded. A damaged copy is repaired; conflicting histories and skipped or
 reordered transitions fail closed.
 
-The remaining rotation boundary is dynamic P2P membership: production new-set
-operators need a pre-activation, mutually authenticated endpoint-registration
-workflow so their commit and handoff votes are reachable before activation.
-The local devnet still starts with a static four-validator transport topology,
-so it must not be presented as a complete live operator replacement workflow.
+Dynamic P2P membership now has a pre-activation, mutually authenticated
+endpoint-registration workflow so new-set commit and handoff votes are
+reachable before activation. The local devnet generator still starts only a
+static four-validator topology; multi-host deployment, operator ceremonies,
+and hostile-network recovery drills remain production work.
 
 Protocol v7 adds the consensus commitment for that workflow. When a chain has
 an active peer registry, a validator-rotation proposal must carry a canonical
@@ -169,9 +169,12 @@ to an overlapping validator's live endpoint fail closed. The certificate is
 stored inside the pending rotation and therefore covered by every subsequent
 state root. Its peer registry becomes active atomically in the same block as the
 new finality set; intervening peer-registry updates are forbidden. The remaining
-runtime step is a temporary union transport view before activation so old and
-new operators can exchange activation votes without granting newcomers early
-consensus authority.
+live validator service builds an authenticated temporary union transport view
+before activation. Future-only operators may synchronize finalized state and
+exchange messages for the exact activation height, but cannot gossip
+transactions or influence earlier proposals and timeouts. The activation block
+requires prepare and commit quorums from both sets; committing it immediately
+rebuilds the in-memory topology from the newly active registry.
 
 ## Run
 

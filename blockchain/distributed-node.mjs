@@ -45,7 +45,6 @@ import {
   createPeerRegistry,
   EMPTY_PEER_REGISTRY_HASH,
   peerRegistryHash,
-  verifyPeerRegistry,
 } from "./peer-registry.mjs";
 import { requestJson } from "./http-client.mjs";
 import { createPeerAnnouncement } from "./peer-discovery.mjs";
@@ -65,6 +64,10 @@ import {
   verifyStateSnapshot,
   verifyStateSnapshotCandidate,
 } from "./state-snapshot.mjs";
+import {
+  authorizeTransportAction,
+  buildValidatorTransportView,
+} from "./validator-transport-view.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -265,6 +268,7 @@ export class ValidatorReplica {
   #peerTransports;
   #peerTlsPins;
   #peerRegistry;
+  #transportView;
   #transportWallet;
 
   constructor(directory) {
@@ -274,50 +278,24 @@ export class ValidatorReplica {
     this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
     const genesis = readJson(join(this.#directory, "genesis.json"));
     this.#genesis = genesis;
-    this.#validators = genesis.validators;
-    let registryHistory;
-    try {
-      registryHistory = readJson(join(this.#directory, "PEER-REGISTRIES.json"));
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      registryHistory = [readJson(join(this.#directory, "PEER-REGISTRY.json"))];
-    }
-    if (!Array.isArray(registryHistory) || registryHistory.length < 1 ||
-        registryHistory.length > 1_024) throw new Error("peer registry history is invalid");
-    let previousRegistry = null;
-    let registry = null;
-    for (const candidate of registryHistory) {
-      const verified = verifyPeerRegistry(candidate, {
-        currentHeight: Math.max(this.#chain.height, candidate?.activationHeight ?? 0),
-        networkId: this.#chain.networkId,
-        previousRegistry,
-        validators: this.#validators,
-      });
-      previousRegistry = verified;
-      if (verified.activationHeight <= this.#chain.height) registry = verified;
-    }
+    this.#validators = this.#chain.validatorMembers;
+    const registry = this.#chain.peerRegistry;
     if (!registry) throw new Error("peer registry has no active version");
-    if (peerRegistryHash(registry) !== this.#chain.peerRegistryHash) {
-      throw new Error("local peer registry does not match finalized chain state");
-    }
     this.#peerRegistry = registry;
-    const registryByValidator = new Map(registry.peers.map((peer) =>
-      [peer.validatorAddress, peer]));
-    this.#peerUrls = this.#validators.map(({ address }) => registryByValidator.get(address).url);
-    this.#peerTransports = this.#validators.map(({ address }) =>
-      registryByValidator.get(address).transport);
-    this.#peerTlsPins = this.#validators.map(({ address }) =>
-      registryByValidator.get(address).tlsCertificateSha256);
     this.#transportWallet = readJson(join(this.#directory, "TRANSPORT-KEY.json"));
-    const member = genesis.validators
+    this.#refreshTransportView();
+    const pendingMembers = this.#chain.pendingValidatorRotation?.validators ?? [];
+    const member = [...this.#validators, ...pendingMembers]
       .find(({ address }) => address === this.#wallet.address);
     if (!member || member.publicKey !== this.#wallet.publicKey) {
       throw new Error("validator key does not belong to this network");
     }
-    const ownTransport = registryByValidator.get(this.#wallet.address).transport;
+    const ownTransport = this.#transportView
+      .find(({ validatorAddress }) => validatorAddress === this.#wallet.address)?.transport;
+    if (!ownTransport) throw new Error("validator has no authenticated transport binding");
     if (ownTransport.address !== this.#transportWallet.address ||
         ownTransport.publicKey !== this.#transportWallet.publicKey) {
-      throw new Error("validator transport key does not belong to the active peer registry");
+      throw new Error("validator transport key does not belong to the authenticated transport view");
     }
     for (const name of readdirSync(join(this.#directory, "mempool")).sort()) {
       if (/^[0-9a-f]{64}\.json$/.test(name)) this.#mempool.add(readJson(join(this.#directory, "mempool", name)));
@@ -330,7 +308,53 @@ export class ValidatorReplica {
   get tipHash() { return this.#chain.tipHash; }
   get mempoolSize() { return this.#mempool.size; }
   get peerUrls() { return [...this.#peerUrls]; }
+  get peerCount() { return this.#transportView.length; }
   get validatorCount() { return this.#validators.length; }
+
+  validatorCountForHeight(height) {
+    return this.#chain.validatorMembersForHeight(height).length;
+  }
+
+  #validatorSets(height) {
+    const required = this.#chain.validatorMembersForHeight(height);
+    const pending = this.#chain.pendingValidatorRotation;
+    const previous = pending?.activationHeight === height ? this.#chain.validatorMembers : null;
+    const accepted = new Map([...(previous ?? []), ...required]
+      .map((member) => [member.address, member]));
+    return { accepted, previous, required };
+  }
+
+  #requireSetQuorum(voters, members, label) {
+    const addresses = new Set(members.map(({ address }) => address));
+    const votes = [...voters].filter((address) => addresses.has(address)).length;
+    const quorum = Math.floor((members.length * 2) / 3) + 1;
+    if (votes < quorum) throw new Error(`${label} quorum not reached (${votes}/${quorum})`);
+  }
+
+  #refreshTransportView() {
+    const activeByAddress = new Map(this.#chain.validatorMembers.map((member) =>
+      [member.address, member]));
+    this.#validators = [
+      ...this.#genesis.validators
+        .filter(({ address }) => activeByAddress.has(address))
+        .map(({ address }) => activeByAddress.get(address)),
+      ...[...activeByAddress.values()]
+        .filter(({ address }) => !this.#genesis.validators.some((member) =>
+          member.address === address)),
+    ];
+    this.#peerRegistry = this.#chain.peerRegistry;
+    this.#transportView = buildValidatorTransportView({
+      currentPeerRegistry: this.#peerRegistry,
+      currentValidators: this.#validators,
+      height: this.#chain.height,
+      networkId: this.#chain.networkId,
+      pendingRotation: this.#chain.pendingValidatorRotation,
+    });
+    this.#peerUrls = this.#transportView.map(({ url }) => url);
+    this.#peerTransports = this.#transportView.map(({ transport }) => transport);
+    this.#peerTlsPins = this.#transportView.map(({ tlsCertificateSha256 }) =>
+      tlsCertificateSha256);
+  }
 
   account(address) {
     if (!ADDRESS.test(address)) throw new Error("address is invalid");
@@ -364,8 +388,15 @@ export class ValidatorReplica {
   }
 
   authorizeValidator(auth, method, path, body) {
-    const peer = this.#peerTransports.find(({ address }) => address === auth?.signer);
-    if (!peer) throw new Error("gossip signer is not a network validator");
+    const index = this.#peerTransports.findIndex(({ address }) => address === auth?.signer);
+    const peer = this.#peerTransports[index];
+    if (!peer) throw new Error("gossip signer has no authenticated transport binding");
+    authorizeTransportAction(this.#transportView[index], {
+      currentHeight: this.height,
+      path,
+      payload: body,
+      pendingRotation: this.#chain.pendingValidatorRotation,
+    });
     if (!this.#validatorNonces.has(peer.address)) this.#validatorNonces.set(peer.address, new Map());
     return verifyPeerRequest({
       auth, body, method, networkId: this.networkId, path,
@@ -388,10 +419,10 @@ export class ValidatorReplica {
 
   validatorAddressForPeerSigner(signer) {
     const index = this.#peerTransports.findIndex(({ address }) => address === signer);
-    return index < 0 ? null : this.#validators[index].address;
+    return index < 0 ? null : this.#transportView[index].validatorAddress;
   }
 
-  peerAddress(index) { return this.#validators[index]?.address; }
+  peerAddress(index) { return this.#transportView[index]?.validatorAddress; }
   peerTlsCertificateSha256(index) { return this.#peerTlsPins[index] ?? null; }
 
   pendingTransactions() { return this.#mempool.values(); }
@@ -483,6 +514,7 @@ export class ValidatorReplica {
       { trustedValidators: this.#validators },
     );
     this.#chain = installed.chain;
+    this.#refreshTransportView();
     return {
       height: this.height,
       snapshotHash: installed.snapshotHash,
@@ -533,13 +565,12 @@ export class ValidatorReplica {
     }
     this.#chain.validateProposal(proposal);
     const uniqueVotes = new Map((votes ?? []).map((vote) => [vote.validator, vote]));
-    const quorum = Math.floor((this.#validators.length * 2) / 3) + 1;
-    if (uniqueVotes.size < quorum) {
-      throw new Error(`validator prepare quorum not reached (${uniqueVotes.size}/${quorum})`);
-    }
+    const sets = this.#validatorSets(proposal.height);
+    this.#requireSetQuorum(uniqueVotes.keys(), sets.required, "validator prepare");
+    if (sets.previous) this.#requireSetQuorum(uniqueVotes.keys(), sets.previous, "old-set prepare");
     const hash = blockHash(proposal);
     for (const vote of uniqueVotes.values()) {
-      const member = this.#validators.find(({ address }) => address === vote.validator);
+      const member = sets.accepted.get(vote.validator);
       if (!member || !verifyObject({ blockHash: hash }, vote.signature, member.publicKey, "BLOCK_PREPARE")) {
         throw new Error("validator prepare signature is invalid");
       }
@@ -550,6 +581,9 @@ export class ValidatorReplica {
 
   commitVote(proposal, prepareCertificate) {
     const verified = this.prepareCertificate(proposal, prepareCertificate);
+    if (!this.#validatorSets(proposal.height).accepted.has(this.address)) {
+      throw new Error("local validator cannot vote at this height");
+    }
     const hash = blockHash(proposal);
     const certificateHash = prepareCertificateHash(verified);
     const decisionPath = join(this.#directory, "commits",
@@ -577,10 +611,9 @@ export class ValidatorReplica {
   finalizeProposal(proposal, prepareCertificate, votes) {
     const verifiedPrepare = this.prepareCertificate(proposal, prepareCertificate);
     const uniqueVotes = new Map((votes ?? []).map((vote) => [vote.validator, vote]));
-    const quorum = Math.floor((this.#validators.length * 2) / 3) + 1;
-    if (uniqueVotes.size < quorum) {
-      throw new Error(`validator commit quorum not reached (${uniqueVotes.size}/${quorum})`);
-    }
+    const sets = this.#validatorSets(proposal.height);
+    this.#requireSetQuorum(uniqueVotes.keys(), sets.required, "validator commit");
+    if (sets.previous) this.#requireSetQuorum(uniqueVotes.keys(), sets.previous, "old-set commit");
     const block = {
       ...proposal,
       certificate: [...uniqueVotes.values()].sort((left, right) =>
@@ -620,6 +653,9 @@ export class ValidatorReplica {
       throw new Error("proposal is not the deterministic block for this state");
     }
     this.#chain.validateProposal(block);
+    if (!this.#validatorSets(block.height).accepted.has(this.address)) {
+      throw new Error("local validator cannot vote at this height");
+    }
     const hash = blockHash(block);
     const decisionPath = join(this.#directory, "prepares",
       `${String(block.height).padStart(12, "0")}-${String(block.round).padStart(2, "0")}.json`);
@@ -669,7 +705,7 @@ export class ValidatorReplica {
 
   validateLockedProposal(lock, expectedValidator) {
     if (lock === null) return null;
-    const member = this.#validators.find(({ address }) => address === expectedValidator);
+    const member = this.#validatorSets(lock?.proposal?.height).accepted.get(expectedValidator);
     if (!member || !lock?.proposal || !Array.isArray(lock.prepareCertificate) ||
         lock.vote?.validator !== expectedValidator || lock.blockHash !== blockHash(lock.proposal)) {
       throw new Error("peer lock proof is invalid");
@@ -705,6 +741,10 @@ export class ValidatorReplica {
       throw new Error("timeout proposal is not deterministic for this state");
     }
     this.#chain.validateProposal(proposal);
+    const required = this.#chain.validatorMembersForHeight(proposal.height);
+    if (!required.some(({ address }) => address === this.address)) {
+      throw new Error("local validator cannot time out this height");
+    }
     const height = proposal.height;
     const previousHash = proposal.previousHash;
     const lockedBlockHash = blockHash(proposal);
@@ -791,6 +831,7 @@ export class ValidatorReplica {
     verified.appendBlock(block);
     persistBlock(this.#directory, block, verified);
     this.#chain = verified;
+    this.#refreshTransportView();
     this.#mempool.remove(block.transactions);
     for (const transaction of block.transactions) {
       rmSync(join(this.#directory, "mempool", `${transactionId(transaction)}.json`), { force: true });
