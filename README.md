@@ -33,6 +33,9 @@ The intended advantages are:
   account pays its fee; both post-quantum signatures, both nonces, the amount,
   recipient and network are consensus-bound, so the sponsor never controls the
   sender's funds;
+- **resource-credit path:** the next Pay-lane upgrade will let locked NIR create
+  renewable transfer capacity that the owner can use or sponsor for customers;
+  ordinary NIR fees remain the fallback when credits are exhausted;
 - **post-quantum accounts:** transfers, vaults, validator votes, evaluator
   receipts, and network authentication use ML-DSA-65 signatures;
 - **safety as an economic role:** safe progress may earn a reward, while a
@@ -59,7 +62,7 @@ The intended advantages are:
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
-| Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
+| Candidate bonds, safety payouts, burns, and validator/beacon slashing | Enforced by chain state; beacon bond enforcement activates only after every genesis authority has locked the minimum |
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
 | Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
 | Multi-seed signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally; independent hosting remains |
@@ -109,6 +112,10 @@ application runtime at genesis:
   or governance rights;
 - **sponsored payments:** a service may pay the network fee so a new user can
   receive and spend funds before acquiring NIR for gas;
+- **Transfer Credits:** staked NIR will produce a bounded, renewable Pay-lane
+  quota. Credits are usage rights, not transferable money and not new NIR;
+  delegation will authorize a merchant or wallet service to sponsor a user's
+  transfer without gaining custody of that user's balance;
 - **state proofs and light clients:** wallets verify balances and finalized
   headers without trusting one RPC provider;
 - **parallel lanes:** Pay, Proof, and Control operations declare state access so

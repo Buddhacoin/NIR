@@ -17,7 +17,7 @@ deterministic tests, an independent audit and a delayed testnet activation.
 | BNB Chain | Familiar developer interfaces reduce adoption friction | Offer standard RPC adapters later without making NIR dependent on another chain ([documentation](https://docs.bnbchain.org/)) |
 | XRP Ledger | Prefer safety over liveness: if quorum is unsafe, halt instead of finalizing conflicting histories | Adopt fail-closed finality, but avoid operator-curated trust lists ([consensus](https://xrpl.org/docs/concepts/consensus-protocol)) |
 | Solana | Parallel account execution, sponsored fees, and a standard program for user-created fungible assets | Adopt explicit state-access lists and sponsored payments; add a constrained native asset standard only after NIR payments are stable ([core concepts](https://solana.com/docs/core), [token basics](https://solana.com/docs/tokens/basics)) |
-| TRON | Cheap, predictable retail transfers and explicit resource accounting | Adopt a clear fee quote; avoid governance concentrated in a small elected set ([documentation](https://developers.tron.network/docs)) |
+| TRON | Cheap retail transfers, renewable Bandwidth/Energy from staked TRX, and resource delegation | Adopt bounded Transfer Credits from locked NIR plus non-custodial sponsorship; keep ordinary fees as fallback and avoid governance concentrated in a small elected set ([resource model](https://developers.tron.network/docs/resource-model)) |
 | Zcash | Selective disclosure and viewing keys can reconcile privacy with audits | Research post-quantum selective privacy; do not ship legacy zero-knowledge cryptography unchanged ([protocol](https://zips.z.cash/protocol/protocol.pdf)) |
 | Hyperliquid | A specialized native execution core can outperform a universal VM | Keep intelligence proofs and safety bounties as native state transitions ([HyperCore](https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/overview)) |
 | Dogecoin | Simple payments, recognizable units and approachable community UX matter | Borrow simplicity and friendliness, not inflation rules ([developer resources](https://dogecoin.com/dogepedia/)) |
@@ -49,6 +49,29 @@ This obtains Avalanche's separation of concerns without bridges between NIR's
 own core functions. A user sees one address and one balance. Nodes may process
 non-conflicting lanes in parallel later, but all results commit to one state root.
 
+## Transfer Credits
+
+NIR should adapt TRON's strongest payment idea without copying its governance.
+A separate Pay-lane stake locks native NIR and earns a deterministic quota of
+Transfer Credits per block epoch. One ordinary transfer consumes a published
+number of credits; more expensive future operations consume more. Credits:
+
+- replenish up to a cap and cannot be sold as a second currency;
+- never increase the 21 million NIR supply;
+- can be delegated by a signed, revocable allowance without transferring the
+  underlying NIR;
+- can sponsor only the exact sender-authorized transaction, reusing NIR's
+  existing two-signature fee-payer protection;
+- fall back to the normal NIR fee when allowance or quota is insufficient;
+- use block-height epochs rather than wall-clock time, preventing timestamp
+  manipulation from manufacturing quota.
+
+The unresolved economic question is validator compensation for credit-paid
+traffic. Mainnet must not call a transfer “free” while silently shifting an
+unbounded cost to operators. The safe implementation order is metering and
+delegation first, then public load measurements, followed by a capped formula
+that divides capacity between fee-paid and credit-paid traffic.
+
 ## Future native assets
 
 NIR can support currencies created by users without becoming a token on Solana,
@@ -77,8 +100,8 @@ base monetary chain is mature.
 1. Deploy the implemented beacon service with independent operators and audit
    finality rotation, including withdrawal delays and long network partitions.
 2. Add a state root, snapshots and a light-client proof format.
-3. Add sponsored transactions so a new user can receive and spend NIR without
-   first acquiring fee funds.
+3. Add Transfer Credit staking, delegation, and a separately bounded block
+   quota; sponsored transactions are already implemented.
 4. Add declared state-access lists and parallel replay benchmarks.
 5. Research post-quantum selective privacy with auditable viewing permissions.
 6. Specify and audit the constrained native asset registry.

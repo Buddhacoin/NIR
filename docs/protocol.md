@@ -94,6 +94,12 @@ but cannot make consensus accept another subset or alternate seed. Protocol
 v16 limits that stop: after eight later blocks, consensus records every
 non-revealer, excludes it, clears partial contributions and retries the same
 round with a new deterministic committee. No timeout manufactures randomness.
+Protocol v17 adds native beacon bonds. A genesis beacon authority can lock NIR
+with a signed transaction. Enforcement activates irreversibly only after every
+genesis authority reaches the minimum, avoiding a circular launch dependency.
+After activation, a timeout burns one percent of each non-revealer's bond and
+increments its consensus fault count. An authority that falls below the minimum
+is disabled from later epoch committees; the timeout still never creates a seed.
 
 ### Epoch-randomness transition
 
@@ -103,14 +109,15 @@ Every member signs a commitment to a private 32-byte share; reveals are refused
 until all commitments exist in an earlier height. The next seed hashes the
 previous seed and every ordered reveal, and advances only when the exact
 committee is complete. A missing member can stop the round but cannot make the
-protocol accept an alternative subset or a forged reveal. The remaining step
+protocol accept an alternative subset or a forged reveal.
 Protocol v14 accepts signed commitments and reveals as separate block
 collections, commits their phase transition to the state root, carries them
 through network proposals, restores them from snapshots, and refuses reveals in
 the commitment height. Protocol v15 binds progress admissions to the unfinished
 round and assigns their beacon committees only after its seed is finalized.
-Protocol v16 adds deterministic timeout faults and safe same-round rotation;
-the fault record is state-rooted and ready to authorize native bond penalties.
+Protocol v16 adds deterministic timeout faults and safe same-round rotation.
+Protocol v17 turns those state-rooted faults into native bond burns and disables
+an under-bonded offender from future epoch committees.
 
 ### Draft score
 

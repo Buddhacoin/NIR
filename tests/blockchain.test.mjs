@@ -6,6 +6,7 @@ import {
   NirChain,
   allocateProgressRewards,
   computeProgressScore,
+  createBeaconBond,
   createCandidateBond,
   createProgressCommitment,
   createValidatorBond,
@@ -20,10 +21,12 @@ import {
   quoteTransferFee,
 } from "../blockchain/chain.mjs";
 import {
+  BEACON_NON_REVEAL_SLASH_BPS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
+  MIN_BEACON_BOND,
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
@@ -516,6 +519,83 @@ test("an epoch non-revealer is excluded and the same round safely rotates", () =
   assert.deepEqual(rotated.lastFault.nonRevealers, [withheld]);
   assert.equal(rotated.commitments.length, 0);
   assert.equal(rotated.reveals.length, 0);
+});
+
+test("bonded epoch randomness sabotage burns NIR and disables the offender", () => {
+  const { beaconAuthorities, chain, treasury, validators } = fixture();
+  const timestamp = TREASURY_VESTING_MS;
+  const outsider = generateWallet();
+  const outsiderBlock = chain.buildBlock({
+    transactions: [createBeaconBond({
+      wallet: outsider, networkId: chain.networkId, amount: MIN_BEACON_BOND.toString(), nonce: 0,
+    })],
+    timestamp,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(outsiderBlock, quorumFor(outsiderBlock, validators))),
+    /beacon bond transaction is invalid/,
+  );
+  const funding = beaconAuthorities.map((authority, index) => createTransfer({
+    wallet: treasury,
+    networkId: chain.networkId,
+    recipient: authority.address,
+    amount: (MIN_BEACON_BOND + MIN_TRANSFER_FEE).toString(),
+    nonce: chain.nextNonce(treasury.address) + index,
+  }));
+  const fundingBlock = chain.buildBlock({ transactions: funding, timestamp });
+  chain.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
+  const bonds = beaconAuthorities.map((authority) => createBeaconBond({
+    wallet: authority,
+    networkId: chain.networkId,
+    amount: MIN_BEACON_BOND.toString(),
+    nonce: chain.nextNonce(authority.address),
+  }));
+  const bondBlock = chain.buildBlock({ transactions: bonds, timestamp });
+  chain.appendBlock(finalizeBlock(bondBlock, quorumFor(bondBlock, validators)));
+  assert.equal(chain.beaconBondingActive, true);
+
+  const initial = chain.epochRandomnessStatus();
+  const members = initial.committee.map((address) =>
+    beaconAuthorities.find((wallet) => wallet.address === address));
+  const secrets = members.map((_, index) => fingerprint(`bonded-withhold-${index}`));
+  const commitBlock = chain.buildBlock({
+    epochRandomnessCommits: members.map((wallet, index) => createEpochRandomnessCommit({
+      wallet, networkId: chain.networkId, round: initial.round, secret: secrets[index],
+    })),
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  const revealBlock = chain.buildBlock({
+    epochRandomnessReveals: members.slice(0, -1).map((wallet, index) =>
+      createEpochRandomnessReveal({
+        wallet, networkId: chain.networkId, round: initial.round, secret: secrets[index],
+      })),
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(revealBlock, quorumFor(revealBlock, validators)));
+  while (chain.height <= commitBlock.height + EPOCH_REVEAL_TIMEOUT_BLOCKS) {
+    const block = chain.buildBlock({ timestamp });
+    chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  }
+  const offender = members.at(-1).address;
+  const expectedPenalty = (MIN_BEACON_BOND * BEACON_NON_REVEAL_SLASH_BPS) / 10_000n;
+  assert.equal(chain.beaconBond(offender), MIN_BEACON_BOND - expectedPenalty);
+  assert.equal(chain.beaconFaultCount(offender), 1);
+  assert.equal(chain.burned, expectedPenalty);
+  assert.deepEqual(chain.epochRandomnessStatus().disabled, [offender]);
+  assert.ok(!chain.epochRandomnessStatus().committee.includes(offender));
+  const offenderWallet = members.at(-1);
+  const disabledBond = chain.buildBlock({
+    transactions: [createBeaconBond({
+      wallet: offenderWallet, networkId: chain.networkId, amount: "1",
+      nonce: chain.nextNonce(offender),
+    })],
+    timestamp,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(disabledBond, quorumFor(disabledBond, validators))),
+    /beacon bond transaction is invalid/,
+  );
 });
 
 test("known capability cannot mint against a weaker selected baseline", () => {

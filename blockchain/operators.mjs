@@ -110,6 +110,7 @@ export class EpochRandomnessMachine {
   #commitments = new Map();
   #committee;
   #committeeSize;
+  #disabled = new Set();
   #excluded = new Set();
   #lastFault = null;
   #networkId;
@@ -134,6 +135,7 @@ export class EpochRandomnessMachine {
         !HASH.test(snapshot.previousSeed ?? "") ||
         !Array.isArray(snapshot.committee) || !Array.isArray(snapshot.commitments) ||
         !Array.isArray(snapshot.reveals) || !Array.isArray(snapshot.excluded) ||
+        !Array.isArray(snapshot.disabled) ||
         !Number.isSafeInteger(snapshot.attempt) || snapshot.attempt < 0) {
       throw new Error("epoch randomness snapshot is invalid");
     }
@@ -144,8 +146,11 @@ export class EpochRandomnessMachine {
     machine.#previousSeed = snapshot.previousSeed;
     machine.#attempt = snapshot.attempt;
     machine.#excluded = new Set(snapshot.excluded);
+    machine.#disabled = new Set(snapshot.disabled);
     if (machine.#excluded.size !== snapshot.excluded.length ||
-        [...machine.#excluded].some((address) => !registry.has(address))) {
+        [...machine.#excluded].some((address) => !registry.has(address)) ||
+        machine.#disabled.size !== snapshot.disabled.length ||
+        [...machine.#disabled].some((address) => !registry.has(address))) {
       throw new Error("epoch randomness snapshot exclusions are invalid");
     }
     if (snapshot.lastFault !== null && (
@@ -153,7 +158,8 @@ export class EpochRandomnessMachine {
       !Number.isSafeInteger(snapshot.lastFault.detectedHeight) ||
       !Number.isSafeInteger(snapshot.lastFault.round) ||
       !Array.isArray(snapshot.lastFault.nonRevealers) ||
-      snapshot.lastFault.nonRevealers.some((address) => !machine.#excluded.has(address))
+      new Set(snapshot.lastFault.nonRevealers).size !== snapshot.lastFault.nonRevealers.length ||
+      snapshot.lastFault.nonRevealers.some((address) => !registry.has(address))
     )) throw new Error("epoch randomness snapshot fault is invalid");
     machine.#lastFault = structuredClone(snapshot.lastFault);
     machine.#committee = machine.#selectCommittee();
@@ -182,7 +188,8 @@ export class EpochRandomnessMachine {
   }
 
   #selectCommittee() {
-    const eligible = new Map([...this.#registry].filter(([address]) => !this.#excluded.has(address)));
+    const eligible = new Map([...this.#registry].filter(([address]) =>
+      !this.#excluded.has(address) && !this.#disabled.has(address)));
     if (eligible.size < this.#committeeSize) {
       throw new Error("not enough eligible epoch randomness authorities");
     }
@@ -204,12 +211,18 @@ export class EpochRandomnessMachine {
       commitHeight: this.#commitHeight,
       commitments: [...this.#commitments.entries()].sort(([left], [right]) => left.localeCompare(right)),
       committee: [...this.#committee],
+      disabled: [...this.#disabled].sort(),
       excluded: [...this.#excluded].sort(),
       lastFault: structuredClone(this.#lastFault),
       previousSeed: this.#previousSeed,
       reveals: [...this.#reveals.entries()].sort(([left], [right]) => left.localeCompare(right)),
       round: this.#round,
     };
+  }
+
+  disable(address) {
+    if (!this.#registry.has(address)) throw new Error("unknown epoch randomness authority");
+    this.#disabled.add(address);
   }
 
   commit(message, height) {

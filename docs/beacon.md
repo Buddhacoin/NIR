@@ -74,3 +74,15 @@ censor and delay progress, but its block hash no longer selects the committee.
 If a committed member withholds past eight blocks, the chain records and
 excludes it, erases the incomplete attempt and rotates the same round. It does
 not derive a seed from the surviving subset.
+
+## Native bond
+
+Each genesis authority can lock at least 1,000 NIR with a signed `beacon-bond`
+transaction. Bond enforcement activates irreversibly when every authority has
+reached that threshold; before that moment the network is explicitly in its
+bootstrap phase. After activation, failing to reveal burns one percent of the
+operator's current bond. If the remaining balance is below 1,000 NIR, the
+operator is disabled from subsequent epoch committees. The burn, remaining
+bond, fault counter, disabled set and activation flag are all state-rooted and
+recomputed by every node. Withdrawal and re-admission are deliberately absent
+until delayed exits and replacement governance are specified and audited.
