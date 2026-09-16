@@ -377,6 +377,15 @@ assembled into old/new quorums, durably replicated, distributed after the
 activation block, and reloaded on restart. Multi-host operator ceremonies and
 operator-run production recovery drills remain; there is no fork-choice protocol.
 
+The automated live-rotation rehearsal starts six authenticated HTTP validator
+processes: four current operators and two future-only operators joining a
+four-member next set with two-member overlap. It gossips a transaction across
+the union topology, finalizes the activation with both quorums, broadcasts the
+same finalized block and handoff to all six processes, restarts a newcomer, and
+proves that a retired finality key cannot vote at the next height. This verifies
+the local protocol path, but does not substitute for independent machines,
+organizations, networks, or an external audit.
+
 Protocol v7 also requires a pre-activation onboarding certificate in any
 validator rotation on a network with an active peer registry. This prevents a
 rotation from naming unreachable or unconsenting operators: all future
