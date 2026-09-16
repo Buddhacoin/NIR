@@ -956,6 +956,10 @@ export class NirChain {
 
   get stateRoot() { return this.#stateRoot(); }
 
+  epochRandomnessStatus() {
+    return structuredClone(this.#epochRandomness.snapshot());
+  }
+
   #stateRoot(overrides = {}) {
     return computeChainStateRoot({
       balances: overrides.balances ?? this.#balances,
@@ -1247,6 +1251,7 @@ export class NirChain {
   buildBlock({
     transactions = [], rewardClaims = [], safetyClaims = [],
     randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [],
+    epochRandomnessCommits = [], epochRandomnessReveals = [],
     progressBeacons = [],
     validatorRotation = null, peerRegistryUpdate = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
@@ -1330,6 +1335,8 @@ export class NirChain {
       peerRegistryUpdate: activatingOnboarding || nextPeerRegistry === this.#peerRegistry
         ? null : nextPeerRegistry,
       previousHash: this.#blocks.at(-1).hash,
+      epochRandomnessCommits,
+      epochRandomnessReveals,
       progressRewards,
       fallbackBeacons,
       progressBeacons,
@@ -1847,7 +1854,8 @@ export class NirChain {
     if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) ||
         !Array.isArray(block.safetySettlements) || !Array.isArray(block.randomnessCommits) ||
         !Array.isArray(block.randomnessReveals) || !Array.isArray(block.fallbackBeacons) ||
-        !Array.isArray(block.progressBeacons)) {
+        !Array.isArray(block.progressBeacons) || !Array.isArray(block.epochRandomnessCommits) ||
+        !Array.isArray(block.epochRandomnessReveals)) {
       throw new Error("block collections are invalid");
     }
     const blockValidatorMembers = this.#validatorsForHeight(block.height);
@@ -1856,6 +1864,8 @@ export class NirChain {
     this.#verifyRoundCertificate(block, blockValidators);
     if (block.randomnessCommits.length > blockValidators.size ||
         block.randomnessReveals.length > blockValidators.size ||
+        block.epochRandomnessCommits.length > this.#beaconAuthorities.size ||
+        block.epochRandomnessReveals.length > this.#beaconAuthorities.size ||
         block.fallbackBeacons.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK ||
         block.progressBeacons.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
       throw new Error("too many randomness contributions");
@@ -1913,6 +1923,18 @@ export class NirChain {
     }
 
     const capabilityMemory = this.#capabilityMemory.clone();
+    const epochRandomness = EpochRandomnessMachine.fromSnapshot({
+      networkId: this.#networkId,
+      registry: this.#beaconAuthorities,
+      committeeSize: this.#beaconQuorum,
+      snapshot: this.#epochRandomness.snapshot(),
+    });
+    for (const commitment of block.epochRandomnessCommits) {
+      epochRandomness.commit(commitment, block.height);
+    }
+    for (const reveal of block.epochRandomnessReveals) {
+      epochRandomness.reveal(reveal, block.height);
+    }
     for (const claim of block.progressRewards) {
       this.#verifyProgressClaim(
         claim,
@@ -2251,6 +2273,7 @@ export class NirChain {
       burned: this.#burned + newlyBurned,
       candidateBonds,
       capabilityMemoryRoot: capabilityMemory.stateRoot,
+      epochRandomness: epochRandomness.snapshot(),
       lastRewardTimestamp: lastRewardTimestampAfter,
       mined: this.#mined + newlyMined,
       nonces,
@@ -2282,6 +2305,7 @@ export class NirChain {
     this.#progressCommitments = progressCommitments;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
+    this.#epochRandomness = epochRandomness;
     this.#mined += newlyMined;
     this.#rewardEpoch = rewardEpochAfter;
     this.#lastRewardTimestamp = lastRewardTimestampAfter;

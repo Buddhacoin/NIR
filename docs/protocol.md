@@ -102,10 +102,12 @@ until all commitments exist in an earlier height. The next seed hashes the
 previous seed and every ordered reveal, and advances only when the exact
 committee is complete. A missing member can stop the round but cannot make the
 protocol accept an alternative subset or a forged reveal. The remaining step
-is accepting its signed messages in blocks and making progress admissions wait
-for a strictly later finalized epoch seed. Protocol v13 already serializes the
-machine in consensus state, commits it to the state root, restores it from
-snapshots with structural validation, and clones it for proposal replay.
+is making progress admissions wait for a strictly later finalized epoch seed.
+Protocol v14 accepts signed commitments and reveals as separate block
+collections, commits their phase transition to the state root, carries them
+through network proposals, restores them from snapshots, and refuses reveals in
+the commitment height. The current progress path still uses the intermediate
+future-block selector until the next migration switches its dependency.
 
 ### Draft score
 

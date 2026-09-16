@@ -200,9 +200,11 @@ assigned reveal matches its commitment. This removes last-revealer grinding at
 the cost of deliberately halting that randomness round when a member withholds.
 Its signatures and adversarial tests are implemented. Protocol v13 commits the
 complete round, committee, phase height, commitments, reveals and seed to every
-state root and validates them during snapshot restoration. The next migration
-will admit commit/reveal messages as block collections and make progress
-admissions wait for the resulting strictly later seed.
+state root and validates them during snapshot restoration. Protocol v14 also
+includes signed `epochRandomnessCommits` and `epochRandomnessReveals` in blocks,
+hashes and network proposals. Reveals are accepted only at a later height and a
+completed round atomically rotates its seed and committee. The next migration
+will make progress admissions wait for the resulting strictly later seed.
 
 ## Why organizations use NIR
 

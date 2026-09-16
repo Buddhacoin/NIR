@@ -18,6 +18,9 @@ identically.
 - deterministic round-robin block proposers;
 - finality certificates requiring at least `floor(2N/3) + 1` validator votes;
 - separate evaluator and consensus registries with disjoint operator identities;
+- consensus-native post-quantum epoch randomness with fixed committees,
+  commit/reveal separation across block heights, state-root commitments and
+  snapshot recovery;
 - fixed per-epoch progress-reward budgets and the 21 million NIR hard cap;
 - a ten-minute minimum interval between intelligence-reward blocks;
 - proportional reward allocation from proof scores;

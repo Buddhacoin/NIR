@@ -42,6 +42,8 @@ import { createSafetyFailureClaim } from "../blockchain/safety-bounty.mjs";
 import {
   createFallbackBeacon,
   createFallbackBeaconShare,
+  createEpochRandomnessCommit,
+  createEpochRandomnessReveal,
   createProgressBeacon,
   createProgressBeaconShare,
   createRandomnessCommit,
@@ -424,6 +426,39 @@ test("a progress challenge requires an independent beacon quorum after commitmen
   assert.equal(challenge.beaconValue, finalizedSource.progressBeacons[0].value);
   assert.equal(challenge.committee.length, 3);
   assert.equal(new Set(challenge.committee).size, 3);
+});
+
+test("finalized blocks advance post-quantum epoch randomness in two phases", () => {
+  const { beaconAuthorities, chain, validators } = fixture();
+  const initial = chain.epochRandomnessStatus();
+  const members = initial.committee.map((address) =>
+    beaconAuthorities.find((wallet) => wallet.address === address));
+  const secrets = members.map((_, index) => fingerprint(`chain-epoch-secret-${index}`));
+  const commits = members.map((wallet, index) => createEpochRandomnessCommit({
+    wallet, networkId: chain.networkId, round: initial.round, secret: secrets[index],
+  }));
+  const reveals = members.map((wallet, index) => createEpochRandomnessReveal({
+    wallet, networkId: chain.networkId, round: initial.round, secret: secrets[index],
+  }));
+  const premature = chain.buildBlock({
+    epochRandomnessCommits: commits, epochRandomnessReveals: reveals, timestamp: 0,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(premature, quorumFor(premature, validators))),
+    /premature/,
+  );
+  const commitBlock = chain.buildBlock({ epochRandomnessCommits: commits, timestamp: 0 });
+  chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
+  assert.equal(chain.epochRandomnessStatus().commitHeight, commitBlock.height);
+  const rootAfterCommit = chain.stateRoot;
+  const revealBlock = chain.buildBlock({ epochRandomnessReveals: reveals, timestamp: 0 });
+  chain.appendBlock(finalizeBlock(revealBlock, quorumFor(revealBlock, validators)));
+  const completed = chain.epochRandomnessStatus();
+  assert.equal(completed.round, initial.round + 1);
+  assert.notEqual(completed.previousSeed, initial.previousSeed);
+  assert.notEqual(chain.stateRoot, rootAfterCommit);
+  assert.equal(completed.commitments.length, 0);
+  assert.equal(completed.reveals.length, 0);
 });
 
 test("known capability cannot mint against a weaker selected baseline", () => {
