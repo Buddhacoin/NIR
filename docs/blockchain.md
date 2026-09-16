@@ -51,16 +51,18 @@ receipts.
 `executionBundleHash` is consensus-required and covered by evaluator
 signatures. A reward must also reference a signed candidate admission from an
 earlier finalized block. The chain matches its artifact, baseline, suite,
-recipient and height; derives the challenge from the immediately following
-finalized block; and accepts receipts only from the resulting deterministic
+recipient and height. After finalization, more than two thirds of a separate
+post-quantum beacon registry must sign domain-separated fresh shares. Their
+canonical aggregate derives the challenge and deterministic evaluator
 committee. Successful and expired admissions are removed from state.
 
 Admission does not charge NIR, because requiring an existing coin would make
 the first intelligence reward impossible. Spam is bounded by block limits, one
 pending admission per address, a 4,096-entry state cap, and expiry after 1,024
-blocks. Sybil creation is still cheap before NIR circulates, and the next-block
-hash has some proposer-bias risk. Production should move this challenge to the
-independent multi-party beacon and introduce a non-circular anti-spam rule.
+blocks. Sybil creation is still cheap before NIR circulates. Production must
+add a non-circular anti-spam rule and deploy the beacon authorities under
+genuinely independent control. If their quorum is unavailable, new challenges
+pause safely instead of falling back to proposer-controlled randomness.
 
 Validator and evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. This is not yet

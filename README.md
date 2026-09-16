@@ -164,9 +164,12 @@ adjustment for the energy used.
 The evaluator runner now builds a deterministic, content-addressed proof bundle
 before a reward can be proposed. A signed `progress-commitment` transaction
 first fixes the baseline, candidate, benchmark and recipient in finalized chain
-state. The next finalized block derives a fresh challenge seed and randomly
-assigns the evaluator committee. The bundle binds those committed files to the
-challenge, the revealed benchmark,
+state. Only after that commitment is final, a post-quantum quorum from the
+separate beacon-authority registry supplies fresh entropy. The chain commits
+the aggregate, derives the challenge seed and deterministically assigns the
+evaluator committee. Beacon shares use a progress-only signature domain, so a
+safety-fallback signature cannot be replayed as an intelligence challenge. The
+bundle binds those committed files to the challenge, the revealed benchmark,
 an exact runtime manifest, every independent output, measured resources, and
 the derived report. Artifact substitution, environment substitution, a task
 revealed before commitment, and reuse of the same finalized challenge all fail
@@ -177,8 +180,10 @@ The commitment is balance-free so the first NIR can be mined, but it consumes
 the submitter nonce, is limited to one pending request per address, expires
 after 1,024 blocks, and shares the block transaction limit.
 
-Evaluation and block finality use separate ML-DSA-65 key registries. Their
-operator identities must be unique and disjoint in the genesis configuration.
+Evaluation, randomness and block finality use three separate ML-DSA-65 key
+registries. Their operator identities must be unique and pairwise disjoint in
+the genesis configuration. A block proposer cannot choose a progress challenge
+alone; fewer than the configured beacon quorum cannot create one.
 
 ## Why organizations use NIR
 

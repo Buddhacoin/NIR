@@ -780,6 +780,26 @@ export class NirChain {
       ) {
         throw new Error("progress commitment snapshot is invalid");
       }
+      const challengeFields = [
+        commitment.beaconValue,
+        commitment.challengeHeight,
+        commitment.challengeSeed,
+        commitment.committee,
+      ];
+      const unassigned = challengeFields.every((value) => value === null);
+      const assigned =
+        /^[0-9a-f]{64}$/.test(commitment.beaconValue ?? "") &&
+        /^[0-9a-f]{64}$/.test(commitment.challengeSeed ?? "") &&
+        Number.isSafeInteger(commitment.challengeHeight) &&
+        commitment.challengeHeight > commitment.committedHeight &&
+        commitment.challengeHeight <= commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE &&
+        Array.isArray(commitment.committee) &&
+        commitment.committee.length === chain.#evaluationQuorum &&
+        new Set(commitment.committee).size === commitment.committee.length &&
+        commitment.committee.every((address) => chain.#evaluators.has(address));
+      if (!unassigned && !assigned) {
+        throw new Error("progress challenge snapshot is invalid");
+      }
       progressSubmitters.add(commitment.sender);
     }
     const validators = snapshotEntries(state.validators, "validators");
@@ -926,26 +946,15 @@ export class NirChain {
   progressChallenge(candidateId) {
     const commitment = this.#progressCommitments.get(candidateId);
     if (!commitment) throw new Error("progress commitment is unknown or expired");
-    const source = this.#blocks.find(
-      ({ height }) => height === commitment.committedHeight + 1,
-    );
-    if (!source) throw new Error("progress challenge is not available yet");
-    const challengeSeed = hashObject(
-      { candidateId, sourceBlockHash: source.hash },
-      "PROGRESS_CHALLENGE",
-    );
-    const committee = selectOperatorCommittee({
-      registry: this.#evaluators,
-      randomness: challengeSeed,
-      context: { candidateId, sourceHeight: source.height },
-      size: this.#evaluationQuorum,
-    }).map(({ address }) => address);
+    if (!commitment.challengeSeed || !Array.isArray(commitment.committee)) {
+      throw new Error("progress challenge is not available yet");
+    }
     return {
-      challengeSeed,
-      committee,
+      beaconValue: commitment.beaconValue,
+      challengeSeed: commitment.challengeSeed,
+      committee: [...commitment.committee],
       committedHeight: commitment.committedHeight,
-      sourceBlockHash: source.hash,
-      sourceHeight: source.height,
+      sourceHeight: commitment.challengeHeight,
     };
   }
 
@@ -1153,6 +1162,7 @@ export class NirChain {
   buildBlock({
     transactions = [], rewardClaims = [], safetyClaims = [],
     randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [],
+    progressBeacons = [],
     validatorRotation = null, peerRegistryUpdate = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
@@ -1237,6 +1247,7 @@ export class NirChain {
       previousHash: this.#blocks.at(-1).hash,
       progressRewards,
       fallbackBeacons,
+      progressBeacons,
       randomnessCommits,
       randomnessReveals,
       safetySettlements,
@@ -1389,6 +1400,37 @@ export class NirChain {
         .sort((a, b) => a.authority.localeCompare(b.authority)),
     }, "FALLBACK_RANDOMNESS_SHARES");
     if (claim.value !== expectedValue) throw new Error("fallback beacon aggregate is invalid");
+    return claim.value;
+  }
+
+  #verifyProgressBeacon(claim, candidateId, round) {
+    if (claim?.candidateId !== candidateId || claim?.networkId !== this.#networkId ||
+        claim?.round !== round || !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
+        !Array.isArray(claim.attestations) || claim.attestations.length > this.#beaconAuthorities.size) {
+      throw new Error("progress beacon is invalid");
+    }
+    const signers = new Set();
+    for (const attestation of claim.attestations) {
+      const authority = this.#beaconAuthorities.get(attestation.authority);
+      const payload = {
+        authority: attestation.authority, candidateId, networkId: this.#networkId,
+        round, value: attestation.value,
+      };
+      if (!authority || signers.has(attestation.authority) ||
+          !/^[0-9a-f]{64}$/.test(attestation.value ?? "") ||
+          !verifyObject(payload, attestation.signature, authority.publicKey, "PROGRESS_RANDOMNESS_SHARE")) {
+        throw new Error("progress beacon signature is invalid or duplicated");
+      }
+      signers.add(attestation.authority);
+    }
+    if (signers.size < this.#beaconQuorum) throw new Error("progress beacon quorum not reached");
+    const expectedValue = hashObject({
+      candidateId, networkId: this.#networkId, round,
+      shares: [...claim.attestations]
+        .map(({ authority, value }) => ({ authority, value }))
+        .sort((a, b) => a.authority.localeCompare(b.authority)),
+    }, "PROGRESS_RANDOMNESS_SHARES");
+    if (claim.value !== expectedValue) throw new Error("progress beacon aggregate is invalid");
     return claim.value;
   }
 
@@ -1548,6 +1590,10 @@ export class NirChain {
     progressCommitments.set(expectedId, {
       artifactHash: transaction.artifactHash,
       baselineHash: transaction.baselineHash,
+      beaconValue: null,
+      challengeHeight: null,
+      challengeSeed: null,
+      committee: null,
       committedHeight: height,
       recipient: transaction.recipient,
       sender: transaction.sender,
@@ -1654,7 +1700,8 @@ export class NirChain {
     }
     if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) ||
         !Array.isArray(block.safetySettlements) || !Array.isArray(block.randomnessCommits) ||
-        !Array.isArray(block.randomnessReveals) || !Array.isArray(block.fallbackBeacons)) {
+        !Array.isArray(block.randomnessReveals) || !Array.isArray(block.fallbackBeacons) ||
+        !Array.isArray(block.progressBeacons)) {
       throw new Error("block collections are invalid");
     }
     const blockValidatorMembers = this.#validatorsForHeight(block.height);
@@ -1663,7 +1710,8 @@ export class NirChain {
     this.#verifyRoundCertificate(block, blockValidators);
     if (block.randomnessCommits.length > blockValidators.size ||
         block.randomnessReveals.length > blockValidators.size ||
-        block.fallbackBeacons.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
+        block.fallbackBeacons.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK ||
+        block.progressBeacons.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
       throw new Error("too many randomness contributions");
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
@@ -1868,6 +1916,42 @@ export class NirChain {
       if (block.height > commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE) {
         progressCommitments.delete(candidateId);
       }
+    }
+
+    const progressedBeacons = new Set();
+    for (const claim of block.progressBeacons) {
+      const commitment = progressCommitments.get(claim.candidateId);
+      if (
+        !commitment ||
+        commitment.challengeSeed !== null ||
+        progressedBeacons.has(claim.candidateId) ||
+        block.height <= commitment.committedHeight ||
+        block.height > commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE
+      ) {
+        throw new Error("progress beacon target is invalid or already assigned");
+      }
+      const beaconValue = this.#verifyProgressBeacon(
+        claim,
+        claim.candidateId,
+        block.height,
+      );
+      const challengeSeed = hashObject(
+        { beaconValue, candidateId: claim.candidateId },
+        "PROGRESS_CHALLENGE",
+      );
+      progressCommitments.set(claim.candidateId, {
+        ...commitment,
+        beaconValue,
+        challengeHeight: block.height,
+        challengeSeed,
+        committee: selectOperatorCommittee({
+          registry: this.#evaluators,
+          randomness: challengeSeed,
+          context: { candidateId: claim.candidateId, challengeHeight: block.height },
+          size: this.#evaluationQuorum,
+        }).map(({ address }) => address),
+      });
+      progressedBeacons.add(claim.candidateId);
     }
 
     for (const contribution of block.randomnessCommits) {

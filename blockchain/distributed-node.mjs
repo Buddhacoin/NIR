@@ -246,6 +246,7 @@ export class TransactionMempool {
 function proposalFields(block) {
   return {
     fallbackBeacons: block.fallbackBeacons,
+    progressBeacons: block.progressBeacons,
     peerRegistryUpdate: block.peerRegistryUpdate,
     randomnessCommits: block.randomnessCommits,
     randomnessReveals: block.randomnessReveals,

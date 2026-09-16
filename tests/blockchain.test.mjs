@@ -41,6 +41,8 @@ import { createSafetyFailureClaim } from "../blockchain/safety-bounty.mjs";
 import {
   createFallbackBeacon,
   createFallbackBeaconShare,
+  createProgressBeacon,
+  createProgressBeaconShare,
   createRandomnessCommit,
   createRandomnessReveal,
 } from "../blockchain/operators.mjs";
@@ -74,8 +76,11 @@ function fixture() {
     evaluators: operatorMembers(evaluators, "evaluator"),
     treasuryAddress: treasury.address,
   });
+  TEST_BEACON_WALLETS.set(chain, beaconAuthorities);
   return { beaconAuthorities, chain, evaluators, treasury, validators };
 }
+
+const TEST_BEACON_WALLETS = new WeakMap();
 
 function fingerprint(label) {
   return createHash("sha256").update(label).digest("hex");
@@ -158,7 +163,19 @@ function progressClaim(
   });
   const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
   chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
-  const challengeBlock = chain.buildBlock({ timestamp });
+  const beaconAuthorities = TEST_BEACON_WALLETS.get(chain);
+  const round = chain.height + 1;
+  const shares = beaconAuthorities.slice(0, 3).map((wallet, index) =>
+    createProgressBeaconShare({
+      wallet, networkId: chain.networkId, candidateId: admission.candidateId,
+      round, value: fingerprint(`${admission.candidateId}-progress-beacon-${index}`),
+    }));
+  const challengeBlock = chain.buildBlock({
+    progressBeacons: [createProgressBeacon({
+      shares, networkId: chain.networkId, candidateId: admission.candidateId, round,
+    })],
+    timestamp,
+  });
   chain.appendBlock(finalizeBlock(challengeBlock, quorumFor(challengeBlock, validators)));
   const challenge = chain.progressChallenge(admission.candidateId);
   const assignedEvaluators = challenge.committee.map((address) =>
@@ -289,8 +306,8 @@ test("a finalized progress block mints its fixed epoch budget", () => {
   );
 });
 
-test("a progress challenge exists only after the commitment is finalized", () => {
-  const { chain, validators } = fixture();
+test("a progress challenge requires an independent beacon quorum after commitment", () => {
+  const { beaconAuthorities, chain, validators } = fixture();
   const miner = generateWallet();
   const admission = createProgressCommitment({
     wallet: miner,
@@ -313,11 +330,61 @@ test("a progress challenge exists only after the commitment is finalized", () =>
     () => chain.progressChallenge(admission.candidateId),
     /not available yet/,
   );
-  const source = chain.buildBlock({ timestamp: 0 });
+  const round = chain.height + 1;
+  const shares = beaconAuthorities.map((wallet, index) => createProgressBeaconShare({
+    wallet, networkId: chain.networkId, candidateId: admission.candidateId,
+    round, value: fingerprint(`challenge-beacon-${index}`),
+  }));
+  const insufficient = chain.buildBlock({
+    progressBeacons: [createProgressBeacon({
+      shares: shares.slice(0, 2), networkId: chain.networkId,
+      candidateId: admission.candidateId, round,
+    })],
+    timestamp: 0,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(insufficient, quorumFor(insufficient, validators))),
+    /quorum not reached/,
+  );
+  const wrongDomain = createFallbackBeacon({
+    shares: beaconAuthorities.slice(0, 3).map((wallet, index) =>
+      createFallbackBeaconShare({
+        wallet, networkId: chain.networkId, candidateId: admission.candidateId,
+        round, value: fingerprint(`wrong-domain-beacon-${index}`),
+      })),
+    networkId: chain.networkId,
+    candidateId: admission.candidateId,
+    round,
+  });
+  const wrongDomainBlock = chain.buildBlock({
+    progressBeacons: [wrongDomain],
+    timestamp: 0,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(wrongDomainBlock, quorumFor(wrongDomainBlock, validators))),
+    /signature is invalid/,
+  );
+  const validBeacon = createProgressBeacon({
+    shares: shares.slice(0, 3), networkId: chain.networkId,
+    candidateId: admission.candidateId, round,
+  });
+  const forgedAggregate = chain.buildBlock({
+    progressBeacons: [{ ...validBeacon, value: fingerprint("forged-progress-aggregate") }],
+    timestamp: 0,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(forgedAggregate, quorumFor(forgedAggregate, validators))),
+    /aggregate is invalid/,
+  );
+  const source = chain.buildBlock({
+    progressBeacons: [validBeacon],
+    timestamp: 0,
+  });
   const finalizedSource = finalizeBlock(source, quorumFor(source, validators));
   chain.appendBlock(finalizedSource);
   const challenge = chain.progressChallenge(admission.candidateId);
-  assert.equal(challenge.sourceBlockHash, finalizedSource.hash);
+  assert.equal(challenge.sourceHeight, finalizedSource.height);
+  assert.equal(challenge.beaconValue, finalizedSource.progressBeacons[0].value);
   assert.equal(challenge.committee.length, 3);
   assert.equal(new Set(challenge.committee).size, 3);
 });

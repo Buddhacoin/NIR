@@ -10,6 +10,7 @@ import {
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import { SAFETY_POLICY_V1_COMMITMENT } from "./constants.mjs";
+import { createProgressBeacon, createProgressBeaconShare } from "./operators.mjs";
 
 const validators = Array.from({ length: 4 }, generateWallet);
 const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -74,7 +75,24 @@ const admissionBlock = chain.buildBlock({
   timestamp: genesisTimestamp,
 });
 chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock)));
-const challengeBlock = chain.buildBlock({ timestamp: genesisTimestamp });
+const challengeRound = chain.height + 1;
+const challengeShares = beaconAuthorities.slice(0, 3).map((wallet, index) =>
+  createProgressBeaconShare({
+    wallet,
+    networkId: chain.networkId,
+    candidateId: admission.candidateId,
+    round: challengeRound,
+    value: createHash("sha256").update(`progress-beacon-${index}`).digest("hex"),
+  }));
+const challengeBlock = chain.buildBlock({
+  progressBeacons: [createProgressBeacon({
+    shares: challengeShares,
+    networkId: chain.networkId,
+    candidateId: admission.candidateId,
+    round: challengeRound,
+  })],
+  timestamp: genesisTimestamp,
+});
 chain.appendBlock(finalizeBlock(challengeBlock, quorumFor(challengeBlock)));
 const challenge = chain.progressChallenge(admission.candidateId);
 const evaluation = chain.prepareProgressEvaluation({

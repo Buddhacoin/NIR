@@ -5,7 +5,7 @@ import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "
 import { resolve } from "node:path";
 import process from "node:process";
 
-import { createFallbackBeaconShare } from "./operators.mjs";
+import { createFallbackBeaconShare, createProgressBeaconShare } from "./operators.mjs";
 import { decryptWallet } from "./vault.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
@@ -82,16 +82,24 @@ try {
     });
     request.on("end", () => {
       try {
-        const { candidateId, round } = JSON.parse(raw);
+        const { candidateId, round, purpose = "fallback" } = JSON.parse(raw);
         if (!HASH.test(candidateId ?? "") || !Number.isSafeInteger(round) || round < 1) {
           throw new Error("candidateId or round is invalid");
         }
-        const key = `${candidateId}:${round}`;
-        let share = issued.get(key);
+        if (!["fallback", "progress"].includes(purpose)) throw new Error("beacon purpose is invalid");
+        const key = `${purpose}:${candidateId}:${round}`;
+        const legacyKey = `${candidateId}:${round}`;
+        let share = issued.get(key) ?? (purpose === "fallback" ? issued.get(legacyKey) : undefined);
         if (!share) {
-          share = createFallbackBeaconShare({
+          const createShare = purpose === "progress"
+            ? createProgressBeaconShare
+            : createFallbackBeaconShare;
+          share = createShare({
             wallet, networkId, candidateId, round, value: randomBytes(32).toString("hex"),
           });
+          issued.set(key, share);
+          persist();
+        } else if (!issued.has(key)) {
           issued.set(key, share);
           persist();
         }

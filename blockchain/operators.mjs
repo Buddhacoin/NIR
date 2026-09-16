@@ -46,6 +46,28 @@ export function createFallbackBeacon({ shares, networkId, candidateId, round }) 
   return { candidateId, networkId, round, value, attestations };
 }
 
+export function createProgressBeaconShare({ wallet, networkId, candidateId, round, value }) {
+  if (!wallet || !HASH.test(candidateId ?? "") || !HASH.test(value ?? "") ||
+      !Number.isSafeInteger(round) || round < 1) throw new Error("progress beacon share input is invalid");
+  const payload = { authority: wallet.address, candidateId, networkId, round, value };
+  return { ...payload, signature: signObject(payload, wallet, "PROGRESS_RANDOMNESS_SHARE") };
+}
+
+export function createProgressBeacon({ shares, networkId, candidateId, round }) {
+  if (!Array.isArray(shares) || !HASH.test(candidateId ?? "") ||
+      !Number.isSafeInteger(round) || round < 1) throw new Error("progress beacon input is invalid");
+  const attestations = shares.map((share) => ({
+    authority: share.authority, signature: share.signature, value: share.value,
+  })).sort((a, b) => a.authority.localeCompare(b.authority));
+  const value = hashObject({
+    candidateId, networkId, round,
+    shares: attestations.map(({ authority, value: shareValue }) => ({
+      authority, value: shareValue,
+    })),
+  }, "PROGRESS_RANDOMNESS_SHARES");
+  return { candidateId, networkId, round, value, attestations };
+}
+
 export function combineRandomnessReveals({ networkId, candidateId, commitments, reveals, quorum }) {
   if (!(commitments instanceof Map) || !(reveals instanceof Map) || !HASH.test(candidateId ?? "") ||
       !Number.isSafeInteger(quorum) || quorum < 2 || reveals.size < quorum) {

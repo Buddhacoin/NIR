@@ -78,11 +78,12 @@ from independently operated isolated runners and genuine hardware attestation.
 
 The chain resolves the bundle against a signed admission in finalized state.
 It independently checks commit-before-challenge ordering and exact equality of
-the artifact, baseline, suite and recipient. The next finalized block supplies
-the challenge seed and selects the evaluator committee; a different evaluator
-quorum cannot substitute itself. This next-block source closes self-declared
-history but remains more biasable than the independent multi-party beacon used
-by the safety path, so beacon unification remains required before production.
+the artifact, baseline, suite and recipient. A later quorum of the independent
+beacon-authority registry supplies domain-separated entropy. The canonical
+aggregate selects the evaluator committee; neither a block proposer nor a
+different evaluator quorum can substitute itself. If the beacon quorum is
+offline, issuance waits: the protocol does not weaken randomness to preserve
+liveness.
 
 ### Draft score
 
@@ -154,12 +155,12 @@ randomness is safe only when it becomes available after the complete candidate
 commitment is final. Consequently this component must not authorize issuance
 until an on-chain commit/future-randomness/evaluate state machine is connected.
 
-The local operator module now enforces this ordering as an admission state
-machine: an artifact, baseline, suite, recipient, and epoch are committed first;
-only randomness from a later epoch can assign the complete evaluator committee;
-the assignment cannot be replaced, shortened, or duplicated. The remaining
-network step is to derive that randomness from a distributed beacon or a
-commit/reveal contribution from many operators and persist admissions in blocks.
+The chain enforces this ordering as an admission state machine: an artifact,
+baseline, suite, recipient, and epoch are committed first; only a later
+post-quantum beacon quorum can assign the complete evaluator committee; the
+assignment cannot be replaced, shortened, duplicated, or synthesized from the
+safety-fallback signature domain. Admissions and assignments are consensus
+state and therefore replay identically on every validating node.
 
 Identical incorrect votes do not, by themselves, cryptographically prove
 collusion. Penalizing coordinated fraud needs an objective fraud proof or an
