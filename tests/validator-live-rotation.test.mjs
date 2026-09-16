@@ -70,7 +70,7 @@ function createReplicaDirectory(root, index, genesis, blocks, wallet, transport,
   return directory;
 }
 
-test("six live operators complete a dual-quorum 4-to-4 validator rotation", async () => {
+test("dual-quorum live rotation survives old/new outages and restores a newcomer", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-live-rotation-test-"));
   const servers = [];
   try {
@@ -196,21 +196,43 @@ test("six live operators complete a dual-quorum 4-to-4 validator rotation", asyn
     const proposerAddress = replicas[0].expectedProposer(7);
     const proposerIndex = replicas.findIndex(({ address }) => address === proposerAddress);
     assert.ok(proposerIndex >= 0);
+    const offlineOld = 2;
+    const offlineNew = proposerIndex === 4 ? 5 : 4;
+    await Promise.all([close(servers[offlineOld]), close(servers[offlineNew])]);
     const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
     const result = await produced.json();
     assert.equal(produced.status, 202, result.error);
     assert.equal(result.height, 7);
     assert.ok(result.prepares >= 4);
     assert.ok(result.commits >= 4);
-    assert.deepEqual(replicas.map(({ height }) => height), [7, 7, 7, 7, 7, 7]);
-    assert.deepEqual(replicas.map(({ peerCount }) => peerCount), [4, 4, 4, 4, 4, 4]);
-    assert.ok(directories.every((directory) =>
-      existsSync(join(directory, "handoffs", "VALIDATOR-HANDOFFS.json"))));
+    assert.equal(result.committedPeers, 4);
+    const online = replicas.map((_, index) => index)
+      .filter((index) => index !== offlineOld && index !== offlineNew);
+    assert.ok(online.every((index) => replicas[index].height === 7));
+    assert.ok(online.every((index) => replicas[index].peerCount === 4));
+    assert.ok(online.every((index) =>
+      existsSync(join(directories[index], "handoffs", "VALIDATOR-HANDOFFS.json"))));
+    assert.equal(replicas[offlineOld].height, 6);
+    assert.equal(replicas[offlineNew].height, 6);
 
-    const restartedNewcomer = new ValidatorReplica(directories[4]);
+    replicas[offlineNew] = new ValidatorReplica(directories[offlineNew]);
+    servers[offlineNew] = createValidatorHttpServer(replicas[offlineNew]);
+    await new Promise((resolve) =>
+      servers[offlineNew].listen(ports[offlineNew], "127.0.0.1", resolve));
+    const synchronized = await fetch(`${urls[offlineNew]}/v1/sync`, { method: "POST" });
+    const syncResult = await synchronized.json();
+    assert.equal(synchronized.status, 200, syncResult.error);
+    assert.equal(syncResult.height, 7);
+    assert.equal(syncResult.syncedBlocks, 1);
+    assert.equal(syncResult.synchronizedHandoffs, 1);
+    assert.ok(existsSync(join(
+      directories[offlineNew], "handoffs", "VALIDATOR-HANDOFFS.json",
+    )));
+
+    const restartedNewcomer = new ValidatorReplica(directories[offlineNew]);
     assert.equal(restartedNewcomer.height, 7);
     assert.equal(restartedNewcomer.peerCount, 4);
-    assert.throws(() => new ValidatorReplica(directories[2]), /does not belong to this network/);
+    const retiredOnline = offlineOld === 2 ? 3 : 2;
 
     const nextTransaction = createTransfer({
       amount: MIN_TRANSFER_FEE.toString(),
@@ -221,7 +243,7 @@ test("six live operators complete a dual-quorum 4-to-4 validator rotation", asyn
     });
     replicas[4].submitTransaction(nextTransaction);
     const nextProposal = replicas[4].buildProposal();
-    assert.throws(() => replicas[2].vote(nextProposal), /cannot vote at this height/);
+    assert.throws(() => replicas[retiredOnline].vote(nextProposal), /cannot vote at this height/);
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

@@ -15,7 +15,8 @@ Implemented and continuously tested:
 - deterministic partition tests, 512 adversarial message schedules, and
   multi-height stateful fuzzing with restarts and validator rotations;
 - a six-process live `4 → 4` validator-rotation rehearsal with pre-activation
-  synchronization, dual quorums, handoff persistence, restart, and retirement;
+  synchronization, simultaneous old/new outages, dual quorums, authenticated
+  handoff recovery, restart, and retirement;
 - a local wallet preview and valueless mining demonstration.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR

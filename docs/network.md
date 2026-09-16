@@ -380,11 +380,14 @@ operator-run production recovery drills remain; there is no fork-choice protocol
 The automated live-rotation rehearsal starts six authenticated HTTP validator
 processes: four current operators and two future-only operators joining a
 four-member next set with two-member overlap. It gossips a transaction across
-the union topology, finalizes the activation with both quorums, broadcasts the
-same finalized block and handoff to all six processes, restarts a newcomer, and
-proves that a retired finality key cannot vote at the next height. This verifies
-the local protocol path, but does not substitute for independent machines,
-organizations, networks, or an external audit.
+the union topology, then takes one old-only and one future-only process offline.
+The four remaining processes still satisfy both quorums and finalize the same
+activation block. The missed newcomer later authenticates to the active set,
+replays the block, downloads and independently verifies the ordered handoff
+history, restarts, and joins the four-member topology. A retired finality key
+cannot vote at the next height. This verifies the local protocol path, but does
+not substitute for independent machines, organizations, networks, or an
+external audit.
 
 Protocol v7 also requires a pre-activation onboarding certificate in any
 validator rotation on a network with an active peer registry. This prevents a

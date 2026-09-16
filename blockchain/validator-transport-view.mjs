@@ -2,6 +2,7 @@ import { verifyValidatorOnboarding } from "./validator-onboarding.mjs";
 
 const SYNC_PATHS = new Set([
   "/v1/p2p/blocks/range",
+  "/v1/p2p/handoffs/history",
   "/v1/p2p/health",
   "/v1/p2p/snapshots/candidate",
 ]);

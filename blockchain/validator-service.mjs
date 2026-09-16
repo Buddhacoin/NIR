@@ -6,6 +6,7 @@ import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
 import { IngressLimiter } from "./ingress-limiter.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
+import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 
 const SNAPSHOT_CATCHUP_THRESHOLD = 16;
 
@@ -111,7 +112,34 @@ async function synchronizeValidator(validator, urls) {
       // Try the next independently authenticated peer.
     }
   }
-  return { height: validator.height, snapshotHeight, syncedBlocks, tipHash: validator.tipHash };
+  const activeUrls = validator.peerUrls;
+  const handoffResponses = await Promise.allSettled(activeUrls.map((url, index) =>
+    gossipRequest(
+      validator, index, url, "/v1/p2p/handoffs/history", {},
+      MAX_HANDOFF_STORE_BYTES + 64 * 1024,
+    )));
+  const histories = handoffResponses
+    .filter(({ status, value }) => status === "fulfilled" && Array.isArray(value?.handoffs))
+    .map(({ value }) => value.handoffs)
+    .sort((left, right) => right.length - left.length);
+  let synchronizedHandoffs = 0;
+  for (const history of histories) {
+    for (const handoff of history) {
+      try {
+        const result = validator.installFinalizedValidatorHandoff(handoff);
+        if (result.status === "installed") synchronizedHandoffs += 1;
+      } catch {
+        // A malformed, conflicting, or premature history cannot block other peers.
+      }
+    }
+  }
+  return {
+    height: validator.height,
+    snapshotHeight,
+    syncedBlocks,
+    synchronizedHandoffs,
+    tipHash: validator.tipHash,
+  };
 }
 
 async function discoverLockedProposal(validator, urls) {
@@ -381,6 +409,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = await readBody(request);
         const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.installFinalizedValidatorHandoff(payload);
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/handoffs/history") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = { handoffs: validator.validatorHandoffHistory() };
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });

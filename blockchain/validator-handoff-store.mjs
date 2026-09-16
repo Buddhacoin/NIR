@@ -18,7 +18,7 @@ import { advanceValidatorTrust, verifyValidatorHandoff } from "./validator-hando
 
 const PRIMARY = "VALIDATOR-HANDOFFS.json";
 const BACKUP = "VALIDATOR-HANDOFFS.backup.json";
-const MAX_HANDOFF_STORE_BYTES = 16 * 1024 * 1024;
+export const MAX_HANDOFF_STORE_BYTES = 16 * 1024 * 1024;
 
 function serialized(value) {
   const contents = `${JSON.stringify(value)}\n`;

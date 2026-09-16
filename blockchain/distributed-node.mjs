@@ -512,6 +512,15 @@ export class ValidatorReplica {
     return { ...installed, status: "installed" };
   }
 
+  validatorHandoffHistory() {
+    const trustAnchor = {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#genesis.validators,
+    };
+    const history = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor);
+    return history.handoffs.map((handoff) => structuredClone(handoff));
+  }
+
   installStateSnapshotCandidates(candidates) {
     const trustAnchor = {
       expectedNetworkId: this.networkId,
