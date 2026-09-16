@@ -14,6 +14,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { generateWallet } from "../blockchain/crypto.mjs";
+import { createDeterministicZip, zipSha3 } from "../blockchain/deterministic-zip.mjs";
 import {
   artifactPaths,
   createReleaseArtifact,
@@ -146,4 +147,20 @@ test("reproducible packages are byte-identical and bound to signed sources", () 
   } finally {
     rmSync(values.root, { recursive: true, force: true });
   }
+});
+
+test("browser extension ZIPs have deterministic bytes, metadata, and ordering", () => {
+  const entries = [
+    { contents: Buffer.from("manifest"), path: "manifest.json" },
+    { contents: Buffer.from("app"), path: "app.js" },
+  ];
+  const first = createDeterministicZip(entries);
+  const second = createDeterministicZip([...entries].reverse());
+  assert.ok(first.equals(second));
+  assert.equal(first.readUInt32LE(0), 0x04034b50);
+  assert.equal(first.readUInt32LE(first.length - 22), 0x06054b50);
+  assert.match(zipSha3(first), /^[0-9a-f]{64}$/);
+  assert.throws(() => createDeterministicZip([
+    ...entries, { contents: Buffer.from("duplicate"), path: "app.js" },
+  ]), /unique/);
 });

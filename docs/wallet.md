@@ -43,8 +43,10 @@ and transaction broadcast must be implemented before those buttons become live.
 
 Run `npm run wallet:preview` and open `http://localhost:8765` to inspect it. A
 packaged desktop download will wrap the same reviewed interface. During
-development, Chromium browsers can load `wallet-ui/` as an unpacked extension;
-publishing a signed extension package must wait until key isolation and the node
+development, Chromium browsers can load `wallet-ui/` as an unpacked extension.
+A deterministic ZIP can be built and independently checked with the commands in
+[`releases.md`](releases.md); publishing it in a browser store must wait until
+key isolation and the node
 connection have been independently audited.
 
 The interface includes persistent dark and light themes. The orange circular

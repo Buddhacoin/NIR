@@ -62,7 +62,7 @@ The intended advantages are:
 | Canonical state snapshots with ML-DSA validator quorum | Two ordered rotations, activation-bound snapshot restore, short tail replay, portable backup, and two-stage pruning are tested locally |
 | Post-quantum signed releases | Clean Git revision and complete tracked file set are bound; deterministic wallet/node `.nirpkg` artifacts are locally verified; native installers remain |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, multi-height fuzzing, and live validator rotation |
-| Installable browser/PWA wallet interface | Interactive local testnet preview |
+| Installable browser/PWA wallet interface | Permission-free Manifest V3 preview plus deterministic verifiable ZIP; real-value signing remains disabled |
 | Public mainnet or exchange-listed NIR | Not launched |
 
 Nothing in the local faucet, demo mining flow, or wallet preview has monetary

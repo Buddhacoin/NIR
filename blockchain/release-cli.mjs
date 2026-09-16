@@ -11,6 +11,8 @@ import {
 import { relative, resolve } from "node:path";
 import process from "node:process";
 
+import { canonicalJson } from "./crypto.mjs";
+import { createDeterministicZip, zipSha3 } from "./deterministic-zip.mjs";
 import {
   createReleaseManifest,
   signReleaseManifest,
@@ -61,6 +63,28 @@ function trackedFiles(root) {
   return execFileSync("git", ["-C", root, "ls-files", "-z"], {
     encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
   }).split("\0").filter(Boolean).sort();
+}
+
+function extensionZip(root, manifest, paths) {
+  const artifact = createReleaseArtifact(root, artifactPaths("wallet", paths), {
+    kind: "wallet", sourceManifest: manifest,
+  });
+  const entries = artifact.entries.map((entry) => ({
+    contents: Buffer.from(entry.content, "base64"),
+    executable: entry.executable,
+    path: entry.path.slice("wallet-ui/".length),
+  }));
+  entries.push({
+    contents: Buffer.from(`${canonicalJson({
+      artifactHash: artifact.artifactHash,
+      format: "nir-extension-release-v1",
+      sourceManifestHash: artifact.sourceManifestHash,
+      sourceRevision: artifact.sourceRevision,
+    })}\n`),
+    executable: false,
+    path: "NIR-RELEASE.json",
+  });
+  return createDeterministicZip(entries);
 }
 
 function revision(root) {
@@ -155,8 +179,39 @@ try {
       readBoundedJson(artifactPath, 520 * 1024 * 1024), { sourceManifest: manifest },
     );
     console.log(`${artifact.kind} artifact ${artifact.artifactHash} verified for ${signer.address}.`);
+  } else if (command === "build-extension" && args.length === 4) {
+    const [rootValue, envelopePath, trustedAddress, output] = args;
+    const root = resolve(rootValue);
+    requireCleanTrackedTree(root);
+    const { manifest } = verifySignedRelease(readBoundedJson(envelopePath), { trustedAddress });
+    if (manifest.sourceRevision !== revision(root)) {
+      throw new Error("checked-out revision does not match the signed release");
+    }
+    const paths = trackedFiles(root);
+    verifyReleaseFiles(root, manifest, paths);
+    const zip = extensionZip(root, manifest, paths);
+    writeAtomicContents(output, zip);
+    console.log(`Browser extension ${zipSha3(zip)} created.`);
+  } else if (command === "verify-extension" && args.length === 4) {
+    const [rootValue, envelopePath, trustedAddress, archivePath] = args;
+    const root = resolve(rootValue);
+    requireCleanTrackedTree(root);
+    const { manifest } = verifySignedRelease(readBoundedJson(envelopePath), { trustedAddress });
+    if (manifest.sourceRevision !== revision(root)) {
+      throw new Error("checked-out revision does not match the signed release");
+    }
+    const paths = trackedFiles(root);
+    verifyReleaseFiles(root, manifest, paths);
+    const expected = extensionZip(root, manifest, paths);
+    const actualMetadata = lstatSync(archivePath);
+    if (!actualMetadata.isFile() || actualMetadata.isSymbolicLink() ||
+        actualMetadata.size > 520 * 1024 * 1024 ||
+        !expected.equals(readFileSync(archivePath))) {
+      throw new Error("browser extension does not match the reproducible build");
+    }
+    console.log(`Browser extension ${zipSha3(expected)} verified.`);
   } else {
-    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address>");
+    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
   }
 } catch (error) {
   console.error(`Release operation failed: ${error.message}`);

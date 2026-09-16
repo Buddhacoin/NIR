@@ -83,3 +83,25 @@ and `package.json`. The canonical JSON container has no timestamps, host paths,
 file-order ambiguity, compression metadata, or network-fetched dependencies.
 Its `artifactHash` must match across independent builders. `.nirpkg` is an
 auditable release container, not yet a click-to-install desktop application.
+
+## Build the browser extension ZIP
+
+The extension recipe uses the same signed source release and produces an
+uncompressed deterministic ZIP with fixed timestamps, canonical file ordering,
+stable Unix modes, and an embedded `NIR-RELEASE.json` provenance record:
+
+```bash
+npm run release:build-extension -- \
+  . signed-release.json nir1TRUSTED_RELEASE_ADDRESS nir-wallet-extension.zip
+
+npm run release:verify-extension -- \
+  . signed-release.json nir1TRUSTED_RELEASE_ADDRESS nir-wallet-extension.zip
+```
+
+Independent builders must obtain the same extension hash. The archive contains
+a Manifest V3 wallet with no requested browser permissions. It is still a
+valueless developer preview: transaction signing remains in the native
+encrypted-vault process, and store publication must wait for the security audit.
+Chrome/Chromium can load the extracted directory through developer mode. Safari
+requires conversion and signing through Xcode; that platform package is not yet
+implemented.
