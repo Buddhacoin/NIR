@@ -10,7 +10,13 @@ import {
 } from "../blockchain/distributed-node.mjs";
 import { requestJson } from "../blockchain/http-client.mjs";
 import { IngressLimiter } from "../blockchain/ingress-limiter.mjs";
-import { discoverPeers, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
+import {
+  createPeerAnnouncement,
+  discoverPeers,
+  discoverPeersFromSeeds,
+  selectPeerAnnouncements,
+  verifyPeerAnnouncement,
+} from "../blockchain/peer-discovery.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 
@@ -95,6 +101,82 @@ test("a seed serves signed discovery under bounded ingress and server limits", a
     assert.match(limited.body.error, /rate limit/);
   } finally {
     if (server) await close(server);
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("multi-seed discovery survives one outage and requires independent responses", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-multi-discovery-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const validators = layout.validatorDirectories.slice(0, 3)
+    .map((directory) => new ValidatorReplica(directory));
+  const genesis = JSON.parse(readFileSync(
+    join(layout.validatorDirectories[0], "genesis.json"), "utf8",
+  ));
+  const peers = new Map(genesis.peerRegistry.peers.map((peer) =>
+    [peer.validatorAddress, peer]));
+  const servers = validators.slice(0, 2).map((validator) =>
+    createValidatorHttpServer(validator));
+  try {
+    const urls = [];
+    for (const server of servers) {
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      urls.push(`http://127.0.0.1:${server.address().port}`);
+    }
+    const result = await discoverPeersFromSeeds({
+      expectedNetworkId: genesis.networkId,
+      expectedRegistryHash: peerRegistryHash(genesis.peerRegistry),
+      minimumResponses: 2,
+      seeds: validators.map((validator, index) => ({
+        trustedTransport: peers.get(validator.address).transport,
+        url: index < 2 ? urls[index] : "http://127.0.0.1:1",
+      })),
+    });
+    assert.equal(result.respondingSeeds, 2);
+    assert.equal(result.registry.peers.length, 4);
+    await assert.rejects(() => discoverPeersFromSeeds({
+      expectedNetworkId: genesis.networkId,
+      expectedRegistryHash: peerRegistryHash(genesis.peerRegistry),
+      minimumResponses: 3,
+      seeds: validators.map((validator, index) => ({
+        trustedTransport: peers.get(validator.address).transport,
+        url: index < 2 ? urls[index] : "http://127.0.0.1:1",
+      })),
+    }), /insufficient/);
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("multi-seed selection rejects independently signed conflicts at one height", () => {
+  const { genesis, layout, temporary } = fixture();
+  try {
+    const validators = layout.validatorDirectories.slice(0, 2)
+      .map((directory) => new ValidatorReplica(directory));
+    const transports = layout.validatorDirectories.slice(0, 2).map((directory) =>
+      JSON.parse(readFileSync(join(directory, "TRANSPORT-KEY.json"), "utf8")));
+    const peerByValidator = new Map(genesis.peerRegistry.peers.map((peer) =>
+      [peer.validatorAddress, peer]));
+    const first = validators[0].peerAnnouncement();
+    const conflicting = createPeerAnnouncement({
+      height: first.height,
+      networkId: genesis.networkId,
+      registry: genesis.peerRegistry,
+      tipHash: "f".repeat(64),
+    }, transports[1]);
+    assert.throws(() => selectPeerAnnouncements([
+      { announcement: first, trustedTransport: peerByValidator.get(validators[0].address).transport },
+      {
+        announcement: conflicting,
+        trustedTransport: peerByValidator.get(validators[1].address).transport,
+      },
+    ], {
+      expectedNetworkId: genesis.networkId,
+      expectedRegistryHash: peerRegistryHash(genesis.peerRegistry),
+      minimumResponses: 2,
+    }), /conflicting tips/);
+  } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
 });

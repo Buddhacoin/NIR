@@ -54,7 +54,7 @@ The intended advantages are:
 | Candidate bonds, safety payouts, burns, and validator slashing | Enforced by chain state |
 | Independent validator processes and P2P transaction gossip | Implemented for the local devnet |
 | Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
-| Signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally |
+| Multi-seed signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally; independent hosting remains |
 | Pre-activation validator onboarding | A six-process `4 → 4` rehearsal proves dual quorums with one old and one new node offline, paired key/topology history recovery, restart, and retirement |
 | Bounded public ingress, request sizes, connections, headers, and timeouts | Implemented locally; production DDoS edge protection remains |
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |

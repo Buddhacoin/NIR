@@ -64,3 +64,86 @@ export async function discoverPeers({
     trustedTransport,
   });
 }
+
+export function selectPeerAnnouncements(entries, {
+  expectedNetworkId,
+  expectedRegistryHash,
+  minimumHeight = 0,
+  minimumResponses = 1,
+} = {}) {
+  if (!Array.isArray(entries) || entries.length > 128 ||
+      !Number.isSafeInteger(minimumResponses) || minimumResponses < 1 ||
+      minimumResponses > 128) {
+    throw new Error("peer discovery candidate policy is invalid");
+  }
+  const valid = [];
+  const signers = new Set();
+  for (const entry of entries) {
+    try {
+      const announcement = verifyPeerAnnouncement(entry?.announcement, {
+        expectedNetworkId,
+        expectedRegistryHash,
+        minimumHeight,
+        trustedTransport: entry?.trustedTransport,
+      });
+      const signer = entry.announcement.signer;
+      if (signers.has(signer)) continue;
+      signers.add(signer);
+      valid.push({ announcement, signer });
+    } catch {
+      // An unavailable or malformed source cannot invalidate independent responses.
+    }
+  }
+  if (valid.length < minimumResponses) {
+    throw new Error(`peer discovery responses are insufficient (${valid.length}/${minimumResponses})`);
+  }
+  const tipByHeight = new Map();
+  for (const { announcement } of valid) {
+    const known = tipByHeight.get(announcement.height);
+    if (known && known !== announcement.tipHash) {
+      throw new Error("trusted discovery seeds report conflicting tips at the same height");
+    }
+    tipByHeight.set(announcement.height, announcement.tipHash);
+  }
+  valid.sort((left, right) => right.announcement.height - left.announcement.height ||
+    left.signer.localeCompare(right.signer));
+  return {
+    ...structuredClone(valid[0].announcement),
+    respondingSeeds: valid.length,
+  };
+}
+
+export async function discoverPeersFromSeeds({
+  expectedNetworkId,
+  expectedRegistryHash,
+  minimumHeight = 0,
+  minimumResponses = 1,
+  seeds,
+}) {
+  if (!Array.isArray(seeds) || seeds.length === 0 || seeds.length > 128) {
+    throw new Error("discovery seed list is invalid");
+  }
+  const normalized = seeds.map((seed) => ({
+    origin: new URL(seed?.url).origin,
+    tlsCertificateSha256: seed?.tlsCertificateSha256 ?? null,
+    trustedTransport: seed?.trustedTransport,
+  }));
+  if (new Set(normalized.map(({ origin }) => origin)).size !== normalized.length ||
+      new Set(normalized.map(({ trustedTransport }) => trustedTransport?.address)).size !==
+        normalized.length) {
+    throw new Error("discovery seeds must have unique origins and transport identities");
+  }
+  const responses = await Promise.allSettled(normalized.map(async (seed) => {
+    const response = await requestJson(`${seed.origin}/v1/discovery`, {
+      tlsCertificateSha256: seed.tlsCertificateSha256,
+    });
+    if (!response.ok) {
+      throw new Error(response.body?.error ?? `discovery seed returned ${response.status}`);
+    }
+    return { announcement: response.body, trustedTransport: seed.trustedTransport };
+  }));
+  return selectPeerAnnouncements(
+    responses.filter(({ status }) => status === "fulfilled").map(({ value }) => value),
+    { expectedNetworkId, expectedRegistryHash, minimumHeight, minimumResponses },
+  );
+}

@@ -28,10 +28,11 @@ has market value.
 
 Required before inviting unknown operators:
 
-- automated certificate issuance, renewal and revocation, multi-seed health
-  selection, and production denial-of-service controls; signed seed discovery,
-  bounded application ingress, pinned TLS 1.3, and quorum-signed endpoint and
-  transport-identity rotation with on-chain rollback protection are implemented;
+- automated certificate issuance, renewal, revocation, and production
+  denial-of-service controls remain; multi-seed signed discovery with outage
+  tolerance and same-height conflict detection, bounded application ingress,
+  pinned TLS 1.3, and quorum-signed endpoint and transport-identity rotation
+  with on-chain rollback protection are implemented;
 - a production database and operational recovery drills around the implemented
   quorum snapshots, tail replay, two-stage pruning, and portable backups;
   authenticated snapshot catch-up from multiple peers is implemented, while

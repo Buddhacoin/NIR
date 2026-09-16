@@ -50,20 +50,30 @@ signed with that validator's separate transport key. The client accepts it only
 when the signer is a trusted seed and the registry hash matches its local chain
 checkpoint.
 
-With a validator running at the URL already recorded in genesis:
+With validators running at URLs already recorded in genesis, pass one or more
+comma-separated seeds. Two responding identities are required automatically
+when multiple seeds are supplied:
 
 ```bash
 npm run network:discover -- \
   .nir-network/validators/validator-0/genesis.json \
-  http://127.0.0.1:8791
+  http://127.0.0.1:8791,http://127.0.0.1:8792,http://127.0.0.1:8793
 ```
 
 The output is a verified peer list, not a list trusted merely because an HTTP
-server supplied it. A changed endpoint, transport key, certificate pin, network
-identifier, or registry entry changes the committed hash and is rejected. After
-an on-chain registry rotation, a joining node must first synchronize finalized
-blocks from a checkpoint it already trusts; discovery cannot safely invent a
-new trust root.
+server supplied it. Each response needs a different transport identity. An
+offline seed is tolerated when the response threshold is still met; duplicate
+origins and keys are rejected. Independently signed different tips at the same
+height stop discovery instead of letting response order choose a view. A changed
+endpoint, transport key, certificate pin, network identifier, or registry entry
+changes the committed hash and is rejected. After an on-chain registry rotation,
+a joining node uses the separately verified handoff/topology history described
+below; discovery cannot safely invent a new trust root.
+
+One seed remains supported for local development and emergency availability,
+but it provides no operational redundancy. Production seeds must be hosted by
+different organizations, networks, and failure domains; running three processes
+on one machine does not make them independent.
 
 ## Start an encrypted local network
 

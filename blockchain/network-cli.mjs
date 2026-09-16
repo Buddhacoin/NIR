@@ -11,7 +11,7 @@ import {
 import { createNodeHttpServer } from "./node-service.mjs";
 import { createValidatorHttpServer } from "./validator-service.mjs";
 import { certificateSha256 } from "./http-client.mjs";
-import { discoverPeers } from "./peer-discovery.mjs";
+import { discoverPeersFromSeeds } from "./peer-discovery.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
 
 const [command, directory, parameter = "", portText = ""] = process.argv.slice(2);
@@ -64,19 +64,28 @@ try {
     });
   } else if (command === "discover" && directory && parameter) {
     const genesis = JSON.parse(readFileSync(directory, "utf8"));
-    const seedOrigin = new URL(parameter).origin;
-    const seed = genesis.peerRegistry?.peers?.find(({ url }) => url === seedOrigin);
-    if (!seed) throw new Error("seed URL is not trusted by the genesis peer registry");
-    const announcement = await discoverPeers({
+    const requestedOrigins = parameter.split(",").filter(Boolean).map((value) =>
+      new URL(value).origin);
+    const registrySeeds = new Map(genesis.peerRegistry?.peers?.map((peer) =>
+      [new URL(peer.url).origin, peer]));
+    const seeds = requestedOrigins.map((origin) => {
+      const seed = registrySeeds.get(origin);
+      if (!seed) throw new Error(`seed URL is not trusted by genesis: ${origin}`);
+      return {
+        tlsCertificateSha256: seed.tlsCertificateSha256,
+        trustedTransport: seed.transport,
+        url: origin,
+      };
+    });
+    const announcement = await discoverPeersFromSeeds({
       expectedNetworkId: genesis.networkId,
       expectedRegistryHash: peerRegistryHash(genesis.peerRegistry),
-      seedUrl: seedOrigin,
-      tlsCertificateSha256: seed.tlsCertificateSha256,
-      trustedTransport: seed.transport,
+      minimumResponses: Math.min(2, seeds.length),
+      seeds,
     });
     console.log(JSON.stringify(announcement, null, 2));
   } else {
-    throw new Error("usage: init-dev <new-dir> | serve-validator <dir> [port] | serve-coordinator <dir> <peer-urls> [port] | discover <genesis.json> <seed-url>");
+    throw new Error("usage: init-dev <new-dir> | serve-validator <dir> [port] | serve-coordinator <dir> <peer-urls> [port] | discover <genesis.json> <seed-urls-comma-separated>");
   }
 } catch (error) {
   console.error(`Network operation failed: ${error.message}`);
