@@ -91,6 +91,16 @@ test("epoch randomness is unknowable until every fixed committee member reveals"
   members.forEach((wallet, index) => machine.commit(createEpochRandomnessCommit({
     wallet, networkId, round: 1, secret: secrets[index],
   }), 10));
+  const restored = EpochRandomnessMachine.fromSnapshot({
+    networkId, registry, committeeSize: 3, snapshot: machine.snapshot(),
+  });
+  assert.deepEqual(restored.snapshot(), machine.snapshot());
+  const tamperedSnapshot = structuredClone(machine.snapshot());
+  tamperedSnapshot.commitments[0][1] = fingerprint("tampered-commitment");
+  tamperedSnapshot.reveals = [[tamperedSnapshot.commitments[0][0], secrets[0]]];
+  assert.throws(() => EpochRandomnessMachine.fromSnapshot({
+    networkId, registry, committeeSize: 3, snapshot: tamperedSnapshot,
+  }), /contributions are invalid/);
   assert.throws(() => machine.reveal(createEpochRandomnessReveal({
     wallet: members[0], networkId, round: 1, secret: secrets[0],
   }), 10), /premature/);

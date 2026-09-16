@@ -29,6 +29,7 @@ import {
 } from "./crypto.mjs";
 import { CapabilityMemory } from "./memory.mjs";
 import {
+  EpochRandomnessMachine,
   combineRandomnessReveals,
   randomnessCommitment,
   selectOperatorCommittee,
@@ -591,6 +592,7 @@ export class NirChain {
   #candidateBonds;
   #capabilityMemory;
   #evaluationQuorum;
+  #epochRandomness;
   #beaconAuthorities;
   #beaconQuorum;
   #evaluatorOrder;
@@ -683,6 +685,15 @@ export class NirChain {
     this.#evaluatorOrder = [...this.#evaluators.keys()].sort();
     this.#evaluationQuorum = Math.floor((this.#evaluatorOrder.length * 2) / 3) + 1;
     this.#beaconQuorum = Math.floor((this.#beaconAuthorities.size * 2) / 3) + 1;
+    this.#epochRandomness = new EpochRandomnessMachine({
+      networkId,
+      registry: this.#beaconAuthorities,
+      committeeSize: this.#beaconQuorum,
+      genesisSeed: hashObject({
+        authorities: [...this.#beaconAuthorities.keys()].sort(),
+        networkId,
+      }, "EPOCH_RANDOMNESS_GENESIS"),
+    });
     assertAddress(treasuryAddress, "treasury address");
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
     this.#burned = 0n;
@@ -871,6 +882,12 @@ export class NirChain {
     chain.#burned = snapshotAtomic(state.burned, "burned supply");
     chain.#candidateBonds = candidateBonds;
     chain.#capabilityMemory = memory;
+    chain.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
+      networkId: chain.#networkId,
+      registry: chain.#beaconAuthorities,
+      committeeSize: chain.#beaconQuorum,
+      snapshot: state.epochRandomness,
+    });
     chain.#lastRewardTimestamp = snapshotSignedInteger(state.lastRewardTimestamp, "last reward timestamp");
     chain.#mined = snapshotAtomic(state.mined, "mined supply");
     chain.#nonces = nonces;
@@ -945,6 +962,7 @@ export class NirChain {
       burned: overrides.burned ?? this.#burned,
       candidateBonds: overrides.candidateBonds ?? this.#candidateBonds,
       capabilityMemoryRoot: overrides.capabilityMemoryRoot ?? this.#capabilityMemory.stateRoot,
+      epochRandomness: overrides.epochRandomness ?? this.#epochRandomness.snapshot(),
       lastRewardTimestamp: overrides.lastRewardTimestamp ?? this.#lastRewardTimestamp,
       mined: overrides.mined ?? this.#mined,
       nonces: overrides.nonces ?? this.#nonces,
@@ -972,6 +990,7 @@ export class NirChain {
         burned: this.#burned,
         candidateBonds: this.#candidateBonds,
         capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
+        epochRandomness: this.#epochRandomness.snapshot(),
         lastRewardTimestamp: this.#lastRewardTimestamp,
         mined: this.#mined,
         nonces: this.#nonces,
@@ -1776,6 +1795,12 @@ export class NirChain {
       randomnessReveals: new Map(candidate.randomnessReveals),
     }]));
     fork.#capabilityMemory = this.#capabilityMemory.clone();
+    fork.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
+      networkId: this.#networkId,
+      registry: this.#beaconAuthorities,
+      committeeSize: this.#beaconQuorum,
+      snapshot: this.#epochRandomness.snapshot(),
+    });
     fork.#lastRewardTimestamp = this.#lastRewardTimestamp;
     fork.#mined = this.#mined;
     fork.#nonces = new Map(this.#nonces);

@@ -102,8 +102,10 @@ until all commitments exist in an earlier height. The next seed hashes the
 previous seed and every ordered reveal, and advances only when the exact
 committee is complete. A missing member can stop the round but cannot make the
 protocol accept an alternative subset or a forged reveal. The remaining step
-is serializing this machine in block state and making progress admissions wait
-for a strictly later finalized epoch seed.
+is accepting its signed messages in blocks and making progress admissions wait
+for a strictly later finalized epoch seed. Protocol v13 already serializes the
+machine in consensus state, commits it to the state root, restores it from
+snapshots with structural validation, and clones it for proposal replay.
 
 ### Draft score
 

@@ -198,8 +198,11 @@ state machine: a seed-derived fixed committee first signs commitments to secret
 shares and may reveal only in a later height. The seed advances only after every
 assigned reveal matches its commitment. This removes last-revealer grinding at
 the cost of deliberately halting that randomness round when a member withholds.
-Its signatures and adversarial tests are implemented; connecting the resulting
-epoch seed to consensus state is the next protocol migration.
+Its signatures and adversarial tests are implemented. Protocol v13 commits the
+complete round, committee, phase height, commitments, reveals and seed to every
+state root and validates them during snapshot restoration. The next migration
+will admit commit/reveal messages as block collections and make progress
+admissions wait for the resulting strictly later seed.
 
 ## Why organizations use NIR
 

@@ -126,6 +126,43 @@ export class EpochRandomnessMachine {
     this.#committee = this.#selectCommittee();
   }
 
+  static fromSnapshot({ networkId, registry, committeeSize, snapshot }) {
+    if (!snapshot || !Number.isSafeInteger(snapshot.round) || snapshot.round < 1 ||
+        !HASH.test(snapshot.previousSeed ?? "") ||
+        !Array.isArray(snapshot.committee) || !Array.isArray(snapshot.commitments) ||
+        !Array.isArray(snapshot.reveals)) {
+      throw new Error("epoch randomness snapshot is invalid");
+    }
+    const machine = new EpochRandomnessMachine({
+      networkId, registry, committeeSize, genesisSeed: snapshot.previousSeed,
+    });
+    machine.#round = snapshot.round;
+    machine.#previousSeed = snapshot.previousSeed;
+    machine.#committee = machine.#selectCommittee();
+    if (snapshot.committee.length !== machine.#committee.length ||
+        snapshot.committee.some((address, index) => address !== machine.#committee[index])) {
+      throw new Error("epoch randomness snapshot committee is invalid");
+    }
+    const commitments = new Map(snapshot.commitments);
+    const reveals = new Map(snapshot.reveals);
+    const members = new Set(machine.#committee);
+    if (commitments.size !== snapshot.commitments.length || reveals.size !== snapshot.reveals.length ||
+        [...commitments].some(([address, value]) => !members.has(address) || !HASH.test(value ?? "")) ||
+        [...reveals].some(([address, secret]) => !members.has(address) || !HASH.test(secret ?? "") ||
+          commitments.get(address) !== epochRandomnessCommitment({ networkId, round: snapshot.round, secret }))) {
+      throw new Error("epoch randomness snapshot contributions are invalid");
+    }
+    const commitHeightValid = snapshot.commitHeight === null
+      ? commitments.size < machine.#committee.length && reveals.size === 0
+      : Number.isSafeInteger(snapshot.commitHeight) && snapshot.commitHeight >= 1 &&
+        commitments.size === machine.#committee.length;
+    if (!commitHeightValid) throw new Error("epoch randomness snapshot phase is invalid");
+    machine.#commitHeight = snapshot.commitHeight;
+    machine.#commitments = commitments;
+    machine.#reveals = reveals;
+    return machine;
+  }
+
   #selectCommittee() {
     return selectOperatorCommittee({
       registry: this.#registry,
@@ -138,6 +175,17 @@ export class EpochRandomnessMachine {
   get round() { return this.#round; }
   get previousSeed() { return this.#previousSeed; }
   committee() { return [...this.#committee]; }
+
+  snapshot() {
+    return {
+      commitHeight: this.#commitHeight,
+      commitments: [...this.#commitments.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      committee: [...this.#committee],
+      previousSeed: this.#previousSeed,
+      reveals: [...this.#reveals.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      round: this.#round,
+    };
+  }
 
   commit(message, height) {
     if (!Number.isSafeInteger(height) || height < 1 || message?.networkId !== this.#networkId ||
