@@ -142,11 +142,20 @@ any remaining tail blocks. Minority, stale, malformed, and conflicting
 candidates cannot advance its state; when no snapshot quorum exists, the node
 falls back to sequential finalized-block replay.
 
-The handoff format and verifier are implemented and adversarially tested. The
-remaining integration boundary is automatic creation and durable distribution
-of each handoff by the old and new validator processes at the actual activation
-block. Until that is connected, a network that has rotated validators must not
-claim unattended snapshot bootstrap across that rotation.
+Handoff candidates are now emitted inside the commit phase, after each
+validator has persisted its non-equivocating commit decision. The proposer or
+coordinator requires both old- and new-set quorums before committing an
+activation block, stores the assembled proof with atomic primary and backup
+copies, and distributes it only after the matching block is finalized. On
+restart, this history advances the genesis trust anchor before any snapshot is
+loaded. A damaged copy is repaired; conflicting histories and skipped or
+reordered transitions fail closed.
+
+The remaining rotation boundary is dynamic P2P membership: production new-set
+operators need a pre-activation, mutually authenticated endpoint-registration
+workflow so their commit and handoff votes are reachable before activation.
+The local devnet still starts with a static four-validator transport topology,
+so it must not be presented as a complete live operator replacement workflow.
 
 ## Run
 

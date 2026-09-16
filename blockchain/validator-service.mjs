@@ -149,6 +149,7 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
     prepareCertificate = validator.prepareCertificate(proposal, prepares);
   }
   const ownCommit = validator.commitVote(proposal, prepareCertificate);
+  const ownHandoffCandidate = validator.validatorHandoffCandidate(proposal);
   const commitResponses = await Promise.allSettled(urls.map((peer, index) =>
     gossipRequest(validator, index, peer, "/v1/p2p/commits", {
       prepareCertificate, proposal,
@@ -156,9 +157,19 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
   const commits = [ownCommit, ...commitResponses
     .filter(({ status, value }) => status === "fulfilled" && value)
     .map(({ value }) => value.vote)];
+  const handoffCandidates = [ownHandoffCandidate, ...commitResponses
+    .filter(({ status, value }) => status === "fulfilled" && value?.handoffCandidate)
+    .map(({ value }) => value.handoffCandidate)].filter(Boolean);
+  const handoff = ownHandoffCandidate === null ? null
+    : validator.assembleValidatorHandoffCandidates(handoffCandidates, proposal);
   const block = validator.finalizeProposal(proposal, prepareCertificate, commits);
+  if (handoff) validator.installFinalizedValidatorHandoff(handoff);
   const broadcasts = await Promise.allSettled(urls.map((peer, index) =>
     gossipRequest(validator, index, peer, "/v1/p2p/blocks", block)));
+  if (handoff) {
+    await Promise.allSettled(urls.map((peer, index) =>
+      gossipRequest(validator, index, peer, "/v1/p2p/handoffs", handoff)));
+  }
   return {
     blockHash: block.hash,
     committedPeers: 1 + broadcasts.filter(({ status, value }) => status === "fulfilled" && value).length,
@@ -349,7 +360,16 @@ export function createValidatorHttpServer(validator, options = {}) {
         }
         const result = {
           vote: validator.commitVote(payload.proposal, payload.prepareCertificate),
+          handoffCandidate: validator.validatorHandoffCandidate(payload.proposal),
         };
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/handoffs") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = validator.installFinalizedValidatorHandoff(payload);
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
@@ -462,7 +482,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = validator.authorize(auth, request.method, url.pathname, payload);
         const result = {
           vote: validator.commitVote(payload.proposal, payload.prepareCertificate),
+          handoffCandidate: validator.validatorHandoffCandidate(payload.proposal),
         };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/handoffs") {
+        const { auth, payload } = await readBody(request);
+        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const result = validator.installFinalizedValidatorHandoff(payload);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/timeouts") {

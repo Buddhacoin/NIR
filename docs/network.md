@@ -372,9 +372,11 @@ joining-node installation, portable pruned backups, and two-stage pruning are
 implemented locally. Validators more than 16 blocks behind also collect
 authenticated snapshot candidates from peers, require matching finality quorum,
 install the checkpoint, and replay the remaining tail; failed quorum safely
-falls back to block-by-block replay. Automatic handoff production at activation
-and operator-run production recovery drills remain; there is no fork-choice
-protocol.
+falls back to block-by-block replay. Commit-bound handoff candidates are now
+assembled into old/new quorums, durably replicated, distributed after the
+activation block, and reloaded on restart. Pre-activation onboarding of new
+operators into the authenticated P2P topology and operator-run production
+recovery drills remain; there is no fork-choice protocol.
 
 Validator mempools are disk-backed and gossiped over a static full mesh. Repeated
 rounds preserve the same execution value and rotate the proposer through

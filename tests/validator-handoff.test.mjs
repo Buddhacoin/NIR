@@ -5,6 +5,8 @@ import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
   advanceValidatorTrust,
   createValidatorHandoff,
+  createValidatorHandoffCandidate,
+  mergeValidatorHandoffCandidates,
   verifyValidatorHandoff,
 } from "../blockchain/validator-handoff.mjs";
 
@@ -36,6 +38,26 @@ test("validator trust advances only after old and new quorums sign the same hand
   assert.equal(verified.activationHeight, 10);
   assert.deepEqual(verified.trustedValidators, members(next)
     .sort((left, right) => left.address.localeCompare(right.address)));
+});
+
+test("independent activation candidates merge only with old and new quorums", () => {
+  const previous = Array.from({ length: 4 }, generateWallet);
+  const next = [previous[0], previous[1], ...Array.from({ length: 2 }, generateWallet)];
+  const transition = fields(previous, next);
+  const signers = [...new Map([...previous, ...next].map((wallet) =>
+    [wallet.address, wallet])).values()];
+  const candidates = signers.map((wallet) => createValidatorHandoffCandidate(transition, wallet));
+  const merged = mergeValidatorHandoffCandidates(candidates, {
+    expectedNetworkId: transition.networkId,
+    trustedValidators: transition.previousValidators,
+  });
+  assert.equal(merged.verified.activationHeight, transition.activationHeight);
+  assert.equal(merged.handoff.previousAttestations.length, 4);
+  assert.equal(merged.handoff.nextAttestations.length, 4);
+  assert.throws(() => mergeValidatorHandoffCandidates(candidates.slice(0, 2), {
+    expectedNetworkId: transition.networkId,
+    trustedValidators: transition.previousValidators,
+  }), /candidate quorum is not reached/);
 });
 
 test("a new validator set cannot self-authorize or alter a signed transition", () => {

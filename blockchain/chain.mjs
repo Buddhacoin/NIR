@@ -861,6 +861,11 @@ export class NirChain {
 
   get validatorSetId() { return validatorSetId([...this.#validators.values()].sort((a, b) => a.address.localeCompare(b.address))); }
 
+  get validatorMembers() {
+    return [...this.#validators.values()].sort((left, right) =>
+      left.address.localeCompare(right.address)).map((member) => structuredClone(member));
+  }
+
   get pendingValidatorRotation() {
     return this.#pendingValidatorRotation ? structuredClone(this.#pendingValidatorRotation) : null;
   }

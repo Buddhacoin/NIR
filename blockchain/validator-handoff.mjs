@@ -76,7 +76,24 @@ export function createValidatorHandoff(fields, previousWallets, nextWallets) {
   };
 }
 
-function verifyAttestations(payload, attestations, validators, domain) {
+export function createValidatorHandoffCandidate(fields, wallet) {
+  const payload = handoffPayload(fields);
+  const previousValidators = normalizeTrustSet(fields.previousValidators);
+  const previous = previousValidators.find(({ address }) => address === wallet?.address);
+  const next = payload.nextValidators.find(({ address }) => address === wallet?.address);
+  if ((!previous && !next) || (previous && previous.publicKey !== wallet.publicKey) ||
+      (next && next.publicKey !== wallet.publicKey)) {
+    throw new Error("validator is not a member of this handoff");
+  }
+  return {
+    ...payload,
+    handoffHash: hashObject(payload, "VALIDATOR_HANDOFF"),
+    nextAttestations: next ? attest(payload, [wallet], "VALIDATOR_HANDOFF_NEW") : [],
+    previousAttestations: previous ? attest(payload, [wallet], "VALIDATOR_HANDOFF_OLD") : [],
+  };
+}
+
+function verifyAttestations(payload, attestations, validators, domain, minimum = null) {
   if (!Array.isArray(attestations) || attestations.length > validators.length) {
     throw new Error("validator handoff attestations are invalid");
   }
@@ -91,11 +108,12 @@ function verifyAttestations(payload, attestations, validators, domain) {
     }
     seen.add(member.address);
   }
-  const quorum = Math.floor((validators.length * 2) / 3) + 1;
-  if (seen.size < quorum) throw new Error("validator handoff quorum is not reached");
+  const required = minimum ?? Math.floor((validators.length * 2) / 3) + 1;
+  if (seen.size < required) throw new Error("validator handoff quorum is not reached");
+  return seen;
 }
 
-export function verifyValidatorHandoff(handoff, {
+function verifyHandoffContent(handoff, {
   expectedNetworkId,
   minimumActivationHeight = 1,
   trustedValidators,
@@ -111,6 +129,16 @@ export function verifyValidatorHandoff(handoff, {
       handoffHash !== hashObject(payload, "VALIDATOR_HANDOFF")) {
     throw new Error("validator handoff trust chain is invalid");
   }
+  return { current, handoffHash, nextAttestations, payload, previousAttestations };
+}
+
+export function verifyValidatorHandoff(handoff, {
+  expectedNetworkId,
+  minimumActivationHeight = 1,
+  trustedValidators,
+} = {}) {
+  const { current, handoffHash, nextAttestations, payload, previousAttestations } =
+    verifyHandoffContent(handoff, { expectedNetworkId, minimumActivationHeight, trustedValidators });
   verifyAttestations(payload, previousAttestations, current, "VALIDATOR_HANDOFF_OLD");
   verifyAttestations(payload, nextAttestations, payload.nextValidators, "VALIDATOR_HANDOFF_NEW");
   return {
@@ -121,6 +149,54 @@ export function verifyValidatorHandoff(handoff, {
     trustedValidators: payload.nextValidators,
     validatorSetId: payload.nextSetId,
   };
+}
+
+export function mergeValidatorHandoffCandidates(candidates, trustAnchor) {
+  if (!Array.isArray(candidates) || candidates.length === 0 || candidates.length > MAX_VALIDATORS) {
+    throw new Error("validator handoff candidates are invalid");
+  }
+  const groups = new Map();
+  for (const candidate of candidates) {
+    try {
+      const content = verifyHandoffContent(candidate, trustAnchor);
+      const previous = verifyAttestations(
+        content.payload, content.previousAttestations, content.current,
+        "VALIDATOR_HANDOFF_OLD", 0,
+      );
+      const next = verifyAttestations(
+        content.payload, content.nextAttestations, content.payload.nextValidators,
+        "VALIDATOR_HANDOFF_NEW", 0,
+      );
+      if (previous.size + next.size === 0) throw new Error("empty candidate");
+      const group = groups.get(content.handoffHash) ?? {
+        handoff: structuredClone(candidate), next: new Map(), previous: new Map(),
+      };
+      for (const attestation of content.previousAttestations) {
+        group.previous.set(attestation.validator, structuredClone(attestation));
+      }
+      for (const attestation of content.nextAttestations) {
+        group.next.set(attestation.validator, structuredClone(attestation));
+      }
+      groups.set(content.handoffHash, group);
+    } catch {
+      // Invalid or unrelated candidates cannot poison an honest handoff quorum.
+    }
+  }
+  const complete = [];
+  for (const group of groups.values()) {
+    const handoff = {
+      ...group.handoff,
+      nextAttestations: [...group.next.values()].sort((left, right) =>
+        left.validator.localeCompare(right.validator)),
+      previousAttestations: [...group.previous.values()].sort((left, right) =>
+        left.validator.localeCompare(right.validator)),
+    };
+    try { complete.push({ handoff, verified: verifyValidatorHandoff(handoff, trustAnchor) }); }
+    catch { /* A partial group is not a handoff proof. */ }
+  }
+  if (complete.length === 0) throw new Error("validator handoff candidate quorum is not reached");
+  if (complete.length > 1) throw new Error("conflicting validator handoff quorums exist");
+  return complete[0];
 }
 
 export function advanceValidatorTrust({ expectedNetworkId, handoffs = [], trustedValidators } = {}) {

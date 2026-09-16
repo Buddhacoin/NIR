@@ -51,6 +51,14 @@ import { requestJson } from "./http-client.mjs";
 import { createPeerAnnouncement } from "./peer-discovery.mjs";
 import { installStateSnapshot } from "./snapshot-store.mjs";
 import {
+  createValidatorHandoffCandidate,
+  mergeValidatorHandoffCandidates,
+} from "./validator-handoff.mjs";
+import {
+  installValidatorHandoff,
+  loadValidatorHandoffs,
+} from "./validator-handoff-store.mjs";
+import {
   MAX_SNAPSHOT_BYTES,
   createStateSnapshot,
   mergeStateSnapshotCandidates,
@@ -97,7 +105,18 @@ function referenceCapability() {
 
 function loadChain(directory) {
   const genesis = readJson(join(directory, "genesis.json"));
-  return { ...loadBlockStore(directory, genesis), genesis };
+  const history = loadValidatorHandoffs(join(directory, "handoffs"), {
+    expectedNetworkId: genesis.networkId,
+    trustedValidators: genesis.validators,
+  });
+  return {
+    ...loadBlockStore(directory, genesis, {
+      handoffs: history.handoffs,
+      trustedValidators: genesis.validators,
+    }),
+    genesis,
+    handoffs: history.handoffs,
+  };
 }
 
 export function initializeDistributedDevnet(
@@ -391,6 +410,63 @@ export class ValidatorReplica {
       throw new Error("snapshot attestation does not match local finalized state");
     }
     return candidate.attestations[0];
+  }
+
+  validatorHandoffCandidate(proposal) {
+    const pending = this.#chain.pendingValidatorRotation;
+    if (!pending || pending.activationHeight !== proposal?.height) return null;
+    const rebuilt = this.#chain.buildBlock(proposalFields(proposal));
+    if (canonicalJson(rebuilt) !== canonicalJson(proposal)) {
+      throw new Error("handoff proposal is not deterministic for this state");
+    }
+    this.#chain.validateProposal(proposal);
+    return createValidatorHandoffCandidate({
+      activationBlockHash: blockHash(proposal),
+      activationHeight: proposal.height,
+      activationStateRoot: proposal.stateRoot,
+      networkId: this.networkId,
+      nextValidators: pending.validators,
+      previousValidators: this.#chain.validatorMembers,
+    }, this.#wallet);
+  }
+
+  assembleValidatorHandoffCandidates(candidates, proposal) {
+    if (this.validatorHandoffCandidate(proposal) === null) return null;
+    const trustAnchor = {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#genesis.validators,
+    };
+    const history = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor);
+    const merged = mergeValidatorHandoffCandidates(candidates, {
+      expectedNetworkId: this.networkId,
+      minimumActivationHeight: (history.lastHandoff?.activationHeight ?? 0) + 1,
+      trustedValidators: history.trustedValidators,
+    });
+    if (merged.verified.activationHeight !== proposal.height ||
+        merged.verified.activationBlockHash !== blockHash(proposal) ||
+        merged.verified.activationStateRoot !== proposal.stateRoot) {
+      throw new Error("validator handoff does not match the activation proposal");
+    }
+    return merged.handoff;
+  }
+
+  installFinalizedValidatorHandoff(handoff) {
+    const block = this.#chain.blocks().find(({ height }) => height === handoff?.activationHeight);
+    if (!block || block.hash !== handoff.activationBlockHash ||
+        block.stateRoot !== handoff.activationStateRoot) {
+      throw new Error("validator handoff activation block is not finalized locally");
+    }
+    const trustAnchor = {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#genesis.validators,
+    };
+    const history = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor);
+    const known = history.handoffs.find(({ handoffHash }) => handoffHash === handoff.handoffHash);
+    if (known) return { handoffHash: handoff.handoffHash, status: "known" };
+    const installed = installValidatorHandoff(
+      join(this.#directory, "handoffs"), handoff, trustAnchor,
+    );
+    return { ...installed, status: "installed" };
   }
 
   installStateSnapshotCandidates(candidates) {
@@ -924,6 +1000,28 @@ export class DistributedCoordinator {
     if (uniqueCommits.size < commitQuorum || !uniqueCommits.has(proposal.proposer)) {
       throw new Error(`remote commit quorum not reached (${uniqueCommits.size}/${commitQuorum})`);
     }
+    const pendingRotation = this.#chain.pendingValidatorRotation;
+    let handoff = null;
+    if (pendingRotation?.activationHeight === proposal.height) {
+      const history = loadValidatorHandoffs(join(this.#directory, "handoffs"), {
+        expectedNetworkId: this.networkId,
+        trustedValidators: this.#genesis.validators,
+      });
+      const candidates = commitResults
+        .filter(({ status, value }) => status === "fulfilled" && value?.handoffCandidate)
+        .map(({ value }) => value.handoffCandidate);
+      const merged = mergeValidatorHandoffCandidates(candidates, {
+        expectedNetworkId: this.networkId,
+        minimumActivationHeight: (history.lastHandoff?.activationHeight ?? 0) + 1,
+        trustedValidators: history.trustedValidators,
+      });
+      if (merged.verified.activationBlockHash !== blockHash(proposal) ||
+          merged.verified.activationHeight !== proposal.height ||
+          merged.verified.activationStateRoot !== proposal.stateRoot) {
+        throw new Error("validator handoff does not match the coordinator activation proposal");
+      }
+      handoff = merged.handoff;
+    }
     const block = {
       ...proposal,
       certificate: [...uniqueCommits.values()].sort((left, right) =>
@@ -935,9 +1033,17 @@ export class DistributedCoordinator {
     verified.appendBlock(block);
     persistBlock(this.#directory, block, verified);
     this.#chain = verified;
+    if (handoff) installValidatorHandoff(join(this.#directory, "handoffs"), handoff, {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#genesis.validators,
+    });
     this.#mempool.remove(transactions);
     const broadcasts = await Promise.allSettled(this.#peers.map((_, index) =>
       this.#request(index, "/v1/blocks", block)));
+    if (handoff) {
+      await Promise.allSettled(this.#peers.map((_, index) =>
+        this.#request(index, "/v1/handoffs", handoff)));
+    }
     return {
       blockHash: block.hash,
       committedPeers: broadcasts.filter(({ status }) => status === "fulfilled").length,
