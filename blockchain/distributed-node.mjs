@@ -522,17 +522,23 @@ export class ValidatorReplica {
   }
 
   installStateSnapshotCandidates(candidates) {
-    const trustAnchor = {
+    const rootTrustAnchor = {
       expectedNetworkId: this.networkId,
-      trustedValidators: this.#validators,
+      trustedValidators: this.#genesis.validators,
     };
-    const merged = mergeStateSnapshotCandidates(candidates, trustAnchor);
+    const history = loadValidatorHandoffs(
+      join(this.#directory, "handoffs"), rootTrustAnchor,
+    );
+    const merged = mergeStateSnapshotCandidates(candidates, {
+      expectedNetworkId: this.networkId,
+      trustedValidators: history.trustedValidators,
+    });
     if (merged.verified.height <= this.height) {
       throw new Error("state snapshot does not advance the validator");
     }
     const installed = installBlockStoreSnapshot(
       this.#directory, this.#genesis, merged.snapshot,
-      { trustedValidators: this.#validators },
+      { handoffs: history.handoffs, trustedValidators: this.#genesis.validators },
     );
     this.#chain = installed.chain;
     this.#refreshTransportView();

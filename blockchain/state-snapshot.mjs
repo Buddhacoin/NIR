@@ -138,6 +138,11 @@ export function verifyStateSnapshotWithHandoffs(snapshot, trustAnchor) {
   if (lastHandoff && snapshot?.height < lastHandoff.activationHeight) {
     throw new Error("state snapshot predates its validator handoff");
   }
+  if (lastHandoff && snapshot?.height === lastHandoff.activationHeight &&
+      (snapshot.tipHash !== lastHandoff.activationBlockHash ||
+       snapshot.stateRoot !== lastHandoff.activationStateRoot)) {
+    throw new Error("state snapshot does not match its validator activation handoff");
+  }
   return verifyStateSnapshot(snapshot, {
     expectedNetworkId: trustAnchor?.expectedNetworkId,
     trustedValidators,

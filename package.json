@@ -29,6 +29,6 @@
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",
     "network:discover": "node blockchain/network-cli.mjs discover",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
-    "test:chain": "node --test tests/*.test.mjs"
+    "test:chain": "node --test --test-concurrency=1 tests/*.test.mjs"
   }
 }

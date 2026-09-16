@@ -142,6 +142,15 @@ any remaining tail blocks. Minority, stale, malformed, and conflicting
 candidates cannot advance its state; when no snapshot quorum exists, the node
 falls back to sequential finalized-block replay.
 
+Snapshot trust can advance through multiple ordered validator generations. The
+node roots every handoff in genesis, verifies both old- and new-set quorums for
+each transition, and uses only the resulting final set for snapshot signatures.
+When a snapshot is taken at the exact activation height, its checkpoint hash
+and state root must equal the values committed by that handoff. The automated
+`A → B → C` test restores the second activation snapshot and replays only one
+later journal block; a missing, reordered, or correctly re-signed but
+state-mismatched handoff fails closed.
+
 Handoff candidates are now emitted inside the commit phase, after each
 validator has persisted its non-equivocating commit decision. The proposer or
 coordinator requires both old- and new-set quorums before committing an

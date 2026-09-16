@@ -340,6 +340,9 @@ npm run node:snapshot-install -- /srv/nir-node /secure/incoming/STATE-SNAPSHOT.j
 If the snapshot crosses validator rotations, pass the ordered handoff array as
 the final argument. The file is rooted in the validators from the node's local
 `genesis.json`; the downloaded snapshot cannot choose its own trust anchor.
+The same path is tested across two consecutive validator generations. A
+snapshot taken on an activation block must match that handoff's exact block
+hash and state root, after which only the post-snapshot journal tail is replayed.
 
 Old blocks are never deleted by installation. Pruning requires three separate
 commands, with a real node stop/start and health check between the first two:

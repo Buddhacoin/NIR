@@ -17,6 +17,8 @@ Implemented and continuously tested:
 - a six-process live `4 → 4` validator-rotation rehearsal with pre-activation
   synchronization, simultaneous old/new outages, dual quorums, authenticated
   handoff recovery, restart, and retirement;
+- snapshot recovery across two ordered validator generations, with exact
+  activation-block binding and one-block journal-tail replay;
 - a local wallet preview and valueless mining demonstration.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR
