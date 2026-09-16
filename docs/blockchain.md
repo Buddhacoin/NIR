@@ -11,6 +11,8 @@ identically.
 - account balances, sequential nonces, fees, and atomic block application;
 - a consensus-enforced minimum transfer fee of 0.00001000 NIR, paid to the
   block proposer;
+- native fee sponsorship: the sender authorizes the exact payment while a
+  distinct post-quantum account authorizes and pays only its exact fee;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;
@@ -34,6 +36,13 @@ identically.
   that exact committee;
 - domain-separated signatures and hashes;
 - limits on block bytes, transactions, rewards, and numeric inputs.
+
+Transfers may name a distinct fee payer. The sender signs the exact payment and
+fee-payer identity; the sponsor then signs that complete sender-authorized
+transaction under a separate `SPONSORED_TRANSFER` domain. Consensus advances
+both nonces, charges the amount only to the sender and the fee only to the
+sponsor. This allows wallet providers or merchants to onboard a user without
+receiving custody or general signing authority over that user's funds.
 
 ## Trust boundary
 

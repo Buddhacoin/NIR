@@ -130,7 +130,12 @@ export function computeChainStateRoot(state) {
 }
 
 function unsignedTransaction(transaction) {
-  const { signature: _signature, signatures: _signatures, ...unsigned } = transaction;
+  const {
+    feePayerSignature: _feePayerSignature,
+    signature: _signature,
+    signatures: _signatures,
+    ...unsigned
+  } = transaction;
   return unsigned;
 }
 
@@ -175,6 +180,44 @@ export function createTransfer({
   return {
     ...transaction,
     signature: signObject(transaction, wallet, "TRANSFER"),
+  };
+}
+
+export function createSponsoredTransfer({
+  wallet,
+  sponsorWallet,
+  networkId,
+  recipient,
+  amount,
+  nonce,
+  sponsorNonce,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  if (!sponsorWallet || sponsorWallet.address === wallet?.address) {
+    throw new Error("a sponsored transfer requires a distinct fee payer");
+  }
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    amount: String(amount),
+    fee: String(fee),
+    feePayer: sponsorWallet.address,
+    feePayerAlgorithm: SIGNATURE_ALGORITHM,
+    feePayerNonce: sponsorNonce,
+    feePayerPublicKey: sponsorWallet.publicKey,
+    networkId,
+    nonce,
+    publicKey: wallet.publicKey,
+    recipient,
+    sender: wallet.address,
+    type: "transfer",
+  };
+  const signed = {
+    ...transaction,
+    signature: signObject(transaction, wallet, "TRANSFER"),
+  };
+  return {
+    ...signed,
+    feePayerSignature: signObject(signed, sponsorWallet, "SPONSORED_TRANSFER"),
   };
 }
 
@@ -1487,18 +1530,66 @@ export class NirChain {
       throw new Error("transfer fee is below the protocol minimum");
     }
     const senderBalance = balances.get(transaction.sender) ?? 0n;
-    if (senderBalance < amount + fee) throw new Error("insufficient balance");
+    const sponsorFields = [
+      transaction.feePayer,
+      transaction.feePayerAlgorithm,
+      transaction.feePayerNonce,
+      transaction.feePayerPublicKey,
+      transaction.feePayerSignature,
+    ];
+    const sponsored = sponsorFields.every((value) => value !== undefined);
+    if (!sponsored && sponsorFields.some((value) => value !== undefined)) {
+      throw new Error("sponsored transfer fields are incomplete");
+    }
+    let feePayerBalance = 0n;
+    let expectedFeePayerNonce = 0;
+    if (sponsored) {
+      if (
+        transaction.feePayer === transaction.sender ||
+        transaction.feePayerAlgorithm !== SIGNATURE_ALGORITHM ||
+        typeof transaction.feePayerPublicKey !== "string" || transaction.feePayerPublicKey.length > 4_000 ||
+        typeof transaction.feePayerSignature !== "string" || transaction.feePayerSignature.length > 7_000 ||
+        addressFromPublicKey(transaction.feePayerPublicKey) !== transaction.feePayer ||
+        !Number.isSafeInteger(transaction.feePayerNonce) || transaction.feePayerNonce < 0
+      ) throw new Error("sponsored transfer fee payer is invalid");
+      const { feePayerSignature: _feePayerSignature, ...sponsorPayload } = transaction;
+      if (!verifyObject(
+        sponsorPayload,
+        transaction.feePayerSignature,
+        transaction.feePayerPublicKey,
+        "SPONSORED_TRANSFER",
+      )) throw new Error("invalid fee payer signature");
+      expectedFeePayerNonce = nonces.get(transaction.feePayer) ?? 0;
+      if (transaction.feePayerNonce !== expectedFeePayerNonce) {
+        throw new Error("unexpected fee payer nonce");
+      }
+      feePayerBalance = balances.get(transaction.feePayer) ?? 0n;
+      if (senderBalance < amount || feePayerBalance < fee) throw new Error("insufficient balance");
+    } else if (senderBalance < amount + fee) {
+      throw new Error("insufficient balance");
+    }
     if (transaction.sender === this.#treasuryAddress) {
       const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
         this.#genesisTimestamp,
         timestamp,
       );
-      if (senderBalance - amount - fee < locked) {
+      if (senderBalance - amount - (sponsored ? 0n : fee) < locked) {
         throw new Error("treasury funds are still vesting");
       }
     }
-    balances.set(transaction.sender, senderBalance - amount - fee);
+    if (sponsored && transaction.feePayer === this.#treasuryAddress) {
+      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
+        this.#genesisTimestamp,
+        timestamp,
+      );
+      if (feePayerBalance - fee < locked) throw new Error("treasury funds are still vesting");
+    }
+    balances.set(transaction.sender, senderBalance - amount - (sponsored ? 0n : fee));
     balances.set(transaction.recipient, (balances.get(transaction.recipient) ?? 0n) + amount);
+    if (sponsored) {
+      balances.set(transaction.feePayer, (balances.get(transaction.feePayer) ?? 0n) - fee);
+      nonces.set(transaction.feePayer, expectedFeePayerNonce + 1);
+    }
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
   }

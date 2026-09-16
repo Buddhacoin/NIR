@@ -10,6 +10,7 @@ import {
   createProgressCommitment,
   createValidatorBond,
   createProgressClaim,
+  createSponsoredTransfer,
   createTransfer,
   createMultisigTransfer,
   finalizeBlock,
@@ -838,6 +839,55 @@ test("a signed transfer cannot be replayed on another network", () => {
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   assert.throws(() => chain.appendBlock(finalized), /another network/);
   assert.equal(chain.height, 0);
+});
+
+test("a fee sponsor can pay for an exact transfer without controlling its funds", () => {
+  const { chain, evaluators, validators } = fixture();
+  const sponsor = generateWallet();
+  const alice = generateWallet();
+  const bob = generateWallet();
+  const rewardBlock = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, validators, sponsor, "sponsor-funds")],
+    timestamp: 1,
+  });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const funding = createTransfer({
+    wallet: sponsor, networkId: chain.networkId, recipient: alice.address,
+    amount: "100", nonce: chain.nextNonce(sponsor.address),
+  });
+  const fundingBlock = chain.buildBlock({ transactions: [funding], timestamp: 2 });
+  chain.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
+  const sponsorBefore = chain.balance(sponsor.address);
+  const sponsorNonce = chain.nextNonce(sponsor.address);
+  const transfer = createSponsoredTransfer({
+    wallet: alice,
+    sponsorWallet: sponsor,
+    networkId: chain.networkId,
+    recipient: bob.address,
+    amount: "100",
+    nonce: chain.nextNonce(alice.address),
+    sponsorNonce,
+  });
+  const forged = chain.buildBlock({
+    transactions: [{ ...transfer, feePayerSignature: transfer.signature }],
+    timestamp: 3,
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(forged, quorumFor(forged, validators))),
+    /fee payer signature/,
+  );
+  const block = chain.buildBlock({ transactions: [transfer], timestamp: 3 });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  assert.equal(chain.balance(alice.address), 0n);
+  assert.equal(chain.balance(bob.address), 100n);
+  assert.equal(chain.balance(sponsor.address), sponsorBefore - MIN_TRANSFER_FEE);
+  assert.equal(chain.nextNonce(alice.address), 1);
+  assert.equal(chain.nextNonce(sponsor.address), sponsorNonce + 1);
+  const replay = chain.buildBlock({ transactions: [transfer], timestamp: 4 });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(replay, quorumFor(replay, validators))),
+    /nonce/,
+  );
 });
 
 test("a transfer cannot spend more than the sender owns", () => {

@@ -29,6 +29,10 @@ The intended advantages are:
 - **hard scarcity:** consensus enforces a maximum of 21,000,000 NIR;
 - **independent base layer:** NIR does not depend on Ethereum, Solana, TON, a
   bridge custodian, or another chain's fee market;
+- **sponsored payments:** a person may sign an exact transfer while a separate
+  account pays its fee; both post-quantum signatures, both nonces, the amount,
+  recipient and network are consensus-bound, so the sponsor never controls the
+  sender's funds;
 - **post-quantum accounts:** transfers, vaults, validator votes, evaluator
   receipts, and network authentication use ML-DSA-65 signatures;
 - **safety as an economic role:** safe progress may earn a reward, while a
@@ -48,6 +52,7 @@ The intended advantages are:
 | Independent NIR ledger and 8-decimal balances | Implemented and tested |
 | 21 million cap and ten-year treasury vesting | Enforced by consensus |
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
+| Sponsored transfer fees | Two-party post-quantum authorization and independent replay protection implemented |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer review, terminal-confirmed signing without browser key access, and a separate valueless-testnet-only submit step; implemented locally |
