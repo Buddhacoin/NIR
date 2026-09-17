@@ -168,8 +168,11 @@ Every finalized header commits to the ordered transaction count and Merkle
 root. Leaves bind both the complete signed transaction identifier and its exact
 index, so reordering, substitution and duplicate-position ambiguity change the
 root. Nodes expose a logarithmic inclusion path for a finalized transaction.
-Persistent wallet header history and verified history rendering are the next
-integration layer.
+The local wallet stores the compact header chain in a checkpoint-anchored,
+atomically replaced file. For every displayed operation it independently
+reconstructs this root from the complete signed transaction and its inclusion
+path. A missing, altered, reordered or unrelated transaction is hidden rather
+than presented as wallet history.
 
 ### Draft score
 

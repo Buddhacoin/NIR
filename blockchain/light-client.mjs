@@ -68,18 +68,15 @@ function verifyVotes(proof, validators, previousValidators = null) {
   }, "finality");
 }
 
-function validateHeader(proof, expectedNetworkId) {
-  const header = proof?.header;
+export function validateFinalityHeader(header, hash, expectedNetworkId) {
   const expectedKeys = [
     "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height", "networkId",
     "peerRegistryHash", "previousHash", "protocolVersion", "stateRoot", "timestamp",
     "transactionCount", "transactionsRoot",
   ];
-  if (!proof || proof.format !== FORMAT || header?.format !== HEADER_FORMAT ||
-      Object.keys(proof).sort().join(",") !==
-        "certificate,format,hash,header,prepareCertificate" ||
+  if (header?.format !== HEADER_FORMAT ||
       Object.keys(header ?? {}).sort().join(",") !== expectedKeys.sort().join(",") ||
-      proof.hash !== blockHeaderHash(header) || !HASH.test(proof.hash ?? "") ||
+      hash !== blockHeaderHash(header) || !HASH.test(hash ?? "") ||
       header.networkId !== expectedNetworkId || header.protocolVersion !== PROTOCOL_VERSION ||
       !Number.isSafeInteger(header.height) || header.height < 1 ||
       !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
@@ -92,6 +89,15 @@ function validateHeader(proof, expectedNetworkId) {
     throw new Error("light client finality header is invalid");
   }
   return header;
+}
+
+function validateProof(proof, expectedNetworkId) {
+  if (!proof || proof.format !== FORMAT ||
+      Object.keys(proof).sort().join(",") !==
+        "certificate,format,hash,header,prepareCertificate") {
+    throw new Error("light client finality proof is invalid");
+  }
+  return validateFinalityHeader(proof.header, proof.hash, expectedNetworkId);
 }
 
 export function verifyFinalityProofChain(proofs, {
@@ -127,7 +133,7 @@ export function verifyFinalityProofChain(proofs, {
     throw new Error("light client checkpoint validator set does not match handoff history");
   }
   for (const proof of proofs) {
-    const header = validateHeader(proof, expectedNetworkId);
+    const header = validateProof(proof, expectedNetworkId);
     if (header.height !== previousHeight + 1 || header.previousHash !== previousHash ||
         (previousTimestamp !== null && header.timestamp < previousTimestamp)) {
       throw new Error("light client finality chain is discontinuous");

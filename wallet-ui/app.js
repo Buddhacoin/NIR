@@ -155,15 +155,92 @@ async function readAccount() {
         proof,
       }),
     });
+    const verifiedTransactions = [];
+    let unavailableTransactions = 0;
+    const recent = [...(account.transactions ?? [])].slice(-20).reverse();
+    for (const summary of recent) {
+      try {
+        const transactionResponse = await fetch(nodeUrl(
+          `/v1/transactions/${encodeURIComponent(summary.id)}/proof`,
+        ));
+        if (!transactionResponse.ok) throw new Error("transaction proof unavailable");
+        const result = await bridgeRequest("/v1/verify-transaction-proof", {
+          method: "POST",
+          body: JSON.stringify({
+            proof: await transactionResponse.json(), transactionId: summary.id,
+          }),
+        });
+        if (!result.verified || result.transactionId !== summary.id) {
+          throw new Error("transaction proof was not accepted");
+        }
+        verifiedTransactions.push(result);
+      } catch {
+        unavailableTransactions += 1;
+      }
+    }
     return {
       ...account,
       ...verified.statement.account,
       proofHeight: verified.statement.height,
       proofVerified: true,
+      unavailableTransactions,
+      verifiedTransactions,
     };
   } catch {
     return { ...account, proofVerified: false };
   }
+}
+
+function renderTransactions(account) {
+  const empty = document.querySelector("#history-empty");
+  const list = document.querySelector("#transaction-list");
+  list.replaceChildren();
+  if (!account.proofVerified) {
+    list.hidden = true;
+    empty.hidden = false;
+    empty.querySelector("b").textContent = "История не подтверждена";
+    empty.querySelector("p").textContent = "Кошелёк не получил доказательства от кворума.";
+    messages.history = ["История операций", "Неподтверждённые ответы узла скрыты."];
+    return;
+  }
+  const transactions = account.verifiedTransactions ?? [];
+  if (transactions.length === 0) {
+    list.hidden = true;
+    empty.hidden = false;
+    empty.querySelector("b").textContent = "Подтверждённых операций нет";
+    empty.querySelector("p").textContent = "История проверена по финализированным заголовкам.";
+  } else {
+    empty.hidden = true;
+    list.hidden = false;
+    for (const item of transactions) {
+      const transaction = item.transaction;
+      const incoming = transaction.recipient === walletInfo.address &&
+        transaction.sender !== walletInfo.address;
+      const row = document.createElement("div");
+      row.className = "transaction-row";
+      const symbol = document.createElement("i");
+      symbol.textContent = incoming ? "↓" : transaction.type === "transfer" ? "↑" : "✓";
+      const description = document.createElement("div");
+      const title = document.createElement("b");
+      title.textContent = transaction.type === "transfer"
+        ? incoming ? "Получено" : "Отправлено"
+        : "Операция сети";
+      const details = document.createElement("span");
+      details.textContent = `Блок ${item.height} · ${item.transactionId.slice(0, 10)}… · доказано`;
+      description.append(title, details);
+      const amount = document.createElement("strong");
+      amount.textContent = transaction.amount === undefined ? "✓"
+        : `${incoming ? "+" : "−"}${formatAtomic(transaction.amount)} NIR`;
+      row.append(symbol, description, amount);
+      list.append(row);
+    }
+  }
+  const unavailable = account.unavailableTransactions ?? 0;
+  messages.history = [
+    "Проверенная история",
+    `${transactions.length} операций доказаны заголовками финализированных блоков.` +
+      (unavailable ? ` ${unavailable} неподтверждённых ответов скрыто.` : ""),
+  ];
 }
 
 async function refreshAccount() {
@@ -185,6 +262,7 @@ async function refreshAccount() {
     document.querySelector("#wallet-state").textContent = account.proofVerified
       ? `Кворум подтвердил баланс · блок ${account.proofHeight}`
       : `Подключён ${walletInfo.address.slice(0, 12)}… · данные одного узла`;
+    renderTransactions(account);
   } catch {
     document.querySelector("#wallet-state").textContent = "Vault подключён · локальный узел недоступен";
   }

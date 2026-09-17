@@ -10,6 +10,7 @@ import {
 import { verifyPaymentRequest } from "./payment-request.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
 import {
   enforceWalletTrustCheckpoint,
   loadWalletTrustCheckpoint,
@@ -22,6 +23,16 @@ import {
   MAX_FINALITY_CHAIN_BYTES,
   verifyFinalityProofChain,
 } from "./light-client.mjs";
+import {
+  appendWalletHeaders,
+  loadWalletHeaderStore,
+  walletHeaderAt,
+} from "./wallet-header-store.mjs";
+import {
+  committedTransactionId,
+  MAX_TRANSACTION_PROOF_BYTES,
+  verifyTransactionProof,
+} from "./transaction-tree.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -156,6 +167,7 @@ export function createWalletBridgeServer({
   sessionToken,
   trustAnchor,
   trustCheckpointPath,
+  headerHistoryPath,
   trustHistoryPath,
   vaultPath,
 } = {}) {
@@ -175,6 +187,7 @@ export function createWalletBridgeServer({
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))))) ||
       (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
+      (headerHistoryPath !== undefined && typeof headerHistoryPath !== "string") ||
       (trustHistoryPath !== undefined && typeof trustHistoryPath !== "string") ||
       !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
@@ -196,6 +209,36 @@ export function createWalletBridgeServer({
     ? loadWalletTrustCheckpoint(trustCheckpointPath, accountTrust.expectedNetworkId) : null;
   let verifiedFinalityTip = null;
   if (trustCheckpoint) requireCheckpointHandoff(trustCheckpoint, accountTrust.handoffs);
+  if (headerHistoryPath && (!accountTrust || !genesisCheckpoint)) {
+    throw new Error("wallet header history requires a genesis trust anchor");
+  }
+  const headerStoreOptions = headerHistoryPath ? {
+    checkpoint: trustCheckpoint,
+    genesisCheckpoint,
+    networkId: accountTrust.expectedNetworkId,
+  } : null;
+  let headerStore = headerHistoryPath
+    ? loadWalletHeaderStore(headerHistoryPath, headerStoreOptions) : null;
+  if (headerStore?.headers.length) {
+    const last = headerStore.headers.at(-1);
+    const activeTrust = advanceValidatorTrust({
+      expectedNetworkId: accountTrust.expectedNetworkId,
+      handoffs: accountTrust.handoffs.filter(({ activationHeight }) =>
+        activationHeight <= last.header.height),
+      trustedValidators: accountTrust.trustedValidators,
+    });
+    verifiedFinalityTip = {
+      accountStateRoot: last.header.accountStateRoot,
+      height: last.header.height,
+      networkId: accountTrust.expectedNetworkId,
+      stateRoot: last.header.stateRoot,
+      tipHash: last.hash,
+      transactionCount: last.header.transactionCount,
+      transactionsRoot: last.header.transactionsRoot,
+      validatorSetId: validatorSetId(activeTrust.trustedValidators),
+    };
+  }
+  const walletAddress = walletPublicInfo(vaultPath).address;
   const seen = new Set();
   let pending = false;
   let pairingAttempts = 0;
@@ -250,9 +293,11 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/trust-info") {
         return send(response, 200, {
           enabled: Boolean(accountTrust),
-          minimumHeight: trustCheckpoint?.height ?? genesisCheckpoint?.height ?? 0,
+          minimumHeight: verifiedFinalityTip?.height ?? trustCheckpoint?.height ??
+            genesisCheckpoint?.height ?? 0,
           networkId: accountTrust?.expectedNetworkId ?? null,
-          tipHash: trustCheckpoint?.tipHash ?? genesisCheckpoint?.tipHash ?? null,
+          tipHash: verifiedFinalityTip?.tipHash ?? trustCheckpoint?.tipHash ??
+            genesisCheckpoint?.tipHash ?? null,
         }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-payment-request") {
@@ -308,13 +353,59 @@ export function createWalletBridgeServer({
         const restartsFromPersisted = body?.proofs?.[0]?.header?.height === persistedBase.height + 1 &&
           body.proofs[0].header.previousHash === persistedBase.tipHash;
         const base = restartsFromPersisted ? persistedBase : (verifiedFinalityTip ?? persistedBase);
-        verifiedFinalityTip = verifyFinalityProofChain(body?.proofs, {
+        const nextTip = verifyFinalityProofChain(body?.proofs, {
           checkpoint: base,
           expectedNetworkId: accountTrust.expectedNetworkId,
           handoffs: accountTrust.handoffs,
           trustedValidators: accountTrust.trustedValidators,
         });
+        if (headerHistoryPath) {
+          headerStore = appendWalletHeaders(
+            headerHistoryPath,
+            headerStore,
+            body.proofs.map(({ hash, header }) => ({ hash, header })),
+            { ...headerStoreOptions, checkpoint: trustCheckpoint },
+          );
+        }
+        verifiedFinalityTip = nextTip;
         return send(response, 200, { tip: verifiedFinalityTip, verified: true }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/verify-transaction-proof") {
+        if (!accountTrust || !headerStore) {
+          throw new Error("wallet verified transaction history is not configured");
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("transaction proof verification requires application/json");
+        }
+        const body = await readBody(request, MAX_TRANSACTION_PROOF_BYTES + 96 * 1024);
+        const envelope = body?.proof;
+        if (!envelope || !Number.isSafeInteger(envelope.height) || envelope.height < 1 ||
+            !/^[0-9a-f]{64}$/.test(envelope.blockHash ?? "") ||
+            !/^[0-9a-f]{64}$/.test(envelope.transactionsRoot ?? "") ||
+            envelope.transaction?.networkId !== accountTrust.expectedNetworkId ||
+            (envelope.transaction?.sender !== walletAddress &&
+             envelope.transaction?.recipient !== walletAddress)) {
+          throw new Error("wallet transaction proof request is invalid");
+        }
+        const committedHeader = walletHeaderAt(headerStore, envelope.height);
+        if (!committedHeader || committedHeader.hash !== envelope.blockHash ||
+            committedHeader.header.transactionsRoot !== envelope.transactionsRoot ||
+            committedHeader.header.transactionCount !== envelope.proof?.count) {
+          throw new Error("transaction proof does not match a verified finality header");
+        }
+        const transactionId = verifyTransactionProof(
+          envelope.transaction, envelope.proof, committedHeader.header.transactionsRoot,
+        );
+        if (body.transactionId !== undefined && body.transactionId !== transactionId) {
+          throw new Error("transaction proof identifier does not match");
+        }
+        return send(response, 200, {
+          blockHash: committedHeader.hash,
+          height: committedHeader.header.height,
+          transaction: envelope.transaction,
+          transactionId,
+          verified: true,
+        }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {
         if (!accountTrust) throw new Error("bridge account trust anchor is not configured");

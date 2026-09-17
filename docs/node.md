@@ -35,6 +35,12 @@ The faucet sends at most 10 test NIR once to a fresh address. The HTTP service
 binds only to loopback by default and permits browser origins on localhost or
 127.0.0.1. It is not a public-network security boundary.
 
+The transaction-proof response contains the complete signed transaction, its
+finalized block height and hash, ordered inclusion path, transaction count and
+root. Clients must compare those values with a header chain they verified
+independently; receiving the proof and header from the same untrusted node is
+not sufficient by itself.
+
 ## Wallet-to-wallet flow
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses

@@ -9,9 +9,17 @@ import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
 import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
-import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
-import { SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
+import { createTransfer, finalizeBlock, NirChain } from "../blockchain/chain.mjs";
+import {
+  MIN_TRANSFER_FEE,
+  SAFETY_POLICY_V1_COMMITMENT,
+  TREASURY_VESTING_MS,
+} from "../blockchain/constants.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
+import {
+  committedTransactionId,
+  createTransactionProof,
+} from "../blockchain/transaction-tree.mjs";
 
 async function close(server) {
   if (!server.listening) return;
@@ -47,6 +55,7 @@ test("wallet checkpoint advances only through a verified finality header chain",
   const beacons = Array.from({ length: 4 }, generateWallet);
   const members = validatorMembers(validators);
   const networkId = "nir-wallet-light-client";
+  const treasury = generateWallet();
   const chain = new NirChain({
     beaconAuthorities: beacons.map((entry, index) => ({
       ...publicWallet(entry), operatorId: `beacon-${index}`,
@@ -61,11 +70,13 @@ test("wallet checkpoint advances only through a verified finality header chain",
     genesisTimestamp: 0,
     networkId,
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
-    treasuryAddress: generateWallet().address,
+    treasuryAddress: treasury.address,
     validators: members,
   });
-  const append = (timestamp) => {
-    const block = finalizeBlock(chain.buildBlock({ timestamp }), validators.slice(0, 3));
+  const append = (timestamp, transactions = []) => {
+    const block = finalizeBlock(
+      chain.buildBlock({ timestamp, transactions }), validators.slice(0, 3),
+    );
     chain.appendBlock(block);
     return block;
   };
@@ -97,6 +108,7 @@ test("wallet checkpoint advances only through a verified finality header chain",
       },
       handoffs: [], trustedValidators: members,
     },
+    headerHistoryPath: join(directory, "wallet.headers.json"),
     trustCheckpointPath: join(directory, "wallet.trust.json"), vaultPath,
   });
   try {
@@ -119,7 +131,15 @@ test("wallet checkpoint advances only through a verified finality header chain",
       method: "POST",
     });
     assert.equal(bootstrap.status, 200);
-    const second = append(2);
+    const transfer = createTransfer({
+      amount: "100000000",
+      fee: MIN_TRANSFER_FEE.toString(),
+      networkId,
+      nonce: 0,
+      recipient: wallet.address,
+      wallet: treasury,
+    });
+    const second = append(TREASURY_VESTING_MS, [transfer]);
     const laterProof = account(2);
     const premature = await request(`${base}/v1/verify-account-proof`, origin, token, {
       body: JSON.stringify({ address: wallet.address, minimumHeight: 2, proof: laterProof }),
@@ -132,6 +152,33 @@ test("wallet checkpoint advances only through a verified finality header chain",
     });
     assert.equal(lightSync.status, 200);
     assert.equal((await lightSync.json()).tip.height, 2);
+    const transactionEnvelope = {
+      blockHash: second.hash,
+      height: second.height,
+      proof: createTransactionProof(second.transactions, 0),
+      transaction: transfer,
+      transactionsRoot: second.transactionsRoot,
+    };
+    const verifiedTransaction = await request(
+      `${base}/v1/verify-transaction-proof`, origin, token, {
+        body: JSON.stringify({
+          proof: transactionEnvelope,
+          transactionId: committedTransactionId(second.transactions[0]),
+        }),
+        method: "POST",
+      },
+    );
+    assert.equal(verifiedTransaction.status, 200);
+    assert.equal((await verifiedTransaction.json()).height, 2);
+    const forgedTransaction = await request(
+      `${base}/v1/verify-transaction-proof`, origin, token, {
+        body: JSON.stringify({
+          proof: { ...transactionEnvelope, transaction: { ...transfer, amount: "200000000" } },
+        }),
+        method: "POST",
+      },
+    );
+    assert.equal(forgedTransaction.status, 400);
     const accepted = await request(`${base}/v1/verify-account-proof`, origin, token, {
       body: JSON.stringify({ address: wallet.address, minimumHeight: 2, proof: laterProof }),
       method: "POST",

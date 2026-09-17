@@ -72,12 +72,16 @@ is accepted.
 The bridge also writes `<vault>.trust.json`, a non-secret atomic checkpoint that
 prevents an older height, conflicting state or truncated rotation history from
 being accepted after restart. It should be backed up with the encrypted vault.
+It additionally keeps `<vault>.headers.json`. This file contains no private
+keys: it is the continuous compact header chain whose hashes are anchored by
+the trust checkpoint. The bridge rejects a missing, truncated, mutated,
+symlinked or checkpoint-conflicting copy instead of silently trusting RPC data.
 
 With an explicit genesis file, the bridge deterministically derives block zero
 and its validator-set checkpoint. Even the first higher balance is not accepted
 merely because RPC servers report it. The wallet downloads bounded pages from
 `/v1/finality-proofs` and asks the local bridge to check every
-protocol-v21 compact header, previous-hash link, block-body commitment, prepare
+protocol-v22 compact header, previous-hash link, block-body commitment, prepare
 quorum, commit quorum and dual-quorum validator activation. Only an account
 proof matching the resulting height, block hash, state root and validator-set
 identifier can replace the atomic checkpoint. The proof must also reconstruct
@@ -85,6 +89,15 @@ the header's sparse account root from the exact balance, nonce and resource
 state plus its 256 sibling hashes. This supports both membership and fresh-address
 absence proofs. Full transaction bodies and the complete account database are
 not downloaded by the wallet.
+
+The account RPC supplies candidate operation identifiers, not trusted history.
+For at most the 20 newest candidates, the wallet requests
+`/v1/transactions/{id}/proof`. The bridge requires the exact block hash,
+transaction count and ordered Merkle root from its persisted verified header,
+recomputes the identifier from the complete signed transaction, verifies the
+Merkle path, and confirms that the local wallet is sender or recipient. Only
+then does the interface render the operation. Failed or unavailable proofs are
+counted and hidden.
 
 ## Multiple node policy
 

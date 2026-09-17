@@ -38,21 +38,29 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=22"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=24"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
 });
 
 test("wallet shell cache uses the current asset version", () => {
   for (const asset of ["style.css", "nir-coin-icon.png"]) {
-    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=22`));
-    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=22`));
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=24`));
+    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=24`));
   }
-  assert.match(html, /app\.js\?v=23/);
-  assert.match(serviceWorker, /app\.js\?v=23/);
-  assert.match(serviceWorker, /nir-wallet-shell-v23/);
+  assert.match(html, /app\.js\?v=24/);
+  assert.match(serviceWorker, /app\.js\?v=24/);
+  assert.match(serviceWorker, /nir-wallet-shell-v24/);
   assert.match(serviceWorker, /node-selection\.js/);
   assert.match(serviceWorker, /nodes\.json/);
+});
+
+test("wallet renders only locally verified transaction history", () => {
+  assert.match(html, /id="transaction-list"/);
+  assert.match(script, /\/v1\/verify-transaction-proof/);
+  assert.match(script, /verifiedTransactions\.push/);
+  assert.match(script, /Неподтверждённые ответы узла скрыты/);
+  assert.match(styles, /\.transaction-row/);
 });
 
 test("wallet exposes native resource staking and delegation controls", () => {

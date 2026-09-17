@@ -98,6 +98,7 @@ try {
       trustedValidators: genesis.validators,
     } } : {}),
     ...(genesis ? { trustCheckpointPath: `${vaultPath}.trust.json` } : {}),
+    ...(genesis ? { headerHistoryPath: `${vaultPath}.headers.json` } : {}),
     ...(genesis ? { trustHistoryPath } : {}),
     vaultPath,
     authorize: async (intent) => {
@@ -126,6 +127,7 @@ try {
       ? `Account proofs pinned to ${genesis.networkId}; verified validator handoffs: ${handoffs.length}`
       : "Account proof verification disabled: start with an explicit genesis.json path");
     if (genesis) console.log(`Wallet trust checkpoint: ${vaultPath}.trust.json`);
+    if (genesis) console.log(`Verified finality headers: ${vaultPath}.headers.json`);
     console.log(`One-time pairing code: ${pairingCode} (expires in 2 minutes)`);
     console.log("Keep this terminal open. Every signature still requires confirmation and password.");
   });
