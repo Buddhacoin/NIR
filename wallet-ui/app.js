@@ -2,6 +2,7 @@ import { normalizeNodePolicy, selectNodeHealth } from "./node-selection.js";
 import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
 import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
+import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
 
 const messages = {
   receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
@@ -25,6 +26,7 @@ const resourcesPanel = document.querySelector("#resources-panel");
 const settingsPanel = document.querySelector("#settings-panel");
 const setupPanel = document.querySelector("#setup-panel");
 const contactsPanel = document.querySelector("#contacts-panel");
+const offlineSigningPanel = document.querySelector("#offline-signing-panel");
 const onboarding = document.querySelector("#onboarding");
 const bridgeStatus = document.querySelector("#bridge-status");
 const receiveStatus = document.querySelector("#receive-status");
@@ -45,6 +47,9 @@ let addressBook = readAddressBook();
 let pendingAddressChange = null;
 let paymentRequestQrFrames = [];
 let paymentRequestQrIndex = 0;
+let offlineSigningPackage = null;
+let offlinePackageQrFrames = [];
+let offlinePackageQrIndex = 0;
 
 function renderWalletConnection() {
   const connected = Boolean(walletInfo && bridgeSession);
@@ -65,6 +70,8 @@ function clearWalletSession(message = "Vault отключён · ключи и s
   pendingSimulation = null;
   pendingResourceIntent = null;
   pendingPaymentRequest = null;
+  offlineSigningPackage = null;
+  offlinePackageQrFrames = [];
   document.querySelector("#balance-value").textContent = "0.00000000";
   document.querySelector("#wallet-state").textContent = message;
   document.querySelector("#signed-json").value = "";
@@ -185,6 +192,26 @@ async function bridgeRequest(path, options = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Public verification is intentionally unauthenticated: it never sees a vault password or key. */
+async function publicBridgeRequest(path, options = {}) {
+  if (!bridgeSession?.url) throw new Error("Сначала подключите локальный bridge для публичной проверки подписи.");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${bridgeSession.url}${path}`, {
+      ...options, signal: controller.signal,
+      headers: options.body ? { "content-type": "application/json" } : {},
+    });
+    let result;
+    try { result = await response.json(); } catch { throw new Error("Публичная проверка вернула не JSON."); }
+    if (response.status === 404 || response.status === 405) {
+      throw new Error("Этот bridge ещё не поддерживает проверку офлайн-подписей. Обновите проверенную установку.");
+    }
+    if (!response.ok || result.verified !== true) throw new Error(result.error || "Публичная проверка подписи не пройдена.");
+    return result;
+  } finally { clearTimeout(timeout); }
 }
 
 async function pairBridge(url, code) {
@@ -487,6 +514,39 @@ function renderPaymentQrFrame() {
   document.querySelector("#payment-request-qr-label").textContent = `Фрагмент ${paymentRequestQrIndex + 1} из ${paymentRequestQrFrames.length}. При импорте нужны все фрагменты.`;
   document.querySelector("#previous-payment-request-qr").disabled = paymentRequestQrIndex === 0;
   document.querySelector("#next-payment-request-qr").disabled = paymentRequestQrIndex === paymentRequestQrFrames.length - 1;
+}
+
+function renderOfflinePackageQrFrame() {
+  const frame = offlinePackageQrFrames[offlinePackageQrIndex];
+  if (!frame) return;
+  drawQr(document.querySelector("#offline-package-qr"), frame,
+    `QR-фрагмент пакета офлайн-подписи ${offlinePackageQrIndex + 1} из ${offlinePackageQrFrames.length}`);
+  document.querySelector("#offline-package-qr-frame").value = frame;
+  document.querySelector("#offline-package-qr-label").textContent =
+    `Фрагмент ${offlinePackageQrIndex + 1} из ${offlinePackageQrFrames.length}. На офлайн-устройстве нужны все фрагменты.`;
+  document.querySelector("#previous-offline-package-qr").disabled = offlinePackageQrIndex === 0;
+  document.querySelector("#next-offline-package-qr").disabled = offlinePackageQrIndex === offlinePackageQrFrames.length - 1;
+}
+
+async function exportOfflineSigningPackage(intent, simulation) {
+  const status = document.querySelector("#offline-signing-status");
+  status.textContent = "Подготовка проверенного офлайн-пакета…";
+  try {
+    const result = await publicBridgeRequest("/v1/create-offline-signing-package", {
+      method: "POST", body: JSON.stringify({ intent, simulationId: simulation.simulationId }),
+    });
+    offlineSigningPackage = validateOfflineSigningPackage(result.signingPackage ?? result.package);
+    offlinePackageQrFrames = []; offlinePackageQrIndex = 0;
+    document.querySelector("#offline-package-json").value = JSON.stringify(offlineSigningPackage, null, 2);
+    document.querySelector("#offline-package-summary").textContent =
+      `Сеть: ${offlineSigningPackage.networkId} · checkpoint: ${offlineSigningPackage.checkpoint.height} · действует до ${new Date(offlineSigningPackage.expiresAt).toLocaleTimeString()}.`;
+    document.querySelector("#offline-package-export").hidden = false;
+    document.querySelector("#offline-package-qr-card").hidden = true;
+    document.querySelector("#offline-signed-result").hidden = true;
+    document.querySelector("#offline-signed-input").value = "";
+    status.textContent = "Пакет создан. Его создание не подписывает и не отправляет операцию.";
+    if (!offlineSigningPanel.open) offlineSigningPanel.showModal();
+  } catch (error) { status.textContent = error.message; }
 }
 
 async function openResources() {
@@ -884,6 +944,72 @@ document.querySelector("#edit-transfer").onclick = () => {
   document.querySelector("#send-form").hidden = false;
   sendStatus.textContent = "";
 };
+
+document.querySelector("#export-offline-package").onclick = async (event) => {
+  if (!pendingIntent || !pendingSimulation) return;
+  event.currentTarget.disabled = true;
+  try { await exportOfflineSigningPackage(pendingIntent, pendingSimulation); }
+  finally { event.currentTarget.disabled = false; }
+};
+
+document.querySelector("#copy-offline-package").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(document.querySelector("#offline-package-json").value);
+    document.querySelector("#offline-signing-status").textContent = "Офлайн-пакет скопирован.";
+  } catch { document.querySelector("#offline-signing-status").textContent = "Браузер запретил доступ к буферу обмена."; }
+};
+document.querySelector("#show-offline-package-qr").onclick = () => {
+  try {
+    offlinePackageQrFrames = encodeOfflineQrFrames(document.querySelector("#offline-package-json").value);
+    offlinePackageQrIndex = 0;
+    document.querySelector("#offline-package-qr-card").hidden = false;
+    renderOfflinePackageQrFrame();
+    document.querySelector("#offline-signing-status").textContent = "QR создан локально. Передайте все фрагменты.";
+  } catch (error) { document.querySelector("#offline-signing-status").textContent = error.message; }
+};
+document.querySelector("#previous-offline-package-qr").onclick = () => { offlinePackageQrIndex -= 1; renderOfflinePackageQrFrame(); };
+document.querySelector("#next-offline-package-qr").onclick = () => { offlinePackageQrIndex += 1; renderOfflinePackageQrFrame(); };
+document.querySelector("#copy-offline-package-qr").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(document.querySelector("#offline-package-qr-frame").value);
+    document.querySelector("#offline-signing-status").textContent = "QR-фрагмент скопирован.";
+  } catch { document.querySelector("#offline-signing-status").textContent = "Браузер запретил доступ к буферу обмена."; }
+};
+document.querySelector("#verify-offline-signed").onclick = async (event) => {
+  event.currentTarget.disabled = true;
+  const status = document.querySelector("#offline-signing-status");
+  status.textContent = "Локальная проверка структуры и срока действия…";
+  try {
+    let encoded = document.querySelector("#offline-signed-input").value.trim();
+    if (encoded.startsWith("NIRQR1/")) encoded = decodeOfflineQrFrames(encoded);
+    if (encoded.length < 2 || encoded.length > 128_000) throw new Error("Размер подписанного пакета недопустим.");
+    let signedPackage;
+    try { signedPackage = JSON.parse(encoded); } catch { throw new Error("Подписанный пакет не является корректным JSON."); }
+    const local = await validateOfflineSignedEnvelope(signedPackage, { expected: offlineSigningPackage });
+    if (!networkInfo || local.packet.networkId !== networkInfo.networkId) throw new Error("Сеть подписанного пакета не совпадает с подключённой сетью.");
+    status.textContent = "Независимая публичная проверка подписи…";
+    const verified = await publicBridgeRequest("/v1/verify-offline-signed-package", {
+      method: "POST", body: JSON.stringify({ networkId: local.packet.networkId, signedPackage }),
+    });
+    const bridgeEnvelope = verified.signedPackage ?? verified.envelope;
+    const checked = await validateOfflineSignedEnvelope(bridgeEnvelope, { expected: local.packet });
+    if (canonicalTransaction(checked.transaction) !== canonicalTransaction(local.transaction)) {
+      throw new Error("Публичная проверка вернула другую операцию.");
+    }
+    document.querySelector("#offline-signed-json").value = JSON.stringify(checked.transaction, null, 2);
+    document.querySelector("#offline-signed-summary").textContent =
+      `Сеть ${checked.packet.networkId}; тип ${checked.packet.intent.type}; checkpoint ${checked.packet.checkpoint.height}. Операция не отправлена.`;
+    document.querySelector("#offline-signed-result").hidden = false;
+    status.textContent = "Подпись проверена. Автоматическая отправка намеренно отключена.";
+  } catch (error) {
+    document.querySelector("#offline-signed-result").hidden = true;
+    status.textContent = error.name === "AbortError" ? "Публичная проверка не ответила вовремя." : error.message;
+  } finally { event.currentTarget.disabled = false; }
+};
+
+function canonicalTransaction(transaction) {
+  return canonicalJson(transaction);
+}
 
 document.querySelector("#request-signature").onclick = async () => {
   if (!pendingIntent || !pendingSimulation) return;

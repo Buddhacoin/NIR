@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="nir-coin-icon.png?v=24">
-  <link rel="stylesheet" href="style.css?v=29"><title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css?v=30"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
@@ -70,6 +70,7 @@
       </section>
       <p class="warning">Подпись не отправляет транзакцию в сеть. Перед подписью симуляция будет проверена повторно.</p>
       <button class="primary" id="request-signature" type="button">Запросить подпись</button>
+      <button class="secondary" id="export-offline-package" type="button">Экспортировать для офлайн-подписи</button>
       <button class="secondary" id="edit-transfer" type="button">Изменить</button>
     </section>
     <section id="signed-result" hidden>
@@ -79,6 +80,21 @@
       <button class="secondary" id="copy-signed" type="button">Копировать JSON</button>
     </section>
     <p class="form-status" id="send-status" role="status"></p>
+  </dialog>
+  <dialog id="offline-signing-panel" aria-labelledby="offline-signing-title">
+    <button class="close" data-close="offline-signing-panel" aria-label="Закрыть">×</button>
+    <h2 id="offline-signing-title">Офлайн-подпись</h2>
+    <p>Пакет содержит только намерение, проверенную симуляцию и checkpoint. В нём нет пароля, ключа или session token. Подпись на отдельном устройстве не отправляет операцию в сеть.</p>
+    <section id="offline-package-export" hidden aria-labelledby="offline-package-export-title">
+      <b id="offline-package-export-title">Пакет для офлайн-устройства</b>
+      <p class="network-note" id="offline-package-summary"></p>
+      <textarea id="offline-package-json" readonly aria-label="Пакет для офлайн подписи"></textarea>
+      <button class="secondary" id="copy-offline-package" type="button">Копировать пакет</button>
+      <button class="secondary" id="show-offline-package-qr" type="button">Показать QR-фрагменты</button>
+      <section class="qr-card" id="offline-package-qr-card" hidden aria-labelledby="offline-package-qr-title"><b id="offline-package-qr-title">QR пакета</b><canvas id="offline-package-qr" width="270" height="270" aria-label="QR-код пакета офлайн подписи"></canvas><p id="offline-package-qr-label"></p><div class="split-actions"><button class="secondary" id="previous-offline-package-qr" type="button">Назад</button><button class="secondary" id="next-offline-package-qr" type="button">Далее</button></div><textarea id="offline-package-qr-frame" readonly aria-label="Текущий QR-фрагмент пакета"></textarea><button class="secondary" id="copy-offline-package-qr" type="button">Копировать QR-фрагмент</button></section>
+    </section>
+    <section class="request-import" aria-labelledby="offline-import-title"><h3 id="offline-import-title">Импортировать офлайн-подпись</h3><p>Вставьте JSON подписанного пакета или все QR-фрагменты. Импорт только проверяет подпись и показывает результат; он никогда не публикует операцию.</p><label>Подписанный пакет или QR-фрагменты<textarea id="offline-signed-input" spellcheck="false" autocomplete="off"></textarea></label><button class="secondary" id="verify-offline-signed" type="button">Проверить офлайн-подпись</button><section id="offline-signed-result" hidden><b>Офлайн-подпись проверена</b><p id="offline-signed-summary"></p><textarea id="offline-signed-json" readonly aria-label="Проверенная офлайн подписанная операция"></textarea><p class="warning">Операция не добавлена в очередь и не отправлена. Создайте новую симуляцию, если хотите подписать или опубликовать её в обычном потоке.</p></section></section>
+    <p class="form-status" id="offline-signing-status" role="status" aria-live="polite"></p>
   </dialog>
   <dialog id="contacts-panel" aria-labelledby="contacts-title">
     <button class="close" data-close="contacts-panel" aria-label="Закрыть">×</button>
@@ -134,5 +150,5 @@
     <p class="warning">Не храните пароль рядом с vault. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=29"></script>
+  <script type="module" src="app.js?v=30"></script>
 </body></html>

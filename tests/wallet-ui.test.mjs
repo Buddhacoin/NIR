@@ -52,19 +52,20 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=29/);
-  assert.match(serviceWorker, /style\.css\?v=29/);
+  assert.match(html, /style\.css\?v=30/);
+  assert.match(serviceWorker, /style\.css\?v=30/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=29/);
-  assert.match(serviceWorker, /app\.js\?v=29/);
-  assert.match(serviceWorker, /nir-wallet-shell-v31/);
+  assert.match(html, /app\.js\?v=30/);
+  assert.match(serviceWorker, /app\.js\?v=30/);
+  assert.match(serviceWorker, /nir-wallet-shell-v32/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
   assert.match(serviceWorker, /node-selection\.js/);
   assert.match(serviceWorker, /address-book\.js/);
   assert.match(serviceWorker, /qr\.js/);
   assert.match(serviceWorker, /transaction-decoder\.js/);
+  assert.match(serviceWorker, /offline-signing\.js/);
   assert.match(serviceWorker, /nodes\.json/);
 });
 
@@ -189,4 +190,19 @@ test("wallet provides local contacts and local QR payment exchange without autom
   assert.match(html, /Импорт лишь проверяет и заполняет форму/);
   assert.match(styles, /\.qr-card/);
   assert.match(styles, /\.contact-row/);
+});
+
+test("wallet exports a versioned offline signing package and imports no broadcastable result", () => {
+  for (const id of ["export-offline-package", "offline-signing-panel", "offline-package-json",
+    "offline-package-qr", "offline-signed-input", "verify-offline-signed", "offline-signed-result"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /validateOfflineSigningPackage/);
+  assert.match(script, /validateOfflineSignedEnvelope/);
+  assert.match(script, /decodeOfflineQrFrames/);
+  assert.match(script, /publicBridgeRequest\("\/v1\/verify-offline-signed-package"/);
+  assert.match(script, /publicBridgeRequest\("\/v1\/create-offline-signing-package"/);
+  assert.match(script, /Автоматическая отправка намеренно отключена/);
+  assert.doesNotMatch(script, /signedTransaction = checked\.transaction/);
+  assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(offline|package|signature)/i);
 });
