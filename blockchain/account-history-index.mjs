@@ -32,6 +32,9 @@ const FORMAT = "nir-account-history-index-v2";
 const MAX_RECORD_BYTES = MAX_BLOCK_BYTES * 4;
 const PRIMARY_DIRECTORY = "account-history-index";
 const BACKUP_DIRECTORY = "account-history-index-backup";
+const INSTALL_DIRECTORY = ".account-history-index-install";
+const INSTALL_MARKER = "ACCOUNT-HISTORY-INSTALL.json";
+const INSTALL_FORMAT = "nir-account-history-install-v1";
 const ZERO_HASH = "0".repeat(64);
 
 function fileName(height) {
@@ -197,6 +200,68 @@ function retainedBlocks(chain) {
     .map((block) => [block.height, block]));
 }
 
+function readCompleteRecordSet(directory, chain) {
+  const records = [];
+  let previousIndexHash = ZERO_HASH;
+  for (let height = 1; height <= chain.height; height += 1) {
+    const record = readCandidate(join(directory, fileName(height)), {
+      height, networkId: chain.networkId, previousIndexHash,
+    });
+    if (!record) return null;
+    records.push(record);
+    previousIndexHash = record.indexHash;
+  }
+  try { return verifyAccountHistoryIndexRecords(records, chain); }
+  catch { return null; }
+}
+
+function readInstallMarker(root, chain) {
+  const path = join(root, INSTALL_MARKER);
+  let marker;
+  try {
+    if (statSync(path).size > 64 * 1024) throw new Error("marker is too large");
+    marker = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error("account history installation marker is invalid");
+  }
+  if (marker?.format !== INSTALL_FORMAT || marker.networkId !== chain.networkId ||
+      marker.height !== chain.height || marker.tipHash !== chain.tipHash) {
+    throw new Error("account history installation marker does not match the chain");
+  }
+  return marker;
+}
+
+function writeRecordSet(directory, records) {
+  rmSync(directory, { recursive: true, force: true });
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  for (const record of records) writeAtomic(join(directory, fileName(record.height)), record);
+}
+
+function finishPreparedInstallation(root, chain) {
+  if (!readInstallMarker(root, chain)) return false;
+  const staging = join(root, INSTALL_DIRECTORY);
+  const candidates = [
+    join(staging, PRIMARY_DIRECTORY),
+    join(staging, BACKUP_DIRECTORY),
+    join(root, PRIMARY_DIRECTORY),
+    join(root, BACKUP_DIRECTORY),
+  ];
+  const records = candidates.map((directory) => readCompleteRecordSet(directory, chain))
+    .find(Boolean);
+  if (!records) throw new Error("prepared account history installation cannot be recovered");
+  const live = [join(root, PRIMARY_DIRECTORY), join(root, BACKUP_DIRECTORY)];
+  for (const directory of live) writeRecordSet(directory, records);
+  if (live.some((directory) => !readCompleteRecordSet(directory, chain))) {
+    throw new Error("prepared account history installation did not verify");
+  }
+  rmSync(join(root, INSTALL_MARKER));
+  syncDirectory(root);
+  rmSync(staging, { recursive: true, force: true });
+  syncDirectory(root);
+  return true;
+}
+
 export class AccountHistoryIndex {
   #accumulators = new Map();
   #directories;
@@ -210,6 +275,8 @@ export class AccountHistoryIndex {
 
   constructor(directory, chain) {
     const root = resolve(directory);
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    finishPreparedInstallation(root, chain);
     this.#directories = [join(root, PRIMARY_DIRECTORY), join(root, BACKUP_DIRECTORY)];
     this.#directories.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
     this.#networkId = chain.networkId;
@@ -407,11 +474,24 @@ export function verifyAccountHistoryIndexRecords(records, chain) {
 export function installAccountHistoryIndexRecords(directory, records, chain) {
   const verified = verifyAccountHistoryIndexRecords(records, chain);
   const root = resolve(directory);
-  const directories = [join(root, PRIMARY_DIRECTORY), join(root, BACKUP_DIRECTORY)];
-  directories.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
-  for (const record of verified) {
-    for (const path of directories) writeAtomic(join(path, fileName(record.height)), record);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  finishPreparedInstallation(root, chain);
+  const staging = join(root, INSTALL_DIRECTORY);
+  rmSync(staging, { recursive: true, force: true });
+  const stagedCopies = [join(staging, PRIMARY_DIRECTORY), join(staging, BACKUP_DIRECTORY)];
+  for (const path of stagedCopies) {
+    writeRecordSet(path, verified);
+    if (!readCompleteRecordSet(path, chain)) {
+      throw new Error("staged account history installation did not verify");
+    }
   }
+  writeAtomic(join(root, INSTALL_MARKER), {
+    format: INSTALL_FORMAT,
+    height: chain.height,
+    networkId: chain.networkId,
+    tipHash: chain.tipHash,
+  });
+  finishPreparedInstallation(root, chain);
   new AccountHistoryIndex(root, chain);
   return { height: chain.height, records: verified.length, tipHash: chain.tipHash };
 }

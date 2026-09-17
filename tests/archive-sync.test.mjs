@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -103,6 +111,38 @@ test("tampered chunks, one source, and duplicate operators cannot authorize reco
       { archive: first, source: "archive-a.example" },
       { archive: first, source: "archive-c.example" },
     ], chain, { trustedOperators }), /operators must be independent/);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("an interrupted archive activation resumes from its verified staged generation", () => {
+  const { chain, directory, recipient, temporary } = fixture();
+  try {
+    const staging = join(directory, ".account-history-index-install");
+    mkdirSync(staging, { recursive: true });
+    cpSync(join(directory, "account-history-index"),
+      join(staging, "account-history-index"), { recursive: true });
+    cpSync(join(directory, "account-history-index-backup"),
+      join(staging, "account-history-index-backup"), { recursive: true });
+    writeFileSync(join(directory, "ACCOUNT-HISTORY-INSTALL.json"), JSON.stringify({
+      format: "nir-account-history-install-v1",
+      height: chain.height,
+      networkId: chain.networkId,
+      tipHash: chain.tipHash,
+    }));
+    rmSync(join(directory, "account-history-index"), { recursive: true, force: true });
+    rmSync(join(directory, "account-history-index-backup"), { recursive: true, force: true });
+    rmSync(join(staging, "account-history-index-backup"), { recursive: true, force: true });
+
+    const recovered = new AccountHistoryIndex(directory, chain);
+    assert.equal(recovered.page(recipient.address).count, 1);
+    assert.equal(existsSync(join(directory, "ACCOUNT-HISTORY-INSTALL.json")), false);
+    assert.equal(existsSync(staging), false);
+    assert.equal(existsSync(join(directory, "account-history-index",
+      "000000000002.json")), true);
+    assert.equal(existsSync(join(directory, "account-history-index-backup",
+      "000000000002.json")), true);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

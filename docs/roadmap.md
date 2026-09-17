@@ -37,8 +37,9 @@ replays, restarts, message faults and state restoration.
   loading, redundant append-only disk indexes, direct transaction lookup,
   incremental Merkle proof caches, corruption repair, verified backup copying,
   bounded signed archive chunks and agreement by multiple independent configured
-  operators (implemented locally; public archive-service deployment, crash-safe
-  installation generations and disk-native large-scale databases remain);
+  operators, plus crash-resumable staged installation generations (implemented
+  locally; public archive-service deployment and disk-native large-scale
+  databases remain);
 - congestion measurements and a sustainable validator-compensation formula;
 - public test network with independent seed, validator, beacon and evaluator
   operators.

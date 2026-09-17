@@ -221,6 +221,13 @@ and finalized-checkpoint verification used for local storage. Thus archive
 operators can restore availability but cannot rewrite monetary or transaction
 history.
 
+The receiver verifies two complete staged journals before persisting an
+installation marker. That marker makes activation resumable: it remains present
+while live copies are replaced and is synchronized away only after both new
+copies pass full checkpoint verification. An interruption therefore leaves
+either the prior live generation or a verified staged generation from which
+startup can finish; it never makes a partial journal authoritative.
+
 Operator membership is not currently selected by consensus. Production must
 distribute operators across independent organizations and failure domains,
 publish rotation policy, deploy authenticated transports, and rehearse total

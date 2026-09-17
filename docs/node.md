@@ -83,6 +83,14 @@ insufficiently corroborated archive fails closed. The API is currently in
 `blockchain/archive-sync.mjs`; authenticated download services and an operator
 CLI remain production work.
 
+Installation is a recoverable transaction. The node writes and verifies two
+complete staged journals before synchronizing an installation marker. It then
+replaces both live copies while retaining the staged source. The marker is
+removed only after both live copies independently pass complete verification.
+After a crash at any earlier point, startup resumes from a valid staged or live
+copy; if none matches the chain checkpoint, it stops rather than accepting a
+partial generation.
+
 ## Wallet-to-wallet flow
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses
@@ -136,5 +144,4 @@ block and history journals detect and repair several partial-write and
 corruption cases, but they are not a production database. Production still
 requires independently operated archive services, multiple remote backup
 targets, authenticated transport for the implemented signed multi-source archive
-format, crash-safe generation switching during installation, continuous restore
-drills, metrics, and independent storage review.
+format, continuous restore drills, metrics, and independent storage review.
