@@ -212,9 +212,14 @@ export function verifyOfflineSignedPackage(value, { now = Date.now() } = {}) {
     fail("signed package does not bind to the reviewed package");
   }
   const transaction = value.transaction;
+  for (const [field, expected] of Object.entries(verified.package.intent)) {
+    if (!Object.hasOwn(transaction ?? {}, field) ||
+        canonicalJson(transaction[field]) !== canonicalJson(expected)) {
+      fail(`signed operation changed reviewed field ${field}`);
+    }
+  }
   if (verified.simulation.type === "payment-request") {
     verifyPaymentRequest(transaction, { networkId: value.networkId, now });
-    if (transaction.requestId !== verified.package.intent.requestId) fail("signed payment request does not match package");
   } else {
     const domains = { transfer: "TRANSFER", "credit-stake": "CREDIT_STAKE", "credit-delegation": "CREDIT_DELEGATION",
       "credit-unstake-request": "CREDIT_UNSTAKE_REQUEST", "credit-unstake-claim": "CREDIT_UNSTAKE_CLAIM" };

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { canonicalJson, generateWallet } from "../blockchain/crypto.mjs";
+import { createTransfer } from "../blockchain/chain.mjs";
 import { encryptWallet } from "../blockchain/vault.mjs";
 import {
   createOfflineSigningPackage, exportWatchOnly, parseCanonicalOfflineSigningPackage,
@@ -54,6 +55,22 @@ test("offline signer fails closed for changed state, commitment, expiry, unknown
   changed.simulation.stateEvidence.accounts[sender.address].nextNonce = 5;
   assert.throws(() => validateOfflineSigningPackage(changed, { now }), /nonce|consequences/);
   assert.throws(() => signOfflinePackage({ vault: encryptWallet(recipient, "offline-password-long"), password: "offline-password-long", signingPackage, now }), /required signing authority/);
+});
+
+test("offline verifier rejects a valid signature over an operation different from the reviewed intent", () => {
+  const signingPackage = createOfflineSigningPackage({
+    intent: transfer(), stateEvidence: evidence(), checkpoint: checkpoint(),
+    expiresAt: now + 60_000, now,
+  });
+  const signed = signOfflinePackage({
+    vault: encryptWallet(sender, "offline-password-long"),
+    password: "offline-password-long", signingPackage, now,
+  });
+  signed.transaction = createTransfer({
+    amount: "51", fee: "1000", networkId, nonce: 4,
+    recipient: generateWallet().address, wallet: sender,
+  });
+  assert.throws(() => verifyOfflineSignedPackage(signed, { now }), /changed reviewed field/);
 });
 
 test("offline package supports resource operations and rejects unsafe vault file modes", () => {
