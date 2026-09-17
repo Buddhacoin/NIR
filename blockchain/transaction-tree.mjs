@@ -45,18 +45,25 @@ export function transactionRoot(transactions) {
   return levels[0].length === 0 ? emptyHash(0) : levels.at(-1)[0];
 }
 
-export function createTransactionProof(transactions, index) {
-  if (!Number.isSafeInteger(index) || index < 0 || index >= transactions.length) {
-    throw new Error("transaction proof index is invalid");
+export function createTransactionProofs(transactions, indexes) {
+  if (!Array.isArray(indexes) || indexes.some((index) =>
+    !Number.isSafeInteger(index) || index < 0 || index >= transactions.length)) {
+    throw new Error("transaction proof indexes are invalid");
   }
   const levels = levelsFor(transactions);
-  const siblings = [];
-  let position = index;
-  for (let level = 0; level < levels.length - 1; level += 1) {
-    siblings.push(levels[level][position ^ 1] ?? emptyHash(level));
-    position = Math.floor(position / 2);
-  }
-  return { count: transactions.length, format: FORMAT, index, siblings };
+  return indexes.map((index) => {
+    const siblings = [];
+    let position = index;
+    for (let level = 0; level < levels.length - 1; level += 1) {
+      siblings.push(levels[level][position ^ 1] ?? emptyHash(level));
+      position = Math.floor(position / 2);
+    }
+    return { count: transactions.length, format: FORMAT, index, siblings };
+  });
+}
+
+export function createTransactionProof(transactions, index) {
+  return createTransactionProofs(transactions, [index])[0];
 }
 
 export function verifyTransactionProof(transaction, proof, expectedRoot) {

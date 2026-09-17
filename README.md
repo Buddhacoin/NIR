@@ -62,8 +62,8 @@ The intended advantages are:
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, multi-node finalized-view selection and failover, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
 | Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
 | Cryptographic account proofs and light client | Protocol-v21 sparse account proofs bind balance, nonce, stake, credits, delegations and pending exits to the account root in every finalized header; the wallet also verifies every hash link, post-quantum prepare/commit quorum and validator rotation before advancing persisted trust |
-| Finalized transaction inclusion proofs | Protocol-v22 headers commit to ordered transaction count and Merkle root; the wallet persists the verified header chain and displays an operation only after locally matching its logarithmic proof to the finalized root |
-| Paginated account history proofs | Protocol-v24 account state commits to the exact count and fixed-depth indexed Merkle root of every related transaction; redundant append-only disk indexes survive restart and backup, while the wallet downloads only the newest page and verifies every identifier at its exact position |
+| Finalized transaction inclusion proofs | Protocol-v22 headers commit to ordered transaction count and Merkle root; a durable identifier locator serves archived bodies and proofs without scanning blocks, while the wallet matches each proof to its verified finalized header |
+| Paginated account history proofs | Protocol-v24 account state commits to the exact count and fixed-depth indexed Merkle root of every related transaction; redundant append-only disk indexes survive restart and backup, and cached incremental Merkle nodes produce bounded pages without rehashing the account's full history |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
@@ -372,7 +372,7 @@ candidate runs are committed.
 - `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
 - `blockchain/node-store.mjs` — atomic block files and verified restart replay.
 - `blockchain/block-store.mjs` — fsync-backed redundant journals, checkpoints, and public backups.
-- `blockchain/account-history-index.mjs` — redundant append-only account-history index and proof pages.
+- `blockchain/account-history-index.mjs` — redundant append-only history and transaction archive, direct identifier lookup, and cached proof trees.
 - `blockchain/distributed-node.mjs` — separate validators, mempool, and remote quorum coordinator.
 - `blockchain/validator-service.mjs` — one-key validator RPC with durable anti-equivocation votes.
 - `blockchain/consensus-view.mjs` — fail-closed highest-certificate selection for validator view changes.

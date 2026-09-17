@@ -104,6 +104,10 @@ test("the account history index is durable, redundant, and rebuilt from verified
     assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
     const account = node.account(wallet.address);
     let page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
+    const transactionProof = node.transactionProof(page.entries[0].id);
+    assert.equal(verifyTransactionProof(
+      transactionProof.transaction, transactionProof.proof, transactionProof.transactionsRoot,
+    ), page.entries[0].id);
     assert.deepEqual(verifyAccountHistoryEntry(
       page.entries[0].id, page.entries[0].proof, account.history,
     ), { index: 0, transactionId: page.entries[0].id });
@@ -113,6 +117,7 @@ test("the account history index is durable, redundant, and rebuilt from verified
     node = new PersistentDevNode(directory);
     page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
     assert.equal(page.entries.length, 1);
+    assert.equal(node.transactionProof(page.entries[0].id).height, 1);
     assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
   } finally {
     rmSync(temporary, { recursive: true, force: true });
@@ -225,6 +230,9 @@ test("an exported chain backup is independently replayable and contains no priva
     assert.equal(replay.chain.height, 1);
     assert.equal(replay.chain.tipHash, node.tipHash);
     assert.equal(historyIndex.page(wallet.address).count, 1);
+    assert.equal(historyIndex.transactionProof(
+      historyIndex.page(wallet.address).entries[0].id,
+    ).height, 1);
     assert.equal(existsSync(join(backup, "account-history-index", "000000000001.json")), true);
     assert.throws(() => exportBlockStoreBackup(directory, backup, genesis), /EEXIST/);
   } finally {

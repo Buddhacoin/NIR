@@ -50,7 +50,11 @@ the referenced transactions.
 
 The node serves these pages from two append-only history-index journals rather
 than rescanning every block for every request. Each per-height record binds the
-network, finalized block hash, previous index-record hash and ordered updates.
+network, finalized block hash, previous index-record hash, ordered account
+updates, transaction bodies and their inclusion proofs. A direct identifier
+map therefore serves `/v1/transactions/{id}/proof` without scanning blocks.
+Incrementally maintained Merkle-node maps serve account pages without rebuilding
+the complete account tree for every request.
 At startup the node checks the complete hash chain and compares the rebuilt
 per-account histories with the commitments in verified consensus state. One
 damaged copy is repaired from the other; if both copies of a retained height are

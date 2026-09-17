@@ -89,39 +89,61 @@ export function accountHistoryCommitment(transactionIds) {
   return normalizeAccountHistory(accountHistoryAccumulator(transactionIds));
 }
 
-function historyLevels(transactionIds) {
-  if (!Array.isArray(transactionIds) || transactionIds.length > MAX_COUNT ||
-      transactionIds.some((id) => !HASH.test(id ?? ""))) throw new Error("account history is invalid");
-  const levels = [new Map(transactionIds.map((id, index) => [index, leaf(id, index)]))];
-  for (let level = 0; level < DEPTH; level += 1) {
-    const parents = new Set([...levels[level].keys()].map((index) => Math.floor(index / 2)));
-    const next = new Map();
-    for (const parent of parents) {
-      next.set(parent, node(
-        levels[level].get(parent * 2) ?? emptyHashes[level],
-        levels[level].get(parent * 2 + 1) ?? emptyHashes[level],
-      ));
-    }
-    levels.push(next);
+export class AccountHistoryMerkleIndex {
+  #count = 0;
+  #levels = Array.from({ length: DEPTH + 1 }, () => new Map());
+
+  constructor(transactionIds = []) {
+    if (!Array.isArray(transactionIds)) throw new Error("account history is invalid");
+    for (const id of transactionIds) this.append(id);
   }
-  return levels;
+
+  get count() { return this.#count; }
+
+  append(transactionId) {
+    if (this.#count >= MAX_COUNT || !HASH.test(transactionId ?? "")) {
+      throw new Error("account history transaction id is invalid");
+    }
+    let position = this.#count;
+    let value = leaf(transactionId, position);
+    this.#levels[0].set(position, value);
+    for (let level = 0; level < DEPTH; level += 1) {
+      const sibling = this.#levels[level].get(position ^ 1) ?? emptyHashes[level];
+      value = position % 2 === 0 ? node(value, sibling) : node(sibling, value);
+      position = Math.floor(position / 2);
+      this.#levels[level + 1].set(position, value);
+    }
+    this.#count += 1;
+    return this.commitment();
+  }
+
+  commitment() {
+    return {
+      count: this.#count,
+      format: FORMAT,
+      root: this.#levels[DEPTH].get(0) ?? EMPTY_ACCOUNT_HISTORY_ROOT,
+    };
+  }
+
+  proofs(indexes) {
+    if (!Array.isArray(indexes) || indexes.some((index) =>
+      !Number.isSafeInteger(index) || index < 0 || index >= this.#count)) {
+      throw new Error("account history proof indexes are invalid");
+    }
+    return indexes.map((index) => {
+      const siblings = [];
+      let position = index;
+      for (let level = 0; level < DEPTH; level += 1) {
+        siblings.push(this.#levels[level].get(position ^ 1) ?? emptyHashes[level]);
+        position = Math.floor(position / 2);
+      }
+      return { count: this.#count, format: PROOF_FORMAT, index, siblings };
+    });
+  }
 }
 
 export function createAccountHistoryProofs(transactionIds, indexes) {
-  if (!Array.isArray(indexes) || indexes.some((index) =>
-    !Number.isSafeInteger(index) || index < 0 || index >= transactionIds.length)) {
-    throw new Error("account history proof indexes are invalid");
-  }
-  const levels = historyLevels(transactionIds);
-  return indexes.map((index) => {
-    const siblings = [];
-    let position = index;
-    for (let level = 0; level < DEPTH; level += 1) {
-      siblings.push(levels[level].get(position ^ 1) ?? emptyHashes[level]);
-      position = Math.floor(position / 2);
-    }
-    return { count: transactionIds.length, format: PROOF_FORMAT, index, siblings };
-  });
+  return new AccountHistoryMerkleIndex(transactionIds).proofs(indexes);
 }
 
 export function createAccountHistoryProof(transactionIds, index) {

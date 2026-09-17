@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AccountHistoryMerkleIndex,
   accountHistoryCommitment,
   appendAccountHistory,
   createAccountHistoryProof,
@@ -41,4 +42,12 @@ test("fixed-depth proofs authenticate exact history positions without the full l
   assert.throws(() => verifyAccountHistoryEntry(
     ids[1], createAccountHistoryProof(ids, 0), commitment,
   ), /root does not match/);
+});
+
+test("cached Merkle nodes advance to the same commitment incrementally", () => {
+  const tree = new AccountHistoryMerkleIndex();
+  ids.forEach((id, index) => {
+    assert.deepEqual(tree.append(id), accountHistoryCommitment(ids.slice(0, index + 1)));
+  });
+  assert.deepEqual(tree.commitment(), accountHistoryCommitment(ids));
 });

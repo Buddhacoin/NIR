@@ -13,17 +13,23 @@ import {
 import { dirname, join, resolve } from "node:path";
 
 import {
-  accountHistoryCommitment,
-  createAccountHistoryProofs,
+  AccountHistoryMerkleIndex,
+  appendAccountHistory,
+  emptyAccountHistoryAccumulator,
   normalizeAccountHistory,
 } from "./account-history.mjs";
 import { transactionId } from "./chain.mjs";
+import { MAX_BLOCK_BYTES } from "./constants.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
+import {
+  createTransactionProofs,
+  verifyTransactionProof,
+} from "./transaction-tree.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
-const FORMAT = "nir-account-history-index-v1";
-const MAX_RECORD_BYTES = 512 * 1024;
+const FORMAT = "nir-account-history-index-v2";
+const MAX_RECORD_BYTES = MAX_BLOCK_BYTES * 4;
 const PRIMARY_DIRECTORY = "account-history-index";
 const BACKUP_DIRECTORY = "account-history-index-backup";
 const ZERO_HASH = "0".repeat(64);
@@ -73,12 +79,18 @@ function updatesForBlock(block) {
 }
 
 function createRecord(block, networkId, previousIndexHash) {
+  const indexes = block.transactions.map((_, index) => index);
+  const proofs = createTransactionProofs(block.transactions, indexes);
   const payload = {
     blockHash: block.hash,
     format: FORMAT,
     height: block.height,
     networkId,
     previousIndexHash,
+    transactions: block.transactions.map((transaction, index) => ({
+      id: transactionId(transaction), index, proof: proofs[index], transaction,
+    })),
+    transactionsRoot: block.transactionsRoot,
     updates: updatesForBlock(block),
   };
   return { ...payload, indexHash: hashObject(payload, "ACCOUNT_HISTORY_INDEX_BLOCK") };
@@ -87,8 +99,19 @@ function createRecord(block, networkId, previousIndexHash) {
 function verifyRecord(value, { height, networkId, previousIndexHash }) {
   if (!value || value.format !== FORMAT || value.height !== height || value.networkId !== networkId ||
       value.previousIndexHash !== previousIndexHash || !HASH.test(value.blockHash ?? "") ||
-      !HASH.test(value.indexHash ?? "") || !Array.isArray(value.updates)) {
+      !HASH.test(value.indexHash ?? "") || !HASH.test(value.transactionsRoot ?? "") ||
+      !Array.isArray(value.transactions) || !Array.isArray(value.updates)) {
     throw new Error("account history index record header is invalid");
+  }
+  const transactionIds = new Set();
+  for (const [index, entry] of value.transactions.entries()) {
+    if (!entry || entry.index !== index || entry.proof?.index !== index ||
+        entry.proof?.count !== value.transactions.length || !HASH.test(entry.id ?? "") ||
+        verifyTransactionProof(entry.transaction, entry.proof, value.transactionsRoot) !== entry.id ||
+        transactionIds.has(entry.id)) {
+      throw new Error("account history transaction index is invalid");
+    }
+    transactionIds.add(entry.id);
   }
   let previousAddress = null;
   for (const update of value.updates) {
@@ -115,11 +138,29 @@ function readCandidate(path, context) {
   catch { return null; }
 }
 
-function applyRecord(histories, record) {
+function applyRecord(accumulators, histories, trees, transactions, record) {
+  for (const entry of record.transactions) {
+    if (transactions.has(entry.id)) throw new Error("duplicate transaction in history index");
+    transactions.set(entry.id, {
+      blockHash: record.blockHash,
+      height: record.height,
+      proof: entry.proof,
+      transaction: entry.transaction,
+      transactionsRoot: record.transactionsRoot,
+    });
+  }
   for (const { address, transactionIds } of record.updates) {
     const ids = histories.get(address) ?? [];
-    ids.push(...transactionIds);
+    const tree = trees.get(address) ?? new AccountHistoryMerkleIndex();
+    let accumulator = accumulators.get(address) ?? emptyAccountHistoryAccumulator();
+    for (const id of transactionIds) {
+      ids.push(id);
+      tree.append(id);
+      accumulator = appendAccountHistory(accumulator, id);
+    }
+    accumulators.set(address, accumulator);
     histories.set(address, ids);
+    trees.set(address, tree);
   }
 }
 
@@ -128,22 +169,27 @@ function expectedHistories(chain) {
   return new Map(entries.map(([address, history]) => [address, normalizeAccountHistory(history)]));
 }
 
-function matchesChain(histories, chain) {
+function matchesChain(accumulators, histories, trees, chain) {
   const expected = expectedHistories(chain);
   if (histories.size !== expected.size) return false;
   for (const [address, commitment] of expected) {
     const ids = histories.get(address);
     if (!ids) return false;
-    const actual = accountHistoryCommitment(ids);
-    if (canonicalJson(actual) !== canonicalJson(commitment)) return false;
+    const actual = trees.get(address)?.commitment();
+    const accumulated = normalizeAccountHistory(accumulators.get(address));
+    if (canonicalJson(actual) !== canonicalJson(commitment) ||
+        canonicalJson(accumulated) !== canonicalJson(commitment)) return false;
   }
   return true;
 }
 
-function updatesMatchChain(histories, record, chain) {
-  return record.updates.every(({ address }) => canonicalJson(
-    accountHistoryCommitment(histories.get(address) ?? []),
-  ) === canonicalJson(chain.accountState(address).history));
+function updatesMatchChain(accumulators, record, chain) {
+  return record.updates.every(({ address, transactionIds }) => {
+    let accumulator = accumulators.get(address) ?? emptyAccountHistoryAccumulator();
+    for (const id of transactionIds) accumulator = appendAccountHistory(accumulator, id);
+    return canonicalJson(normalizeAccountHistory(accumulator)) ===
+      canonicalJson(chain.accountState(address).history);
+  });
 }
 
 function retainedBlocks(chain) {
@@ -152,11 +198,14 @@ function retainedBlocks(chain) {
 }
 
 export class AccountHistoryIndex {
+  #accumulators = new Map();
   #directories;
   #height = 0;
   #histories = new Map();
   #indexHash = ZERO_HASH;
   #networkId;
+  #transactions = new Map();
+  #trees = new Map();
   #tipHash;
 
   constructor(directory, chain) {
@@ -174,9 +223,12 @@ export class AccountHistoryIndex {
   }
 
   #reset() {
+    this.#accumulators = new Map();
     this.#height = 0;
     this.#histories = new Map();
     this.#indexHash = ZERO_HASH;
+    this.#transactions = new Map();
+    this.#trees = new Map();
   }
 
   #load(chain) {
@@ -192,34 +244,37 @@ export class AccountHistoryIndex {
         throw new Error(`account history index copies conflict at height ${height}`);
       }
       const retainedBlock = retained.get(height);
-      const canonical = retainedBlock
-        ? createRecord(retainedBlock, this.#networkId, this.#indexHash) : null;
       let record = candidates[0] ?? null;
-      if (canonical && record?.indexHash !== canonical.indexHash) record = canonical;
+      const matchesRetained = !retainedBlock || (record &&
+        record.blockHash === retainedBlock.hash &&
+        record.transactionsRoot === retainedBlock.transactionsRoot &&
+        record.transactions.length === retainedBlock.transactions.length);
+      const canonical = retainedBlock && !matchesRetained
+        ? createRecord(retainedBlock, this.#networkId, this.#indexHash) : null;
+      if (canonical) record = canonical;
       if (!record) {
-        if (!canonical) throw new Error(`account history index ${height} cannot be recovered`);
-        record = canonical;
+        if (!retainedBlock) throw new Error(`account history index ${height} cannot be recovered`);
+        record = createRecord(retainedBlock, this.#networkId, this.#indexHash);
       }
-      if (retainedBlock && record.blockHash !== retainedBlock.hash) record = canonical;
       candidatesByCopy.forEach((candidate, index) => {
         if (candidate?.indexHash !== record.indexHash) {
           writeAtomic(join(this.#directories[index], name), record);
         }
       });
-      applyRecord(this.#histories, record);
+      applyRecord(this.#accumulators, this.#histories, this.#trees, this.#transactions, record);
       this.#height = height;
       this.#indexHash = record.indexHash;
       this.#tipHash = record.blockHash;
     }
     if (this.#height !== chain.height || this.#tipHash !== chain.tipHash ||
-        !matchesChain(this.#histories, chain)) {
+        !matchesChain(this.#accumulators, this.#histories, this.#trees, chain)) {
       if (chain.blocks()[0].height !== 0) {
         throw new Error("account history index does not match the pruned chain state");
       }
       this.#reset();
       this.#tipHash = chain.blocks()[0].hash;
       for (const block of chain.blocks().slice(1)) this.#append(block);
-      if (!matchesChain(this.#histories, chain)) {
+      if (!matchesChain(this.#accumulators, this.#histories, this.#trees, chain)) {
         throw new Error("account history index rebuild does not match chain state");
       }
     }
@@ -228,7 +283,7 @@ export class AccountHistoryIndex {
   #append(block) {
     const record = createRecord(block, this.#networkId, this.#indexHash);
     this.#write(record);
-    applyRecord(this.#histories, record);
+    applyRecord(this.#accumulators, this.#histories, this.#trees, this.#transactions, record);
     this.#height = block.height;
     this.#indexHash = record.indexHash;
     this.#tipHash = block.hash;
@@ -240,14 +295,11 @@ export class AccountHistoryIndex {
       throw new Error("account history index requires the next verified block");
     }
     const record = createRecord(block, this.#networkId, this.#indexHash);
-    const nextHistories = new Map([...this.#histories]
-      .map(([address, ids]) => [address, [...ids]]));
-    applyRecord(nextHistories, record);
-    if (!updatesMatchChain(nextHistories, record, verifiedChain)) {
+    if (!updatesMatchChain(this.#accumulators, record, verifiedChain)) {
       throw new Error("account history index update does not match chain state");
     }
     this.#write(record);
-    this.#histories = nextHistories;
+    applyRecord(this.#accumulators, this.#histories, this.#trees, this.#transactions, record);
     this.#height = block.height;
     this.#indexHash = record.indexHash;
     this.#tipHash = block.hash;
@@ -263,7 +315,7 @@ export class AccountHistoryIndex {
     }
     const start = Math.max(0, end - limit);
     const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
-    const proofs = createAccountHistoryProofs(ids, indexes);
+    const proofs = (this.#trees.get(address) ?? new AccountHistoryMerkleIndex()).proofs(indexes);
     return {
       count: ids.length,
       entries: ids.slice(start, end).map((id, offset) => ({
@@ -272,6 +324,13 @@ export class AccountHistoryIndex {
       nextBefore: start === 0 ? null : start,
       start,
     };
+  }
+
+  transactionProof(id) {
+    if (!HASH.test(id ?? "")) throw new Error("transaction id is invalid");
+    const proof = this.#transactions.get(id);
+    if (!proof) throw new Error("transaction is not found");
+    return structuredClone(proof);
   }
 }
 

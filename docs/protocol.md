@@ -196,6 +196,14 @@ history roots. It can only make that node temporarily unable to serve history,
 at which point recovery must come from retained verified blocks or a separately
 verified archive copy.
 
+Storage format `nir-account-history-index-v2` additionally retains each
+transaction body, its ordered block position and inclusion path. On load, every
+identifier is recomputed and every path must reach the recorded transaction
+root. The node builds a direct identifier locator and advances cached
+per-account Merkle nodes as it replays the append-only index. These caches alter
+query cost only; clients still verify returned paths against finalized headers
+and authenticated account roots.
+
 ### Draft score
 
 For an accepted proof `p`:
