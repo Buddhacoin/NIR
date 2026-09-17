@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -45,6 +45,7 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
   const payer = createWalletFile({ path: vaultPath, password });
   const recipient = generateWallet();
   initializeDevnet(nodeDirectory);
+  const genesis = JSON.parse(readFileSync(join(nodeDirectory, "genesis.json"), "utf8"));
   const node = new PersistentDevNode(nodeDirectory);
   const nodeServer = createNodeHttpServer(node);
   const token = "7".repeat(64);
@@ -54,6 +55,10 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     origin: "http://127.0.0.1:8765",
     pairingCode: "24681357",
     sessionToken: token,
+    trustAnchor: {
+      expectedNetworkId: genesis.networkId,
+      trustedValidators: genesis.validators,
+    },
     vaultPath,
   });
   try {
@@ -83,6 +88,16 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     const account = await jsonRequest(`${nodeUrl}/v1/accounts/${payer.address}`);
     assert.equal(account.value.atomicBalance, (10n * ATOMIC_UNITS).toString());
     assert.equal(account.value.nextNonce, 0);
+    const proof = await jsonRequest(`${nodeUrl}/v1/accounts/${payer.address}/proof`);
+    assert.equal(proof.response.status, 200);
+    const proofCheck = await jsonRequest(`${bridgeUrl}/v1/verify-account-proof`, {
+      body: { address: payer.address, minimumHeight: 0, proof: proof.value },
+      headers: bridgeHeaders,
+      method: "POST",
+    });
+    assert.equal(proofCheck.response.status, 200, JSON.stringify(proofCheck.value));
+    assert.equal(proofCheck.value.verified, true);
+    assert.equal(proofCheck.value.statement.account.atomicBalance, account.value.atomicBalance);
 
     const amount = (2n * ATOMIC_UNITS).toString();
     const quote = await jsonRequest(`${nodeUrl}/v1/fees?amount=${amount}`);

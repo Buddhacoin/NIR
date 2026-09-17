@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createCreditStake, createTransfer } from "../blockchain/chain.mjs";
+import { verifyAccountProof } from "../blockchain/account-proof.mjs";
 import { ATOMIC_UNITS, MIN_TRANSFER_FEE } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
@@ -67,6 +68,16 @@ test("account RPC state includes persistent transfer-credit resources", () => {
     account = node.account(wallet.address);
     assert.equal(account.resources.atomicStake, (5n * ATOMIC_UNITS).toString());
     assert.equal(account.resources.availableTransferCredits, "0");
+    const proof = node.accountProof(wallet.address);
+    const genesis = JSON.parse(readFileSync(join(directory, "genesis.json"), "utf8"));
+    const verified = verifyAccountProof(proof, {
+      expectedAddress: wallet.address,
+      expectedNetworkId: node.networkId,
+      minimumHeight: node.height,
+      trustedValidators: genesis.validators,
+    });
+    assert.equal(verified.account.atomicBalance, account.atomicBalance);
+    assert.deepEqual(verified.account.resources, account.resources);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

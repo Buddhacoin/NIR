@@ -61,6 +61,7 @@ The intended advantages are:
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
 | Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
+| Quorum-verified account proofs | Balance, nonce and Transfer Credit state are bound to finalized height and state root by a post-quantum validator quorum; local wallet trust-anchor verification implemented |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
@@ -88,6 +89,18 @@ The ordered product and protocol plan is in [`docs/roadmap.md`](docs/roadmap.md)
 and resource staking instructions are in [`docs/staking.md`](docs/staking.md).
 Signed invoice creation and payment are documented in
 [`docs/payment-requests.md`](docs/payment-requests.md).
+Quorum balance verification is documented in
+[`docs/account-proofs.md`](docs/account-proofs.md).
+
+Run the complete JavaScript and Python verification locally without any hosted
+service or payment:
+
+```bash
+npm run verify
+```
+
+The hosted workflow invokes the same command, so a local green result exercises
+the same repository test entry point even when an external runner is unavailable.
 
 ## Who uses NIR and how
 
@@ -367,6 +380,7 @@ candidate runs are committed.
 - `docs/roadmap.md` — ordered development stages and their measurable exit gates.
 - `docs/staking.md` — resource staking, credit delegation and delayed exit guide.
 - `docs/payment-requests.md` — signed expiring invoice creation and verification.
+- `docs/account-proofs.md` — validator-quorum balance and resource verification.
 - `docs/beacon.md` — independent beacon deployment and aggregation runbook.
 - `docs/releases.md` — offline release signing, trust-anchor publication, and source verification.
 - `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.

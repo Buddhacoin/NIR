@@ -63,8 +63,16 @@ export function createNodeHttpServer(node) {
         }, origin);
       }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
-        const address = decodeURIComponent(url.pathname.slice("/v1/accounts/".length));
+        const accountPath = url.pathname.slice("/v1/accounts/".length);
+        const proofRequest = accountPath.endsWith("/proof");
+        const address = decodeURIComponent(proofRequest ? accountPath.slice(0, -6) : accountPath);
         if (!ADDRESS.test(address)) throw new Error("address is invalid");
+        if (proofRequest) {
+          if (typeof node.accountProof !== "function") {
+            return send(response, 501, { error: "account proof is unavailable" }, origin);
+          }
+          return send(response, 200, node.accountProof(address), origin);
+        }
         return send(response, 200, node.account(address), origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/fees") {

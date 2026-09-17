@@ -104,7 +104,30 @@ async function readAccount() {
   if (!walletInfo || !networkInfo) throw new Error("Подключите vault и локальный узел.");
   const response = await fetch(`${NODE_URL}/v1/accounts/${encodeURIComponent(walletInfo.address)}`);
   if (!response.ok) throw new Error("Не удалось получить nonce и баланс от узла.");
-  return response.json();
+  const account = await response.json();
+  try {
+    const proofResponse = await fetch(
+      `${NODE_URL}/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`,
+    );
+    if (!proofResponse.ok) throw new Error("proof unavailable");
+    const proof = await proofResponse.json();
+    const verified = await bridgeRequest("/v1/verify-account-proof", {
+      method: "POST",
+      body: JSON.stringify({
+        address: walletInfo.address,
+        minimumHeight: networkInfo.height,
+        proof,
+      }),
+    });
+    return {
+      ...account,
+      ...verified.statement.account,
+      proofHeight: verified.statement.height,
+      proofVerified: true,
+    };
+  } catch {
+    return { ...account, proofVerified: false };
+  }
 }
 
 async function refreshAccount() {
@@ -123,7 +146,9 @@ async function refreshAccount() {
     claim.disabled = Boolean(pending && networkInfo.height < pending.unlockHeight);
     claim.textContent = pending && networkInfo.height < pending.unlockHeight
       ? `Доступно с блока ${pending.unlockHeight}` : "Завершить вывод";
-    document.querySelector("#wallet-state").textContent = `Подключён ${walletInfo.address.slice(0, 12)}… · тестовая сеть`;
+    document.querySelector("#wallet-state").textContent = account.proofVerified
+      ? `Кворум подтвердил баланс · блок ${account.proofHeight}`
+      : `Подключён ${walletInfo.address.slice(0, 12)}… · данные одного узла`;
   } catch {
     document.querySelector("#wallet-state").textContent = "Vault подключён · локальный узел недоступен";
   }

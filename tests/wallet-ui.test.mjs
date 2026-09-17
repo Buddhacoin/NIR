@@ -99,6 +99,10 @@ test("wallet reports the local node connection state", () => {
   assert.match(script, /networkButton\.classList\.add\("offline"\)/);
   assert.match(styles, /\.network\.connected/);
   assert.match(styles, /\.network\.offline/);
+  assert.match(script, /\/v1\/accounts\/\$\{encodeURIComponent\(walletInfo\.address\)\}\/proof/);
+  assert.match(script, /bridgeRequest\("\/v1\/verify-account-proof"/);
+  assert.match(script, /Кворум подтвердил баланс/);
+  assert.match(script, /данные одного узла/);
 });
 
 test("wallet creates and verifies signed payment requests before filling a transfer", () => {

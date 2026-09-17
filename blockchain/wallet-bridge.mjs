@@ -8,6 +8,7 @@ import {
   walletPublicInfo,
 } from "./wallet-files.mjs";
 import { verifyPaymentRequest } from "./payment-request.mjs";
+import { verifyAccountProof } from "./account-proof.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -32,7 +33,7 @@ function readBody(request) {
     let size = 0;
     request.on("data", (chunk) => {
       size += chunk.length;
-      if (size > 16 * 1024) reject(new Error("bridge request is too large"));
+      if (size > 72 * 1024) reject(new Error("bridge request is too large"));
       else chunks.push(chunk);
     });
     request.on("end", () => {
@@ -140,11 +141,16 @@ export function createWalletBridgeServer({
   pairingCode,
   pairingLifetimeMs = 120_000,
   sessionToken,
+  trustAnchor,
   vaultPath,
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
+      (trustAnchor !== undefined &&
+        (typeof trustAnchor?.expectedNetworkId !== "string" ||
+         !Array.isArray(trustAnchor?.trustedValidators) ||
+         trustAnchor.trustedValidators.length < 4)) ||
       (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
       !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
@@ -210,6 +216,26 @@ export function createWalletBridgeServer({
         }
         return send(response, 200, {
           request: verifyPaymentRequest(body.request, { networkId: body.networkId }), verified: true,
+        }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {
+        if (!trustAnchor) throw new Error("bridge account trust anchor is not configured");
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("account proof verification requires application/json");
+        }
+        const body = await readBody(request);
+        if (!ADDRESS.test(body?.address ?? "") || !Number.isSafeInteger(body?.minimumHeight) ||
+            body.minimumHeight < 0) {
+          throw new Error("account proof request is invalid");
+        }
+        return send(response, 200, {
+          statement: verifyAccountProof(body.proof, {
+            expectedAddress: body.address,
+            expectedNetworkId: trustAnchor.expectedNetworkId,
+            minimumHeight: body.minimumHeight,
+            trustedValidators: trustAnchor.trustedValidators,
+          }),
+          verified: true,
         }, origin);
       }
       if (request.method === "POST" &&

@@ -29,7 +29,8 @@ outside the browser. Start it for one exact wallet origin:
 
 ```bash
 npm run wallet:bridge -- \
-  /absolute/path/personal.nirvault.json 8788 http://127.0.0.1:8765
+  /absolute/path/personal.nirvault.json 8788 http://127.0.0.1:8765 \
+  /absolute/path/node/genesis.json
 ```
 
 At startup it prints a random eight-digit pairing code that expires after two
@@ -56,6 +57,12 @@ The same bridge can sign an expiring payment request and verify a request from
 another NIR account. Verification binds the exact address, amount, network,
 expiry, identifier and memo before the wallet fills transfer fields. It does not
 broadcast anything or authorize the eventual payment.
+
+When started with an explicit genesis file, the bridge also verifies account
+statements signed by a validator quorum. The browser then shows a confirmed
+height instead of trusting the balance reported by one node. Omitting the
+genesis path leaves this check disabled and the interface labels the result as
+single-node data.
 The pairing code and session token are not recovery secrets. Neither belongs in
 a URL or persistent browser storage. Close the terminal process when finished.
 
