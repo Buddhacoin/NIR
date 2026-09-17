@@ -64,7 +64,7 @@ dialog input { min-height: 48px; padding: 11px 13px; }
 dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; }
 .secondary { width: 100%; margin-top: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); color: var(--text); font-weight: 700; }
 .form-status { min-height: 20px; margin: 4px 0 0; color: #a23131; overflow-wrap: anywhere; }
-#send-review, #signed-result { margin-top: 18px; }
+#send-review, #signed-result, #resource-signed { margin-top: 18px; }
 #send-review dl { display: grid; gap: 1px; margin: 0 0 16px; overflow: hidden; border: 1px solid var(--border); border-radius: 15px; background: var(--border); }
 #send-review dl div { padding: 11px 13px; background: var(--surface-soft); }
 #send-review dt { color: var(--muted); font-size: 12px; }

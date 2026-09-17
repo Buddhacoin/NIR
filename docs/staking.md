@@ -27,7 +27,8 @@ economic measurements.
    or begin an exit from the locked balance.
 5. Compare the action, network, amount or delegation, fee and nonce printed by
    the bridge. Type `SIGN` and enter the vault password only in that terminal.
-6. The wallet submits the signed operation only to the connected valueless
+6. Inspect the signed JSON in the wallet, then use the separate submit button.
+   The wallet repeats the network check, submits only to the connected valueless
    local network and refreshes locked stake, credits and pending unlock height.
 
 The browser never receives the private key or password. Every signing request

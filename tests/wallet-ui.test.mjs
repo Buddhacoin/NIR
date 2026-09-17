@@ -52,6 +52,10 @@ test("wallet exposes native resource staking and delegation controls", () => {
   assert.match(script, /type: "credit-delegation"/);
   assert.match(script, /type: "credit-unstake-request"/);
   assert.match(script, /type: "credit-unstake-claim"/);
+  assert.match(html, /id="resource-signed-json"/);
+  assert.match(html, /id="submit-resource"[^>]*>Отправить в local testnet/);
+  assert.match(script, /signedResourceTransaction = signed\.transaction/);
+  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {

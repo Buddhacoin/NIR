@@ -25,6 +25,7 @@ let walletInfo = null;
 let networkInfo = null;
 let pendingIntent = null;
 let signedTransaction = null;
+let signedResourceTransaction = null;
 
 function showMessage(key, copy = null) {
   const [title, defaultCopy] = messages[key];
@@ -145,9 +146,12 @@ async function resourceFee() {
   return (await response.json()).amount;
 }
 
-async function signAndSubmitResource(fields) {
+async function signResource(fields) {
   if (!walletInfo || !networkInfo || networkInfo.valueMode !== "valueless-devnet") {
     throw new Error("Операция разрешена только в подключённой локальной тестовой сети.");
+  }
+  if (signedResourceTransaction) {
+    throw new Error("Сначала отправьте или удалите уже подписанную операцию.");
   }
   const account = await readAccount();
   const intent = {
@@ -163,27 +167,51 @@ async function signAndSubmitResource(fields) {
   const signed = await bridgeRequest("/v1/sign-resource", {
     method: "POST", body: JSON.stringify(intent),
   });
-  const health = await fetch(`${NODE_URL}/health`).then((response) => response.json());
-  if (health.valueMode !== "valueless-devnet" || health.networkId !== signed.transaction.networkId) {
-    throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
-  }
-  const response = await fetch(`${NODE_URL}/v1/transactions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(signed.transaction),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Узел отклонил операцию.");
-  resourcesStatus.textContent = `Подтверждено в блоке ${result.height}.`;
-  await refreshNodeStatus();
+  signedResourceTransaction = signed.transaction;
+  document.querySelector("#resource-signed-json").value =
+    JSON.stringify(signedResourceTransaction, null, 2);
+  document.querySelector("#resource-signed").hidden = false;
+  resourcesStatus.textContent = "Подписано локально. Проверьте JSON перед отдельной отправкой.";
 }
+
+document.querySelector("#submit-resource").onclick = async (event) => {
+  if (!signedResourceTransaction) return;
+  event.currentTarget.disabled = true;
+  resourcesStatus.textContent = "Повторная проверка тестовой сети…";
+  try {
+    const health = await fetch(`${NODE_URL}/health`).then((response) => response.json());
+    if (health.valueMode !== "valueless-devnet" ||
+        health.networkId !== signedResourceTransaction.networkId) {
+      throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
+    }
+    const response = await fetch(`${NODE_URL}/v1/transactions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(signedResourceTransaction),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Узел отклонил операцию.");
+    resourcesStatus.textContent = `Подтверждено в блоке ${result.height}.`;
+    signedResourceTransaction = null;
+    document.querySelector("#resource-signed").hidden = true;
+    await refreshNodeStatus();
+  } catch (error) { resourcesStatus.textContent = error.message; }
+  finally { event.currentTarget.disabled = false; }
+};
+
+document.querySelector("#discard-resource").onclick = () => {
+  signedResourceTransaction = null;
+  document.querySelector("#resource-signed-json").value = "";
+  document.querySelector("#resource-signed").hidden = true;
+  resourcesStatus.textContent = "Подписанная операция удалена и не отправлена.";
+};
 
 document.querySelector("#stake-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
   try {
-    await signAndSubmitResource({
+    await signResource({
       amount: parseNir(document.querySelector("#stake-amount").value), type: "credit-stake",
     });
     event.currentTarget.reset();
@@ -202,7 +230,7 @@ document.querySelector("#delegation-form").addEventListener("submit", async (eve
         !Number.isSafeInteger(limit) || limit < 0 || limit > 1_000_000) {
       throw new Error("Проверьте адрес и целый лимит от 0 до 1 000 000.");
     }
-    await signAndSubmitResource({ delegate, limit, type: "credit-delegation" });
+    await signResource({ delegate, limit, type: "credit-delegation" });
     event.currentTarget.reset();
   } catch (error) { resourcesStatus.textContent = error.message; }
   finally { button.disabled = false; }
@@ -213,7 +241,7 @@ document.querySelector("#unstake-form").addEventListener("submit", async (event)
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
   try {
-    await signAndSubmitResource({
+    await signResource({
       amount: parseNir(document.querySelector("#unstake-amount").value),
       type: "credit-unstake-request",
     });
@@ -224,7 +252,7 @@ document.querySelector("#unstake-form").addEventListener("submit", async (event)
 
 document.querySelector("#claim-unstake").onclick = async (event) => {
   event.currentTarget.disabled = true;
-  try { await signAndSubmitResource({ type: "credit-unstake-claim" }); }
+  try { await signResource({ type: "credit-unstake-claim" }); }
   catch (error) { resourcesStatus.textContent = error.message; }
   finally { event.currentTarget.disabled = false; }
 };
