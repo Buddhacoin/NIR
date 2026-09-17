@@ -1,4 +1,9 @@
+import { consensusValueBytes } from "./consensus-codec.mjs";
+
 const MAX_DEPTH = 64;
+const MAX_INPUT_BYTES = 64 * 1024 * 1024;
+const MAX_STRING_BYTES = 16 * 1024 * 1024;
+const MAX_CONTAINER_ENTRIES = 100_000;
 
 function validUnicodeScalarString(value) {
   for (let index = 0; index < value.length; index += 1) {
@@ -13,7 +18,9 @@ function validUnicodeScalarString(value) {
 }
 
 export function parseConsensusJson(input) {
-  if (typeof input !== "string") throw new Error("consensus JSON input must be a string");
+  if (typeof input !== "string" || Buffer.byteLength(input, "utf8") > MAX_INPUT_BYTES) {
+    throw new Error("consensus JSON input must be a bounded string");
+  }
   let position = 0;
 
   function fail() { throw new Error("consensus JSON is not canonical data"); }
@@ -31,7 +38,8 @@ export function parseConsensusJson(input) {
         position += 1;
         let parsed;
         try { parsed = JSON.parse(input.slice(start, position)); } catch { fail(); }
-        if (!validUnicodeScalarString(parsed)) fail();
+        if (!validUnicodeScalarString(parsed) ||
+            Buffer.byteLength(parsed, "utf8") > MAX_STRING_BYTES) fail();
         return parsed;
       }
       if (!escaped && code < 0x20) fail();
@@ -63,6 +71,7 @@ export function parseConsensusJson(input) {
       if (input[position] === "]") { position += 1; return result; }
       while (true) {
         result.push(value(depth + 1));
+        if (result.length > MAX_CONTAINER_ENTRIES) fail();
         whitespace();
         if (input[position] === "]") { position += 1; return result; }
         if (input[position] !== ",") fail();
@@ -78,7 +87,8 @@ export function parseConsensusJson(input) {
       while (true) {
         whitespace();
         const key = string();
-        if (key.normalize("NFC") !== key || seen.has(key)) fail();
+        if (key.normalize("NFC") !== key || seen.has(key) ||
+            seen.size >= MAX_CONTAINER_ENTRIES) fail();
         seen.add(key);
         whitespace();
         if (input[position] !== ":") fail();
@@ -99,5 +109,6 @@ export function parseConsensusJson(input) {
   const parsed = value(0);
   whitespace();
   if (position !== input.length) fail();
+  consensusValueBytes(parsed);
   return parsed;
 }

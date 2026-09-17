@@ -72,8 +72,11 @@ function sortedObjectEntries(value, field) {
     throw new Error(`${field} has too many fields or a symbol key`);
   }
   const normalized = new Set();
+  let keyBytes = 0;
   const entries = keys.map((key) => {
     const bytes = stringBytes(key, `${field} key`);
+    keyBytes += bytes.length;
+    if (keyBytes > MAX_ENCODED_BYTES) throw new Error("consensus value is too large");
     const nfc = key.normalize("NFC");
     if (nfc !== key || normalized.has(nfc)) {
       throw new Error(`${field} contains an ambiguous non-NFC key`);
@@ -103,18 +106,28 @@ function arrayValues(value, field) {
   return values;
 }
 
-function encodeValue(value, chunks, active, depth, field) {
+function append(context, ...values) {
+  for (const value of values) {
+    if (context.total + value.length > MAX_ENCODED_BYTES) {
+      throw new Error("consensus value is too large");
+    }
+    context.total += value.length;
+    context.chunks.push(value);
+  }
+}
+
+function encodeValue(value, context, active, depth, field) {
   if (depth > MAX_DEPTH) throw new Error("consensus value nesting is too deep");
   if (value === null) {
-    chunks.push(Buffer.from([0x00]));
+    append(context, Buffer.from([0x00]));
     return;
   }
   if (value === false) {
-    chunks.push(Buffer.from([0x01]));
+    append(context, Buffer.from([0x01]));
     return;
   }
   if (value === true) {
-    chunks.push(Buffer.from([0x02]));
+    append(context, Buffer.from([0x02]));
     return;
   }
   if (typeof value === "number") {
@@ -124,12 +137,12 @@ function encodeValue(value, chunks, active, depth, field) {
     const encoded = Buffer.allocUnsafe(9);
     encoded[0] = 0x03;
     encoded.writeBigInt64BE(BigInt(value), 1);
-    chunks.push(encoded);
+    append(context, encoded);
     return;
   }
   if (typeof value === "string") {
     const encoded = stringBytes(value, field);
-    chunks.push(Buffer.from([0x04]), u32(encoded.length), encoded);
+    append(context, Buffer.from([0x04]), u32(encoded.length), encoded);
     return;
   }
   if (typeof value !== "object") {
@@ -140,17 +153,17 @@ function encodeValue(value, chunks, active, depth, field) {
   try {
     if (Array.isArray(value)) {
       const values = arrayValues(value, field);
-      chunks.push(Buffer.from([0x05]), u32(values.length));
+      append(context, Buffer.from([0x05]), u32(values.length));
       values.forEach((entry, index) => {
-        encodeValue(entry, chunks, active, depth + 1, `${field}[${index}]`);
+        encodeValue(entry, context, active, depth + 1, `${field}[${index}]`);
       });
       return;
     }
     const entries = sortedObjectEntries(value, field);
-    chunks.push(Buffer.from([0x06]), u32(entries.length));
+    append(context, Buffer.from([0x06]), u32(entries.length));
     for (const entry of entries) {
-      chunks.push(Buffer.from([0x04]), u32(entry.bytes.length), entry.bytes);
-      encodeValue(entry.value, chunks, active, depth + 1, `${field}.${entry.key}`);
+      append(context, Buffer.from([0x04]), u32(entry.bytes.length), entry.bytes);
+      encodeValue(entry.value, context, active, depth + 1, `${field}.${entry.key}`);
     }
   } finally {
     active.delete(value);
@@ -158,11 +171,9 @@ function encodeValue(value, chunks, active, depth, field) {
 }
 
 export function consensusValueBytes(value) {
-  const chunks = [];
-  encodeValue(value, chunks, new WeakSet(), 0, "consensus value");
-  const encoded = Buffer.concat(chunks);
-  if (encoded.length > MAX_ENCODED_BYTES) throw new Error("consensus value is too large");
-  return encoded;
+  const context = { chunks: [], total: 0 };
+  encodeValue(value, context, new WeakSet(), 0, "consensus value");
+  return Buffer.concat(context.chunks, context.total);
 }
 
 function envelopePrefix(domain, encodingVersion) {
@@ -229,5 +240,7 @@ function jsonValue(value, active, depth, field) {
 }
 
 export function strictCanonicalJson(value) {
+  // Enforce the same aggregate bounds before constructing a JSON string.
+  consensusValueBytes(value);
   return jsonValue(value, new WeakSet(), 0, "consensus value");
 }

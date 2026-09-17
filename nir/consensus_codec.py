@@ -38,22 +38,36 @@ def _u32(value: int) -> bytes:
     return struct.pack(">I", value)
 
 
-def _encode(value: object, active: set[int], depth: int, field: str) -> bytes:
+def _append(output: bytearray, *parts: bytes) -> None:
+    for part in parts:
+        if len(output) + len(part) > _MAX_ENCODED_BYTES:
+            raise ConsensusEncodingError("consensus value is too large")
+        output.extend(part)
+
+
+def _encode(
+    value: object, output: bytearray, active: set[int], depth: int, field: str
+) -> None:
     if depth > _MAX_DEPTH:
         raise ConsensusEncodingError("consensus value nesting is too deep")
     if value is None:
-        return b"\x00"
+        _append(output, b"\x00")
+        return
     if value is False:
-        return b"\x01"
+        _append(output, b"\x01")
+        return
     if value is True:
-        return b"\x02"
+        _append(output, b"\x02")
+        return
     if type(value) is int:
         if value < -_MAX_SAFE_INTEGER or value > _MAX_SAFE_INTEGER:
             raise ConsensusEncodingError(f"{field} must be an unambiguous safe integer")
-        return b"\x03" + struct.pack(">q", value)
+        _append(output, b"\x03", struct.pack(">q", value))
+        return
     if type(value) is str:
         encoded = _string_bytes(value, field)
-        return b"\x04" + _u32(len(encoded)) + encoded
+        _append(output, b"\x04", _u32(len(encoded)), encoded)
+        return
     if type(value) not in (list, dict):
         raise ConsensusEncodingError(f"{field} contains an unsupported value type")
     identity = id(value)
@@ -64,35 +78,37 @@ def _encode(value: object, active: set[int], depth: int, field: str) -> bytes:
         if type(value) is list:
             if len(value) > _MAX_CONTAINER_ENTRIES:
                 raise ConsensusEncodingError(f"{field} is too large")
-            return b"\x05" + _u32(len(value)) + b"".join(
-                _encode(item, active, depth + 1, f"{field}[{index}]")
-                for index, item in enumerate(value)
-            )
+            _append(output, b"\x05", _u32(len(value)))
+            for index, item in enumerate(value):
+                _encode(item, output, active, depth + 1, f"{field}[{index}]")
+            return
         if len(value) > _MAX_CONTAINER_ENTRIES:
             raise ConsensusEncodingError(f"{field} has too many fields")
         entries: list[tuple[bytes, str, object]] = []
+        key_bytes_total = 0
         for key, item in value.items():
             if type(key) is not str:
                 raise ConsensusEncodingError(f"{field} contains a non-string key")
             key_bytes = _string_bytes(key, f"{field} key")
+            key_bytes_total += len(key_bytes)
+            if key_bytes_total > _MAX_ENCODED_BYTES:
+                raise ConsensusEncodingError("consensus value is too large")
             if unicodedata.normalize("NFC", key) != key:
                 raise ConsensusEncodingError(f"{field} contains an ambiguous non-NFC key")
             entries.append((key_bytes, key, item))
         entries.sort(key=lambda entry: entry[0])
-        return b"\x06" + _u32(len(entries)) + b"".join(
-            b"\x04" + _u32(len(key_bytes)) + key_bytes +
-            _encode(item, active, depth + 1, f"{field}.{key}")
-            for key_bytes, key, item in entries
-        )
+        _append(output, b"\x06", _u32(len(entries)))
+        for key_bytes, key, item in entries:
+            _append(output, b"\x04", _u32(len(key_bytes)), key_bytes)
+            _encode(item, output, active, depth + 1, f"{field}.{key}")
     finally:
         active.remove(identity)
 
 
 def consensus_value_bytes(value: object) -> bytes:
-    encoded = _encode(value, set(), 0, "consensus value")
-    if len(encoded) > _MAX_ENCODED_BYTES:
-        raise ConsensusEncodingError("consensus value is too large")
-    return encoded
+    encoded = bytearray()
+    _encode(value, encoded, set(), 0, "consensus value")
+    return bytes(encoded)
 
 
 def consensus_envelope_bytes(domain: str, value: object) -> bytes:

@@ -49,6 +49,8 @@ class ConsensusCodecTests(unittest.TestCase):
             with self.subTest(value=type(value).__name__):
                 with self.assertRaises(ConsensusEncodingError):
                     consensus_value_bytes(value)
+        with self.assertRaises(ConsensusEncodingError):
+            consensus_value_bytes([None] * 100_001)
 
 
 if __name__ == "__main__":

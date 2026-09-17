@@ -95,4 +95,7 @@ test("strict consensus JSON rejects duplicate keys and numeric ambiguity", () =>
     '{"a":-0}', '{"a":9007199254740992}', '{"a":"\\ud800"}',
     '{"a":1,}', '[1,]', 'undefined',
   ]) assert.throws(() => parseConsensusJson(source), /canonical data/);
+  assert.throws(() => consensusValueBytes(Array(100_001).fill(null)), /too large/);
+  assert.throws(() => parseConsensusJson(`[${"0,".repeat(100_000)}0]`),
+    /canonical data/);
 });
