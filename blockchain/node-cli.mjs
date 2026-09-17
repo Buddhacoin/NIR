@@ -8,6 +8,7 @@ import {
   finalizeBlockPruning,
   installBlockStoreSnapshot,
   loadBlockStore,
+  planBlockPruning,
   stageBlockPruning,
   verifyStagedBlockPruning,
 } from "./block-store.mjs";
@@ -29,6 +30,11 @@ function recoveryContext(directory, handoffsPath = "") {
   const handoffs = handoffsPath ? readBoundedJson(handoffsPath) : [];
   if (!Array.isArray(handoffs)) throw new Error("validator handoffs must be a JSON array");
   return { genesis, options: { handoffs, trustedValidators: genesis.validators } };
+}
+
+function withDirectoryLock(directory, operation) {
+  const release = acquireDataDirectoryLock(directory);
+  try { return operation(); } finally { release(); }
 }
 try {
   if (command === "init-dev" && directory) {
@@ -71,9 +77,11 @@ try {
       tipHash: chain.tipHash,
     }, null, 2));
   } else if (command === "snapshot-install" && directory && parameter) {
-    const { genesis, options } = recoveryContext(directory, extra);
-    const snapshot = readBoundedJson(parameter);
-    const result = installBlockStoreSnapshot(directory, genesis, snapshot, options);
+    const result = withDirectoryLock(directory, () => {
+      const { genesis, options } = recoveryContext(directory, extra);
+      const snapshot = readBoundedJson(parameter);
+      return installBlockStoreSnapshot(directory, genesis, snapshot, options);
+    });
     console.log(JSON.stringify({
       directory,
       height: result.chain.height,
@@ -81,15 +89,20 @@ try {
       stateRoot: result.stateRoot,
       tipHash: result.chain.tipHash,
     }, null, 2));
-  } else if (["prune-stage", "prune-verify", "prune-finalize"].includes(command) && directory) {
-    const { genesis, options } = recoveryContext(directory, parameter);
-    const { chain } = loadBlockStore(directory, genesis, options);
-    new AccountHistoryIndex(directory, chain);
-    const operation = command === "prune-stage" ? stageBlockPruning
-      : command === "prune-verify" ? verifyStagedBlockPruning : finalizeBlockPruning;
-    console.log(JSON.stringify(operation(directory, genesis, options), null, 2));
+  } else if (["prune-plan", "prune-stage", "prune-verify", "prune-finalize"]
+    .includes(command) && directory) {
+    const result = withDirectoryLock(directory, () => {
+      const { genesis, options } = recoveryContext(directory, parameter);
+      if (command === "prune-plan") return planBlockPruning(directory, genesis, options);
+      const { chain } = loadBlockStore(directory, genesis, options);
+      new AccountHistoryIndex(directory, chain);
+      const operation = command === "prune-stage" ? stageBlockPruning
+        : command === "prune-verify" ? verifyStagedBlockPruning : finalizeBlockPruning;
+      return operation(directory, genesis, options);
+    });
+    console.log(JSON.stringify(result, null, 2));
   } else {
-    throw new Error("usage: node:init-dev <new-directory> | node:serve <directory> [port] [host] | node:backup <directory> <new-backup-directory> | node:verify-backup <backup-directory> | snapshot-install <directory> <snapshot.json> [handoffs.json] | prune-stage|prune-verify|prune-finalize <directory> [handoffs.json]");
+    throw new Error("usage: node:init-dev <new-directory> | node:serve <directory> [port] [host] | node:backup <directory> <new-backup-directory> | node:verify-backup <backup-directory> | snapshot-install <directory> <snapshot.json> [handoffs.json] | prune-plan|prune-stage|prune-verify|prune-finalize <directory> [handoffs.json]");
   }
 } catch (error) {
   console.error(`Node operation failed: ${error.message}`);

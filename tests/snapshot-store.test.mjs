@@ -20,6 +20,7 @@ import {
   finalizeBlockPruning,
   installBlockStoreSnapshot,
   loadBlockStore,
+  planBlockPruning,
   persistBlock,
   stageBlockPruning,
   verifyStagedBlockPruning,
@@ -167,16 +168,49 @@ test("old journal blocks are quarantined and deleted only after restart verifica
     persistBlock(root, block2, replay);
     installBlockStoreSnapshot(root, genesisConfig, snapshot);
 
+    const plan = planBlockPruning(root, genesisConfig);
+    assert.equal(plan.eligible, true);
+    assert.equal(plan.prunableBlocks, 1);
+    assert.ok(plan.prunableBytes > 0);
+    assert.equal(plan.projectedLiveBytes, plan.snapshotBytes + plan.tailBytes);
+    assert.equal(planBlockPruning(root, genesisConfig, {
+      pruningPolicy: { minimumPrunableBytes: plan.prunableBytes + 1 },
+    }).eligible, false);
     const staged = stageBlockPruning(root, genesisConfig);
     assert.equal(staged.baseHeight, 1);
     assert.equal(staged.movedFiles, 2);
     assert.throws(() => finalizeBlockPruning(root, genesisConfig), /restart verification/);
     assert.equal(loadBlockStore(root, genesisConfig).chain.tipHash, chain.tipHash);
 
+    const manifest = JSON.parse(readFileSync(join(staged.quarantine, "PRUNE-MANIFEST.json")));
+    const firstTarget = join(
+      staged.quarantine, manifest.files[0].folder, manifest.files[0].name,
+    );
+    const original = readFileSync(firstTarget, "utf8");
+    writeFileSync(firstTarget, "corrupt\n", "utf8");
+    assert.throws(() => verifyStagedBlockPruning(root, genesisConfig), /checksum mismatch/);
+    writeFileSync(firstTarget, original, "utf8");
     const verified = verifyStagedBlockPruning(root, genesisConfig);
     assert.equal(verified.verifiedHeight, 2);
+
+    const block3 = finalizeBlock(chain.buildBlock({ timestamp: 3 }), validators.slice(0, 3));
+    chain.appendBlock(block3);
+    replay.appendBlock(block3);
+    persistBlock(root, block3, replay);
+    assert.throws(() => finalizeBlockPruning(root, genesisConfig), /stale or invalid/);
+    assert.equal(verifyStagedBlockPruning(root, genesisConfig).verifiedHeight, 3);
+    const verification = JSON.parse(readFileSync(
+      join(staged.quarantine, "PRUNE-VERIFIED.json"), "utf8",
+    ));
+    writeFileSync(join(staged.quarantine, "PRUNE-FINALIZING.json"), JSON.stringify({
+      checkpointHash: verification.checkpointHash,
+      format: "nir-prune-finalizing-v1",
+      manifestHash: verification.manifestHash,
+    }), "utf8");
+    rmSync(firstTarget);
     const finalized = finalizeBlockPruning(root, genesisConfig);
-    assert.equal(finalized.deletedFiles, 2);
+    assert.equal(finalized.deletedFiles, 1);
+    assert.equal(finalized.plannedFiles, 2);
     assert.equal(loadBlockStore(root, genesisConfig).chain.tipHash, chain.tipHash);
     const backup = join(root, "portable-backup");
     exportBlockStoreBackup(root, backup, genesisConfig);
@@ -191,6 +225,9 @@ test("operator CLI installs a snapshot and enforces the three pruning phases", (
   const { chain, genesisConfig, validators } = fixture();
   try {
     initializeBlockStore(root, new NirChain(genesisConfig));
+    const replay = new NirChain(genesisConfig);
+    replay.appendBlock(chain.blocks().at(-1));
+    persistBlock(root, chain.blocks().at(-1), replay);
     writeFileSync(join(root, "genesis.json"), JSON.stringify(genesisConfig), "utf8");
     const snapshotPath = join(root, "incoming-snapshot.json");
     writeFileSync(snapshotPath, JSON.stringify(
@@ -200,6 +237,10 @@ test("operator CLI installs a snapshot and enforces the three pruning phases", (
       "blockchain/node-cli.mjs", ...arguments_,
     ], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
     assert.equal(run("snapshot-install", root, snapshotPath).height, 1);
+    const plan = run("prune-plan", root);
+    assert.equal(plan.eligible, true);
+    assert.equal(plan.prunableBlocks, 1);
+    assert.ok(plan.prunableBytes > 0);
     assert.equal(run("prune-stage", root).baseHeight, 1);
     assert.throws(() => run("prune-finalize", root), /restart verification/);
     assert.equal(run("prune-verify", root).verifiedHeight, 1);

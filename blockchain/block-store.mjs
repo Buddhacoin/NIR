@@ -4,12 +4,14 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -29,7 +31,11 @@ const SNAPSHOTS_DIRECTORY = "snapshots";
 const PRUNE_DIRECTORY = "prune-quarantine";
 const PRUNE_MANIFEST = "PRUNE-MANIFEST.json";
 const PRUNE_VERIFIED = "PRUNE-VERIFIED.json";
+const PRUNE_FINALIZING = "PRUNE-FINALIZING.json";
 const BLOCK_NAME = /^[0-9]{12}\.json$/;
+const MAX_PRUNE_MANIFEST_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_MAX_PRUNED_TAIL_BLOCKS = 100_000;
+export const DEFAULT_MAX_PRUNED_TAIL_BYTES = 64 * 1024 * 1024 * 1024;
 
 function serialized(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -298,17 +304,46 @@ function pruningDirectories(root) {
 
 function readPruneManifest(path) {
   try {
-    const value = JSON.parse(readFileSync(join(path, PRUNE_MANIFEST), "utf8"));
-    if (value?.format !== "nir-prune-quarantine-v1" ||
+    const manifestPath = join(path, PRUNE_MANIFEST);
+    if (statSync(manifestPath).size > MAX_PRUNE_MANIFEST_BYTES) throw new Error("invalid");
+    const value = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (!["nir-prune-quarantine-v1", "nir-prune-quarantine-v2"].includes(value?.format) ||
+        typeof value.networkId !== "string" || value.networkId.length < 1 ||
         !Number.isSafeInteger(value.baseHeight) || value.baseHeight < 1 ||
         !/^[0-9a-f]{64}$/.test(value.baseHash ?? "") ||
         !Array.isArray(value.files) || value.files.some((file) =>
           ![BLOCKS_DIRECTORY, BACKUP_DIRECTORY].includes(file?.folder) ||
-          !BLOCK_NAME.test(file?.name))) throw new Error("invalid");
+          !BLOCK_NAME.test(file?.name) || (value.format === "nir-prune-quarantine-v2" &&
+            (!Number.isSafeInteger(file.bytes) || file.bytes < 1 ||
+             !/^[0-9a-f]{64}$/.test(file.fileSha256 ?? ""))))) throw new Error("invalid");
+    const keys = value.files.map((file) => `${file.folder}/${file.name}`);
+    if (new Set(keys).size !== keys.length ||
+        keys.some((key, index) => index > 0 && key <= keys[index - 1])) throw new Error("invalid");
     return value;
   } catch {
     throw new Error("block pruning manifest is invalid");
   }
+}
+
+function fileDetails(path) {
+  const metadata = lstatSync(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("block pruning file is invalid");
+  }
+  const contents = readFileSync(path, "utf8");
+  return { bytes: Buffer.byteLength(contents), contents, fileSha256: fileSha256(contents) };
+}
+
+function assertManifestFile(path, file) {
+  const actual = fileDetails(path);
+  if (file.fileSha256 && (actual.fileSha256 !== file.fileSha256 || actual.bytes !== file.bytes)) {
+    throw new Error("block pruning file checksum mismatch");
+  }
+  return actual;
+}
+
+function pruneManifestHash(manifest) {
+  return hashObject(manifest, "BLOCK_PRUNE_MANIFEST");
 }
 
 function completeStagedMoves(root, quarantine, manifest) {
@@ -318,13 +353,18 @@ function completeStagedMoves(root, quarantine, manifest) {
     const sourceExists = existsSync(source);
     const targetExists = existsSync(target);
     if (sourceExists && targetExists) {
-      if (readFileSync(source, "utf8") !== readFileSync(target, "utf8")) {
+      const sourceFile = assertManifestFile(source, file);
+      const targetFile = assertManifestFile(target, file);
+      if (sourceFile.contents !== targetFile.contents) {
         throw new Error("block pruning copies conflict");
       }
       rmSync(source);
     } else if (sourceExists) {
+      assertManifestFile(source, file);
       renameSync(source, target);
-    } else if (!targetExists) {
+    } else if (targetExists) {
+      assertManifestFile(target, file);
+    } else {
       throw new Error("a staged pruning block is missing");
     }
   }
@@ -334,34 +374,117 @@ function completeStagedMoves(root, quarantine, manifest) {
   }
 }
 
-export function stageBlockPruning(directory, genesis, options = {}) {
+function pruningPolicy(options) {
+  const policy = options.pruningPolicy ?? {};
+  const normalized = {
+    maximumTailBlocks: policy.maximumTailBlocks ?? DEFAULT_MAX_PRUNED_TAIL_BLOCKS,
+    maximumTailBytes: policy.maximumTailBytes ?? DEFAULT_MAX_PRUNED_TAIL_BYTES,
+    minimumPrunableBlocks: policy.minimumPrunableBlocks ?? 1,
+    minimumPrunableBytes: policy.minimumPrunableBytes ?? 1,
+  };
+  if (![normalized.maximumTailBlocks, normalized.maximumTailBytes].every((value) =>
+    Number.isSafeInteger(value) && value >= 0) ||
+      ![normalized.minimumPrunableBlocks, normalized.minimumPrunableBytes].every((value) =>
+        Number.isSafeInteger(value) && value >= 1)) {
+    throw new Error("block pruning policy is invalid");
+  }
+  return normalized;
+}
+
+function createBlockPruningPlan(directory, genesis, options = {}) {
   const root = resolve(directory);
+  if (pruningDirectories(root).length > 0) {
+    throw new Error("staged block pruning must be verified or finalized first");
+  }
   const loaded = loadBlockStore(root, genesis, options);
   const base = loaded.chain.blocks()[0];
   if (base.height < 1) throw new Error("block pruning requires an installed state snapshot");
-  const quarantine = join(root, PRUNE_DIRECTORY, `${String(base.height).padStart(12, "0")}-${base.hash}`);
-  if (existsSync(quarantine)) throw new Error("block pruning is already staged for this snapshot");
   const files = [];
+  let journalBytes = 0;
+  let prunableBytes = 0;
+  const prunableHeights = new Set();
   for (const folder of [BLOCKS_DIRECTORY, BACKUP_DIRECTORY]) {
-    for (const height of heightsIn(join(root, folder)).filter((value) => value <= base.height)) {
-      files.push({ folder, name: blockName(height) });
+    const path = join(root, folder);
+    for (const height of heightsIn(path)) {
+      const name = blockName(height);
+      const details = fileDetails(join(path, name));
+      journalBytes += details.bytes;
+      if (height <= base.height) {
+        files.push({
+          bytes: details.bytes, fileSha256: details.fileSha256, folder, name,
+        });
+        prunableBytes += details.bytes;
+        prunableHeights.add(height);
+      }
     }
   }
   files.sort((left, right) =>
     `${left.folder}/${left.name}`.localeCompare(`${right.folder}/${right.name}`));
+  const snapshotBytes = ["STATE-SNAPSHOT.json", "STATE-SNAPSHOT.backup.json"]
+    .map((name) => statSync(join(root, SNAPSHOTS_DIRECTORY, name)).size)
+    .reduce((sum, bytes) => sum + bytes, 0);
+  const policy = pruningPolicy(options);
+  const tailBlocks = loaded.chain.height - base.height;
+  const tailBytes = journalBytes - prunableBytes;
+  const reasons = [];
+  if (prunableHeights.size < policy.minimumPrunableBlocks) {
+    reasons.push("prunable block count is below policy minimum");
+  }
+  if (prunableBytes < policy.minimumPrunableBytes) {
+    reasons.push("prunable bytes are below policy minimum");
+  }
+  if (tailBlocks > policy.maximumTailBlocks) {
+    reasons.push("snapshot tail block count exceeds policy maximum; install a newer snapshot");
+  }
+  if (tailBytes > policy.maximumTailBytes) {
+    reasons.push("snapshot tail bytes exceed policy maximum; install a newer snapshot");
+  }
+  return {
+    baseHash: base.hash,
+    baseHeight: base.height,
+    eligible: reasons.length === 0,
+    files,
+    journalBytes,
+    policy,
+    projectedLiveBytes: snapshotBytes + tailBytes,
+    prunableBlocks: prunableHeights.size,
+    prunableBytes,
+    reasons,
+    snapshotBytes,
+    tailBlocks,
+    tailBytes,
+    tipHeight: loaded.chain.height,
+  };
+}
+
+export function planBlockPruning(directory, genesis, options = {}) {
+  const { files: _files, ...plan } = createBlockPruningPlan(directory, genesis, options);
+  return plan;
+}
+
+export function stageBlockPruning(directory, genesis, options = {}) {
+  const root = resolve(directory);
+  const plan = createBlockPruningPlan(root, genesis, options);
+  if (!plan.eligible) throw new Error(`block pruning policy rejected plan: ${plan.reasons.join("; ")}`);
+  const quarantine = join(root, PRUNE_DIRECTORY,
+    `${String(plan.baseHeight).padStart(12, "0")}-${plan.baseHash}`);
+  if (existsSync(quarantine)) throw new Error("block pruning is already staged for this snapshot");
   for (const folder of [BLOCKS_DIRECTORY, BACKUP_DIRECTORY]) {
     mkdirSync(join(quarantine, folder), { recursive: true, mode: 0o700 });
   }
   const manifest = {
-    baseHash: base.hash,
-    baseHeight: base.height,
-    files,
-    format: "nir-prune-quarantine-v1",
+    baseHash: plan.baseHash,
+    baseHeight: plan.baseHeight,
+    files: plan.files,
+    format: "nir-prune-quarantine-v2",
     networkId: genesis.networkId,
   };
   writeAtomic(join(quarantine, PRUNE_MANIFEST), serialized(manifest));
   completeStagedMoves(root, quarantine, manifest);
-  return { baseHash: base.hash, baseHeight: base.height, movedFiles: files.length, quarantine };
+  return {
+    baseHash: plan.baseHash, baseHeight: plan.baseHeight, movedFiles: plan.files.length,
+    prunableBytes: plan.prunableBytes, projectedLiveBytes: plan.projectedLiveBytes, quarantine,
+  };
 }
 
 export function verifyStagedBlockPruning(directory, genesis, options = {}) {
@@ -385,6 +508,7 @@ export function verifyStagedBlockPruning(directory, genesis, options = {}) {
       baseHeight: base.height,
       checkpointHash: loaded.checkpoint.checkpointHash,
       format: "nir-prune-verification-v1",
+      manifestHash: pruneManifestHash(manifest),
       networkId: genesis.networkId,
     }));
   }
@@ -398,22 +522,54 @@ export function finalizeBlockPruning(directory, genesis, options = {}) {
   const loaded = loadBlockStore(root, genesis, options);
   const base = loaded.chain.blocks()[0];
   let deletedFiles = 0;
+  let plannedFiles = 0;
   for (const quarantine of quarantines) {
     const manifest = readPruneManifest(quarantine);
+    plannedFiles += manifest.files.length;
     let verification;
     try { verification = JSON.parse(readFileSync(join(quarantine, PRUNE_VERIFIED), "utf8")); }
     catch { throw new Error("block pruning has not passed restart verification"); }
     if (verification?.format !== "nir-prune-verification-v1" ||
         verification.networkId !== genesis.networkId ||
         verification.baseHeight !== manifest.baseHeight || verification.baseHash !== manifest.baseHash ||
+        verification.checkpointHash !== loaded.checkpoint.checkpointHash ||
+        verification.manifestHash !== pruneManifestHash(manifest) ||
         base.height !== manifest.baseHeight || base.hash !== manifest.baseHash) {
       throw new Error("block pruning verification is stale or invalid");
     }
-    deletedFiles += manifest.files.length;
+    const finalizingPath = join(quarantine, PRUNE_FINALIZING);
+    let finalizing = null;
+    if (existsSync(finalizingPath)) {
+      try { finalizing = JSON.parse(readFileSync(finalizingPath, "utf8")); } catch { /* fail below */ }
+      if (finalizing?.format !== "nir-prune-finalizing-v1" ||
+          finalizing.manifestHash !== verification.manifestHash ||
+          finalizing.checkpointHash !== verification.checkpointHash) {
+        throw new Error("block pruning finalization marker is invalid");
+      }
+    } else {
+      for (const file of manifest.files) {
+        assertManifestFile(join(quarantine, file.folder, file.name), file);
+      }
+      writeAtomic(finalizingPath, serialized({
+        checkpointHash: verification.checkpointHash,
+        format: "nir-prune-finalizing-v1",
+        manifestHash: verification.manifestHash,
+      }));
+    }
+    for (const file of manifest.files) {
+      const target = join(quarantine, file.folder, file.name);
+      if (!existsSync(target)) continue;
+      assertManifestFile(target, file);
+      rmSync(target);
+      deletedFiles += 1;
+    }
+    for (const folder of [BLOCKS_DIRECTORY, BACKUP_DIRECTORY]) {
+      syncDirectory(join(quarantine, folder));
+    }
     rmSync(quarantine, { recursive: true });
   }
   syncDirectory(join(root, PRUNE_DIRECTORY));
-  return { baseHeight: base.height, deletedFiles, verifiedHeight: loaded.chain.height };
+  return { baseHeight: base.height, deletedFiles, plannedFiles, verifiedHeight: loaded.chain.height };
 }
 
 export function exportBlockStoreBackup(directory, destination, genesis, options = {}) {

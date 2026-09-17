@@ -27,6 +27,7 @@
     "node:verify-backup": "node blockchain/node-cli.mjs verify-backup",
     "node:snapshot-install": "node blockchain/node-cli.mjs snapshot-install",
     "node:prune-stage": "node blockchain/node-cli.mjs prune-stage",
+    "node:prune-plan": "node blockchain/node-cli.mjs prune-plan",
     "node:prune-verify": "node blockchain/node-cli.mjs prune-verify",
     "node:prune-finalize": "node blockchain/node-cli.mjs prune-finalize",
     "archive:create": "node blockchain/archive-cli.mjs create",
@@ -48,6 +49,7 @@
     "release:verify-extension": "node blockchain/release-cli.mjs verify-extension",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
     "benchmark:history": "node benchmarks/account-history-storage.mjs",
+    "benchmark:storage-lifecycle": "node benchmarks/storage-lifecycle.mjs",
     "test:chain": "node --test --test-concurrency=1 tests/*.test.mjs",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py' -v",
     "verify": "npm run test:python && npm run test:chain"
