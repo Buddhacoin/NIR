@@ -38,8 +38,9 @@ replays, restarts, message faults and state restoration.
   incremental Merkle proof caches, corruption repair, verified backup copying,
   bounded signed archive chunks and agreement by multiple independent configured
   operators, crash-resumable staged installation generations and password-safe
-  operator export/restore commands (implemented locally; public archive-service
-  deployment and disk-native large-scale databases remain);
+  operator commands, plus bounded HTTPS multi-source download (implemented
+  locally; genuinely independent public deployment, transport operations and
+  disk-native large-scale databases remain);
 - congestion measurements and a sustainable validator-compensation formula;
 - public test network with independent seed, validator, beacon and evaluator
   operators.

@@ -20,6 +20,11 @@ import {
   selectHistoryArchiveCandidates,
   verifySignedHistoryArchive,
 } from "../blockchain/archive-sync.mjs";
+import {
+  createHistoryArchiveHttpServer,
+  downloadHistoryArchive,
+  restoreHistoryArchiveFromSources,
+} from "../blockchain/archive-service.mjs";
 import { loadBlockStore } from "../blockchain/block-store.mjs";
 import { createTransfer } from "../blockchain/chain.mjs";
 import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
@@ -49,6 +54,19 @@ function fixture() {
   const genesis = JSON.parse(readFileSync(join(directory, "genesis.json"), "utf8"));
   const { chain } = loadBlockStore(directory, genesis);
   return { chain, directory, recipient, temporary };
+}
+
+async function listen(server) {
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+async function close(server) {
+  await new Promise((resolve, reject) => server.close((error) =>
+    error ? reject(error) : resolve()));
 }
 
 test("independent operators agree on archive contents across different chunk layouts", () => {
@@ -191,6 +209,68 @@ test("the operator CLI restores two independently signed archive files", () => {
     assert.equal(JSON.parse(output).matchingSources, 2);
     assert.equal(new AccountHistoryIndex(directory, chain).page(recipient.address).count, 1);
   } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("a node downloads and restores matching archives from independent services", async () => {
+  const { chain, directory, recipient, temporary } = fixture();
+  const operators = [generateWallet(), generateWallet()];
+  const trustedOperators = operators.map(publicWallet);
+  const archives = operators.map((operator, index) => createSignedHistoryArchive(
+    directory, chain, operator, { maxRecordsPerChunk: index + 1 },
+  ));
+  const servers = archives.map(createHistoryArchiveHttpServer);
+  try {
+    const sources = [];
+    for (const server of servers) sources.push(await listen(server));
+    await assert.rejects(() => downloadHistoryArchive(sources[0], chain, {
+      trustedOperators,
+    }), /must use HTTPS/);
+    const downloaded = await downloadHistoryArchive(sources[0], chain, {
+      allowInsecureLocalhost: true, trustedOperators,
+    });
+    assert.equal(downloaded.archive.manifest.archiveHash,
+      archives[0].manifest.archiveHash);
+    await assert.rejects(() => downloadHistoryArchive(sources[0], chain, {
+      allowInsecureLocalhost: true,
+      maxTotalBytes: 1024,
+      trustedOperators,
+    }), /download budget/);
+
+    rmSync(join(directory, "account-history-index"), { recursive: true, force: true });
+    rmSync(join(directory, "account-history-index-backup"), { recursive: true, force: true });
+    const restored = await restoreHistoryArchiveFromSources(directory, sources, chain, {
+      allowInsecureLocalhost: true, trustedOperators,
+    });
+    assert.equal(restored.matchingSources, 2);
+    assert.equal(new AccountHistoryIndex(directory, chain).page(recipient.address).count, 1);
+  } finally {
+    await Promise.all(servers.filter((server) => server.listening).map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("an untrusted remote manifest is rejected before any chunk is requested", async () => {
+  const { chain, directory, temporary } = fixture();
+  const trustedOperators = [publicWallet(generateWallet()), publicWallet(generateWallet())];
+  const outsider = createSignedHistoryArchive(directory, chain, generateWallet());
+  const server = createHistoryArchiveHttpServer(outsider);
+  try {
+    const source = await listen(server);
+    let chunkRequests = 0;
+    const fetchImpl = (url, options) => {
+      if (new URL(url).pathname.includes("/chunks/")) chunkRequests += 1;
+      return fetch(url, options);
+    };
+    await assert.rejects(() => downloadHistoryArchive(source, chain, {
+      allowInsecureLocalhost: true,
+      fetchImpl,
+      trustedOperators,
+    }), /signer is not trusted/);
+    assert.equal(chunkRequests, 0);
+  } finally {
+    if (server.listening) await close(server);
     rmSync(temporary, { recursive: true, force: true });
   }
 });

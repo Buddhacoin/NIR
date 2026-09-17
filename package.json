@@ -28,6 +28,8 @@
     "node:prune-finalize": "node blockchain/node-cli.mjs prune-finalize",
     "archive:create": "node blockchain/archive-cli.mjs create",
     "archive:restore": "node blockchain/archive-cli.mjs restore",
+    "archive:restore-remote": "node blockchain/archive-cli.mjs restore-remote",
+    "archive:serve": "node blockchain/archive-cli.mjs serve",
     "network:init-dev": "node blockchain/network-cli.mjs init-dev",
     "network:validator": "node blockchain/network-cli.mjs serve-validator",
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",

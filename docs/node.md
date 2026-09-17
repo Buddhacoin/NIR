@@ -81,7 +81,7 @@ signatures authenticate delivery; they cannot create consensus history or
 override a local finalized header. An invalid, stale, oversized, duplicated, or
 insufficiently corroborated archive fails closed. The verification API is in
 `blockchain/archive-sync.mjs`, and local operator commands are described below;
-authenticated download services remain production work.
+independently hosted TLS endpoints remain production work.
 
 Installation is a recoverable transaction. The node writes and verifies two
 complete staged journals before synchronizing an installation marker. It then
@@ -117,8 +117,30 @@ npm run archive:restore -- /node/path /policy/trusted-archive-operators.json /im
 
 The command will not accept one archive, two files signed by the same key,
 unknown keys, different content, stale checkpoints, modified chunks, or a
-partial installation. These commands currently exchange bounded local files;
-automatic authenticated network download is the next operational layer.
+partial installation.
+
+An operator may expose one immutable archive to a loopback-only service:
+
+```bash
+npm run archive:serve -- /export/path/history.json 8790
+```
+
+For a public deployment, place that service behind an independently configured
+HTTPS reverse proxy; the built-in command deliberately refuses a public bind.
+The recovering node accepts remote URLs only over HTTPS:
+
+```bash
+npm run archive:restore-remote -- /node/path /policy/trusted-archive-operators.json https://archive-a.example https://archive-b.example
+```
+
+The client rejects redirects, credentials embedded in URLs, excessive response
+sizes, slow responses, untrusted manifests and stale checkpoints. It verifies
+the signed manifest before requesting chunks, downloads only the committed
+indexes within configured chunk and total-byte budgets, limits both source and
+chunk concurrency, verifies the completed archive again, and
+then applies the same multi-operator agreement and crash-resumable installation
+used for local files. Plain HTTP is available only through an explicit library
+option for loopback integration tests.
 
 ## Wallet-to-wallet flow
 

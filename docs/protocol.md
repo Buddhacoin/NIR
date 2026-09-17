@@ -228,6 +228,16 @@ copies pass full checkpoint verification. An interruption therefore leaves
 either the prior live generation or a verified staged generation from which
 startup can finish; it never makes a partial journal authoritative.
 
+Remote exchange separates the small signed manifest from immutable chunk
+responses. A receiver authenticates the configured operator, signature and its
+own finalized checkpoint before requesting any chunk. Remote redirects are
+disabled; URLs cannot contain credentials; production sources require HTTPS;
+response bytes, time and concurrent requests are bounded. After all committed
+chunks arrive, the receiver repeats complete archive verification before the
+operator can count toward multi-source agreement. Transport confidentiality and
+availability complement these checks but do not replace content signatures or
+local consensus roots.
+
 Operator membership is not currently selected by consensus. Production must
 distribute operators across independent organizations and failure domains,
 publish rotation policy, deploy authenticated transports, and rehearse total

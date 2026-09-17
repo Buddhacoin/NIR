@@ -18,8 +18,8 @@ import {
 const FORMAT = "nir-history-archive-manifest-v1";
 const HASH = /^[0-9a-f]{64}$/;
 const MAX_CHUNKS = 100_000;
-const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
-const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+export const MAX_HISTORY_ARCHIVE_CHUNK_BYTES = 16 * 1024 * 1024;
+export const MAX_HISTORY_ARCHIVE_MANIFEST_BYTES = 2 * 1024 * 1024;
 
 function chunkDigest(contents) {
   return createHash("sha3-256")
@@ -49,7 +49,8 @@ function manifestPayload(value) {
     if (chunk?.index !== index || !Number.isSafeInteger(chunk.startHeight) ||
         !Number.isSafeInteger(chunk.endHeight) || chunk.startHeight !== previousEnd + 1 ||
         chunk.endHeight < chunk.startHeight || chunk.endHeight > value.height ||
-        !Number.isSafeInteger(chunk.size) || chunk.size < 2 || chunk.size > MAX_CHUNK_BYTES ||
+        !Number.isSafeInteger(chunk.size) || chunk.size < 2 ||
+        chunk.size > MAX_HISTORY_ARCHIVE_CHUNK_BYTES ||
         !HASH.test(chunk.sha3_256 ?? "")) {
       throw new Error("history archive chunk manifest is invalid");
     }
@@ -77,7 +78,7 @@ function manifestPayload(value) {
     stateRoot: value.stateRoot,
     tipHash: value.tipHash,
   };
-  if (Buffer.byteLength(canonicalJson(payload)) > MAX_MANIFEST_BYTES) {
+  if (Buffer.byteLength(canonicalJson(payload)) > MAX_HISTORY_ARCHIVE_MANIFEST_BYTES) {
     throw new Error("history archive manifest is too large");
   }
   return payload;
@@ -85,7 +86,8 @@ function manifestPayload(value) {
 
 function createChunks(records, { maxChunkBytes, maxRecordsPerChunk }) {
   if (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes < 1024 ||
-      maxChunkBytes > MAX_CHUNK_BYTES || !Number.isSafeInteger(maxRecordsPerChunk) ||
+      maxChunkBytes > MAX_HISTORY_ARCHIVE_CHUNK_BYTES ||
+      !Number.isSafeInteger(maxRecordsPerChunk) ||
       maxRecordsPerChunk < 1 || maxRecordsPerChunk > 10_000) {
     throw new Error("history archive chunk policy is invalid");
   }
@@ -121,7 +123,7 @@ function createChunks(records, { maxChunkBytes, maxRecordsPerChunk }) {
 }
 
 export function createSignedHistoryArchive(directory, chain, wallet, {
-  maxChunkBytes = MAX_CHUNK_BYTES,
+  maxChunkBytes = MAX_HISTORY_ARCHIVE_CHUNK_BYTES,
   maxRecordsPerChunk = 256,
 } = {}) {
   const records = readAccountHistoryIndexRecords(directory, chain);
@@ -159,7 +161,9 @@ function trustedOperatorMap(trustedOperators) {
   return operators;
 }
 
-export function verifySignedHistoryArchive(archive, chain, { trustedOperators } = {}) {
+export function verifySignedHistoryArchiveManifest(archive, chain, {
+  trustedOperators,
+} = {}) {
   const operators = trustedOperatorMap(trustedOperators);
   const signer = archive?.signer;
   const trusted = operators.get(signer?.address);
@@ -179,6 +183,18 @@ export function verifySignedHistoryArchive(archive, chain, { trustedOperators } 
       payload.accountStateRoot !== tip.accountStateRoot) {
     throw new Error("history archive does not match the verified chain checkpoint");
   }
+  return {
+    archiveHash,
+    contentRoot: payload.contentRoot,
+    manifest: { ...payload, archiveHash },
+    signer: structuredClone(signer),
+  };
+}
+
+export function verifySignedHistoryArchive(archive, chain, options = {}) {
+  const verifiedManifest = verifySignedHistoryArchiveManifest(archive, chain, options);
+  const { archiveHash, contentRoot: expectedContentRoot, manifest: payload, signer } =
+    verifiedManifest;
   if (!Array.isArray(archive.chunks) || archive.chunks.length !== payload.chunks.length) {
     throw new Error("history archive chunks are incomplete");
   }
@@ -206,13 +222,13 @@ export function verifySignedHistoryArchive(archive, chain, { trustedOperators } 
     }
     records.push(...parsed);
   }
-  if (records.length !== payload.recordCount || contentRoot(records) !== payload.contentRoot) {
+  if (records.length !== payload.recordCount || contentRoot(records) !== expectedContentRoot) {
     throw new Error("history archive content root is invalid");
   }
   return {
     archiveHash,
-    contentRoot: payload.contentRoot,
-    manifest: { ...payload, archiveHash },
+    contentRoot: expectedContentRoot,
+    manifest: payload,
     records: verifyAccountHistoryIndexRecords(records, chain),
     signer: structuredClone(signer),
   };

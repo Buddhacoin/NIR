@@ -11,6 +11,10 @@ import { join, resolve } from "node:path";
 import process from "node:process";
 
 import { restoreHistoryArchive } from "./archive-sync.mjs";
+import {
+  createHistoryArchiveHttpServer,
+  restoreHistoryArchiveFromSources,
+} from "./archive-service.mjs";
 import { loadBlockStore } from "./block-store.mjs";
 import { signWalletHistoryArchive } from "./wallet-files.mjs";
 
@@ -93,8 +97,27 @@ try {
       trustedOperators,
     });
     console.log(JSON.stringify(result, null, 2));
+  } else if (command === "restore-remote" && directory && parameters.length >= 3) {
+    const [operatorsPath, ...sources] = parameters;
+    const trustedOperators = readBoundedJson(operatorsPath, MAX_CONFIG_FILE_BYTES);
+    const result = await restoreHistoryArchiveFromSources(
+      directory, sources, loadChain(directory), { trustedOperators },
+    );
+    console.log(JSON.stringify(result, null, 2));
+  } else if (command === "serve" && directory && parameters.length <= 2) {
+    const port = Number(parameters[0] || 8790);
+    const host = parameters[1] || "127.0.0.1";
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535 ||
+        !["127.0.0.1", "::1", "localhost"].includes(host)) {
+      throw new Error("archive service must use a valid port and a loopback host");
+    }
+    const archive = readBoundedJson(directory, MAX_ARCHIVE_FILE_BYTES);
+    const server = createHistoryArchiveHttpServer(archive);
+    server.listen(port, host, () => {
+      console.log(`NIR history archive listening on http://${host}:${port}`);
+    });
   } else {
-    throw new Error("usage: archive:create <node-directory> <operator-wallet> <new-archive.json> | archive:restore <node-directory> <trusted-operators.json> <archive-a.json> <archive-b.json> [...]");
+    throw new Error("usage: archive:create <node-directory> <operator-wallet> <new-archive.json> | archive:restore <node-directory> <trusted-operators.json> <archive-a.json> <archive-b.json> [...] | archive:restore-remote <node-directory> <trusted-operators.json> <https-source-a> <https-source-b> [...] | archive:serve <archive.json> [port] [loopback-host]");
   }
 } catch (error) {
   console.error(`Archive operation failed: ${error.message}`);
