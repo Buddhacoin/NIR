@@ -1,101 +1,110 @@
-# NIR roadmap
+# Дорожная карта NIR
 
-This roadmap is ordered by security dependencies, not marketing dates. A stage
-advances only after its tests, public specification, independent review and
-operational rehearsal are complete.
+Эта дорожная карта описывает порядок работ по безопасности, а не обещает дату
+запуска или рост стоимости. Переход на следующий этап возможен только после
+публичной спецификации, воспроизводимых тестов, независимой проверки и
+операционной репетиции.
 
-## Stage 1 — deterministic monetary core (implemented locally)
+## Что уже реализовано в локальном прототипе
 
-- independent ledger, 21 million NIR cap and treasury vesting;
-- post-quantum accounts, multisignature custody and encrypted recovery vaults;
-- fees, sponsored payments, candidate and validator bonds, burns and slashing;
-- two-phase finality, durable storage, snapshots, peer recovery and validator
-  rotation;
-- committed AI candidates, fresh challenges, independent evaluation, safety
-  vetoes and world capability memory;
-- bonded epoch-randomness authorities with timeout rotation and penalties.
+- самостоятельный журнал состояния с фиксированным пределом выпуска в
+  `21 000 000 NIR`, правилами комиссий, сжигания и блокировки залогов;
+- адреса с криптографическими подписями, мультиподпись и зашифрованные vault;
+- финализация блоков, хранение, снимки, восстановление и проверяемые доказательства
+  состояния и истории;
+- модель вкладов в полезные возможности: зафиксированный кандидат, свежие задания,
+  независимая воспроизводимая оценка, окно оспаривания и запрет награды при
+  критическом нарушении безопасности;
+- роли автора, оператора воспроизведения, автора заданий, оценщика безопасности,
+  исследователя нарушений и обычного узла;
+- блокировка NIR для получения возобновляемых `Network Credits`, делегирование
+  лимита и отложенный выход из блокировки;
+- нативные правила для будущих активов и основа для инструментов разработчика;
+- локальный кошелёк и демонстрационные сценарии платежа, ресурсов и майнинга.
 
-Exit gate: the complete automated suite stays deterministic across clean
-replays, restarts, message faults and state restoration.
+Это программный прототип. Локальные тесты показывают, что заявленные сценарии
+повторяются в известной среде; они не являются доказательством безопасности
+публичной сети.
 
-## Stage 2 — usable payment network (in progress)
+## Этап 1 — открытая тестовая сеть
 
-- Transfer Credit stake, renewal, exact-payment sponsorship, revocable
-  delegation and delayed exit;
-- wallet screens for available balance, locked stake, credits, delegations and
-  pending unlocks;
-- payment requests, address book, human-readable fee and resource quote;
-- compact light-client headers with block-body commitments, continuous hash
-  links, post-quantum certificates, validator handoffs and rollback-protected
-  wallet checkpoints (implemented locally; independent audit remains);
-- sparse account membership and absence proofs bound directly to every verified
-  finality header (implemented locally; independent audit remains);
-- ordered transaction roots, node-side inclusion proofs, checkpoint-anchored
-  wallet header persistence and proof-gated history rendering (implemented
-  locally; independent audit and long-term header compaction remain);
-- per-account indexed history accumulators, proof-verified newest-page wallet
-  loading, redundant append-only disk indexes, direct transaction lookup,
-  incremental Merkle proof caches, corruption repair, verified backup copying,
-  bounded signed archive chunks and agreement by multiple independent configured
-  operators, crash-resumable staged installation generations and password-safe
-  operator commands, plus manifest-first bounded HTTPS recovery that streams one
-  agreed copy to disk and falls back across sources (implemented locally;
-  the versioned SQLite serving index also keeps history pages, proof nodes and
-  the transaction locator on disk, reuses a checkpoint-matched cache at startup,
-  and rebuilds incompatible schemas safely; genuinely independent public
-  deployment, transport operations, large-dataset benchmarks and compaction
-  policy remain);
-- congestion measurements and a sustainable validator-compensation formula;
-- public test network with independent seed, validator, beacon and evaluator
-  operators.
+Нужны несколько независимых операторов узлов, валидаторов, источников
+случайности и оценщиков на разных площадках. До этого нельзя называть сеть
+децентрализованной или независимой от команды разработки.
 
-Exit gate: an ordinary user can install a verified wallet, recover it, receive
-NIR and make a payment without operating a node or understanding resource accounting.
+- публичный манифест сети, genesis-отпечаток и несколько проверяемых точек
+  подключения;
+- воспроизводимые сборки кошелька и узла, безопасное обновление и восстановление;
+- независимые beacon-сервисы и ротация состава валидаторов;
+- валюто-нейтральные тестовые единицы, журнал инцидентов и программа поиска ошибок;
+- измерения нагрузки для комиссий, лимитов и компенсации операторов.
 
-## Stage 3 — native assets and developer tools
+**Критерий выхода:** обычный человек может установить проверяемый кошелёк,
+восстановить vault, получить тестовые NIR и провести тестовый платёж, не
+запуская свой узел и не вводя секреты на веб-странице.
 
-- small consensus-native asset instruction set: create, capped mint, transfer,
-  burn and permanent revocation of mint authority;
-- explicit metadata, freeze and administration indicators in every wallet;
-- NIR-only resource payment so child assets cannot replace the base currency;
-- stable RPC, typed SDKs, local sandbox, indexer and explorer;
-- signed application permissions and transaction simulation before approval.
+## Этап 2 — проверяемый майнинг полезного вклада
 
-Exit gate: the asset rules have bounded storage, deterministic execution,
-property tests and an external audit. No unrestricted application runtime is
-required for this stage.
+Цель — запускать воспроизводимую оценку без требования раскрывать частные веса
+или данные участника, когда это допустимо технически и юридически.
 
-## Stage 4 — programmable applications
+- изолированный стенд запуска, подписанные контейнеры и фиксирование версий;
+- свежие объективно проверяемые задания и контроль утечек;
+- случайное назначение независимых исполнителей и оценщиков;
+- доказательства происхождения, новизны и воспроизводимости результата;
+- отдельный рынок safety-проверок: подтверждённая критическая находка отменяет
+  выпуск для кандидата, а не создаёт новые NIR;
+- залоги, объективные штрафы и оспаривание, устойчивые к очевидным формам сговора.
 
-- deterministic, metered contract runtime with no ambient filesystem, network
-  or clock access;
-- declared read/write sets so independent operations can execute in parallel;
-- capability-based permissions, storage rent and strict compute/memory limits;
-- versioned contracts, delayed upgrades and visible administrator powers;
-- composable payments, escrow, marketplaces and AI-service licensing;
-- formal contract interfaces and wallet simulation of every state change.
+**Критерий выхода:** внешний аудит подтверждает, что правила награды, отклонения
+и штрафа одинаково пересчитываются независимыми узлами. Нельзя обещать, что
+система измерит «общий интеллект» или обнаружит все риски модели: она сможет
+проверять только заранее определённые и публично ограниченные свойства.
 
-Exit gate: adversarial contracts cannot violate the NIR cap, bypass signatures,
-starve the Pay lane or make honest nodes disagree.
+## Этап 3 — платежи, активы и разработка приложений
 
-## Stage 5 — scalable execution
+- понятная оплата переводов: обычная комиссия либо `Network Credits`;
+- нативные активы с ограниченным выпуском, переводом, сжиганием и видимыми
+  полномочиями администратора;
+- стабильный API, типизированные инструменты, локальная песочница, индексатор и
+  обозреватель;
+- подписываемые разрешения приложений и симуляция каждой операции до подтверждения;
+- адресная книга, платежные запросы, QR-потоки и доступные мобильный и desktop UX.
 
-- parallel Pay, Proof and Control lanes under one finality certificate;
-- reproducible throughput and latency benchmarks;
-- data-availability sampling and shard-ready cross-lane messages;
-- dynamic partitioning only after single-chain state proofs and recovery are
-  proven under sustained public load.
+**Критерий выхода:** правила хранения ограничены, исполнение детерминированно,
+а внешний аудит проверил, что приложения и активы не обходят подписи, лимит
+выпуска, комиссию или правила финализации.
 
-Exit gate: partitions, delayed messages and unavailable data fail closed
-without splitting monetary history.
+## Этап 4 — программируемые сервисы и масштабирование
 
-## Stage 6 — production launch
+- ограниченная по вычислениям и памяти среда приложений без доступа к файловой
+  системе, сети или часам узла;
+- явные права чтения и записи, параллельное выполнение независимых операций;
+- лимиты, аренда хранения, версии и отложенные обновления с видимыми правами;
+- платежи, условные расчёты, лицензирование и сервисы оценки;
+- масштабирование только после подтверждения восстановления данных, проверок
+  состояния и безопасной обработки задержанных сообщений под нагрузкой.
 
-- independent cryptographic, consensus, economic and wallet audits;
-- long-running incentivized test network and public bug bounty;
-- reproducible native installers and hardware-backed signing;
-- finalized genesis ceremony, treasury vault and operator diversity evidence;
-- published incident response, upgrade procedure and emergency limitations.
+**Критерий выхода:** намеренно вредоносное приложение не может изменить денежные
+правила, обойти подпись, заставить честные узлы расходиться или заблокировать
+платёжную очередь.
 
-There is no mainnet date until every production gate in
-[`launch-readiness.md`](launch-readiness.md) is independently satisfied.
+## Этап 5 — подготовка к production
+
+Перед запуском с реальной ценностью необходимы независимые аудиты криптографии,
+консенсуса, экономики, кошелька, инфраструктуры и реализации проверок
+безопасности. Нужны длительная тестовая сеть, открытая программа вознаграждения
+за ошибки, процедура обновлений, доказательства разнообразия операторов и
+публичная церемония genesis.
+
+## Чего дорожная карта не гарантирует
+
+- стоимость, ликвидность, доход от участия или возможность обменять NIR;
+- отсутствие всех ошибок, атак, сговора или регуляторных ограничений;
+- безопасность любой модели, приложения или внешнего сервиса;
+- неизменность параметров до запуска: изменения прототипа возможны и должны
+  быть видны в истории проекта. После запуска изменение правил потребует
+  заранее определённого, публичного и технически проверяемого процесса.
+
+Состояние готовности к запуску ведётся отдельно в
+[launch-readiness.md](launch-readiness.md).
