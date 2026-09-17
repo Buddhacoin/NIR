@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -182,7 +189,14 @@ test("old journal blocks are quarantined and deleted only after restart verifica
     assert.throws(() => finalizeBlockPruning(root, genesisConfig), /restart verification/);
     assert.equal(loadBlockStore(root, genesisConfig).chain.tipHash, chain.tipHash);
 
-    const manifest = JSON.parse(readFileSync(join(staged.quarantine, "PRUNE-MANIFEST.json")));
+    const manifestPath = join(staged.quarantine, "PRUNE-MANIFEST.json");
+    const realManifestPath = `${manifestPath}.real`;
+    renameSync(manifestPath, realManifestPath);
+    symlinkSync(realManifestPath, manifestPath);
+    assert.throws(() => verifyStagedBlockPruning(root, genesisConfig), /manifest is invalid/);
+    rmSync(manifestPath);
+    renameSync(realManifestPath, manifestPath);
+    const manifest = JSON.parse(readFileSync(manifestPath));
     const firstTarget = join(
       staged.quarantine, manifest.files[0].folder, manifest.files[0].name,
     );
@@ -199,9 +213,14 @@ test("old journal blocks are quarantined and deleted only after restart verifica
     persistBlock(root, block3, replay);
     assert.throws(() => finalizeBlockPruning(root, genesisConfig), /stale or invalid/);
     assert.equal(verifyStagedBlockPruning(root, genesisConfig).verifiedHeight, 3);
-    const verification = JSON.parse(readFileSync(
-      join(staged.quarantine, "PRUNE-VERIFIED.json"), "utf8",
-    ));
+    const verificationPath = join(staged.quarantine, "PRUNE-VERIFIED.json");
+    const realVerificationPath = `${verificationPath}.real`;
+    renameSync(verificationPath, realVerificationPath);
+    symlinkSync(realVerificationPath, verificationPath);
+    assert.throws(() => finalizeBlockPruning(root, genesisConfig), /restart verification/);
+    rmSync(verificationPath);
+    renameSync(realVerificationPath, verificationPath);
+    const verification = JSON.parse(readFileSync(verificationPath, "utf8"));
     writeFileSync(join(staged.quarantine, "PRUNE-FINALIZING.json"), JSON.stringify({
       checkpointHash: verification.checkpointHash,
       format: "nir-prune-finalizing-v1",

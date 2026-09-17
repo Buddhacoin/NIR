@@ -1,8 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -18,6 +20,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { NirChain } from "./chain.mjs";
 import { hashObject } from "./crypto.mjs";
+import { MAX_BLOCK_BYTES } from "./constants.mjs";
 import { installStateSnapshot, loadInstalledStateSnapshot } from "./snapshot-store.mjs";
 import { copyAccountHistoryIndex } from "./account-history-index.mjs";
 
@@ -34,6 +37,8 @@ const PRUNE_VERIFIED = "PRUNE-VERIFIED.json";
 const PRUNE_FINALIZING = "PRUNE-FINALIZING.json";
 const BLOCK_NAME = /^[0-9]{12}\.json$/;
 const MAX_PRUNE_MANIFEST_BYTES = 64 * 1024 * 1024;
+const MAX_PRUNE_MARKER_BYTES = 64 * 1024;
+const MAX_PRUNE_BLOCK_FILE_BYTES = MAX_BLOCK_BYTES * 4;
 export const DEFAULT_MAX_PRUNED_TAIL_BLOCKS = 100_000;
 export const DEFAULT_MAX_PRUNED_TAIL_BYTES = 64 * 1024 * 1024 * 1024;
 
@@ -46,25 +51,46 @@ function fileSha256(value) {
 }
 
 function syncDirectory(path) {
-  const descriptor = openSync(path, "r");
+  const descriptor = openSync(path,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 
 function writeAtomic(path, contents, mode = 0o600) {
-  const temporary = `${path}.${process.pid}.tmp`;
+  const parent = dirname(path);
+  const parentMetadata = lstatSync(parent);
+  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink()) {
+    throw new Error("block store destination directory is unsafe");
+  }
+  const temporary = join(parent,
+    `.${randomBytes(16).toString("hex")}.${process.pid}.tmp`);
   let descriptor;
   try {
-    descriptor = openSync(temporary, "w", mode);
+    descriptor = openSync(temporary, fsConstants.O_WRONLY | fsConstants.O_CREAT |
+      fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, mode);
     writeFileSync(descriptor, contents, "utf8");
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
-    chmodSync(temporary, mode);
     renameSync(temporary, path);
-    syncDirectory(dirname(path));
+    syncDirectory(parent);
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
     rmSync(temporary, { force: true });
+  }
+}
+
+function readBoundedRegularText(path, maximumBytes, message) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size > maximumBytes) throw new Error(message);
+    const contents = readFileSync(descriptor);
+    if (contents.length > maximumBytes) throw new Error(message);
+    return contents.toString("utf8");
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -305,8 +331,9 @@ function pruningDirectories(root) {
 function readPruneManifest(path) {
   try {
     const manifestPath = join(path, PRUNE_MANIFEST);
-    if (statSync(manifestPath).size > MAX_PRUNE_MANIFEST_BYTES) throw new Error("invalid");
-    const value = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const value = JSON.parse(readBoundedRegularText(
+      manifestPath, MAX_PRUNE_MANIFEST_BYTES, "block pruning manifest is invalid",
+    ));
     if (!["nir-prune-quarantine-v1", "nir-prune-quarantine-v2"].includes(value?.format) ||
         typeof value.networkId !== "string" || value.networkId.length < 1 ||
         !Number.isSafeInteger(value.baseHeight) || value.baseHeight < 1 ||
@@ -326,11 +353,9 @@ function readPruneManifest(path) {
 }
 
 function fileDetails(path) {
-  const metadata = lstatSync(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error("block pruning file is invalid");
-  }
-  const contents = readFileSync(path, "utf8");
+  const contents = readBoundedRegularText(
+    path, MAX_PRUNE_BLOCK_FILE_BYTES, "block pruning file is invalid",
+  );
   return { bytes: Buffer.byteLength(contents), contents, fileSha256: fileSha256(contents) };
 }
 
@@ -527,7 +552,12 @@ export function finalizeBlockPruning(directory, genesis, options = {}) {
     const manifest = readPruneManifest(quarantine);
     plannedFiles += manifest.files.length;
     let verification;
-    try { verification = JSON.parse(readFileSync(join(quarantine, PRUNE_VERIFIED), "utf8")); }
+    try {
+      verification = JSON.parse(readBoundedRegularText(
+        join(quarantine, PRUNE_VERIFIED), MAX_PRUNE_MARKER_BYTES,
+        "block pruning verification is invalid",
+      ));
+    }
     catch { throw new Error("block pruning has not passed restart verification"); }
     if (verification?.format !== "nir-prune-verification-v1" ||
         verification.networkId !== genesis.networkId ||
@@ -540,7 +570,12 @@ export function finalizeBlockPruning(directory, genesis, options = {}) {
     const finalizingPath = join(quarantine, PRUNE_FINALIZING);
     let finalizing = null;
     if (existsSync(finalizingPath)) {
-      try { finalizing = JSON.parse(readFileSync(finalizingPath, "utf8")); } catch { /* fail below */ }
+      try {
+        finalizing = JSON.parse(readBoundedRegularText(
+          finalizingPath, MAX_PRUNE_MARKER_BYTES,
+          "block pruning finalization marker is invalid",
+        ));
+      } catch { /* fail below */ }
       if (finalizing?.format !== "nir-prune-finalizing-v1" ||
           finalizing.manifestHash !== verification.manifestHash ||
           finalizing.checkpointHash !== verification.checkpointHash) {
