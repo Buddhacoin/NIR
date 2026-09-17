@@ -31,6 +31,31 @@ function readSecret(prompt) {
   });
 }
 
+function readHandoffFile(path, allowMissing = false) {
+  if (!path) return [];
+  let metadata;
+  try { metadata = lstatSync(path); }
+  catch (error) {
+    if (allowMissing && error.code === "ENOENT") return [];
+    throw error;
+  }
+  if (metadata.isSymbolicLink() || statSync(path).size > MAX_HANDOFF_STORE_BYTES) {
+    throw new Error("validator handoff history file is unsafe");
+  }
+  const handoffs = JSON.parse(readFileSync(path, "utf8"));
+  if (!Array.isArray(handoffs)) throw new Error("validator handoff history is invalid");
+  return handoffs;
+}
+
+function selectCompatibleHistory(left, right) {
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length <= right.length ? right : left;
+  if (shorter.some(({ handoffHash }, index) => longer[index]?.handoffHash !== handoffHash)) {
+    throw new Error("validator handoff histories conflict");
+  }
+  return longer;
+}
+
 const [vaultPath, portText = "8788", origin = "http://127.0.0.1:8765", genesisPath, handoffPath] =
   process.argv.slice(2);
 try {
@@ -47,12 +72,10 @@ try {
   if (handoffPath && !genesis) {
     throw new Error("validator handoffs require an explicit genesis trust anchor");
   }
-  if (handoffPath && (lstatSync(handoffPath).isSymbolicLink() ||
-      statSync(handoffPath).size > MAX_HANDOFF_STORE_BYTES)) {
-    throw new Error("validator handoff history file is unsafe");
-  }
-  const handoffs = handoffPath ? JSON.parse(readFileSync(handoffPath, "utf8")) : [];
-  if (!Array.isArray(handoffs)) throw new Error("validator handoff history is invalid");
+  const trustHistoryPath = `${vaultPath}.handoffs.json`;
+  const handoffs = selectCompatibleHistory(
+    readHandoffFile(handoffPath), readHandoffFile(trustHistoryPath, true),
+  );
   const sessionToken = randomBytes(32).toString("hex");
   const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
   const server = createWalletBridgeServer({
@@ -63,6 +86,7 @@ try {
       expectedNetworkId: genesis.networkId, handoffs, trustedValidators: genesis.validators,
     } } : {}),
     ...(genesis ? { trustCheckpointPath: `${vaultPath}.trust.json` } : {}),
+    ...(genesis ? { trustHistoryPath } : {}),
     vaultPath,
     authorize: async (intent) => {
       console.error("\nNIR signing request");

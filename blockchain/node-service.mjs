@@ -62,6 +62,12 @@ export function createNodeHttpServer(node) {
           ...(Number.isSafeInteger(node.mempoolSize) ? { mempoolSize: node.mempoolSize } : {}),
         }, origin);
       }
+      if (request.method === "GET" && url.pathname === "/v1/validator-handoffs") {
+        if (typeof node.validatorHandoffHistory !== "function") {
+          return send(response, 501, { error: "validator handoff history is unavailable" }, origin);
+        }
+        return send(response, 200, { handoffs: node.validatorHandoffHistory() }, origin);
+      }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
         const accountPath = url.pathname.slice("/v1/accounts/".length);
         const proofRequest = accountPath.endsWith("/proof");

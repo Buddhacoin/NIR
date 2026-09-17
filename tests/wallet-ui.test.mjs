@@ -38,17 +38,17 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=20"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=21"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
 });
 
 test("wallet shell cache uses the current asset version", () => {
   for (const asset of ["style.css", "app.js", "nir-coin-icon.png"]) {
-    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=20`));
-    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=20`));
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=21`));
+    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=21`));
   }
-  assert.match(serviceWorker, /nir-wallet-shell-v20/);
+  assert.match(serviceWorker, /nir-wallet-shell-v21/);
 });
 
 test("wallet exposes native resource staking and delegation controls", () => {
@@ -101,6 +101,8 @@ test("wallet reports the local node connection state", () => {
   assert.match(styles, /\.network\.offline/);
   assert.match(script, /\/v1\/accounts\/\$\{encodeURIComponent\(walletInfo\.address\)\}\/proof/);
   assert.match(script, /bridgeRequest\("\/v1\/verify-account-proof"/);
+  assert.match(script, /\/v1\/validator-handoffs/);
+  assert.match(script, /bridgeRequest\("\/v1\/update-validator-trust"/);
   assert.match(script, /Кворум подтвердил баланс/);
   assert.match(script, /данные одного узла/);
 });

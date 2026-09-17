@@ -14,8 +14,10 @@ import {
   enforceWalletTrustCheckpoint,
   loadWalletTrustCheckpoint,
   requireCheckpointHandoff,
+  saveWalletHandoffHistory,
   saveWalletTrustCheckpoint,
 } from "./wallet-trust-store.mjs";
+import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -34,13 +36,13 @@ function send(response, status, value, origin) {
   response.end(body);
 }
 
-function readBody(request) {
+function readBody(request, maximumBytes = 72 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     request.on("data", (chunk) => {
       size += chunk.length;
-      if (size > 72 * 1024) reject(new Error("bridge request is too large"));
+      if (size > maximumBytes) reject(new Error("bridge request is too large"));
       else chunks.push(chunk);
     });
     request.on("end", () => {
@@ -150,6 +152,7 @@ export function createWalletBridgeServer({
   sessionToken,
   trustAnchor,
   trustCheckpointPath,
+  trustHistoryPath,
   vaultPath,
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
@@ -161,6 +164,7 @@ export function createWalletBridgeServer({
          trustAnchor.trustedValidators.length < 4)) ||
       (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
+      (trustHistoryPath !== undefined && typeof trustHistoryPath !== "string") ||
       !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
   }
@@ -239,6 +243,34 @@ export function createWalletBridgeServer({
         }
         return send(response, 200, {
           request: verifyPaymentRequest(body.request, { networkId: body.networkId }), verified: true,
+        }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/update-validator-trust") {
+        if (!accountTrust) throw new Error("bridge account trust anchor is not configured");
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("validator trust updates require application/json");
+        }
+        const body = await readBody(request, MAX_HANDOFF_STORE_BYTES);
+        if (!Array.isArray(body?.handoffs) || body.handoffs.length > 128 ||
+            body.handoffs.length < accountTrust.handoffs.length ||
+            accountTrust.handoffs.some(({ handoffHash }, index) =>
+              body.handoffs[index]?.handoffHash !== handoffHash)) {
+          throw new Error("validator trust update does not extend the accepted history");
+        }
+        const advanced = advanceValidatorTrust({
+          expectedNetworkId: accountTrust.expectedNetworkId,
+          handoffs: body.handoffs,
+          trustedValidators: accountTrust.trustedValidators,
+        });
+        requireCheckpointHandoff(trustCheckpoint, body.handoffs);
+        if (trustHistoryPath && body.handoffs.length > accountTrust.handoffs.length) {
+          saveWalletHandoffHistory(trustHistoryPath, body.handoffs);
+        }
+        accountTrust.handoffs = structuredClone(body.handoffs);
+        return send(response, 200, {
+          activationHeight: advanced.lastHandoff?.activationHeight ?? 0,
+          handoffs: accountTrust.handoffs.length,
+          updated: true,
         }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {

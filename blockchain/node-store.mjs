@@ -100,6 +100,8 @@ export class PersistentDevNode {
   get height() { return this.#chain.height; }
   get tipHash() { return this.#chain.tipHash; }
 
+  validatorHandoffHistory() { return []; }
+
   account(address) {
     const transactions = this.#chain.blocks().flatMap((block) => block.transactions)
       .filter((transaction) => transaction.sender === address || transaction.recipient === address)

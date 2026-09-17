@@ -164,6 +164,7 @@ test("validators independently attest an account proof with one peer offline", a
     const urls = await Promise.all(servers.map((server) => listen(server)));
     const account = generateWallet();
     let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    assert.deepEqual(coordinator.validatorHandoffHistory(), []);
     await coordinator.faucet(account.address);
     await close(servers[3]);
     coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);

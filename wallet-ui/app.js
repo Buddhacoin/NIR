@@ -106,6 +106,13 @@ async function readAccount() {
   if (!response.ok) throw new Error("Не удалось получить nonce и баланс от узла.");
   const account = await response.json();
   try {
+    const historyResponse = await fetch(`${NODE_URL}/v1/validator-handoffs`);
+    if (historyResponse.ok) {
+      const history = await historyResponse.json();
+      await bridgeRequest("/v1/update-validator-trust", {
+        method: "POST", body: JSON.stringify({ handoffs: history.handoffs }),
+      });
+    }
     const proofResponse = await fetch(
       `${NODE_URL}/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`,
     );

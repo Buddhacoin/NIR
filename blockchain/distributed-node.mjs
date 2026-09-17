@@ -332,6 +332,7 @@ export class ValidatorReplica {
   get height() { return this.#chain.height; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
+
   get mempoolSize() { return this.#mempool.size; }
   get peerUrls() { return [...this.#peerUrls]; }
   get peerCount() { return this.#transportView.length; }
@@ -1088,6 +1089,13 @@ export class DistributedCoordinator {
   get mempoolSize() { return this.#mempool.size; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
+
+  validatorHandoffHistory() {
+    return loadValidatorHandoffs(join(this.#directory, "handoffs"), {
+      expectedNetworkId: this.networkId,
+      trustedValidators: this.#genesis.validators,
+    }).handoffs;
+  }
 
   account(address) {
     if (!ADDRESS.test(address)) throw new Error("address is invalid");

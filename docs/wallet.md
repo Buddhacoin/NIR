@@ -63,9 +63,12 @@ When started with an explicit genesis file, the bridge also verifies account
 statements signed by a validator quorum. The browser then shows a confirmed
 height instead of trusting the balance reported by one node. Omitting the
 genesis path leaves this check disabled and the interface labels the result as
-single-node data. The optional handoff-history path lets the bridge advance that
-trust through independently approved validator rotations. Every transition is
-verified from genesis and only the set active at the proof height is accepted.
+single-node data. Before checking a balance, the wallet automatically downloads
+the handoff history from its node. The bridge accepts only a cryptographically
+valid extension rooted in genesis and stores it as `<vault>.handoffs.json`; the
+optional command-line history remains an offline recovery input. Every
+transition is verified from genesis and only the set active at the proof height
+is accepted.
 The bridge also writes `<vault>.trust.json`, a non-secret atomic checkpoint that
 prevents an older height, conflicting state or truncated rotation history from
 being accepted after restart. It should be backed up with the encrypted vault.

@@ -54,11 +54,14 @@ and refuses to sign a mismatch. The coordinator returns a proof only after an
 independent two-thirds-plus-one quorum agrees. One of four validators may be
 offline; two signatures are never enough.
 
-The final argument may be omitted before the first validator rotation. When it
-is present, the bridge verifies every transition from the pinned genesis and
-selects the validator set active at the proof height. A new set cannot appoint
-itself, an old set cannot sign balances after its replacement, and a future
-rotation is not applied early.
+The final argument may be omitted. Before checking a balance, the wallet now
+requests the current handoff history from its node and gives it to the isolated
+bridge. The bridge accepts only an extension rooted in its pinned genesis and
+stores the verified result as `<vault>.handoffs.json`. A node can withhold the
+history and cause a safe verification failure, but it cannot forge a transition.
+An explicitly supplied history remains useful for offline recovery. A new set
+cannot appoint itself, an old set cannot sign balances after its replacement,
+and a future rotation is not applied early.
 
 The bridge atomically stores a public checkpoint beside the encrypted vault as
 `<vault>.trust.json`. It contains no signing key. Once a newer finalized height
@@ -69,7 +72,7 @@ with the vault; deleting it deliberately resets rollback memory.
 
 ## Remaining production work
 
-Production distribution must deliver the verified handoff history to wallets
-through multiple independent sources.
-Authority never comes from a validator list supplied by the same untrusted proof
-response.
+Production distribution should add redundant discovery sources for availability.
+Authenticity already comes from old-and-new quorum signatures and the genesis
+trust anchor, never from the server delivering the history or a validator list
+inside the same untrusted proof response.

@@ -217,6 +217,8 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
     assert.equal(faucetResponse.status, 202);
     const account = await fetch(`${base}/v1/accounts/${wallet.address}`).then((response) => response.json());
     assert.equal(account.atomicBalance, (10n * ATOMIC_UNITS).toString());
+    const handoffs = await fetch(`${base}/v1/validator-handoffs`).then((response) => response.json());
+    assert.deepEqual(handoffs, { handoffs: [] });
 
     const rejected = await fetch(`${base}/health`, { headers: { origin: "https://example.com" } });
     assert.equal(rejected.status, 403);

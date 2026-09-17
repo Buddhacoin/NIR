@@ -81,21 +81,29 @@ test("wallet account trust advances through verified validator handoffs", async 
   const origin = "http://127.0.0.1:8765";
   const token = "0".repeat(64);
   const trustCheckpointPath = join(directory, "wallet.trust.json");
+  const trustHistoryPath = join(directory, "wallet.handoffs.json");
   const server = createWalletBridgeServer({
     authorize: async () => null,
     origin,
     sessionToken: token,
     trustAnchor: {
       expectedNetworkId: networkId,
-      handoffs: [handoff],
+      handoffs: [],
       trustedValidators: firstMembers,
     },
     trustCheckpointPath,
+    trustHistoryPath,
     vaultPath,
   });
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    const updated = await request(`${base}/v1/update-validator-trust`, origin, token, {
+      body: JSON.stringify({ handoffs: [handoff] }), method: "POST",
+    });
+    assert.equal(updated.status, 200);
+    assert.equal((await updated.json()).handoffs, 1);
+    assert.equal(existsSync(trustHistoryPath), true);
     const verified = await request(`${base}/v1/verify-account-proof`, origin, token, {
       body: JSON.stringify({ address: account.address, minimumHeight: 10, proof }), method: "POST",
     });

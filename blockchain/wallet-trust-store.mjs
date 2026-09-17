@@ -15,6 +15,7 @@ import { dirname, resolve } from "node:path";
 const FORMAT = "nir-wallet-trust-checkpoint-v1";
 const HASH = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 16 * 1024;
+const MAX_HISTORY_BYTES = 16 * 1024 * 1024;
 
 function validate(checkpoint, expectedNetworkId) {
   if (!checkpoint || checkpoint.format !== FORMAT ||
@@ -33,6 +34,24 @@ function validate(checkpoint, expectedNetworkId) {
 function syncDirectory(path) {
   const descriptor = openSync(path, "r");
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+}
+
+function writeAtomicContents(target, contents) {
+  const temporary = `${target}.${process.pid}.tmp`;
+  let descriptor;
+  try {
+    descriptor = openSync(temporary, "wx", 0o600);
+    writeFileSync(descriptor, contents, "utf8");
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, target);
+    syncDirectory(dirname(target));
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    rmSync(temporary, { force: true });
+  }
 }
 
 export function loadWalletTrustCheckpoint(path, expectedNetworkId) {
@@ -67,22 +86,18 @@ export function saveWalletTrustCheckpoint(path, statement, lastHandoff = null) {
     validatorSetId: statement.validatorSetId,
   }, statement.networkId);
   const contents = `${JSON.stringify(checkpoint, null, 2)}\n`;
-  const temporary = `${target}.${process.pid}.tmp`;
-  let descriptor;
-  try {
-    descriptor = openSync(temporary, "wx", 0o600);
-    writeFileSync(descriptor, contents, "utf8");
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = undefined;
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, target);
-    syncDirectory(dirname(target));
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-    rmSync(temporary, { force: true });
-  }
+  writeAtomicContents(target, contents);
   return checkpoint;
+}
+
+export function saveWalletHandoffHistory(path, handoffs) {
+  if (!Array.isArray(handoffs)) throw new Error("wallet handoff history is invalid");
+  const contents = `${JSON.stringify(handoffs, null, 2)}\n`;
+  if (Buffer.byteLength(contents) > MAX_HISTORY_BYTES) {
+    throw new Error("wallet handoff history is too large");
+  }
+  writeAtomicContents(resolve(path), contents);
+  return handoffs.length;
 }
 
 export function enforceWalletTrustCheckpoint(checkpoint, statement) {
