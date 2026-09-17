@@ -64,6 +64,24 @@ test("the disk history database serves bounded pages and survives reopen", () =>
       assert.equal(verifyAccountHistoryEntry(entry.id, entry.proof, commitment).index,
         entry.index);
     }
+    for (const { before, limit } of [
+      { before: 25, limit: 100 },
+      { before: 24, limit: 7 },
+      { before: 11, limit: 3 },
+      { before: 1, limit: 1 },
+      { before: 0, limit: 20 },
+    ]) {
+      const bounded = database.page(address, { before, limit });
+      const expectedStart = Math.max(0, before - limit);
+      assert.deepEqual(bounded.entries.map(({ id }) => id), ids.slice(expectedStart, before));
+      for (const entry of bounded.entries) {
+        verifyAccountHistoryEntry(entry.id, entry.proof, commitment);
+      }
+    }
+    const storage = database.storageStats();
+    assert.equal(storage.allocatedBytes, storage.pageCount * storage.pageSize);
+    assert.equal(storage.freeBytes, storage.freePages * storage.pageSize);
+    assert.ok(storage.reclaimableBps >= 0 && storage.reclaimableBps <= 10_000);
     assert.deepEqual(database.transactionProof(ids[24]).transaction, transactions[24]);
     assert.equal(database.matchesCommitments(new Map([[address, commitment]]), {
       height: 2,

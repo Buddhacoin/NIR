@@ -43,6 +43,7 @@
     "release:build-extension": "node blockchain/release-cli.mjs build-extension",
     "release:verify-extension": "node blockchain/release-cli.mjs verify-extension",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
+    "benchmark:history": "node benchmarks/account-history-storage.mjs",
     "test:chain": "node --test --test-concurrency=1 tests/*.test.mjs",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py' -v",
     "verify": "npm run test:python && npm run test:chain"

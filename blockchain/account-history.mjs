@@ -19,6 +19,7 @@ for (let level = 0; level < DEPTH; level += 1) {
 export const EMPTY_ACCOUNT_HISTORY_ROOT = emptyHashes[DEPTH];
 
 function bit(index, level) { return Math.floor(index / (2 ** level)) % 2; }
+function siblingPosition(position) { return position % 2 === 0 ? position + 1 : position - 1; }
 function leaf(transactionId, index) {
   return hashObject({ index, transactionId }, "ACCOUNT_HISTORY_LEAF");
 }
@@ -119,7 +120,7 @@ export class AccountHistoryMerkleIndex {
     let value = leaf(transactionId, position);
     this.#levels[0].set(position, value);
     for (let level = 0; level < DEPTH; level += 1) {
-      const sibling = this.#levels[level].get(position ^ 1) ?? emptyHashes[level];
+      const sibling = this.#levels[level].get(siblingPosition(position)) ?? emptyHashes[level];
       value = position % 2 === 0 ? node(value, sibling) : node(sibling, value);
       position = Math.floor(position / 2);
       this.#levels[level + 1].set(position, value);
@@ -145,7 +146,7 @@ export class AccountHistoryMerkleIndex {
       const siblings = [];
       let position = index;
       for (let level = 0; level < DEPTH; level += 1) {
-        siblings.push(this.#levels[level].get(position ^ 1) ?? emptyHashes[level]);
+        siblings.push(this.#levels[level].get(siblingPosition(position)) ?? emptyHashes[level]);
         position = Math.floor(position / 2);
       }
       return { count: this.#count, format: PROOF_FORMAT, index, siblings };

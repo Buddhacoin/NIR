@@ -36,6 +36,8 @@ function assertSafeDatabaseFiles(target) {
   }
 }
 
+function siblingPosition(position) { return position % 2 === 0 ? position + 1 : position - 1; }
+
 export class AccountHistoryDatabase {
   #database;
   #statements;
@@ -114,6 +116,10 @@ export class AccountHistoryDatabase {
       node: this.#database.prepare(
         "SELECT hash FROM nodes WHERE address = ? AND level = ? AND position = ?",
       ),
+      nodesAtLevel: this.#database.prepare(`
+        SELECT position, hash FROM nodes
+        WHERE address = ? AND level = ? AND position BETWEEN ? AND ?
+      `),
       setMetadata: this.#database.prepare(`
         INSERT INTO metadata(key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -151,7 +157,9 @@ export class AccountHistoryDatabase {
           this.#statements.insertHistory.run(address, count, id);
           this.#statements.insertNode.run(address, 0, position, value);
           for (let level = 0; level < ACCOUNT_HISTORY_DEPTH; level += 1) {
-            const sibling = this.#statements.node.get(address, level, position ^ 1)?.hash ??
+            const sibling = this.#statements.node.get(
+              address, level, siblingPosition(position),
+            )?.hash ??
               accountHistoryEmptyHash(level);
             value = position % 2 === 0
               ? accountHistoryNodeHash(value, sibling)
@@ -239,6 +247,20 @@ export class AccountHistoryDatabase {
     }
   }
 
+  storageStats() {
+    const pageCount = this.#database.prepare("PRAGMA page_count").get().page_count;
+    const freePages = this.#database.prepare("PRAGMA freelist_count").get().freelist_count;
+    const pageSize = this.#database.prepare("PRAGMA page_size").get().page_size;
+    return {
+      allocatedBytes: pageCount * pageSize,
+      freeBytes: freePages * pageSize,
+      freePages,
+      pageCount,
+      pageSize,
+      reclaimableBps: pageCount === 0 ? 0 : Math.floor((freePages * 10_000) / pageCount),
+    };
+  }
+
   page(address, { before, limit = 20 } = {}) {
     if (!ADDRESS.test(address ?? "")) throw new Error("address is invalid");
     const account = this.#statements.account.get(address);
@@ -249,11 +271,26 @@ export class AccountHistoryDatabase {
       throw new Error("account history page is invalid");
     }
     const start = Math.max(0, end - limit);
+    const nodes = new Map();
+    for (let level = 0; level < ACCOUNT_HISTORY_DEPTH; level += 1) {
+      let minimum = Number.MAX_SAFE_INTEGER;
+      let maximum = 0;
+      for (let position = start; position < end; position += 1) {
+        const sibling = siblingPosition(Math.floor(position / (2 ** level)));
+        minimum = Math.min(minimum, sibling);
+        maximum = Math.max(maximum, sibling);
+      }
+      if (end !== start) {
+        for (const { hash, position } of this.#statements.nodesAtLevel.all(
+          address, level, minimum, maximum,
+        )) nodes.set(`${level}:${position}`, hash);
+      }
+    }
     const entries = this.#statements.history.all(address, start, end).map(({ id, position }) => {
       const siblings = [];
       let nodePosition = position;
       for (let level = 0; level < ACCOUNT_HISTORY_DEPTH; level += 1) {
-        siblings.push(this.#statements.node.get(address, level, nodePosition ^ 1)?.hash ??
+        siblings.push(nodes.get(`${level}:${siblingPosition(nodePosition)}`) ??
           accountHistoryEmptyHash(level));
         nodePosition = Math.floor(nodePosition / 2);
       }
