@@ -5,9 +5,10 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   createCreditDelegation,
@@ -57,6 +58,47 @@ export function walletPublicInfo(path) {
     label: vault.label,
     publicKey: vault.publicKey,
   };
+}
+
+export function verifyWalletFile({ path, password }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    return { ...walletPublicInfo(path), verified: true };
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function copyVerifiedWalletFile({ sourcePath, targetPath, password }) {
+  const source = resolve(sourcePath);
+  const target = resolve(targetPath);
+  if (source === target) throw new Error("wallet backup target must be a new file");
+  const vault = readVault(source);
+  const wallet = decryptWallet(vault, password);
+  let created = false;
+  try {
+    const parent = lstatSync(dirname(target));
+    if (!parent.isDirectory() || parent.isSymbolicLink()) {
+      throw new Error("wallet backup parent must be a regular directory");
+    }
+    const descriptor = openSync(target, "wx", 0o600);
+    created = true;
+    try {
+      fchmodSync(descriptor, 0o600);
+      writeFileSync(descriptor, `${JSON.stringify(vault, null, 2)}\n`, "utf8");
+    } finally {
+      closeSync(descriptor);
+    }
+    chmodSync(target, 0o600);
+    const copied = verifyWalletFile({ path: target, password });
+    if (copied.address !== wallet.address) throw new Error("wallet backup verification failed");
+    return { ...copied, path: target };
+  } catch (error) {
+    if (created) rmSync(target, { force: true });
+    throw error;
+  } finally {
+    wallet.privateKey = "";
+  }
 }
 
 export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee }) {

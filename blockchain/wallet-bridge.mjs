@@ -249,6 +249,7 @@ export function createWalletBridgeServer({
   let pending = false;
   let pairingAttempts = 0;
   let pairingAvailable = pairingCode !== undefined;
+  let sessionActive = true;
   const pairingDeadline = Date.now() + pairingLifetimeMs;
   const server = createServer(async (request, response) => {
     const requestOrigin = request.headers.origin;
@@ -261,7 +262,7 @@ export function createWalletBridgeServer({
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "access-control-allow-headers": "content-type, x-nir-bridge-token",
-        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-methods": "DELETE, GET, POST, OPTIONS",
         "access-control-allow-origin": origin,
         "access-control-max-age": "300",
         "vary": "Origin",
@@ -289,10 +290,16 @@ export function createWalletBridgeServer({
         return send(response, 400, { error: error.message }, origin);
       }
     }
-    if (!authorized(request, sessionToken)) {
+    if (!sessionActive || !authorized(request, sessionToken)) {
       return send(response, 401, { error: "bridge session is not authorized" }, origin);
     }
     try {
+      if (request.method === "DELETE" && url.pathname === "/v1/session") {
+        sessionActive = false;
+        pairingAvailable = false;
+        verifiedAccountState = null;
+        return send(response, 200, { disconnected: true }, origin);
+      }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
       }

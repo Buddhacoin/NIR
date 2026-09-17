@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -214,4 +215,95 @@ export function installWalletArtifact(artifact, targetPath, { signedRelease, tru
     rmSync(target, { recursive: true, force: true });
     throw error;
   }
+}
+
+function installedFiles(directory, prefix = "", result = []) {
+  if (prefix.split("/").filter(Boolean).length > 32) {
+    throw new Error("wallet installation directory depth is excessive");
+  }
+  const names = readdirSync(directory).sort();
+  result.seen = (result.seen ?? 0) + names.length;
+  if (names.length > MAX_ENTRIES || result.seen > MAX_ENTRIES) {
+    throw new Error("wallet installation contains too many entries");
+  }
+  for (const name of names) {
+    const relative = prefix ? `${prefix}/${name}` : name;
+    const path = join(directory, name);
+    const metadata = lstatSync(path);
+    if (metadata.isSymbolicLink()) throw new Error("wallet installation contains a symbolic link");
+    if ((metadata.mode & 0o022) !== 0) {
+      throw new Error("wallet installation contains a group- or world-writable entry");
+    }
+    if (metadata.isDirectory()) installedFiles(path, relative, result);
+    else if (metadata.isFile()) result.push(relative);
+    else throw new Error("wallet installation contains an unsupported entry");
+  }
+  return result;
+}
+
+export function verifyWalletInstallation(targetPath, { signedRelease, trustedAddress } = {}) {
+  const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
+  const target = resolve(targetPath);
+  const targetMetadata = lstatSync(target);
+  if (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink() ||
+      (targetMetadata.mode & 0o022) !== 0) {
+    throw new Error("wallet installation must be a regular directory");
+  }
+  const sourceEntries = new Map(manifest.files.map((entry) => [entry.path, entry]));
+  const sourcePaths = artifactPaths("wallet", manifest.files.map(({ path }) => path));
+  const expectedRelative = sourcePaths.map((path) => path.slice("wallet-ui/".length));
+  const actualRelative = installedFiles(target);
+  const expectedFiles = [...expectedRelative, "NIR-INSTALL.json"].sort();
+  if (actualRelative.length !== expectedFiles.length ||
+      actualRelative.some((path, index) => path !== expectedFiles[index])) {
+    throw new Error("wallet installation file set does not match the signed release");
+  }
+  const entries = sourcePaths.map((path, index) => {
+    const relative = expectedRelative[index];
+    if (!relative) throw new Error("wallet installation path is invalid");
+    const destination = join(target, ...relative.split("/"));
+    const metadata = lstatSync(destination);
+    const contents = readFileSync(destination);
+    const source = sourceEntries.get(path);
+    const sourceDigest = createHash("sha3-256")
+      .update("NIR/RELEASE_FILE/v1\0").update(contents).digest("hex");
+    const executable = (metadata.mode & 0o111) !== 0;
+    if (!metadata.isFile() || metadata.isSymbolicLink() || !source ||
+        contents.length !== source.size || executable !== source.executable ||
+        sourceDigest !== source.sha3_256) {
+      throw new Error("wallet installation contents differ from the signed release");
+    }
+    return {
+      content: contents.toString("base64"), executable, path,
+      sha3_256: digest(contents), size: contents.length,
+    };
+  });
+  const payload = payloadFrom({
+    entries,
+    format: "nir-reproducible-package-v1",
+    kind: "wallet",
+    releaseVersion: manifest.releaseVersion,
+    sourceManifestHash: manifest.manifestHash,
+    sourceRevision: manifest.sourceRevision,
+  });
+  const artifactHash = hashObject(payload, "RELEASE_ARTIFACT_HASH");
+  const provenancePath = join(target, "NIR-INSTALL.json");
+  const provenanceMetadata = lstatSync(provenancePath);
+  if (!provenanceMetadata.isFile() || provenanceMetadata.isSymbolicLink() ||
+      provenanceMetadata.size > 16 * 1024) {
+    throw new Error("wallet installation provenance is invalid");
+  }
+  const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
+  const expectedProvenance = {
+    artifactHash,
+    format: "nir-wallet-install-v1",
+    releaseVersion: manifest.releaseVersion,
+    signerAddress: signer.address,
+    sourceManifestHash: manifest.manifestHash,
+    sourceRevision: manifest.sourceRevision,
+  };
+  if (canonicalJson(provenance) !== canonicalJson(expectedProvenance)) {
+    throw new Error("wallet installation provenance does not match its contents");
+  }
+  return { ...expectedProvenance, files: entries.length, verified: true };
 }

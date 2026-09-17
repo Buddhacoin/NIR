@@ -607,6 +607,13 @@ test("wallet bridge exchanges a short-lived one-time code for one in-memory sess
     });
     assert.equal(reused.status, 400);
     assert.match((await reused.json()).error, /unavailable/);
+    assert.equal((await request(`${base}/v1/wallet`, origin, token)).status, 200);
+    const disconnected = await request(`${base}/v1/session`, origin, token, {
+      method: "DELETE",
+    });
+    assert.equal(disconnected.status, 200);
+    assert.deepEqual(await disconnected.json(), { disconnected: true });
+    assert.equal((await request(`${base}/v1/wallet`, origin, token)).status, 401);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });

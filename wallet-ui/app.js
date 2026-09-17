@@ -19,6 +19,9 @@ const bridgePanel = document.querySelector("#bridge-panel");
 const receivePanel = document.querySelector("#receive-panel");
 const sendPanel = document.querySelector("#send-panel");
 const resourcesPanel = document.querySelector("#resources-panel");
+const settingsPanel = document.querySelector("#settings-panel");
+const setupPanel = document.querySelector("#setup-panel");
+const onboarding = document.querySelector("#onboarding");
 const bridgeStatus = document.querySelector("#bridge-status");
 const receiveStatus = document.querySelector("#receive-status");
 const sendStatus = document.querySelector("#send-status");
@@ -31,6 +34,32 @@ let nodePolicy = null;
 let pendingIntent = null;
 let signedTransaction = null;
 let signedResourceTransaction = null;
+
+function renderWalletConnection() {
+  const connected = Boolean(walletInfo && bridgeSession);
+  onboarding.hidden = connected;
+  document.querySelector("#disconnect-wallet").hidden = !connected;
+  document.querySelector("#settings-connect").hidden = connected;
+  document.querySelector("#security-state").textContent = connected
+    ? `Vault подключён · ${walletInfo.address.slice(0, 16)}…`
+    : "Vault не подключён";
+}
+
+function clearWalletSession(message = "Vault отключён · ключи и session token отсутствуют в странице") {
+  bridgeSession = null;
+  walletInfo = null;
+  pendingIntent = null;
+  signedTransaction = null;
+  signedResourceTransaction = null;
+  document.querySelector("#balance-value").textContent = "0.00000000";
+  document.querySelector("#wallet-state").textContent = message;
+  document.querySelector("#signed-json").value = "";
+  document.querySelector("#resource-signed-json").value = "";
+  document.querySelector("#send-review").hidden = true;
+  document.querySelector("#signed-result").hidden = true;
+  document.querySelector("#resource-signed").hidden = true;
+  renderWalletConnection();
+}
 
 function showMessage(key, copy = null) {
   const [title, defaultCopy] = messages[key];
@@ -62,7 +91,10 @@ async function bridgeRequest(path, options = {}) {
       },
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Локальный bridge отклонил запрос.");
+    if (!response.ok) {
+      if (response.status === 401) clearWalletSession("Сессия vault завершена · подключитесь снова");
+      throw new Error(result.error || "Локальный bridge отклонил запрос.");
+    }
     return result;
   } finally {
     clearTimeout(timeout);
@@ -114,9 +146,9 @@ async function readAccount() {
   if (!response.ok) throw new Error("Не удалось получить nonce и баланс от узла.");
   const account = await response.json();
   try {
-    const historyResponse = await fetch(nodeUrl("/v1/validator-handoffs"));
-    if (historyResponse.ok) {
-      const history = await historyResponse.json();
+    const handoffResponse = await fetch(nodeUrl("/v1/validator-handoffs"));
+    if (handoffResponse.ok) {
+      const history = await handoffResponse.json();
       await bridgeRequest("/v1/update-validator-trust", {
         method: "POST", body: JSON.stringify({ handoffs: history.handoffs }),
       });
@@ -416,6 +448,16 @@ function openBridgePanel() {
   bridgePanel.showModal();
 }
 
+function openSetupPanel() {
+  if (settingsPanel.open) settingsPanel.close();
+  setupPanel.showModal();
+}
+
+function openSettingsPanel() {
+  renderWalletConnection();
+  settingsPanel.showModal();
+}
+
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   bridgeStatus.textContent = "Подключение…";
@@ -429,6 +471,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     walletInfo = await bridgeRequest("/v1/wallet");
     codeInput.value = "";
     bridgeStatus.textContent = `Подключён ${walletInfo.address.slice(0, 16)}…`;
+    renderWalletConnection();
     await refreshNodeStatus();
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
@@ -638,6 +681,8 @@ document.querySelectorAll("[data-action]").forEach((button) => {
   button.addEventListener("click", () => {
     if (button.dataset.action === "receive") receive();
     else if (button.dataset.action === "send") openSend();
+    else if (button.dataset.action === "connect") openBridgePanel();
+    else if (button.dataset.action === "setup") openSetupPanel();
     else showMessage(button.dataset.action);
   });
 });
@@ -646,6 +691,27 @@ document.querySelector("#panel .primary").onclick = () => panel.close();
 document.querySelectorAll("[data-close]").forEach((button) => {
   button.onclick = () => document.querySelector(`#${button.dataset.close}`).close();
 });
+document.querySelector("#settings-connect").onclick = () => {
+  settingsPanel.close();
+  openBridgePanel();
+};
+document.querySelector("#settings-setup").onclick = openSetupPanel;
+document.querySelector("#setup-connect").onclick = () => {
+  setupPanel.close();
+  openBridgePanel();
+};
+document.querySelector("#disconnect-wallet").onclick = async (event) => {
+  event.currentTarget.disabled = true;
+  try {
+    if (bridgeSession) await bridgeRequest("/v1/session", { method: "DELETE" });
+  } catch {
+    // Local state is still erased if the bridge has already stopped or the session expired.
+  } finally {
+    clearWalletSession();
+    event.currentTarget.disabled = false;
+    settingsPanel.close();
+  }
+};
 
 const navigationButtons = [...document.querySelectorAll("[data-nav]")];
 navigationButtons.forEach((button) => button.addEventListener("click", () => {
@@ -661,7 +727,7 @@ navigationButtons.forEach((button) => button.addEventListener("click", () => {
   else if (destination === "history") {
     document.querySelector("#history").scrollIntoView({ behavior: "smooth", block: "center" });
     showMessage("history");
-  } else if (destination === "settings" && !walletInfo) openBridgePanel();
+  } else if (destination === "settings") openSettingsPanel();
   else showMessage(destination);
 }));
 
@@ -738,6 +804,7 @@ async function refreshNodeStatus() {
   }
 }
 refreshNodeStatus();
+renderWalletConnection();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   navigator.serviceWorker.register("./sw.js");

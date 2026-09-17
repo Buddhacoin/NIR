@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -6,6 +7,13 @@ const html = readFileSync(new URL("../wallet-ui/index.html", import.meta.url), "
 const script = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../wallet-ui/style.css", import.meta.url), "utf8");
 const serviceWorker = readFileSync(new URL("../wallet-ui/sw.js", import.meta.url), "utf8");
+const extensionManifest = JSON.parse(readFileSync(
+  new URL("../wallet-ui/manifest.json", import.meta.url), "utf8",
+));
+
+test("wallet browser module parses as valid JavaScript", () => {
+  execFileSync(process.execPath, ["--check", new URL("../wallet-ui/app.js", import.meta.url).pathname]);
+});
 
 test("wallet navigation has five interactive destinations", () => {
   for (const destination of ["home", "history", "resources", "mine", "settings"]) {
@@ -44,15 +52,41 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  for (const asset of ["style.css", "nir-coin-icon.png"]) {
-    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=24`));
-    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=24`));
-  }
-  assert.match(html, /app\.js\?v=26/);
-  assert.match(serviceWorker, /app\.js\?v=26/);
-  assert.match(serviceWorker, /nir-wallet-shell-v26/);
+  assert.match(html, /style\.css\?v=27/);
+  assert.match(serviceWorker, /style\.css\?v=27/);
+  assert.match(html, /nir-coin-icon\.png\?v=24/);
+  assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
+  assert.match(html, /app\.js\?v=27/);
+  assert.match(serviceWorker, /app\.js\?v=27/);
+  assert.match(serviceWorker, /nir-wallet-shell-v29/);
+  assert.match(serviceWorker, /skipWaiting/);
+  assert.match(serviceWorker, /clients\.claim/);
   assert.match(serviceWorker, /node-selection\.js/);
   assert.match(serviceWorker, /nodes\.json/);
+});
+
+test("wallet provides safe onboarding, recovery guidance, and session revocation", () => {
+  for (const id of ["onboarding", "settings-panel", "setup-panel", "disconnect-wallet"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /npm run wallet:backup/);
+  assert.match(html, /npm run wallet:restore/);
+  assert.match(script, /bridgeRequest\("\/v1\/session", \{ method: "DELETE" \}\)/);
+  assert.match(script, /clearWalletSession/);
+  assert.match(script, /onboarding\.hidden = connected/);
+});
+
+test("wallet limits browser privileges and supports accessible system settings", () => {
+  assert.match(html, /Content-Security-Policy/);
+  assert.match(html, /aria-live="polite"/);
+  assert.deepEqual(extensionManifest.permissions, []);
+  assert.deepEqual(extensionManifest.host_permissions,
+    ["http://127.0.0.1/*", "http://localhost/*"]);
+  assert.match(extensionManifest.content_security_policy.extension_pages, /object-src 'none'/);
+  assert.match(styles, /prefers-reduced-motion: reduce/);
+  assert.match(styles, /forced-colors: active/);
+  assert.match(styles, /@media \(max-width: 370px\)/);
+  assert.match(styles, /@media \(min-width: 760px\)/);
 });
 
 test("wallet renders only locally verified transaction history", () => {

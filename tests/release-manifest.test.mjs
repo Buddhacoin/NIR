@@ -22,6 +22,7 @@ import {
   installWalletArtifact,
   serializeReleaseArtifact,
   verifyReleaseArtifact,
+  verifyWalletInstallation,
 } from "../blockchain/release-artifact.mjs";
 import {
   createReleaseManifest,
@@ -186,6 +187,9 @@ test("verified wallet packages install only into a new directory with provenance
       provenance);
     assert.equal(provenance.artifactHash, artifact.artifactHash);
     assert.equal(provenance.signerAddress, wallet.address);
+    assert.deepEqual(verifyWalletInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), { ...provenance, files: 1, verified: true });
     const untrustedTarget = join(values.root, "untrusted-wallet");
     assert.throws(() => installWalletArtifact(artifact, untrustedTarget, {
       signedRelease, trustedAddress: generateWallet().address,
@@ -202,6 +206,22 @@ test("verified wallet packages install only into a new directory with provenance
       signedRelease, trustedAddress: wallet.address,
     }), /digest|hash/);
     assert.equal(existsSync(rejectedTarget), false);
+
+    writeFileSync(join(target, "unexpected.js"), "unexpected\n");
+    assert.throws(() => verifyWalletInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /file set/);
+    rmSync(join(target, "unexpected.js"));
+    chmodSync(join(target, "index.html"), 0o666);
+    assert.throws(() => verifyWalletInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /world-writable/);
+    chmodSync(join(target, "index.html"), 0o644);
+
+    writeFileSync(join(target, "index.html"), "<h1>Modified</h1>\n");
+    assert.throws(() => verifyWalletInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /contents differ/);
   } finally {
     rmSync(values.root, { recursive: true, force: true });
   }

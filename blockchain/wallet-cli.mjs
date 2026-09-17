@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import process from "node:process";
 
-import { createWalletFile, signWalletTransfer, walletPublicInfo } from "./wallet-files.mjs";
+import {
+  copyVerifiedWalletFile,
+  createWalletFile,
+  signWalletTransfer,
+  verifyWalletFile,
+  walletPublicInfo,
+} from "./wallet-files.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -36,6 +42,15 @@ try {
     console.log(JSON.stringify(createWalletFile({ path: args[0], password }), null, 2));
   } else if (command === "address" && args.length === 1) {
     console.log(JSON.stringify(walletPublicInfo(args[0]), null, 2));
+  } else if (command === "verify" && args.length === 1) {
+    const password = await readSecret("Wallet password: ");
+    console.log(JSON.stringify(verifyWalletFile({ path: args[0], password }), null, 2));
+  } else if (["backup", "restore"].includes(command) && args.length === 2) {
+    const password = await readSecret("Wallet password: ");
+    const result = copyVerifiedWalletFile({
+      sourcePath: args[0], targetPath: args[1], password,
+    });
+    console.log(JSON.stringify({ ...result, operation: command }, null, 2));
   } else if (command === "sign" && (args.length === 5 || args.length === 6)) {
     const [path, networkId, recipient, amount, nonce, fee] = args;
     console.error(`Recipient: ${recipient}\nAmount (atomic units): ${amount}\nNetwork: ${networkId}`);
@@ -46,7 +61,7 @@ try {
       path, password, networkId, recipient, amount, nonce: Number(nonce), fee,
     }), null, 2));
   } else {
-    throw new Error("usage: wallet:create <file> | wallet:address <file> | wallet:sign <file> <network> <recipient> <atomic-amount> <nonce> [atomic-fee]");
+    throw new Error("usage: wallet:create <file> | wallet:address <file> | wallet:verify <file> | wallet:backup <vault> <new-backup-file> | wallet:restore <backup-file> <new-vault-file> | wallet:sign <file> <network> <recipient> <atomic-amount> <nonce> [atomic-fee]");
   }
 } catch (error) {
   console.error(`Wallet operation failed: ${error.message}`);

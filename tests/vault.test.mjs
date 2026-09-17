@@ -7,7 +7,13 @@ import test from "node:test";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { createMultisigRecoveryManifest, decryptWallet, encryptWallet } from "../blockchain/vault.mjs";
 import { createVaultSet, verifyVaultSet } from "../blockchain/vault-files.mjs";
-import { createWalletFile, signWalletTransfer, walletPublicInfo } from "../blockchain/wallet-files.mjs";
+import {
+  copyVerifiedWalletFile,
+  createWalletFile,
+  signWalletTransfer,
+  verifyWalletFile,
+  walletPublicInfo,
+} from "../blockchain/wallet-files.mjs";
 import { verifyObject } from "../blockchain/crypto.mjs";
 
 test("an encrypted vault restores the exact post-quantum wallet", () => {
@@ -112,6 +118,38 @@ test("native wallet file is private and signs a network-bound transfer", () => {
     corrupted.address = recipient.address;
     writeFileSync(path, JSON.stringify(corrupted));
     assert.throws(() => walletPublicInfo(path), /not a NIR wallet vault/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wallet backups are password-verified, private, and restore only to a new file", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-backup-test-"));
+  const source = join(directory, "wallet.nirvault.json");
+  const backup = join(directory, "wallet-backup.nirvault.json");
+  const restored = join(directory, "wallet-restored.nirvault.json");
+  const password = "wallet-backup-password-long";
+  try {
+    const created = createWalletFile({ path: source, password });
+    assert.deepEqual(verifyWalletFile({ path: source, password }), {
+      ...walletPublicInfo(source), verified: true,
+    });
+    assert.throws(() => verifyWalletFile({ path: source, password: "wrong-password-long" }),
+      /integrity check is invalid/);
+    const copied = copyVerifiedWalletFile({ sourcePath: source, targetPath: backup, password });
+    assert.equal(copied.address, created.address);
+    assert.equal(statSync(backup).mode & 0o777, 0o600);
+    assert.equal(readFileSync(backup, "utf8"), readFileSync(source, "utf8"));
+    assert.equal(copyVerifiedWalletFile({
+      sourcePath: backup, targetPath: restored, password,
+    }).address, created.address);
+    assert.throws(() => copyVerifiedWalletFile({
+      sourcePath: backup, targetPath: restored, password,
+    }), /EEXIST/);
+    assert.throws(() => copyVerifiedWalletFile({
+      sourcePath: source, targetPath: join(directory, "bad-backup.json"),
+      password: "wrong-password-long",
+    }), /integrity check is invalid/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

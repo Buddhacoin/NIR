@@ -36,6 +36,19 @@ header, .title { display: flex; align-items: center; justify-content: space-betw
 .actions i { display: grid; place-items: center; width: 42px; height: 42px; margin: 0 auto 9px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-soft); color: var(--text); font-style: normal; }
 .actions svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .card { min-height: 218px; margin-top: 18px; padding: 20px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: 0 14px 40px #0000000a; }
+.onboarding { min-height: 0; }
+.onboarding[hidden] { display: none; }
+.onboarding .title { align-items: flex-start; gap: 16px; }
+.onboarding h2 { margin: 4px 0 0; }
+.onboarding > p, .onboarding li { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.onboarding > p { margin: 9px 0; }
+.onboarding ol { margin: 9px 0 11px; padding-left: 21px; }
+.onboarding li + li { margin-top: 6px; }
+.eyebrow { color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.step { flex: none; padding: 6px 9px; border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
+.onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.onboarding-actions button { padding-top: 11px; padding-bottom: 11px; }
+.onboarding-actions .secondary { margin: 0; }
 h2 { font-size: 18px; }
 .title button span { font-size: 18px; vertical-align: -1px; }
 .empty { padding: 24px 10px 12px; text-align: center; }
@@ -72,6 +85,7 @@ dialog input, dialog textarea { width: 100%; border: 1px solid var(--border); bo
 dialog input { min-height: 48px; padding: 11px 13px; }
 dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; }
 .secondary { width: 100%; margin-top: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); color: var(--text); font-weight: 700; }
+.danger { width: 100%; margin-top: 9px; padding: 13px; border: 1px solid #d6a4a4; border-radius: 14px; background: transparent; color: #9b3030; font-weight: 700; }
 .form-status { min-height: 20px; margin: 4px 0 0; color: #a23131; overflow-wrap: anywhere; }
 #send-review, #signed-result, #resource-signed { margin-top: 18px; }
 #send-review dl { display: grid; gap: 1px; margin: 0 0 16px; overflow: hidden; border: 1px solid var(--border); border-radius: 15px; background: var(--border); }
@@ -95,9 +109,41 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 .request-import label { margin-top: 12px; }
 .request-import textarea { min-height: 92px; }
 #verified-request-note { margin: 9px 0 0; color: #157542; overflow-wrap: anywhere; }
+.security-state { margin: 17px 0; padding: 12px 13px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.setup-steps { display: grid; gap: 13px; padding-left: 22px; }
+.setup-steps li { padding-left: 3px; }
+.setup-steps b, .setup-steps code { display: block; }
+.setup-steps code { margin-top: 6px; padding: 9px; border-radius: 10px; background: var(--surface-soft); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; user-select: all; }
+#setup-panel { max-height: calc(100vh - 28px); overflow-y: auto; }
 :root[data-theme="dark"] { color-scheme: dark; --bg: #080808; --surface: #131313; --surface-soft: #242424; --border: #303030; --text: #f5f5f5; --muted: #979797; --inverse: #080808; }
 :root[data-theme="dark"] body { background: radial-gradient(circle at 50% -15%, #1b1b1b 0, var(--bg) 48%); }
 :root[data-theme="dark"] .header-actions button { background: #151515dc; }
 :root[data-theme="dark"] nav { border-color: #303030; background: #151515ef; }
 :root[data-theme="dark"] .network.connected { color: #75d39a; }
 :root[data-theme="dark"] nav .active i { background: transparent; color: #fff; }
+:root[data-theme="dark"] .danger { border-color: #693c3c; color: #e7a2a2; }
+
+@media (max-width: 370px) {
+  .shell { padding-right: 13px; padding-left: 13px; }
+  .network { max-width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .onboarding-actions { grid-template-columns: 1fr; }
+  .actions { gap: 7px; }
+  .actions button { font-size: 12px; }
+  nav span { font-size: 10px; }
+}
+
+@media (min-width: 760px) {
+  .shell { width: min(560px, 100%); padding-top: 28px; }
+  dialog { width: min(440px, calc(100% - 40px)); }
+  .onboarding ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-left: 0; list-style-position: inside; }
+  .onboarding li, .onboarding li + li { margin: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+}
+
+@media (forced-colors: active) {
+  button, .card, nav, dialog, input, textarea { border: 1px solid ButtonText; }
+  .network.connected, .network.offline, .form-status { color: CanvasText; }
+}
