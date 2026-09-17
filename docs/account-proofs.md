@@ -59,6 +59,9 @@ requests the current handoff history from its node and gives it to the isolated
 bridge. The bridge accepts only an extension rooted in its pinned genesis and
 stores the verified result as `<vault>.handoffs.json`. A node can withhold the
 history and cause a safe verification failure, but it cannot forge a transition.
+In distributed mode the node first asks every reachable validator for its
+authenticated copy, rejects valid histories that diverge, and returns the
+longest compatible chain together with the number of matching sources.
 An explicitly supplied history remains useful for offline recovery. A new set
 cannot appoint itself, an old set cannot sign balances after its replacement,
 and a future rotation is not applied early.

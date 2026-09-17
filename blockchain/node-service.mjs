@@ -66,7 +66,8 @@ export function createNodeHttpServer(node) {
         if (typeof node.validatorHandoffHistory !== "function") {
           return send(response, 501, { error: "validator handoff history is unavailable" }, origin);
         }
-        return send(response, 200, { handoffs: node.validatorHandoffHistory() }, origin);
+        const history = await node.validatorHandoffHistory();
+        return send(response, 200, Array.isArray(history) ? { handoffs: history } : history, origin);
       }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
         const accountPath = url.pathname.slice("/v1/accounts/".length);

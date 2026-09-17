@@ -217,3 +217,34 @@ export function advanceValidatorTrust({ expectedNetworkId, handoffs = [], truste
   }
   return { lastHandoff, trustedValidators: current };
 }
+
+export function selectValidatorHandoffHistories(candidates, trustAnchor = {}) {
+  if (!Array.isArray(candidates) || candidates.length === 0 || candidates.length > 128) {
+    throw new Error("validator handoff history candidates are invalid");
+  }
+  const valid = [];
+  for (const candidate of candidates) {
+    try {
+      if (!Array.isArray(candidate) || candidate.length > 128) throw new Error("invalid history");
+      const verified = advanceValidatorTrust({ ...trustAnchor, handoffs: candidate });
+      valid.push({ handoffs: structuredClone(candidate), verified });
+    } catch {
+      // A malformed source cannot suppress independently verifiable histories.
+    }
+  }
+  if (valid.length === 0) throw new Error("no valid validator handoff history exists");
+  valid.sort((left, right) => right.handoffs.length - left.handoffs.length);
+  const selected = valid[0];
+  for (const candidate of valid.slice(1)) {
+    const shared = Math.min(selected.handoffs.length, candidate.handoffs.length);
+    for (let index = 0; index < shared; index += 1) {
+      if (selected.handoffs[index].handoffHash !== candidate.handoffs[index].handoffHash) {
+        throw new Error("authenticated validator handoff histories conflict");
+      }
+    }
+  }
+  const matchingSources = valid.filter(({ handoffs }) =>
+    handoffs.length === selected.handoffs.length && handoffs.every(({ handoffHash }, index) =>
+      handoffHash === selected.handoffs[index].handoffHash)).length;
+  return { ...selected, matchingSources };
+}

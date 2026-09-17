@@ -52,6 +52,7 @@ import { installStateSnapshot } from "./snapshot-store.mjs";
 import {
   createValidatorHandoffCandidate,
   mergeValidatorHandoffCandidates,
+  selectValidatorHandoffHistories,
 } from "./validator-handoff.mjs";
 import {
   installValidatorHandoff,
@@ -1090,11 +1091,18 @@ export class DistributedCoordinator {
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
 
-  validatorHandoffHistory() {
-    return loadValidatorHandoffs(join(this.#directory, "handoffs"), {
+  async validatorHandoffHistory() {
+    const trustAnchor = {
       expectedNetworkId: this.networkId,
       trustedValidators: this.#genesis.validators,
-    }).handoffs;
+    };
+    const local = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor).handoffs;
+    const responses = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#request(index, "/v1/handoffs/history", {})));
+    const candidates = [local, ...responses.filter(({ status }) => status === "fulfilled")
+      .map(({ value }) => value.handoffs)];
+    const selected = selectValidatorHandoffHistories(candidates, trustAnchor);
+    return { handoffs: selected.handoffs, matchingSources: selected.matchingSources };
   }
 
   account(address) {
@@ -1186,7 +1194,8 @@ export class DistributedCoordinator {
     return peerRequest(this.#peers[index], path, value, {
       networkId: this.networkId,
       maxResponseBytes: path === "/v1/snapshots/candidate"
-        ? MAX_SNAPSHOT_BYTES + 64 * 1024 : undefined,
+        ? MAX_SNAPSHOT_BYTES + 64 * 1024
+        : path === "/v1/handoffs/history" ? 16 * 1024 * 1024 + 64 * 1024 : undefined,
       peer: this.#validators[index],
       tlsCertificateSha256: this.#peerTlsPins[index],
       wallet: this.#wallet,

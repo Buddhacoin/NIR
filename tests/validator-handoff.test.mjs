@@ -7,6 +7,7 @@ import {
   createValidatorHandoff,
   createValidatorHandoffCandidate,
   mergeValidatorHandoffCandidates,
+  selectValidatorHandoffHistories,
   verifyValidatorHandoff,
 } from "../blockchain/validator-handoff.mjs";
 
@@ -38,6 +39,30 @@ test("validator trust advances only after old and new quorums sign the same hand
   assert.equal(verified.activationHeight, 10);
   assert.deepEqual(verified.trustedValidators, members(next)
     .sort((left, right) => left.address.localeCompare(right.address)));
+});
+
+test("handoff history selection tolerates stale and malformed independent sources", () => {
+  const first = Array.from({ length: 4 }, generateWallet);
+  const second = [first[0], first[1], ...Array.from({ length: 2 }, generateWallet)];
+  const handoff = createValidatorHandoff(
+    fields(first, second, 10), first.slice(0, 3), second.slice(0, 3),
+  );
+  const selected = selectValidatorHandoffHistories([
+    [], [handoff], [handoff], [{ broken: true }],
+  ], {
+    expectedNetworkId: "nir-handoff-test",
+    trustedValidators: members(first),
+  });
+  assert.equal(selected.handoffs.length, 1);
+  assert.equal(selected.matchingSources, 2);
+  const alternate = [first[0], first[2], ...Array.from({ length: 2 }, generateWallet)];
+  const conflicting = createValidatorHandoff(
+    fields(first, alternate, 10), first.slice(0, 3), alternate.slice(0, 3),
+  );
+  assert.throws(() => selectValidatorHandoffHistories([[handoff], [conflicting]], {
+    expectedNetworkId: "nir-handoff-test",
+    trustedValidators: members(first),
+  }), /histories conflict/);
 });
 
 test("independent activation candidates merge only with old and new quorums", () => {
