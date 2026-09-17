@@ -28,6 +28,30 @@ function chunkDigest(contents) {
     .digest("hex");
 }
 
+export function verifyHistoryArchiveChunk(chunk, expected, index = expected?.index) {
+  const maximumBase64Length = Math.ceil((expected?.size ?? 0) / 3) * 4;
+  if (!Number.isSafeInteger(index) || index < 0 || chunk?.index !== index ||
+      expected?.index !== index || typeof chunk.data !== "string" ||
+      chunk.data.length !== maximumBase64Length ||
+      Buffer.byteLength(chunk.data) !== maximumBase64Length) {
+    throw new Error("history archive chunk is invalid");
+  }
+  const contents = Buffer.from(chunk.data, "base64");
+  if (contents.toString("base64") !== chunk.data || contents.length !== expected.size ||
+      chunkDigest(contents) !== expected.sha3_256) {
+    throw new Error("history archive chunk hash is invalid");
+  }
+  let parsed;
+  try { parsed = JSON.parse(contents.toString("utf8")); }
+  catch { throw new Error("history archive chunk JSON is invalid"); }
+  if (!Array.isArray(parsed) || canonicalJson(parsed) !== contents.toString("utf8") ||
+      parsed.length !== expected.endHeight - expected.startHeight + 1 ||
+      parsed[0]?.height !== expected.startHeight || parsed.at(-1)?.height !== expected.endHeight) {
+    throw new Error("history archive chunk contents are invalid");
+  }
+  return parsed;
+}
+
 function contentRoot(records) {
   return hashObject(records.map(({ blockHash, height, indexHash }) => ({
     blockHash, height, indexHash,
@@ -200,27 +224,7 @@ export function verifySignedHistoryArchive(archive, chain, options = {}) {
   }
   const records = [];
   for (const [index, expected] of payload.chunks.entries()) {
-    const chunk = archive.chunks[index];
-    const maximumBase64Length = Math.ceil(expected.size / 3) * 4;
-    if (chunk?.index !== index || typeof chunk.data !== "string" ||
-        chunk.data.length !== maximumBase64Length ||
-        Buffer.byteLength(chunk.data) !== maximumBase64Length) {
-      throw new Error("history archive chunk is invalid");
-    }
-    const contents = Buffer.from(chunk.data, "base64");
-    if (contents.toString("base64") !== chunk.data || contents.length !== expected.size ||
-        chunkDigest(contents) !== expected.sha3_256) {
-      throw new Error("history archive chunk hash is invalid");
-    }
-    let parsed;
-    try { parsed = JSON.parse(contents.toString("utf8")); }
-    catch { throw new Error("history archive chunk JSON is invalid"); }
-    if (!Array.isArray(parsed) || canonicalJson(parsed) !== contents.toString("utf8") ||
-        parsed.length !== expected.endHeight - expected.startHeight + 1 ||
-        parsed[0]?.height !== expected.startHeight || parsed.at(-1)?.height !== expected.endHeight) {
-      throw new Error("history archive chunk contents are invalid");
-    }
-    records.push(...parsed);
+    records.push(...verifyHistoryArchiveChunk(archive.chunks[index], expected, index));
   }
   if (records.length !== payload.recordCount || contentRoot(records) !== expectedContentRoot) {
     throw new Error("history archive content root is invalid");

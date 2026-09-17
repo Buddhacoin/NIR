@@ -240,6 +240,45 @@ test("a node downloads and restores matching archives from independent services"
 
     rmSync(join(directory, "account-history-index"), { recursive: true, force: true });
     rmSync(join(directory, "account-history-index-backup"), { recursive: true, force: true });
+    const chunkRequests = new Map(sources.map((source) => [new URL(source).port, 0]));
+    const fetchImpl = (url, options) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.includes("/chunks/")) {
+        chunkRequests.set(parsed.port, chunkRequests.get(parsed.port) + 1);
+      }
+      return fetch(url, options);
+    };
+    const restored = await restoreHistoryArchiveFromSources(directory, sources, chain, {
+      allowInsecureLocalhost: true, fetchImpl, trustedOperators,
+    });
+    assert.equal(restored.matchingSources, 2);
+    assert.ok(chunkRequests.get(new URL(sources[0]).port) > 0);
+    assert.equal(chunkRequests.get(new URL(sources[1]).port), 0);
+    assert.equal(new AccountHistoryIndex(directory, chain).page(recipient.address).count, 1);
+  } finally {
+    await Promise.all(servers.filter((server) => server.listening).map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("streaming recovery falls back when the first agreed operator serves a bad chunk", async () => {
+  const { chain, directory, recipient, temporary } = fixture();
+  const operators = [generateWallet(), generateWallet()];
+  const trustedOperators = operators.map(publicWallet);
+  const archives = operators.map((operator) =>
+    createSignedHistoryArchive(directory, chain, operator));
+  const damaged = structuredClone(archives[0]);
+  const data = damaged.chunks[0].data;
+  damaged.chunks[0].data = `${data[0] === "A" ? "B" : "A"}${data.slice(1)}`;
+  const servers = [
+    createHistoryArchiveHttpServer(damaged),
+    createHistoryArchiveHttpServer(archives[1]),
+  ];
+  try {
+    const sources = [];
+    for (const server of servers) sources.push(await listen(server));
+    rmSync(join(directory, "account-history-index"), { recursive: true, force: true });
+    rmSync(join(directory, "account-history-index-backup"), { recursive: true, force: true });
     const restored = await restoreHistoryArchiveFromSources(directory, sources, chain, {
       allowInsecureLocalhost: true, trustedOperators,
     });

@@ -141,16 +141,18 @@ function readCandidate(path, context) {
   catch { return null; }
 }
 
-function applyRecord(accumulators, histories, trees, transactions, record) {
+function applyRecord(accumulators, histories, trees, transactions, record, {
+  retainTransactionDetails = true,
+} = {}) {
   for (const entry of record.transactions) {
     if (transactions.has(entry.id)) throw new Error("duplicate transaction in history index");
-    transactions.set(entry.id, {
+    transactions.set(entry.id, retainTransactionDetails ? {
       blockHash: record.blockHash,
       height: record.height,
       proof: entry.proof,
       transaction: entry.transaction,
       transactionsRoot: record.transactionsRoot,
-    });
+    } : true);
   }
   for (const { address, transactionIds } of record.updates) {
     const ids = histories.get(address) ?? [];
@@ -200,19 +202,23 @@ function retainedBlocks(chain) {
     .map((block) => [block.height, block]));
 }
 
-function readCompleteRecordSet(directory, chain) {
-  const records = [];
+function *recordDirectoryEntries(directory, chain) {
   let previousIndexHash = ZERO_HASH;
   for (let height = 1; height <= chain.height; height += 1) {
     const record = readCandidate(join(directory, fileName(height)), {
       height, networkId: chain.networkId, previousIndexHash,
     });
-    if (!record) return null;
-    records.push(record);
+    if (!record) throw new Error(`account history index ${height} is unavailable`);
     previousIndexHash = record.indexHash;
+    yield record;
   }
-  try { return verifyAccountHistoryIndexRecords(records, chain); }
-  catch { return null; }
+}
+
+function verifyRecordDirectory(directory, chain) {
+  try {
+    verifyAccountHistoryIndexRecordIterable(recordDirectoryEntries(directory, chain), chain);
+    return true;
+  } catch { return false; }
 }
 
 function readInstallMarker(root, chain) {
@@ -232,10 +238,14 @@ function readInstallMarker(root, chain) {
   return marker;
 }
 
-function writeRecordSet(directory, records) {
-  rmSync(directory, { recursive: true, force: true });
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  for (const record of records) writeAtomic(join(directory, fileName(record.height)), record);
+function copyRecordSet(source, destination, chain) {
+  if (!verifyRecordDirectory(source, chain)) return false;
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(destination, { recursive: true, mode: 0o700 });
+  for (const record of recordDirectoryEntries(source, chain)) {
+    writeAtomic(join(destination, fileName(record.height)), record);
+  }
+  return verifyRecordDirectory(destination, chain);
 }
 
 function finishPreparedInstallation(root, chain) {
@@ -247,12 +257,15 @@ function finishPreparedInstallation(root, chain) {
     join(root, PRIMARY_DIRECTORY),
     join(root, BACKUP_DIRECTORY),
   ];
-  const records = candidates.map((directory) => readCompleteRecordSet(directory, chain))
-    .find(Boolean);
-  if (!records) throw new Error("prepared account history installation cannot be recovered");
+  const source = candidates.find((directory) => verifyRecordDirectory(directory, chain));
+  if (!source) throw new Error("prepared account history installation cannot be recovered");
   const live = [join(root, PRIMARY_DIRECTORY), join(root, BACKUP_DIRECTORY)];
-  for (const directory of live) writeRecordSet(directory, records);
-  if (live.some((directory) => !readCompleteRecordSet(directory, chain))) {
+  for (const directory of live) {
+    if (directory !== source && !copyRecordSet(source, directory, chain)) {
+      throw new Error("prepared account history installation did not verify");
+    }
+  }
+  if (live.some((directory) => !verifyRecordDirectory(directory, chain))) {
     throw new Error("prepared account history installation did not verify");
   }
   rmSync(join(root, INSTALL_MARKER));
@@ -442,6 +455,17 @@ export function verifyAccountHistoryIndexRecords(records, chain) {
   if (!Array.isArray(records) || records.length !== chain.height) {
     throw new Error("account history archive record count is invalid");
   }
+  return verifyAccountHistoryIndexRecordIterable(records, chain, { collect: true });
+}
+
+export function verifyAccountHistoryIndexRecordIterable(records, chain, {
+  collect = false,
+  onRecord,
+} = {}) {
+  if (!records || typeof records[Symbol.iterator] !== "function" ||
+      (onRecord !== undefined && typeof onRecord !== "function")) {
+    throw new Error("account history archive records are invalid");
+  }
   const accumulators = new Map();
   const histories = new Map();
   const trees = new Map();
@@ -449,8 +473,11 @@ export function verifyAccountHistoryIndexRecords(records, chain) {
   const retained = retainedBlocks(chain);
   let previousIndexHash = ZERO_HASH;
   let tipHash = chain.blocks()[0].hash;
-  const verified = records.map((candidate, offset) => {
-    const height = offset + 1;
+  let count = 0;
+  const verified = collect ? [] : null;
+  for (const candidate of records) {
+    const height = count + 1;
+    if (height > chain.height) throw new Error("account history archive has extra records");
     const record = verifyRecord(candidate, {
       height, networkId: chain.networkId, previousIndexHash,
     });
@@ -460,28 +487,44 @@ export function verifyAccountHistoryIndexRecords(records, chain) {
         record.transactions.length !== block.transactions.length)) {
       throw new Error(`account history archive conflicts with block ${height}`);
     }
-    applyRecord(accumulators, histories, trees, transactions, record);
+    applyRecord(accumulators, histories, trees, transactions, record, {
+      retainTransactionDetails: false,
+    });
+    if (onRecord) onRecord(record);
+    if (verified) verified.push(record);
     previousIndexHash = record.indexHash;
     tipHash = record.blockHash;
-    return record;
-  });
-  if (tipHash !== chain.tipHash || !matchesChain(accumulators, histories, trees, chain)) {
+    count += 1;
+  }
+  if (count !== chain.height || tipHash !== chain.tipHash ||
+      !matchesChain(accumulators, histories, trees, chain)) {
     throw new Error("account history archive does not match chain state");
   }
-  return verified;
+  return verified ?? { records: count, tipHash };
 }
 
 export function installAccountHistoryIndexRecords(directory, records, chain) {
-  const verified = verifyAccountHistoryIndexRecords(records, chain);
+  if (!Array.isArray(records)) throw new Error("account history archive records are invalid");
+  return installAccountHistoryIndexRecordIterable(directory, records, chain);
+}
+
+export function installAccountHistoryIndexRecordIterable(directory, records, chain) {
   const root = resolve(directory);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   finishPreparedInstallation(root, chain);
   const staging = join(root, INSTALL_DIRECTORY);
   rmSync(staging, { recursive: true, force: true });
   const stagedCopies = [join(staging, PRIMARY_DIRECTORY), join(staging, BACKUP_DIRECTORY)];
+  stagedCopies.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
+  const verified = verifyAccountHistoryIndexRecordIterable(records, chain, {
+    onRecord(record) {
+      for (const path of stagedCopies) {
+        writeAtomic(join(path, fileName(record.height)), record);
+      }
+    },
+  });
   for (const path of stagedCopies) {
-    writeRecordSet(path, verified);
-    if (!readCompleteRecordSet(path, chain)) {
+    if (!verifyRecordDirectory(path, chain)) {
       throw new Error("staged account history installation did not verify");
     }
   }
@@ -493,5 +536,5 @@ export function installAccountHistoryIndexRecords(directory, records, chain) {
   });
   finishPreparedInstallation(root, chain);
   new AccountHistoryIndex(root, chain);
-  return { height: chain.height, records: verified.length, tipHash: chain.tipHash };
+  return { height: chain.height, records: verified.records, tipHash: chain.tipHash };
 }

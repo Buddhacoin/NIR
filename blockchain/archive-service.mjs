@@ -1,12 +1,24 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 
 import {
   MAX_HISTORY_ARCHIVE_CHUNK_BYTES,
   MAX_HISTORY_ARCHIVE_MANIFEST_BYTES,
-  restoreHistoryArchive,
+  verifyHistoryArchiveChunk,
   verifySignedHistoryArchive,
   verifySignedHistoryArchiveManifest,
 } from "./archive-sync.mjs";
+import { installAccountHistoryIndexRecordIterable } from "./account-history-index.mjs";
+import { canonicalJson } from "./crypto.mjs";
 
 const MAX_SOURCES = 128;
 const MAX_SOURCE_BYTES = 256;
@@ -148,6 +160,35 @@ function downloadPolicy({
   return { concurrency, maxChunks, maxTotalBytes, timeoutMs };
 }
 
+function remoteSource(sourceValue, options = {}) {
+  if (typeof options.fetchImpl !== "function" && options.fetchImpl !== undefined) {
+    throw new Error("history archive fetch is unavailable");
+  }
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (typeof fetchImpl !== "function") throw new Error("history archive fetch is unavailable");
+  const { source, url } = normalizedSource(sourceValue, options.allowInsecureLocalhost ?? false);
+  const policy = downloadPolicy(options);
+  const get = async (path, maximumBytes) => boundedJson(await fetchImpl(new URL(path, url), {
+    headers: { accept: "application/json" },
+    redirect: "error",
+    signal: AbortSignal.timeout(policy.timeoutMs),
+  }), maximumBytes);
+  return { get, policy, source };
+}
+
+async function fetchVerifiedManifest(sourceValue, chain, options) {
+  const remote = remoteSource(sourceValue, options);
+  const envelope = await remote.get("v1/history-archive/manifest",
+    MAX_HISTORY_ARCHIVE_MANIFEST_BYTES + MAX_JSON_OVERHEAD);
+  const verified = verifySignedHistoryArchiveManifest(envelope, chain, options);
+  const totalBytes = verified.manifest.chunks.reduce((total, chunk) => total + chunk.size, 0);
+  if (verified.manifest.chunks.length > remote.policy.maxChunks ||
+      totalBytes > remote.policy.maxTotalBytes) {
+    throw new Error("history archive exceeds the configured download budget");
+  }
+  return { ...remote, envelope, verified };
+}
+
 export async function downloadHistoryArchive(sourceValue, chain, {
   allowInsecureLocalhost = false,
   concurrency,
@@ -157,21 +198,12 @@ export async function downloadHistoryArchive(sourceValue, chain, {
   timeoutMs,
   trustedOperators,
 } = {}) {
-  if (typeof fetchImpl !== "function") throw new Error("history archive fetch is unavailable");
-  const { source, url } = normalizedSource(sourceValue, allowInsecureLocalhost);
-  const policy = downloadPolicy({ concurrency, maxChunks, maxTotalBytes, timeoutMs });
-  const get = async (path, maximumBytes) => boundedJson(await fetchImpl(new URL(path, url), {
-    headers: { accept: "application/json" },
-    redirect: "error",
-    signal: AbortSignal.timeout(policy.timeoutMs),
-  }), maximumBytes);
-  const envelope = await get("v1/history-archive/manifest",
-    MAX_HISTORY_ARCHIVE_MANIFEST_BYTES + MAX_JSON_OVERHEAD);
-  const verified = verifySignedHistoryArchiveManifest(envelope, chain, { trustedOperators });
-  const totalBytes = verified.manifest.chunks.reduce((total, chunk) => total + chunk.size, 0);
-  if (verified.manifest.chunks.length > policy.maxChunks || totalBytes > policy.maxTotalBytes) {
-    throw new Error("history archive exceeds the configured download budget");
-  }
+  const { envelope, get, policy, source, verified } = await fetchVerifiedManifest(
+    sourceValue, chain, {
+      allowInsecureLocalhost, concurrency, fetchImpl, maxChunks, maxTotalBytes,
+      timeoutMs, trustedOperators,
+    },
+  );
   const chunks = new Array(verified.manifest.chunks.length);
   let next = 0;
   const worker = async () => {
@@ -191,25 +223,132 @@ export async function downloadHistoryArchive(sourceValue, chain, {
   return { archive, source };
 }
 
-export async function restoreHistoryArchiveFromSources(directory, sources, chain, options = {}) {
-  if (!Array.isArray(sources) || sources.length < 2 || sources.length > MAX_SOURCES ||
-      new Set(sources).size !== sources.length) {
-    throw new Error("history archive source list is invalid");
-  }
+async function selectRemoteManifests(sources, chain, options) {
   const sourceConcurrency = options.sourceConcurrency ?? 2;
+  const minimumSources = options.minimumSources ?? 2;
   if (!Number.isSafeInteger(sourceConcurrency) || sourceConcurrency < 1 ||
-      sourceConcurrency > 8) throw new Error("history archive source concurrency is invalid");
+      sourceConcurrency > 8 || !Number.isSafeInteger(minimumSources) ||
+      minimumSources < 2 || minimumSources > MAX_SOURCES) {
+    throw new Error("history archive source policy is invalid");
+  }
   downloadPolicy(options);
-  const candidates = [];
+  const providers = [];
   let next = 0;
   const worker = async () => {
     while (next < sources.length) {
       const index = next;
       next += 1;
-      try { candidates.push(await downloadHistoryArchive(sources[index], chain, options)); }
-      catch { /* A failed source cannot count toward independent agreement. */ }
+      try {
+        providers.push({
+          ...await fetchVerifiedManifest(sources[index], chain, options),
+          sourceIndex: index,
+        });
+      } catch { /* An invalid source cannot count toward agreement. */ }
     }
   };
   await Promise.all(Array.from({ length: Math.min(sourceConcurrency, sources.length) }, worker));
-  return restoreHistoryArchive(directory, candidates, chain, options);
+  providers.sort((left, right) => left.sourceIndex - right.sourceIndex);
+  const signers = new Set();
+  const groups = new Map();
+  for (const provider of providers) {
+    const signer = provider.verified.signer.address;
+    if (signers.has(signer)) throw new Error("history archive operators must be independent");
+    signers.add(signer);
+    const root = provider.verified.contentRoot;
+    const group = groups.get(root) ?? [];
+    group.push(provider);
+    groups.set(root, group);
+  }
+  if (groups.size > 1) {
+    throw new Error("trusted history archive operators returned conflicting content");
+  }
+  const selected = [...groups.values()].find((group) => group.length >= minimumSources);
+  if (!selected) throw new Error("history archive lacks enough independent matching sources");
+  return selected;
+}
+
+async function downloadChunksToDirectory(provider, directory) {
+  mkdirSync(directory, { recursive: false, mode: 0o700 });
+  const expectedChunks = provider.verified.manifest.chunks;
+  let next = 0;
+  const worker = async () => {
+    while (next < expectedChunks.length) {
+      const index = next;
+      next += 1;
+      const expected = expectedChunks[index];
+      const base64Bytes = Math.ceil(expected.size / 3) * 4;
+      const chunk = await provider.get(`v1/history-archive/chunks/${index}`,
+        base64Bytes + MAX_JSON_OVERHEAD);
+      const records = verifyHistoryArchiveChunk(chunk, expected, index);
+      writeFileSync(join(directory, `${String(index).padStart(8, "0")}.json`),
+        canonicalJson(records), { encoding: "utf8", flag: "wx", mode: 0o600 });
+    }
+  };
+  await Promise.all(Array.from({
+    length: Math.min(provider.policy.concurrency, expectedChunks.length),
+  }, worker));
+}
+
+function *recordsFromDownloadedChunks(directory, verified) {
+  const content = createHash("sha3-256").update("NIR/HISTORY_ARCHIVE_CONTENT/v1\0[");
+  let count = 0;
+  for (const [index, expected] of verified.manifest.chunks.entries()) {
+    const path = join(directory, `${String(index).padStart(8, "0")}.json`);
+    if (statSync(path).size !== expected.size) {
+      throw new Error("downloaded history archive chunk size is invalid");
+    }
+    const raw = readFileSync(path);
+    const records = verifyHistoryArchiveChunk({
+      data: raw.toString("base64"), index,
+    }, expected, index);
+    for (const record of records) {
+      if (count > 0) content.update(",");
+      content.update(canonicalJson({
+        blockHash: record.blockHash,
+        height: record.height,
+        indexHash: record.indexHash,
+      }));
+      count += 1;
+      yield record;
+    }
+  }
+  content.update("]");
+  if (count !== verified.manifest.recordCount ||
+      content.digest("hex") !== verified.contentRoot) {
+    throw new Error("downloaded history archive content root is invalid");
+  }
+}
+
+export async function restoreHistoryArchiveFromSources(directory, sources, chain, options = {}) {
+  if (!Array.isArray(sources) || sources.length < 2 || sources.length > MAX_SOURCES ||
+      new Set(sources).size !== sources.length) {
+    throw new Error("history archive source list is invalid");
+  }
+  const providers = await selectRemoteManifests(sources, chain, options);
+  const root = resolve(directory);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const temporary = mkdtempSync(join(root, ".history-archive-download-"));
+  let lastError;
+  try {
+    for (const [attempt, provider] of providers.entries()) {
+      const chunks = join(temporary, `source-${attempt}`);
+      try {
+        await downloadChunksToDirectory(provider, chunks);
+        const installed = installAccountHistoryIndexRecordIterable(
+          root, recordsFromDownloadedChunks(chunks, provider.verified), chain,
+        );
+        return {
+          ...installed,
+          matchingSources: providers.length,
+          operators: providers.map(({ verified }) => verified.signer.address),
+        };
+      } catch (error) {
+        lastError = error;
+        rmSync(chunks, { recursive: true, force: true });
+      }
+    }
+    throw lastError ?? new Error("history archive download failed");
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 }

@@ -137,10 +137,19 @@ The client rejects redirects, credentials embedded in URLs, excessive response
 sizes, slow responses, untrusted manifests and stale checkpoints. It verifies
 the signed manifest before requesting chunks, downloads only the committed
 indexes within configured chunk and total-byte budgets, limits both source and
-chunk concurrency, verifies the completed archive again, and
-then applies the same multi-operator agreement and crash-resumable installation
-used for local files. Plain HTTP is available only through an explicit library
+chunk concurrency, and first compares only the small manifests from independent
+operators. Once their signed content roots agree, it downloads chunks from one
+operator into a private temporary directory, verifies and installs them as a
+record stream, and falls back to the next agreed operator if a chunk is missing
+or corrupt. It does not retain multiple complete remote archives or all record
+bodies in memory. Plain HTTP is available only through an explicit library
 option for loopback integration tests.
+
+This removes archive-sized memory growth during recovery, but it is not yet a
+fully disk-native query engine. After activation, the current serving index
+still keeps account identifiers, proof-tree nodes and the transaction locator
+in process memory for fast wallet queries. Replacing those maps with an audited
+embedded database remains necessary for very large public history.
 
 ## Wallet-to-wallet flow
 

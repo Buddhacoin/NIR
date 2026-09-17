@@ -238,6 +238,16 @@ operator can count toward multi-source agreement. Transport confidentiality and
 availability complement these checks but do not replace content signatures or
 local consensus roots.
 
+Multi-source agreement is manifest-first. Two or more independent configured
+signers must attest the same history content root, but the receiver need not
+download duplicate copies of that content. It streams one agreed operator's
+bounded chunks to a private temporary directory, rechecks every chunk while
+iterating records into the staged redundant index, and falls back to another
+agreed operator on failure. Only compact `{height, blockHash, indexHash}` tuples
+are fed into an incremental content-root hash; neither those tuples nor
+transaction bodies are retained as a second in-memory archive during
+installation.
+
 Operator membership is not currently selected by consensus. Production must
 distribute operators across independent organizations and failure domains,
 publish rotation policy, deploy authenticated transports, and rehearse total
