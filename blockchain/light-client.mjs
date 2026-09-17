@@ -1,6 +1,15 @@
 import { canonicalJson, verifyObject } from "./crypto.mjs";
 import { blockHeader, blockHeaderHash, prepareCertificateHash } from "./chain.mjs";
-import { MAX_VALIDATORS, PROTOCOL_VERSION } from "./constants.mjs";
+import {
+  MAX_VALIDATORS,
+  PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "./constants.mjs";
+import {
+  normalizeProtocolUpgrade,
+  normalizeSupportedProtocolVersions,
+  protocolTransition,
+} from "./protocol-upgrade.mjs";
 import { verifyValidatorHandoff } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 
@@ -68,16 +77,19 @@ function verifyVotes(proof, validators, previousValidators = null) {
   }, "finality");
 }
 
-export function validateFinalityHeader(header, hash, expectedNetworkId) {
+export function validateFinalityHeader(header, hash, expectedNetworkId, {
+  supportedProtocolVersions = SUPPORTED_PROTOCOL_VERSIONS,
+} = {}) {
+  const supported = normalizeSupportedProtocolVersions(supportedProtocolVersions);
   const expectedKeys = [
     "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height", "networkId",
-    "peerRegistryHash", "previousHash", "protocolVersion", "stateRoot", "timestamp",
+    "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion", "stateRoot", "timestamp",
     "transactionCount", "transactionsRoot",
   ];
   if (header?.format !== HEADER_FORMAT ||
       Object.keys(header ?? {}).sort().join(",") !== expectedKeys.sort().join(",") ||
       hash !== blockHeaderHash(header) || !HASH.test(hash ?? "") ||
-      header.networkId !== expectedNetworkId || header.protocolVersion !== PROTOCOL_VERSION ||
+      header.networkId !== expectedNetworkId || !supported.includes(header.protocolVersion) ||
       !Number.isSafeInteger(header.height) || header.height < 1 ||
       !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
       !Number.isSafeInteger(header.transactionCount) || header.transactionCount < 0 ||
@@ -88,22 +100,33 @@ export function validateFinalityHeader(header, hash, expectedNetworkId) {
       !HASH.test(header.peerRegistryHash ?? "")) {
     throw new Error("light client finality header is invalid");
   }
+  if (header.protocolUpgrade !== null) {
+    try {
+      normalizeProtocolUpgrade(header.protocolUpgrade, {
+        currentHeight: header.height,
+        currentVersion: header.protocolVersion,
+      });
+    } catch { throw new Error("light client protocol upgrade is invalid"); }
+  }
   return header;
 }
 
-function validateProof(proof, expectedNetworkId) {
+function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
   if (!proof || proof.format !== FORMAT ||
       Object.keys(proof).sort().join(",") !==
         "certificate,format,hash,header,prepareCertificate") {
     throw new Error("light client finality proof is invalid");
   }
-  return validateFinalityHeader(proof.header, proof.hash, expectedNetworkId);
+  return validateFinalityHeader(proof.header, proof.hash, expectedNetworkId, {
+    supportedProtocolVersions,
+  });
 }
 
 export function verifyFinalityProofChain(proofs, {
   checkpoint,
   expectedNetworkId,
   handoffs = [],
+  supportedProtocolVersions = SUPPORTED_PROTOCOL_VERSIONS,
   trustedValidators,
 } = {}) {
   if (!checkpoint || !Number.isSafeInteger(checkpoint.height) || checkpoint.height < 0 ||
@@ -118,6 +141,8 @@ export function verifyFinalityProofChain(proofs, {
   let previousHash = checkpoint.tipHash;
   let previousHeight = checkpoint.height;
   let previousTimestamp = null;
+  let protocolVersion = checkpoint.protocolVersion ?? PROTOCOL_VERSION;
+  let pendingProtocolUpgrade = checkpoint.pendingProtocolUpgrade ?? null;
   let handoffIndex = 0;
   while (handoffIndex < handoffs.length && handoffs[handoffIndex].activationHeight <= checkpoint.height) {
     const advanced = verifyValidatorHandoff(handoffs[handoffIndex], {
@@ -133,11 +158,21 @@ export function verifyFinalityProofChain(proofs, {
     throw new Error("light client checkpoint validator set does not match handoff history");
   }
   for (const proof of proofs) {
-    const header = validateProof(proof, expectedNetworkId);
+    const header = validateProof(proof, expectedNetworkId, supportedProtocolVersions);
     if (header.height !== previousHeight + 1 || header.previousHash !== previousHash ||
         (previousTimestamp !== null && header.timestamp < previousTimestamp)) {
       throw new Error("light client finality chain is discontinuous");
     }
+    const protocolState = protocolTransition({
+      blockVersion: header.protocolVersion,
+      currentHeight: header.height,
+      currentVersion: protocolVersion,
+      pendingUpgrade: pendingProtocolUpgrade,
+      proposedUpgrade: header.protocolUpgrade,
+      supportedVersions: supportedProtocolVersions,
+    });
+    protocolVersion = protocolState.protocolVersion;
+    pendingProtocolUpgrade = protocolState.pendingUpgrade;
     let oldSet = null;
     const handoff = handoffs[handoffIndex];
     if (handoff && handoff.activationHeight === header.height) {
@@ -166,6 +201,8 @@ export function verifyFinalityProofChain(proofs, {
     height: last.header.height,
     accountStateRoot: last.header.accountStateRoot,
     networkId: expectedNetworkId,
+    pendingProtocolUpgrade,
+    protocolVersion,
     stateRoot: last.header.stateRoot,
     tipHash: last.hash,
     transactionCount: last.header.transactionCount,

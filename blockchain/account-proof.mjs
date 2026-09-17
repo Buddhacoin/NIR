@@ -1,6 +1,8 @@
 import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { verifyAccountStateProof } from "./account-tree.mjs";
+import { PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "./constants.mjs";
+import { normalizePendingProtocolUpgrade } from "./protocol-upgrade.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -44,15 +46,21 @@ function validateStatement(statement) {
       statement.networkId.length > 128 || !Number.isSafeInteger(statement.height) ||
       statement.height < 0 || !HASH.test(statement.tipHash ?? "") ||
       !HASH.test(statement.stateRoot ?? "") || !HASH.test(statement.validatorSetId ?? "") ||
+      !SUPPORTED_PROTOCOL_VERSIONS.includes(statement.protocolVersion) ||
       ((statement.accountStateRoot === undefined) !== (statement.inclusionProof === undefined)) ||
       (statement.accountStateRoot !== undefined && !HASH.test(statement.accountStateRoot))) {
     throw new Error("account proof statement is invalid");
   }
+  normalizePendingProtocolUpgrade(statement.pendingProtocolUpgrade, {
+    currentHeight: statement.height,
+    currentVersion: statement.protocolVersion,
+  });
   validateAccount(statement.account);
 }
 
 export function createAccountProof({
   account, accountStateRoot, inclusionProof, height, networkId, stateRoot, tipHash,
+  pendingProtocolUpgrade = null, protocolVersion = PROTOCOL_VERSION,
   validators, validatorWallets,
 }) {
   if (!Array.isArray(validators) || validators.length < 4 ||
@@ -68,6 +76,8 @@ export function createAccountProof({
     format: FORMAT,
     height,
     networkId,
+    pendingProtocolUpgrade: structuredClone(pendingProtocolUpgrade),
+    protocolVersion,
     stateRoot,
     tipHash,
     validatorSetId: validatorSetId(orderedValidators(validators)),

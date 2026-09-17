@@ -495,6 +495,9 @@ export function createWalletBridgeServer({
         if (requiredBase && statement.height > requiredBase.height &&
             (!verifiedFinalityTip || verifiedFinalityTip.height !== statement.height ||
              statement.accountStateRoot !== verifiedFinalityTip.accountStateRoot ||
+             JSON.stringify(statement.pendingProtocolUpgrade) !==
+               JSON.stringify(verifiedFinalityTip.pendingProtocolUpgrade) ||
+             statement.protocolVersion !== verifiedFinalityTip.protocolVersion ||
              verifiedFinalityTip.tipHash !== statement.tipHash ||
              verifiedFinalityTip.stateRoot !== statement.stateRoot ||
              verifiedFinalityTip.validatorSetId !== statement.validatorSetId)) {

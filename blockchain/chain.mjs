@@ -51,6 +51,12 @@ import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mj
 import { peerRegistryHash, verifyPeerRegistry } from "./peer-registry.mjs";
 import { verifyValidatorOnboarding } from "./validator-onboarding.mjs";
 import {
+  normalizePendingProtocolUpgrade,
+  normalizeSupportedProtocolVersions,
+  protocolTransition,
+  protocolVersionAtNextHeight,
+} from "./protocol-upgrade.mjs";
+import {
   activeValidatorSet,
   scheduleValidatorRotation,
   validatorSetId,
@@ -637,6 +643,7 @@ export function blockHeader(block) {
     networkId,
     peerRegistryHash,
     previousHash,
+    protocolUpgrade,
     protocolVersion,
     stateRoot,
     timestamp,
@@ -653,6 +660,7 @@ export function blockHeader(block) {
     networkId,
     peerRegistryHash,
     previousHash,
+    protocolUpgrade: protocolUpgrade ?? null,
     protocolVersion,
     stateRoot,
     timestamp,
@@ -821,8 +829,10 @@ export class NirChain {
   #validatorBonds;
   #registeredValidators;
   #pendingValidatorRotation;
+  #pendingProtocolUpgrade;
   #peerRegistry;
   #progressCommitments;
+  #protocolVersion;
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
@@ -830,6 +840,7 @@ export class NirChain {
   #genesisConfig;
   #validatorOrder;
   #validators;
+  #supportedProtocolVersions;
 
   constructor({
     networkId,
@@ -841,7 +852,7 @@ export class NirChain {
     beaconAuthorities,
     peerRegistry = null,
     genesisTimestamp = Date.now(),
-  }) {
+  }, { supportedProtocolVersions } = {}) {
     if (
       typeof networkId !== "string" ||
       networkId.length === 0 ||
@@ -858,6 +869,9 @@ export class NirChain {
       throw new Error("invalid genesis timestamp");
     }
     this.#networkId = networkId;
+    this.#supportedProtocolVersions = normalizeSupportedProtocolVersions(
+      supportedProtocolVersions,
+    );
     this.#genesisConfig = structuredClone({
       beaconAuthorities,
       capabilityReferences,
@@ -925,7 +939,9 @@ export class NirChain {
     this.#validatorBonds = new Map();
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorRotation = null;
+    this.#pendingProtocolUpgrade = null;
     this.#progressCommitments = new Map();
+    this.#protocolVersion = PROTOCOL_VERSION;
     this.#peerRegistry = peerRegistry === null ? null : verifyPeerRegistry(peerRegistry, {
       currentHeight: 0,
       networkId,
@@ -995,8 +1011,8 @@ export class NirChain {
     ];
   }
 
-  static fromVerifiedSnapshot(genesisConfig, snapshot) {
-    const chain = new NirChain(genesisConfig);
+  static fromVerifiedSnapshot(genesisConfig, snapshot, options = {}) {
+    const chain = new NirChain(genesisConfig, options);
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
@@ -1185,6 +1201,17 @@ export class NirChain {
     chain.#lastRewardTimestamp = snapshotSignedInteger(state.lastRewardTimestamp, "last reward timestamp");
     chain.#mined = snapshotAtomic(state.mined, "mined supply");
     chain.#nonces = nonces;
+    chain.#protocolVersion = snapshotInteger(state.protocolVersion, "protocol version");
+    if (!chain.#supportedProtocolVersions.includes(chain.#protocolVersion) ||
+        snapshot.checkpoint?.protocolVersion !== chain.#protocolVersion) {
+      throw new Error("snapshot protocol version is unsupported or inconsistent");
+    }
+    chain.#pendingProtocolUpgrade = normalizePendingProtocolUpgrade(
+      state.pendingProtocolUpgrade, {
+        currentHeight: snapshot.height,
+        currentVersion: chain.#protocolVersion,
+      },
+    );
     chain.#pendingValidatorRotation = structuredClone(state.pendingValidatorRotation);
     chain.#progressCommitments = progressCommitments;
     chain.#peerRegistry = structuredClone(state.peerRegistry);
@@ -1305,8 +1332,12 @@ export class NirChain {
       pendingValidatorRotation:
         overrides.pendingValidatorRotation === undefined
           ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
+      pendingProtocolUpgrade:
+        overrides.pendingProtocolUpgrade === undefined
+          ? this.#pendingProtocolUpgrade : overrides.pendingProtocolUpgrade,
       peerRegistry: overrides.peerRegistry === undefined ? this.#peerRegistry : overrides.peerRegistry,
       progressCommitments: overrides.progressCommitments ?? this.#progressCommitments,
+      protocolVersion: overrides.protocolVersion ?? this.#protocolVersion,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
       registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
       rewardEpoch: overrides.rewardEpoch ?? this.#rewardEpoch,
@@ -1338,9 +1369,11 @@ export class NirChain {
         lastRewardTimestamp: this.#lastRewardTimestamp,
         mined: this.#mined,
         nonces: this.#nonces,
+        pendingProtocolUpgrade: this.#pendingProtocolUpgrade,
         pendingValidatorRotation: this.#pendingValidatorRotation,
         peerRegistry: this.#peerRegistry,
         progressCommitments: this.#progressCommitments,
+        protocolVersion: this.#protocolVersion,
         randomnessFaults: this.#randomnessFaults,
         registeredValidators: this.#registeredValidators,
         rewardEpoch: this.#rewardEpoch,
@@ -1434,6 +1467,12 @@ export class NirChain {
 
   get pendingValidatorRotation() {
     return this.#pendingValidatorRotation ? structuredClone(this.#pendingValidatorRotation) : null;
+  }
+
+  get protocolVersion() { return this.#protocolVersion; }
+
+  get pendingProtocolUpgrade() {
+    return this.#pendingProtocolUpgrade ? structuredClone(this.#pendingProtocolUpgrade) : null;
   }
 
   get peerRegistryHash() {
@@ -1619,9 +1658,26 @@ export class NirChain {
     epochRandomnessCommits = [], epochRandomnessReveals = [],
     progressBeacons = [],
     validatorRotation = null, peerRegistryUpdate = null,
+    protocolUpgrade = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
     const height = this.height + 1;
+    const nextProtocolVersion = protocolVersionAtNextHeight({
+      currentHeight: this.height,
+      currentVersion: this.#protocolVersion,
+      pendingUpgrade: this.#pendingProtocolUpgrade,
+      supportedVersions: this.#supportedProtocolVersions,
+    });
+    const protocolState = protocolTransition({
+      blockVersion: nextProtocolVersion,
+      currentHeight: height,
+      currentVersion: this.#protocolVersion,
+      pendingUpgrade: this.#pendingProtocolUpgrade,
+      proposedUpgrade: protocolUpgrade,
+      supportedVersions: this.#supportedProtocolVersions,
+    });
+    const scheduledProtocolUpgrade = protocolUpgrade === null
+      ? null : protocolState.pendingUpgrade;
     const remaining = MINING_POOL - this.#mined;
     const progressRewards = allocateProgressRewards(
       this.#rewardEpoch,
@@ -1713,7 +1769,8 @@ export class NirChain {
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
       feeRecipient: this.expectedProposer(height, 0),
       proposer: this.expectedProposer(height, round),
-      protocolVersion: PROTOCOL_VERSION,
+      protocolUpgrade: scheduledProtocolUpgrade,
+      protocolVersion: nextProtocolVersion,
       round,
       roundCertificate,
       timestamp,
@@ -2423,9 +2480,11 @@ export class NirChain {
     fork.#lastRewardTimestamp = this.#lastRewardTimestamp;
     fork.#mined = this.#mined;
     fork.#nonces = new Map(this.#nonces);
+    fork.#pendingProtocolUpgrade = structuredClone(this.#pendingProtocolUpgrade);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
     fork.#progressCommitments = new Map(this.#progressCommitments);
+    fork.#protocolVersion = this.#protocolVersion;
     fork.#randomnessFaults = new Map(this.#randomnessFaults);
     fork.#registeredValidators = new Map(this.#registeredValidators);
     fork.#rewardEpoch = this.#rewardEpoch;
@@ -2436,6 +2495,7 @@ export class NirChain {
     fork.#validators = new Map(this.#validators);
     fork.#validatorOrder = [...this.#validatorOrder];
     fork.#quorum = this.#quorum;
+    fork.#supportedProtocolVersions = [...this.#supportedProtocolVersions];
     return fork;
   }
 
@@ -2454,8 +2514,15 @@ export class NirChain {
   #applyBlock(block, verifyCertificate, verifyStateRoot = true) {
     const previous = this.#blocks.at(-1);
     if (block.networkId !== this.#networkId) throw new Error("wrong network id");
-    if (block.protocolVersion !== PROTOCOL_VERSION) throw new Error("wrong protocol version");
     if (block.height !== previous.height + 1) throw new Error("unexpected block height");
+    const protocolState = protocolTransition({
+      blockVersion: block.protocolVersion,
+      currentHeight: block.height,
+      currentVersion: this.#protocolVersion,
+      pendingUpgrade: this.#pendingProtocolUpgrade,
+      proposedUpgrade: block.protocolUpgrade === undefined ? null : block.protocolUpgrade,
+      supportedVersions: this.#supportedProtocolVersions,
+    });
     if (block.previousHash !== previous.hash) throw new Error("broken hash chain");
     if (!Number.isSafeInteger(block.timestamp) || block.timestamp < previous.timestamp) {
       throw new Error("invalid block timestamp");
@@ -2977,9 +3044,11 @@ export class NirChain {
       lastRewardTimestamp: lastRewardTimestampAfter,
       mined: this.#mined + newlyMined,
       nonces,
+      pendingProtocolUpgrade: protocolState.pendingUpgrade,
       pendingValidatorRotation: pendingValidatorRotationAfter,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
+      protocolVersion: protocolState.protocolVersion,
       randomnessFaults,
       registeredValidators,
       rewardEpoch: rewardEpochAfter,
@@ -3019,6 +3088,7 @@ export class NirChain {
     this.#creditUnstakes = creditUnstakes;
     this.#creditUsage = creditUsage;
     this.#nonces = nonces;
+    this.#pendingProtocolUpgrade = protocolState.pendingUpgrade;
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;
     this.#validatorFaults = validatorFaults;
@@ -3026,6 +3096,7 @@ export class NirChain {
     this.#registeredValidators = registeredValidators;
     this.#peerRegistry = nextPeerRegistry;
     this.#progressCommitments = progressCommitments;
+    this.#protocolVersion = protocolState.protocolVersion;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;
     this.#epochRandomness = epochRandomness;

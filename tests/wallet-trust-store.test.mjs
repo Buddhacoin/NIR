@@ -14,6 +14,8 @@ function statement(height = 12) {
   return {
     height,
     networkId: "nir-wallet-trust-test",
+    pendingProtocolUpgrade: null,
+    protocolVersion: 24,
     stateRoot: "a".repeat(64),
     tipHash: "b".repeat(64),
     validatorSetId: "c".repeat(64),

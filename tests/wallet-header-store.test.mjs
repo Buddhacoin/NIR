@@ -24,6 +24,7 @@ function entry(height, previousHash) {
     networkId: "nir-header-store-test",
     peerRegistryHash: hash("d"),
     previousHash,
+    protocolUpgrade: null,
     protocolVersion: PROTOCOL_VERSION,
     stateRoot: hash("e"),
     timestamp: height,

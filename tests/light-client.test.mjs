@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
-import { SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
+import { PROTOCOL_VERSION, SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
   createFinalityProof,
@@ -60,6 +60,8 @@ test("compact finality proofs advance a checkpoint without full block bodies", (
     accountStateRoot: second.accountStateRoot,
     height: 2,
     networkId: chain.networkId,
+    pendingProtocolUpgrade: null,
+    protocolVersion: PROTOCOL_VERSION,
     stateRoot: second.stateRoot,
     tipHash: second.hash,
     transactionCount: second.transactionCount,

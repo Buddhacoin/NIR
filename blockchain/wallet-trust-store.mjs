@@ -11,8 +11,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "./constants.mjs";
+import { normalizePendingProtocolUpgrade } from "./protocol-upgrade.mjs";
 
-const FORMAT = "nir-wallet-trust-checkpoint-v2";
+const FORMAT = "nir-wallet-trust-checkpoint-v3";
 const HASH = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 16 * 1024;
 const MAX_HISTORY_BYTES = 16 * 1024 * 1024;
@@ -24,11 +26,16 @@ function validate(checkpoint, expectedNetworkId) {
       !HASH.test(checkpoint.tipHash ?? "") || !HASH.test(checkpoint.stateRoot ?? "") ||
       (checkpoint.accountStateRoot !== null && !HASH.test(checkpoint.accountStateRoot ?? "")) ||
       !HASH.test(checkpoint.validatorSetId ?? "") ||
+      !SUPPORTED_PROTOCOL_VERSIONS.includes(checkpoint.protocolVersion) ||
       (checkpoint.lastHandoffHash !== null && !HASH.test(checkpoint.lastHandoffHash ?? "")) ||
       !Number.isSafeInteger(checkpoint.lastHandoffHeight) || checkpoint.lastHandoffHeight < 0 ||
       (checkpoint.lastHandoffHash === null) !== (checkpoint.lastHandoffHeight === 0)) {
     throw new Error("wallet trust checkpoint is invalid");
   }
+  normalizePendingProtocolUpgrade(checkpoint.pendingProtocolUpgrade, {
+    currentHeight: checkpoint.height,
+    currentVersion: checkpoint.protocolVersion,
+  });
   return structuredClone(checkpoint);
 }
 
@@ -83,6 +90,8 @@ export function saveWalletTrustCheckpoint(path, statement, lastHandoff = null) {
     lastHandoffHash: lastHandoff?.handoffHash ?? null,
     lastHandoffHeight: lastHandoff?.activationHeight ?? 0,
     networkId: statement.networkId,
+    pendingProtocolUpgrade: statement.pendingProtocolUpgrade,
+    protocolVersion: statement.protocolVersion,
     stateRoot: statement.stateRoot,
     tipHash: statement.tipHash,
     validatorSetId: statement.validatorSetId,
@@ -109,6 +118,9 @@ export function enforceWalletTrustCheckpoint(checkpoint, statement) {
        (statement.tipHash !== checkpoint.tipHash || statement.stateRoot !== checkpoint.stateRoot ||
         (checkpoint.accountStateRoot !== null &&
          statement.accountStateRoot !== checkpoint.accountStateRoot) ||
+        JSON.stringify(statement.pendingProtocolUpgrade) !==
+          JSON.stringify(checkpoint.pendingProtocolUpgrade) ||
+        statement.protocolVersion !== checkpoint.protocolVersion ||
         statement.validatorSetId !== checkpoint.validatorSetId))) {
     throw new Error("account proof would roll back the wallet trust checkpoint");
   }

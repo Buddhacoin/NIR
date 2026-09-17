@@ -154,6 +154,8 @@ export class PersistentDevNode {
       inclusionProof: authenticated.inclusionProof,
       height: this.#chain.height,
       networkId: this.#chain.networkId,
+      pendingProtocolUpgrade: this.#chain.pendingProtocolUpgrade,
+      protocolVersion: this.#chain.protocolVersion,
       stateRoot: this.#chain.stateRoot,
       tipHash: this.#chain.tipHash,
       validators,

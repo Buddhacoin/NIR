@@ -13,6 +13,8 @@ import {
 import { dirname, resolve } from "node:path";
 
 import { validateFinalityHeader } from "./light-client.mjs";
+import { PROTOCOL_VERSION } from "./constants.mjs";
+import { protocolTransition } from "./protocol-upgrade.mjs";
 
 const FORMAT = "nir-wallet-finality-headers-v1";
 const HASH = /^[0-9a-f]{64}$/;
@@ -65,6 +67,9 @@ function validateStore(store, {
   let height = 0;
   let previousHash = genesisCheckpoint.tipHash;
   let previousTimestamp = null;
+  let protocolVersion = genesisCheckpoint.protocolVersion ?? PROTOCOL_VERSION;
+  let pendingProtocolUpgrade = genesisCheckpoint.pendingProtocolUpgrade ?? null;
+  const protocolStates = [];
   const seen = new Set();
   for (const entry of store.headers) {
     if (!entry || Object.keys(entry).sort().join(",") !== "hash,header" ||
@@ -74,6 +79,16 @@ function validateStore(store, {
         (previousTimestamp !== null && header.timestamp < previousTimestamp)) {
       throw new Error("wallet header store is discontinuous");
     }
+    const protocolState = protocolTransition({
+      blockVersion: header.protocolVersion,
+      currentHeight: header.height,
+      currentVersion: protocolVersion,
+      pendingUpgrade: pendingProtocolUpgrade,
+      proposedUpgrade: header.protocolUpgrade,
+    });
+    protocolVersion = protocolState.protocolVersion;
+    pendingProtocolUpgrade = protocolState.pendingUpgrade;
+    protocolStates.push(protocolState);
     seen.add(entry.hash);
     height = header.height;
     previousHash = entry.hash;
@@ -87,6 +102,14 @@ function validateStore(store, {
         (checkpoint.accountStateRoot !== null && checkpoint.accountStateRoot !== undefined &&
          entry.header.accountStateRoot !== checkpoint.accountStateRoot)) {
       throw new Error("wallet header store does not contain its trust checkpoint");
+    }
+    const checkpointProtocol = protocolStates[checkpoint.height - 1];
+    if ((checkpoint.protocolVersion !== undefined &&
+         checkpointProtocol.protocolVersion !== checkpoint.protocolVersion) ||
+        (checkpoint.pendingProtocolUpgrade !== undefined &&
+         JSON.stringify(checkpointProtocol.pendingUpgrade) !==
+           JSON.stringify(checkpoint.pendingProtocolUpgrade))) {
+      throw new Error("wallet header protocol checkpoint is inconsistent");
     }
   }
   // A crash can leave headers written just before the account checkpoint. They
