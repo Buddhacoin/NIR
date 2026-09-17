@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { parseConsensusJson } from "./consensus-json.mjs";
 
 import {
   signWalletPaymentRequest,
@@ -71,7 +72,7 @@ function readBody(request, maximumBytes = 72 * 1024) {
       else chunks.push(chunk);
     });
     request.on("end", () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+      try { resolve(parseConsensusJson(Buffer.concat(chunks).toString("utf8"))); }
       catch { reject(new Error("bridge request is not valid JSON")); }
     });
     request.on("error", reject);

@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-
-import { canonicalJson } from "./crypto.mjs";
+import { hashObject } from "./crypto.mjs";
 
 export const MIN_FRONTIER_GAIN_BPS = 100;
 export const MAX_PARENT_REGRESSION_BPS = 500;
@@ -55,7 +53,7 @@ function memoryRoot(records, behaviors) {
     behaviors: [...behaviors].sort(),
     records: orderedRecords,
   };
-  return createHash("sha256").update(canonicalJson(payload)).digest("hex");
+  return hashObject(payload, "CAPABILITY_MEMORY");
 }
 
 export function capabilityMemorySnapshotRoot(snapshot) {

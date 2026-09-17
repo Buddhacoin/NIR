@@ -2,6 +2,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 
 import { blockHash, transactionId } from "./chain.mjs";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
 import { IngressLimiter } from "./ingress-limiter.mjs";
@@ -32,8 +33,8 @@ function readBody(request) {
       else chunks.push(chunk);
     });
     request.on("end", () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-      catch { reject(new Error("validator request is not valid JSON")); }
+      try { resolve(parseConsensusJson(Buffer.concat(chunks).toString("utf8"))); }
+      catch { reject(new Error("validator request is not valid consensus JSON")); }
     });
     request.on("error", reject);
   });

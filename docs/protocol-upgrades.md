@@ -97,6 +97,12 @@ validation by upgraded nodes at activation. Older nodes fail closed rather than
 accepting that change. Historical state remains hash-linked and cannot be
 rewritten by the scheduling mechanism.
 
+Consensus byte encoding is itself versioned. The active mapping and normative
+grammar are specified in [consensus-encoding.md](consensus-encoding.md). A new
+serializer cannot be enabled by local preference: its implementation, vectors
+and protocol-to-encoding mapping must ship with a sequential delayed protocol
+version. Earlier blocks retain their original bytes and hashes.
+
 ## Adversarial coverage
 
 Automated tests cover:

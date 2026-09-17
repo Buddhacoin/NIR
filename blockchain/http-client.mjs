@@ -1,6 +1,7 @@
 import { createHash, X509Certificate } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { parseConsensusJson } from "./consensus-json.mjs";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -85,7 +86,7 @@ export function requestJson(url, {
         if (settled) return;
         try {
           const result = {
-            body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            body: parseConsensusJson(Buffer.concat(chunks).toString("utf8")),
             ok: response.statusCode >= 200 && response.statusCode < 300,
             status: response.statusCode,
           };

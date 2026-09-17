@@ -19,6 +19,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 
 import { NirChain } from "./chain.mjs";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { hashObject } from "./crypto.mjs";
 import { MAX_BLOCK_BYTES } from "./constants.mjs";
 import { installStateSnapshot, loadInstalledStateSnapshot } from "./snapshot-store.mjs";
@@ -156,7 +157,7 @@ function verifyCheckpoint(value, networkId) {
 }
 
 function readCheckpoint(path, networkId) {
-  try { return verifyCheckpoint(JSON.parse(readFileSync(path, "utf8")), networkId); }
+  try { return verifyCheckpoint(parseConsensusJson(readFileSync(path, "utf8")), networkId); }
   catch { return null; }
 }
 
@@ -174,7 +175,7 @@ function heightsIn(path) {
 function readCandidate(path, expected) {
   try {
     const contents = readFileSync(path, "utf8");
-    const block = JSON.parse(contents);
+    const block = parseConsensusJson(contents);
     if (expected && (fileSha256(contents) !== expected.fileSha256 ||
         block.hash !== expected.blockHash)) return null;
     return { block, contents };
@@ -331,7 +332,7 @@ function pruningDirectories(root) {
 function readPruneManifest(path) {
   try {
     const manifestPath = join(path, PRUNE_MANIFEST);
-    const value = JSON.parse(readBoundedRegularText(
+    const value = parseConsensusJson(readBoundedRegularText(
       manifestPath, MAX_PRUNE_MANIFEST_BYTES, "block pruning manifest is invalid",
     ));
     if (!["nir-prune-quarantine-v1", "nir-prune-quarantine-v2"].includes(value?.format) ||
@@ -553,7 +554,7 @@ export function finalizeBlockPruning(directory, genesis, options = {}) {
     plannedFiles += manifest.files.length;
     let verification;
     try {
-      verification = JSON.parse(readBoundedRegularText(
+      verification = parseConsensusJson(readBoundedRegularText(
         join(quarantine, PRUNE_VERIFIED), MAX_PRUNE_MARKER_BYTES,
         "block pruning verification is invalid",
       ));
@@ -571,7 +572,7 @@ export function finalizeBlockPruning(directory, genesis, options = {}) {
     let finalizing = null;
     if (existsSync(finalizingPath)) {
       try {
-        finalizing = JSON.parse(readBoundedRegularText(
+        finalizing = parseConsensusJson(readBoundedRegularText(
           finalizingPath, MAX_PRUNE_MARKER_BYTES,
           "block pruning finalization marker is invalid",
         ));

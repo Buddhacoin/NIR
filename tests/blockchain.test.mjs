@@ -283,6 +283,27 @@ test("genesis supply contains only the locked treasury allocation", () => {
   assert.ok(chain.issued < MAX_SUPPLY);
 });
 
+test("fixed block and transaction schemas reject extra fields", () => {
+  const { chain, treasury, validators } = fixture();
+  const transaction = createTransfer({
+    wallet: treasury,
+    networkId: chain.networkId,
+    recipient: generateWallet().address,
+    amount: "1",
+    nonce: 0,
+  });
+  const invalidTransactionBlock = chain.buildBlock({
+    transactions: [{ ...transaction, ignoredBySomeImplementations: true }],
+    timestamp: 1,
+  });
+  assert.throws(() => chain.validateProposal(invalidTransactionBlock), /transaction schema/);
+
+  const proposal = chain.buildBlock({ timestamp: 1 });
+  const finalized = finalizeBlock(proposal, quorumFor(proposal, validators));
+  assert.throws(() => chain.appendBlock({ ...finalized, unexpected: null }), /block schema/);
+  assert.equal(chain.height, 0);
+});
+
 test("evaluation and consensus operators must be independent", () => {
   const validators = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -326,7 +347,7 @@ test("Python and JavaScript capability memory use the same state root", () => {
   ]);
   assert.equal(
     memory.stateRoot,
-    "74fe4a4f969946c880ad08924f88ee8bc7d3feef4e28ede7351e462a6e84ea19",
+    "899e7e77b9632818d2caae6da02b01eb964b3003b43ee4cc37f9b96caa2cce01",
   );
 });
 

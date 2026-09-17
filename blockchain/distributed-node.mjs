@@ -21,6 +21,7 @@ import {
   timeoutForRound,
   voteForBlock,
 } from "./chain.mjs";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import {
   initializeBlockStore,
   installBlockStoreSnapshot,
@@ -115,7 +116,7 @@ function writeAtomic(path, value, mode = 0o600) {
 }
 
 function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
+  return parseConsensusJson(readFileSync(path, "utf8"));
 }
 
 function members(wallets, prefix) {

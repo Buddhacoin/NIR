@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { parseConsensusJson } from "./consensus-json.mjs";
 
 import { verifyPeerRegistry } from "./peer-registry.mjs";
 import { verifyValidatorHandoff } from "./validator-handoff.mjs";
@@ -149,7 +150,7 @@ function readCandidate(path, context) {
   try {
     if (!existsSync(path) || lstatSync(path).isSymbolicLink() ||
         statSync(path).size > MAX_TOPOLOGY_STORE_BYTES) return null;
-    const onboardings = JSON.parse(readFileSync(path, "utf8"));
+    const onboardings = parseConsensusJson(readFileSync(path, "utf8"));
     if (!Array.isArray(onboardings) || onboardings.length > context.handoffs.length) return null;
     const verified = verifyValidatorTopologyHistory({
       ...context,

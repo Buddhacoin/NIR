@@ -57,6 +57,10 @@ import {
   protocolVersionAtNextHeight,
 } from "./protocol-upgrade.mjs";
 import {
+  consensusEncodingVersionForProtocol,
+  consensusValueBytes,
+} from "./consensus-codec.mjs";
+import {
   activeValidatorSet,
   scheduleValidatorRotation,
   validatorSetId,
@@ -205,6 +209,73 @@ function unsignedTransaction(transaction) {
     ...unsigned
   } = transaction;
   return unsigned;
+}
+
+const SINGLE_TRANSFER_FIELDS = [
+  "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "recipient",
+  "sender", "signature", "type",
+];
+const SPONSOR_FIELDS = [
+  "feePayer", "feePayerAlgorithm", "feePayerNonce", "feePayerPublicKey",
+  "feePayerSignature",
+];
+const TRANSACTION_SCHEMAS = Object.freeze({
+  "beacon-bond": [[
+    "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ]],
+  "candidate-bond": [[
+    "algorithm", "amount", "candidateId", "fee", "networkId", "nonce", "publicKey",
+    "sender", "signature", "type",
+  ]],
+  "credit-delegation": [[
+    "algorithm", "delegate", "fee", "limit", "networkId", "nonce", "publicKey",
+    "sender", "signature", "type",
+  ]],
+  "credit-stake": [[
+    "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ]],
+  "credit-unstake-claim": [[
+    "algorithm", "networkId", "nonce", "publicKey", "sender", "signature", "type",
+  ]],
+  "credit-unstake-request": [[
+    "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ]],
+  "progress-commitment": [[
+    "algorithm", "artifactHash", "baselineHash", "candidateId", "networkId", "nonce",
+    "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
+  ]],
+  "validator-bond": [[
+    "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ], [
+    "algorithm", "amount", "fee", "networkId", "nonce", "operatorId", "publicKey",
+    "sender", "signature", "type",
+  ]],
+  transfer: [
+    SINGLE_TRANSFER_FIELDS,
+    [...SINGLE_TRANSFER_FIELDS, "resource"],
+    [...SINGLE_TRANSFER_FIELDS, "resource", "creditOwner"],
+    [...SINGLE_TRANSFER_FIELDS, ...SPONSOR_FIELDS],
+    [...SINGLE_TRANSFER_FIELDS, "resource", ...SPONSOR_FIELDS],
+    [
+      "algorithm", "amount", "fee", "memberPublicKeys", "networkId", "nonce",
+      "recipient", "sender", "signatures", "threshold", "type",
+    ],
+  ],
+});
+
+function requireExactTransactionSchema(transaction) {
+  if (!transaction || Object.getPrototypeOf(transaction) !== Object.prototype) {
+    throw new Error("transaction schema is invalid");
+  }
+  const actual = Object.keys(transaction).sort().join("\0");
+  const schemas = TRANSACTION_SCHEMAS[transaction.type] ?? [];
+  if (!schemas.some((fields) => [...fields].sort().join("\0") === actual)) {
+    throw new Error("transaction schema contains missing or extra fields");
+  }
 }
 
 function multisigDescriptor(memberPublicKeys, threshold) {
@@ -630,6 +701,48 @@ function unsignedBlock(block) {
     ...unsigned
   } = block;
   return unsigned;
+}
+
+const BLOCK_FIELDS = Object.freeze([
+  "accountStateRoot",
+  "capabilityMemoryRoot",
+  "certificate",
+  "epochRandomnessCommits",
+  "epochRandomnessReveals",
+  "fallbackBeacons",
+  "feeRecipient",
+  "hash",
+  "height",
+  "issuanceEpoch",
+  "networkId",
+  "peerRegistryHash",
+  "peerRegistryUpdate",
+  "prepareCertificate",
+  "previousHash",
+  "progressBeacons",
+  "progressRewards",
+  "proposer",
+  "protocolUpgrade",
+  "protocolVersion",
+  "randomnessCommits",
+  "randomnessReveals",
+  "round",
+  "roundCertificate",
+  "safetySettlements",
+  "stateRoot",
+  "timestamp",
+  "transactionCount",
+  "transactions",
+  "transactionsRoot",
+  "validatorRotation",
+].sort());
+
+function requireExactBlockSchema(block) {
+  consensusValueBytes(block);
+  if (!block || Object.getPrototypeOf(block) !== Object.prototype ||
+      Object.keys(block).sort().join("\0") !== BLOCK_FIELDS.join("\0")) {
+    throw new Error("block schema contains missing or extra fields");
+  }
 }
 
 const FINALITY_HEADER_FORMAT = "nir-finality-header-v1";
@@ -1676,6 +1789,7 @@ export class NirChain {
       proposedUpgrade: protocolUpgrade,
       supportedVersions: this.#supportedProtocolVersions,
     });
+    consensusEncodingVersionForProtocol(protocolState.protocolVersion);
     const scheduledProtocolUpgrade = protocolUpgrade === null
       ? null : protocolState.pendingUpgrade;
     const remaining = MINING_POOL - this.#mined;
@@ -2513,6 +2627,7 @@ export class NirChain {
 
   #applyBlock(block, verifyCertificate, verifyStateRoot = true) {
     const previous = this.#blocks.at(-1);
+    requireExactBlockSchema(block);
     if (block.networkId !== this.#networkId) throw new Error("wrong network id");
     if (block.height !== previous.height + 1) throw new Error("unexpected block height");
     const protocolState = protocolTransition({
@@ -2523,6 +2638,7 @@ export class NirChain {
       proposedUpgrade: block.protocolUpgrade === undefined ? null : block.protocolUpgrade,
       supportedVersions: this.#supportedProtocolVersions,
     });
+    consensusEncodingVersionForProtocol(protocolState.protocolVersion);
     if (block.previousHash !== previous.hash) throw new Error("broken hash chain");
     if (!Number.isSafeInteger(block.timestamp) || block.timestamp < previous.timestamp) {
       throw new Error("invalid block timestamp");
@@ -2779,6 +2895,7 @@ export class NirChain {
     }
     const transactionIds = new Set();
     for (const transaction of block.transactions) {
+      requireExactTransactionSchema(transaction);
       const id = transactionId(transaction);
       if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
       transactionIds.add(id);

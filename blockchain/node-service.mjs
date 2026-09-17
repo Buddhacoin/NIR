@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { parseConsensusJson } from "./consensus-json.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 
@@ -34,7 +35,8 @@ function readBody(request) {
     });
     request.on("end", () => {
       if (failed) return;
-      try { resolve(JSON.parse(body)); } catch { reject(new Error("request body is not valid JSON")); }
+      try { resolve(parseConsensusJson(body)); }
+      catch { reject(new Error("request body is not valid consensus JSON")); }
     });
     request.on("error", reject);
   });

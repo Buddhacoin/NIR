@@ -20,6 +20,7 @@ import {
   SAFETY_POLICY_V1_COMMITMENT,
 } from "./constants.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
 import { createAccountProof } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
@@ -71,7 +72,7 @@ export function initializeDevnet(directory, { networkId = "nir-local-devnet" } =
 }
 
 function loadJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
+  return parseConsensusJson(readFileSync(path, "utf8"));
 }
 
 function validatorQuorum(block, wallets) {

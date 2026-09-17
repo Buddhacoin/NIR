@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { parseConsensusJson } from "./consensus-json.mjs";
 
 import { advanceValidatorTrust, verifyValidatorHandoff } from "./validator-handoff.mjs";
 
@@ -55,7 +56,7 @@ function readCandidate(path, trustAnchor) {
   try {
     if (!existsSync(path) || lstatSync(path).isSymbolicLink() ||
         statSync(path).size > MAX_HANDOFF_STORE_BYTES) return null;
-    const handoffs = JSON.parse(readFileSync(path, "utf8"));
+    const handoffs = parseConsensusJson(readFileSync(path, "utf8"));
     const verified = advanceValidatorTrust({ ...trustAnchor, handoffs });
     return { contents: serialized(handoffs), handoffs, verified };
   } catch {

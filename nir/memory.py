@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha256
-import json
 import re
 from typing import Mapping
 
+from .consensus_codec import consensus_hash
 from .model import BPS, ProtocolError
 
 
@@ -15,15 +14,6 @@ MAX_CAPABILITIES = 256
 MIN_FRONTIER_GAIN_BPS = 100
 MAX_PARENT_REGRESSION_BPS = 500
 CAPABILITY_ID = re.compile(r"^[a-z][a-z0-9._-]{0,110}-v[1-9][0-9]{0,8}$")
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
 
 
 def _require_digest(value: str, field: str, *, prefixed: bool = False) -> None:
@@ -125,9 +115,10 @@ class CapabilityMemory:
             artifact: dict(sorted(scores.items()))
             for artifact, scores in sorted(records.items())
         }
-        return sha256(
-            _canonical({"behaviors": sorted(behaviors), "records": records})
-        ).hexdigest()
+        return consensus_hash(
+            "CAPABILITY_MEMORY",
+            {"behaviors": sorted(behaviors), "records": records},
+        )
 
     def seed_reference(
         self,

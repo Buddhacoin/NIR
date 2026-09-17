@@ -22,6 +22,10 @@ import {
   verifySignedHistoryArchiveManifest,
 } from "./archive-sync.mjs";
 import { installAccountHistoryIndexRecordIterable } from "./account-history-index.mjs";
+import {
+  consensusArrayEnvelopeHeader,
+  consensusValueBytes,
+} from "./consensus-codec.mjs";
 import { canonicalJson } from "./crypto.mjs";
 
 const MAX_SOURCES = 128;
@@ -294,7 +298,9 @@ async function downloadChunksToDirectory(provider, directory) {
 }
 
 function *recordsFromDownloadedChunks(directory, verified) {
-  const content = createHash("sha3-256").update("NIR/HISTORY_ARCHIVE_CONTENT/v1\0[");
+  const content = createHash("sha3-256").update(consensusArrayEnvelopeHeader(
+    "HISTORY_ARCHIVE_CONTENT", verified.manifest.recordCount,
+  ));
   let count = 0;
   for (const [index, expected] of verified.manifest.chunks.entries()) {
     const path = join(directory, `${String(index).padStart(8, "0")}.json`);
@@ -317,8 +323,7 @@ function *recordsFromDownloadedChunks(directory, verified) {
       data: raw.toString("base64"), index,
     }, expected, index);
     for (const record of records) {
-      if (count > 0) content.update(",");
-      content.update(canonicalJson({
+      content.update(consensusValueBytes({
         blockHash: record.blockHash,
         height: record.height,
         indexHash: record.indexHash,
@@ -327,7 +332,6 @@ function *recordsFromDownloadedChunks(directory, verified) {
       yield record;
     }
   }
-  content.update("]");
   if (count !== verified.manifest.recordCount ||
       content.digest("hex") !== verified.contentRoot) {
     throw new Error("downloaded history archive content root is invalid");

@@ -8,25 +8,17 @@ import {
 } from "node:crypto";
 
 import { SIGNATURE_ALGORITHM } from "./constants.mjs";
+import {
+  consensusEnvelopeBytes,
+  strictCanonicalJson,
+} from "./consensus-codec.mjs";
 
 export function canonicalJson(value) {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-    .join(",")}}`;
+  return strictCanonicalJson(value);
 }
 
 function domainPayload(domain, value) {
-  if (!/^[A-Z0-9_-]{1,40}$/.test(domain)) {
-    throw new Error("invalid cryptographic domain");
-  }
-  return Buffer.from(`NIR/${domain}/v1\0${canonicalJson(value)}`);
+  return consensusEnvelopeBytes(domain, value);
 }
 
 export function hashObject(value, domain = "OBJECT") {
