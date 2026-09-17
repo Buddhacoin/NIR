@@ -56,10 +56,10 @@ The intended advantages are:
 | 21 million cap and ten-year treasury vesting | Enforced by consensus |
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
 | Sponsored transfer fees | Two-party post-quantum authorization and independent replay protection implemented |
-| Transfer Credits from locked NIR | Protocol-v19 stake, block-epoch renewal, exact-payment sponsorship, revocable delegation, delayed unstaking, and per-block capacity limit implemented; wallet controls and calibrated production parameters remain |
+| Transfer Credits from locked NIR | Protocol-v19 stake, block-epoch renewal, exact-payment sponsorship, revocable delegation, delayed unstaking, per-block capacity limit, account RPC state and local wallet controls implemented; production calibration remains |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
-| Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer review, terminal-confirmed signing without browser key access, and a separate valueless-testnet-only submit step; implemented locally |
+| Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |

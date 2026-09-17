@@ -112,10 +112,19 @@ export class PersistentDevNode {
         type: transaction.type,
       }));
     const balance = this.#chain.balance(address);
+    const pendingUnstake = this.#chain.creditUnstake(address);
     return {
       address,
       atomicBalance: balance.toString(),
       balance: formatNir(balance),
+      resources: {
+        atomicStake: this.#chain.creditStake(address).toString(),
+        availableTransferCredits: this.#chain.transferCredits(address).toString(),
+        delegations: this.#chain.creditDelegations(address),
+        pendingUnstake: pendingUnstake ? {
+          amount: pendingUnstake.amount.toString(), unlockHeight: pendingUnstake.unlockHeight,
+        } : null,
+      },
       nextNonce: this.#chain.nextNonce(address),
       transactions,
     };

@@ -45,9 +45,12 @@ try {
     vaultPath,
     authorize: async (intent) => {
       console.error("\nNIR signing request");
+      console.error(`Action: ${intent.type ?? "transfer"}`);
       console.error(`Network: ${intent.networkId}`);
-      console.error(`Recipient: ${intent.recipient}`);
-      console.error(`Amount: ${intent.amount} atomic units`);
+      if (intent.recipient) console.error(`Recipient: ${intent.recipient}`);
+      if (intent.delegate) console.error(`Delegate: ${intent.delegate}`);
+      if (intent.limit !== undefined) console.error(`Delegated transfers per epoch: ${intent.limit}`);
+      if (intent.amount) console.error(`Amount: ${intent.amount} atomic units`);
       console.error(`Fee: ${intent.fee ?? "consensus default"}`);
       console.error(`Nonce: ${intent.nonce}`);
       console.error(`Request: ${intent.requestId}`);

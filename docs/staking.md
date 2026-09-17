@@ -17,6 +17,22 @@ to another account without giving it control of the locked NIR.
 These are test-network parameters. Production values require public load and
 economic measurements.
 
+## Use it in the local wallet
+
+1. Start the local node, wallet preview and signing bridge as described in the
+   main README.
+2. Pair the encrypted vault with the one-time code shown by the bridge.
+3. Open **Resources** in the bottom navigation.
+4. Choose an amount to lock, enter an address and per-epoch delegation limit,
+   or begin an exit from the locked balance.
+5. Compare the action, network, amount or delegation, fee and nonce printed by
+   the bridge. Type `SIGN` and enter the vault password only in that terminal.
+6. The wallet submits the signed operation only to the connected valueless
+   local network and refreshes locked stake, credits and pending unlock height.
+
+The browser never receives the private key or password. Every signing request
+has a one-use identifier, and the bridge accepts only its exact paired origin.
+
 ## Stake
 
 The account signs a `credit-stake` transaction. The amount leaves its spendable
@@ -79,5 +95,5 @@ a compromised delegate.
    spendable balance.
 
 Only one exit request per account may be pending. A premature claim is rejected.
-The wallet interface does not expose these controls yet; current use is through
-the protocol API and valueless local network.
+The local wallet enables the claim button when the connected node reaches the
+recorded unlock height.

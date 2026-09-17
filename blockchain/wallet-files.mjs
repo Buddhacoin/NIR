@@ -9,7 +9,13 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-import { createTransfer } from "./chain.mjs";
+import {
+  createCreditDelegation,
+  createCreditStake,
+  createCreditUnstakeClaim,
+  createCreditUnstakeRequest,
+  createTransfer,
+} from "./chain.mjs";
 import { addressFromPublicKey, generateWallet } from "./crypto.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 
@@ -53,6 +59,30 @@ export function signWalletTransfer({ path, password, networkId, recipient, amoun
       wallet, networkId, recipient, amount, nonce,
       ...(fee === undefined ? {} : { fee }),
     });
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function signWalletResourceOperation({ path, password, operation }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    const common = { wallet, networkId: operation.networkId, nonce: operation.nonce };
+    if (operation.type === "credit-stake") {
+      return createCreditStake({ ...common, amount: operation.amount, fee: operation.fee });
+    }
+    if (operation.type === "credit-delegation") {
+      return createCreditDelegation({
+        ...common, delegate: operation.delegate, limit: operation.limit, fee: operation.fee,
+      });
+    }
+    if (operation.type === "credit-unstake-request") {
+      return createCreditUnstakeRequest({ ...common, amount: operation.amount });
+    }
+    if (operation.type === "credit-unstake-claim") {
+      return createCreditUnstakeClaim(common);
+    }
+    throw new Error("wallet resource operation is not supported");
   } finally {
     wallet.privateKey = "";
   }

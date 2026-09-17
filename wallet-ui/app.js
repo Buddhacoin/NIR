@@ -3,6 +3,7 @@ const messages = {
   send: ["Отправить NIR", "Подключите локальный vault. Перед подписью кошелёк покажет адрес, сумму, комиссию и процент комиссии."],
   mine: ["Майнинг интеллекта", "Здесь можно будет выбрать роль, проверить оборудование и получить назначенное задание. Сейчас доступен только локальный демонстрационный режим."],
   history: ["История операций", "Операций пока нет. После подключения узла здесь появятся подтверждённые переводы, комиссии и награды."],
+  resources: ["Ресурсы сети", "Заблокируйте NIR, чтобы получать Transfer Credits или безопасно делегировать лимит переводов другому адресу."],
   settings: ["Настройки", "Переключение темы уже работает. Session token хранится только в памяти страницы и исчезает при её закрытии."],
   network: ["Local testnet", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
 };
@@ -15,8 +16,10 @@ const panelTitle = document.querySelector("#panel-title");
 const panelCopy = document.querySelector("#panel-copy");
 const bridgePanel = document.querySelector("#bridge-panel");
 const sendPanel = document.querySelector("#send-panel");
+const resourcesPanel = document.querySelector("#resources-panel");
 const bridgeStatus = document.querySelector("#bridge-status");
 const sendStatus = document.querySelector("#send-status");
+const resourcesStatus = document.querySelector("#resources-status");
 let bridgeSession = null;
 let walletInfo = null;
 let networkInfo = null;
@@ -106,11 +109,125 @@ async function refreshAccount() {
   try {
     const account = await readAccount();
     document.querySelector("#balance-value").textContent = formatAtomic(account.atomicBalance);
+    const resources = account.resources ?? {};
+    document.querySelector("#resource-stake").textContent = `${formatAtomic(resources.atomicStake ?? "0")} NIR`;
+    document.querySelector("#resource-credits").textContent = `${resources.availableTransferCredits ?? "0"} переводов`;
+    const pending = resources.pendingUnstake;
+    document.querySelector("#resource-unstake").textContent = pending
+      ? `${formatAtomic(pending.amount)} NIR · блок ${pending.unlockHeight}` : "Нет";
+    const claim = document.querySelector("#claim-unstake");
+    claim.hidden = !pending;
+    claim.disabled = Boolean(pending && networkInfo.height < pending.unlockHeight);
+    claim.textContent = pending && networkInfo.height < pending.unlockHeight
+      ? `Доступно с блока ${pending.unlockHeight}` : "Завершить вывод";
     document.querySelector("#wallet-state").textContent = `Подключён ${walletInfo.address.slice(0, 12)}… · тестовая сеть`;
   } catch {
     document.querySelector("#wallet-state").textContent = "Vault подключён · локальный узел недоступен";
   }
 }
+
+function randomRequestId() {
+  return [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function openResources() {
+  if (!walletInfo) return openBridgePanel();
+  resourcesStatus.textContent = "Обновление…";
+  resourcesPanel.showModal();
+  await refreshAccount();
+  resourcesStatus.textContent = "";
+}
+
+async function resourceFee() {
+  const response = await fetch(`${NODE_URL}/v1/fees?amount=1`);
+  if (!response.ok) throw new Error("Узел не смог рассчитать комиссию.");
+  return (await response.json()).amount;
+}
+
+async function signAndSubmitResource(fields) {
+  if (!walletInfo || !networkInfo || networkInfo.valueMode !== "valueless-devnet") {
+    throw new Error("Операция разрешена только в подключённой локальной тестовой сети.");
+  }
+  const account = await readAccount();
+  const intent = {
+    ...fields,
+    networkId: networkInfo.networkId,
+    nonce: account.nextNonce,
+    requestId: randomRequestId(),
+  };
+  if (["credit-stake", "credit-delegation"].includes(intent.type)) {
+    intent.fee = await resourceFee();
+  }
+  resourcesStatus.textContent = "Подтвердите точные параметры и пароль в терминале bridge…";
+  const signed = await bridgeRequest("/v1/sign-resource", {
+    method: "POST", body: JSON.stringify(intent),
+  });
+  const health = await fetch(`${NODE_URL}/health`).then((response) => response.json());
+  if (health.valueMode !== "valueless-devnet" || health.networkId !== signed.transaction.networkId) {
+    throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
+  }
+  const response = await fetch(`${NODE_URL}/v1/transactions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(signed.transaction),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Узел отклонил операцию.");
+  resourcesStatus.textContent = `Подтверждено в блоке ${result.height}.`;
+  await refreshNodeStatus();
+}
+
+document.querySelector("#stake-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  try {
+    await signAndSubmitResource({
+      amount: parseNir(document.querySelector("#stake-amount").value), type: "credit-stake",
+    });
+    event.currentTarget.reset();
+  } catch (error) { resourcesStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+document.querySelector("#delegation-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  try {
+    const delegate = document.querySelector("#delegate-address").value.trim();
+    const limit = Number(document.querySelector("#delegate-limit").value);
+    if (!NIR_ADDRESS.test(delegate) || delegate === walletInfo.address ||
+        !Number.isSafeInteger(limit) || limit < 0 || limit > 1_000_000) {
+      throw new Error("Проверьте адрес и целый лимит от 0 до 1 000 000.");
+    }
+    await signAndSubmitResource({ delegate, limit, type: "credit-delegation" });
+    event.currentTarget.reset();
+  } catch (error) { resourcesStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+document.querySelector("#unstake-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  try {
+    await signAndSubmitResource({
+      amount: parseNir(document.querySelector("#unstake-amount").value),
+      type: "credit-unstake-request",
+    });
+    event.currentTarget.reset();
+  } catch (error) { resourcesStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+document.querySelector("#claim-unstake").onclick = async (event) => {
+  event.currentTarget.disabled = true;
+  try { await signAndSubmitResource({ type: "credit-unstake-claim" }); }
+  catch (error) { resourcesStatus.textContent = error.message; }
+  finally { event.currentTarget.disabled = false; }
+};
 
 function openBridgePanel() {
   bridgeStatus.textContent = "";
@@ -290,6 +407,7 @@ navigationButtons.forEach((button) => button.addEventListener("click", () => {
   });
   const destination = button.dataset.nav;
   if (destination === "home") window.scrollTo({ top: 0, behavior: "smooth" });
+  else if (destination === "resources") openResources();
   else if (destination === "history") {
     document.querySelector("#history").scrollIntoView({ behavior: "smooth", block: "center" });
     showMessage("history");

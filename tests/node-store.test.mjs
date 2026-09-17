@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createTransfer } from "../blockchain/chain.mjs";
+import { createCreditStake, createTransfer } from "../blockchain/chain.mjs";
 import { ATOMIC_UNITS, MIN_TRANSFER_FEE } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
@@ -38,6 +38,35 @@ test("a transfer survives a complete node restart and replay", () => {
     const forged = { ...transfer, nonce: 1, amount: (3n * ATOMIC_UNITS).toString() };
     assert.throws(() => node.submitTransaction(forged), /invalid transaction signature/);
     assert.equal(node.height, 2);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("account RPC state includes persistent transfer-credit resources", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-resource-account-test-"));
+  const directory = join(temporary, "node");
+  try {
+    initializeDevnet(directory);
+    const wallet = generateWallet();
+    let node = new PersistentDevNode(directory);
+    node.faucet(wallet.address, (10n * ATOMIC_UNITS).toString());
+    node.submitTransaction(createCreditStake({
+      wallet,
+      networkId: node.networkId,
+      amount: (5n * ATOMIC_UNITS).toString(),
+      nonce: 0,
+    }));
+    let account = node.account(wallet.address);
+    assert.equal(account.resources.atomicStake, (5n * ATOMIC_UNITS).toString());
+    assert.equal(account.resources.availableTransferCredits, "0");
+    assert.deepEqual(account.resources.delegations, []);
+    assert.equal(account.resources.pendingUnstake, null);
+
+    node = new PersistentDevNode(directory);
+    account = node.account(wallet.address);
+    assert.equal(account.resources.atomicStake, (5n * ATOMIC_UNITS).toString());
+    assert.equal(account.resources.availableTransferCredits, "0");
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

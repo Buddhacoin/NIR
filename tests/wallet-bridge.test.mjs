@@ -115,6 +115,48 @@ test("wallet bridge never broadcasts and consumes a rejected request id", async 
   }
 });
 
+test("wallet bridge signs an allowlisted resource operation without exposing the key", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-resource-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const password = "wallet-resource-password-long";
+  createWalletFile({ path: vaultPath, password });
+  const origin = "http://127.0.0.1:8765";
+  const token = "3".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => password, origin, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const signed = await request(`${base}/v1/sign-resource`, origin, token, {
+      body: JSON.stringify({
+        amount: "10000000000", fee: "1000", networkId: "nir-testnet", nonce: 0,
+        requestId: "4".repeat(64), type: "credit-stake",
+      }),
+      method: "POST",
+    });
+    assert.equal(signed.status, 200);
+    const result = await signed.json();
+    const { signature, ...payload } = result.transaction;
+    const publicKey = JSON.parse(readFileSync(vaultPath, "utf8")).publicKey;
+    assert.equal(verifyObject(payload, signature, publicKey, "CREDIT_STAKE"), true);
+    assert.equal(result.transaction.type, "credit-stake");
+    assert.equal(JSON.stringify(result).includes("privateKey"), false);
+
+    const invalid = await request(`${base}/v1/sign-resource`, origin, token, {
+      body: JSON.stringify({
+        networkId: "nir-testnet", nonce: 1, requestId: "5".repeat(64), type: "validator-bond",
+      }),
+      method: "POST",
+    });
+    assert.equal(invalid.status, 400);
+    assert.match((await invalid.json()).error, /invalid/);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("wallet bridge serializes confirmations so prompts cannot overlap", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-lock-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");

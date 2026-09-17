@@ -78,6 +78,18 @@ import {
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
 
+function accountResources(chain, address) {
+  const pendingUnstake = chain.creditUnstake(address);
+  return {
+    atomicStake: chain.creditStake(address).toString(),
+    availableTransferCredits: chain.transferCredits(address).toString(),
+    delegations: chain.creditDelegations(address),
+    pendingUnstake: pendingUnstake ? {
+      amount: pendingUnstake.amount.toString(), unlockHeight: pendingUnstake.unlockHeight,
+    } : null,
+  };
+}
+
 function writeExclusive(path, value, mode = 0o600) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {
     encoding: "utf8", flag: "wx", mode,
@@ -367,7 +379,11 @@ export class ValidatorReplica {
 
   account(address) {
     if (!ADDRESS.test(address)) throw new Error("address is invalid");
-    return { address, atomicBalance: this.#chain.balance(address).toString() };
+    return {
+      address,
+      atomicBalance: this.#chain.balance(address).toString(),
+      resources: accountResources(this.#chain, address),
+    };
   }
 
   authorize(auth, method, path, body) {
@@ -1045,7 +1061,8 @@ export class DistributedCoordinator {
       .map((transaction) => ({ ...transaction, id: transactionId(transaction) }));
     const balance = this.#chain.balance(address);
     return { address, atomicBalance: balance.toString(), balance: formatNir(balance),
-      nextNonce: this.#chain.nextNonce(address), transactions };
+      nextNonce: this.#chain.nextNonce(address),
+      resources: accountResources(this.#chain, address), transactions };
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {

@@ -1264,6 +1264,13 @@ export class NirChain {
   creditDelegation(owner, delegate) {
     return structuredClone(this.#creditDelegations.get(creditDelegationKey(owner, delegate)) ?? null);
   }
+  creditDelegations(owner) {
+    assertAddress(owner, "credit delegation owner");
+    return [...this.#creditDelegations.values()]
+      .filter((delegation) => delegation.owner === owner)
+      .sort((left, right) => left.delegate.localeCompare(right.delegate))
+      .map((delegation) => structuredClone(delegation));
+  }
   creditUnstake(address) { return structuredClone(this.#creditUnstakes.get(address) ?? null); }
 
   transferCredits(address, height = this.height + 1) {

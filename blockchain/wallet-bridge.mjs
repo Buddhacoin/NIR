@@ -1,7 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
-import { signWalletTransfer, walletPublicInfo } from "./wallet-files.mjs";
+import {
+  signWalletResourceOperation,
+  signWalletTransfer,
+  walletPublicInfo,
+} from "./wallet-files.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -55,6 +59,43 @@ function validIntent(value) {
     recipient: value.recipient,
     requestId: value.requestId,
   };
+}
+
+function validResourceIntent(value) {
+  if (!value || !REQUEST_ID.test(value.requestId ?? "") ||
+      typeof value.networkId !== "string" || value.networkId.length < 3 ||
+      value.networkId.length > 128 || !Number.isSafeInteger(value.nonce) || value.nonce < 0 ||
+      !["credit-stake", "credit-delegation", "credit-unstake-request", "credit-unstake-claim"]
+        .includes(value.type)) {
+    throw new Error("bridge resource intent is invalid");
+  }
+  const operation = {
+    networkId: value.networkId,
+    nonce: value.nonce,
+    requestId: value.requestId,
+    type: value.type,
+  };
+  if (["credit-stake", "credit-unstake-request"].includes(value.type)) {
+    if (typeof value.amount !== "string" || !/^[1-9][0-9]{0,30}$/.test(value.amount)) {
+      throw new Error("bridge resource amount is invalid");
+    }
+    operation.amount = value.amount;
+  }
+  if (["credit-stake", "credit-delegation"].includes(value.type)) {
+    if (typeof value.fee !== "string" || !/^[1-9][0-9]{0,30}$/.test(value.fee)) {
+      throw new Error("bridge resource fee is invalid");
+    }
+    operation.fee = value.fee;
+  }
+  if (value.type === "credit-delegation") {
+    if (!ADDRESS.test(value.delegate ?? "") || !Number.isSafeInteger(value.limit) ||
+        value.limit < 0 || value.limit > 1_000_000) {
+      throw new Error("bridge resource delegation is invalid");
+    }
+    operation.delegate = value.delegate;
+    operation.limit = value.limit;
+  }
+  return operation;
 }
 
 function authorized(request, sessionToken) {
@@ -137,11 +178,13 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
       }
-      if (request.method === "POST" && url.pathname === "/v1/sign") {
+      if (request.method === "POST" && ["/v1/sign", "/v1/sign-resource"].includes(url.pathname)) {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("bridge signing requests require application/json");
         }
-        const intent = validIntent(await readBody(request));
+        const intent = url.pathname === "/v1/sign-resource"
+          ? validResourceIntent(await readBody(request))
+          : validIntent(await readBody(request));
         if (pending) throw new Error("another signing request is awaiting confirmation");
         if (seen.has(intent.requestId)) throw new Error("signing request was already used");
         seen.add(intent.requestId);
@@ -150,8 +193,10 @@ export function createWalletBridgeServer({
         try {
           const password = await authorize(structuredClone(intent));
           if (typeof password !== "string") throw new Error("signing was rejected by the user");
-          const { requestId, ...transfer } = intent;
-          const transaction = signWalletTransfer({ path: vaultPath, password, ...transfer });
+          const { requestId, ...payload } = intent;
+          const transaction = url.pathname === "/v1/sign-resource"
+            ? signWalletResourceOperation({ path: vaultPath, password, operation: payload })
+            : signWalletTransfer({ path: vaultPath, password, ...payload });
           return send(response, 200, { requestId, transaction }, origin);
         } finally {
           pending = false;

@@ -6,8 +6,8 @@ const html = readFileSync(new URL("../wallet-ui/index.html", import.meta.url), "
 const script = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../wallet-ui/style.css", import.meta.url), "utf8");
 
-test("wallet navigation has four interactive destinations", () => {
-  for (const destination of ["home", "history", "mine", "settings"]) {
+test("wallet navigation has five interactive destinations", () => {
+  for (const destination of ["home", "history", "resources", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
   }
   assert.match(script, /querySelectorAll\("\[data-nav\]"\)/);
@@ -24,6 +24,7 @@ test("visible secondary controls have actions", () => {
 
 test("bottom navigation is a compact readable dock", () => {
   assert.match(styles, /nav \{ position: fixed/);
+  assert.match(styles, /grid-template-columns: repeat\(5, 1fr\)/);
   assert.match(styles, /width: min\(422px, calc\(100% - 24px\)\)/);
   assert.match(styles, /nav button \{[^}]*min-height: 66px/s);
   assert.match(styles, /nav button svg \{[^}]*width: 25px/s);
@@ -36,9 +37,21 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=18"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=19"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
+});
+
+test("wallet exposes native resource staking and delegation controls", () => {
+  for (const id of ["resource-stake", "resource-credits", "resource-unstake",
+    "stake-form", "delegation-form", "unstake-form", "claim-unstake"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /bridgeRequest\("\/v1\/sign-resource"/);
+  assert.match(script, /type: "credit-stake"/);
+  assert.match(script, /type: "credit-delegation"/);
+  assert.match(script, /type: "credit-unstake-request"/);
+  assert.match(script, /type: "credit-unstake-claim"/);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {

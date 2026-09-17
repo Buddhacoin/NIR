@@ -121,6 +121,30 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     assert.equal(payerAfter.value.nextNonce, 1);
     assert.equal(recipientAfter.value.atomicBalance, amount);
 
+    const resourceSigned = await jsonRequest(`${bridgeUrl}/v1/sign-resource`, {
+      body: {
+        amount: (5n * ATOMIC_UNITS).toString(),
+        fee: MIN_TRANSFER_FEE.toString(),
+        networkId: health.value.networkId,
+        nonce: payerAfter.value.nextNonce,
+        requestId: "9".repeat(64),
+        type: "credit-stake",
+      },
+      headers: bridgeHeaders,
+      method: "POST",
+    });
+    assert.equal(resourceSigned.response.status, 200);
+    assert.equal(approvals, 2);
+    const resourceSubmitted = await jsonRequest(`${nodeUrl}/v1/transactions`, {
+      body: resourceSigned.value.transaction,
+      method: "POST",
+    });
+    assert.equal(resourceSubmitted.response.status, 202);
+    const resourceAccount = await jsonRequest(`${nodeUrl}/v1/accounts/${payer.address}`);
+    assert.equal(resourceAccount.value.resources.atomicStake, (5n * ATOMIC_UNITS).toString());
+    assert.equal(resourceAccount.value.resources.availableTransferCredits, "0");
+    assert.equal(resourceAccount.value.nextNonce, 2);
+
     const replay = await jsonRequest(`${nodeUrl}/v1/transactions`, {
       body: signed.value.transaction,
       method: "POST",
