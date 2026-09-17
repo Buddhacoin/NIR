@@ -233,6 +233,14 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
       }
+      if (request.method === "GET" && url.pathname === "/v1/trust-info") {
+        return send(response, 200, {
+          enabled: Boolean(accountTrust),
+          minimumHeight: trustCheckpoint?.height ?? 0,
+          networkId: accountTrust?.expectedNetworkId ?? null,
+          tipHash: trustCheckpoint?.tipHash ?? null,
+        }, origin);
+      }
       if (request.method === "POST" && url.pathname === "/v1/verify-payment-request") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("payment request verification requires application/json");

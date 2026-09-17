@@ -1,3 +1,5 @@
+import { normalizeNodePolicy, selectNodeHealth } from "./node-selection.js";
+
 const messages = {
   receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
   send: ["Отправить NIR", "Подключите локальный vault. Перед подписью кошелёк покажет адрес, сумму, комиссию и процент комиссии."],
@@ -8,7 +10,6 @@ const messages = {
   network: ["Local testnet", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
 };
 
-const NODE_URL = "http://127.0.0.1:8787";
 const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8788";
 const NIR_ADDRESS = /^nir1[0-9a-f]{64}$/;
 const panel = document.querySelector("#panel");
@@ -25,6 +26,8 @@ const resourcesStatus = document.querySelector("#resources-status");
 let bridgeSession = null;
 let walletInfo = null;
 let networkInfo = null;
+let activeNodeUrl = null;
+let nodePolicy = null;
 let pendingIntent = null;
 let signedTransaction = null;
 let signedResourceTransaction = null;
@@ -100,13 +103,18 @@ function formatAtomic(value) {
   return `${atomic / 100_000_000n}.${fraction}`;
 }
 
+function nodeUrl(path) {
+  if (!activeNodeUrl) throw new Error("Нет подтверждённого узла NIR.");
+  return `${activeNodeUrl}${path}`;
+}
+
 async function readAccount() {
   if (!walletInfo || !networkInfo) throw new Error("Подключите vault и локальный узел.");
-  const response = await fetch(`${NODE_URL}/v1/accounts/${encodeURIComponent(walletInfo.address)}`);
+  const response = await fetch(nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}`));
   if (!response.ok) throw new Error("Не удалось получить nonce и баланс от узла.");
   const account = await response.json();
   try {
-    const historyResponse = await fetch(`${NODE_URL}/v1/validator-handoffs`);
+    const historyResponse = await fetch(nodeUrl("/v1/validator-handoffs"));
     if (historyResponse.ok) {
       const history = await historyResponse.json();
       await bridgeRequest("/v1/update-validator-trust", {
@@ -114,7 +122,7 @@ async function readAccount() {
       });
     }
     const proofResponse = await fetch(
-      `${NODE_URL}/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`,
+      nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`),
     );
     if (!proofResponse.ok) throw new Error("proof unavailable");
     const proof = await proofResponse.json();
@@ -175,7 +183,7 @@ async function openResources() {
 }
 
 async function resourceFee() {
-  const response = await fetch(`${NODE_URL}/v1/fees?amount=1`);
+  const response = await fetch(nodeUrl("/v1/fees?amount=1"));
   if (!response.ok) throw new Error("Узел не смог рассчитать комиссию.");
   return (await response.json()).amount;
 }
@@ -213,12 +221,13 @@ document.querySelector("#submit-resource").onclick = async (event) => {
   event.currentTarget.disabled = true;
   resourcesStatus.textContent = "Повторная проверка тестовой сети…";
   try {
-    const health = await fetch(`${NODE_URL}/health`).then((response) => response.json());
+    await selectActiveNode();
+    const health = await fetch(nodeUrl("/health")).then((response) => response.json());
     if (health.valueMode !== "valueless-devnet" ||
         health.networkId !== signedResourceTransaction.networkId) {
       throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
     }
-    const response = await fetch(`${NODE_URL}/v1/transactions`, {
+    const response = await fetch(nodeUrl("/v1/transactions"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(signedResourceTransaction),
@@ -311,7 +320,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     walletInfo = await bridgeRequest("/v1/wallet");
     codeInput.value = "";
     bridgeStatus.textContent = `Подключён ${walletInfo.address.slice(0, 16)}…`;
-    await refreshAccount();
+    await refreshNodeStatus();
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
     bridgeSession = null;
@@ -419,7 +428,7 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
     const amount = parseNir(document.querySelector("#send-amount").value);
     const [account, quoteResponse] = await Promise.all([
       readAccount(),
-      fetch(`${NODE_URL}/v1/fees?amount=${encodeURIComponent(amount)}`),
+      fetch(nodeUrl(`/v1/fees?amount=${encodeURIComponent(amount)}`)),
     ]);
     if (!quoteResponse.ok) throw new Error("Узел не смог рассчитать комиссию.");
     const quote = await quoteResponse.json();
@@ -480,7 +489,8 @@ document.querySelector("#submit-signed").onclick = async () => {
   submitButton.disabled = true;
   sendStatus.textContent = "Повторная проверка тестовой сети…";
   try {
-    const healthResponse = await fetch(`${NODE_URL}/health`);
+    await selectActiveNode();
+    const healthResponse = await fetch(nodeUrl("/health"));
     if (!healthResponse.ok) throw new Error("Локальный узел не отвечает.");
     const currentNetwork = await healthResponse.json();
     if (currentNetwork.valueMode !== "valueless-devnet") {
@@ -489,7 +499,7 @@ document.querySelector("#submit-signed").onclick = async () => {
     if (currentNetwork.networkId !== signedTransaction.networkId) {
       throw new Error("Сеть узла не совпадает с сетью подписанной транзакции.");
     }
-    const response = await fetch(`${NODE_URL}/v1/transactions`, {
+    const response = await fetch(nodeUrl("/v1/transactions"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(signedTransaction),
@@ -557,26 +567,65 @@ setTheme(localStorage.getItem("nir-theme") || "light");
 themeButton.onclick = () => setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
 
 const networkButton = document.querySelector(".network");
-async function refreshNodeStatus() {
+async function loadNodePolicy() {
+  if (nodePolicy) return nodePolicy;
+  const response = await fetch("./nodes.json", { cache: "no-store" });
+  if (!response.ok) throw new Error("node policy unavailable");
+  nodePolicy = normalizeNodePolicy(await response.json());
+  return nodePolicy;
+}
+
+async function selectActiveNode() {
+  const policy = await loadNodePolicy();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2_000);
+  const timeout = setTimeout(() => controller.abort(), 2_500);
   try {
-    const response = await fetch(`${NODE_URL}/health`, { signal: controller.signal });
-    if (!response.ok) throw new Error("node unavailable");
-    networkInfo = await response.json();
-    networkButton.textContent = `● Connected · h${networkInfo.height}`;
+    let trust = { minimumHeight: 0, networkId: null };
+    if (bridgeSession) {
+      const candidate = await bridgeRequest("/v1/trust-info");
+      if (candidate.enabled) trust = candidate;
+    }
+    const responses = await Promise.allSettled(policy.nodes.map(async (url) => {
+      const response = await fetch(`${url}/health`, { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) throw new Error("node unavailable");
+      return { health: await response.json(), url };
+    }));
+    const selected = selectNodeHealth(
+      responses.filter(({ status }) => status === "fulfilled").map(({ value }) => value),
+      {
+        expectedNetworkId: trust.networkId,
+        minimumAgreement: policy.minimumAgreement,
+        minimumHeight: trust.minimumHeight,
+        trustedTipHash: trust.tipHash,
+      },
+    );
+    activeNodeUrl = selected.url;
+    networkInfo = {
+      ...selected.health,
+      agreeingNodes: selected.agreeingNodes,
+      availableNodes: selected.availableNodes,
+    };
+    return networkInfo;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function refreshNodeStatus() {
+  try {
+    await selectActiveNode();
+    networkButton.textContent = `● ${networkInfo.agreeingNodes}/${networkInfo.availableNodes} · h${networkInfo.height}`;
     networkButton.classList.add("connected");
     networkButton.classList.remove("offline");
-    messages.network = ["NIR node подключён", `${networkInfo.networkId}, высота ${networkInfo.height}. Режим: тестовые единицы без реальной стоимости.`];
+    messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
     await refreshAccount();
   } catch {
     networkInfo = null;
-    networkButton.textContent = "○ Node offline";
+    activeNodeUrl = null;
+    networkButton.textContent = "○ Nodes offline";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
-    messages.network = ["NIR node не подключён", "Запустите локальный узел на 127.0.0.1:8787. Кошелёк повторит проверку после обновления страницы."];
-  } finally {
-    clearTimeout(timeout);
+    messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
   }
 }
 refreshNodeStatus();

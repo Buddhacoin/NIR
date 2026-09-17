@@ -59,7 +59,7 @@ The intended advantages are:
 | Transfer Credits from locked NIR | Protocol-v19 stake, block-epoch renewal, exact-payment sponsorship, revocable delegation, delayed unstaking, per-block capacity limit, account RPC state and local wallet controls implemented; production calibration remains |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
-| Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
+| Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, multi-node finalized-view selection and failover, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
 | Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
 | Quorum-verified account proofs | Balance, nonce and Transfer Credit state are bound to finalized height and state root; independent validators attest separately, while the wallet automatically verifies and persists genesis-rooted validator rotations and rejects trust rollback |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |

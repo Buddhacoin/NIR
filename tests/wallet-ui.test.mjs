@@ -38,17 +38,19 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=21"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=22"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
 });
 
 test("wallet shell cache uses the current asset version", () => {
   for (const asset of ["style.css", "app.js", "nir-coin-icon.png"]) {
-    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=21`));
-    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=21`));
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=22`));
+    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=22`));
   }
-  assert.match(serviceWorker, /nir-wallet-shell-v21/);
+  assert.match(serviceWorker, /nir-wallet-shell-v22/);
+  assert.match(serviceWorker, /node-selection\.js/);
+  assert.match(serviceWorker, /nodes\.json/);
 });
 
 test("wallet exposes native resource staking and delegation controls", () => {
@@ -88,13 +90,14 @@ test("wallet reviews and signs before a separate testnet-only broadcast", () => 
   assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
   assert.match(script, /currentNetwork\.valueMode !== "valueless-devnet"/);
   assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
-  assert.match(script, /fetch\(`\$\{NODE_URL\}\/v1\/transactions/);
+  assert.match(script, /fetch\(nodeUrl\("\/v1\/transactions"\)/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
 });
 
 test("wallet reports the local node connection state", () => {
-  assert.match(script, /NODE_URL = "http:\/\/127\.0\.0\.1:8787"/);
-  assert.match(script, /fetch\(`\$\{NODE_URL\}\/health`/);
+  assert.match(script, /selectNodeHealth/);
+  assert.match(script, /fetch\(`\$\{url\}\/health`/);
+  assert.match(script, /bridgeRequest\("\/v1\/trust-info"/);
   assert.match(script, /networkButton\.classList\.add\("connected"\)/);
   assert.match(script, /networkButton\.classList\.add\("offline"\)/);
   assert.match(styles, /\.network\.connected/);

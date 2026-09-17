@@ -72,6 +72,19 @@ is accepted.
 The bridge also writes `<vault>.trust.json`, a non-secret atomic checkpoint that
 prevents an older height, conflicting state or truncated rotation history from
 being accepted after restart. It should be backed up with the encrypted vault.
+
+## Multiple node policy
+
+The signed wallet package contains `wallet-ui/nodes.json`. It lists exact node
+origins and the minimum number that must report the same network, finalized
+height and block hash. The wallet probes every origin, rejects same-height hash
+conflicts, ignores a lone node claiming a higher height, and automatically uses
+another member of the accepted group when one endpoint is unavailable. The
+local valueless profile permits one of three loopback endpoints. A public
+profile must list independently operated HTTPS origins and require at least two
+matching responses. The bridge supplies the pinned network identifier and the
+minimum previously accepted height, so a foreign network or rollback is not a
+candidate even before the account proof is checked.
 The pairing code and session token are not recovery secrets. Neither belongs in
 a URL or persistent browser storage. Close the terminal process when finished.
 

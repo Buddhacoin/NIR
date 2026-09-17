@@ -69,6 +69,12 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     assert.equal(pairing.response.status, 200);
     assert.equal(pairing.value.sessionToken, token);
     const bridgeHeaders = { "x-nir-bridge-token": pairing.value.sessionToken };
+    const trustInfo = await jsonRequest(`${bridgeUrl}/v1/trust-info`, {
+      headers: bridgeHeaders,
+    });
+    assert.equal(trustInfo.response.status, 200);
+    assert.equal(trustInfo.value.networkId, genesis.networkId);
+    assert.equal(trustInfo.value.minimumHeight, 0);
 
     const health = await jsonRequest(`${nodeUrl}/health`);
     assert.equal(health.response.status, 200);
