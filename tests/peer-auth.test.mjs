@@ -55,3 +55,24 @@ test("peer authentication rejects mutation and authenticates the response valida
     result: { accepted: false }, trustedPeer: publicWallet(validator),
   }), /signature/);
 });
+
+test("restart rejects requests issued before the new authentication epoch", () => {
+  const wallet = generateWallet();
+  const trustedPeer = publicWallet(wallet);
+  const body = { height: 9 };
+  const auth = createPeerRequest({
+    body, networkId: "nir-test", path: "/v1/blocks", timestamp: 10_000, wallet,
+  });
+  assert.throws(() => verifyPeerRequest({
+    auth, body, method: "POST", minimumTimestamp: 10_001, networkId: "nir-test",
+    now: 10_001, path: "/v1/blocks", seenNonces: new Map(), trustedPeer,
+  }), /timestamp/);
+  const reconnected = createPeerRequest({
+    body, networkId: "nir-test", path: "/v1/blocks", timestamp: 10_001, wallet,
+  });
+  assert.equal(verifyPeerRequest({
+    auth: reconnected, body, method: "POST", minimumTimestamp: 10_001,
+    networkId: "nir-test", now: 10_001, path: "/v1/blocks",
+    seenNonces: new Map(), trustedPeer,
+  }), reconnected.nonce);
+});

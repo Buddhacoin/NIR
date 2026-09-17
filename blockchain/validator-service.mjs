@@ -9,10 +9,29 @@ import { IngressLimiter } from "./ingress-limiter.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { MAX_TOPOLOGY_STORE_BYTES } from "./validator-topology-history.mjs";
+import {
+  boundedAllSettled,
+  PeerReputation,
+  VerificationScheduler,
+} from "./operator-defense.mjs";
 
 const SNAPSHOT_CATCHUP_THRESHOLD = 16;
 const MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES =
   MAX_HANDOFF_STORE_BYTES + MAX_TOPOLOGY_STORE_BYTES + 64 * 1024;
+const SIGNER = /^nir1[0-9a-f]{64}$/;
+
+function requestIdentity(path, body) {
+  if (SIGNER.test(body?.auth?.signer ?? "")) return `peer:${body.auth.signer}`;
+  if (path === "/v1/transactions" && SIGNER.test(body?.sender ?? "")) {
+    return `transaction:${body.sender}`;
+  }
+  return `public:${path.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160)}`;
+}
+
+function objectivePeerViolation(error) {
+  return /invalid|malformed|unexpected|conflict|duplicate|replay|mismatch|not deterministic|not sent by|too many|exceeds|unknown transaction/i
+    .test(error?.message ?? "");
+}
 
 function send(response, status, value) {
   const body = JSON.stringify(value);
@@ -79,11 +98,11 @@ async function peerHealth(validator, index, url) {
 }
 
 async function discoverRecoveryPeers(validator, peers) {
-  const responses = await Promise.allSettled(peers.map((peer) =>
+  const responses = await boundedAllSettled(peers, (peer) =>
     gossipPeerRequest(
       validator, peer, "/v1/p2p/topologies/history", {},
       MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES,
-    )));
+    ));
   const histories = responses
     .filter(({ status, value }) => status === "fulfilled" &&
       Array.isArray(value?.handoffs) && value.handoffs.length > 0 &&
@@ -106,8 +125,8 @@ async function synchronizeValidator(validator, urls) {
   const configuredPeers = urls.map((url, index) => validator.peerDescriptor(index, url));
   const recovery = await discoverRecoveryPeers(validator, configuredPeers);
   const syncPeers = recovery.peers;
-  const statuses = await Promise.allSettled(syncPeers.map((peer) =>
-    peerHealthDescriptor(validator, peer)));
+  const statuses = await boundedAllSettled(syncPeers, (peer) =>
+    peerHealthDescriptor(validator, peer));
   const candidates = statuses.map((result, index) => ({
     height: result.status === "fulfilled" && result.value ? result.value.height : -1,
     index,
@@ -115,11 +134,11 @@ async function synchronizeValidator(validator, urls) {
   let syncedBlocks = 0;
   let snapshotHeight = null;
   if ((candidates[0]?.height ?? validator.height) - validator.height >= SNAPSHOT_CATCHUP_THRESHOLD) {
-    const snapshots = await Promise.allSettled(syncPeers.map((peer) =>
+    const snapshots = await boundedAllSettled(syncPeers, (peer) =>
       gossipPeerRequest(
         validator, peer, "/v1/p2p/snapshots/candidate", {},
         MAX_SNAPSHOT_BYTES + 64 * 1024,
-      )));
+      ));
     try {
       const accepted = snapshots
         .filter(({ status, value }) => status === "fulfilled" && value?.snapshot)
@@ -149,11 +168,11 @@ async function synchronizeValidator(validator, urls) {
     }
   }
   const activeUrls = validator.peerUrls;
-  const handoffResponses = await Promise.allSettled(activeUrls.map((url, index) =>
+  const handoffResponses = await boundedAllSettled(activeUrls, (url, index) =>
     gossipRequest(
       validator, index, url, "/v1/p2p/handoffs/history", {},
       MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES,
-    )));
+    ));
   const histories = handoffResponses
     .filter(({ status, value }) => status === "fulfilled" && Array.isArray(value?.handoffs))
     .map(({ value }) => value.handoffs)
@@ -179,7 +198,7 @@ async function synchronizeValidator(validator, urls) {
 }
 
 async function discoverLockedProposal(validator, urls) {
-  const reports = await Promise.allSettled(urls.map(async (peer, index) => {
+  const reports = await boundedAllSettled(urls, async (peer, index) => {
     if (validator.peerAddress(index) === validator.address) {
       return { index, lock: validator.lockedProposal() };
     }
@@ -187,7 +206,7 @@ async function discoverLockedProposal(validator, urls) {
       height: validator.height + 1,
     });
     return { index, lock: result.lock };
-  }));
+  });
   const groups = new Map();
   for (const report of reports) {
     if (report.status !== "fulfilled" || report.value.lock === null) continue;
@@ -216,8 +235,8 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
     prepareCertificate = validator.prepareCertificate(proposal, recoveredPrepare);
   } else {
     const ownPrepare = validator.vote(proposal);
-    const responses = await Promise.allSettled(urls.map((peer, index) =>
-      gossipRequest(validator, index, peer, "/v1/p2p/proposals", proposal)));
+    const responses = await boundedAllSettled(urls, (peer, index) =>
+      gossipRequest(validator, index, peer, "/v1/p2p/proposals", proposal));
     const prepares = [ownPrepare, ...responses
       .filter(({ status, value }) => status === "fulfilled" && value)
       .map(({ value }) => value.vote)];
@@ -225,10 +244,10 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
   }
   const ownCommit = validator.commitVote(proposal, prepareCertificate);
   const ownHandoffCandidate = validator.validatorHandoffCandidate(proposal);
-  const commitResponses = await Promise.allSettled(urls.map((peer, index) =>
+  const commitResponses = await boundedAllSettled(urls, (peer, index) =>
     gossipRequest(validator, index, peer, "/v1/p2p/commits", {
       prepareCertificate, proposal,
-    })));
+    }));
   const commits = [ownCommit, ...commitResponses
     .filter(({ status, value }) => status === "fulfilled" && value)
     .map(({ value }) => value.vote)];
@@ -239,11 +258,11 @@ async function finalizeValidatorProposal(validator, urls, proposal, recoveredPre
     : validator.assembleValidatorHandoffCandidates(handoffCandidates, proposal);
   const block = validator.finalizeProposal(proposal, prepareCertificate, commits);
   if (handoff) validator.installFinalizedValidatorHandoff(handoff);
-  const broadcasts = await Promise.allSettled(transitionPeers.map((peer) =>
-    gossipPeerRequest(validator, peer, "/v1/p2p/blocks", block)));
+  const broadcasts = await boundedAllSettled(transitionPeers, (peer) =>
+    gossipPeerRequest(validator, peer, "/v1/p2p/blocks", block));
   if (handoff) {
-    await Promise.allSettled(transitionPeers.map((peer) =>
-      gossipPeerRequest(validator, peer, "/v1/p2p/handoffs", handoff)));
+    await boundedAllSettled(transitionPeers, (peer) =>
+      gossipPeerRequest(validator, peer, "/v1/p2p/handoffs", handoff));
   }
   return {
     blockHash: block.hash,
@@ -291,8 +310,8 @@ async function timeoutProposal(validator, urls, proposal, baseMs, maximumMs) {
     throw new Error("elected proposer recovered before the timeout elapsed");
   }
   const ownTimeout = validator.timeout(request);
-  const responses = await Promise.allSettled(urls.map((peer, index) =>
-    gossipRequest(validator, index, peer, "/v1/p2p/timeouts", request)));
+  const responses = await boundedAllSettled(urls, (peer, index) =>
+    gossipRequest(validator, index, peer, "/v1/p2p/timeouts", request));
   const timeouts = [ownTimeout, ...responses
     .filter(({ status, value }) => status === "fulfilled" && value)
     .map(({ value }) => value.timeout)];
@@ -343,8 +362,16 @@ export function createValidatorHttpServer(validator, options = {}) {
   if (typeof ingressLimiter.consume !== "function") {
     throw new Error("validator ingress limiter is invalid");
   }
-  const consumeIngress = (request) =>
-    ingressLimiter.consume(request.socket.remoteAddress ?? "unknown");
+  const verificationScheduler = options.verificationScheduler ?? new VerificationScheduler();
+  const peerReputation = options.peerReputation ?? new PeerReputation();
+  if (typeof verificationScheduler.run !== "function" ||
+      typeof verificationScheduler.metrics !== "function" ||
+      typeof peerReputation.assertAllowed !== "function" ||
+      typeof peerReputation.recordViolation !== "function" ||
+      typeof peerReputation.metrics !== "function") {
+    throw new Error("validator operator-defense configuration is invalid");
+  }
+  const consumeIngress = (identity) => ingressLimiter.consume(identity);
   const tls = options.tls ?? null;
   if (tls !== null && (typeof tls.key !== "string" && !Buffer.isBuffer(tls.key) ||
       typeof tls.cert !== "string" && !Buffer.isBuffer(tls.cert))) {
@@ -354,6 +381,8 @@ export function createValidatorHttpServer(validator, options = {}) {
     ? (handler) => createHttpServer(handler)
     : (handler) => createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: "TLSv1.3" }, handler);
   const server = createServer(async (request, response) => {
+    let authenticatedIdentity = null;
+    let identity = "public:unknown";
     try {
       const url = new URL(request.url, "http://validator.local");
       if (request.method === "GET" && url.pathname === "/health") {
@@ -367,32 +396,60 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "GET" && url.pathname === "/v1/discovery") {
-        consumeIngress(request);
-        return send(response, 200, validator.peerAnnouncement());
+        identity = "public:discovery";
+        consumeIngress(identity);
+        peerReputation.assertAllowed(identity);
+        return await verificationScheduler.run(identity, () =>
+          send(response, 200, validator.peerAnnouncement()));
       }
+      if (request.method === "GET" && url.pathname === "/metrics") {
+        return send(response, 200, {
+          ingressIdentities: ingressLimiter.size,
+          nonces: validator.securityMetrics(),
+          reputation: peerReputation.metrics(),
+          verification: verificationScheduler.metrics(),
+        });
+      }
+      const bodyless = request.method === "POST" &&
+        ["/v1/sync", "/v1/blocks/produce"].includes(url.pathname);
+      const parsedBody = request.method === "POST" && !bodyless
+        ? await readBody(request) : null;
+      identity = requestIdentity(url.pathname, parsedBody);
+      peerReputation.assertAllowed(identity);
+      const authorizeValidator = (auth, method, path, payload) => {
+        const nonce = validator.authorizeValidator(auth, method, path, payload);
+        authenticatedIdentity = identity;
+        return nonce;
+      };
+      const authorizeCoordinator = (auth, method, path, payload) => {
+        const nonce = validator.authorize(auth, method, path, payload);
+        authenticatedIdentity = identity;
+        return nonce;
+      };
+      return await verificationScheduler.run(identity, async () => {
       if (request.method === "POST" && url.pathname === "/v1/transactions") {
-        consumeIngress(request);
-        const payload = await readBody(request);
+        consumeIngress(identity);
+        const payload = parsedBody;
         const result = validator.submitTransaction(payload);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
-        const gossip = await Promise.allSettled(urls.map((peer, index) =>
-          gossipRequest(validator, index, peer, "/v1/gossip/transactions", payload)));
+        const gossip = await boundedAllSettled(urls, (peer, index) =>
+          gossipRequest(validator, index, peer, "/v1/gossip/transactions", payload));
         return send(response, 202, {
           ...result,
           gossipedPeers: gossip.filter(({ status, value }) => status === "fulfilled" && value).length,
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/gossip/transactions") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.submitTransaction(payload);
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/health") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = {
           address: validator.address,
           height: validator.height,
@@ -404,8 +461,8 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/health") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = {
           address: validator.address,
           height: validator.height,
@@ -417,8 +474,8 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/proposals") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         if (validator.validatorAddressForPeerSigner(auth.signer) !== payload.proposer) {
           throw new Error("proposal was not sent by its proposer");
         }
@@ -428,8 +485,8 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/commits") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         if (validator.validatorAddressForPeerSigner(auth.signer) !== payload.proposal.proposer) {
           throw new Error("commit certificate was not sent by its proposer");
         }
@@ -442,32 +499,32 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/handoffs") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.installFinalizedValidatorHandoff(payload);
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/handoffs/history") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { handoffs: validator.validatorHandoffHistory() };
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/topologies/history") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.validatorTopologyHistory();
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/locks") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         if (payload?.height !== validator.height + 1) throw new Error("lock height is invalid");
         const result = { lock: validator.lockedProposal() };
         return send(response, 200, {
@@ -475,8 +532,8 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/timeouts") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         if (await proposerIsReachable(validator, urls, payload?.proposal?.proposer)) {
           throw new Error("refusing timeout while the elected proposer is reachable");
@@ -491,8 +548,8 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/produce") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         const result = await finalizeValidatorProposal(
           validator, urls, payload.proposal, payload.prepareCertificate ?? null,
@@ -502,93 +559,93 @@ export function createValidatorHttpServer(validator, options = {}) {
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/blocks") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = validator.commit(payload);
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/blocks/range") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { blocks: validator.blocksAfter(payload.fromHeight, payload.limit) };
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/p2p/snapshots/candidate") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorizeValidator(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { snapshot: validator.stateSnapshotCandidate() };
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });
       }
       if (request.method === "POST" && url.pathname === "/v1/sync") {
-        consumeIngress(request);
+        consumeIngress(identity);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         return send(response, 200, await synchronizeValidator(validator, urls));
       }
       if (request.method === "POST" && url.pathname === "/v1/blocks/produce") {
-        consumeIngress(request);
+        consumeIngress(identity);
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         return send(response, 202, await produceValidatorBlock(
           validator, urls, roundTimeoutMs, maxRoundTimeoutMs,
         ));
       }
       if (request.method === "POST" && url.pathname === "/v1/mempool/transactions") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = validator.submitTransaction(payload);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/mempool") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { transactions: validator.pendingTransactions() };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/snapshots/candidate") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { snapshot: validator.stateSnapshotCandidate() };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/handoffs/history") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { handoffs: validator.validatorHandoffHistory() };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/snapshots/attest") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { attestation: validator.stateSnapshotAttestation(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/accounts/proof-candidate") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { proof: validator.accountProofCandidate(payload?.address) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/accounts/proof-attest") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { attestation: validator.accountProofAttestation(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/proposals") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         if (shouldRejectProposal(payload)) throw new Error("proposal rejected by local round policy");
         const result = { vote: validator.vote(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/commits") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = {
           vote: validator.commitVote(payload.proposal, payload.prepareCertificate),
           handoffCandidate: validator.validatorHandoffCandidate(payload.proposal),
@@ -596,25 +653,29 @@ export function createValidatorHttpServer(validator, options = {}) {
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/handoffs") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = validator.installFinalizedValidatorHandoff(payload);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/timeouts") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { timeout: validator.timeout(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/blocks") {
-        const { auth, payload } = await readBody(request);
-        const nonce = validator.authorize(auth, request.method, url.pathname, payload);
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = validator.commit(payload);
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       return send(response, 404, { error: "not found" });
+      });
     } catch (error) {
+      if (authenticatedIdentity !== null && objectivePeerViolation(error)) {
+        peerReputation.recordViolation(authenticatedIdentity, "objective-protocol-violation");
+      }
       return send(response, 400, { error: error.message });
     }
   });

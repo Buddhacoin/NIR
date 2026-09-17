@@ -19,10 +19,11 @@ export function createPeerRequest({ body, method = "POST", networkId, path, wall
 }
 
 export function verifyPeerRequest({ auth, body, method, networkId, path, seenNonces,
-  trustedPeer, now = Date.now() }) {
+  trustedPeer, now = Date.now(), minimumTimestamp = 0 }) {
   if (!auth || typeof auth !== "object" || Array.isArray(auth)) throw new Error("peer authentication is required");
   if (!/^[0-9a-f]{32}$/.test(auth.nonce ?? "")) throw new Error("peer request nonce is invalid");
-  if (!Number.isSafeInteger(auth.timestamp) || Math.abs(now - auth.timestamp) > PEER_CLOCK_SKEW_MS) {
+  if (!Number.isSafeInteger(auth.timestamp) || auth.timestamp < minimumTimestamp ||
+      Math.abs(now - auth.timestamp) > PEER_CLOCK_SKEW_MS) {
     throw new Error("peer request timestamp is outside the allowed window");
   }
   if (seenNonces.has(auth.nonce)) throw new Error("peer request replay detected");
@@ -35,10 +36,13 @@ export function verifyPeerRequest({ auth, body, method, networkId, path, seenNon
       !verifyObject(fields, auth.signature, trustedPeer.publicKey, "PEER_REQUEST")) {
     throw new Error("peer request signature is invalid");
   }
-  for (const [nonce, timestamp] of seenNonces) {
-    if (now - timestamp > PEER_CLOCK_SKEW_MS) seenNonces.delete(nonce);
+  if (typeof seenNonces.cleanup === "function") seenNonces.cleanup(now);
+  else {
+    for (const [nonce, timestamp] of seenNonces) {
+      if (now - timestamp > PEER_CLOCK_SKEW_MS) seenNonces.delete(nonce);
+    }
   }
-  seenNonces.set(auth.nonce, auth.timestamp);
+  seenNonces.set(auth.nonce, now);
   return auth.nonce;
 }
 

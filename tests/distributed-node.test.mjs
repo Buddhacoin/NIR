@@ -36,6 +36,13 @@ test("independent HTTP validator replicas finalize with one peer offline", async
   const servers = replicas.map(createValidatorHttpServer);
   try {
     const urls = await Promise.all(servers.map((server) => listen(server)));
+    const metricsResponse = await fetch(`${urls[0]}/metrics`);
+    assert.equal(metricsResponse.status, 200);
+    const metrics = await metricsResponse.json();
+    assert.equal(metrics.verification.active, 0);
+    assert.equal(metrics.verification.queued, 0);
+    assert.equal(metrics.reputation.quarantinedPeers, 0);
+    assert.equal(JSON.stringify(metrics).includes(replicas[0].address), false);
     let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
     const unsigned = await fetch(`${urls[0]}/v1/blocks`, {
       body: JSON.stringify({ payload: {} }),

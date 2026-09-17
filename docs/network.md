@@ -433,6 +433,9 @@ localhost pacemaker still lacks
 latency sampling, authenticated transport sessions, clock discipline, and
 production-calibrated timeout governance.
 There is no fork recovery or network snapshot synchronization,
-production-grade adaptive denial-of-service defense, coverage-guided or
-unbounded randomized fault testing, or formal consensus proof yet. Test keys are plaintext and have no
+external process isolation for cryptographic workers, coverage-guided or
+unbounded randomized fault testing, or formal consensus proof yet. Bounded
+operator-identity queues, replay lifecycle, objective quarantine, fanout
+backpressure and safe aggregate metrics are specified in
+[operator-dos-defense.md](operator-dos-defense.md). Test keys are plaintext and have no
 monetary value.

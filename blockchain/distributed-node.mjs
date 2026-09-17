@@ -83,6 +83,7 @@ import {
 } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
+import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -291,8 +292,11 @@ export class ValidatorReplica {
   #genesis;
   #wallet;
   #coordinator;
-  #seenNonces = new Map();
+  #seenNonces;
   #validatorNonces = new Map();
+  #nonceOptions;
+  #clock;
+  #authNotBefore;
   #validators;
   #mempool = new TransactionMempool();
   #peerUrls;
@@ -302,7 +306,15 @@ export class ValidatorReplica {
   #transportView;
   #transportWallet;
 
-  constructor(directory) {
+  constructor(directory, { clock = () => Date.now(), nonceCacheOptions = {} } = {}) {
+    if (typeof clock !== "function" || !nonceCacheOptions ||
+        typeof nonceCacheOptions !== "object" || Array.isArray(nonceCacheOptions)) {
+      throw new Error("validator security clock or nonce configuration is invalid");
+    }
+    this.#clock = clock;
+    this.#authNotBefore = clock();
+    this.#nonceOptions = { ...nonceCacheOptions, clock };
+    this.#seenNonces = new ReplayNonceCache(this.#nonceOptions);
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
     this.#wallet = readJson(join(this.#directory, "VALIDATOR-KEY.json"));
@@ -386,6 +398,13 @@ export class ValidatorReplica {
     this.#peerTransports = this.#transportView.map(({ transport }) => transport);
     this.#peerTlsPins = this.#transportView.map(({ tlsCertificateSha256 }) =>
       tlsCertificateSha256);
+    const admittedTransports = new Set(this.#peerTransports.map(({ address }) => address));
+    for (const [address, cache] of this.#validatorNonces) {
+      if (!admittedTransports.has(address)) {
+        cache.close();
+        this.#validatorNonces.delete(address);
+      }
+    }
   }
 
   account(address) {
@@ -431,6 +450,7 @@ export class ValidatorReplica {
     return verifyPeerRequest({
       auth, body, method, networkId: this.networkId, path,
       seenNonces: this.#seenNonces, trustedPeer: this.#coordinator,
+      minimumTimestamp: this.#authNotBefore, now: this.#clock(),
     });
   }
 
@@ -463,11 +483,29 @@ export class ValidatorReplica {
       payload: body,
       pendingRotation: this.#chain.pendingValidatorRotation,
     });
-    if (!this.#validatorNonces.has(peer.address)) this.#validatorNonces.set(peer.address, new Map());
+    if (!this.#validatorNonces.has(peer.address)) {
+      this.#validatorNonces.set(peer.address, new ReplayNonceCache(this.#nonceOptions));
+    }
     return verifyPeerRequest({
       auth, body, method, networkId: this.networkId, path,
       seenNonces: this.#validatorNonces.get(peer.address), trustedPeer: peer,
+      minimumTimestamp: this.#authNotBefore, now: this.#clock(),
     });
+  }
+
+  securityMetrics() {
+    return {
+      coordinatorReplayNonces: this.#seenNonces.size,
+      peerReplayNonces: [...this.#validatorNonces.values()]
+        .reduce((total, cache) => total + cache.size, 0),
+      replayPeerCaches: this.#validatorNonces.size,
+    };
+  }
+
+  closeSecurityState() {
+    this.#seenNonces.close();
+    for (const cache of this.#validatorNonces.values()) cache.close();
+    this.#validatorNonces.clear();
   }
 
   createValidatorRequest(path, body) {
@@ -1120,8 +1158,8 @@ export class DistributedCoordinator {
       trustedValidators: this.#genesis.validators,
     };
     const local = loadValidatorHandoffs(join(this.#directory, "handoffs"), trustAnchor).handoffs;
-    const responses = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#request(index, "/v1/handoffs/history", {})));
+    const responses = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#request(index, "/v1/handoffs/history", {}));
     const candidates = [local, ...responses.filter(({ status }) => status === "fulfilled")
       .map(({ value }) => value.handoffs)];
     const selected = selectValidatorHandoffHistories(candidates, trustAnchor);
@@ -1139,8 +1177,8 @@ export class DistributedCoordinator {
 
   async accountProof(address) {
     if (!ADDRESS.test(address)) throw new Error("address is invalid");
-    const synchronization = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#synchronizePeer(index)));
+    const synchronization = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#synchronizePeer(index));
     const synchronized = synchronization.map((result, index) =>
       result.status === "fulfilled" ? index : -1).filter((index) => index >= 0);
     const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
@@ -1161,10 +1199,10 @@ export class DistributedCoordinator {
         verifyAccountProofCandidate(
           proof, trustAnchor, this.#validators[candidateIndex].address,
         );
-        const requests = await Promise.allSettled(synchronized.map((index) =>
+        const requests = await boundedAllSettled(synchronized, (index) =>
           this.#request(index, "/v1/accounts/proof-attest", {
             address, height: proof.height, statementHash: proof.statementHash,
-          })));
+          }));
         const attestations = requests.filter(({ status }) => status === "fulfilled")
           .map(({ value }) => value.attestation);
         const assembled = { ...proof, attestations };
@@ -1200,8 +1238,8 @@ export class DistributedCoordinator {
 
   async submitTransaction(transaction) {
     const queued = this.#queueLocal(transaction);
-    const relays = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#request(index, "/v1/mempool/transactions", transaction)));
+    const relays = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#request(index, "/v1/mempool/transactions", transaction));
     const relayedPeers = relays.filter(({ status }) => status === "fulfilled").length;
     const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
     if (relayedPeers < quorum) {
@@ -1242,8 +1280,8 @@ export class DistributedCoordinator {
   }
 
   async #recoverPeerTransactions() {
-    const responses = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#request(index, "/v1/mempool", {})));
+    const responses = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#request(index, "/v1/mempool", {}));
     const recovered = new Map();
     for (const response of responses) {
       if (response.status !== "fulfilled") continue;
@@ -1270,8 +1308,8 @@ export class DistributedCoordinator {
     await this.#recoverPeerTransactions();
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("mempool is empty");
-    const syncResults = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#synchronizePeer(index)));
+    const syncResults = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#synchronizePeer(index));
     const available = syncResults.map((result, index) => result.status === "fulfilled" ? index : -1)
       .filter((index) => index >= 0);
     let round = 0;
@@ -1282,8 +1320,8 @@ export class DistributedCoordinator {
       proposal = this.#chain.buildBlock({
         transactions, timestamp: proposal?.timestamp ?? Date.now(), round, roundCertificate,
       });
-      const results = await Promise.allSettled(available.map((index) =>
-        this.#request(index, "/v1/proposals", proposal)));
+      const results = await boundedAllSettled(available, (index) =>
+        this.#request(index, "/v1/proposals", proposal));
       const votes = results.filter(({ status }) => status === "fulfilled")
         .map(({ value }) => value.vote);
       uniqueVotes = new Map(votes.map((vote) => [vote.validator, vote]));
@@ -1294,8 +1332,8 @@ export class DistributedCoordinator {
       }
       const nextRound = round + 1;
       const timeoutRequest = { proposal, nextRound };
-      const timeoutResults = await Promise.allSettled(available.map((index) =>
-        this.#request(index, "/v1/timeouts", timeoutRequest)));
+      const timeoutResults = await boundedAllSettled(available, (index) =>
+        this.#request(index, "/v1/timeouts", timeoutRequest));
       const timeouts = timeoutResults.filter(({ status }) => status === "fulfilled")
         .map(({ value }) => value.timeout);
       const uniqueTimeouts = new Map(timeouts.map((vote) => [vote.validator, vote]));
@@ -1308,8 +1346,8 @@ export class DistributedCoordinator {
     }
     const prepareCertificate = [...uniqueVotes.values()].sort((left, right) =>
       left.validator.localeCompare(right.validator));
-    const commitResults = await Promise.allSettled(available.map((index) =>
-      this.#request(index, "/v1/commits", { prepareCertificate, proposal })));
+    const commitResults = await boundedAllSettled(available, (index) =>
+      this.#request(index, "/v1/commits", { prepareCertificate, proposal }));
     const commits = commitResults.filter(({ status }) => status === "fulfilled")
       .map(({ value }) => value.vote);
     const uniqueCommits = new Map(commits.map((vote) => [vote.validator, vote]));
@@ -1356,11 +1394,11 @@ export class DistributedCoordinator {
       trustedValidators: this.#genesis.validators,
     });
     this.#mempool.remove(transactions);
-    const broadcasts = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#request(index, "/v1/blocks", block)));
+    const broadcasts = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#request(index, "/v1/blocks", block));
     if (handoff) {
-      await Promise.allSettled(this.#peers.map((_, index) =>
-        this.#request(index, "/v1/handoffs", handoff)));
+      await boundedAllSettled(this.#peers, (_, index) =>
+        this.#request(index, "/v1/handoffs", handoff));
     }
     return {
       blockHash: block.hash,
@@ -1376,8 +1414,8 @@ export class DistributedCoordinator {
   }
 
   async createSnapshot() {
-    const synchronization = await Promise.allSettled(this.#peers.map((_, index) =>
-      this.#synchronizePeer(index)));
+    const synchronization = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#synchronizePeer(index));
     const synchronized = synchronization.map((result, index) =>
       result.status === "fulfilled" ? index : -1).filter((index) => index >= 0);
     const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
@@ -1395,10 +1433,10 @@ export class DistributedCoordinator {
         verifyStateSnapshotCandidate(
           snapshot, trustAnchor, this.#validators[candidateIndex].address,
         );
-        const requests = await Promise.allSettled(synchronized.map((index) =>
+        const requests = await boundedAllSettled(synchronized, (index) =>
           this.#request(index, "/v1/snapshots/attest", {
             height: snapshot.height, snapshotHash: snapshot.snapshotHash,
-          })));
+          }));
         const attestations = requests.filter(({ status }) => status === "fulfilled")
           .map(({ value }) => value.attestation);
         const assembled = { ...snapshot, attestations };
