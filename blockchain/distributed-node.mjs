@@ -82,7 +82,7 @@ import {
 } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { createTransactionProof } from "./transaction-tree.mjs";
-import { createAccountHistoryProofs } from "./account-history.mjs";
+import { AccountHistoryIndex } from "./account-history-index.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -1060,6 +1060,7 @@ async function peerRequest(url, path, value, {
 export class DistributedCoordinator {
   #chain;
   #directory;
+  #historyIndex;
   #mempool = new TransactionMempool();
   #peers;
   #peerTlsPins;
@@ -1071,6 +1072,7 @@ export class DistributedCoordinator {
   constructor(directory, validatorUrls) {
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
+    this.#historyIndex = new AccountHistoryIndex(this.#directory, this.#chain);
     this.#treasury = readJson(join(this.#directory, "TREASURY-DEV-KEY.json"));
     this.#wallet = readJson(join(this.#directory, "COORDINATOR-KEY.json"));
     if (!Array.isArray(validatorUrls) || validatorUrls.length < 4) {
@@ -1115,26 +1117,7 @@ export class DistributedCoordinator {
   }
 
   accountHistoryPage(address, { before, limit = 20 } = {}) {
-    if (!ADDRESS.test(address)) throw new Error("address is invalid");
-    const ids = this.#chain.blocks().flatMap((block) => block.transactions)
-      .filter((transaction) => transaction.sender === address || transaction.recipient === address)
-      .map(transactionId);
-    const end = before === undefined ? ids.length : before;
-    if (!Number.isSafeInteger(end) || end < 0 || end > ids.length ||
-        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-      throw new Error("account history page is invalid");
-    }
-    const start = Math.max(0, end - limit);
-    const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
-    const proofs = createAccountHistoryProofs(ids, indexes);
-    return {
-      count: ids.length,
-      entries: ids.slice(start, end).map((id, offset) => ({
-        id, index: indexes[offset], proof: proofs[offset],
-      })),
-      nextBefore: start === 0 ? null : start,
-      start,
-    };
+    return this.#historyIndex.page(address, { before, limit });
   }
 
   async validatorHandoffHistory() {
@@ -1372,6 +1355,7 @@ export class DistributedCoordinator {
     const verified = this.#chain.fork();
     verified.appendBlock(block);
     persistBlock(this.#directory, block, verified);
+    this.#historyIndex.appendBlock(block, verified);
     this.#chain = verified;
     if (handoff) installValidatorHandoff(join(this.#directory, "handoffs"), handoff, {
       expectedNetworkId: this.networkId,

@@ -48,6 +48,20 @@ exact-position Merkle proof for every identifier. A client must first verify the
 account proof, then verify the page interval and every path before displaying
 the referenced transactions.
 
+The node serves these pages from two append-only history-index journals rather
+than rescanning every block for every request. Each per-height record binds the
+network, finalized block hash, previous index-record hash and ordered updates.
+At startup the node checks the complete hash chain and compares the rebuilt
+per-account histories with the commitments in verified consensus state. One
+damaged copy is repaired from the other; if both copies of a retained height are
+damaged, the record is deterministically rebuilt from the already verified
+block. A mismatch that cannot be recovered fails closed.
+
+`node:backup` copies and re-verifies both index journals. Operators must create
+and verify this archive before finalizing deletion of old block bodies: a compact
+state snapshot contains history roots, not the transaction identifiers needed
+to serve old pages.
+
 ## Wallet-to-wallet flow
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses
@@ -97,8 +111,8 @@ on one disk do not protect against loss of that disk.
 
 The simple node uses one process holding four development validator keys; the
 separate multi-process network is documented in `docs/network.md`. The durable
-journal now detects and repairs several partial-write and corruption cases, but
-it is not a production database. Production still requires state snapshots that
-avoid replaying the full history, pruning with archival guarantees, multiple
-remote backup targets, authenticated snapshot download from several peers,
+block and history journals detect and repair several partial-write and
+corruption cases, but they are not a production database. Production still
+requires independently operated archive services, multiple remote backup
+targets, authenticated snapshot and archive download from several peers,
 continuous restore drills, metrics, and independent storage review.

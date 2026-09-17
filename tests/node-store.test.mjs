@@ -13,6 +13,7 @@ import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mj
 import { exportBlockStoreBackup, loadBlockStore } from "../blockchain/block-store.mjs";
 import { verifyTransactionProof } from "../blockchain/transaction-tree.mjs";
 import { verifyAccountHistoryEntry } from "../blockchain/account-history.mjs";
+import { AccountHistoryIndex } from "../blockchain/account-history-index.mjs";
 
 test("a transfer survives a complete node restart and replay", () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-node-test-"));
@@ -80,6 +81,39 @@ test("account RPC state includes persistent transfer-credit resources", () => {
     });
     assert.equal(verified.account.atomicBalance, account.atomicBalance);
     assert.deepEqual(verified.account.resources, account.resources);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the account history index is durable, redundant, and rebuilt from verified blocks", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-history-index-test-"));
+  const directory = join(temporary, "node");
+  try {
+    initializeDevnet(directory);
+    const wallet = generateWallet();
+    let node = new PersistentDevNode(directory);
+    node.faucet(wallet.address);
+    const name = "000000000001.json";
+    const primary = join(directory, "account-history-index", name);
+    const backup = join(directory, "account-history-index-backup", name);
+    assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+
+    writeFileSync(primary, "{}\n");
+    node = new PersistentDevNode(directory);
+    assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+    const account = node.account(wallet.address);
+    let page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
+    assert.deepEqual(verifyAccountHistoryEntry(
+      page.entries[0].id, page.entries[0].proof, account.history,
+    ), { index: 0, transactionId: page.entries[0].id });
+
+    writeFileSync(primary, "corrupt\n");
+    writeFileSync(backup, "corrupt\n");
+    node = new PersistentDevNode(directory);
+    page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
+    assert.equal(page.entries.length, 1);
+    assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -187,8 +221,11 @@ test("an exported chain backup is independently replayable and contains no priva
     assert.equal(result.privateKeysIncluded, false);
     assert.equal(existsSync(join(backup, "DEVNET-KEYS.json")), false);
     const replay = loadBlockStore(backup, genesis);
+    const historyIndex = new AccountHistoryIndex(backup, replay.chain);
     assert.equal(replay.chain.height, 1);
     assert.equal(replay.chain.tipHash, node.tipHash);
+    assert.equal(historyIndex.page(wallet.address).count, 1);
+    assert.equal(existsSync(join(backup, "account-history-index", "000000000001.json")), true);
     assert.throws(() => exportBlockStoreBackup(directory, backup, genesis), /EEXIST/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });

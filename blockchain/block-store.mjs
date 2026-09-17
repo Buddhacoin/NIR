@@ -17,6 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { NirChain } from "./chain.mjs";
 import { hashObject } from "./crypto.mjs";
 import { installStateSnapshot, loadInstalledStateSnapshot } from "./snapshot-store.mjs";
+import { copyAccountHistoryIndex } from "./account-history-index.mjs";
 
 const BACKUP_DIRECTORY = "block-backups";
 const BLOCKS_DIRECTORY = "blocks";
@@ -435,6 +436,7 @@ export function exportBlockStoreBackup(directory, destination, genesis, options 
     backupChain.appendBlock(block);
     persistBlock(target, block, backupChain);
   }
+  copyAccountHistoryIndex(directory, target, backupChain);
   return {
     directory: target,
     height: backupChain.height,

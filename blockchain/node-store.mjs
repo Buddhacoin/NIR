@@ -24,7 +24,7 @@ import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-stor
 import { createAccountProof } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { createTransactionProof } from "./transaction-tree.mjs";
-import { createAccountHistoryProofs } from "./account-history.mjs";
+import { AccountHistoryIndex } from "./account-history-index.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -84,6 +84,7 @@ function validatorQuorum(block, wallets) {
 export class PersistentDevNode {
   #chain;
   #config;
+  #historyIndex;
   #keys;
   #root;
 
@@ -97,6 +98,7 @@ export class PersistentDevNode {
       throw new Error("devnet validator keys do not match genesis");
     }
     ({ chain: this.#chain } = loadBlockStore(this.#root, this.#config));
+    this.#historyIndex = new AccountHistoryIndex(this.#root, this.#chain);
   }
 
   get networkId() { return this.#chain.networkId; }
@@ -130,26 +132,7 @@ export class PersistentDevNode {
   }
 
   accountHistoryPage(address, { before, limit = 20 } = {}) {
-    if (!/^nir1[0-9a-f]{64}$/.test(address ?? "")) throw new Error("address is invalid");
-    const ids = this.#chain.blocks().flatMap((block) => block.transactions)
-      .filter((transaction) => transaction.sender === address || transaction.recipient === address)
-      .map(transactionId);
-    const end = before === undefined ? ids.length : before;
-    if (!Number.isSafeInteger(end) || end < 0 || end > ids.length ||
-        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-      throw new Error("account history page is invalid");
-    }
-    const start = Math.max(0, end - limit);
-    const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
-    const proofs = createAccountHistoryProofs(ids, indexes);
-    return {
-      count: ids.length,
-      entries: ids.slice(start, end).map((id, offset) => ({
-        id, index: indexes[offset], proof: proofs[offset],
-      })),
-      nextBefore: start === 0 ? null : start,
-      start,
-    };
+    return this.#historyIndex.page(address, { before, limit });
   }
 
   account(address) {
@@ -200,6 +183,7 @@ export class PersistentDevNode {
     const verified = this.#chain.fork();
     verified.appendBlock(finalized);
     persistBlock(this.#root, finalized, verified);
+    this.#historyIndex.appendBlock(finalized, verified);
     this.#chain = verified;
     return { blockHash: finalized.hash, height: finalized.height };
   }

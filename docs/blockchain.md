@@ -31,7 +31,9 @@ identically.
 - protocol-v24 indexed account-history accumulators: authenticated account
   leaves commit to the exact count and fixed-depth Merkle root of related
   transaction identifiers, so a wallet verifies a bounded page without trusting
-  the node or downloading the complete history;
+  the node or downloading the complete history; redundant per-height disk
+  journals are verified against consensus state and serve pages without a block
+  rescan;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;

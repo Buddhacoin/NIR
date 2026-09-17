@@ -188,6 +188,14 @@ count, rejects gaps, extra entries and shifted indexes, then verifies every path
 against the authenticated root. It therefore downloads only the newest page,
 while omission, insertion, substitution or reordering still fails locally.
 
+The index is a recoverable serving layer, not a second source of consensus.
+Every record is chained to the previous index record and finalized block; after
+loading it, the node recomputes every account commitment and compares it with
+verified chain state. Deleting or rewriting the index cannot change balances or
+history roots. It can only make that node temporarily unable to serve history,
+at which point recovery must come from retained verified blocks or a separately
+verified archive copy.
+
 ### Draft score
 
 For an accepted proof `p`:

@@ -12,6 +12,7 @@ import {
   verifyStagedBlockPruning,
 } from "./block-store.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
+import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { createNodeHttpServer } from "./node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "./node-store.mjs";
 
@@ -66,6 +67,8 @@ try {
     }, null, 2));
   } else if (["prune-stage", "prune-verify", "prune-finalize"].includes(command) && directory) {
     const { genesis, options } = recoveryContext(directory, parameter);
+    const { chain } = loadBlockStore(directory, genesis, options);
+    new AccountHistoryIndex(directory, chain);
     const operation = command === "prune-stage" ? stageBlockPruning
       : command === "prune-verify" ? verifyStagedBlockPruning : finalizeBlockPruning;
     console.log(JSON.stringify(operation(directory, genesis, options), null, 2));
