@@ -155,6 +155,13 @@ async function readAccount() {
         proof,
       }),
     });
+    const transactionIds = (account.transactions ?? []).map(({ id }) => id);
+    const verifiedHistory = await bridgeRequest("/v1/verify-account-history", {
+      method: "POST", body: JSON.stringify({ transactionIds }),
+    });
+    if (!verifiedHistory.verified || verifiedHistory.count !== transactionIds.length) {
+      throw new Error("account history completeness proof failed");
+    }
     const verifiedTransactions = [];
     let unavailableTransactions = 0;
     const recent = [...(account.transactions ?? [])].slice(-20).reverse();

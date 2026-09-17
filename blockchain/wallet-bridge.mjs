@@ -33,6 +33,10 @@ import {
   MAX_TRANSACTION_PROOF_BYTES,
   verifyTransactionProof,
 } from "./transaction-tree.mjs";
+import {
+  MAX_ACCOUNT_HISTORY_PROOF_BYTES,
+  verifyAccountHistory,
+} from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -208,6 +212,7 @@ export function createWalletBridgeServer({
   let trustCheckpoint = trustCheckpointPath
     ? loadWalletTrustCheckpoint(trustCheckpointPath, accountTrust.expectedNetworkId) : null;
   let verifiedFinalityTip = null;
+  let verifiedAccountState = null;
   if (trustCheckpoint) requireCheckpointHandoff(trustCheckpoint, accountTrust.handoffs);
   if (headerHistoryPath && (!accountTrust || !genesisCheckpoint)) {
     throw new Error("wallet header history requires a genesis trust anchor");
@@ -335,6 +340,7 @@ export function createWalletBridgeServer({
         }
         accountTrust.handoffs = structuredClone(body.handoffs);
         verifiedFinalityTip = null;
+        verifiedAccountState = null;
         return send(response, 200, {
           activationHeight: advanced.lastHandoff?.activationHeight ?? 0,
           handoffs: accountTrust.handoffs.length,
@@ -407,6 +413,17 @@ export function createWalletBridgeServer({
           verified: true,
         }, origin);
       }
+      if (request.method === "POST" && url.pathname === "/v1/verify-account-history") {
+        if (!verifiedAccountState || verifiedAccountState.address !== walletAddress) {
+          throw new Error("verify the current wallet account before its history");
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("account history verification requires application/json");
+        }
+        const body = await readBody(request, MAX_ACCOUNT_HISTORY_PROOF_BYTES + 1_024);
+        const commitment = verifyAccountHistory(body?.transactionIds, verifiedAccountState.history);
+        return send(response, 200, { ...commitment, verified: true }, origin);
+      }
       if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {
         if (!accountTrust) throw new Error("bridge account trust anchor is not configured");
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
@@ -451,6 +468,7 @@ export function createWalletBridgeServer({
           );
           verifiedFinalityTip = null;
         }
+        verifiedAccountState = structuredClone(statement.account);
         return send(response, 200, {
           statement,
           verified: true,

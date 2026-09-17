@@ -7,6 +7,7 @@ import {
   verifyAccountProofCandidate,
 } from "../blockchain/account-proof.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { emptyAccountHistory } from "../blockchain/account-history.mjs";
 
 function fixture() {
   const validators = Array.from({ length: 4 }, generateWallet);
@@ -14,6 +15,7 @@ function fixture() {
   const account = {
     address: accountWallet.address,
     atomicBalance: "500000000",
+    history: emptyAccountHistory(),
     nextNonce: 3,
     resources: {
       atomicStake: "10000000000",

@@ -63,6 +63,7 @@ The intended advantages are:
 | Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
 | Cryptographic account proofs and light client | Protocol-v21 sparse account proofs bind balance, nonce, stake, credits, delegations and pending exits to the account root in every finalized header; the wallet also verifies every hash link, post-quantum prepare/commit quorum and validator rotation before advancing persisted trust |
 | Finalized transaction inclusion proofs | Protocol-v22 headers commit to ordered transaction count and Merkle root; the wallet persists the verified header chain and displays an operation only after locally matching its logarithmic proof to the finalized root |
+| Complete account history proofs | Protocol-v23 account state commits to the ordered count and accumulator root of every related transaction; the wallet rejects omitted, inserted, substituted or reordered history before rendering recent operations |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |

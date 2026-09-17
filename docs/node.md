@@ -41,6 +41,11 @@ root. Clients must compare those values with a header chain they verified
 independently; receiving the proof and header from the same untrusted node is
 not sufficient by itself.
 
+The account response includes a protocol-v23 `history` commitment and the
+ordered transaction list reconstructed from finalized blocks. A client must
+verify the account proof and recompute that commitment before treating the list
+as complete.
+
 ## Wallet-to-wallet flow
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses

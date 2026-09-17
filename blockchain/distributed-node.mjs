@@ -391,6 +391,7 @@ export class ValidatorReplica {
     return {
       address,
       atomicBalance: this.#chain.balance(address).toString(),
+      history: this.#chain.accountState(address).history,
       resources: accountResources(this.#chain, address),
     };
   }
@@ -1133,6 +1134,7 @@ export class DistributedCoordinator {
       .map((transaction) => ({ ...transaction, id: transactionId(transaction) }));
     const balance = this.#chain.balance(address);
     return { address, atomicBalance: balance.toString(), balance: formatNir(balance),
+      history: this.#chain.accountState(address).history,
       nextNonce: this.#chain.nextNonce(address),
       resources: accountResources(this.#chain, address), transactions };
   }

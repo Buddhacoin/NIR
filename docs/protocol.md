@@ -174,6 +174,17 @@ reconstructs this root from the complete signed transaction and its inclusion
 path. A missing, altered, reordered or unrelated transaction is hidden rather
 than presented as wallet history.
 
+## Protocol v23 complete account history
+
+Each authenticated account leaf also commits to an ordered history count and
+hash-chain root. Consensus appends a transaction identifier exactly once for
+each distinct sender or recipient after that transaction executes successfully.
+The compact commitment is part of both the account root and complete chain
+state, while full nodes reconstruct the ordered identifiers from finalized
+blocks. Before requesting individual inclusion paths, the wallet recomputes the
+accumulator over the complete identifier list. Omitting, inserting, replacing
+or reordering any entry therefore fails against the verified account proof.
+
 ### Draft score
 
 For an accepted proof `p`:

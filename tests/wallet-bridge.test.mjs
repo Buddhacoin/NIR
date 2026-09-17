@@ -20,6 +20,7 @@ import {
   committedTransactionId,
   createTransactionProof,
 } from "../blockchain/transaction-tree.mjs";
+import { emptyAccountHistory } from "../blockchain/account-history.mjs";
 
 async function close(server) {
   if (!server.listening) return;
@@ -184,6 +185,21 @@ test("wallet checkpoint advances only through a verified finality header chain",
       method: "POST",
     });
     assert.equal(accepted.status, 200);
+    const completeHistory = await request(
+      `${base}/v1/verify-account-history`, origin, token, {
+        body: JSON.stringify({ transactionIds: [committedTransactionId(transfer)] }),
+        method: "POST",
+      },
+    );
+    assert.equal(completeHistory.status, 200);
+    assert.equal((await completeHistory.json()).count, 1);
+    const omittedHistory = await request(
+      `${base}/v1/verify-account-history`, origin, token, {
+        body: JSON.stringify({ transactionIds: [] }), method: "POST",
+      },
+    );
+    assert.equal(omittedHistory.status, 400);
+    assert.match((await omittedHistory.json()).error, /incomplete or reordered/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
@@ -210,6 +226,7 @@ test("wallet account trust advances through verified validator handoffs", async 
   const accountState = {
     address: account.address,
     atomicBalance: "500000000",
+    history: emptyAccountHistory(),
     nextNonce: 2,
     resources: {
       atomicStake: "0", availableTransferCredits: "0", delegations: [], pendingUnstake: null,

@@ -25,7 +25,9 @@ import {
   formatNir,
   multisigAddress,
   quoteTransferFee,
+  transactionId,
 } from "../blockchain/chain.mjs";
+import { accountHistoryCommitment } from "../blockchain/account-history.mjs";
 import {
   BEACON_NON_REVEAL_SLASH_BPS,
   CREDIT_UNSTAKE_DELAY_BLOCKS,
@@ -713,6 +715,9 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
     timestamp: 1,
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const earlierAliceTransactions = chain.blocks().flatMap(({ transactions }) => transactions)
+    .filter(({ sender, recipient }) => sender === alice.address || recipient === alice.address)
+    .map(transactionId);
 
   const transaction = createTransfer({
     wallet: alice,
@@ -729,6 +734,10 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
   assert.equal(chain.stateRoot, block.stateRoot);
   assert.equal(chain.balance(bob.address), 125_000_000n);
   assert.equal(chain.nextNonce(alice.address), 2);
+  assert.deepEqual(chain.accountState(alice.address).history,
+    accountHistoryCommitment([...earlierAliceTransactions, transactionId(transaction)]));
+  assert.deepEqual(chain.accountState(bob.address).history,
+    accountHistoryCommitment([transactionId(transaction)]));
 });
 
 test("a transfer below the consensus fee floor is rejected", () => {

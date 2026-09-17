@@ -62,6 +62,11 @@ import {
   normalizeAccountState,
 } from "./account-tree.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
+import {
+  appendAccountHistory,
+  emptyAccountHistory,
+  normalizeAccountHistory,
+} from "./account-history.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -151,10 +156,11 @@ export function computeChainStateRoot(state) {
 }
 
 function accountStatesFromMaps({
-  balances, creditDelegations, creditStakes, creditUnstakes, creditUsage, height, nonces,
+  accountHistories, balances, creditDelegations, creditStakes, creditUnstakes, creditUsage,
+  height, nonces,
 }) {
   const addresses = new Set([
-    ...balances.keys(), ...creditStakes.keys(), ...creditUnstakes.keys(),
+    ...accountHistories.keys(), ...balances.keys(), ...creditStakes.keys(), ...creditUnstakes.keys(),
     ...creditUsage.keys(), ...nonces.keys(),
     ...[...creditDelegations.values()].map(({ owner }) => owner),
   ]);
@@ -169,6 +175,7 @@ function accountStatesFromMaps({
     return normalizeAccountState({
       address,
       atomicBalance: (balances.get(address) ?? 0n).toString(),
+      history: accountHistories.get(address) ?? emptyAccountHistory(),
       nextNonce: nonces.get(address) ?? 0,
       resources: {
         atomicStake: stake.toString(),
@@ -782,6 +789,7 @@ function snapshotSignedInteger(value, field) {
 }
 
 export class NirChain {
+  #accountHistories;
   #balances;
   #beaconBondingActive;
   #beaconBonds;
@@ -898,6 +906,7 @@ export class NirChain {
       }, "EPOCH_RANDOMNESS_GENESIS"),
     });
     assertAddress(treasuryAddress, "treasury address");
+    this.#accountHistories = new Map();
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
     this.#beaconBondingActive = false;
     this.#beaconBonds = new Map();
@@ -994,6 +1003,11 @@ export class NirChain {
       throw new Error("verified snapshot does not match the target chain");
     }
     const state = snapshot.state;
+    const accountHistories = snapshotEntries(state.accountHistories, "account histories");
+    for (const [address, history] of accountHistories) {
+      assertAddress(address, "account history address");
+      accountHistories.set(address, normalizeAccountHistory(history));
+    }
     const balances = snapshotEntries(state.balances, "balances");
     for (const [address, value] of balances) {
       assertAddress(address, "snapshot balance address");
@@ -1149,6 +1163,7 @@ export class NirChain {
     if (memory.stateRoot !== state.capabilityMemoryRoot) {
       throw new Error("capability memory snapshot root is invalid");
     }
+    chain.#accountHistories = accountHistories;
     chain.#balances = balances;
     chain.#beaconBondingActive = state.beaconBondingActive;
     chain.#beaconBonds = beaconBonds;
@@ -1236,6 +1251,7 @@ export class NirChain {
 
   #accountStates(overrides = {}) {
     return accountStatesFromMaps({
+      accountHistories: overrides.accountHistories ?? this.#accountHistories,
       balances: overrides.balances ?? this.#balances,
       creditDelegations: overrides.creditDelegations ?? this.#creditDelegations,
       creditStakes: overrides.creditStakes ?? this.#creditStakes,
@@ -1269,6 +1285,7 @@ export class NirChain {
 
   #stateRoot(overrides = {}) {
     return computeChainStateRoot({
+      accountHistories: overrides.accountHistories ?? this.#accountHistories,
       balances: overrides.balances ?? this.#balances,
       beaconBondingActive: overrides.beaconBondingActive ?? this.#beaconBondingActive,
       beaconBonds: overrides.beaconBonds ?? this.#beaconBonds,
@@ -1304,6 +1321,7 @@ export class NirChain {
     return {
       capabilityMemory: this.#capabilityMemory.snapshot(),
       state: normalizedStateValue({
+        accountHistories: this.#accountHistories,
         balances: this.#balances,
         beaconBondingActive: this.#beaconBondingActive,
         beaconBonds: this.#beaconBonds,
@@ -2374,6 +2392,8 @@ export class NirChain {
 
   fork() {
     const fork = new NirChain(this.#genesisConfig);
+    fork.#accountHistories = new Map([...this.#accountHistories]
+      .map(([address, history]) => [address, { ...history }]));
     fork.#balances = new Map(this.#balances);
     fork.#beaconBondingActive = this.#beaconBondingActive;
     fork.#beaconBonds = new Map(this.#beaconBonds);
@@ -2580,6 +2600,8 @@ export class NirChain {
       throw new Error("invalid progress reward allocation");
     }
 
+    const accountHistories = new Map([...this.#accountHistories]
+      .map(([address, history]) => [address, { ...history }]));
     const balances = new Map(this.#balances);
     let beaconBondingActive = this.#beaconBondingActive;
     const beaconBonds = new Map(this.#beaconBonds);
@@ -2737,6 +2759,13 @@ export class NirChain {
         );
       } else {
         throw new Error("unknown transaction type");
+      }
+      const participants = new Set([transaction.sender, transaction.recipient]
+        .filter((address) => typeof address === "string" && /^nir1[0-9a-f]{64}$/.test(address)));
+      for (const address of participants) {
+        accountHistories.set(address, appendAccountHistory(
+          accountHistories.get(address) ?? emptyAccountHistory(), id,
+        ));
       }
     }
     if (!beaconBondingActive && [...this.#beaconAuthorities.keys()].every(
@@ -2931,6 +2960,7 @@ export class NirChain {
     const lastRewardTimestampAfter = block.progressRewards.length > 0
       ? block.timestamp : this.#lastRewardTimestamp;
     const expectedStateRoot = this.#stateRoot({
+      accountHistories,
       balances,
       beaconBondingActive,
       beaconBonds,
@@ -2963,6 +2993,7 @@ export class NirChain {
     }
     if (verifyStateRoot) {
       const expectedAccountStateRoot = computeAccountStateRoot(accountStatesFromMaps({
+        accountHistories,
         balances,
         creditDelegations,
         creditStakes,
@@ -2975,6 +3006,7 @@ export class NirChain {
         throw new Error("block account state root is invalid");
       }
     }
+    this.#accountHistories = accountHistories;
     this.#balances = balances;
     this.#beaconBondingActive = beaconBondingActive;
     this.#beaconBonds = beaconBonds;

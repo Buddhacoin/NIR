@@ -146,6 +146,7 @@ export class PersistentDevNode {
       address,
       atomicBalance: balance.toString(),
       balance: formatNir(balance),
+      history: this.#chain.accountState(address).history,
       resources: {
         atomicStake: this.#chain.creditStake(address).toString(),
         availableTransferCredits: this.#chain.transferCredits(address).toString(),

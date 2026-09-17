@@ -1,4 +1,5 @@
 import { canonicalJson, hashObject } from "./crypto.mjs";
+import { emptyAccountHistory, normalizeAccountHistory } from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -25,6 +26,7 @@ export function normalizeAccountState(account) {
   if (!account || !ADDRESS.test(account.address ?? "") ||
       !ATOMIC.test(account.atomicBalance ?? "") ||
       !Number.isSafeInteger(account.nextNonce) || account.nextNonce < 0 ||
+      !account.history ||
       !account.resources || !ATOMIC.test(account.resources.atomicStake ?? "") ||
       !ATOMIC.test(account.resources.availableTransferCredits ?? "") ||
       !Array.isArray(account.resources.delegations) || account.resources.delegations.length > 256) {
@@ -52,6 +54,7 @@ export function normalizeAccountState(account) {
   return {
     address: account.address,
     atomicBalance: account.atomicBalance,
+    history: normalizeAccountHistory(account.history),
     nextNonce: account.nextNonce,
     resources: {
       atomicStake: account.resources.atomicStake,
@@ -68,6 +71,7 @@ export function emptyAccountState(address) {
   return {
     address,
     atomicBalance: "0",
+    history: emptyAccountHistory(),
     nextNonce: 0,
     resources: {
       atomicStake: "0", availableTransferCredits: "0", delegations: [], pendingUnstake: null,
