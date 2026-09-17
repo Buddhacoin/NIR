@@ -159,6 +159,12 @@ transaction envelopes are cryptographically rechecked again when served.
 Production still needs sustained large-dataset benchmarks, compaction policy
 and an external storage review.
 
+`npm run node:serve -- <directory>` also owns an atomic writer lock inside the
+node directory for its complete lifetime. A second live process is rejected
+before opening the chain. A lock left by a process that no longer exists is
+recovered; malformed ownership data and symbolic-link substitutions fail
+closed. Graceful interrupt and termination release the lock.
+
 ## Wallet-to-wallet flow
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses
