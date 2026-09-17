@@ -1,4 +1,6 @@
 import { normalizeNodePolicy, selectNodeHealth } from "./node-selection.js";
+import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
+import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 
 const messages = {
   receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
@@ -11,7 +13,7 @@ const messages = {
 };
 
 const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8788";
-const NIR_ADDRESS = /^nir1[0-9a-f]{64}$/;
+const NIR_ADDRESS = ADDRESS_PATTERN;
 const panel = document.querySelector("#panel");
 const panelTitle = document.querySelector("#panel-title");
 const panelCopy = document.querySelector("#panel-copy");
@@ -21,6 +23,7 @@ const sendPanel = document.querySelector("#send-panel");
 const resourcesPanel = document.querySelector("#resources-panel");
 const settingsPanel = document.querySelector("#settings-panel");
 const setupPanel = document.querySelector("#setup-panel");
+const contactsPanel = document.querySelector("#contacts-panel");
 const onboarding = document.querySelector("#onboarding");
 const bridgeStatus = document.querySelector("#bridge-status");
 const receiveStatus = document.querySelector("#receive-status");
@@ -34,6 +37,10 @@ let nodePolicy = null;
 let pendingIntent = null;
 let signedTransaction = null;
 let signedResourceTransaction = null;
+let addressBook = readAddressBook();
+let pendingAddressChange = null;
+let paymentRequestQrFrames = [];
+let paymentRequestQrIndex = 0;
 
 function renderWalletConnection() {
   const connected = Boolean(walletInfo && bridgeSession);
@@ -315,6 +322,94 @@ function randomRequestId() {
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function activeNetworkId() {
+  if (!networkInfo?.networkId) throw new Error("Сначала подключите и проверьте сеть.");
+  return networkInfo.networkId;
+}
+
+function setContactForm(contact = null) {
+  document.querySelector("#contact-id").value = contact?.id ?? "";
+  document.querySelector("#contact-label").value = contact?.label ?? "";
+  document.querySelector("#contact-address").value = contact?.address ?? "";
+  document.querySelector("#contact-network").value = contact?.networkId ?? activeNetworkId();
+}
+
+function renderContacts() {
+  const list = document.querySelector("#contacts-list");
+  const network = activeNetworkId();
+  list.replaceChildren();
+  const matching = addressBook.filter((contact) => contact.networkId === network);
+  if (!matching.length) {
+    const empty = document.createElement("p");
+    empty.className = "contact-empty";
+    empty.textContent = "В этой сети контактов пока нет.";
+    list.append(empty);
+    return;
+  }
+  for (const contact of matching) {
+    const row = document.createElement("div"); row.className = "contact-row";
+    const copy = document.createElement("div");
+    const label = document.createElement("b"); label.textContent = contact.label;
+    const address = document.createElement("span"); address.textContent = contact.address;
+    address.setAttribute("aria-label", `Полный адрес ${contact.address}, сеть ${contact.networkId}`);
+    copy.append(label, address);
+    const use = document.createElement("button"); use.type = "button"; use.className = "secondary compact"; use.textContent = "Выбрать";
+    use.onclick = () => {
+      document.querySelector("#send-recipient").value = contact.address;
+      document.querySelector("#verified-request-note").textContent = `Контакт «${contact.label}» · сеть ${contact.networkId}`;
+      contactsPanel.close();
+      sendStatus.textContent = "Контакт выбран. Проверьте полный адрес и сумму перед подписью.";
+    };
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "icon-button"; edit.textContent = "Изменить";
+    edit.onclick = () => setContactForm(contact);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "icon-button"; remove.textContent = "Удалить";
+    remove.onclick = () => {
+      addressBook = removeAddressBookContact({ contacts: addressBook, id: contact.id });
+      renderContacts(); document.querySelector("#contacts-status").textContent = "Контакт удалён только из этого браузера.";
+    };
+    const controls = document.createElement("div"); controls.className = "contact-controls"; controls.append(use, edit, remove);
+    row.append(copy, controls); list.append(row);
+  }
+}
+
+function openContacts() {
+  if (!walletInfo) return openBridgePanel();
+  try {
+    const network = activeNetworkId();
+    document.querySelector("#contacts-network").textContent = `Активная сеть: ${network}`;
+    document.querySelector("#contacts-status").textContent = "";
+    document.querySelector("#address-change-warning").hidden = true;
+    pendingAddressChange = null;
+    setContactForm(); renderContacts(); contactsPanel.showModal();
+  } catch (error) { sendStatus.textContent = error.message; }
+}
+
+function saveContact(confirmAddressChange = false) {
+  const networkId = activeNetworkId();
+  const form = {
+    id: document.querySelector("#contact-id").value || undefined,
+    label: document.querySelector("#contact-label").value,
+    address: document.querySelector("#contact-address").value,
+    networkId,
+  };
+  const saved = saveAddressBookContact({ contacts: addressBook, candidate: form, confirmAddressChange });
+  addressBook = saved.contacts;
+  pendingAddressChange = null;
+  document.querySelector("#address-change-warning").hidden = true;
+  document.querySelector("#contacts-status").textContent = "Контакт сохранён локально. Перевод не создан.";
+  setContactForm(); renderContacts();
+}
+
+function renderPaymentQrFrame() {
+  const frame = paymentRequestQrFrames[paymentRequestQrIndex];
+  if (!frame) return;
+  drawQr(document.querySelector("#payment-request-qr"), frame, `QR-фрагмент платёжного запроса ${paymentRequestQrIndex + 1} из ${paymentRequestQrFrames.length}`);
+  document.querySelector("#payment-request-qr-frame").value = frame;
+  document.querySelector("#payment-request-qr-label").textContent = `Фрагмент ${paymentRequestQrIndex + 1} из ${paymentRequestQrFrames.length}. При импорте нужны все фрагменты.`;
+  document.querySelector("#previous-payment-request-qr").disabled = paymentRequestQrIndex === 0;
+  document.querySelector("#next-payment-request-qr").disabled = paymentRequestQrIndex === paymentRequestQrFrames.length - 1;
+}
+
 async function openResources() {
   if (!walletInfo) return openBridgePanel();
   resourcesStatus.textContent = "Обновление…";
@@ -484,9 +579,17 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
 
 function receive() {
   if (!walletInfo) return openBridgePanel();
+  if (!networkInfo?.networkId) {
+    receiveStatus.textContent = "Сначала дождитесь проверки сети, затем откройте получение снова.";
+    return;
+  }
   document.querySelector("#receive-address").textContent = walletInfo.address;
+  document.querySelector("#receive-network").textContent = `Сеть: ${networkInfo.networkId}`;
+  drawQr(document.querySelector("#receive-qr"), `nir:${walletInfo.address}`, `QR публичного адреса ${walletInfo.address}; сеть ${networkInfo.networkId}`);
   document.querySelector("#payment-request-result").hidden = true;
+  document.querySelector("#payment-request-qr-card").hidden = true;
   document.querySelector("#payment-request-json").value = "";
+  paymentRequestQrFrames = [];
   receiveStatus.textContent = "";
   receivePanel.showModal();
 }
@@ -517,6 +620,8 @@ document.querySelector("#payment-request-form").addEventListener("submit", async
     document.querySelector("#payment-request-json").value =
       JSON.stringify(result.paymentRequest, null, 2);
     document.querySelector("#payment-request-result").hidden = false;
+    document.querySelector("#payment-request-qr-card").hidden = true;
+    paymentRequestQrFrames = [];
     receiveStatus.textContent = "Подписано. Изменение любого реквизита сломает подпись.";
   } catch (error) { receiveStatus.textContent = error.message; }
   finally { button.disabled = false; }
@@ -527,6 +632,22 @@ document.querySelector("#copy-payment-request").onclick = async () => {
     await navigator.clipboard.writeText(document.querySelector("#payment-request-json").value);
     receiveStatus.textContent = "Платёжный запрос скопирован.";
   } catch { receiveStatus.textContent = "Браузер запретил доступ к буферу обмена."; }
+};
+
+document.querySelector("#show-payment-request-qr").onclick = () => {
+  try {
+    paymentRequestQrFrames = encodePaymentQrFrames(document.querySelector("#payment-request-json").value);
+    paymentRequestQrIndex = 0;
+    document.querySelector("#payment-request-qr-card").hidden = false;
+    renderPaymentQrFrame();
+    receiveStatus.textContent = "QR сформирован локально. Передайте все фрагменты, если их несколько.";
+  } catch (error) { receiveStatus.textContent = error.message; }
+};
+document.querySelector("#previous-payment-request-qr").onclick = () => { paymentRequestQrIndex -= 1; renderPaymentQrFrame(); };
+document.querySelector("#next-payment-request-qr").onclick = () => { paymentRequestQrIndex += 1; renderPaymentQrFrame(); };
+document.querySelector("#copy-payment-request-qr").onclick = async () => {
+  try { await navigator.clipboard.writeText(document.querySelector("#payment-request-qr-frame").value); receiveStatus.textContent = "QR-фрагмент скопирован."; }
+  catch { receiveStatus.textContent = "Браузер запретил доступ к буферу обмена."; }
 };
 
 function openSend() {
@@ -548,10 +669,11 @@ document.querySelector("#verify-payment-request").onclick = async (event) => {
   sendStatus.textContent = "Проверка постквантовой подписи…";
   try {
     if (!networkInfo) throw new Error("Локальный узел не подключён.");
-    const encoded = document.querySelector("#payment-request-input").value.trim();
+    let encoded = document.querySelector("#payment-request-input").value.trim();
     if (encoded.length < 2 || encoded.length > 16_000) {
       throw new Error("Размер платёжного запроса недопустим.");
     }
+    if (encoded.startsWith("NIRQR1|")) encoded = decodePaymentQrFrames(encoded);
     let paymentRequest;
     try { paymentRequest = JSON.parse(encoded); }
     catch { throw new Error("Платёжный запрос не является корректным JSON."); }
@@ -568,6 +690,28 @@ document.querySelector("#verify-payment-request").onclick = async (event) => {
     document.querySelector("#verified-request-note").textContent = "";
     sendStatus.textContent = error.message;
   } finally { event.currentTarget.disabled = false; }
+};
+
+document.querySelector("#open-contacts").onclick = openContacts;
+document.querySelector("#contact-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  try { saveContact(false); }
+  catch (error) {
+    if (error.code !== "ADDRESS_CHANGE_CONFIRMATION_REQUIRED") {
+      document.querySelector("#contacts-status").textContent = error.message; return;
+    }
+    pendingAddressChange = error;
+    document.querySelector("#contact-old-address").textContent = error.existing.address;
+    document.querySelector("#contact-new-address").textContent = document.querySelector("#contact-address").value.trim().toLowerCase();
+    document.querySelector("#contact-change-network").textContent = `${error.existing.networkId} → ${activeNetworkId()}`;
+    document.querySelector("#address-change-warning").hidden = false;
+    document.querySelector("#contacts-status").textContent = "Нужна отдельная проверка и явное подтверждение замены.";
+  }
+});
+document.querySelector("#confirm-address-change").onclick = () => {
+  if (!pendingAddressChange) return;
+  try { saveContact(true); }
+  catch (error) { document.querySelector("#contacts-status").textContent = error.message; }
 };
 
 document.querySelector("#send-form").addEventListener("submit", async (event) => {

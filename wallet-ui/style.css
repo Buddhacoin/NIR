@@ -104,6 +104,32 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 #resources-panel small { color: var(--muted); line-height: 1.4; }
 .address-box { padding: 12px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
 #payment-request-result { margin-top: 18px; }
+.network-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.qr-card { display: grid; justify-items: center; gap: 10px; margin-top: 17px; padding: 15px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-soft); text-align: center; }
+.qr-card canvas { width: min(100%, 250px); height: auto; image-rendering: pixelated; background: #fff; border-radius: 10px; }
+.qr-card > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.qr-card textarea { min-height: 68px; font-size: 10px; }
+.split-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+.split-actions .secondary { margin: 0; }
+.recipient-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.recipient-field label { min-width: 0; }
+.compact { width: auto; margin: 0; min-height: 48px; padding: 10px 12px; font-size: 12px; }
+.contact-list { display: grid; gap: 8px; margin: 16px 0; }
+.contact-empty { margin: 0; padding: 13px; border: 1px dashed var(--border); border-radius: 14px; color: var(--muted); font-size: 13px; text-align: center; }
+.contact-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface-soft); }
+.contact-row b, .contact-row span { display: block; }
+.contact-row b { font-size: 13px; }
+.contact-row span { margin-top: 4px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.icon-button { border: 0; padding: 7px 5px; background: transparent; color: var(--muted); font-size: 11px; }
+.icon-button:hover { color: var(--text); text-decoration: underline; }
+.address-change-warning { margin-top: 16px; padding: 13px; border: 1px solid #caa98e; border-radius: 15px; background: var(--surface-soft); }
+.address-change-warning > p { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.address-change-warning dl { display: grid; gap: 8px; margin: 12px 0; }
+.address-change-warning dl div { padding: 9px; border-radius: 10px; background: var(--surface); }
+.address-change-warning dt { color: var(--muted); font-size: 11px; }
+.address-change-warning dd { margin: 4px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+#contacts-panel { max-height: calc(100vh - 28px); overflow-y: auto; }
 .request-import { margin: 0 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: 15px; }
 .request-import summary { cursor: pointer; font-size: 13px; font-weight: 700; }
 .request-import label { margin-top: 12px; }
@@ -122,6 +148,7 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 :root[data-theme="dark"] .network.connected { color: #75d39a; }
 :root[data-theme="dark"] nav .active i { background: transparent; color: #fff; }
 :root[data-theme="dark"] .danger { border-color: #693c3c; color: #e7a2a2; }
+:root[data-theme="dark"] .qr-card canvas { filter: none; }
 
 @media (max-width: 370px) {
   .shell { padding-right: 13px; padding-left: 13px; }
@@ -129,6 +156,10 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
   .onboarding-actions { grid-template-columns: 1fr; }
   .actions { gap: 7px; }
   .actions button { font-size: 12px; }
+  .recipient-field { grid-template-columns: 1fr; }
+  .compact { width: 100%; }
+  .contact-row { grid-template-columns: 1fr; }
+  .contact-controls { justify-content: flex-start; }
   nav span { font-size: 10px; }
 }
 

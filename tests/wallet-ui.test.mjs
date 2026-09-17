@@ -52,16 +52,18 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=27/);
-  assert.match(serviceWorker, /style\.css\?v=27/);
+  assert.match(html, /style\.css\?v=28/);
+  assert.match(serviceWorker, /style\.css\?v=28/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=27/);
-  assert.match(serviceWorker, /app\.js\?v=27/);
-  assert.match(serviceWorker, /nir-wallet-shell-v29/);
+  assert.match(html, /app\.js\?v=28/);
+  assert.match(serviceWorker, /app\.js\?v=28/);
+  assert.match(serviceWorker, /nir-wallet-shell-v30/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
   assert.match(serviceWorker, /node-selection\.js/);
+  assert.match(serviceWorker, /address-book\.js/);
+  assert.match(serviceWorker, /qr\.js/);
   assert.match(serviceWorker, /nodes\.json/);
 });
 
@@ -122,6 +124,7 @@ test("wallet pairs with a local bridge without exposing or persisting secrets", 
   assert.match(script, /x-nir-bridge-token/);
   assert.match(script, /bridgeSession = \{ token, url \}/);
   assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(token|bridge)/i);
+  assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(password|private|seed)/i);
   assert.doesNotMatch(html + script, /privateKey/);
 });
 
@@ -165,4 +168,19 @@ test("wallet creates and verifies signed payment requests before filling a trans
   assert.match(script, /bridgeRequest\("\/v1\/verify-payment-request"/);
   assert.match(script, /send-recipient"\)\.value = result\.request\.recipient/);
   assert.match(script, /send-amount"\)\.value = formatAtomic\(result\.request\.amount\)/);
+});
+
+test("wallet provides local contacts and local QR payment exchange without automatic sending", () => {
+  for (const id of ["contacts-panel", "contacts-list", "contact-label", "contact-address", "contact-network", "confirm-address-change", "receive-qr", "payment-request-qr", "payment-request-qr-frame"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /readAddressBook/);
+  assert.match(script, /saveAddressBookContact/);
+  assert.match(script, /ADDRESS_CHANGE_CONFIRMATION_REQUIRED/);
+  assert.match(script, /drawQr\(document\.querySelector\("#receive-qr"\)/);
+  assert.match(script, /encodePaymentQrFrames/);
+  assert.match(script, /decodePaymentQrFrames/);
+  assert.match(html, /Импорт лишь проверяет и заполняет форму/);
+  assert.match(styles, /\.qr-card/);
+  assert.match(styles, /\.contact-row/);
 });

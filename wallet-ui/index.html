@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="nir-coin-icon.png?v=24">
-  <link rel="stylesheet" href="style.css?v=27"><title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css?v=28"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
@@ -38,22 +38,23 @@
   <dialog id="receive-panel" aria-labelledby="receive-title">
     <button class="close" data-close="receive-panel" aria-label="Закрыть">×</button>
     <h2 id="receive-title">Получить NIR</h2>
-    <p>Публичный адрес</p><div class="address-box" id="receive-address"></div>
+    <p>Публичный адрес и сеть</p><div class="address-box" id="receive-address"></div><p class="network-note" id="receive-network"></p>
+    <section class="qr-card" aria-labelledby="receive-qr-title"><b id="receive-qr-title">QR для получения</b><canvas id="receive-qr" width="270" height="270" aria-label="QR-код публичного адреса"></canvas><p>Перед отправкой сверяйте полный адрес и сеть, показанные выше.</p></section>
     <form id="payment-request-form">
       <label>Точная сумма NIR<input id="request-amount" inputmode="decimal" placeholder="1.00000000" required></label>
       <label>Комментарий, до 160 байт<input id="request-memo" maxlength="160" autocomplete="off" placeholder="Заказ 42"></label>
       <label>Действует, минут<input id="request-minutes" inputmode="numeric" type="number" min="1" max="43200" value="60" required></label>
       <button class="primary" type="submit">Подписать запрос</button>
     </form>
-    <section id="payment-request-result" hidden><b>Платёжный запрос подписан</b><p>Передайте этот JSON плательщику. В нём нет приватного ключа.</p><textarea id="payment-request-json" readonly aria-label="Подписанный платёжный запрос"></textarea><button class="primary" id="copy-payment-request" type="button">Копировать запрос</button></section>
+    <section id="payment-request-result" hidden><b>Платёжный запрос подписан</b><p>Передайте этот JSON плательщику. В нём нет приватного ключа.</p><textarea id="payment-request-json" readonly aria-label="Подписанный платёжный запрос"></textarea><button class="primary" id="copy-payment-request" type="button">Копировать запрос</button><button class="secondary" id="show-payment-request-qr" type="button">Показать QR запроса</button><section class="qr-card" id="payment-request-qr-card" hidden aria-labelledby="payment-request-qr-title"><b id="payment-request-qr-title">QR платёжного запроса</b><canvas id="payment-request-qr" width="270" height="270" aria-label="QR-код платёжного запроса"></canvas><p id="payment-request-qr-label"></p><div class="split-actions"><button class="secondary" id="previous-payment-request-qr" type="button">Назад</button><button class="secondary" id="next-payment-request-qr" type="button">Далее</button></div><textarea id="payment-request-qr-frame" readonly aria-label="Текущий QR-фрагмент"></textarea><button class="secondary" id="copy-payment-request-qr" type="button">Копировать QR-фрагмент</button></section></section>
     <p class="form-status" id="receive-status" role="status"></p>
   </dialog>
   <dialog id="send-panel" aria-labelledby="send-title">
     <button class="close" data-close="send-panel" aria-label="Закрыть">×</button>
     <h2 id="send-title">Отправить NIR</h2>
-    <details class="request-import"><summary>Вставить подписанный платёжный запрос</summary><label>JSON запроса<textarea id="payment-request-input" spellcheck="false"></textarea></label><button class="secondary" id="verify-payment-request" type="button">Проверить и заполнить</button><p id="verified-request-note"></p></details>
+    <details class="request-import"><summary>Импортировать подписанный платёжный запрос</summary><p>Вставьте JSON или все QR-фрагменты через пробел/с новой строки. Импорт лишь проверяет и заполняет форму — он не подписывает и не отправляет перевод.</p><label>JSON или QR-фрагменты<textarea id="payment-request-input" spellcheck="false" autocomplete="off"></textarea></label><button class="secondary" id="verify-payment-request" type="button">Проверить и заполнить</button><p id="verified-request-note"></p></details>
     <form id="send-form">
-      <label>Адрес получателя<input id="send-recipient" placeholder="nir1…" minlength="68" maxlength="68" autocomplete="off" spellcheck="false" required></label>
+      <div class="recipient-field"><label>Адрес получателя<input id="send-recipient" placeholder="nir1…" minlength="68" maxlength="68" autocomplete="off" spellcheck="false" required></label><button class="secondary compact" id="open-contacts" type="button">Контакты</button></div>
       <label>Сумма NIR<input id="send-amount" inputmode="decimal" placeholder="0.00000001" autocomplete="off" required></label>
       <button class="primary" type="submit">Проверить перевод</button>
     </form>
@@ -70,6 +71,22 @@
       <button class="secondary" id="copy-signed" type="button">Копировать JSON</button>
     </section>
     <p class="form-status" id="send-status" role="status"></p>
+  </dialog>
+  <dialog id="contacts-panel" aria-labelledby="contacts-title">
+    <button class="close" data-close="contacts-panel" aria-label="Закрыть">×</button>
+    <h2 id="contacts-title">Контакты</h2>
+    <p>Сохраняются только имя, публичный адрес и сеть в данных этого браузера. Пароль и ключи здесь не хранятся.</p>
+    <div class="network-note" id="contacts-network" role="status"></div>
+    <div class="contact-list" id="contacts-list" aria-live="polite"></div>
+    <form id="contact-form">
+      <input id="contact-id" type="hidden">
+      <label>Имя контакта<input id="contact-label" maxlength="64" autocomplete="off" required></label>
+      <label>Полный публичный адрес<input id="contact-address" placeholder="nir1…" minlength="68" maxlength="68" autocomplete="off" spellcheck="false" required></label>
+      <label>Сеть<input id="contact-network" readonly aria-readonly="true"></label>
+      <button class="primary" type="submit">Сохранить контакт</button>
+    </form>
+    <section class="address-change-warning" id="address-change-warning" hidden aria-labelledby="address-change-title"><b id="address-change-title">Адрес контакта изменился</b><p>Сверьте полный старый и новый адрес, а затем подтвердите замену отдельно.</p><dl><div><dt>Было</dt><dd id="contact-old-address"></dd></div><div><dt>Станет</dt><dd id="contact-new-address"></dd></div><div><dt>Сеть</dt><dd id="contact-change-network"></dd></div></dl><button class="danger" id="confirm-address-change" type="button">Подтвердить замену адреса</button></section>
+    <p class="form-status" id="contacts-status" role="status" aria-live="polite"></p>
   </dialog>
   <dialog id="resources-panel" aria-labelledby="resources-title">
     <button class="close" data-close="resources-panel" aria-label="Закрыть">×</button>
@@ -104,5 +121,5 @@
     <p class="warning">Не храните пароль рядом с vault. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=27"></script>
+  <script type="module" src="app.js?v=28"></script>
 </body></html>
