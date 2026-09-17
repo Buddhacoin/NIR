@@ -30,7 +30,8 @@ outside the browser. Start it for one exact wallet origin:
 ```bash
 npm run wallet:bridge -- \
   /absolute/path/personal.nirvault.json 8788 http://127.0.0.1:8765 \
-  /absolute/path/node/genesis.json
+  /absolute/path/node/genesis.json \
+  /absolute/path/node/handoffs/VALIDATOR-HANDOFFS.json
 ```
 
 At startup it prints a random eight-digit pairing code that expires after two
@@ -62,7 +63,9 @@ When started with an explicit genesis file, the bridge also verifies account
 statements signed by a validator quorum. The browser then shows a confirmed
 height instead of trusting the balance reported by one node. Omitting the
 genesis path leaves this check disabled and the interface labels the result as
-single-node data.
+single-node data. The optional handoff-history path lets the bridge advance that
+trust through independently approved validator rotations. Every transition is
+verified from genesis and only the set active at the proof height is accepted.
 The pairing code and session token are not recovery secrets. Neither belongs in
 a URL or persistent browser storage. Close the terminal process when finished.
 

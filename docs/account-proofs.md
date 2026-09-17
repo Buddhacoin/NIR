@@ -25,7 +25,8 @@ npm run wallet:bridge -- \
   /absolute/path/personal.nirvault.json \
   8788 \
   http://127.0.0.1:8765 \
-  /absolute/path/node/genesis.json
+  /absolute/path/node/genesis.json \
+  /absolute/path/node/handoffs/VALIDATOR-HANDOFFS.json
 ```
 
 The bridge prints which network is pinned. The wallet asks the node for an
@@ -53,9 +54,15 @@ and refuses to sign a mismatch. The coordinator returns a proof only after an
 independent two-thirds-plus-one quorum agrees. One of four validators may be
 offline; two signatures are never enough.
 
+The final argument may be omitted before the first validator rotation. When it
+is present, the bridge verifies every transition from the pinned genesis and
+selects the validator set active at the proof height. A new set cannot appoint
+itself, an old set cannot sign balances after its replacement, and a future
+rotation is not applied early.
+
 ## Remaining production work
 
-The wallet currently pins the genesis validator set. Its trust anchor must next
-advance through the already verified validator-handoff history so that account
-proofs remain verifiable after a production validator rotation. Authority must
-never come from a validator list supplied by the same untrusted proof response.
+Production distribution must deliver the verified handoff history to wallets
+through multiple independent sources and retain it durably across restarts.
+Authority never comes from a validator list supplied by the same untrusted proof
+response.

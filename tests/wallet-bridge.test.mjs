@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { generateWallet, verifyObject } from "../blockchain/crypto.mjs";
+import { generateWallet, publicWallet, verifyObject } from "../blockchain/crypto.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
+import { createAccountProof } from "../blockchain/account-proof.mjs";
+import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
 
 async function close(server) {
   if (!server.listening) return;
@@ -26,6 +28,109 @@ function request(url, origin, token, options = {}) {
     },
   });
 }
+
+function validatorMembers(wallets) {
+  return wallets.map((wallet) => ({
+    ...publicWallet(wallet), operatorId: `validator-${wallet.address.slice(4, 16)}`,
+  }));
+}
+
+test("wallet account trust advances through verified validator handoffs", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-proof-rotation-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const account = createWalletFile({ path: vaultPath, password: "wallet-proof-password-long" });
+  const first = Array.from({ length: 4 }, generateWallet);
+  const second = [first[0], first[1], generateWallet(), generateWallet()];
+  const firstMembers = validatorMembers(first);
+  const secondMembers = validatorMembers(second);
+  const networkId = "nir-wallet-rotation-test";
+  const handoff = createValidatorHandoff({
+    activationBlockHash: "a".repeat(64),
+    activationHeight: 10,
+    activationStateRoot: "b".repeat(64),
+    networkId,
+    nextValidators: secondMembers,
+    previousValidators: firstMembers,
+  }, first.slice(0, 3), second.slice(0, 3));
+  const accountState = {
+    address: account.address,
+    atomicBalance: "500000000",
+    nextNonce: 2,
+    resources: {
+      atomicStake: "0", availableTransferCredits: "0", delegations: [], pendingUnstake: null,
+    },
+  };
+  const proof = createAccountProof({
+    account: accountState,
+    height: 10,
+    networkId,
+    stateRoot: "b".repeat(64),
+    tipHash: "a".repeat(64),
+    validators: secondMembers,
+    validatorWallets: second.slice(0, 3),
+  });
+  const staleAuthority = createAccountProof({
+    account: accountState,
+    height: 10,
+    networkId,
+    stateRoot: "b".repeat(64),
+    tipHash: "a".repeat(64),
+    validators: firstMembers,
+    validatorWallets: first.slice(0, 3),
+  });
+  const origin = "http://127.0.0.1:8765";
+  const token = "0".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    origin,
+    sessionToken: token,
+    trustAnchor: {
+      expectedNetworkId: networkId,
+      handoffs: [handoff],
+      trustedValidators: firstMembers,
+    },
+    vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const verified = await request(`${base}/v1/verify-account-proof`, origin, token, {
+      body: JSON.stringify({ address: account.address, minimumHeight: 10, proof }), method: "POST",
+    });
+    assert.equal(verified.status, 200);
+    assert.equal((await verified.json()).verified, true);
+    const rejected = await request(`${base}/v1/verify-account-proof`, origin, token, {
+      body: JSON.stringify({
+        address: account.address, minimumHeight: 10, proof: staleAuthority,
+      }),
+      method: "POST",
+    });
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error, /trust anchor/);
+    const wrongActivationProof = createAccountProof({
+      account: accountState,
+      height: 10,
+      networkId,
+      stateRoot: "c".repeat(64),
+      tipHash: "d".repeat(64),
+      validators: secondMembers,
+      validatorWallets: second.slice(0, 3),
+    });
+    const wrongActivation = await request(
+      `${base}/v1/verify-account-proof`, origin, token, {
+        body: JSON.stringify({
+          address: account.address, minimumHeight: 10, proof: wrongActivationProof,
+        }),
+        method: "POST",
+      },
+    );
+    assert.equal(wrongActivation.status, 400);
+    assert.match((await wrongActivation.json()).error, /activation block/);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("wallet bridge signs only an exact-origin, session-authorized, confirmed request", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-test-"));

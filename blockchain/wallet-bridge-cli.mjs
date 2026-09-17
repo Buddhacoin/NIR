@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { randomBytes, randomInt } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync, statSync } from "node:fs";
 import process from "node:process";
 
 import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
+import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -30,12 +31,12 @@ function readSecret(prompt) {
   });
 }
 
-const [vaultPath, portText = "8788", origin = "http://127.0.0.1:8765", genesisPath] =
+const [vaultPath, portText = "8788", origin = "http://127.0.0.1:8765", genesisPath, handoffPath] =
   process.argv.slice(2);
 try {
   const port = Number(portText);
   if (!vaultPath || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    throw new Error("usage: wallet:bridge <vault> [port] [exact-browser-origin] [genesis.json]");
+    throw new Error("usage: wallet:bridge <vault> [port] [exact-browser-origin] [genesis.json] [validator-handoffs.json]");
   }
   const wallet = walletPublicInfo(vaultPath);
   const genesis = genesisPath ? JSON.parse(readFileSync(genesisPath, "utf8")) : null;
@@ -43,6 +44,15 @@ try {
       !Array.isArray(genesis.validators) || genesis.validators.length < 4)) {
     throw new Error("account proof genesis trust anchor is invalid");
   }
+  if (handoffPath && !genesis) {
+    throw new Error("validator handoffs require an explicit genesis trust anchor");
+  }
+  if (handoffPath && (lstatSync(handoffPath).isSymbolicLink() ||
+      statSync(handoffPath).size > MAX_HANDOFF_STORE_BYTES)) {
+    throw new Error("validator handoff history file is unsafe");
+  }
+  const handoffs = handoffPath ? JSON.parse(readFileSync(handoffPath, "utf8")) : [];
+  if (!Array.isArray(handoffs)) throw new Error("validator handoff history is invalid");
   const sessionToken = randomBytes(32).toString("hex");
   const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
   const server = createWalletBridgeServer({
@@ -50,7 +60,7 @@ try {
     pairingCode,
     sessionToken,
     ...(genesis ? { trustAnchor: {
-      expectedNetworkId: genesis.networkId, trustedValidators: genesis.validators,
+      expectedNetworkId: genesis.networkId, handoffs, trustedValidators: genesis.validators,
     } } : {}),
     vaultPath,
     authorize: async (intent) => {
@@ -76,7 +86,7 @@ try {
     console.log(`Listening only on http://127.0.0.1:${port}`);
     console.log(`Allowed origin: ${origin}`);
     console.log(genesis
-      ? `Account proofs pinned to ${genesis.networkId} genesis validators`
+      ? `Account proofs pinned to ${genesis.networkId}; verified validator handoffs: ${handoffs.length}`
       : "Account proof verification disabled: start with an explicit genesis.json path");
     console.log(`One-time pairing code: ${pairingCode} (expires in 2 minutes)`);
     console.log("Keep this terminal open. Every signature still requires confirmation and password.");

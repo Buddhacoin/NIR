@@ -9,6 +9,7 @@ import {
 } from "./wallet-files.mjs";
 import { verifyPaymentRequest } from "./payment-request.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
+import { advanceValidatorTrust } from "./validator-handoff.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -155,6 +156,14 @@ export function createWalletBridgeServer({
       !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
   }
+  const accountTrust = trustAnchor ? {
+    expectedNetworkId: trustAnchor.expectedNetworkId,
+    handoffs: structuredClone(trustAnchor.handoffs ?? []),
+    trustedValidators: structuredClone(trustAnchor.trustedValidators),
+  } : null;
+  if (accountTrust) {
+    advanceValidatorTrust(accountTrust);
+  }
   const seen = new Set();
   let pending = false;
   let pairingAttempts = 0;
@@ -219,7 +228,7 @@ export function createWalletBridgeServer({
         }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {
-        if (!trustAnchor) throw new Error("bridge account trust anchor is not configured");
+        if (!accountTrust) throw new Error("bridge account trust anchor is not configured");
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("account proof verification requires application/json");
         }
@@ -228,12 +237,23 @@ export function createWalletBridgeServer({
             body.minimumHeight < 0) {
           throw new Error("account proof request is invalid");
         }
+        const activeTrust = advanceValidatorTrust({
+          expectedNetworkId: accountTrust.expectedNetworkId,
+          handoffs: accountTrust.handoffs.filter(({ activationHeight }) =>
+            Number.isSafeInteger(body.proof?.height) && activationHeight <= body.proof.height),
+          trustedValidators: accountTrust.trustedValidators,
+        });
+        if (activeTrust.lastHandoff?.activationHeight === body.proof?.height &&
+            (body.proof.tipHash !== activeTrust.lastHandoff.activationBlockHash ||
+             body.proof.stateRoot !== activeTrust.lastHandoff.activationStateRoot)) {
+          throw new Error("account proof does not match the validator activation block");
+        }
         return send(response, 200, {
           statement: verifyAccountProof(body.proof, {
             expectedAddress: body.address,
-            expectedNetworkId: trustAnchor.expectedNetworkId,
+            expectedNetworkId: accountTrust.expectedNetworkId,
             minimumHeight: body.minimumHeight,
-            trustedValidators: trustAnchor.trustedValidators,
+            trustedValidators: activeTrust.trustedValidators,
           }),
           verified: true,
         }, origin);
