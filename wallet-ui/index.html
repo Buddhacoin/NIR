@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="nir-coin-icon.png?v=24">
-  <link rel="stylesheet" href="style.css?v=28"><title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css?v=29"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
@@ -46,6 +46,11 @@
       <label>Действует, минут<input id="request-minutes" inputmode="numeric" type="number" min="1" max="43200" value="60" required></label>
       <button class="primary" type="submit">Подписать запрос</button>
     </form>
+    <section class="simulation-review" id="payment-request-simulation" hidden aria-labelledby="payment-request-simulation-title">
+      <h3 id="payment-request-simulation-title">Проверка запроса перед подписью</h3><p>Показаны только подтверждённые последствия. Неизвестный тип или недоказанное состояние отклоняются.</p>
+      <dl class="simulation-fields"></dl><ul class="simulation-risks" aria-label="Риски операции"></ul>
+      <button class="primary" id="confirm-payment-request-simulation" type="button">Подписать проверенный запрос</button><button class="secondary" id="edit-payment-request-simulation" type="button">Изменить</button>
+    </section>
     <section id="payment-request-result" hidden><b>Платёжный запрос подписан</b><p>Передайте этот JSON плательщику. В нём нет приватного ключа.</p><textarea id="payment-request-json" readonly aria-label="Подписанный платёжный запрос"></textarea><button class="primary" id="copy-payment-request" type="button">Копировать запрос</button><button class="secondary" id="show-payment-request-qr" type="button">Показать QR запроса</button><section class="qr-card" id="payment-request-qr-card" hidden aria-labelledby="payment-request-qr-title"><b id="payment-request-qr-title">QR платёжного запроса</b><canvas id="payment-request-qr" width="270" height="270" aria-label="QR-код платёжного запроса"></canvas><p id="payment-request-qr-label"></p><div class="split-actions"><button class="secondary" id="previous-payment-request-qr" type="button">Назад</button><button class="secondary" id="next-payment-request-qr" type="button">Далее</button></div><textarea id="payment-request-qr-frame" readonly aria-label="Текущий QR-фрагмент"></textarea><button class="secondary" id="copy-payment-request-qr" type="button">Копировать QR-фрагмент</button></section></section>
     <p class="form-status" id="receive-status" role="status"></p>
   </dialog>
@@ -59,8 +64,11 @@
       <button class="primary" type="submit">Проверить перевод</button>
     </form>
     <section id="send-review" hidden>
-      <dl><div><dt>Получатель</dt><dd id="review-recipient"></dd></div><div><dt>Сумма</dt><dd id="review-amount"></dd></div><div><dt>Комиссия</dt><dd id="review-fee"></dd></div><div><dt>Сеть и nonce</dt><dd id="review-network"></dd></div></dl>
-      <p class="warning">Сверьте данные с терминалом. Подпись не отправляет транзакцию в сеть.</p>
+      <section class="simulation-review" id="transfer-simulation" aria-labelledby="transfer-simulation-title">
+        <h3 id="transfer-simulation-title">Проверка перевода перед подписью</h3><p>Сверьте полный адрес, сеть, изменения баланса и полномочия. Симуляция доказана состоянием сети.</p>
+        <dl class="simulation-fields"></dl><ul class="simulation-risks" aria-label="Риски операции"></ul>
+      </section>
+      <p class="warning">Подпись не отправляет транзакцию в сеть. Перед подписью симуляция будет проверена повторно.</p>
       <button class="primary" id="request-signature" type="button">Запросить подпись</button>
       <button class="secondary" id="edit-transfer" type="button">Изменить</button>
     </section>
@@ -96,6 +104,11 @@
     <details open><summary>Заблокировать NIR</summary><form id="stake-form"><label>Сумма NIR<input id="stake-amount" inputmode="decimal" placeholder="100.00000000" required></label><button class="primary" type="submit">Запросить подпись</button></form></details>
     <details><summary>Разрешить переводы другому адресу</summary><form id="delegation-form"><label>Адрес<input id="delegate-address" placeholder="nir1…" minlength="68" maxlength="68" required></label><label>Лимит переводов на эпоху<input id="delegate-limit" inputmode="numeric" min="0" max="1000000" placeholder="10" required></label><small>Укажите 0, чтобы отозвать действующее разрешение.</small><button class="primary" type="submit">Запросить подпись</button></form></details>
     <details><summary>Начать вывод</summary><form id="unstake-form"><label>Сумма NIR<input id="unstake-amount" inputmode="decimal" placeholder="100.00000000" required></label><button class="primary" type="submit">Запросить подпись</button></form><button class="secondary" id="claim-unstake" type="button" hidden>Подписать завершение вывода</button></details>
+    <section class="simulation-review" id="resource-simulation" hidden aria-labelledby="resource-simulation-title">
+      <h3 id="resource-simulation-title">Проверка операции перед подписью</h3><p>Проверьте точные изменения ресурсов, полномочия и риски. Без доказательства состояния подпись недоступна.</p>
+      <dl class="simulation-fields"></dl><ul class="simulation-risks" aria-label="Риски операции"></ul>
+      <button class="primary" id="confirm-resource-simulation" type="button">Подписать проверенную операцию</button><button class="secondary" id="edit-resource-simulation" type="button">Изменить</button>
+    </section>
     <section id="resource-signed" hidden><b>Операция подписана локально</b><p>Сверьте JSON. Подпись ещё ничего не отправила.</p><textarea id="resource-signed-json" readonly aria-label="Подписанная ресурсная операция"></textarea><button class="primary" id="submit-resource" type="button">Отправить в local testnet</button><button class="secondary" id="discard-resource" type="button">Удалить подпись</button></section>
     <p class="form-status" id="resources-status" role="status"></p>
   </dialog>
@@ -121,5 +134,5 @@
     <p class="warning">Не храните пароль рядом с vault. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=28"></script>
+  <script type="module" src="app.js?v=29"></script>
 </body></html>

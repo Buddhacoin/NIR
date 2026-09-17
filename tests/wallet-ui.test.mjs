@@ -52,18 +52,19 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=28/);
-  assert.match(serviceWorker, /style\.css\?v=28/);
+  assert.match(html, /style\.css\?v=29/);
+  assert.match(serviceWorker, /style\.css\?v=29/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=28/);
-  assert.match(serviceWorker, /app\.js\?v=28/);
-  assert.match(serviceWorker, /nir-wallet-shell-v30/);
+  assert.match(html, /app\.js\?v=29/);
+  assert.match(serviceWorker, /app\.js\?v=29/);
+  assert.match(serviceWorker, /nir-wallet-shell-v31/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
   assert.match(serviceWorker, /node-selection\.js/);
   assert.match(serviceWorker, /address-book\.js/);
   assert.match(serviceWorker, /qr\.js/);
+  assert.match(serviceWorker, /transaction-decoder\.js/);
   assert.match(serviceWorker, /nodes\.json/);
 });
 
@@ -128,11 +129,16 @@ test("wallet pairs with a local bridge without exposing or persisting secrets", 
   assert.doesNotMatch(html + script, /privateKey/);
 });
 
-test("wallet reviews and signs before a separate testnet-only broadcast", () => {
-  for (const field of ["review-recipient", "review-amount", "review-fee", "review-network"]) {
+test("wallet requires a proof-backed simulation before a separate testnet-only broadcast", () => {
+  for (const field of ["transfer-simulation", "resource-simulation", "payment-request-simulation"]) {
     assert.match(html, new RegExp(`id="${field}"`));
   }
-  assert.match(script, /\/v1\/fees\?amount=/);
+  assert.match(script, /bridgeRequest\("\/v1\/simulate-transaction"/);
+  assert.match(script, /decodeVerifiedSimulation/);
+  assert.match(script, /recheckSimulation/);
+  assert.match(script, /assertSignedMatchesIntent/);
+  assert.match(script, /simulationId: refreshed\.simulationId/);
+  assert.match(script, /Симуляция недоступна: состояние не подтверждено кворумом/);
   assert.match(script, /bridgeRequest\("\/v1\/sign"/);
   assert.match(script, /signButton\.disabled = true/);
   assert.match(script, /signButton\.disabled = false/);

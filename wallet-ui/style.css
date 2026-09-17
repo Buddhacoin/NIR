@@ -88,10 +88,18 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 .danger { width: 100%; margin-top: 9px; padding: 13px; border: 1px solid #d6a4a4; border-radius: 14px; background: transparent; color: #9b3030; font-weight: 700; }
 .form-status { min-height: 20px; margin: 4px 0 0; color: #a23131; overflow-wrap: anywhere; }
 #send-review, #signed-result, #resource-signed { margin-top: 18px; }
-#send-review dl { display: grid; gap: 1px; margin: 0 0 16px; overflow: hidden; border: 1px solid var(--border); border-radius: 15px; background: var(--border); }
-#send-review dl div { padding: 11px 13px; background: var(--surface-soft); }
-#send-review dt { color: var(--muted); font-size: 12px; }
-#send-review dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; }
+.simulation-review { margin-top: 18px; padding: 15px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-soft); }
+.simulation-review h3 { margin: 0; font-size: 15px; }
+.simulation-review > p { margin: 7px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.simulation-fields { display: grid; gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--border); }
+.simulation-fields div { padding: 10px 11px; background: var(--surface); }
+.simulation-fields dt { color: var(--muted); font-size: 11px; }
+.simulation-fields dd { margin: 4px 0 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; }
+.simulation-risks { display: grid; gap: 7px; margin: 12px 0; padding: 0; list-style: none; }
+.simulation-risks:empty { display: none; }
+.simulation-risks li { padding: 9px 10px; border-left: 3px solid var(--muted); border-radius: 8px; background: var(--surface); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.simulation-risks .risk-warning { border-left-color: #97732d; }
+.simulation-risks .risk-danger { border-left-color: #9b3030; }
 .warning { padding: 11px 12px; border-radius: 12px; background: var(--surface-soft); }
 .resource-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 18px 0; }
 .resource-stats div { min-width: 0; padding: 12px 9px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); }

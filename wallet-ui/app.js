@@ -1,6 +1,7 @@
 import { normalizeNodePolicy, selectNodeHealth } from "./node-selection.js";
 import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
 import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
+import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 
 const messages = {
   receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
@@ -35,6 +36,9 @@ let networkInfo = null;
 let activeNodeUrl = null;
 let nodePolicy = null;
 let pendingIntent = null;
+let pendingSimulation = null;
+let pendingResourceIntent = null;
+let pendingPaymentRequest = null;
 let signedTransaction = null;
 let signedResourceTransaction = null;
 let addressBook = readAddressBook();
@@ -58,14 +62,89 @@ function clearWalletSession(message = "Vault отключён · ключи и s
   pendingIntent = null;
   signedTransaction = null;
   signedResourceTransaction = null;
+  pendingSimulation = null;
+  pendingResourceIntent = null;
+  pendingPaymentRequest = null;
   document.querySelector("#balance-value").textContent = "0.00000000";
   document.querySelector("#wallet-state").textContent = message;
   document.querySelector("#signed-json").value = "";
   document.querySelector("#resource-signed-json").value = "";
   document.querySelector("#send-review").hidden = true;
   document.querySelector("#signed-result").hidden = true;
+  document.querySelector("#transfer-simulation").hidden = true;
   document.querySelector("#resource-signed").hidden = true;
   renderWalletConnection();
+}
+
+function setText(id, value) { document.querySelector(id).textContent = value; }
+
+function clearSimulation(target) {
+  document.querySelector(target).hidden = true;
+}
+
+function renderSimulation(target, simulation) {
+  const root = document.querySelector(target);
+  const fields = root.querySelector(".simulation-fields");
+  const risks = root.querySelector(".simulation-risks");
+  fields.replaceChildren(); risks.replaceChildren();
+  const add = (term, value) => {
+    const row = document.createElement("div");
+    const dt = document.createElement("dt"); const dd = document.createElement("dd");
+    dt.textContent = term; dd.textContent = value; row.append(dt, dd); fields.append(row);
+  };
+  add("Операция", simulation.type);
+  add("Сеть", `${simulation.networkId} · состояние на блоке ${simulation.stateHeight}`);
+  add("Полномочия", simulation.authority.map((item) => `${item.role}: ${item.address}`).join(" · "));
+  add("Комиссия", `${formatAtomic(simulation.fee.amount)} NIR · платит ${simulation.fee.payer ?? "ресурс сети"}`);
+  for (const effect of simulation.balance) {
+    const sign = BigInt(effect.delta) > 0n ? "+" : "";
+    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`);
+  }
+  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено");
+  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`);
+  for (const risk of simulation.risks) {
+    const item = document.createElement("li"); item.className = "risk-info";
+    item.textContent = risk; risks.append(item);
+  }
+  root.hidden = false;
+}
+
+async function simulateIntent(intent, account) {
+  if (!account?.proofVerified) throw new Error("Симуляция недоступна: состояние не подтверждено кворумом.");
+  const result = await bridgeRequest("/v1/simulate-transaction", {
+    method: "POST",
+    body: JSON.stringify({
+      intent,
+      verifiedAccount: { statement: account, height: account.proofHeight, proofVerified: account.proofVerified },
+      network: { networkId: networkInfo?.networkId, height: networkInfo?.height, valueMode: networkInfo?.valueMode },
+    }),
+  });
+  return decodeVerifiedSimulation(result, intent);
+}
+
+function sameSimulation(a, b) {
+  const { simulationId: _a, ...left } = a;
+  const { simulationId: _b, ...right } = b;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertSignedMatchesIntent(transaction, intent) {
+  if (!transaction || typeof transaction !== "object") throw new Error("Bridge вернул некорректную подписанную операцию.");
+  for (const [key, value] of Object.entries(intent)) {
+    if (transaction[key] !== value) throw new Error(`Подписанная операция отличается от проверенного намерения: ${key}.`);
+  }
+}
+
+async function recheckSimulation(intent, previous) {
+  const account = await readAccount();
+  if (!account.proofVerified || (intent.nonce !== undefined && account.nextNonce !== intent.nonce)) {
+    throw new Error("Состояние или nonce изменились после проверки. Подпись отменена.");
+  }
+  const refreshed = await simulateIntent(intent, account);
+  if (!sameSimulation(previous, refreshed)) {
+    throw new Error("Результат симуляции изменился. Подпись отменена; проверьте новую операцию.");
+  }
+  return refreshed;
 }
 
 function showMessage(key, copy = null) {
@@ -424,7 +503,7 @@ async function resourceFee() {
   return (await response.json()).amount;
 }
 
-async function signResource(fields) {
+async function prepareResourceSimulation(fields) {
   if (!walletInfo || !networkInfo || networkInfo.valueMode !== "valueless-devnet") {
     throw new Error("Операция разрешена только в подключённой локальной тестовой сети.");
   }
@@ -438,19 +517,41 @@ async function signResource(fields) {
     nonce: account.nextNonce,
     requestId: randomRequestId(),
   };
-  if (["credit-stake", "credit-delegation"].includes(intent.type)) {
+  if (["credit-stake", "credit-delegation", "credit-unstake-request"].includes(intent.type)) {
     intent.fee = await resourceFee();
   }
-  resourcesStatus.textContent = "Подтвердите точные параметры и пароль в терминале bridge…";
-  const signed = await bridgeRequest("/v1/sign-resource", {
-    method: "POST", body: JSON.stringify(intent),
-  });
-  signedResourceTransaction = signed.transaction;
-  document.querySelector("#resource-signed-json").value =
-    JSON.stringify(signedResourceTransaction, null, 2);
-  document.querySelector("#resource-signed").hidden = false;
-  resourcesStatus.textContent = "Подписано локально. Проверьте JSON перед отдельной отправкой.";
+  resourcesStatus.textContent = "Симуляция с доказательством состояния…";
+  const simulation = await simulateIntent(intent, account);
+  pendingResourceIntent = intent;
+  pendingSimulation = simulation;
+  renderSimulation("#resource-simulation", simulation);
+  resourcesStatus.textContent = "Проверьте последствия. Подпись ещё не запрошена.";
 }
+
+document.querySelector("#confirm-resource-simulation").onclick = async (event) => {
+  if (!pendingResourceIntent || !pendingSimulation) return;
+  event.currentTarget.disabled = true;
+  resourcesStatus.textContent = "Повторная симуляция перед подписью…";
+  try {
+    const refreshed = await recheckSimulation(pendingResourceIntent, pendingSimulation);
+    resourcesStatus.textContent = "Подтвердите параметры и пароль только в терминале bridge…";
+    const signed = await bridgeRequest("/v1/sign-resource", {
+      method: "POST", body: JSON.stringify({ ...pendingResourceIntent, simulationId: refreshed.simulationId }),
+    });
+    assertSignedMatchesIntent(signed.transaction, pendingResourceIntent);
+    signedResourceTransaction = signed.transaction;
+    document.querySelector("#resource-signed-json").value = JSON.stringify(signedResourceTransaction, null, 2);
+    document.querySelector("#resource-signed").hidden = false;
+    clearSimulation("#resource-simulation");
+    pendingResourceIntent = null; pendingSimulation = null;
+    resourcesStatus.textContent = "Подписано локально. Отправка остаётся отдельным действием.";
+  } catch (error) { resourcesStatus.textContent = error.message; }
+  finally { event.currentTarget.disabled = false; }
+};
+document.querySelector("#edit-resource-simulation").onclick = () => {
+  pendingResourceIntent = null; pendingSimulation = null; clearSimulation("#resource-simulation");
+  resourcesStatus.textContent = "Симуляция отменена. Операция не подписана.";
+};
 
 document.querySelector("#submit-resource").onclick = async (event) => {
   if (!signedResourceTransaction) return;
@@ -490,7 +591,7 @@ document.querySelector("#stake-form").addEventListener("submit", async (event) =
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
   try {
-    await signResource({
+    await prepareResourceSimulation({
       amount: parseNir(document.querySelector("#stake-amount").value), type: "credit-stake",
     });
     event.currentTarget.reset();
@@ -509,7 +610,7 @@ document.querySelector("#delegation-form").addEventListener("submit", async (eve
         !Number.isSafeInteger(limit) || limit < 0 || limit > 1_000_000) {
       throw new Error("Проверьте адрес и целый лимит от 0 до 1 000 000.");
     }
-    await signResource({ delegate, limit, type: "credit-delegation" });
+    await prepareResourceSimulation({ delegate, limit, type: "credit-delegation" });
     event.currentTarget.reset();
   } catch (error) { resourcesStatus.textContent = error.message; }
   finally { button.disabled = false; }
@@ -520,7 +621,7 @@ document.querySelector("#unstake-form").addEventListener("submit", async (event)
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
   try {
-    await signResource({
+    await prepareResourceSimulation({
       amount: parseNir(document.querySelector("#unstake-amount").value),
       type: "credit-unstake-request",
     });
@@ -531,7 +632,7 @@ document.querySelector("#unstake-form").addEventListener("submit", async (event)
 
 document.querySelector("#claim-unstake").onclick = async (event) => {
   event.currentTarget.disabled = true;
-  try { await signResource({ type: "credit-unstake-claim" }); }
+  try { await prepareResourceSimulation({ type: "credit-unstake-claim" }); }
   catch (error) { resourcesStatus.textContent = error.message; }
   finally { event.currentTarget.disabled = false; }
 };
@@ -587,6 +688,8 @@ function receive() {
   document.querySelector("#receive-network").textContent = `Сеть: ${networkInfo.networkId}`;
   drawQr(document.querySelector("#receive-qr"), `nir:${walletInfo.address}`, `QR публичного адреса ${walletInfo.address}; сеть ${networkInfo.networkId}`);
   document.querySelector("#payment-request-result").hidden = true;
+  document.querySelector("#payment-request-simulation").hidden = true;
+  document.querySelector("#payment-request-form").hidden = false;
   document.querySelector("#payment-request-qr-card").hidden = true;
   document.querySelector("#payment-request-json").value = "";
   paymentRequestQrFrames = [];
@@ -598,7 +701,7 @@ document.querySelector("#payment-request-form").addEventListener("submit", async
   event.preventDefault();
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
-  receiveStatus.textContent = "Подтвердите запрос и пароль в терминале bridge…";
+  receiveStatus.textContent = "Симуляция платёжного запроса…";
   try {
     if (!networkInfo || networkInfo.valueMode !== "valueless-devnet") {
       throw new Error("Подключите локальную тестовую сеть.");
@@ -607,25 +710,50 @@ document.querySelector("#payment-request-form").addEventListener("submit", async
     if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 43_200) {
       throw new Error("Срок должен быть от 1 минуты до 30 дней.");
     }
-    const result = await bridgeRequest("/v1/sign-payment-request", {
-      method: "POST",
-      body: JSON.stringify({
-        amount: parseNir(document.querySelector("#request-amount").value),
-        expiresAt: Date.now() + minutes * 60_000,
-        memo: document.querySelector("#request-memo").value.trim(),
-        networkId: networkInfo.networkId,
-        requestId: randomRequestId(),
-      }),
-    });
-    document.querySelector("#payment-request-json").value =
-      JSON.stringify(result.paymentRequest, null, 2);
-    document.querySelector("#payment-request-result").hidden = false;
-    document.querySelector("#payment-request-qr-card").hidden = true;
-    paymentRequestQrFrames = [];
-    receiveStatus.textContent = "Подписано. Изменение любого реквизита сломает подпись.";
+    const intent = { type: "payment-request", amount: parseNir(document.querySelector("#request-amount").value),
+      expiresAt: Date.now() + minutes * 60_000, memo: document.querySelector("#request-memo").value.trim(),
+      networkId: networkInfo.networkId, requestId: randomRequestId() };
+    const simulation = await simulateIntent(intent, await readAccount());
+    pendingPaymentRequest = { intent, simulation };
+    renderSimulation("#payment-request-simulation", simulation);
+    event.currentTarget.hidden = true;
+    receiveStatus.textContent = "Проверьте последствия. Подпись ещё не создана.";
   } catch (error) { receiveStatus.textContent = error.message; }
   finally { button.disabled = false; }
 });
+
+document.querySelector("#confirm-payment-request-simulation").onclick = async (event) => {
+  if (!pendingPaymentRequest) return;
+  event.currentTarget.disabled = true; receiveStatus.textContent = "Повторная симуляция перед подписью…";
+  try {
+    const account = await readAccount();
+    if (!account.proofVerified) throw new Error("Состояние сети больше не подтверждено. Подпись отменена.");
+    const refreshed = await simulateIntent(pendingPaymentRequest.intent, account);
+    if (!sameSimulation(refreshed, pendingPaymentRequest.simulation)) throw new Error("Результат симуляции изменился. Подпись отменена.");
+    const result = await bridgeRequest("/v1/sign-payment-request", {
+      method: "POST", body: JSON.stringify({ ...pendingPaymentRequest.intent, simulationId: refreshed.simulationId }),
+    });
+    const verifiedRequest = await bridgeRequest("/v1/verify-payment-request", {
+      method: "POST", body: JSON.stringify({ networkId: pendingPaymentRequest.intent.networkId, request: result.paymentRequest }),
+    });
+    if (verifiedRequest.request.amount !== pendingPaymentRequest.intent.amount ||
+        verifiedRequest.request.networkId !== pendingPaymentRequest.intent.networkId ||
+        verifiedRequest.request.requestId !== pendingPaymentRequest.intent.requestId) {
+      throw new Error("Подписанный запрос отличается от проверенного намерения.");
+    }
+    document.querySelector("#payment-request-json").value = JSON.stringify(result.paymentRequest, null, 2);
+    document.querySelector("#payment-request-result").hidden = false;
+    document.querySelector("#payment-request-qr-card").hidden = true;
+    clearSimulation("#payment-request-simulation"); pendingPaymentRequest = null; paymentRequestQrFrames = [];
+    receiveStatus.textContent = "Подписано. Отправка запроса не создаёт перевод.";
+  } catch (error) { receiveStatus.textContent = error.message; }
+  finally { event.currentTarget.disabled = false; }
+};
+document.querySelector("#edit-payment-request-simulation").onclick = () => {
+  pendingPaymentRequest = null; clearSimulation("#payment-request-simulation");
+  document.querySelector("#payment-request-form").hidden = false;
+  receiveStatus.textContent = "Симуляция отменена. Запрос не подписан.";
+};
 
 document.querySelector("#copy-payment-request").onclick = async () => {
   try {
@@ -716,19 +844,19 @@ document.querySelector("#confirm-address-change").onclick = () => {
 
 document.querySelector("#send-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  sendStatus.textContent = "Проверка комиссии и nonce…";
+  sendStatus.textContent = "Симуляция перевода с доказательством состояния…";
   try {
     const recipient = document.querySelector("#send-recipient").value.trim();
     if (!NIR_ADDRESS.test(recipient)) throw new Error("Адрес получателя NIR неверен.");
     if (recipient === walletInfo.address) throw new Error("Нельзя отправить перевод на тот же адрес.");
     const amount = parseNir(document.querySelector("#send-amount").value);
     const [account, quoteResponse] = await Promise.all([
-      readAccount(),
-      fetch(nodeUrl(`/v1/fees?amount=${encodeURIComponent(amount)}`)),
+      readAccount(), fetch(nodeUrl(`/v1/fees?amount=${encodeURIComponent(amount)}`)),
     ]);
     if (!quoteResponse.ok) throw new Error("Узел не смог рассчитать комиссию.");
     const quote = await quoteResponse.json();
     pendingIntent = {
+      type: "transfer",
       amount,
       fee: quote.amount,
       networkId: networkInfo.networkId,
@@ -737,13 +865,12 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
       requestId: [...crypto.getRandomValues(new Uint8Array(32))]
         .map((byte) => byte.toString(16).padStart(2, "0")).join(""),
     };
-    document.querySelector("#review-recipient").textContent = recipient;
-    document.querySelector("#review-amount").textContent = `${formatAtomic(amount)} NIR`;
-    document.querySelector("#review-fee").textContent = `${formatAtomic(quote.amount)} NIR · ${quote.percent}`;
-    document.querySelector("#review-network").textContent = `${networkInfo.networkId} · ${account.nextNonce}`;
+    const simulation = await simulateIntent(pendingIntent, account);
+    pendingSimulation = simulation;
+    renderSimulation("#transfer-simulation", simulation);
     event.currentTarget.hidden = true;
     document.querySelector("#send-review").hidden = false;
-    sendStatus.textContent = quote.requiresExplicitConfirmation ? "Внимание: комиссия выше порога предупреждения." : "";
+    sendStatus.textContent = "Проверьте точные изменения и риски. Подпись ещё не запрошена.";
   } catch (error) {
     sendStatus.textContent = error.message;
   }
@@ -751,27 +878,32 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
 
 document.querySelector("#edit-transfer").onclick = () => {
   pendingIntent = null;
+  pendingSimulation = null;
+  clearSimulation("#transfer-simulation");
   document.querySelector("#send-review").hidden = true;
   document.querySelector("#send-form").hidden = false;
   sendStatus.textContent = "";
 };
 
 document.querySelector("#request-signature").onclick = async () => {
-  if (!pendingIntent) return;
+  if (!pendingIntent || !pendingSimulation) return;
   const signButton = document.querySelector("#request-signature");
   signButton.disabled = true;
   sendStatus.textContent = "Подтвердите запрос и введите пароль в терминале bridge…";
   try {
+    const refreshed = await recheckSimulation(pendingIntent, pendingSimulation);
     const result = await bridgeRequest("/v1/sign", {
       method: "POST",
-      body: JSON.stringify(pendingIntent),
+      body: JSON.stringify({ ...pendingIntent, simulationId: refreshed.simulationId }),
     });
+    assertSignedMatchesIntent(result.transaction, pendingIntent);
     document.querySelector("#signed-json").value = JSON.stringify(result.transaction, null, 2);
     signedTransaction = result.transaction;
     document.querySelector("#send-review").hidden = true;
     document.querySelector("#signed-result").hidden = false;
     sendStatus.textContent = "Подписано. Автоматическая отправка намеренно отключена.";
     pendingIntent = null;
+    pendingSimulation = null;
   } catch (error) {
     sendStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   } finally {
