@@ -28,9 +28,10 @@ identically.
 - protocol-v22 ordered transaction commitments: every header carries the exact
   transaction count and Merkle root, while nodes return a logarithmic inclusion
   path for any finalized transaction;
-- protocol-v23 per-account history accumulators: authenticated account leaves
-  commit to the exact count and order of related transaction identifiers, so a
-  wallet detects a censored or reordered history response;
+- protocol-v24 indexed account-history accumulators: authenticated account
+  leaves commit to the exact count and fixed-depth Merkle root of related
+  transaction identifiers, so a wallet verifies a bounded page without trusting
+  the node or downloading the complete history;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;

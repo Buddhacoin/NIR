@@ -24,6 +24,7 @@ import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-stor
 import { createAccountProof } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { createTransactionProof } from "./transaction-tree.mjs";
+import { createAccountHistoryProofs } from "./account-history.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -128,18 +129,30 @@ export class PersistentDevNode {
     throw new Error("transaction is not found");
   }
 
-  account(address) {
-    const transactions = this.#chain.blocks().flatMap((block) => block.transactions)
+  accountHistoryPage(address, { before, limit = 20 } = {}) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address ?? "")) throw new Error("address is invalid");
+    const ids = this.#chain.blocks().flatMap((block) => block.transactions)
       .filter((transaction) => transaction.sender === address || transaction.recipient === address)
-      .map((transaction) => ({
-        amount: transaction.amount,
-        fee: transaction.fee,
-        id: transactionId(transaction),
-        nonce: transaction.nonce,
-        recipient: transaction.recipient,
-        sender: transaction.sender,
-        type: transaction.type,
-      }));
+      .map(transactionId);
+    const end = before === undefined ? ids.length : before;
+    if (!Number.isSafeInteger(end) || end < 0 || end > ids.length ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("account history page is invalid");
+    }
+    const start = Math.max(0, end - limit);
+    const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
+    const proofs = createAccountHistoryProofs(ids, indexes);
+    return {
+      count: ids.length,
+      entries: ids.slice(start, end).map((id, offset) => ({
+        id, index: indexes[offset], proof: proofs[offset],
+      })),
+      nextBefore: start === 0 ? null : start,
+      start,
+    };
+  }
+
+  account(address) {
     const balance = this.#chain.balance(address);
     const pendingUnstake = this.#chain.creditUnstake(address);
     return {
@@ -156,7 +169,6 @@ export class PersistentDevNode {
         } : null,
       },
       nextNonce: this.#chain.nextNonce(address),
-      transactions,
     };
   }
 
@@ -201,7 +213,7 @@ export class PersistentDevNode {
     if (atomic <= 0n || atomic > 10n * ATOMIC_UNITS) {
       throw new Error("devnet faucet amount must be between 1 atomic unit and 10 NIR");
     }
-    if (this.account(recipient).transactions.length > 0) {
+    if (this.#chain.accountState(recipient).history.count > 0) {
       throw new Error("devnet faucet is limited to one request per fresh address");
     }
     const transaction = createTransfer({

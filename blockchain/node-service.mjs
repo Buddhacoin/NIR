@@ -90,8 +90,21 @@ export function createNodeHttpServer(node) {
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
         const accountPath = url.pathname.slice("/v1/accounts/".length);
         const proofRequest = accountPath.endsWith("/proof");
-        const address = decodeURIComponent(proofRequest ? accountPath.slice(0, -6) : accountPath);
+        const historyRequest = accountPath.endsWith("/history");
+        const address = decodeURIComponent(proofRequest ? accountPath.slice(0, -6)
+          : historyRequest ? accountPath.slice(0, -8) : accountPath);
         if (!ADDRESS.test(address)) throw new Error("address is invalid");
+        if (historyRequest) {
+          if (typeof node.accountHistoryPage !== "function") {
+            return send(response, 501, { error: "account history pages are unavailable" }, origin);
+          }
+          const beforeText = url.searchParams.get("before");
+          const limitText = url.searchParams.get("limit");
+          return send(response, 200, await node.accountHistoryPage(address, {
+            ...(beforeText === null ? {} : { before: Number(beforeText) }),
+            ...(limitText === null ? {} : { limit: Number(limitText) }),
+          }), origin);
+        }
         if (proofRequest) {
           if (typeof node.accountProof !== "function") {
             return send(response, 501, { error: "account proof is unavailable" }, origin);

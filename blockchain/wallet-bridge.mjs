@@ -36,6 +36,7 @@ import {
 import {
   MAX_ACCOUNT_HISTORY_PROOF_BYTES,
   verifyAccountHistory,
+  verifyAccountHistoryEntry,
 } from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
@@ -423,6 +424,37 @@ export function createWalletBridgeServer({
         const body = await readBody(request, MAX_ACCOUNT_HISTORY_PROOF_BYTES + 1_024);
         const commitment = verifyAccountHistory(body?.transactionIds, verifiedAccountState.history);
         return send(response, 200, { ...commitment, verified: true }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/verify-account-history-page") {
+        if (!verifiedAccountState || verifiedAccountState.address !== walletAddress) {
+          throw new Error("verify the current wallet account before its history");
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("account history page verification requires application/json");
+        }
+        const body = await readBody(request, 512 * 1024);
+        const { before, limit, page } = body ?? {};
+        const count = verifiedAccountState.history.count;
+        if (!Number.isSafeInteger(before) || before < 0 || before > count ||
+            !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+            !page || page.count !== count || !Array.isArray(page.entries)) {
+          throw new Error("account history page request is invalid");
+        }
+        const start = Math.max(0, before - limit);
+        if (page.start !== start || page.nextBefore !== (start === 0 ? null : start) ||
+            page.entries.length !== before - start) {
+          throw new Error("account history page range is incomplete");
+        }
+        const entries = page.entries.map((entry, offset) => {
+          if (!entry || entry.index !== start + offset || entry.proof?.index !== entry.index) {
+            throw new Error("account history page index is invalid");
+          }
+          verifyAccountHistoryEntry(entry.id, entry.proof, verifiedAccountState.history);
+          return { id: entry.id, index: entry.index };
+        });
+        return send(response, 200, {
+          count, entries, nextBefore: page.nextBefore, start, verified: true,
+        }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {
         if (!accountTrust) throw new Error("bridge account trust anchor is not configured");

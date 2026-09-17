@@ -20,7 +20,10 @@ import {
   committedTransactionId,
   createTransactionProof,
 } from "../blockchain/transaction-tree.mjs";
-import { emptyAccountHistory } from "../blockchain/account-history.mjs";
+import {
+  createAccountHistoryProof,
+  emptyAccountHistory,
+} from "../blockchain/account-history.mjs";
 
 async function close(server) {
   if (!server.listening) return;
@@ -200,6 +203,29 @@ test("wallet checkpoint advances only through a verified finality header chain",
     );
     assert.equal(omittedHistory.status, 400);
     assert.match((await omittedHistory.json()).error, /incomplete or reordered/);
+    const page = {
+      count: 1,
+      entries: [{
+        id: committedTransactionId(transfer),
+        index: 0,
+        proof: createAccountHistoryProof([committedTransactionId(transfer)], 0),
+      }],
+      nextBefore: null,
+      start: 0,
+    };
+    const verifiedPage = await request(
+      `${base}/v1/verify-account-history-page`, origin, token, {
+        body: JSON.stringify({ before: 1, limit: 20, page }), method: "POST",
+      },
+    );
+    assert.equal(verifiedPage.status, 200);
+    const missingPage = await request(
+      `${base}/v1/verify-account-history-page`, origin, token, {
+        body: JSON.stringify({ before: 1, limit: 20, page: { ...page, entries: [] } }),
+        method: "POST",
+      },
+    );
+    assert.equal(missingPage.status, 400);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });

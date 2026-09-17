@@ -33,9 +33,9 @@ replays, restarts, message faults and state restoration.
 - ordered transaction roots, node-side inclusion proofs, checkpoint-anchored
   wallet header persistence and proof-gated history rendering (implemented
   locally; independent audit and long-term header compaction remain);
-- per-account ordered history accumulators and wallet-side completeness checks
-  against authenticated account leaves (implemented locally; scalable archival
-  indexing and paginated range proofs remain);
+- per-account indexed history accumulators and proof-verified newest-page wallet
+  loading against authenticated account leaves (implemented locally; persistent
+  archival indexes and independently operated archive services remain);
 - congestion measurements and a sustainable validator-compensation formula;
 - public test network with independent seed, validator, beacon and evaluator
   operators.

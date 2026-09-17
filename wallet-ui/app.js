@@ -155,16 +155,19 @@ async function readAccount() {
         proof,
       }),
     });
-    const transactionIds = (account.transactions ?? []).map(({ id }) => id);
-    const verifiedHistory = await bridgeRequest("/v1/verify-account-history", {
-      method: "POST", body: JSON.stringify({ transactionIds }),
+    const historyCount = verified.statement.account.history.count;
+    const historyResponse = await fetch(nodeUrl(
+      `/v1/accounts/${encodeURIComponent(walletInfo.address)}/history?before=${historyCount}&limit=20`,
+    ));
+    if (!historyResponse.ok) throw new Error("account history page unavailable");
+    const verifiedHistory = await bridgeRequest("/v1/verify-account-history-page", {
+      method: "POST",
+      body: JSON.stringify({ before: historyCount, limit: 20, page: await historyResponse.json() }),
     });
-    if (!verifiedHistory.verified || verifiedHistory.count !== transactionIds.length) {
-      throw new Error("account history completeness proof failed");
-    }
+    if (!verifiedHistory.verified) throw new Error("account history page proof failed");
     const verifiedTransactions = [];
     let unavailableTransactions = 0;
-    const recent = [...(account.transactions ?? [])].slice(-20).reverse();
+    const recent = [...verifiedHistory.entries].reverse();
     for (const summary of recent) {
       try {
         const transactionResponse = await fetch(nodeUrl(

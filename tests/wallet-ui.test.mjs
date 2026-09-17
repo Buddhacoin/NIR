@@ -48,9 +48,9 @@ test("wallet shell cache uses the current asset version", () => {
     assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=24`));
     assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=24`));
   }
-  assert.match(html, /app\.js\?v=25/);
-  assert.match(serviceWorker, /app\.js\?v=25/);
-  assert.match(serviceWorker, /nir-wallet-shell-v25/);
+  assert.match(html, /app\.js\?v=26/);
+  assert.match(serviceWorker, /app\.js\?v=26/);
+  assert.match(serviceWorker, /nir-wallet-shell-v26/);
   assert.match(serviceWorker, /node-selection\.js/);
   assert.match(serviceWorker, /nodes\.json/);
 });
@@ -59,6 +59,7 @@ test("wallet renders only locally verified transaction history", () => {
   assert.match(html, /id="transaction-list"/);
   assert.match(script, /\/v1\/verify-transaction-proof/);
   assert.match(script, /\/v1\/verify-account-history/);
+  assert.match(script, /\/v1\/verify-account-history-page/);
   assert.match(script, /verifiedTransactions\.push/);
   assert.match(script, /Неподтверждённые ответы узла скрыты/);
   assert.match(styles, /\.transaction-row/);

@@ -12,6 +12,7 @@ import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { exportBlockStoreBackup, loadBlockStore } from "../blockchain/block-store.mjs";
 import { verifyTransactionProof } from "../blockchain/transaction-tree.mjs";
+import { verifyAccountHistoryEntry } from "../blockchain/account-history.mjs";
 
 test("a transfer survives a complete node restart and replay", () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-node-test-"));
@@ -34,7 +35,7 @@ test("a transfer survives a complete node restart and replay", () => {
 
     node = new PersistentDevNode(directory);
     assert.equal(node.height, 2);
-    assert.equal(node.account(bob.address).transactions.length, 1);
+    assert.equal(node.account(bob.address).history.count, 1);
     assert.equal(node.account(bob.address).atomicBalance, (2n * ATOMIC_UNITS).toString());
 
     const forged = { ...transfer, nonce: 1, amount: (3n * ATOMIC_UNITS).toString() };
@@ -218,12 +219,20 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
     assert.equal(faucetResponse.status, 202);
     const account = await fetch(`${base}/v1/accounts/${wallet.address}`).then((response) => response.json());
     assert.equal(account.atomicBalance, (10n * ATOMIC_UNITS).toString());
+    const historyPage = await fetch(
+      `${base}/v1/accounts/${wallet.address}/history?before=1&limit=20`,
+    ).then((response) => response.json());
+    assert.equal(historyPage.entries.length, 1);
+    const transactionId = historyPage.entries[0].id;
     const transactionProof = await fetch(
-      `${base}/v1/transactions/${account.transactions[0].id}/proof`,
+      `${base}/v1/transactions/${transactionId}/proof`,
     ).then((response) => response.json());
     assert.equal(verifyTransactionProof(
       transactionProof.transaction, transactionProof.proof, transactionProof.transactionsRoot,
-    ), account.transactions[0].id);
+    ), transactionId);
+    assert.deepEqual(verifyAccountHistoryEntry(
+      historyPage.entries[0].id, historyPage.entries[0].proof, account.history,
+    ), { index: 0, transactionId });
     const handoffs = await fetch(`${base}/v1/validator-handoffs`).then((response) => response.json());
     assert.deepEqual(handoffs, { handoffs: [] });
     const finality = await fetch(`${base}/v1/finality-proofs?fromHeight=0&limit=8`)

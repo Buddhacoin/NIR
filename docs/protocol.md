@@ -174,16 +174,19 @@ reconstructs this root from the complete signed transaction and its inclusion
 path. A missing, altered, reordered or unrelated transaction is hidden rather
 than presented as wallet history.
 
-## Protocol v23 complete account history
+## Protocol v24 paginated account history
 
 Each authenticated account leaf also commits to an ordered history count and
-hash-chain root. Consensus appends a transaction identifier exactly once for
-each distinct sender or recipient after that transaction executes successfully.
-The compact commitment is part of both the account root and complete chain
-state, while full nodes reconstruct the ordered identifiers from finalized
-blocks. Before requesting individual inclusion paths, the wallet recomputes the
-accumulator over the complete identifier list. Omitting, inserting, replacing
-or reordering any entry therefore fails against the verified account proof.
+fixed-depth indexed Merkle root. Consensus appends a transaction identifier
+exactly once for each distinct sender or recipient after that transaction
+executes successfully. The compact frontier is part of complete chain state;
+only its count, format and root enter the public account leaf.
+
+A node serves bounded pages with the absolute index and a 32-sibling proof for
+every identifier. The wallet fixes the expected interval from the authenticated
+count, rejects gaps, extra entries and shifted indexes, then verifies every path
+against the authenticated root. It therefore downloads only the newest page,
+while omission, insertion, substitution or reordering still fails locally.
 
 ### Draft score
 

@@ -90,12 +90,11 @@ state plus its 256 sibling hashes. This supports both membership and fresh-addre
 absence proofs. Full transaction bodies and the complete account database are
 not downloaded by the wallet.
 
-The account RPC supplies candidate operation identifiers, not trusted history.
-Protocol v23 binds their exact ordered count and accumulator root to the
-authenticated account leaf. The bridge first recomputes that commitment over
-the complete RPC list; omission, insertion, substitution or reordering fails
-before any row is displayed.
-For at most the 20 newest candidates, the wallet requests
+The account proof supplies the authenticated history count and indexed Merkle
+root. Protocol v24 lets the wallet request only the 20 newest identifiers. The
+bridge requires the exact expected interval and verifies every absolute index
+and 32-level Merkle path; omission, insertion, substitution or reordering fails
+before any row is displayed. The wallet then requests
 `/v1/transactions/{id}/proof`. The bridge requires the exact block hash,
 transaction count and ordered Merkle root from its persisted verified header,
 recomputes the identifier from the complete signed transaction, verifies the

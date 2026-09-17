@@ -82,6 +82,7 @@ import {
 } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { createTransactionProof } from "./transaction-tree.mjs";
+import { createAccountHistoryProofs } from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -1113,6 +1114,29 @@ export class DistributedCoordinator {
     throw new Error("transaction is not found");
   }
 
+  accountHistoryPage(address, { before, limit = 20 } = {}) {
+    if (!ADDRESS.test(address)) throw new Error("address is invalid");
+    const ids = this.#chain.blocks().flatMap((block) => block.transactions)
+      .filter((transaction) => transaction.sender === address || transaction.recipient === address)
+      .map(transactionId);
+    const end = before === undefined ? ids.length : before;
+    if (!Number.isSafeInteger(end) || end < 0 || end > ids.length ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("account history page is invalid");
+    }
+    const start = Math.max(0, end - limit);
+    const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
+    const proofs = createAccountHistoryProofs(ids, indexes);
+    return {
+      count: ids.length,
+      entries: ids.slice(start, end).map((id, offset) => ({
+        id, index: indexes[offset], proof: proofs[offset],
+      })),
+      nextBefore: start === 0 ? null : start,
+      start,
+    };
+  }
+
   async validatorHandoffHistory() {
     const trustAnchor = {
       expectedNetworkId: this.networkId,
@@ -1129,14 +1153,11 @@ export class DistributedCoordinator {
 
   account(address) {
     if (!ADDRESS.test(address)) throw new Error("address is invalid");
-    const transactions = this.#chain.blocks().flatMap((block) => block.transactions)
-      .filter((transaction) => transaction.sender === address || transaction.recipient === address)
-      .map((transaction) => ({ ...transaction, id: transactionId(transaction) }));
     const balance = this.#chain.balance(address);
     return { address, atomicBalance: balance.toString(), balance: formatNir(balance),
       history: this.#chain.accountState(address).history,
       nextNonce: this.#chain.nextNonce(address),
-      resources: accountResources(this.#chain, address), transactions };
+      resources: accountResources(this.#chain, address) };
   }
 
   async accountProof(address) {
@@ -1429,7 +1450,7 @@ export class DistributedCoordinator {
     if (!ADDRESS.test(recipient) || atomic <= 0n || atomic > 10n * ATOMIC_UNITS) {
       throw new Error("invalid devnet faucet request");
     }
-    if (this.account(recipient).transactions.length > 0) {
+    if (this.#chain.accountState(recipient).history.count > 0) {
       throw new Error("devnet faucet is limited to one request per fresh address");
     }
     const transaction = createTransfer({

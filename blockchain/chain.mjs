@@ -65,7 +65,8 @@ import { transactionRoot } from "./transaction-tree.mjs";
 import {
   appendAccountHistory,
   emptyAccountHistory,
-  normalizeAccountHistory,
+  emptyAccountHistoryAccumulator,
+  normalizeAccountHistoryAccumulator,
 } from "./account-history.mjs";
 
 function parseAtomic(value, field) {
@@ -1006,7 +1007,7 @@ export class NirChain {
     const accountHistories = snapshotEntries(state.accountHistories, "account histories");
     for (const [address, history] of accountHistories) {
       assertAddress(address, "account history address");
-      accountHistories.set(address, normalizeAccountHistory(history));
+      accountHistories.set(address, normalizeAccountHistoryAccumulator(history));
     }
     const balances = snapshotEntries(state.balances, "balances");
     for (const [address, value] of balances) {
@@ -2764,7 +2765,7 @@ export class NirChain {
         .filter((address) => typeof address === "string" && /^nir1[0-9a-f]{64}$/.test(address)));
       for (const address of participants) {
         accountHistories.set(address, appendAccountHistory(
-          accountHistories.get(address) ?? emptyAccountHistory(), id,
+          accountHistories.get(address) ?? emptyAccountHistoryAccumulator(), id,
         ));
       }
     }

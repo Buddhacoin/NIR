@@ -41,10 +41,12 @@ root. Clients must compare those values with a header chain they verified
 independently; receiving the proof and header from the same untrusted node is
 not sufficient by itself.
 
-The account response includes a protocol-v23 `history` commitment and the
-ordered transaction list reconstructed from finalized blocks. A client must
-verify the account proof and recompute that commitment before treating the list
-as complete.
+The account response includes a protocol-v24 `history` commitment but no
+unbounded transaction list. `GET /v1/accounts/{address}/history?before=N&limit=L`
+returns a bounded descending page interval in ascending index order, with an
+exact-position Merkle proof for every identifier. A client must first verify the
+account proof, then verify the page interval and every path before displaying
+the referenced transactions.
 
 ## Wallet-to-wallet flow
 
