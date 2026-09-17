@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -143,6 +153,62 @@ test("the account history index is durable, redundant, and rebuilt from verified
     assert.equal(page.entries.length, 1);
     assert.equal(node.transactionProof(page.entries[0].id).height, 1);
     assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("history storage resists random corruption and symbolic-link substitution", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-history-adversarial-test-"));
+  const directory = join(temporary, "node");
+  const outsideDirectory = join(temporary, "outside");
+  try {
+    initializeDevnet(directory);
+    const wallet = generateWallet();
+    let node = new PersistentDevNode(directory);
+    node.faucet(wallet.address);
+    const name = "000000000001.json";
+    const primary = join(directory, "account-history-index", name);
+    const backup = join(directory, "account-history-index-backup", name);
+    const canonical = readFileSync(backup);
+
+    for (let scenario = 0; scenario < 32; scenario += 1) {
+      const corrupted = Buffer.from(canonical);
+      const offset = (scenario * 104729 + 17) % corrupted.length;
+      corrupted[offset] ^= (scenario % 251) + 1;
+      writeFileSync(primary, corrupted);
+      node = new PersistentDevNode(directory);
+      assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+      assert.equal(node.accountHistoryPage(wallet.address, { before: 1, limit: 1 }).entries.length, 1);
+    }
+
+    writeFileSync(primary, Buffer.alloc(8_000_001, 0x61));
+    node = new PersistentDevNode(directory);
+    assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+
+    mkdirSync(outsideDirectory, { mode: 0o700 });
+    const outsideFile = join(outsideDirectory, "do-not-touch");
+    writeFileSync(outsideFile, "outside remains unchanged\n");
+    rmSync(primary);
+    symlinkSync(outsideFile, primary);
+    node = new PersistentDevNode(directory);
+    assert.equal(readFileSync(outsideFile, "utf8"), "outside remains unchanged\n");
+    assert.equal(lstatSync(primary).isFile(), true);
+    assert.equal(lstatSync(primary).isSymbolicLink(), false);
+
+    const database = join(directory, "account-history.sqlite");
+    rmSync(database);
+    symlinkSync(outsideFile, database);
+    node = new PersistentDevNode(directory);
+    assert.equal(readFileSync(outsideFile, "utf8"), "outside remains unchanged\n");
+    assert.equal(lstatSync(database).isFile(), true);
+    assert.equal(lstatSync(database).isSymbolicLink(), false);
+
+    const primaryDirectory = join(directory, "account-history-index");
+    rmSync(primaryDirectory, { recursive: true });
+    symlinkSync(outsideDirectory, primaryDirectory, "dir");
+    assert.throws(() => new PersistentDevNode(directory), /directory is unsafe/);
+    assert.equal(readFileSync(outsideFile, "utf8"), "outside remains unchanged\n");
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import {
   closeSync,
+  constants as fsConstants,
   fchmodSync,
+  fstatSync,
   openSync,
   readFileSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -22,8 +23,19 @@ const MAX_ARCHIVE_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_CONFIG_FILE_BYTES = 2 * 1024 * 1024;
 
 function readBoundedJson(path, maximumBytes) {
-  if (statSync(path).size > maximumBytes) throw new Error(`${path} is too large`);
-  return JSON.parse(readFileSync(path, "utf8"));
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size > maximumBytes) {
+      throw new Error(`${path} is not a bounded regular file`);
+    }
+    const contents = readFileSync(descriptor);
+    if (contents.length > maximumBytes) throw new Error(`${path} is too large`);
+    return JSON.parse(contents.toString("utf8"));
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 function writeExclusive(path, value) {

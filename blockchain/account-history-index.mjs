@@ -1,16 +1,18 @@
 import {
-  chmodSync,
   closeSync,
+  constants as fsConstants,
+  fstatSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   appendAccountHistory,
@@ -45,22 +47,53 @@ function fileName(height) {
 }
 
 function syncDirectory(path) {
-  const descriptor = openSync(path, "r");
+  const descriptor = openSync(path,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 
-function writeAtomic(path, value) {
-  const temporary = `${path}.${process.pid}.tmp`;
+function ensureRealDirectory(path) {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const metadata = lstatSync(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("account history directory is unsafe");
+  }
+}
+
+function readBoundedRegularFile(path, maximumBytes) {
   let descriptor;
   try {
-    descriptor = openSync(temporary, "w", 0o600);
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size > maximumBytes) {
+      throw new Error("account history file is unsafe");
+    }
+    const contents = readFileSync(descriptor);
+    if (contents.length > maximumBytes) throw new Error("account history file is too large");
+    return contents;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function writeAtomic(path, value) {
+  const parent = dirname(path);
+  const parentMetadata = lstatSync(parent);
+  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink()) {
+    throw new Error("account history destination directory is unsafe");
+  }
+  const temporary = join(dirname(path),
+    `.${basename(path)}.${process.pid}.${randomBytes(16).toString("hex")}.tmp`);
+  let descriptor;
+  try {
+    descriptor = openSync(temporary, fsConstants.O_WRONLY | fsConstants.O_CREAT |
+      fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
     writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
     fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = undefined;
-    chmodSync(temporary, 0o600);
     renameSync(temporary, path);
     syncDirectory(dirname(path));
+    closeSync(descriptor);
+    descriptor = undefined;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
     rmSync(temporary, { force: true });
@@ -137,16 +170,15 @@ function verifyRecord(value, { height, networkId, previousIndexHash }) {
 
 function readCandidate(path, context) {
   try {
-    if (statSync(path).size > MAX_RECORD_BYTES) return null;
-    return verifyRecord(JSON.parse(readFileSync(path, "utf8")), context);
+    return verifyRecord(JSON.parse(readBoundedRegularFile(path, MAX_RECORD_BYTES).toString("utf8")),
+      context);
   }
   catch { return null; }
 }
 
 function readSelfVerifiedCandidate(path, { height, networkId }) {
   try {
-    if (statSync(path).size > MAX_RECORD_BYTES) return null;
-    const value = JSON.parse(readFileSync(path, "utf8"));
+    const value = JSON.parse(readBoundedRegularFile(path, MAX_RECORD_BYTES).toString("utf8"));
     if (!HASH.test(value?.previousIndexHash ?? "")) return null;
     return verifyRecord(value, { height, networkId, previousIndexHash: value.previousIndexHash });
   } catch { return null; }
@@ -215,6 +247,10 @@ function retainedBlocks(chain) {
 }
 
 function *recordDirectoryEntries(directory, chain) {
+  const metadata = lstatSync(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("account history record directory is unsafe");
+  }
   let previousIndexHash = ZERO_HASH;
   for (let height = 1; height <= chain.height; height += 1) {
     const record = readCandidate(join(directory, fileName(height)), {
@@ -237,8 +273,7 @@ function readInstallMarker(root, chain) {
   const path = join(root, INSTALL_MARKER);
   let marker;
   try {
-    if (statSync(path).size > 64 * 1024) throw new Error("marker is too large");
-    marker = JSON.parse(readFileSync(path, "utf8"));
+    marker = JSON.parse(readBoundedRegularFile(path, 64 * 1024).toString("utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     throw new Error("account history installation marker is invalid");
@@ -253,7 +288,7 @@ function readInstallMarker(root, chain) {
 function copyRecordSet(source, destination, chain) {
   if (!verifyRecordDirectory(source, chain)) return false;
   rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true, mode: 0o700 });
+  ensureRealDirectory(destination);
   for (const record of recordDirectoryEntries(source, chain)) {
     writeAtomic(join(destination, fileName(record.height)), record);
   }
@@ -299,10 +334,10 @@ export class AccountHistoryIndex {
 
   constructor(directory, chain) {
     const root = resolve(directory);
-    mkdirSync(root, { recursive: true, mode: 0o700 });
+    ensureRealDirectory(root);
     finishPreparedInstallation(root, chain);
     this.#directories = [join(root, PRIMARY_DIRECTORY), join(root, BACKUP_DIRECTORY)];
-    this.#directories.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
+    this.#directories.forEach(ensureRealDirectory);
     this.#networkId = chain.networkId;
     this.#tipHash = chain.blocks()[0].hash;
     const liveDatabase = join(root, DATABASE_FILE);
@@ -487,7 +522,7 @@ export function copyAccountHistoryIndex(sourceDirectory, destinationDirectory, c
     join(resolve(destinationDirectory), PRIMARY_DIRECTORY),
     join(resolve(destinationDirectory), BACKUP_DIRECTORY),
   ];
-  targetDirectories.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
+  targetDirectories.forEach(ensureRealDirectory);
   let previousIndexHash = ZERO_HASH;
   for (let height = 1; height <= chain.height; height += 1) {
     const value = readCandidate(join(source, fileName(height)), {
@@ -576,12 +611,12 @@ export function installAccountHistoryIndexRecords(directory, records, chain) {
 
 export function installAccountHistoryIndexRecordIterable(directory, records, chain) {
   const root = resolve(directory);
-  mkdirSync(root, { recursive: true, mode: 0o700 });
+  ensureRealDirectory(root);
   finishPreparedInstallation(root, chain);
   const staging = join(root, INSTALL_DIRECTORY);
   rmSync(staging, { recursive: true, force: true });
   const stagedCopies = [join(staging, PRIMARY_DIRECTORY), join(staging, BACKUP_DIRECTORY)];
-  stagedCopies.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
+  stagedCopies.forEach(ensureRealDirectory);
   const verified = verifyAccountHistoryIndexRecordIterable(records, chain, {
     onRecord(record) {
       for (const path of stagedCopies) {

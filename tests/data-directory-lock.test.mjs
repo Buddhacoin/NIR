@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -39,5 +46,43 @@ test("a dead process lock is recovered but malformed ownership fails closed", ()
     assert.throws(() => acquireDataDirectoryLock(directory), /lock is invalid/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("release never deletes a lock whose ownership changed", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-directory-lock-test-"));
+  const lockDirectory = join(directory, ".nir-writer-lock");
+  try {
+    const release = acquireDataDirectoryLock(directory);
+    writeFileSync(join(lockDirectory, "owner.json"), JSON.stringify({
+      format: "nir-data-directory-lock-v1",
+      pid: process.pid,
+      startedAt: Date.now(),
+      token: "f".repeat(64),
+    }), { mode: 0o600 });
+    assert.equal(release(), false);
+    assert.equal(existsSync(lockDirectory), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("symbolic-link substitutions fail closed", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-directory-lock-test-"));
+  const target = mkdtempSync(join(tmpdir(), "nir-directory-lock-target-"));
+  try {
+    const linkedRoot = join(directory, "linked-node");
+    symlinkSync(target, linkedRoot, "dir");
+    assert.throws(() => acquireDataDirectoryLock(linkedRoot), /directory is unsafe/);
+
+    const lockDirectory = join(directory, ".nir-writer-lock");
+    mkdirSync(lockDirectory, { mode: 0o700 });
+    const outside = join(target, "owner.json");
+    writeFileSync(outside, "{}\n", { mode: 0o600 });
+    symlinkSync(outside, join(lockDirectory, "owner.json"));
+    assert.throws(() => acquireDataDirectoryLock(directory), /lock is invalid|ELOOP/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
   }
 });

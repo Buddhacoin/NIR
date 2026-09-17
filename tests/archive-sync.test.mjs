@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -171,6 +172,36 @@ test("an interrupted archive activation resumes from its verified staged generat
   }
 });
 
+test("activation crash windows recover only from a complete verified generation", () => {
+  const { chain, directory, recipient, temporary } = fixture();
+  const marker = join(directory, "ACCOUNT-HISTORY-INSTALL.json");
+  const markerValue = JSON.stringify({
+    format: "nir-account-history-install-v1",
+    height: chain.height,
+    networkId: chain.networkId,
+    tipHash: chain.tipHash,
+  });
+  try {
+    writeFileSync(marker, markerValue);
+    let recovered = new AccountHistoryIndex(directory, chain);
+    assert.equal(recovered.page(recipient.address).count, 1);
+    assert.equal(existsSync(marker), false);
+
+    writeFileSync(marker, markerValue);
+    rmSync(join(directory, "account-history-index"), { recursive: true, force: true });
+    rmSync(join(directory, "account-history-index-backup"), { recursive: true, force: true });
+    mkdirSync(join(directory, "account-history-index"), { recursive: true });
+    mkdirSync(join(directory, "account-history-index-backup"), { recursive: true });
+    writeFileSync(join(directory, "account-history-index", "000000000001.json"), "{}\n");
+    writeFileSync(join(directory, "account-history-index-backup", "000000000001.json"), "{}\n");
+    assert.throws(() => new AccountHistoryIndex(directory, chain),
+      /prepared account history installation cannot be recovered/);
+    assert.equal(existsSync(marker), true);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("an encrypted operator vault signs an archive without exporting its private key", () => {
   const { chain, directory, temporary } = fixture();
   try {
@@ -208,6 +239,12 @@ test("the operator CLI restores two independently signed archive files", () => {
     ], { encoding: "utf8" });
     assert.equal(JSON.parse(output).matchingSources, 2);
     assert.equal(new AccountHistoryIndex(directory, chain).page(recipient.address).count, 1);
+    const linkedPolicy = join(temporary, "linked-trusted.json");
+    symlinkSync(policyPath, linkedPolicy);
+    assert.throws(() => execFileSync(process.execPath, [
+      join(process.cwd(), "blockchain/archive-cli.mjs"),
+      "restore", directory, linkedPolicy, ...archivePaths,
+    ], { encoding: "utf8", stdio: "pipe" }), /Command failed/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

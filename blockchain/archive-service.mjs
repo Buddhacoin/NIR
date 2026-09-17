@@ -1,11 +1,15 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -294,10 +298,21 @@ function *recordsFromDownloadedChunks(directory, verified) {
   let count = 0;
   for (const [index, expected] of verified.manifest.chunks.entries()) {
     const path = join(directory, `${String(index).padStart(8, "0")}.json`);
-    if (statSync(path).size !== expected.size) {
-      throw new Error("downloaded history archive chunk size is invalid");
+    let descriptor;
+    let raw;
+    try {
+      descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      const metadata = fstatSync(descriptor);
+      if (!metadata.isFile() || metadata.size !== expected.size) {
+        throw new Error("downloaded history archive chunk size is invalid");
+      }
+      raw = readFileSync(descriptor);
+      if (raw.length !== expected.size) {
+        throw new Error("downloaded history archive chunk size is invalid");
+      }
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
     }
-    const raw = readFileSync(path);
     const records = verifyHistoryArchiveChunk({
       data: raw.toString("base64"), index,
     }, expected, index);
@@ -327,6 +342,10 @@ export async function restoreHistoryArchiveFromSources(directory, sources, chain
   const providers = await selectRemoteManifests(sources, chain, options);
   const root = resolve(directory);
   mkdirSync(root, { recursive: true, mode: 0o700 });
+  const rootMetadata = lstatSync(root);
+  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
+    throw new Error("history archive destination is unsafe");
+  }
   const temporary = mkdtempSync(join(root, ".history-archive-download-"));
   let lastError;
   try {

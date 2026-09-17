@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -19,13 +19,31 @@ const HASH = /^[0-9a-f]{64}$/;
 export const ACCOUNT_HISTORY_DATABASE_FORMAT = "nir-account-history-database";
 export const ACCOUNT_HISTORY_DATABASE_SCHEMA_VERSION = 1;
 
+function fileMetadata(path) {
+  try { return lstatSync(path); }
+  catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function assertSafeDatabaseFiles(target) {
+  for (const suffix of ["", "-journal", "-shm", "-wal"]) {
+    const metadata = fileMetadata(`${target}${suffix}`);
+    if (metadata && (!metadata.isFile() || metadata.isSymbolicLink())) {
+      throw new Error("account history database path is unsafe");
+    }
+  }
+}
+
 export class AccountHistoryDatabase {
   #database;
   #statements;
 
   constructor(path, { reset = false } = {}) {
     const target = resolve(path);
-    const initialize = reset || !existsSync(target);
+    assertSafeDatabaseFiles(target);
+    const initialize = reset || fileMetadata(target) === null;
     if (reset) {
       for (const suffix of ["", "-journal", "-shm", "-wal"]) rmSync(`${target}${suffix}`, { force: true });
     }
