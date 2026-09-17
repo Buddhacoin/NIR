@@ -10,6 +10,10 @@ import {
 } from "./wallet-files.mjs";
 import { verifyPaymentRequest } from "./payment-request.mjs";
 import { simulateWalletOperation } from "./transaction-simulation.mjs";
+import {
+  createOfflineSigningPackage,
+  verifyOfflineSignedPackage,
+} from "./offline-signer.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
@@ -43,6 +47,7 @@ import {
 } from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
+const NETWORK = /^[a-zA-Z0-9._:-]{3,128}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
 const SIMULATION_ID = /^[0-9a-f]{64}$/;
 const MAX_SIMULATIONS = 128;
@@ -650,11 +655,41 @@ export function createWalletBridgeServer({
           intentHash: simulation.intentHash,
           intent: simulation.intent,
           proof: { ...simulation.proof, networkId: simulation.networkId },
+          stateEvidence: structuredClone(stateEvidence),
         });
         if (simulations.size > MAX_SIMULATIONS) simulations.delete(simulations.keys().next().value);
         return send(response, 200, {
           simulation: { ...simulation, simulationId }, verified: true,
         }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/create-offline-signing-package") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("offline signing package requires application/json");
+        }
+        const body = await readBody(request);
+        if (!SIMULATION_ID.test(body?.simulationId ?? "") || !Number.isSafeInteger(body?.expiresAt)) {
+          throw new Error("offline signing package request is invalid");
+        }
+        const stored = simulations.get(body.simulationId);
+        if (!stored || stored.expiresAt <= Date.now()) throw new Error("simulation is missing or expired; re-simulate before export");
+        const signingPackage = createOfflineSigningPackage({
+          intent: stored.intent, stateEvidence: stored.stateEvidence, checkpoint: body.checkpoint,
+          expiresAt: body.expiresAt,
+        });
+        return send(response, 200, { signingPackage, verified: true }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/verify-offline-signed-package") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("offline signed package requires application/json");
+        }
+        const body = await readBody(request, 160 * 1024);
+        if (!NETWORK.test(body?.networkId ?? "") || body.networkId !== accountTrust?.expectedNetworkId) {
+          throw new Error("offline signed package network is invalid");
+        }
+        const checked = verifyOfflineSignedPackage(body.signedPackage);
+        if (checked.package.networkId !== body.networkId) throw new Error("offline signed package belongs to another network");
+        return send(response, 200, { intent: checked.package.intent, signedPackage: { package: checked.package,
+          transaction: checked.transaction }, simulation: checked.simulation, verified: true }, origin);
       }
       if (request.method === "POST" &&
           ["/v1/sign", "/v1/sign-resource", "/v1/sign-payment-request"].includes(url.pathname)) {
