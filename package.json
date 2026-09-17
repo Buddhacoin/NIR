@@ -26,6 +26,8 @@
     "node:prune-stage": "node blockchain/node-cli.mjs prune-stage",
     "node:prune-verify": "node blockchain/node-cli.mjs prune-verify",
     "node:prune-finalize": "node blockchain/node-cli.mjs prune-finalize",
+    "archive:create": "node blockchain/archive-cli.mjs create",
+    "archive:restore": "node blockchain/archive-cli.mjs restore",
     "network:init-dev": "node blockchain/network-cli.mjs init-dev",
     "network:validator": "node blockchain/network-cli.mjs serve-validator",
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",

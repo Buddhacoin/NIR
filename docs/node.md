@@ -79,9 +79,9 @@ transaction proof, and every account-history root against its own independently
 verified chain checkpoint before writing either redundant journal. Archive
 signatures authenticate delivery; they cannot create consensus history or
 override a local finalized header. An invalid, stale, oversized, duplicated, or
-insufficiently corroborated archive fails closed. The API is currently in
-`blockchain/archive-sync.mjs`; authenticated download services and an operator
-CLI remain production work.
+insufficiently corroborated archive fails closed. The verification API is in
+`blockchain/archive-sync.mjs`, and local operator commands are described below;
+authenticated download services remain production work.
 
 Installation is a recoverable transaction. The node writes and verifies two
 complete staged journals before synchronizing an installation marker. It then
@@ -90,6 +90,35 @@ removed only after both live copies independently pass complete verification.
 After a crash at any earlier point, startup resumes from a valid staged or live
 copy; if none matches the chain checkpoint, it stops rather than accepting a
 partial generation.
+
+## Signed history archive commands
+
+Each archive operator uses a separate encrypted NIR vault and runs this on its
+own verified node:
+
+```bash
+npm run wallet:create -- /private/path/archive-operator.nirvault.json
+npm run archive:create -- /node/path /private/path/archive-operator.nirvault.json /export/path/history.json
+```
+
+The second command asks for the password without echoing it and prints the
+public `operator` identity, archive hash, content root and height. It never
+writes the private key into the archive. Collect the public identity from at
+least two genuinely independent operators in a JSON array named, for example,
+`trusted-archive-operators.json`. This is a trust policy, so it must be checked
+through an authenticated channel rather than copied from the archive being
+verified.
+
+After independently obtaining their archive files, restore with:
+
+```bash
+npm run archive:restore -- /node/path /policy/trusted-archive-operators.json /imports/operator-a.json /imports/operator-b.json
+```
+
+The command will not accept one archive, two files signed by the same key,
+unknown keys, different content, stale checkpoints, modified chunks, or a
+partial installation. These commands currently exchange bounded local files;
+automatic authenticated network download is the next operational layer.
 
 ## Wallet-to-wallet flow
 

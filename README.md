@@ -64,7 +64,7 @@ The intended advantages are:
 | Cryptographic account proofs and light client | Protocol-v21 sparse account proofs bind balance, nonce, stake, credits, delegations and pending exits to the account root in every finalized header; the wallet also verifies every hash link, post-quantum prepare/commit quorum and validator rotation before advancing persisted trust |
 | Finalized transaction inclusion proofs | Protocol-v22 headers commit to ordered transaction count and Merkle root; a durable identifier locator serves archived bodies and proofs without scanning blocks, while the wallet matches each proof to its verified finalized header |
 | Paginated account history proofs | Protocol-v24 account state commits to the exact count and fixed-depth indexed Merkle root of every related transaction; redundant append-only disk indexes survive restart and backup, and cached incremental Merkle nodes produce bounded pages without rehashing the account's full history |
-| Multi-source history recovery | Post-quantum signed manifests, bounded hash-addressed chunks, an explicit trusted-operator set, agreement from at least two distinct operators, and crash-resumable staged installation are implemented locally; independent public archive deployment remains |
+| Multi-source history recovery | Post-quantum signed manifests, bounded hash-addressed chunks, an explicit trusted-operator set, agreement from at least two distinct operators, crash-resumable staged installation, and password-safe operator commands are implemented locally; independent public archive deployment remains |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
@@ -375,6 +375,7 @@ candidate runs are committed.
 - `blockchain/block-store.mjs` — fsync-backed redundant journals, checkpoints, and public backups.
 - `blockchain/account-history-index.mjs` — redundant append-only history and transaction archive, direct identifier lookup, and cached proof trees.
 - `blockchain/archive-sync.mjs` — bounded signed history archives, independent-source agreement, strict checkpoint verification, and local index restoration.
+- `blockchain/archive-cli.mjs` — password-safe operator export and multi-archive restoration commands.
 - `blockchain/distributed-node.mjs` — separate validators, mempool, and remote quorum coordinator.
 - `blockchain/validator-service.mjs` — one-key validator RPC with durable anti-equivocation votes.
 - `blockchain/consensus-view.mjs` — fail-closed highest-certificate selection for validator view changes.

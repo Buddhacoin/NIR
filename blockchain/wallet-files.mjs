@@ -18,6 +18,7 @@ import {
 } from "./chain.mjs";
 import { addressFromPublicKey, generateWallet } from "./crypto.mjs";
 import { createPaymentRequest } from "./payment-request.mjs";
+import { createSignedHistoryArchive } from "./archive-sync.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 
 function readVault(path) {
@@ -50,7 +51,12 @@ export function walletPublicInfo(path) {
       addressFromPublicKey(vault.publicKey) !== vault.address) {
     throw new Error("file is not a NIR wallet vault");
   }
-  return { address: vault.address, algorithm: vault.algorithm, label: vault.label };
+  return {
+    address: vault.address,
+    algorithm: vault.algorithm,
+    label: vault.label,
+    publicKey: vault.publicKey,
+  };
 }
 
 export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee }) {
@@ -93,6 +99,15 @@ export function signWalletPaymentRequest({ path, password, intent }) {
   const wallet = decryptWallet(readVault(path), password);
   try {
     return createPaymentRequest({ wallet, ...intent });
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function signWalletHistoryArchive({ path, password, directory, chain, options }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    return createSignedHistoryArchive(directory, chain, wallet, options);
   } finally {
     wallet.privateKey = "";
   }

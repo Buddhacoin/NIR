@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -25,6 +26,10 @@ import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { verifyTransactionProof } from "../blockchain/transaction-tree.mjs";
+import {
+  createWalletFile,
+  signWalletHistoryArchive,
+} from "../blockchain/wallet-files.mjs";
 
 function fixture() {
   const temporary = mkdtempSync(join(tmpdir(), "nir-archive-sync-test-"));
@@ -143,6 +148,48 @@ test("an interrupted archive activation resumes from its verified staged generat
       "000000000002.json")), true);
     assert.equal(existsSync(join(directory, "account-history-index-backup",
       "000000000002.json")), true);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("an encrypted operator vault signs an archive without exporting its private key", () => {
+  const { chain, directory, temporary } = fixture();
+  try {
+    const path = join(temporary, "archive-operator.nirvault");
+    const password = "correct horse battery staple";
+    createWalletFile({ label: "archive operator", password, path });
+    const archive = signWalletHistoryArchive({ chain, directory, password, path });
+    const trustedOperators = [archive.signer, publicWallet(generateWallet())];
+    assert.equal(verifySignedHistoryArchive(archive, chain, { trustedOperators })
+      .contentRoot, archive.manifest.contentRoot);
+    assert.equal(JSON.stringify(archive).includes("privateKey"), false);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("the operator CLI restores two independently signed archive files", () => {
+  const { chain, directory, recipient, temporary } = fixture();
+  try {
+    const operators = [generateWallet(), generateWallet()];
+    const archivePaths = operators.map((operator, index) => {
+      const path = join(temporary, `operator-${index}.json`);
+      writeFileSync(path, JSON.stringify(createSignedHistoryArchive(
+        directory, chain, operator,
+      )));
+      return path;
+    });
+    const policyPath = join(temporary, "trusted.json");
+    writeFileSync(policyPath, JSON.stringify(operators.map(publicWallet)));
+    rmSync(join(directory, "account-history-index"), { recursive: true, force: true });
+    rmSync(join(directory, "account-history-index-backup"), { recursive: true, force: true });
+    const output = execFileSync(process.execPath, [
+      join(process.cwd(), "blockchain/archive-cli.mjs"),
+      "restore", directory, policyPath, ...archivePaths,
+    ], { encoding: "utf8" });
+    assert.equal(JSON.parse(output).matchingSources, 2);
+    assert.equal(new AccountHistoryIndex(directory, chain).page(recipient.address).count, 1);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
