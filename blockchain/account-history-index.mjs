@@ -559,6 +559,10 @@ export function verifyAccountHistoryIndexRecords(records, chain) {
   return verifyAccountHistoryIndexRecordIterable(records, chain, { collect: true });
 }
 
+export function verifyAccountHistoryIndexRecord(record, context) {
+  return verifyRecord(record, context);
+}
+
 export function verifyAccountHistoryIndexRecordIterable(records, chain, {
   collect = false,
   onRecord,

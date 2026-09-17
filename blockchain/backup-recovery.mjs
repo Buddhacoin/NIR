@@ -143,11 +143,13 @@ function allowedBackupPath(path) {
 }
 
 export function createBackupInventory(directory, {
+  ignoreDrillMarkers = false,
   maxFiles = MAX_BACKUP_FILES,
   maxFileBytes = MAX_BACKUP_FILE_BYTES,
   maxTotalBytes = MAX_BACKUP_TOTAL_BYTES,
 } = {}) {
-  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_BACKUP_FILES ||
+  if (typeof ignoreDrillMarkers !== "boolean" ||
+      !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_BACKUP_FILES ||
       !Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > MAX_BACKUP_FILE_BYTES ||
       !Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 ||
       maxTotalBytes > MAX_BACKUP_TOTAL_BYTES) throw new Error("backup inventory policy is invalid");
@@ -164,6 +166,9 @@ export function createBackupInventory(directory, {
       if (entry.isDirectory()) { walk(target); continue; }
       if (!entry.isFile()) throw new Error("backup contains a non-regular file");
       const name = safeRelativePath(portablePath(relative(root, target)));
+      if (ignoreDrillMarkers && ["DRILL-COMPLETE.json", "DRILL-STARTED.json"].includes(name)) {
+        continue;
+      }
       if (!allowedBackupPath(name)) throw new Error(`backup contains disallowed file ${name}`);
       if (metadata.size > maxFileBytes) throw new Error("one backup file exceeds the size limit");
       totalBytes += metadata.size;
@@ -597,6 +602,7 @@ export async function runRemoteBackupRestoreDrill(parentDirectory, sources, gene
     networkId: loaded.chain.networkId,
     privateKeysIncluded: false,
     sources: selected.map(({ source }) => source).sort(),
+    stateRoot: loaded.chain.stateRoot,
     tipHash: loaded.chain.tipHash,
     workspace,
   };

@@ -92,7 +92,9 @@ export function installStateSnapshot(directory, genesisConfig, snapshot, trustAn
   return { ...verified, directory: root };
 }
 
-export function loadInstalledStateSnapshot(directory, genesisConfig, trustAnchor) {
+export function loadInstalledStateSnapshot(directory, genesisConfig, trustAnchor, {
+  repair = true,
+} = {}) {
   const root = resolve(directory);
   if (existsSync(root) && lstatSync(root).isSymbolicLink()) {
     throw new Error("state snapshot directory cannot be a symbolic link");
@@ -113,7 +115,7 @@ export function loadInstalledStateSnapshot(directory, genesisConfig, trustAnchor
   let recoveredCopies = 0;
   for (let index = 0; index < paths.length; index += 1) {
     if (!candidates[index] || candidates[index].contents !== selected.contents) {
-      writeAtomic(paths[index], selected.contents);
+      if (repair) writeAtomic(paths[index], selected.contents);
       recoveredCopies += 1;
     }
   }

@@ -36,12 +36,26 @@ const PRUNE_DIRECTORY = "prune-quarantine";
 const PRUNE_MANIFEST = "PRUNE-MANIFEST.json";
 const PRUNE_VERIFIED = "PRUNE-VERIFIED.json";
 const PRUNE_FINALIZING = "PRUNE-FINALIZING.json";
+const SCRUB_INSTALLING = "SCRUB-INSTALLING.json";
 const BLOCK_NAME = /^[0-9]{12}\.json$/;
 const MAX_PRUNE_MANIFEST_BYTES = 64 * 1024 * 1024;
 const MAX_PRUNE_MARKER_BYTES = 64 * 1024;
 const MAX_PRUNE_BLOCK_FILE_BYTES = MAX_BLOCK_BYTES * 4;
 export const DEFAULT_MAX_PRUNED_TAIL_BLOCKS = 100_000;
 export const DEFAULT_MAX_PRUNED_TAIL_BYTES = 64 * 1024 * 1024 * 1024;
+
+export function readBlockStoreCheckpoint(directory, genesis) {
+  const root = resolve(directory);
+  const candidates = [CHECKPOINT_FILE, CHECKPOINT_BACKUP_FILE]
+    .map((name) => readCheckpoint(join(root, name), genesis.networkId));
+  const valid = candidates.filter(Boolean).sort((left, right) => right.height - left.height);
+  if (valid.length === 0) throw new Error("block-store checkpoints are unavailable or corrupt");
+  if (valid.length === 2 && valid[0].height === valid[1].height &&
+      valid[0].checkpointHash !== valid[1].checkpointHash) {
+    throw new Error("block-store checkpoints conflict at the same height");
+  }
+  return structuredClone(valid[0]);
+}
 
 function serialized(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -192,12 +206,24 @@ export function initializeBlockStore(directory, chain) {
 }
 
 export function loadBlockStore(directory, genesis, {
+  allowIntegrityInstall = false,
   handoffs = [],
+  repair = true,
   trustedValidators = genesis.validators,
 } = {}) {
   const root = resolve(directory);
-  mkdirSync(join(root, BLOCKS_DIRECTORY), { recursive: true, mode: 0o700 });
-  mkdirSync(join(root, BACKUP_DIRECTORY), { recursive: true, mode: 0o700 });
+  if (existsSync(join(root, SCRUB_INSTALLING)) && !allowIntegrityInstall) {
+    throw new Error("block store has an incomplete integrity installation");
+  }
+  if (repair) {
+    mkdirSync(join(root, BLOCKS_DIRECTORY), { recursive: true, mode: 0o700 });
+    mkdirSync(join(root, BACKUP_DIRECTORY), { recursive: true, mode: 0o700 });
+  } else if (![BLOCKS_DIRECTORY, BACKUP_DIRECTORY].every((name) => {
+    const path = join(root, name);
+    return existsSync(path) && !lstatSync(path).isSymbolicLink() && lstatSync(path).isDirectory();
+  })) {
+    throw new Error("block-store journal directories are missing");
+  }
   const checkpointPaths = [
     join(root, CHECKPOINT_FILE),
     join(root, CHECKPOINT_BACKUP_FILE),
@@ -223,6 +249,7 @@ export function loadBlockStore(directory, genesis, {
   const trustAnchor = { expectedNetworkId: genesis.networkId, handoffs, trustedValidators };
   const installed = loadInstalledStateSnapshot(
     join(root, SNAPSHOTS_DIRECTORY), genesis, trustAnchor,
+    { repair },
   );
   let chain = installed?.chain ?? new NirChain(genesis);
   const baseHeight = chain.height;
@@ -268,18 +295,18 @@ export function loadBlockStore(directory, genesis, {
     }
     const canonicalContents = serialized(accepted.block);
     if (!primary || primary.contents !== canonicalContents) {
-      writeAtomic(join(primaryDirectory, name), canonicalContents);
+      if (repair) writeAtomic(join(primaryDirectory, name), canonicalContents);
       recoveredCopies += 1;
     }
     if (!backup || backup.contents !== canonicalContents) {
-      writeAtomic(join(backupDirectory, name), canonicalContents);
+      if (repair) writeAtomic(join(backupDirectory, name), canonicalContents);
       recoveredCopies += 1;
     }
   }
   if (checkpoint && checkpoint.height > chain.height) {
     throw new Error("block-store checkpoint is ahead of the recoverable journal");
   }
-  writeCheckpoint(root, chain);
+  if (repair) writeCheckpoint(root, chain);
   return { chain, checkpoint: createCheckpoint(chain), recoveredCopies };
 }
 
