@@ -61,7 +61,7 @@ The intended advantages are:
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, multi-node finalized-view selection and failover, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
 | Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
-| Quorum-verified account proofs and light client | Balance, nonce and Transfer Credit state are bound to finalized height and state root; after its first checkpoint the wallet independently verifies every compact protocol-v20 header, hash link, post-quantum prepare/commit quorum and validator rotation before advancing persisted trust |
+| Cryptographic account proofs and light client | Protocol-v21 sparse account proofs bind balance, nonce, stake, credits, delegations and pending exits to the account root in every finalized header; the wallet also verifies every hash link, post-quantum prepare/commit quorum and validator rotation before advancing persisted trust |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
@@ -139,7 +139,9 @@ application runtime at genesis:
   headers without trusting one RPC provider. Nodes supply compact headers rather
   than transaction bodies; each header commits to the complete block body, and
   the local bridge checks continuity, protocol version, both finality
-  certificates and the validator set active at that height;
+  certificates and the validator set active at that height. A 256-level sparse
+  proof then binds the requested account—or proves that a fresh address is
+  absent—to the account root carried by that verified header;
 - **parallel lanes:** Pay, Proof, and Control operations declare state access so
   independent work can execute concurrently;
 - **programmable applications:** a future deterministic, metered runtime with

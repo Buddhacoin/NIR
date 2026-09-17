@@ -395,14 +395,11 @@ export class ValidatorReplica {
   }
 
   accountProofCandidate(address) {
-    const { address: accountAddress, atomicBalance, resources } = this.account(address);
+    const authenticated = this.#chain.accountStateProof(address);
     return createAccountProof({
-      account: {
-        address: accountAddress,
-        atomicBalance,
-        nextNonce: this.#chain.nextNonce(address),
-        resources,
-      },
+      account: authenticated.account,
+      accountStateRoot: authenticated.accountStateRoot,
+      inclusionProof: authenticated.inclusionProof,
       height: this.#chain.height,
       networkId: this.#chain.networkId,
       stateRoot: this.#chain.stateRoot,

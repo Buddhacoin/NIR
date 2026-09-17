@@ -69,16 +69,16 @@ test("wallet checkpoint advances only through a verified finality header chain",
     chain.appendBlock(block);
     return block;
   };
-  const account = (height) => createAccountProof({
-    account: {
-      address: wallet.address, atomicBalance: "0", nextNonce: 0,
-      resources: {
-        atomicStake: "0", availableTransferCredits: "0", delegations: [], pendingUnstake: null,
-      },
-    },
-    height, networkId, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
-    validators: members, validatorWallets: validators.slice(0, 3),
-  });
+  const account = (height) => {
+    const authenticated = chain.accountStateProof(wallet.address);
+    return createAccountProof({
+      account: authenticated.account,
+      accountStateRoot: authenticated.accountStateRoot,
+      inclusionProof: authenticated.inclusionProof,
+      height, networkId, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
+      validators: members, validatorWallets: validators.slice(0, 3),
+    });
+  };
   const genesisBlock = chain.blocks()[0];
   const firstBlock = append(1);
   const origin = "http://127.0.0.1:8765";
@@ -89,6 +89,7 @@ test("wallet checkpoint advances only through a verified finality header chain",
     trustAnchor: {
       expectedNetworkId: networkId,
       genesisCheckpoint: {
+        accountStateRoot: genesisBlock.accountStateRoot,
         height: 0,
         stateRoot: genesisBlock.stateRoot,
         tipHash: genesisBlock.hash,

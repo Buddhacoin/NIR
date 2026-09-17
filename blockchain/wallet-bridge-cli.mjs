@@ -88,6 +88,7 @@ try {
     ...(genesis ? { trustAnchor: {
       expectedNetworkId: genesis.networkId,
       genesisCheckpoint: {
+        accountStateRoot: genesisBlock.accountStateRoot,
         height: 0,
         stateRoot: genesisBlock.stateRoot,
         tipHash: genesisBlock.hash,

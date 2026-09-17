@@ -150,6 +150,18 @@ prepare and commit that header hash. A light client can therefore verify the
 continuous finalized history and the exact active validator quorum while a full
 node retains and executes the committed block body.
 
+## Protocol v21 authenticated account state
+
+Every finalized header also contains `accountStateRoot`, the root of a
+fixed-depth sparse Merkle tree keyed by the complete 256-bit NIR address. A
+non-empty leaf commits to the canonical balance, nonce, locked Transfer Credit
+stake, currently available credits, outbound delegations and pending delayed
+exit. The deterministic empty leaf permits proofs that a fresh address has no
+state. Membership and absence proofs contain exactly 256 sibling hashes and are
+verified locally against the account root from the already verified finality
+header. Account attestations remain as an independent quorum signal, but cannot
+make a balance pass if its Merkle path is invalid.
+
 ### Draft score
 
 For an accepted proof `p`:

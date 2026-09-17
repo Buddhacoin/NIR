@@ -55,6 +55,12 @@ import {
   scheduleValidatorRotation,
   validatorSetId,
 } from "./validator-rotation.mjs";
+import {
+  accountStateRoot as computeAccountStateRoot,
+  createAccountStateWitness,
+  emptyAccountState,
+  normalizeAccountState,
+} from "./account-tree.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -141,6 +147,39 @@ function normalizedStateValue(value) {
 
 export function computeChainStateRoot(state) {
   return hashObject(normalizedStateValue(state), "CHAIN_STATE_V1");
+}
+
+function accountStatesFromMaps({
+  balances, creditDelegations, creditStakes, creditUnstakes, creditUsage, height, nonces,
+}) {
+  const addresses = new Set([
+    ...balances.keys(), ...creditStakes.keys(), ...creditUnstakes.keys(),
+    ...creditUsage.keys(), ...nonces.keys(),
+    ...[...creditDelegations.values()].map(({ owner }) => owner),
+  ]);
+  const epoch = Math.floor(height / TRANSFER_CREDIT_EPOCH_BLOCKS);
+  return [...addresses].sort().map((address) => {
+    const stake = creditStakes.get(address) ?? 0n;
+    const allowance = (stake * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
+      TRANSFER_CREDIT_STAKE_UNIT;
+    const usage = creditUsage.get(address);
+    const spent = usage?.epoch === epoch ? BigInt(usage.spent) : 0n;
+    const pending = creditUnstakes.get(address) ?? null;
+    return normalizeAccountState({
+      address,
+      atomicBalance: (balances.get(address) ?? 0n).toString(),
+      nextNonce: nonces.get(address) ?? 0,
+      resources: {
+        atomicStake: stake.toString(),
+        availableTransferCredits: (allowance > spent ? allowance - spent : 0n).toString(),
+        delegations: [...creditDelegations.values()]
+          .filter((delegation) => delegation.owner === address),
+        pendingUnstake: pending ? {
+          amount: pending.amount.toString(), unlockHeight: pending.unlockHeight,
+        } : null,
+      },
+    });
+  });
 }
 
 function unsignedTransaction(transaction) {
@@ -583,6 +622,7 @@ const FINALITY_HEADER_FORMAT = "nir-finality-header-v1";
 export function blockHeader(block) {
   const unsigned = unsignedBlock(block);
   const {
+    accountStateRoot,
     capabilityMemoryRoot,
     height,
     networkId,
@@ -595,6 +635,7 @@ export function blockHeader(block) {
   } = unsigned;
   return {
     bodyHash: hashObject(body, "BLOCK_BODY"),
+    accountStateRoot,
     capabilityMemoryRoot,
     format: FINALITY_HEADER_FORMAT,
     height,
@@ -893,7 +934,9 @@ export class NirChain {
     }
     this.#safetyPolicies = new Set(safetyPolicyCommitments);
     const stateRoot = this.#stateRoot();
+    const accountStateRoot = computeAccountStateRoot(this.#accountStates({ height: 0 }));
     const genesis = {
+      accountStateRoot,
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
       beaconAuthorities: [...this.#beaconAuthorities.values()].map(({ address, operatorId }) => ({ address, operatorId })),
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
@@ -914,6 +957,7 @@ export class NirChain {
     };
     this.#blocks = [
       {
+        accountStateRoot,
         capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
         certificate: [],
         hash: hashObject(genesis, "GENESIS"),
@@ -1179,6 +1223,35 @@ export class NirChain {
   }
 
   get stateRoot() { return this.#stateRoot(); }
+
+  #accountStates(overrides = {}) {
+    return accountStatesFromMaps({
+      balances: overrides.balances ?? this.#balances,
+      creditDelegations: overrides.creditDelegations ?? this.#creditDelegations,
+      creditStakes: overrides.creditStakes ?? this.#creditStakes,
+      creditUnstakes: overrides.creditUnstakes ?? this.#creditUnstakes,
+      creditUsage: overrides.creditUsage ?? this.#creditUsage,
+      height: overrides.height ?? this.height,
+      nonces: overrides.nonces ?? this.#nonces,
+    });
+  }
+
+  get accountStateRoot() { return computeAccountStateRoot(this.#accountStates()); }
+
+  accountState(address) {
+    assertAddress(address, "account state address");
+    return this.#accountStates().find((account) => account.address === address) ??
+      emptyAccountState(address);
+  }
+
+  accountStateProof(address) {
+    const accounts = this.#accountStates();
+    const witness = createAccountStateWitness(accounts, address);
+    return {
+      account: accounts.find((entry) => entry.address === address) ?? emptyAccountState(address),
+      ...witness,
+    };
+  }
 
   epochRandomnessStatus() {
     return structuredClone(this.#epochRandomness.snapshot());
@@ -1591,6 +1664,7 @@ export class NirChain {
       throw new Error("peer registry must activate at its containing block height");
     }
     const proposal = {
+      accountStateRoot: "0".repeat(64),
       capabilityMemoryRoot: stagedMemory.stateRoot,
       height,
       networkId: this.#networkId,
@@ -1629,7 +1703,11 @@ export class NirChain {
     try {
       const trial = this.fork();
       trial.#applyBlock(simulation, false, false);
-      return { ...proposal, stateRoot: trial.stateRoot };
+      return {
+        ...proposal,
+        accountStateRoot: trial.accountStateRoot,
+        stateRoot: trial.stateRoot,
+      };
     } catch {
       // An assembler may still return an invalid proposal for diagnostic and
       // adversarial tests; validators will reject it before trusting this root.
@@ -2866,6 +2944,20 @@ export class NirChain {
     });
     if (verifyStateRoot && block.stateRoot !== expectedStateRoot) {
       throw new Error("block state root is invalid");
+    }
+    if (verifyStateRoot) {
+      const expectedAccountStateRoot = computeAccountStateRoot(accountStatesFromMaps({
+        balances,
+        creditDelegations,
+        creditStakes,
+        creditUnstakes,
+        creditUsage,
+        height: block.height,
+        nonces,
+      }));
+      if (block.accountStateRoot !== expectedAccountStateRoot) {
+        throw new Error("block account state root is invalid");
+      }
     }
     this.#balances = balances;
     this.#beaconBondingActive = beaconBondingActive;

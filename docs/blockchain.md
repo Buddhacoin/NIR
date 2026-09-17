@@ -21,6 +21,10 @@ identically.
   header and that header commits to the complete block body, allowing wallets
   to verify the continuous finalized chain and post-quantum validator quorums
   without downloading transaction bodies;
+- protocol-v21 sparse account commitments: every header carries an authenticated
+  root for balances, nonces and Transfer Credit state; fixed-depth membership
+  and absence proofs let a wallet verify one address without downloading the
+  account database;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;

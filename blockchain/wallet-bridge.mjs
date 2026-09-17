@@ -169,6 +169,7 @@ export function createWalletBridgeServer({
          (trustAnchor.genesisCheckpoint !== undefined &&
           (!Number.isSafeInteger(trustAnchor.genesisCheckpoint?.height) ||
            trustAnchor.genesisCheckpoint.height !== 0 ||
+           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.accountStateRoot ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.tipHash ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.stateRoot ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))))) ||
@@ -346,6 +347,7 @@ export function createWalletBridgeServer({
         const requiredBase = trustCheckpoint ?? genesisCheckpoint;
         if (requiredBase && statement.height > requiredBase.height &&
             (!verifiedFinalityTip || verifiedFinalityTip.height !== statement.height ||
+             statement.accountStateRoot !== verifiedFinalityTip.accountStateRoot ||
              verifiedFinalityTip.tipHash !== statement.tipHash ||
              verifiedFinalityTip.stateRoot !== statement.stateRoot ||
              verifiedFinalityTip.validatorSetId !== statement.validatorSetId)) {

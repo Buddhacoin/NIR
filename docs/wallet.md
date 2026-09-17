@@ -77,11 +77,14 @@ With an explicit genesis file, the bridge deterministically derives block zero
 and its validator-set checkpoint. Even the first higher balance is not accepted
 merely because RPC servers report it. The wallet downloads bounded pages from
 `/v1/finality-proofs` and asks the local bridge to check every
-protocol-v20 compact header, previous-hash link, block-body commitment, prepare
+protocol-v21 compact header, previous-hash link, block-body commitment, prepare
 quorum, commit quorum and dual-quorum validator activation. Only an account
 proof matching the resulting height, block hash, state root and validator-set
-identifier can replace the atomic checkpoint. Full transaction bodies are not
-downloaded by the wallet.
+identifier can replace the atomic checkpoint. The proof must also reconstruct
+the header's sparse account root from the exact balance, nonce and resource
+state plus its 256 sibling hashes. This supports both membership and fresh-address
+absence proofs. Full transaction bodies and the complete account database are
+not downloaded by the wallet.
 
 ## Multiple node policy
 

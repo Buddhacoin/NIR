@@ -57,6 +57,7 @@ test("compact finality proofs advance a checkpoint without full block bodies", (
     trustedValidators: validatorMembers,
   });
   assert.deepEqual(result, {
+    accountStateRoot: second.accountStateRoot,
     height: 2,
     networkId: chain.networkId,
     stateRoot: second.stateRoot,

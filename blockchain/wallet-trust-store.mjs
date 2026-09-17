@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const FORMAT = "nir-wallet-trust-checkpoint-v1";
+const FORMAT = "nir-wallet-trust-checkpoint-v2";
 const HASH = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 16 * 1024;
 const MAX_HISTORY_BYTES = 16 * 1024 * 1024;
@@ -22,6 +22,7 @@ function validate(checkpoint, expectedNetworkId) {
       checkpoint.networkId !== expectedNetworkId ||
       !Number.isSafeInteger(checkpoint.height) || checkpoint.height < 0 ||
       !HASH.test(checkpoint.tipHash ?? "") || !HASH.test(checkpoint.stateRoot ?? "") ||
+      (checkpoint.accountStateRoot !== null && !HASH.test(checkpoint.accountStateRoot ?? "")) ||
       !HASH.test(checkpoint.validatorSetId ?? "") ||
       (checkpoint.lastHandoffHash !== null && !HASH.test(checkpoint.lastHandoffHash ?? "")) ||
       !Number.isSafeInteger(checkpoint.lastHandoffHeight) || checkpoint.lastHandoffHeight < 0 ||
@@ -76,6 +77,7 @@ export function loadWalletTrustCheckpoint(path, expectedNetworkId) {
 export function saveWalletTrustCheckpoint(path, statement, lastHandoff = null) {
   const target = resolve(path);
   const checkpoint = validate({
+    accountStateRoot: statement.accountStateRoot ?? null,
     format: FORMAT,
     height: statement.height,
     lastHandoffHash: lastHandoff?.handoffHash ?? null,
@@ -105,6 +107,8 @@ export function enforceWalletTrustCheckpoint(checkpoint, statement) {
   if (statement.height < checkpoint.height ||
       (statement.height === checkpoint.height &&
        (statement.tipHash !== checkpoint.tipHash || statement.stateRoot !== checkpoint.stateRoot ||
+        (checkpoint.accountStateRoot !== null &&
+         statement.accountStateRoot !== checkpoint.accountStateRoot) ||
         statement.validatorSetId !== checkpoint.validatorSetId))) {
     throw new Error("account proof would roll back the wallet trust checkpoint");
   }

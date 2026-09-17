@@ -224,6 +224,10 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
     assert.equal(finality.proofs.length, 1);
     assert.equal(finality.proofs[0].header.height, 1);
     assert.match(finality.proofs[0].hash, /^[0-9a-f]{64}$/);
+    const accountProof = await fetch(`${base}/v1/accounts/${wallet.address}/proof`)
+      .then((response) => response.json());
+    assert.equal(accountProof.accountStateRoot, finality.proofs[0].header.accountStateRoot);
+    assert.equal(accountProof.inclusionProof.siblings.length, 256);
 
     const rejected = await fetch(`${base}/health`, { headers: { origin: "https://example.com" } });
     assert.equal(rejected.status, 403);

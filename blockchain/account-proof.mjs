@@ -1,5 +1,6 @@
 import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
+import { verifyAccountStateProof } from "./account-tree.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -42,14 +43,17 @@ function validateStatement(statement) {
       typeof statement.networkId !== "string" || statement.networkId.length < 3 ||
       statement.networkId.length > 128 || !Number.isSafeInteger(statement.height) ||
       statement.height < 0 || !HASH.test(statement.tipHash ?? "") ||
-      !HASH.test(statement.stateRoot ?? "") || !HASH.test(statement.validatorSetId ?? "")) {
+      !HASH.test(statement.stateRoot ?? "") || !HASH.test(statement.validatorSetId ?? "") ||
+      ((statement.accountStateRoot === undefined) !== (statement.inclusionProof === undefined)) ||
+      (statement.accountStateRoot !== undefined && !HASH.test(statement.accountStateRoot))) {
     throw new Error("account proof statement is invalid");
   }
   validateAccount(statement.account);
 }
 
 export function createAccountProof({
-  account, height, networkId, stateRoot, tipHash, validators, validatorWallets,
+  account, accountStateRoot, inclusionProof, height, networkId, stateRoot, tipHash,
+  validators, validatorWallets,
 }) {
   if (!Array.isArray(validators) || validators.length < 4 ||
       !Array.isArray(validatorWallets)) {
@@ -57,6 +61,10 @@ export function createAccountProof({
   }
   const statement = {
     account: structuredClone(account),
+    ...(accountStateRoot === undefined ? {} : {
+      accountStateRoot,
+      inclusionProof: structuredClone(inclusionProof),
+    }),
     format: FORMAT,
     height,
     networkId,
@@ -65,6 +73,9 @@ export function createAccountProof({
     validatorSetId: validatorSetId(orderedValidators(validators)),
   };
   validateStatement(statement);
+  if (statement.accountStateRoot !== undefined) {
+    verifyAccountStateProof(statement.account, statement.inclusionProof, statement.accountStateRoot);
+  }
   const statementHash = hashObject(statement, "ACCOUNT_PROOF");
   return {
     ...statement,
@@ -89,6 +100,9 @@ function verifyAccountProofEnvelope(proof, {
   validateStatement(statement);
   if (statementHash !== hashObject(statement, "ACCOUNT_PROOF")) {
     throw new Error("account proof hash is invalid");
+  }
+  if (statement.accountStateRoot !== undefined) {
+    verifyAccountStateProof(statement.account, statement.inclusionProof, statement.accountStateRoot);
   }
   if (statement.networkId !== expectedNetworkId || statement.account.address !== expectedAddress ||
       statement.height < minimumHeight ||

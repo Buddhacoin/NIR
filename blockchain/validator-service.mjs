@@ -48,6 +48,7 @@ async function gossipPeerRequest(
     body: { auth, payload },
     method: "POST",
     maxResponseBytes,
+    timeoutMs: path === "/v1/p2p/blocks" ? 10_000 : 3_000,
     tlsCertificateSha256: peer.tlsCertificateSha256,
   });
   if (!response.ok) throw new Error(response.body.error ?? `gossip peer returned ${response.status}`);
