@@ -15,9 +15,11 @@ const panel = document.querySelector("#panel");
 const panelTitle = document.querySelector("#panel-title");
 const panelCopy = document.querySelector("#panel-copy");
 const bridgePanel = document.querySelector("#bridge-panel");
+const receivePanel = document.querySelector("#receive-panel");
 const sendPanel = document.querySelector("#send-panel");
 const resourcesPanel = document.querySelector("#resources-panel");
 const bridgeStatus = document.querySelector("#bridge-status");
+const receiveStatus = document.querySelector("#receive-status");
 const sendStatus = document.querySelector("#send-status");
 const resourcesStatus = document.querySelector("#resources-status");
 let bridgeSession = null;
@@ -289,8 +291,50 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
 
 function receive() {
   if (!walletInfo) return openBridgePanel();
-  showMessage("receive", `Ваш публичный адрес:\n${walletInfo.address}\n\nПриватный ключ остаётся в зашифрованном vault.`);
+  document.querySelector("#receive-address").textContent = walletInfo.address;
+  document.querySelector("#payment-request-result").hidden = true;
+  document.querySelector("#payment-request-json").value = "";
+  receiveStatus.textContent = "";
+  receivePanel.showModal();
 }
+
+document.querySelector("#payment-request-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  button.disabled = true;
+  receiveStatus.textContent = "Подтвердите запрос и пароль в терминале bridge…";
+  try {
+    if (!networkInfo || networkInfo.valueMode !== "valueless-devnet") {
+      throw new Error("Подключите локальную тестовую сеть.");
+    }
+    const minutes = Number(document.querySelector("#request-minutes").value);
+    if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 43_200) {
+      throw new Error("Срок должен быть от 1 минуты до 30 дней.");
+    }
+    const result = await bridgeRequest("/v1/sign-payment-request", {
+      method: "POST",
+      body: JSON.stringify({
+        amount: parseNir(document.querySelector("#request-amount").value),
+        expiresAt: Date.now() + minutes * 60_000,
+        memo: document.querySelector("#request-memo").value.trim(),
+        networkId: networkInfo.networkId,
+        requestId: randomRequestId(),
+      }),
+    });
+    document.querySelector("#payment-request-json").value =
+      JSON.stringify(result.paymentRequest, null, 2);
+    document.querySelector("#payment-request-result").hidden = false;
+    receiveStatus.textContent = "Подписано. Изменение любого реквизита сломает подпись.";
+  } catch (error) { receiveStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+document.querySelector("#copy-payment-request").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(document.querySelector("#payment-request-json").value);
+    receiveStatus.textContent = "Платёжный запрос скопирован.";
+  } catch { receiveStatus.textContent = "Браузер запретил доступ к буферу обмена."; }
+};
 
 function openSend() {
   if (!walletInfo) return openBridgePanel();
@@ -305,6 +349,33 @@ function openSend() {
   submitButton.hidden = false;
   sendPanel.showModal();
 }
+
+document.querySelector("#verify-payment-request").onclick = async (event) => {
+  event.currentTarget.disabled = true;
+  sendStatus.textContent = "Проверка постквантовой подписи…";
+  try {
+    if (!networkInfo) throw new Error("Локальный узел не подключён.");
+    const encoded = document.querySelector("#payment-request-input").value.trim();
+    if (encoded.length < 2 || encoded.length > 16_000) {
+      throw new Error("Размер платёжного запроса недопустим.");
+    }
+    let paymentRequest;
+    try { paymentRequest = JSON.parse(encoded); }
+    catch { throw new Error("Платёжный запрос не является корректным JSON."); }
+    const result = await bridgeRequest("/v1/verify-payment-request", {
+      method: "POST",
+      body: JSON.stringify({ networkId: networkInfo.networkId, request: paymentRequest }),
+    });
+    document.querySelector("#send-recipient").value = result.request.recipient;
+    document.querySelector("#send-amount").value = formatAtomic(result.request.amount);
+    document.querySelector("#verified-request-note").textContent = result.request.memo
+      ? `✓ Подпись верна · ${result.request.memo}` : "✓ Подпись верна";
+    sendStatus.textContent = "Реквизиты заполнены из проверенного запроса. Проверьте перевод.";
+  } catch (error) {
+    document.querySelector("#verified-request-note").textContent = "";
+    sendStatus.textContent = error.message;
+  } finally { event.currentTarget.disabled = false; }
+};
 
 document.querySelector("#send-form").addEventListener("submit", async (event) => {
   event.preventDefault();

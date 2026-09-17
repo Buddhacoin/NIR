@@ -2,10 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
 import {
+  signWalletPaymentRequest,
   signWalletResourceOperation,
   signWalletTransfer,
   walletPublicInfo,
 } from "./wallet-files.mjs";
+import { verifyPaymentRequest } from "./payment-request.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -98,6 +100,26 @@ function validResourceIntent(value) {
   return operation;
 }
 
+function validPaymentRequestIntent(value) {
+  const now = Date.now();
+  if (!value || !REQUEST_ID.test(value.requestId ?? "") ||
+      typeof value.networkId !== "string" || value.networkId.length < 3 ||
+      value.networkId.length > 128 || typeof value.amount !== "string" ||
+      !/^[1-9][0-9]{0,30}$/.test(value.amount) || typeof value.memo !== "string" ||
+      Buffer.byteLength(value.memo, "utf8") > 160 || /[\u0000-\u001f\u007f]/u.test(value.memo) ||
+      !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now ||
+      value.expiresAt > now + 30 * 24 * 60 * 60 * 1_000) {
+    throw new Error("bridge payment request intent is invalid");
+  }
+  return {
+    amount: value.amount,
+    expiresAt: value.expiresAt,
+    memo: value.memo,
+    networkId: value.networkId,
+    requestId: value.requestId,
+  };
+}
+
 function authorized(request, sessionToken) {
   const supplied = request.headers["x-nir-bridge-token"];
   if (typeof supplied !== "string") return false;
@@ -178,13 +200,27 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
       }
-      if (request.method === "POST" && ["/v1/sign", "/v1/sign-resource"].includes(url.pathname)) {
+      if (request.method === "POST" && url.pathname === "/v1/verify-payment-request") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("payment request verification requires application/json");
+        }
+        const body = await readBody(request);
+        if (typeof body?.networkId !== "string" || body.networkId.length > 128) {
+          throw new Error("payment request network is invalid");
+        }
+        return send(response, 200, {
+          request: verifyPaymentRequest(body.request, { networkId: body.networkId }), verified: true,
+        }, origin);
+      }
+      if (request.method === "POST" &&
+          ["/v1/sign", "/v1/sign-resource", "/v1/sign-payment-request"].includes(url.pathname)) {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("bridge signing requests require application/json");
         }
-        const intent = url.pathname === "/v1/sign-resource"
-          ? validResourceIntent(await readBody(request))
-          : validIntent(await readBody(request));
+        const body = await readBody(request);
+        const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(body)
+          : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(body)
+            : validIntent(body);
         if (pending) throw new Error("another signing request is awaiting confirmation");
         if (seen.has(intent.requestId)) throw new Error("signing request was already used");
         seen.add(intent.requestId);
@@ -196,8 +232,16 @@ export function createWalletBridgeServer({
           const { requestId, ...payload } = intent;
           const transaction = url.pathname === "/v1/sign-resource"
             ? signWalletResourceOperation({ path: vaultPath, password, operation: payload })
-            : signWalletTransfer({ path: vaultPath, password, ...payload });
-          return send(response, 200, { requestId, transaction }, origin);
+            : url.pathname === "/v1/sign-payment-request"
+              ? signWalletPaymentRequest({
+                path: vaultPath, password, intent: { ...payload, requestId },
+              })
+              : signWalletTransfer({ path: vaultPath, password, ...payload });
+          return send(response, 200, {
+            requestId,
+            ...(url.pathname === "/v1/sign-payment-request"
+              ? { paymentRequest: transaction } : { transaction }),
+          }, origin);
         } finally {
           pending = false;
         }

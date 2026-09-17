@@ -60,6 +60,7 @@ The intended advantages are:
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
 | Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
+| Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
 | End-to-end wallet transfer test | Real loopback bridge and node HTTP services, post-quantum signature, block finalization, balance verification, and replay rejection; automated |
 | Verifiable wallet installation | Signed `.nirpkg` verification, safe extraction into a new directory, and persistent source/artifact/signer provenance; implemented |
 | Intelligence evaluation, novelty memory, safety veto, and capped rewards | Executable prototype with deterministic tests |
@@ -85,6 +86,8 @@ The explicit gates for devnet, public testnet, incentivized testnet, and mainnet
 are tracked in [`docs/launch-readiness.md`](docs/launch-readiness.md).
 The ordered product and protocol plan is in [`docs/roadmap.md`](docs/roadmap.md),
 and resource staking instructions are in [`docs/staking.md`](docs/staking.md).
+Signed invoice creation and payment are documented in
+[`docs/payment-requests.md`](docs/payment-requests.md).
 
 ## Who uses NIR and how
 
@@ -363,6 +366,7 @@ candidate runs are committed.
 - `docs/wallet.md` — current native-wallet commands and production requirements.
 - `docs/roadmap.md` — ordered development stages and their measurable exit gates.
 - `docs/staking.md` — resource staking, credit delegation and delayed exit guide.
+- `docs/payment-requests.md` — signed expiring invoice creation and verification.
 - `docs/beacon.md` — independent beacon deployment and aggregation runbook.
 - `docs/releases.md` — offline release signing, trust-anchor publication, and source verification.
 - `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.

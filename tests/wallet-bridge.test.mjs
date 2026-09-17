@@ -157,6 +157,56 @@ test("wallet bridge signs an allowlisted resource operation without exposing the
   }
 });
 
+test("wallet bridge signs and verifies an exact expiring payment request", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-request-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const password = "wallet-payment-request-password";
+  const wallet = createWalletFile({ path: vaultPath, password });
+  const origin = "http://127.0.0.1:8765";
+  const token = "7".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => password, origin, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const signed = await request(`${base}/v1/sign-payment-request`, origin, token, {
+      body: JSON.stringify({
+        amount: "300000000",
+        expiresAt: Date.now() + 3_600_000,
+        memo: "Invoice 17",
+        networkId: "nir-testnet",
+        requestId: "8".repeat(64),
+      }),
+      method: "POST",
+    });
+    assert.equal(signed.status, 200);
+    const result = await signed.json();
+    assert.equal(result.paymentRequest.recipient, wallet.address);
+    assert.equal(result.paymentRequest.amount, "300000000");
+
+    const verified = await request(`${base}/v1/verify-payment-request`, origin, token, {
+      body: JSON.stringify({ networkId: "nir-testnet", request: result.paymentRequest }),
+      method: "POST",
+    });
+    assert.equal(verified.status, 200);
+    assert.equal((await verified.json()).verified, true);
+
+    const tampered = await request(`${base}/v1/verify-payment-request`, origin, token, {
+      body: JSON.stringify({
+        networkId: "nir-testnet",
+        request: { ...result.paymentRequest, amount: "300000001" },
+      }),
+      method: "POST",
+    });
+    assert.equal(tampered.status, 400);
+    assert.match((await tampered.json()).error, /signature/);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("wallet bridge serializes confirmations so prompts cannot overlap", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-lock-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");

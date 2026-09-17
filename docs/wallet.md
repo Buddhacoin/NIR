@@ -44,12 +44,18 @@ vault password. The password is never accepted through HTTP, command arguments,
 or environment variables, and the response contains only the signed transaction.
 
 The bridge deliberately has no broadcast endpoint. The wallet UI can pair with
-it, read the public address, show the node balance, calculate a fee, review an
-exact transfer, and request a terminal-confirmed signature. It displays the
-signed JSON first. A separate button can submit it only after a fresh node
-health check reports `valueless-devnet` and the signed network ID matches the
-node. Signing never submits automatically. Review and submission remain
-separate actions, limiting the damage from a compromised interface.
+it, read the public address, show balance and Transfer Credits, calculate a fee,
+review transfers and resource operations, and request a terminal-confirmed
+signature. It displays signed transaction JSON first. A separate button can
+submit it only after a fresh node health check reports `valueless-devnet` and
+the signed network ID matches the node. Signing never submits automatically.
+Review and submission remain separate actions, limiting the damage from a
+compromised interface.
+
+The same bridge can sign an expiring payment request and verify a request from
+another NIR account. Verification binds the exact address, amount, network,
+expiry, identifier and memo before the wallet fills transfer fields. It does not
+broadcast anything or authorize the eventual payment.
 The pairing code and session token are not recovery secrets. Neither belongs in
 a URL or persistent browser storage. Close the terminal process when finished.
 
@@ -70,9 +76,9 @@ or excessively large passwords and malformed encrypted fields, but a memorable
 weak password can still be guessed; the current vault is not a substitute for
 a reviewed hardware key.
 
-The consumer wallet should eventually provide receive/send screens, QR and
-human-readable payment requests, exact fee and percentage display, transaction
-simulation, address-book warnings, chain synchronization, signed updates,
+The consumer wallet should eventually add compact multi-frame transfer for the
+large post-quantum payment-request payload, transaction simulation,
+address-book warnings, chain synchronization, signed updates,
 hardware-key support, multisignature recovery, and optional selective privacy.
 
 ## Visual preview
@@ -80,9 +86,9 @@ hardware-key support, multisignature recovery, and optional selective privacy.
 `wallet-ui/` contains the first responsive interface and an installable PWA
 manifest. It can also be loaded as an unpacked browser-extension preview through
 its Manifest V3 file. The preview intentionally has no website permissions and
-does not handle secret keys: bridge integration, chain synchronization, and
-reviewed transaction broadcast must be completed before those buttons become
-live.
+does not handle secret keys. Local bridge signing and valueless-node submission
+are active; real-value operation, independent synchronization and audited
+distribution remain disabled.
 
 Run `npm run wallet:preview` and open `http://localhost:8765` to inspect it. A
 packaged desktop download will wrap the same reviewed interface. During

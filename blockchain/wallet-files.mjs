@@ -17,6 +17,7 @@ import {
   createTransfer,
 } from "./chain.mjs";
 import { addressFromPublicKey, generateWallet } from "./crypto.mjs";
+import { createPaymentRequest } from "./payment-request.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 
 function readVault(path) {
@@ -83,6 +84,15 @@ export function signWalletResourceOperation({ path, password, operation }) {
       return createCreditUnstakeClaim(common);
     }
     throw new Error("wallet resource operation is not supported");
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function signWalletPaymentRequest({ path, password, intent }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    return createPaymentRequest({ wallet, ...intent });
   } finally {
     wallet.privateKey = "";
   }

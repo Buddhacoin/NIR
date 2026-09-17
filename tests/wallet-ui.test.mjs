@@ -5,6 +5,7 @@ import test from "node:test";
 const html = readFileSync(new URL("../wallet-ui/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../wallet-ui/style.css", import.meta.url), "utf8");
+const serviceWorker = readFileSync(new URL("../wallet-ui/sw.js", import.meta.url), "utf8");
 
 test("wallet navigation has five interactive destinations", () => {
   for (const destination of ["home", "history", "resources", "mine", "settings"]) {
@@ -37,9 +38,17 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #f5f5f7/);
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
-  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=19"/);
+  assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=20"/);
   assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
   assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
+});
+
+test("wallet shell cache uses the current asset version", () => {
+  for (const asset of ["style.css", "app.js", "nir-coin-icon.png"]) {
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=20`));
+    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=20`));
+  }
+  assert.match(serviceWorker, /nir-wallet-shell-v20/);
 });
 
 test("wallet exposes native resource staking and delegation controls", () => {
@@ -90,4 +99,15 @@ test("wallet reports the local node connection state", () => {
   assert.match(script, /networkButton\.classList\.add\("offline"\)/);
   assert.match(styles, /\.network\.connected/);
   assert.match(styles, /\.network\.offline/);
+});
+
+test("wallet creates and verifies signed payment requests before filling a transfer", () => {
+  for (const id of ["payment-request-form", "payment-request-json", "payment-request-input",
+    "verify-payment-request", "verified-request-note"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /bridgeRequest\("\/v1\/sign-payment-request"/);
+  assert.match(script, /bridgeRequest\("\/v1\/verify-payment-request"/);
+  assert.match(script, /send-recipient"\)\.value = result\.request\.recipient/);
+  assert.match(script, /send-amount"\)\.value = formatAtomic\(result\.request\.amount\)/);
 });

@@ -51,6 +51,8 @@ try {
       if (intent.delegate) console.error(`Delegate: ${intent.delegate}`);
       if (intent.limit !== undefined) console.error(`Delegated transfers per epoch: ${intent.limit}`);
       if (intent.amount) console.error(`Amount: ${intent.amount} atomic units`);
+      if (intent.expiresAt) console.error(`Expires: ${new Date(intent.expiresAt).toISOString()}`);
+      if (intent.memo) console.error(`Memo: ${intent.memo}`);
       console.error(`Fee: ${intent.fee ?? "consensus default"}`);
       console.error(`Nonce: ${intent.nonce}`);
       console.error(`Request: ${intent.requestId}`);
