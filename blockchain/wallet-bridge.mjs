@@ -667,14 +667,30 @@ export function createWalletBridgeServer({
           throw new Error("offline signing package requires application/json");
         }
         const body = await readBody(request);
-        if (!SIMULATION_ID.test(body?.simulationId ?? "") || !Number.isSafeInteger(body?.expiresAt)) {
+        // The browser is deliberately not allowed to choose a checkpoint, or to
+        // stretch a package lifetime.  Both values are derived from the bridge's
+        // protected finality state and its short-lived reviewed simulation.
+        if (!body || Object.keys(body).length !== 1 || !SIMULATION_ID.test(body.simulationId ?? "")) {
           throw new Error("offline signing package request is invalid");
         }
         const stored = simulations.get(body.simulationId);
         if (!stored || stored.expiresAt <= Date.now()) throw new Error("simulation is missing or expired; re-simulate before export");
+        if (!verifiedFinalityTip || stored.proof.networkId !== verifiedFinalityTip.networkId ||
+            stored.proof.tipHash !== verifiedFinalityTip.tipHash ||
+            stored.proof.stateRoot !== verifiedFinalityTip.stateRoot ||
+            stored.stateEvidence.height !== verifiedFinalityTip.height) {
+          throw new Error("verified finality state changed; re-simulate before offline export");
+        }
+        const checkpoint = {
+          height: verifiedFinalityTip.height,
+          networkId: verifiedFinalityTip.networkId,
+          stateRoot: verifiedFinalityTip.stateRoot,
+          tipHash: verifiedFinalityTip.tipHash,
+          validatorSetId: verifiedFinalityTip.validatorSetId,
+        };
         const signingPackage = createOfflineSigningPackage({
-          intent: stored.intent, stateEvidence: stored.stateEvidence, checkpoint: body.checkpoint,
-          expiresAt: body.expiresAt,
+          intent: stored.intent, stateEvidence: stored.stateEvidence, checkpoint,
+          expiresAt: Date.now() + 10 * 60_000,
         });
         return send(response, 200, { signingPackage, verified: true }, origin);
       }
@@ -688,8 +704,10 @@ export function createWalletBridgeServer({
         }
         const checked = verifyOfflineSignedPackage(body.signedPackage);
         if (checked.package.networkId !== body.networkId) throw new Error("offline signed package belongs to another network");
-        return send(response, 200, { intent: checked.package.intent, signedPackage: { package: checked.package,
-          transaction: checked.transaction }, simulation: checked.simulation, verified: true }, origin);
+        // Preserve the canonical envelope: the UI independently compares this
+        // exact public artifact before it ever displays an import result.
+        return send(response, 200, { intent: checked.package.intent, signedPackage: body.signedPackage,
+          simulation: checked.simulation, verified: true }, origin);
       }
       if (request.method === "POST" &&
           ["/v1/sign", "/v1/sign-resource", "/v1/sign-payment-request"].includes(url.pathname)) {
