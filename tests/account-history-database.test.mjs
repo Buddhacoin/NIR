@@ -25,6 +25,8 @@ function record(height, values) {
   return {
     blockHash: height.toString(16).padStart(64, "b"),
     height,
+    indexHash: height.toString(16).padStart(64, "c"),
+    networkId: "nir-history-database-test",
     transactions: transactionIds.map((id, index) => ({
       id,
       proof: proofs[index],
@@ -43,7 +45,11 @@ test("the disk history database serves bounded pages and survives reopen", () =>
     database.appendRecord(record(1, transactions.slice(0, 12)));
     database.appendRecord(record(2, transactions.slice(12)));
     assert.deepEqual(database.checkpoint(), {
+      format: "nir-account-history-database",
       height: 2,
+      indexHash: record(2, []).indexHash,
+      networkId: "nir-history-database-test",
+      schemaVersion: 1,
       tipHash: record(2, []).blockHash,
     });
     database.close();
@@ -61,6 +67,8 @@ test("the disk history database serves bounded pages and survives reopen", () =>
     assert.deepEqual(database.transactionProof(ids[24]).transaction, transactions[24]);
     assert.equal(database.matchesCommitments(new Map([[address, commitment]]), {
       height: 2,
+      indexHash: record(2, []).indexHash,
+      networkId: "nir-history-database-test",
       tipHash: record(2, []).blockHash,
     }), true);
     database.close();
@@ -78,7 +86,11 @@ test("a duplicate transaction rolls back the complete database record", () => {
       [transactions[0], transactions[2]])), /UNIQUE/);
     assert.equal(database.page(address).count, 2);
     assert.deepEqual(database.checkpoint(), {
+      format: "nir-account-history-database",
       height: 1,
+      indexHash: record(1, []).indexHash,
+      networkId: "nir-history-database-test",
+      schemaVersion: 1,
       tipHash: record(1, []).blockHash,
     });
     assert.throws(() => database.transactionProof(ids[2]), /not found/);

@@ -204,8 +204,11 @@ locator, account positions and per-level Merkle nodes as it replays the
 append-only index. Pages and proof siblings are read from disk with bounded
 queries. This database alters query cost only; clients still verify returned
 paths against finalized headers and authenticated account roots. Its account
-counts and roots must match chain state before an atomically rebuilt file can
-replace the previous cache.
+counts and roots must match chain state. A versioned database checkpoint also
+binds the cache to the network, finalized height, tip and latest redundant
+journal record. Matching caches pass an integrity check and are reused directly;
+missing, corrupt or unknown schema versions are deterministically rebuilt rather
+than migrated in place.
 
 ### Multi-source archive recovery
 

@@ -16,6 +16,7 @@ import {
   appendAccountHistory,
   emptyAccountHistoryAccumulator,
   normalizeAccountHistory,
+  normalizeAccountHistoryAccumulator,
 } from "./account-history.mjs";
 import { transactionId } from "./chain.mjs";
 import { MAX_BLOCK_BYTES } from "./constants.mjs";
@@ -142,6 +143,15 @@ function readCandidate(path, context) {
   catch { return null; }
 }
 
+function readSelfVerifiedCandidate(path, { height, networkId }) {
+  try {
+    if (statSync(path).size > MAX_RECORD_BYTES) return null;
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    if (!HASH.test(value?.previousIndexHash ?? "")) return null;
+    return verifyRecord(value, { height, networkId, previousIndexHash: value.previousIndexHash });
+  } catch { return null; }
+}
+
 function applyAccumulatorUpdates(accumulators, record) {
   for (const { address, transactionIds } of record.updates) {
     let accumulator = accumulators.get(address) ?? emptyAccountHistoryAccumulator();
@@ -153,6 +163,31 @@ function applyAccumulatorUpdates(accumulators, record) {
 function expectedHistories(chain) {
   const entries = chain.consensusSnapshot().state.accountHistories ?? [];
   return new Map(entries.map(([address, history]) => [address, normalizeAccountHistory(history)]));
+}
+
+function expectedAccumulators(chain) {
+  const entries = chain.consensusSnapshot().state.accountHistories ?? [];
+  return new Map(entries.map(([address, history]) => [
+    address, normalizeAccountHistoryAccumulator(history),
+  ]));
+}
+
+function verifyLatestRecordCopies(directories, chain, expectedIndexHash) {
+  if (chain.height === 0) return expectedIndexHash === ZERO_HASH;
+  const name = fileName(chain.height);
+  const candidates = directories.map((directory) => readSelfVerifiedCandidate(
+    join(directory, name), { height: chain.height, networkId: chain.networkId },
+  ));
+  const valid = candidates.filter((record) => record && record.indexHash === expectedIndexHash &&
+    record.blockHash === chain.tipHash);
+  if (valid.length === 0 || (candidates.every(Boolean) &&
+      candidates[0].indexHash !== candidates[1].indexHash)) return false;
+  candidates.forEach((candidate, index) => {
+    if (!candidate || candidate.indexHash !== expectedIndexHash) {
+      writeAtomic(join(directories[index], name), valid[0]);
+    }
+  });
+  return true;
 }
 
 function accumulatorsMatchChain(accumulators, chain) {
@@ -271,12 +306,43 @@ export class AccountHistoryIndex {
     this.#networkId = chain.networkId;
     this.#tipHash = chain.blocks()[0].hash;
     const liveDatabase = join(root, DATABASE_FILE);
+    try {
+      const database = new AccountHistoryDatabase(liveDatabase);
+      const checkpoint = database.checkpoint();
+      if (HASH.test(checkpoint.indexHash ?? "") &&
+          verifyLatestRecordCopies(this.#directories, chain, checkpoint.indexHash) &&
+          database.matchesCommitments(expectedHistories(chain), {
+            height: chain.height,
+            indexHash: checkpoint.indexHash,
+            networkId: chain.networkId,
+            tipHash: chain.tipHash,
+          })) {
+        this.#accumulators = expectedAccumulators(chain);
+        this.#database = database;
+        this.#databasePath = liveDatabase;
+        this.#height = chain.height;
+        this.#indexHash = checkpoint.indexHash;
+        this.#tipHash = chain.tipHash;
+        return;
+      }
+      database.close();
+    } catch {
+      // A corrupt or incompatible cache is rebuilt from the verified redundant journals below.
+    }
     this.#databasePath = `${liveDatabase}.${process.pid}.rebuild`;
     this.#database = new AccountHistoryDatabase(this.#databasePath, { reset: true });
     try {
       this.#load(chain);
+      this.#database.sealCheckpoint({
+        height: this.#height,
+        indexHash: this.#indexHash,
+        networkId: this.#networkId,
+        tipHash: this.#tipHash,
+      });
       if (!this.#database.matchesCommitments(expectedHistories(chain), {
         height: chain.height,
+        indexHash: this.#indexHash,
+        networkId: chain.networkId,
         tipHash: chain.tipHash,
       })) throw new Error("account history database does not match chain state");
       this.#database.close();

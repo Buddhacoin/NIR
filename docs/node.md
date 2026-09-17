@@ -148,11 +148,16 @@ option for loopback integration tests.
 The serving index is now disk-native. SQLite transactions atomically add a
 block's transaction locator, account positions and Merkle nodes; a uniqueness
 failure rolls back the complete database update. The database is not consensus
-state: startup reconstructs it into a new file from fully verified journals,
-checks every account count and root against chain state, and only then replaces
-the old file. A corrupt database is therefore repaired rather than trusted.
-Production still needs sustained large-dataset benchmarks, schema migration and
-compaction policy, and an external storage review.
+state. It has an explicit format and schema version plus a checkpoint binding it
+to the network, finalized height, tip and latest journal hash. A normal startup
+runs SQLite's integrity check, compares every account count and root with chain
+state, self-verifies the latest redundant journal record, and then reuses the
+database without replaying all history. A missing, corrupt or incompatible
+database is rebuilt into a new file from fully verified journals and atomically
+installed; unknown schemas are never modified in place. Individual pages and
+transaction envelopes are cryptographically rechecked again when served.
+Production still needs sustained large-dataset benchmarks, compaction policy
+and an external storage review.
 
 ## Wallet-to-wallet flow
 

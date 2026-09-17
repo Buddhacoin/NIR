@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { createCreditStake, createTransfer } from "../blockchain/chain.mjs";
@@ -97,10 +98,18 @@ test("the account history index is durable, redundant, and rebuilt from verified
     const name = "000000000001.json";
     const primary = join(directory, "account-history-index", name);
     const backup = join(directory, "account-history-index-backup", name);
+    const servingDatabase = join(directory, "account-history.sqlite");
     assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
+
+    const databaseInode = statSync(servingDatabase).ino;
+    node = new PersistentDevNode(directory);
+    assert.equal(statSync(servingDatabase).ino, databaseInode,
+      "a valid serving database must be reused without a full rebuild");
 
     writeFileSync(primary, "{}\n");
     node = new PersistentDevNode(directory);
+    assert.equal(statSync(servingDatabase).ino, databaseInode,
+      "repairing the latest redundant journal must not rebuild a valid database");
     assert.equal(readFileSync(primary, "utf8"), readFileSync(backup, "utf8"));
     const account = node.account(wallet.address);
     let page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
@@ -112,11 +121,20 @@ test("the account history index is durable, redundant, and rebuilt from verified
       page.entries[0].id, page.entries[0].proof, account.history,
     ), { index: 0, transactionId: page.entries[0].id });
 
-    writeFileSync(join(directory, "account-history.sqlite"), "corrupt serving cache\n");
+    writeFileSync(servingDatabase, "corrupt serving cache\n");
     node = new PersistentDevNode(directory);
     page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
     assert.equal(page.entries.length, 1);
     assert.equal(node.transactionProof(page.entries[0].id).height, 1);
+
+    const incompatible = new DatabaseSync(servingDatabase);
+    incompatible.exec("PRAGMA user_version = 999");
+    incompatible.close();
+    node = new PersistentDevNode(directory);
+    const migrated = new DatabaseSync(servingDatabase, { readOnly: true });
+    assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 1);
+    migrated.close();
+    assert.equal(node.accountHistoryPage(wallet.address, { before: 1, limit: 20 }).entries.length, 1);
 
     writeFileSync(primary, "corrupt\n");
     writeFileSync(backup, "corrupt\n");

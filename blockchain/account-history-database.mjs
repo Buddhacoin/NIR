@@ -1,4 +1,4 @@
-import { chmodSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -16,6 +16,8 @@ import { verifyTransactionProof } from "./transaction-tree.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
+export const ACCOUNT_HISTORY_DATABASE_FORMAT = "nir-account-history-database";
+export const ACCOUNT_HISTORY_DATABASE_SCHEMA_VERSION = 1;
 
 export class AccountHistoryDatabase {
   #database;
@@ -23,6 +25,7 @@ export class AccountHistoryDatabase {
 
   constructor(path, { reset = false } = {}) {
     const target = resolve(path);
+    const initialize = reset || !existsSync(target);
     if (reset) {
       for (const suffix of ["", "-journal", "-shm", "-wal"]) rmSync(`${target}${suffix}`, { force: true });
     }
@@ -37,6 +40,8 @@ export class AccountHistoryDatabase {
       PRAGMA busy_timeout = 5000;
       PRAGMA trusted_schema = OFF;
       PRAGMA foreign_keys = ON;
+    `);
+    if (initialize) this.#database.exec(`
       CREATE TABLE IF NOT EXISTS metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -64,6 +69,7 @@ export class AccountHistoryDatabase {
         id TEXT PRIMARY KEY,
         envelope TEXT NOT NULL
       ) STRICT;
+      PRAGMA user_version = ${ACCOUNT_HISTORY_DATABASE_SCHEMA_VERSION};
     `);
     this.#statements = {
       account: this.#database.prepare("SELECT count, root FROM accounts WHERE address = ?"),
@@ -96,6 +102,11 @@ export class AccountHistoryDatabase {
       `),
       transaction: this.#database.prepare("SELECT envelope FROM transactions WHERE id = ?"),
     };
+    if (initialize) {
+      this.#statements.setMetadata.run("format", ACCOUNT_HISTORY_DATABASE_FORMAT);
+      this.#statements.setMetadata.run("schemaVersion",
+        String(ACCOUNT_HISTORY_DATABASE_SCHEMA_VERSION));
+    }
   }
 
   close() { this.#database.close(); }
@@ -137,6 +148,8 @@ export class AccountHistoryDatabase {
       }
       this.#statements.setMetadata.run("height", String(record.height));
       this.#statements.setMetadata.run("tipHash", record.blockHash);
+      this.#statements.setMetadata.run("networkId", record.networkId);
+      this.#statements.setMetadata.run("indexHash", record.indexHash);
       this.#database.exec("COMMIT");
     } catch (error) {
       this.#database.exec("ROLLBACK");
@@ -147,7 +160,32 @@ export class AccountHistoryDatabase {
   checkpoint() {
     const height = this.#statements.metadata.get("height")?.value ?? "0";
     const tipHash = this.#statements.metadata.get("tipHash")?.value ?? null;
-    return { height: Number(height), tipHash };
+    return {
+      format: this.#statements.metadata.get("format")?.value ?? null,
+      height: Number(height),
+      indexHash: this.#statements.metadata.get("indexHash")?.value ?? null,
+      networkId: this.#statements.metadata.get("networkId")?.value ?? null,
+      schemaVersion: Number(this.#statements.metadata.get("schemaVersion")?.value ?? 0),
+      tipHash,
+    };
+  }
+
+  sealCheckpoint({ height, indexHash, networkId, tipHash }) {
+    if (!Number.isSafeInteger(height) || height < 0 || !HASH.test(indexHash ?? "") ||
+        typeof networkId !== "string" || networkId.length === 0 || !HASH.test(tipHash ?? "")) {
+      throw new Error("account history database checkpoint is invalid");
+    }
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#statements.setMetadata.run("height", String(height));
+      this.#statements.setMetadata.run("tipHash", tipHash);
+      this.#statements.setMetadata.run("networkId", networkId);
+      this.#statements.setMetadata.run("indexHash", indexHash);
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   commitment(address) {
@@ -159,17 +197,28 @@ export class AccountHistoryDatabase {
     };
   }
 
-  matchesCommitments(expected, { height, tipHash }) {
-    if (!(expected instanceof Map) || this.#statements.accountCount.get().count !== expected.size) {
+  matchesCommitments(expected, { height, indexHash, networkId, tipHash }) {
+    try {
+      const integrity = this.#database.prepare("PRAGMA quick_check").all();
+      const userVersion = this.#database.prepare("PRAGMA user_version").get().user_version;
+      if (integrity.length !== 1 || integrity[0].quick_check !== "ok" ||
+          userVersion !== ACCOUNT_HISTORY_DATABASE_SCHEMA_VERSION ||
+          !(expected instanceof Map) || this.#statements.accountCount.get().count !== expected.size) {
+        return false;
+      }
+      const checkpoint = this.checkpoint();
+      if (checkpoint.format !== ACCOUNT_HISTORY_DATABASE_FORMAT ||
+          checkpoint.schemaVersion !== ACCOUNT_HISTORY_DATABASE_SCHEMA_VERSION ||
+          checkpoint.height !== height || checkpoint.tipHash !== tipHash ||
+          checkpoint.networkId !== networkId || checkpoint.indexHash !== indexHash) return false;
+      for (const [address, commitment] of expected) {
+        const actual = this.commitment(address);
+        if (actual.count !== commitment.count || actual.root !== commitment.root) return false;
+      }
+      return true;
+    } catch {
       return false;
     }
-    const checkpoint = this.checkpoint();
-    if (checkpoint.height !== height || (height > 0 && checkpoint.tipHash !== tipHash)) return false;
-    for (const [address, commitment] of expected) {
-      const actual = this.commitment(address);
-      if (actual.count !== commitment.count || actual.root !== commitment.root) return false;
-    }
-    return true;
   }
 
   page(address, { before, limit = 20 } = {}) {
