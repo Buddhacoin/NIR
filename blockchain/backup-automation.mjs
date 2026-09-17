@@ -1,7 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
+  ftruncateSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -10,7 +13,6 @@ import {
   readdirSync,
   renameSync,
   rmSync,
-  truncateSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -55,7 +57,9 @@ const ALLOWED_CONFIG_KEYS = new Set([
 const SENSITIVE_KEY = /(password|passphrase|private|secret|mnemonic|seed|bearer|token)/i;
 
 function syncDirectory(path) {
-  const descriptor = openSync(path, "r");
+  const descriptor = openSync(
+    path, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }
 
@@ -73,7 +77,12 @@ function writeAtomic(path, value) {
   const temporary = `${target}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
   let descriptor;
   try {
-    descriptor = openSync(temporary, "wx", 0o600);
+    descriptor = openSync(
+      temporary,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL |
+        fsConstants.O_NOFOLLOW,
+      0o600,
+    );
     writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
     fsyncSync(descriptor);
     closeSync(descriptor);
@@ -87,11 +96,39 @@ function writeAtomic(path, value) {
 }
 
 function readBoundedJson(path, maximumBytes = MAX_CONFIG_BYTES) {
-  const metadata = lstatSync(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maximumBytes) {
-    throw new Error("automation JSON input is invalid");
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size > maximumBytes) {
+      throw new Error("automation JSON input is invalid");
+    }
+    const contents = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    if (!after.isFile() || after.size !== before.size || contents.length !== before.size ||
+        after.mtimeMs !== before.mtimeMs) {
+      throw new Error("automation JSON input changed while it was read");
+    }
+    return JSON.parse(contents.toString("utf8"));
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
-  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function readBoundedText(path, maximumBytes, message) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size > maximumBytes) throw new Error(message);
+    const contents = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    if (!after.isFile() || after.size !== before.size || contents.length !== before.size ||
+        after.mtimeMs !== before.mtimeMs) throw new Error(message);
+    return contents.toString("utf8");
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 function assertNoSecrets(value, path = "config") {
@@ -196,7 +233,6 @@ function acquireAutomationLock(stateDirectory, { now = Date.now(), pid = process
       };
     } catch (error) {
       if (error?.code !== "EEXIST") {
-        rmSync(lock, { recursive: true, force: true });
         throw error;
       }
       const owner = readBoundedJson(join(lock, "owner.json"), 16 * 1024);
@@ -236,13 +272,17 @@ function readPending(config) {
   const path = pendingPath(config);
   if (!existsSync(path)) return null;
   const pending = readBoundedJson(path, MAX_RECORD_BYTES);
-  if (pending?.format !== PENDING_FORMAT || !Number.isSafeInteger(pending.sequence) ||
-      pending.sequence < 1 || !Number.isSafeInteger(pending.previousBytes) ||
-      pending.previousBytes < 0 || !HASH.test(pending.previousHash ?? "") ||
-      !HASH.test(pending.resultHash ?? "") ||
-      canonicalJson(pending.signer) !== canonicalJson(config.resultSigner) ||
-      !verifyObject({ resultHash: pending.resultHash }, pending.signature,
-        config.resultSigner.publicKey, "BACKUP_AUTOMATION_RESULT")) {
+  const { pendingHash, signature, signer, ...payload } = pending ?? {};
+  if (payload.format !== PENDING_FORMAT || !Number.isSafeInteger(payload.sequence) ||
+      payload.sequence < 1 || !Number.isSafeInteger(payload.previousBytes) ||
+      payload.previousBytes < 0 || !HASH.test(payload.previousHash ?? "") ||
+      !HASH.test(payload.resultHash ?? "") ||
+      Object.keys(pending ?? {}).sort().join(":") !==
+        ["format", "pendingHash", "previousBytes", "previousHash", "resultHash", "sequence", "signature", "signer"].sort().join(":") ||
+      pendingHash !== hashObject(payload, "BACKUP_AUTOMATION_PENDING") ||
+      canonicalJson(signer) !== canonicalJson(config.resultSigner) ||
+      !verifyObject({ pendingHash }, signature,
+        config.resultSigner.publicKey, "BACKUP_AUTOMATION_PENDING")) {
     throw new Error("backup automation pending append is invalid");
   }
   return pending;
@@ -254,21 +294,27 @@ export function readBackupAutomationJournal(configInput, { repairCrash = false }
   let pending = readPending(config);
   let contents = "";
   if (existsSync(path)) {
-    const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_JOURNAL_BYTES) {
-      throw new Error("backup automation journal is invalid or too large");
-    }
-    contents = readFileSync(path, "utf8");
+    contents = readBoundedText(
+      path, MAX_JOURNAL_BYTES, "backup automation journal is invalid or too large",
+    );
   }
   if (contents && !contents.endsWith("\n")) {
     if (!repairCrash || !pending || pending.previousBytes > Buffer.byteLength(contents)) {
       throw new Error("backup automation journal is incomplete");
     }
-    truncateSync(path, pending.previousBytes);
-    const descriptor = openSync(path, "r");
-    try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+    const descriptor = openSync(path, fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const metadata = fstatSync(descriptor);
+      if (!metadata.isFile() || metadata.size < pending.previousBytes) {
+        throw new Error("backup automation journal is incomplete");
+      }
+      ftruncateSync(descriptor, pending.previousBytes);
+      fsyncSync(descriptor);
+    } finally { closeSync(descriptor); }
     syncDirectory(config.stateDirectory);
-    contents = readFileSync(path, "utf8");
+    contents = readBoundedText(
+      path, MAX_JOURNAL_BYTES, "backup automation journal is invalid or too large",
+    );
     if (contents && !contents.endsWith("\n")) {
       throw new Error("backup automation journal is incomplete");
     }
@@ -387,17 +433,34 @@ function appendResult(config, wallet, payloadFields, io = {}) {
   if (currentBytes + Buffer.byteLength(line) > MAX_JOURNAL_BYTES) {
     throw new Error("backup journal retention limit reached");
   }
-  writeAtomic(pendingPath(config), {
+  const pendingPayload = {
     format: PENDING_FORMAT,
     previousBytes: currentBytes,
     previousHash: payload.previousHash,
     resultHash,
     sequence: payload.sequence,
-    signature: record.signature,
+  };
+  const pendingHash = hashObject(pendingPayload, "BACKUP_AUTOMATION_PENDING");
+  writeAtomic(pendingPath(config), {
+    ...pendingPayload,
+    pendingHash,
+    signature: signObject({ pendingHash }, wallet, "BACKUP_AUTOMATION_PENDING"),
     signer: record.signer,
   });
-  const descriptor = openSync(path, "a", 0o600);
-  try { writeSync(descriptor, line); fsyncSync(descriptor); } finally { closeSync(descriptor); }
+  const descriptor = openSync(
+    path,
+    fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT |
+      fsConstants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size !== currentBytes) {
+      throw new Error("backup automation journal changed before append");
+    }
+    writeSync(descriptor, line);
+    fsyncSync(descriptor);
+  } finally { closeSync(descriptor); }
   syncDirectory(config.stateDirectory);
   const nextRecords = [...state.records, record];
   const head = { format: HEAD_FORMAT, journalHash: journalHash(nextRecords), resultHash,

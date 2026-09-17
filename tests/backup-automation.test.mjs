@@ -21,7 +21,12 @@ import {
   scheduledBackupTime,
   validateBackupAutomationConfig,
 } from "../blockchain/backup-automation.mjs";
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import {
+  generateWallet,
+  hashObject,
+  publicWallet,
+  signObject,
+} from "../blockchain/crypto.mjs";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "nir-backup-automation-"));
@@ -222,16 +227,29 @@ test("a restart repairs only signed journal-ahead head copies", async () => {
       successfulOptions(context.config, [61_000, 61_001]));
     writeFileSync(join(context.config.stateDirectory, "BACKUP-DRILLS.head.backup.json"),
       previousHead);
-    writeFileSync(join(context.config.stateDirectory, "BACKUP-DRILLS.pending.json"),
-      `${JSON.stringify({
+    const pendingPayload = {
         format: "nir-backup-automation-pending-v1",
         previousBytes,
         previousHash: second.payload.previousHash,
         resultHash: second.payload.resultHash,
         sequence: second.payload.sequence,
-        signature: second.signature,
-        signer: second.signer,
-      })}\n`);
+    };
+    const pendingHash = hashObject(pendingPayload, "BACKUP_AUTOMATION_PENDING");
+    const signedPending = {
+      ...pendingPayload,
+      pendingHash,
+      signature: signObject(
+        { pendingHash }, context.wallet, "BACKUP_AUTOMATION_PENDING",
+      ),
+      signer: second.signer,
+    };
+    writeFileSync(join(context.config.stateDirectory, "BACKUP-DRILLS.pending.json"),
+      `${JSON.stringify({ ...signedPending, previousBytes: 0 })}\n`);
+    assert.throws(() => readBackupAutomationJournal(
+      context.config, { repairCrash: true },
+    ), /pending append is invalid/);
+    writeFileSync(join(context.config.stateDirectory, "BACKUP-DRILLS.pending.json"),
+      `${JSON.stringify(signedPending)}\n`);
     await assert.doesNotReject(runBackupAutomationCycle(context.config, context.wallet,
       successfulOptions(context.config, [121_000, 121_001])));
     assert.equal(readBackupAutomationJournal(context.config).records.length, 3);

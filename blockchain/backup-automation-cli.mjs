@@ -1,5 +1,11 @@
 #!/usr/bin/env node
-import { lstatSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import process from "node:process";
 
 import {
@@ -14,11 +20,23 @@ import { decryptWallet } from "./vault.mjs";
 const MAX_VAULT_BYTES = 2 * 1024 * 1024;
 
 function readVault(path) {
-  const metadata = lstatSync(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_VAULT_BYTES) {
-    throw new Error("automation signer vault is invalid");
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size > MAX_VAULT_BYTES) {
+      throw new Error("automation signer vault is invalid");
+    }
+    const contents = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    if (!after.isFile() || after.size !== before.size || contents.length !== before.size ||
+        after.mtimeMs !== before.mtimeMs) {
+      throw new Error("automation signer vault changed while it was read");
+    }
+    return JSON.parse(contents.toString("utf8"));
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
-  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 function readSecret(prompt) {
