@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { generateWallet, publicWallet, verifyObject } from "../blockchain/crypto.mjs";
+import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
@@ -99,7 +99,7 @@ test("wallet checkpoint advances only through a verified finality header chain",
   const origin = "http://127.0.0.1:8765";
   const token = "6".repeat(64);
   const server = createWalletBridgeServer({
-    authorize: async () => null,
+    authorize: async () => "wallet-light-client-password",
     origin, sessionToken: token,
     trustAnchor: {
       expectedNetworkId: networkId,
@@ -188,6 +188,89 @@ test("wallet checkpoint advances only through a verified finality header chain",
       method: "POST",
     });
     assert.equal(accepted.status, 200);
+    const unprovenSimulation = await request(`${base}/v1/simulate-transaction`, origin, token, {
+      body: JSON.stringify({
+        intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+          recipient: treasury.address, type: "transfer" },
+        network: { height: 2, networkId },
+      }), method: "POST",
+    });
+    assert.equal(unprovenSimulation.status, 400);
+    assert.match((await unprovenSimulation.json()).error, /verified account proof/);
+    const simulated = await request(`${base}/v1/simulate-transaction`, origin, token, {
+      body: JSON.stringify({
+        intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+          recipient: treasury.address, type: "transfer" },
+        network: { height: 2, networkId },
+        verifiedAccount: { address: wallet.address, height: 2, proofVerified: true },
+      }), method: "POST",
+    });
+    assert.equal(simulated.status, 200);
+    const simulation = await simulated.json();
+    assert.equal(simulation.verified, true);
+    assert.equal(simulation.simulation.deltas.balance[0].atomicDelta, "-1001");
+    assert.equal(simulation.simulation.proof.verified, true);
+    const unsignedWithoutReview = await request(`${base}/v1/sign`, origin, token, {
+      body: JSON.stringify({
+        amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+        recipient: treasury.address, requestId: "e".repeat(64),
+      }), method: "POST",
+    });
+    assert.equal(unsignedWithoutReview.status, 400);
+    assert.match((await unsignedWithoutReview.json()).error, /simulation is required/);
+    const changedAfterReview = await request(`${base}/v1/sign`, origin, token, {
+      body: JSON.stringify({
+        amount: "2", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+        recipient: treasury.address, requestId: "d".repeat(64),
+        simulationId: simulation.simulation.simulationId,
+      }), method: "POST",
+    });
+    assert.equal(changedAfterReview.status, 400);
+    assert.match((await changedAfterReview.json()).error, /differs from the reviewed simulation/);
+    const signedAfterReview = await request(`${base}/v1/sign`, origin, token, {
+      body: JSON.stringify({
+        amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+        recipient: treasury.address, requestId: "e".repeat(64),
+        simulationId: simulation.simulation.simulationId,
+      }), method: "POST",
+    });
+    assert.equal(signedAfterReview.status, 200);
+    assert.equal((await signedAfterReview.json()).simulationId, simulation.simulation.simulationId);
+    const paymentExpiresAt = Date.now() + 60_000;
+    const paymentPreview = await request(`${base}/v1/simulate-transaction`, origin, token, {
+      body: JSON.stringify({
+        intent: { amount: "1", expiresAt: paymentExpiresAt, memo: "preview", networkId,
+          requestId: "f".repeat(64), type: "payment-request" },
+        network: { height: 2, networkId },
+        verifiedAccount: { address: wallet.address, height: 2, proofVerified: true },
+      }), method: "POST",
+    });
+    assert.equal(paymentPreview.status, 200);
+    const paymentPreviewValue = await paymentPreview.json();
+    const unsignedRequestWithoutReview = await request(`${base}/v1/sign-payment-request`, origin, token, {
+      body: JSON.stringify({
+        amount: "1", expiresAt: paymentExpiresAt, memo: "preview", networkId,
+        requestId: "0".repeat(64),
+      }), method: "POST",
+    });
+    assert.equal(unsignedRequestWithoutReview.status, 400);
+    assert.match((await unsignedRequestWithoutReview.json()).error, /simulation is required/);
+    const changedPaymentPreview = await request(`${base}/v1/sign-payment-request`, origin, token, {
+      body: JSON.stringify({
+        amount: "2", expiresAt: paymentExpiresAt, memo: "preview", networkId,
+        requestId: "f".repeat(64), simulationId: paymentPreviewValue.simulation.simulationId,
+      }), method: "POST",
+    });
+    assert.equal(changedPaymentPreview.status, 400);
+    assert.match((await changedPaymentPreview.json()).error, /differs from the reviewed simulation/);
+    const signedPaymentPreview = await request(`${base}/v1/sign-payment-request`, origin, token, {
+      body: JSON.stringify({
+        amount: "1", expiresAt: paymentExpiresAt, memo: "preview", networkId,
+        requestId: "f".repeat(64), simulationId: paymentPreviewValue.simulation.simulationId,
+      }), method: "POST",
+    });
+    assert.equal(signedPaymentPreview.status, 200);
+    assert.equal((await signedPaymentPreview.json()).paymentRequest.recipient, wallet.address);
     const completeHistory = await request(
       `${base}/v1/verify-account-history`, origin, token, {
         body: JSON.stringify({ transactionIds: [committedTransactionId(transfer)] }),
@@ -354,7 +437,7 @@ test("wallet account trust advances through verified validator handoffs", async 
   }
 });
 
-test("wallet bridge signs only an exact-origin, session-authorized, confirmed request", async () => {
+test("wallet bridge requires a verified simulation before an exact-origin signing request", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
   const password = "wallet-bridge-password-long";
@@ -386,27 +469,21 @@ test("wallet bridge signs only an exact-origin, session-authorized, confirmed re
     const signed = await request(`${base}/v1/sign`, origin, token, {
       body: JSON.stringify(intent), method: "POST",
     });
-    assert.equal(signed.status, 200);
-    const result = await signed.json();
-    assert.equal(result.requestId, intent.requestId);
-    assert.equal(approvals.length, 1);
-    const { signature, ...payload } = result.transaction;
-    const publicKey = JSON.parse(readFileSync(vaultPath, "utf8")).publicKey;
-    assert.equal(verifyObject(payload, signature, publicKey, "TRANSFER"), true);
-    assert.equal(JSON.stringify(result).includes("privateKey"), false);
+    assert.equal(signed.status, 400);
+    assert.match((await signed.json()).error, /simulation is required/);
+    assert.equal(approvals.length, 0);
     const replay = await request(`${base}/v1/sign`, origin, token, {
       body: JSON.stringify(intent), method: "POST",
     });
     assert.equal(replay.status, 400);
-    assert.match((await replay.json()).error, /already used/);
-    assert.equal(approvals.length, 1);
+    assert.match((await replay.json()).error, /simulation is required/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("wallet bridge never broadcasts and consumes a rejected request id", async () => {
+test("wallet bridge never broadcasts a request that has no reviewed simulation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-reject-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
   createWalletFile({ path: vaultPath, password: "wallet-bridge-password-long" });
@@ -427,7 +504,7 @@ test("wallet bridge never broadcasts and consumes a rejected request id", async 
       body: JSON.stringify(intent), method: "POST",
     });
     assert.equal(rejected.status, 400);
-    assert.match((await rejected.json()).error, /rejected/);
+    assert.match((await rejected.json()).error, /simulation is required/);
     assert.equal((await request(`${base}/v1/transactions`, origin, token, {
       body: "{}", method: "POST",
     })).status, 404);
@@ -435,14 +512,14 @@ test("wallet bridge never broadcasts and consumes a rejected request id", async 
       body: JSON.stringify(intent), method: "POST",
     });
     assert.equal(replay.status, 400);
-    assert.match((await replay.json()).error, /already used/);
+    assert.match((await replay.json()).error, /simulation is required/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("wallet bridge signs an allowlisted resource operation without exposing the key", async () => {
+test("wallet bridge rejects a resource operation without a reviewed simulation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-resource-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
   const password = "wallet-resource-password-long";
@@ -462,13 +539,8 @@ test("wallet bridge signs an allowlisted resource operation without exposing the
       }),
       method: "POST",
     });
-    assert.equal(signed.status, 200);
-    const result = await signed.json();
-    const { signature, ...payload } = result.transaction;
-    const publicKey = JSON.parse(readFileSync(vaultPath, "utf8")).publicKey;
-    assert.equal(verifyObject(payload, signature, publicKey, "CREDIT_STAKE"), true);
-    assert.equal(result.transaction.type, "credit-stake");
-    assert.equal(JSON.stringify(result).includes("privateKey"), false);
+    assert.equal(signed.status, 400);
+    assert.match((await signed.json()).error, /simulation is required/);
 
     const invalid = await request(`${base}/v1/sign-resource`, origin, token, {
       body: JSON.stringify({
@@ -484,7 +556,7 @@ test("wallet bridge signs an allowlisted resource operation without exposing the
   }
 });
 
-test("wallet bridge signs and verifies an exact expiring payment request", async () => {
+test("wallet bridge rejects payment-request signing without a reviewed simulation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-request-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
   const password = "wallet-payment-request-password";
@@ -507,34 +579,15 @@ test("wallet bridge signs and verifies an exact expiring payment request", async
       }),
       method: "POST",
     });
-    assert.equal(signed.status, 200);
-    const result = await signed.json();
-    assert.equal(result.paymentRequest.recipient, wallet.address);
-    assert.equal(result.paymentRequest.amount, "300000000");
-
-    const verified = await request(`${base}/v1/verify-payment-request`, origin, token, {
-      body: JSON.stringify({ networkId: "nir-testnet", request: result.paymentRequest }),
-      method: "POST",
-    });
-    assert.equal(verified.status, 200);
-    assert.equal((await verified.json()).verified, true);
-
-    const tampered = await request(`${base}/v1/verify-payment-request`, origin, token, {
-      body: JSON.stringify({
-        networkId: "nir-testnet",
-        request: { ...result.paymentRequest, amount: "300000001" },
-      }),
-      method: "POST",
-    });
-    assert.equal(tampered.status, 400);
-    assert.match((await tampered.json()).error, /signature/);
+    assert.equal(signed.status, 400);
+    assert.match((await signed.json()).error, /simulation is required/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("wallet bridge serializes confirmations so prompts cannot overlap", async () => {
+test("wallet bridge rejects unreviewed requests before opening a confirmation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-lock-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
   const password = "wallet-bridge-password-long";
@@ -559,17 +612,16 @@ test("wallet bridge serializes confirmations so prompts cannot overlap", async (
       amount: "1", networkId: "nir-testnet", nonce: 0,
       recipient: recipient.address, requestId,
     });
-    const first = request(`${base}/v1/sign`, origin, token, {
+    const first = await request(`${base}/v1/sign`, origin, token, {
       body: JSON.stringify(intent("1".repeat(64))), method: "POST",
     });
-    await started;
     const second = await request(`${base}/v1/sign`, origin, token, {
       body: JSON.stringify(intent("2".repeat(64))), method: "POST",
     });
+    assert.equal(first.status, 400);
+    assert.match((await first.json()).error, /simulation is required/);
     assert.equal(second.status, 400);
-    assert.match((await second.json()).error, /another signing request/);
-    releaseApproval();
-    assert.equal((await first).status, 200);
+    assert.match((await second.json()).error, /simulation is required/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
 import {
@@ -8,6 +8,8 @@ import {
   walletPublicInfo,
 } from "./wallet-files.mjs";
 import { verifyPaymentRequest } from "./payment-request.mjs";
+import { simulateWalletOperation } from "./transaction-simulation.mjs";
+import { canonicalJson, hashObject } from "./crypto.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
@@ -41,6 +43,9 @@ import {
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
+const SIMULATION_ID = /^[0-9a-f]{64}$/;
+const MAX_SIMULATIONS = 128;
+const SIMULATION_LIFETIME_MS = 120_000;
 
 function send(response, status, value, origin) {
   const body = JSON.stringify(value);
@@ -113,7 +118,7 @@ function validResourceIntent(value) {
     }
     operation.amount = value.amount;
   }
-  if (["credit-stake", "credit-delegation"].includes(value.type)) {
+  if (["credit-stake", "credit-delegation", "credit-unstake-request"].includes(value.type)) {
     if (typeof value.fee !== "string" || !/^[1-9][0-9]{0,30}$/.test(value.fee)) {
       throw new Error("bridge resource fee is invalid");
     }
@@ -162,6 +167,99 @@ function sameSecret(leftValue, rightValue) {
   const left = Buffer.from(leftValue);
   const right = Buffer.from(rightValue);
   return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function simulationIntent(body, walletAddress) {
+  if (!body?.intent || typeof body.intent !== "object" || Array.isArray(body.intent)) {
+    throw new Error("transaction simulation intent is invalid");
+  }
+  const intent = structuredClone(body.intent);
+  if (intent.type !== "payment-request" && intent.requestId !== undefined) {
+    if (!REQUEST_ID.test(intent.requestId)) throw new Error("transaction simulation request id is invalid");
+    delete intent.requestId;
+  }
+  if (intent.type === "payment-request" && intent.signature === undefined) {
+    if (intent.recipient === undefined) intent.recipient = walletAddress;
+    if (intent.recipient !== walletAddress) {
+      throw new Error("wallet can preview only its own unsigned payment request");
+    }
+  } else if (intent.type !== "payment-request") {
+    if (intent.sender === undefined) intent.sender = walletAddress;
+    if (intent.sender !== walletAddress) throw new Error("wallet can simulate only its own authority");
+  }
+  return intent;
+}
+
+function simulationParticipants(intent, walletAddress) {
+  const participants = new Set([walletAddress]);
+  if (intent.type !== "payment-request") participants.add(intent.sender);
+  if (intent.type === "transfer" && intent.resource === "transfer-credit") {
+    participants.add(intent.feePayer ?? intent.creditOwner ?? intent.sender);
+  } else if (intent.type === "transfer" && intent.feePayer !== undefined) {
+    participants.add(intent.feePayer);
+  }
+  return [...participants];
+}
+
+function bridgeSimulationEvidence({ body, intent, verifiedAccountStates, walletAddress }) {
+  if (!body?.verifiedAccount || body.verifiedAccount.proofVerified !== true ||
+      !body?.network || typeof body.network.networkId !== "string" ||
+      !Number.isSafeInteger(body.network.height) || body.network.height < 0) {
+    throw new Error("simulation requires a verified account proof and network checkpoint");
+  }
+  const accounts = {};
+  let checkpoint = null;
+  for (const address of simulationParticipants(intent, walletAddress)) {
+    if (typeof address !== "string") throw new Error("simulation participant is invalid");
+    const state = verifiedAccountStates.get(address);
+    if (!state) throw new Error("simulation participant has no independently verified account proof");
+    if (!checkpoint) checkpoint = state;
+    if (state.networkId !== checkpoint.networkId || state.height !== checkpoint.height ||
+        state.tipHash !== checkpoint.tipHash || state.stateRoot !== checkpoint.stateRoot) {
+      throw new Error("simulation participants are not proven at one finalized state");
+    }
+    accounts[address] = structuredClone(state.account);
+  }
+  if (!checkpoint || body.network.networkId !== checkpoint.networkId ||
+      body.network.height !== checkpoint.height || intent.networkId !== checkpoint.networkId ||
+      (body.verifiedAccount.address !== undefined && body.verifiedAccount.address !== walletAddress) ||
+      (body.verifiedAccount.height !== undefined && body.verifiedAccount.height !== checkpoint.height)) {
+    throw new Error("simulation checkpoint does not match protected verified state");
+  }
+  return {
+    accounts, height: checkpoint.height, networkId: checkpoint.networkId,
+    proofVerified: true, stateRoot: checkpoint.stateRoot, tipHash: checkpoint.tipHash, verified: true,
+  };
+}
+
+function simulationForSigning({ body, intent, pathname, simulations, verifiedAccountStates, walletAddress }) {
+  if (body.simulationId === undefined) {
+    throw new Error("a fresh verified simulation is required before signing");
+  }
+  if (typeof body.simulationId !== "string" || !SIMULATION_ID.test(body.simulationId)) {
+    throw new Error("simulation reference is invalid");
+  }
+  const simulation = simulations.get(body.simulationId);
+  if (!simulation || simulation.expiresAt <= Date.now()) {
+    simulations.delete(body.simulationId);
+    throw new Error("simulation is missing or expired; re-simulate before signing");
+  }
+  const { requestId: _requestId, ...withoutRequestId } = intent;
+  const operation = pathname === "/v1/sign-payment-request" ? intent : withoutRequestId;
+  const expected = pathname === "/v1/sign-payment-request"
+    ? { ...operation, recipient: walletAddress, type: "payment-request" }
+    : pathname === "/v1/sign-resource" ? { ...operation, sender: walletAddress }
+      : { ...operation, sender: walletAddress, type: "transfer" };
+  if (simulation.intentHash !== hashObject(JSON.parse(canonicalJson(expected)), "WALLET_SIMULATION_INTENT_V1")) {
+    throw new Error("signing intent differs from the reviewed simulation");
+  }
+  const current = verifiedAccountStates.get(walletAddress);
+  if (!current || current.networkId !== simulation.proof.networkId ||
+      current.tipHash !== simulation.proof.tipHash || current.stateRoot !== simulation.proof.stateRoot) {
+    throw new Error("verified account state changed; re-simulate before signing");
+  }
+  simulations.delete(body.simulationId);
+  return body.simulationId;
 }
 
 export function createWalletBridgeServer({
@@ -245,6 +343,8 @@ export function createWalletBridgeServer({
     };
   }
   const walletAddress = walletPublicInfo(vaultPath).address;
+  const verifiedAccountStates = new Map();
+  const simulations = new Map();
   const seen = new Set();
   let pending = false;
   let pairingAttempts = 0;
@@ -298,6 +398,8 @@ export function createWalletBridgeServer({
         sessionActive = false;
         pairingAvailable = false;
         verifiedAccountState = null;
+        verifiedAccountStates.clear();
+        simulations.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
@@ -349,6 +451,8 @@ export function createWalletBridgeServer({
         accountTrust.handoffs = structuredClone(body.handoffs);
         verifiedFinalityTip = null;
         verifiedAccountState = null;
+        verifiedAccountStates.clear();
+        simulations.clear();
         return send(response, 200, {
           activationHeight: advanced.lastHandoff?.activationHeight ?? 0,
           handoffs: accountTrust.handoffs.length,
@@ -382,6 +486,10 @@ export function createWalletBridgeServer({
           );
         }
         verifiedFinalityTip = nextTip;
+        // A previously attested account is not a simulation snapshot for a newer finalized tip.
+        verifiedAccountState = null;
+        verifiedAccountStates.clear();
+        simulations.clear();
         return send(response, 200, { tip: verifiedFinalityTip, verified: true }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-transaction-proof") {
@@ -511,9 +619,40 @@ export function createWalletBridgeServer({
           verifiedFinalityTip = null;
         }
         verifiedAccountState = structuredClone(statement.account);
+        verifiedAccountStates.set(statement.account.address, structuredClone(statement));
+        if (verifiedAccountStates.size > 16) {
+          verifiedAccountStates.delete(verifiedAccountStates.keys().next().value);
+        }
+        simulations.clear();
         return send(response, 200, {
           statement,
           verified: true,
+        }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/simulate-transaction") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("transaction simulation requires application/json");
+        }
+        const body = await readBody(request);
+        const intent = simulationIntent(body, walletAddress);
+        const stateEvidence = bridgeSimulationEvidence({
+          body, intent, verifiedAccountStates, walletAddress,
+        });
+        const simulation = simulateWalletOperation({ intent, stateEvidence });
+        const simulationId = randomBytes(32).toString("hex");
+        const now = Date.now();
+        for (const [id, entry] of simulations) {
+          if (entry.expiresAt <= now) simulations.delete(id);
+        }
+        simulations.set(simulationId, {
+          expiresAt: now + SIMULATION_LIFETIME_MS,
+          intentHash: simulation.intentHash,
+          intent: simulation.intent,
+          proof: { ...simulation.proof, networkId: simulation.networkId },
+        });
+        if (simulations.size > MAX_SIMULATIONS) simulations.delete(simulations.keys().next().value);
+        return send(response, 200, {
+          simulation: { ...simulation, simulationId }, verified: true,
         }, origin);
       }
       if (request.method === "POST" &&
@@ -522,9 +661,13 @@ export function createWalletBridgeServer({
           throw new Error("bridge signing requests require application/json");
         }
         const body = await readBody(request);
-        const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(body)
-          : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(body)
-            : validIntent(body);
+        const { simulationId: _simulationId, ...unsignedBody } = body ?? {};
+        const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(unsignedBody)
+          : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(unsignedBody)
+            : validIntent(unsignedBody);
+        const reviewedSimulationId = simulationForSigning({
+          body, intent, pathname: url.pathname, simulations, verifiedAccountStates, walletAddress,
+        });
         if (pending) throw new Error("another signing request is awaiting confirmation");
         if (seen.has(intent.requestId)) throw new Error("signing request was already used");
         seen.add(intent.requestId);
@@ -543,6 +686,7 @@ export function createWalletBridgeServer({
               : signWalletTransfer({ path: vaultPath, password, ...payload });
           return send(response, 200, {
             requestId,
+            ...(reviewedSimulationId ? { simulationId: reviewedSimulationId } : {}),
             ...(url.pathname === "/v1/sign-payment-request"
               ? { paymentRequest: transaction } : { transaction }),
           }, origin);

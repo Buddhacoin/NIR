@@ -118,8 +118,18 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
       recipient: recipient.address,
       requestId: "8".repeat(64),
     };
+    const transferSimulation = await jsonRequest(`${bridgeUrl}/v1/simulate-transaction`, {
+      body: {
+        intent: { ...intent, type: "transfer" },
+        network: { height: proofCheck.value.statement.height, networkId: health.value.networkId,
+          valueMode: health.value.valueMode, activeNodeUrl: nodeUrl },
+        verifiedAccount: { address: payer.address, height: proofCheck.value.statement.height,
+          proofVerified: true, statement: proofCheck.value.statement },
+      }, headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(transferSimulation.response.status, 200, JSON.stringify(transferSimulation.value));
     const signed = await jsonRequest(`${bridgeUrl}/v1/sign`, {
-      body: intent,
+      body: { ...intent, simulationId: transferSimulation.value.simulation.simulationId },
       headers: bridgeHeaders,
       method: "POST",
     });
@@ -142,15 +152,34 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     assert.equal(payerAfter.value.nextNonce, 1);
     assert.equal(recipientAfter.value.atomicBalance, amount);
 
-    const resourceSigned = await jsonRequest(`${bridgeUrl}/v1/sign-resource`, {
-      body: {
+    const resourceProof = await jsonRequest(`${nodeUrl}/v1/accounts/${payer.address}/proof`);
+    assert.equal(resourceProof.response.status, 200);
+    const resourceProofCheck = await jsonRequest(`${bridgeUrl}/v1/verify-account-proof`, {
+      body: { address: payer.address, minimumHeight: 0, proof: resourceProof.value },
+      headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(resourceProofCheck.response.status, 200, JSON.stringify(resourceProofCheck.value));
+
+    const resourceIntent = {
         amount: (5n * ATOMIC_UNITS).toString(),
         fee: MIN_TRANSFER_FEE.toString(),
         networkId: health.value.networkId,
         nonce: payerAfter.value.nextNonce,
         requestId: "9".repeat(64),
         type: "credit-stake",
-      },
+    };
+    const resourceSimulation = await jsonRequest(`${bridgeUrl}/v1/simulate-transaction`, {
+      body: {
+        intent: resourceIntent,
+        network: { height: resourceProofCheck.value.statement.height, networkId: health.value.networkId,
+          valueMode: health.value.valueMode, activeNodeUrl: nodeUrl },
+        verifiedAccount: { address: payer.address, height: resourceProofCheck.value.statement.height,
+          proofVerified: true, statement: resourceProofCheck.value.statement },
+      }, headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(resourceSimulation.response.status, 200, JSON.stringify(resourceSimulation.value));
+    const resourceSigned = await jsonRequest(`${bridgeUrl}/v1/sign-resource`, {
+      body: { ...resourceIntent, simulationId: resourceSimulation.value.simulation.simulationId },
       headers: bridgeHeaders,
       method: "POST",
     });

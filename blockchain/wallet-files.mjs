@@ -127,7 +127,7 @@ export function signWalletResourceOperation({ path, password, operation }) {
       });
     }
     if (operation.type === "credit-unstake-request") {
-      return createCreditUnstakeRequest({ ...common, amount: operation.amount });
+      return createCreditUnstakeRequest({ ...common, amount: operation.amount, fee: operation.fee });
     }
     if (operation.type === "credit-unstake-claim") {
       return createCreditUnstakeClaim(common);
