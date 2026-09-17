@@ -108,6 +108,19 @@ test("independent signed receipts drive an isolated bounded restore drill", asyn
         trustedOperators: context.trustedOperators,
       },
     ), result, "a completed crash-safe workspace must be reusable");
+    writeFileSync(join(result.workspace, "STORE-CHECKPOINT.json"), "corrupt\n", "utf8");
+    const repaired = await runRemoteBackupRestoreDrill(
+      workspaceParent, sources, context.genesis, {
+        allowInsecureLocalhost: true,
+        now: 1_000_100,
+        trustedOperators: context.trustedOperators,
+      },
+    );
+    assert.notEqual(
+      readFileSync(join(repaired.workspace, "STORE-CHECKPOINT.json"), "utf8"),
+      "corrupt\n",
+      "a completion marker must not bypass a fresh restore verification",
+    );
   } finally {
     await Promise.all(servers.map(close));
     rmSync(context.temporary, { recursive: true, force: true });
@@ -154,6 +167,21 @@ test("receipts reject staleness, operator reuse, conflicts, and private-key file
 
     writeFileSync(join(context.first, "DEVNET-KEYS.json"), "{}\n", "utf8");
     assert.throws(() => createBackupInventory(context.first), /disallowed/);
+    rmSync(join(context.first, "DEVNET-KEYS.json"));
+
+    const storedGenesis = readFileSync(join(context.first, "genesis.json"), "utf8");
+    writeFileSync(join(context.first, "genesis.json"), JSON.stringify({
+      ...context.genesis,
+      privateKey: "must-never-enter-a-public-backup",
+    }), "utf8");
+    assert.throws(() => createSignedBackupReceipt(
+      context.first, context.genesis, context.wallets[0], {
+        createdAt: 10_000,
+        operatorId: context.trustedOperators[0].operatorId,
+        sourceId: sources[0],
+      },
+    ), /public genesis/);
+    writeFileSync(join(context.first, "genesis.json"), storedGenesis, "utf8");
   } finally {
     rmSync(context.temporary, { recursive: true, force: true });
   }

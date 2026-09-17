@@ -1,8 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { createServer } from "node:http";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -59,10 +61,15 @@ function syncDirectory(path) {
 
 function writeAtomic(path, value) {
   const target = resolve(path);
-  const temporary = `${target}.${process.pid}.tmp`;
+  const temporary = `${target}.${process.pid}.${randomBytes(12).toString("hex")}.tmp`;
   let descriptor;
   try {
-    descriptor = openSync(temporary, "wx", 0o600);
+    descriptor = openSync(
+      temporary,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL |
+        fsConstants.O_NOFOLLOW,
+      0o600,
+    );
     writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
     fsyncSync(descriptor);
     closeSync(descriptor);
@@ -73,6 +80,52 @@ function writeAtomic(path, value) {
     if (descriptor !== undefined) closeSync(descriptor);
     rmSync(temporary, { force: true });
   }
+}
+
+function readRegularFile(path, maximumBytes) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size > maximumBytes) {
+      throw new Error("backup file is not a bounded regular file");
+    }
+    const contents = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    if (!after.isFile() || after.size !== before.size || contents.length !== before.size ||
+        after.mtimeMs !== before.mtimeMs) {
+      throw new Error("backup file changed while it was read");
+    }
+    return contents;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function containsSecretField(value, seen = new Set()) {
+  if (value === null || typeof value !== "object") return false;
+  if (seen.has(value)) return true;
+  seen.add(value);
+  for (const [key, child] of Object.entries(value)) {
+    if (/(?:^|_)(?:private(?:key)?|secret|seed|mnemonic|password)(?:$|_)/iu.test(key) ||
+        containsSecretField(child, seen)) return true;
+  }
+  seen.delete(value);
+  return false;
+}
+
+function verifyPublicGenesis(directory, expectedGenesis) {
+  let stored;
+  try {
+    stored = JSON.parse(readRegularFile(join(resolve(directory), "genesis.json"), 2 * 1024 * 1024));
+  } catch {
+    throw new Error("backup genesis is missing or invalid");
+  }
+  if (containsSecretField(stored) || containsSecretField(expectedGenesis) ||
+      canonicalJson(stored) !== canonicalJson(expectedGenesis)) {
+    throw new Error("backup genesis is not the expected public genesis");
+  }
+  return stored;
 }
 
 function safeRelativePath(value) {
@@ -116,7 +169,10 @@ export function createBackupInventory(directory, {
       totalBytes += metadata.size;
       if (totalBytes > maxTotalBytes) throw new Error("backup exceeds the total size limit");
       if (files.length >= maxFiles) throw new Error("backup contains too many files");
-      const contents = readFileSync(target);
+      const contents = readRegularFile(target, maxFileBytes);
+      if (contents.length !== metadata.size) {
+        throw new Error("backup file changed while inventory was created");
+      }
       files.push({ bytes: contents.length, path: name, sha256: sha256(contents) });
     }
   };
@@ -172,6 +228,7 @@ export function createSignedBackupReceipt(directory, genesis, wallet, {
     throw new Error("backup receipt context is invalid");
   }
   validateOperatorId(operatorId);
+  verifyPublicGenesis(directory, genesis);
   const loaded = loadBlockStore(directory, genesis);
   new AccountHistoryIndex(directory, loaded.chain);
   const inventory = createBackupInventory(directory);
@@ -358,7 +415,7 @@ export function createBackupHttpServer(directory, receipt) {
       if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size !== expected.bytes) {
         throw new Error("changed");
       }
-      const contents = readFileSync(target);
+      const contents = readRegularFile(target, expected.bytes);
       if (sha256(contents) !== expected.sha256) throw new Error("changed");
       response.writeHead(200, {
         "cache-control": "public, immutable, max-age=31536000",
@@ -436,6 +493,21 @@ function verifyDownloadedDirectory(directory, inventory) {
   if (actual.inventoryRoot !== inventory.inventoryRoot) throw new Error("downloaded backup root mismatch");
 }
 
+function verifyRestoredWorkspace(workspace, genesis, expected) {
+  verifyPublicGenesis(workspace, genesis);
+  const loaded = loadBlockStore(workspace, genesis);
+  new AccountHistoryIndex(workspace, loaded.chain);
+  if (loaded.checkpoint.checkpointHash !== expected.checkpointHash ||
+      loaded.chain.height !== expected.height || loaded.chain.tipHash !== expected.tipHash ||
+      loaded.chain.stateRoot !== expected.stateRoot ||
+      historyContentRoot(workspace, loaded.chain) !== expected.historyContentRoot ||
+      readHistoryIndexHash(workspace) !== expected.historyIndexHash ||
+      readSnapshotHash(workspace) !== expected.snapshotHash) {
+    throw new Error("restored backup does not match its receipts");
+  }
+  return loaded;
+}
+
 async function downloadProvider(provider, workspace, options) {
   const inventoryResponse = await getRemote(
     provider.source, "v1/backup/inventory", MAX_BACKUP_INVENTORY_BYTES, options,
@@ -479,9 +551,14 @@ export async function runRemoteBackupRestoreDrill(parentDirectory, sources, gene
   const staging = `${workspace}.staging`;
   if (existsSync(workspace)) {
     try {
-      const completed = JSON.parse(readFileSync(join(workspace, "DRILL-COMPLETE.json"), "utf8"));
+      const completed = JSON.parse(readRegularFile(
+        join(workspace, "DRILL-COMPLETE.json"), MAX_BACKUP_RECEIPT_BYTES,
+      ).toString("utf8"));
       if (completed?.format === DRILL_FORMAT && completed.inventoryRoot === selected[0].inventoryRoot &&
-          completed.checkpointHash === selected[0].checkpointHash) return completed;
+          completed.checkpointHash === selected[0].checkpointHash) {
+        verifyRestoredWorkspace(workspace, genesis, selected[0]);
+        return completed;
+      }
     } catch { /* Remove only this deterministic drill workspace and recreate it. */ }
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -509,16 +586,7 @@ export async function runRemoteBackupRestoreDrill(parentDirectory, sources, gene
   });
   renameSync(staging, workspace);
   syncDirectory(root);
-  const loaded = loadBlockStore(workspace, genesis);
-  new AccountHistoryIndex(workspace, loaded.chain);
-  if (loaded.checkpoint.checkpointHash !== selected[0].checkpointHash ||
-      loaded.chain.height !== selected[0].height || loaded.chain.tipHash !== selected[0].tipHash ||
-      loaded.chain.stateRoot !== selected[0].stateRoot ||
-      historyContentRoot(workspace, loaded.chain) !== selected[0].historyContentRoot ||
-      readHistoryIndexHash(workspace) !== selected[0].historyIndexHash ||
-      readSnapshotHash(workspace) !== selected[0].snapshotHash) {
-    throw new Error("restored backup does not match its receipts");
-  }
+  const loaded = verifyRestoredWorkspace(workspace, genesis, selected[0]);
   const completed = {
     checkpointHash: selected[0].checkpointHash,
     completedAt: Date.now(),

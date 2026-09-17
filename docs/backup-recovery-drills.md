@@ -122,8 +122,10 @@ Inside that isolated copy, the drill performs normal block-store replay,
 snapshot authentication and account-history index verification. It then compares
 the restored checkpoint, state, history and snapshot hashes with the receipts.
 Only after all checks pass is `DRILL-COMPLETE.json` written atomically. A crash
-without that marker causes only the deterministic drill workspace to be rebuilt;
-a valid completed marker makes repeated drills idempotent.
+without that marker causes only the deterministic drill workspace to be rebuilt.
+On a repeated drill the marker is not trusted by itself: the block store,
+snapshot and history are replayed and compared with the fresh independent
+receipts again. A damaged completed workspace is discarded and restored anew.
 
 The command never writes to the live node directory and never submits a
 transaction. The completion record contains public hashes, sources and timings,

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import {
   closeSync,
+  constants as fsConstants,
   fchmodSync,
+  fstatSync,
+  fsyncSync,
   openSync,
   readFileSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
@@ -20,16 +22,33 @@ import { signWalletBackupReceipt } from "./wallet-files.mjs";
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 
 function readJson(path, maximumBytes) {
-  if (statSync(path).size > maximumBytes) throw new Error(`${path} is too large`);
-  return JSON.parse(readFileSync(path, "utf8"));
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size > maximumBytes) {
+      throw new Error(`${path} is not a bounded regular file`);
+    }
+    const contents = readFileSync(descriptor);
+    if (contents.length !== metadata.size) throw new Error(`${path} changed while it was read`);
+    return JSON.parse(contents.toString("utf8"));
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 function writeExclusive(path, value) {
   const target = resolve(path);
-  const descriptor = openSync(target, "wx", 0o600);
+  const descriptor = openSync(
+    target,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL |
+      fsConstants.O_NOFOLLOW,
+    0o600,
+  );
   try {
     fchmodSync(descriptor, 0o600);
     writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fsyncSync(descriptor);
   } finally { closeSync(descriptor); }
   return target;
 }
