@@ -48,13 +48,13 @@ exact-position Merkle proof for every identifier. A client must first verify the
 account proof, then verify the page interval and every path before displaying
 the referenced transactions.
 
-The node serves these pages from two append-only history-index journals rather
-than rescanning every block for every request. Each per-height record binds the
-network, finalized block hash, previous index-record hash, ordered account
-updates, transaction bodies and their inclusion proofs. A direct identifier
-map therefore serves `/v1/transactions/{id}/proof` without scanning blocks.
-Incrementally maintained Merkle-node maps serve account pages without rebuilding
-the complete account tree for every request.
+Two append-only history-index journals remain the recoverable source. Each
+per-height record binds the network, finalized block hash, previous index-record
+hash, ordered account updates, transaction bodies and their inclusion proofs.
+A derived SQLite database stores the direct transaction locator, account page
+positions and Merkle nodes on disk. Queries therefore read only the requested
+page and its proof siblings instead of rescanning blocks or retaining the full
+history in process memory.
 At startup the node checks the complete hash chain and compares the rebuilt
 per-account histories with the commitments in verified consensus state. One
 damaged copy is repaired from the other; if both copies of a retained height are
@@ -145,11 +145,14 @@ or corrupt. It does not retain multiple complete remote archives or all record
 bodies in memory. Plain HTTP is available only through an explicit library
 option for loopback integration tests.
 
-This removes archive-sized memory growth during recovery, but it is not yet a
-fully disk-native query engine. After activation, the current serving index
-still keeps account identifiers, proof-tree nodes and the transaction locator
-in process memory for fast wallet queries. Replacing those maps with an audited
-embedded database remains necessary for very large public history.
+The serving index is now disk-native. SQLite transactions atomically add a
+block's transaction locator, account positions and Merkle nodes; a uniqueness
+failure rolls back the complete database update. The database is not consensus
+state: startup reconstructs it into a new file from fully verified journals,
+checks every account count and root against chain state, and only then replaces
+the old file. A corrupt database is therefore repaired rather than trusted.
+Production still needs sustained large-dataset benchmarks, schema migration and
+compaction policy, and an external storage review.
 
 ## Wallet-to-wallet flow
 
@@ -200,8 +203,9 @@ on one disk do not protect against loss of that disk.
 
 The simple node uses one process holding four development validator keys; the
 separate multi-process network is documented in `docs/network.md`. The durable
-block and history journals detect and repair several partial-write and
-corruption cases, but they are not a production database. Production still
+block and history journals plus the rebuildable SQLite serving index detect and
+repair several partial-write and corruption cases, but still require production
+scale validation. Production also
 requires independently operated archive services, multiple remote backup
 targets, authenticated transport for the implemented signed multi-source archive
 format, continuous restore drills, metrics, and independent storage review.

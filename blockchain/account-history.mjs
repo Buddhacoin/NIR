@@ -2,8 +2,11 @@ import { canonicalJson, hashObject } from "./crypto.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const FORMAT = "nir-account-history-v2";
+export const ACCOUNT_HISTORY_FORMAT = FORMAT;
 const PROOF_FORMAT = "nir-account-history-entry-v1";
 const DEPTH = 32;
+export const ACCOUNT_HISTORY_DEPTH = DEPTH;
+export const ACCOUNT_HISTORY_PROOF_FORMAT = PROOF_FORMAT;
 const MAX_COUNT = 2 ** DEPTH;
 export const MAX_ACCOUNT_HISTORY_PROOF_BYTES = 64 * 1024;
 
@@ -20,6 +23,14 @@ function leaf(transactionId, index) {
   return hashObject({ index, transactionId }, "ACCOUNT_HISTORY_LEAF");
 }
 function node(left, right) { return hashObject({ left, right }, "ACCOUNT_HISTORY_NODE"); }
+export function accountHistoryLeafHash(transactionId, index) { return leaf(transactionId, index); }
+export function accountHistoryNodeHash(left, right) { return node(left, right); }
+export function accountHistoryEmptyHash(level) {
+  if (!Number.isSafeInteger(level) || level < 0 || level > DEPTH) {
+    throw new Error("account history level is invalid");
+  }
+  return emptyHashes[level];
+}
 function rootFromFrontier(frontier, count) {
   let value = emptyHashes[0];
   for (let level = 0; level < DEPTH; level += 1) {

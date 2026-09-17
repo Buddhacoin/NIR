@@ -33,8 +33,8 @@ identically.
   transaction identifiers, so a wallet verifies a bounded page without trusting
   the node or downloading the complete history; redundant per-height disk
   journals are verified against consensus state, retain transaction inclusion
-  envelopes, and populate direct transaction lookup plus incremental proof-tree
-  caches without a block rescan;
+  envelopes, and rebuild a bounded-cache SQLite transaction locator plus
+  disk-backed proof nodes without a block rescan;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;

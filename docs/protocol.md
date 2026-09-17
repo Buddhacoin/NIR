@@ -199,10 +199,13 @@ verified archive copy.
 Storage format `nir-account-history-index-v2` additionally retains each
 transaction body, its ordered block position and inclusion path. On load, every
 identifier is recomputed and every path must reach the recorded transaction
-root. The node builds a direct identifier locator and advances cached
-per-account Merkle nodes as it replays the append-only index. These caches alter
-query cost only; clients still verify returned paths against finalized headers
-and authenticated account roots.
+root. The node rebuilds a SQLite serving database containing a direct identifier
+locator, account positions and per-level Merkle nodes as it replays the
+append-only index. Pages and proof siblings are read from disk with bounded
+queries. This database alters query cost only; clients still verify returned
+paths against finalized headers and authenticated account roots. Its account
+counts and roots must match chain state before an atomically rebuilt file can
+replace the previous cache.
 
 ### Multi-source archive recovery
 

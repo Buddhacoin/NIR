@@ -13,7 +13,6 @@ import {
 import { dirname, join, resolve } from "node:path";
 
 import {
-  AccountHistoryMerkleIndex,
   appendAccountHistory,
   emptyAccountHistoryAccumulator,
   normalizeAccountHistory,
@@ -25,6 +24,7 @@ import {
   createTransactionProofs,
   verifyTransactionProof,
 } from "./transaction-tree.mjs";
+import { AccountHistoryDatabase } from "./account-history-database.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -35,6 +35,7 @@ const BACKUP_DIRECTORY = "account-history-index-backup";
 const INSTALL_DIRECTORY = ".account-history-index-install";
 const INSTALL_MARKER = "ACCOUNT-HISTORY-INSTALL.json";
 const INSTALL_FORMAT = "nir-account-history-install-v1";
+const DATABASE_FILE = "account-history.sqlite";
 const ZERO_HASH = "0".repeat(64);
 
 function fileName(height) {
@@ -141,31 +142,11 @@ function readCandidate(path, context) {
   catch { return null; }
 }
 
-function applyRecord(accumulators, histories, trees, transactions, record, {
-  retainTransactionDetails = true,
-} = {}) {
-  for (const entry of record.transactions) {
-    if (transactions.has(entry.id)) throw new Error("duplicate transaction in history index");
-    transactions.set(entry.id, retainTransactionDetails ? {
-      blockHash: record.blockHash,
-      height: record.height,
-      proof: entry.proof,
-      transaction: entry.transaction,
-      transactionsRoot: record.transactionsRoot,
-    } : true);
-  }
+function applyAccumulatorUpdates(accumulators, record) {
   for (const { address, transactionIds } of record.updates) {
-    const ids = histories.get(address) ?? [];
-    const tree = trees.get(address) ?? new AccountHistoryMerkleIndex();
     let accumulator = accumulators.get(address) ?? emptyAccountHistoryAccumulator();
-    for (const id of transactionIds) {
-      ids.push(id);
-      tree.append(id);
-      accumulator = appendAccountHistory(accumulator, id);
-    }
+    for (const id of transactionIds) accumulator = appendAccountHistory(accumulator, id);
     accumulators.set(address, accumulator);
-    histories.set(address, ids);
-    trees.set(address, tree);
   }
 }
 
@@ -174,16 +155,12 @@ function expectedHistories(chain) {
   return new Map(entries.map(([address, history]) => [address, normalizeAccountHistory(history)]));
 }
 
-function matchesChain(accumulators, histories, trees, chain) {
+function accumulatorsMatchChain(accumulators, chain) {
   const expected = expectedHistories(chain);
-  if (histories.size !== expected.size) return false;
+  if (accumulators.size !== expected.size) return false;
   for (const [address, commitment] of expected) {
-    const ids = histories.get(address);
-    if (!ids) return false;
-    const actual = trees.get(address)?.commitment();
-    const accumulated = normalizeAccountHistory(accumulators.get(address));
-    if (canonicalJson(actual) !== canonicalJson(commitment) ||
-        canonicalJson(accumulated) !== canonicalJson(commitment)) return false;
+    if (canonicalJson(normalizeAccountHistory(accumulators.get(address))) !==
+        canonicalJson(commitment)) return false;
   }
   return true;
 }
@@ -277,13 +254,12 @@ function finishPreparedInstallation(root, chain) {
 
 export class AccountHistoryIndex {
   #accumulators = new Map();
+  #database;
+  #databasePath;
   #directories;
   #height = 0;
-  #histories = new Map();
   #indexHash = ZERO_HASH;
   #networkId;
-  #transactions = new Map();
-  #trees = new Map();
   #tipHash;
 
   constructor(directory, chain) {
@@ -294,7 +270,31 @@ export class AccountHistoryIndex {
     this.#directories.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
     this.#networkId = chain.networkId;
     this.#tipHash = chain.blocks()[0].hash;
-    this.#load(chain);
+    const liveDatabase = join(root, DATABASE_FILE);
+    this.#databasePath = `${liveDatabase}.${process.pid}.rebuild`;
+    this.#database = new AccountHistoryDatabase(this.#databasePath, { reset: true });
+    try {
+      this.#load(chain);
+      if (!this.#database.matchesCommitments(expectedHistories(chain), {
+        height: chain.height,
+        tipHash: chain.tipHash,
+      })) throw new Error("account history database does not match chain state");
+      this.#database.close();
+      this.#database = undefined;
+      for (const suffix of ["", "-journal", "-shm", "-wal"]) {
+        rmSync(`${liveDatabase}${suffix}`, { force: true });
+      }
+      renameSync(this.#databasePath, liveDatabase);
+      syncDirectory(root);
+      this.#databasePath = liveDatabase;
+      this.#database = new AccountHistoryDatabase(liveDatabase);
+    } catch (error) {
+      this.#database?.close();
+      for (const suffix of ["", "-journal", "-shm", "-wal"]) {
+        rmSync(`${this.#databasePath}${suffix}`, { force: true });
+      }
+      throw error;
+    }
   }
 
   #write(record) {
@@ -305,10 +305,12 @@ export class AccountHistoryIndex {
   #reset() {
     this.#accumulators = new Map();
     this.#height = 0;
-    this.#histories = new Map();
     this.#indexHash = ZERO_HASH;
-    this.#transactions = new Map();
-    this.#trees = new Map();
+  }
+
+  #resetDatabase() {
+    this.#database.close();
+    this.#database = new AccountHistoryDatabase(this.#databasePath, { reset: true });
   }
 
   #load(chain) {
@@ -341,20 +343,22 @@ export class AccountHistoryIndex {
           writeAtomic(join(this.#directories[index], name), record);
         }
       });
-      applyRecord(this.#accumulators, this.#histories, this.#trees, this.#transactions, record);
+      this.#database.appendRecord(record);
+      applyAccumulatorUpdates(this.#accumulators, record);
       this.#height = height;
       this.#indexHash = record.indexHash;
       this.#tipHash = record.blockHash;
     }
     if (this.#height !== chain.height || this.#tipHash !== chain.tipHash ||
-        !matchesChain(this.#accumulators, this.#histories, this.#trees, chain)) {
+        !accumulatorsMatchChain(this.#accumulators, chain)) {
       if (chain.blocks()[0].height !== 0) {
         throw new Error("account history index does not match the pruned chain state");
       }
       this.#reset();
+      this.#resetDatabase();
       this.#tipHash = chain.blocks()[0].hash;
       for (const block of chain.blocks().slice(1)) this.#append(block);
-      if (!matchesChain(this.#accumulators, this.#histories, this.#trees, chain)) {
+      if (!accumulatorsMatchChain(this.#accumulators, chain)) {
         throw new Error("account history index rebuild does not match chain state");
       }
     }
@@ -363,7 +367,15 @@ export class AccountHistoryIndex {
   #append(block) {
     const record = createRecord(block, this.#networkId, this.#indexHash);
     this.#write(record);
-    applyRecord(this.#accumulators, this.#histories, this.#trees, this.#transactions, record);
+    this.#database.appendRecord(record);
+    applyAccumulatorUpdates(this.#accumulators, record);
+    for (const { address } of record.updates) {
+      const expected = normalizeAccountHistory(this.#accumulators.get(address));
+      const actual = this.#database.commitment(address);
+      if (actual.count !== expected.count || actual.root !== expected.root) {
+        throw new Error("account history database update does not match chain state");
+      }
+    }
     this.#height = block.height;
     this.#indexHash = record.indexHash;
     this.#tipHash = block.hash;
@@ -379,38 +391,26 @@ export class AccountHistoryIndex {
       throw new Error("account history index update does not match chain state");
     }
     this.#write(record);
-    applyRecord(this.#accumulators, this.#histories, this.#trees, this.#transactions, record);
+    this.#database.appendRecord(record);
+    applyAccumulatorUpdates(this.#accumulators, record);
+    for (const { address } of record.updates) {
+      const expected = normalizeAccountHistory(this.#accumulators.get(address));
+      const actual = this.#database.commitment(address);
+      if (actual.count !== expected.count || actual.root !== expected.root) {
+        throw new Error("account history database update does not match chain state");
+      }
+    }
     this.#height = block.height;
     this.#indexHash = record.indexHash;
     this.#tipHash = block.hash;
   }
 
   page(address, { before, limit = 20 } = {}) {
-    if (!ADDRESS.test(address ?? "")) throw new Error("address is invalid");
-    const ids = this.#histories.get(address) ?? [];
-    const end = before === undefined ? ids.length : before;
-    if (!Number.isSafeInteger(end) || end < 0 || end > ids.length ||
-        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-      throw new Error("account history page is invalid");
-    }
-    const start = Math.max(0, end - limit);
-    const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
-    const proofs = (this.#trees.get(address) ?? new AccountHistoryMerkleIndex()).proofs(indexes);
-    return {
-      count: ids.length,
-      entries: ids.slice(start, end).map((id, offset) => ({
-        id, index: indexes[offset], proof: proofs[offset],
-      })),
-      nextBefore: start === 0 ? null : start,
-      start,
-    };
+    return this.#database.page(address, { before, limit });
   }
 
   transactionProof(id) {
-    if (!HASH.test(id ?? "")) throw new Error("transaction id is invalid");
-    const proof = this.#transactions.get(id);
-    if (!proof) throw new Error("transaction is not found");
-    return structuredClone(proof);
+    return this.#database.transactionProof(id);
   }
 }
 
@@ -467,9 +467,7 @@ export function verifyAccountHistoryIndexRecordIterable(records, chain, {
     throw new Error("account history archive records are invalid");
   }
   const accumulators = new Map();
-  const histories = new Map();
-  const trees = new Map();
-  const transactions = new Map();
+  const transactions = new Set();
   const retained = retainedBlocks(chain);
   let previousIndexHash = ZERO_HASH;
   let tipHash = chain.blocks()[0].hash;
@@ -487,9 +485,11 @@ export function verifyAccountHistoryIndexRecordIterable(records, chain, {
         record.transactions.length !== block.transactions.length)) {
       throw new Error(`account history archive conflicts with block ${height}`);
     }
-    applyRecord(accumulators, histories, trees, transactions, record, {
-      retainTransactionDetails: false,
-    });
+    for (const entry of record.transactions) {
+      if (transactions.has(entry.id)) throw new Error("duplicate transaction in history index");
+      transactions.add(entry.id);
+    }
+    applyAccumulatorUpdates(accumulators, record);
     if (onRecord) onRecord(record);
     if (verified) verified.push(record);
     previousIndexHash = record.indexHash;
@@ -497,7 +497,7 @@ export function verifyAccountHistoryIndexRecordIterable(records, chain, {
     count += 1;
   }
   if (count !== chain.height || tipHash !== chain.tipHash ||
-      !matchesChain(accumulators, histories, trees, chain)) {
+      !accumulatorsMatchChain(accumulators, chain)) {
     throw new Error("account history archive does not match chain state");
   }
   return verified ?? { records: count, tipHash };

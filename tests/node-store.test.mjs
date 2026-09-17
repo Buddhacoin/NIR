@@ -112,6 +112,12 @@ test("the account history index is durable, redundant, and rebuilt from verified
       page.entries[0].id, page.entries[0].proof, account.history,
     ), { index: 0, transactionId: page.entries[0].id });
 
+    writeFileSync(join(directory, "account-history.sqlite"), "corrupt serving cache\n");
+    node = new PersistentDevNode(directory);
+    page = node.accountHistoryPage(wallet.address, { before: 1, limit: 20 });
+    assert.equal(page.entries.length, 1);
+    assert.equal(node.transactionProof(page.entries[0].id).height, 1);
+
     writeFileSync(primary, "corrupt\n");
     writeFileSync(backup, "corrupt\n");
     node = new PersistentDevNode(directory);

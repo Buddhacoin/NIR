@@ -40,8 +40,10 @@ replays, restarts, message faults and state restoration.
   operators, crash-resumable staged installation generations and password-safe
   operator commands, plus manifest-first bounded HTTPS recovery that streams one
   agreed copy to disk and falls back across sources (implemented locally;
-  genuinely independent public deployment, transport operations and a
-  disk-native large-scale query database remain);
+  the rebuilt SQLite serving index also keeps history pages, proof nodes and the
+  transaction locator on disk behind a bounded cache; genuinely independent public deployment,
+  transport operations, large-dataset benchmarks and database lifecycle policy
+  remain);
 - congestion measurements and a sustainable validator-compensation formula;
 - public test network with independent seed, validator, beacon and evaluator
   operators.
