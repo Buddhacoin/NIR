@@ -60,9 +60,16 @@ selects the validator set active at the proof height. A new set cannot appoint
 itself, an old set cannot sign balances after its replacement, and a future
 rotation is not applied early.
 
+The bridge atomically stores a public checkpoint beside the encrypted vault as
+`<vault>.trust.json`. It contains no signing key. Once a newer finalized height
+or validator transition has been accepted, restarting the bridge cannot make it
+accept an older height, a conflicting state at the same height, or a handoff
+history that omits the already accepted transition. Back up this file together
+with the vault; deleting it deliberately resets rollback memory.
+
 ## Remaining production work
 
 Production distribution must deliver the verified handoff history to wallets
-through multiple independent sources and retain it durably across restarts.
+through multiple independent sources.
 Authority never comes from a validator list supplied by the same untrusted proof
 response.

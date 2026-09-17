@@ -62,6 +62,7 @@ try {
     ...(genesis ? { trustAnchor: {
       expectedNetworkId: genesis.networkId, handoffs, trustedValidators: genesis.validators,
     } } : {}),
+    ...(genesis ? { trustCheckpointPath: `${vaultPath}.trust.json` } : {}),
     vaultPath,
     authorize: async (intent) => {
       console.error("\nNIR signing request");
@@ -88,6 +89,7 @@ try {
     console.log(genesis
       ? `Account proofs pinned to ${genesis.networkId}; verified validator handoffs: ${handoffs.length}`
       : "Account proof verification disabled: start with an explicit genesis.json path");
+    if (genesis) console.log(`Wallet trust checkpoint: ${vaultPath}.trust.json`);
     console.log(`One-time pairing code: ${pairingCode} (expires in 2 minutes)`);
     console.log("Keep this terminal open. Every signature still requires confirmation and password.");
   });

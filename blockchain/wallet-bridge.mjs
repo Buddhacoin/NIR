@@ -10,6 +10,12 @@ import {
 import { verifyPaymentRequest } from "./payment-request.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
+import {
+  enforceWalletTrustCheckpoint,
+  loadWalletTrustCheckpoint,
+  requireCheckpointHandoff,
+  saveWalletTrustCheckpoint,
+} from "./wallet-trust-store.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -143,6 +149,7 @@ export function createWalletBridgeServer({
   pairingLifetimeMs = 120_000,
   sessionToken,
   trustAnchor,
+  trustCheckpointPath,
   vaultPath,
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
@@ -153,6 +160,7 @@ export function createWalletBridgeServer({
          !Array.isArray(trustAnchor?.trustedValidators) ||
          trustAnchor.trustedValidators.length < 4)) ||
       (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
+      (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
       !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
   }
@@ -164,6 +172,12 @@ export function createWalletBridgeServer({
   if (accountTrust) {
     advanceValidatorTrust(accountTrust);
   }
+  if (trustCheckpointPath && !accountTrust) {
+    throw new Error("wallet trust checkpoint requires an account trust anchor");
+  }
+  let trustCheckpoint = trustCheckpointPath
+    ? loadWalletTrustCheckpoint(trustCheckpointPath, accountTrust.expectedNetworkId) : null;
+  if (trustCheckpoint) requireCheckpointHandoff(trustCheckpoint, accountTrust.handoffs);
   const seen = new Set();
   let pending = false;
   let pairingAttempts = 0;
@@ -248,13 +262,21 @@ export function createWalletBridgeServer({
              body.proof.stateRoot !== activeTrust.lastHandoff.activationStateRoot)) {
           throw new Error("account proof does not match the validator activation block");
         }
-        return send(response, 200, {
-          statement: verifyAccountProof(body.proof, {
+        const statement = verifyAccountProof(body.proof, {
             expectedAddress: body.address,
             expectedNetworkId: accountTrust.expectedNetworkId,
             minimumHeight: body.minimumHeight,
             trustedValidators: activeTrust.trustedValidators,
-          }),
+          });
+        enforceWalletTrustCheckpoint(trustCheckpoint, statement);
+        if (trustCheckpointPath &&
+            (!trustCheckpoint || statement.height > trustCheckpoint.height)) {
+          trustCheckpoint = saveWalletTrustCheckpoint(
+            trustCheckpointPath, statement, activeTrust.lastHandoff,
+          );
+        }
+        return send(response, 200, {
+          statement,
           verified: true,
         }, origin);
       }

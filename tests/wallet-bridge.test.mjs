@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -80,6 +80,7 @@ test("wallet account trust advances through verified validator handoffs", async 
   });
   const origin = "http://127.0.0.1:8765";
   const token = "0".repeat(64);
+  const trustCheckpointPath = join(directory, "wallet.trust.json");
   const server = createWalletBridgeServer({
     authorize: async () => null,
     origin,
@@ -89,6 +90,7 @@ test("wallet account trust advances through verified validator handoffs", async 
       handoffs: [handoff],
       trustedValidators: firstMembers,
     },
+    trustCheckpointPath,
     vaultPath,
   });
   try {
@@ -99,6 +101,7 @@ test("wallet account trust advances through verified validator handoffs", async 
     });
     assert.equal(verified.status, 200);
     assert.equal((await verified.json()).verified, true);
+    assert.equal(existsSync(trustCheckpointPath), true);
     const rejected = await request(`${base}/v1/verify-account-proof`, origin, token, {
       body: JSON.stringify({
         address: account.address, minimumHeight: 10, proof: staleAuthority,
@@ -126,6 +129,19 @@ test("wallet account trust advances through verified validator handoffs", async 
     );
     assert.equal(wrongActivation.status, 400);
     assert.match((await wrongActivation.json()).error, /activation block/);
+    await close(server);
+    assert.throws(() => createWalletBridgeServer({
+      authorize: async () => null,
+      origin,
+      sessionToken: token,
+      trustAnchor: {
+        expectedNetworkId: networkId,
+        handoffs: [],
+        trustedValidators: firstMembers,
+      },
+      trustCheckpointPath,
+      vaultPath,
+    }), /rolls back/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });

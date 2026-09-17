@@ -66,6 +66,9 @@ genesis path leaves this check disabled and the interface labels the result as
 single-node data. The optional handoff-history path lets the bridge advance that
 trust through independently approved validator rotations. Every transition is
 verified from genesis and only the set active at the proof height is accepted.
+The bridge also writes `<vault>.trust.json`, a non-secret atomic checkpoint that
+prevents an older height, conflicting state or truncated rotation history from
+being accepted after restart. It should be backed up with the encrypted vault.
 The pairing code and session token are not recovery secrets. Neither belongs in
 a URL or persistent browser storage. Close the terminal process when finished.
 
