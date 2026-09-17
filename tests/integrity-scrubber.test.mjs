@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -143,6 +144,25 @@ test("one corrupt block copy is detected and repaired only under the writer lock
     release();
     assert.equal(repairLocalIntegrityCopies(context.config).repaired >= 1, true);
     assert.equal(readFileSync(primary, "utf8"), canonical);
+  } finally { context.cleanup(); }
+});
+
+test("an unverified snapshot is never promoted as a local repair source", () => {
+  const context = fixture();
+  try {
+    const snapshotDirectory = join(context.nodeDirectory, "snapshots");
+    const snapshot = join(snapshotDirectory, "STATE-SNAPSHOT.json");
+    const snapshotBackup = join(snapshotDirectory, "STATE-SNAPSHOT.backup.json");
+    mkdirSync(snapshotDirectory, { recursive: true });
+    writeFileSync(snapshot, `${JSON.stringify({ attackerControlled: true })}\n`);
+    writeFileSync(snapshotBackup, `${JSON.stringify({ attackerControlled: true })}\n`);
+    const health = runSweep(context.config);
+    assert.equal(health.healthy, false);
+    assert.ok(health.issues.some(({ kind, left, right }) =>
+      kind === "remote-repair-required" && left?.includes("STATE-SNAPSHOT") &&
+      right?.includes("STATE-SNAPSHOT")), JSON.stringify(health.issues));
+    assert.equal(health.issues.some(({ kind, source }) =>
+      kind === "repairable-local" && source?.includes("STATE-SNAPSHOT")), false);
   } finally { context.cleanup(); }
 });
 

@@ -30,8 +30,10 @@ import {
   createBackupInventory,
   runRemoteBackupRestoreDrill,
 } from "./backup-recovery.mjs";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { hashObject } from "./crypto.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
+import { verifyStateSnapshotWithHandoffs } from "./state-snapshot.mjs";
 
 const CONFIG_FORMAT = "nir-integrity-scrubber-config-v1";
 const CURSOR_FORMAT = "nir-integrity-scrubber-cursor-v1";
@@ -399,6 +401,16 @@ function historyValidator(context, expectedBlockHash) {
   };
 }
 
+function snapshotValidator(trustAnchor, maximumHeight) {
+  return (contents) => {
+    try {
+      const snapshot = parseConsensusJson(contents.toString("utf8"));
+      const verified = verifyStateSnapshotWithHandoffs(snapshot, trustAnchor);
+      return verified.height <= maximumHeight;
+    } catch { return false; }
+  };
+}
+
 function loadContext(config) {
   const genesis = readBoundedJson(config.genesisPath);
   const handoffs = config.handoffsPath ? readBoundedJson(config.handoffsPath) : [];
@@ -525,7 +537,10 @@ export function runIntegrityScrubStep(configInput, options = {}) {
         const backup = join(config.nodeDirectory, "snapshots", "STATE-SNAPSHOT.backup.json");
         if (existsSync(primary) || existsSync(backup)) {
           checkPair(config, cursor, "snapshots/STATE-SNAPSHOT.json",
-            "snapshots/STATE-SNAPSHOT.backup.json", remaining, null, null,
+            "snapshots/STATE-SNAPSHOT.backup.json", remaining, null,
+            snapshotValidator({ expectedNetworkId: genesis.networkId,
+              handoffs: loadOptions.handoffs,
+              trustedValidators: loadOptions.trustedValidators }, checkpoint.height),
             options.afterFileLstat);
         }
         cursor.phase = "history"; cursor.position = 1; cursor.previousHistoryHash = ZERO_HASH;
