@@ -23,6 +23,7 @@ import { generateWallet, publicWallet } from "./crypto.mjs";
 import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
 import { createAccountProof } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
+import { createTransactionProof } from "./transaction-tree.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -110,6 +111,21 @@ export class PersistentDevNode {
     }
     return this.#chain.blocks().filter(({ height }) => height > fromHeight)
       .slice(0, limit).map(createFinalityProof);
+  }
+
+  transactionProof(id) {
+    if (!/^[0-9a-f]{64}$/.test(id ?? "")) throw new Error("transaction id is invalid");
+    for (const block of this.#chain.blocks()) {
+      const index = block.transactions.findIndex((transaction) => transactionId(transaction) === id);
+      if (index >= 0) return {
+        blockHash: block.hash,
+        height: block.height,
+        proof: createTransactionProof(block.transactions, index),
+        transaction: block.transactions[index],
+        transactionsRoot: block.transactionsRoot,
+      };
+    }
+    throw new Error("transaction is not found");
   }
 
   account(address) {

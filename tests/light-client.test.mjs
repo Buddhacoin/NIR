@@ -62,6 +62,8 @@ test("compact finality proofs advance a checkpoint without full block bodies", (
     networkId: chain.networkId,
     stateRoot: second.stateRoot,
     tipHash: second.hash,
+    transactionCount: second.transactionCount,
+    transactionsRoot: second.transactionsRoot,
     validatorSetId: chain.validatorSetId,
   });
   assert.ok(JSON.stringify(proofs[0]).length < JSON.stringify(first).length);

@@ -11,6 +11,7 @@ import { generateWallet } from "../blockchain/crypto.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { exportBlockStoreBackup, loadBlockStore } from "../blockchain/block-store.mjs";
+import { verifyTransactionProof } from "../blockchain/transaction-tree.mjs";
 
 test("a transfer survives a complete node restart and replay", () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-node-test-"));
@@ -217,6 +218,12 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
     assert.equal(faucetResponse.status, 202);
     const account = await fetch(`${base}/v1/accounts/${wallet.address}`).then((response) => response.json());
     assert.equal(account.atomicBalance, (10n * ATOMIC_UNITS).toString());
+    const transactionProof = await fetch(
+      `${base}/v1/transactions/${account.transactions[0].id}/proof`,
+    ).then((response) => response.json());
+    assert.equal(verifyTransactionProof(
+      transactionProof.transaction, transactionProof.proof, transactionProof.transactionsRoot,
+    ), account.transactions[0].id);
     const handoffs = await fetch(`${base}/v1/validator-handoffs`).then((response) => response.json());
     assert.deepEqual(handoffs, { handoffs: [] });
     const finality = await fetch(`${base}/v1/finality-proofs?fromHeight=0&limit=8`)

@@ -25,6 +25,9 @@ identically.
   root for balances, nonces and Transfer Credit state; fixed-depth membership
   and absence proofs let a wallet verify one address without downloading the
   account database;
+- protocol-v22 ordered transaction commitments: every header carries the exact
+  transaction count and Merkle root, while nodes return a logarithmic inclusion
+  path for any finalized transaction;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;

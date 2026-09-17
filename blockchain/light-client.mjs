@@ -73,6 +73,7 @@ function validateHeader(proof, expectedNetworkId) {
   const expectedKeys = [
     "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height", "networkId",
     "peerRegistryHash", "previousHash", "protocolVersion", "stateRoot", "timestamp",
+    "transactionCount", "transactionsRoot",
   ];
   if (!proof || proof.format !== FORMAT || header?.format !== HEADER_FORMAT ||
       Object.keys(proof).sort().join(",") !==
@@ -82,8 +83,10 @@ function validateHeader(proof, expectedNetworkId) {
       header.networkId !== expectedNetworkId || header.protocolVersion !== PROTOCOL_VERSION ||
       !Number.isSafeInteger(header.height) || header.height < 1 ||
       !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
+      !Number.isSafeInteger(header.transactionCount) || header.transactionCount < 0 ||
       !HASH.test(header.previousHash ?? "") || !HASH.test(header.stateRoot ?? "") ||
       !HASH.test(header.accountStateRoot ?? "") ||
+      !HASH.test(header.transactionsRoot ?? "") ||
       !HASH.test(header.bodyHash ?? "") || !HASH.test(header.capabilityMemoryRoot ?? "") ||
       !HASH.test(header.peerRegistryHash ?? "")) {
     throw new Error("light client finality header is invalid");
@@ -159,6 +162,8 @@ export function verifyFinalityProofChain(proofs, {
     networkId: expectedNetworkId,
     stateRoot: last.header.stateRoot,
     tipHash: last.hash,
+    transactionCount: last.header.transactionCount,
+    transactionsRoot: last.header.transactionsRoot,
     validatorSetId: validatorSetId(current),
   };
 }

@@ -79,6 +79,14 @@ export function createNodeHttpServer(node) {
         const proofs = await node.finalityProofsAfter(fromHeight, limit);
         return send(response, 200, { proofs }, origin);
       }
+      if (request.method === "GET" && url.pathname.startsWith("/v1/transactions/") &&
+          url.pathname.endsWith("/proof")) {
+        if (typeof node.transactionProof !== "function") {
+          return send(response, 501, { error: "transaction proof is unavailable" }, origin);
+        }
+        const id = decodeURIComponent(url.pathname.slice("/v1/transactions/".length, -6));
+        return send(response, 200, await node.transactionProof(id), origin);
+      }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
         const accountPath = url.pathname.slice("/v1/accounts/".length);
         const proofRequest = accountPath.endsWith("/proof");

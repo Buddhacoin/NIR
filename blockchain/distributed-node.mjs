@@ -81,6 +81,7 @@ import {
   verifyAccountProofCandidate,
 } from "./account-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
+import { createTransactionProof } from "./transaction-tree.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -1096,6 +1097,19 @@ export class DistributedCoordinator {
     }
     return this.#chain.blocks().filter(({ height }) => height > fromHeight)
       .slice(0, limit).map(createFinalityProof);
+  }
+
+  transactionProof(id) {
+    if (!/^[0-9a-f]{64}$/.test(id ?? "")) throw new Error("transaction id is invalid");
+    for (const block of this.#chain.blocks()) {
+      const index = block.transactions.findIndex((transaction) => transactionId(transaction) === id);
+      if (index >= 0) return {
+        blockHash: block.hash, height: block.height,
+        proof: createTransactionProof(block.transactions, index),
+        transaction: block.transactions[index], transactionsRoot: block.transactionsRoot,
+      };
+    }
+    throw new Error("transaction is not found");
   }
 
   async validatorHandoffHistory() {

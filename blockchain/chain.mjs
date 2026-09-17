@@ -61,6 +61,7 @@ import {
   emptyAccountState,
   normalizeAccountState,
 } from "./account-tree.mjs";
+import { transactionRoot } from "./transaction-tree.mjs";
 
 function parseAtomic(value, field) {
   if (
@@ -631,6 +632,8 @@ export function blockHeader(block) {
     protocolVersion,
     stateRoot,
     timestamp,
+    transactionCount,
+    transactionsRoot,
     ...body
   } = unsigned;
   return {
@@ -645,6 +648,8 @@ export function blockHeader(block) {
     protocolVersion,
     stateRoot,
     timestamp,
+    transactionCount,
+    transactionsRoot,
   };
 }
 
@@ -935,6 +940,7 @@ export class NirChain {
     this.#safetyPolicies = new Set(safetyPolicyCommitments);
     const stateRoot = this.#stateRoot();
     const accountStateRoot = computeAccountStateRoot(this.#accountStates({ height: 0 }));
+    const transactionsRoot = transactionRoot([]);
     const genesis = {
       accountStateRoot,
       balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
@@ -950,6 +956,8 @@ export class NirChain {
       protocolVersion: PROTOCOL_VERSION,
       safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
       stateRoot,
+      transactionCount: 0,
+      transactionsRoot,
       validators: this.#validatorOrder.map((address) => ({
         address,
         operatorId: this.#validators.get(address).operatorId,
@@ -970,7 +978,9 @@ export class NirChain {
         stateRoot,
         protocolVersion: PROTOCOL_VERSION,
         timestamp: genesisTimestamp,
+        transactionCount: 0,
         transactions: [],
+        transactionsRoot,
       },
     ];
   }
@@ -1688,7 +1698,9 @@ export class NirChain {
       round,
       roundCertificate,
       timestamp,
+      transactionCount: transactions.length,
       transactions,
+      transactionsRoot: transactionRoot(transactions),
     };
     const provisional = { ...proposal, stateRoot: "0".repeat(64) };
     const simulation = {
@@ -2451,6 +2463,10 @@ export class NirChain {
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
       throw new Error("too many transactions in one block");
+    }
+    if (block.transactionCount !== block.transactions.length ||
+        block.transactionsRoot !== transactionRoot(block.transactions)) {
+      throw new Error("block transaction commitment is invalid");
     }
     if (block.transactions.filter(({ resource }) => resource === "transfer-credit").length >
         MAX_CREDIT_TRANSFERS_PER_BLOCK) {

@@ -26,6 +26,7 @@ balances as real NIR.
 - `GET /v1/accounts/{nir-address}/proof`
 - `GET /v1/validator-handoffs`
 - `GET /v1/finality-proofs?fromHeight={height}&limit={1..512}`
+- `GET /v1/transactions/{transaction-id}/proof`
 - `GET /v1/fees?amount={atomic-units}`
 - `POST /v1/faucet` with `{ "recipient": "nir1..." }`
 - `POST /v1/transactions` with a complete signed NIR transaction

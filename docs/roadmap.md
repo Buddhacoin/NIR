@@ -30,6 +30,8 @@ replays, restarts, message faults and state restoration.
   wallet checkpoints (implemented locally; independent audit remains);
 - sparse account membership and absence proofs bound directly to every verified
   finality header (implemented locally; independent audit remains);
+- ordered transaction roots and node-side inclusion proofs (implemented locally;
+  persistent wallet header history and verified history UI remain);
 - congestion measurements and a sustainable validator-compensation formula;
 - public test network with independent seed, validator, beacon and evaluator
   operators.

@@ -162,6 +162,15 @@ verified locally against the account root from the already verified finality
 header. Account attestations remain as an independent quorum signal, but cannot
 make a balance pass if its Merkle path is invalid.
 
+## Protocol v22 transaction commitments
+
+Every finalized header commits to the ordered transaction count and Merkle
+root. Leaves bind both the complete signed transaction identifier and its exact
+index, so reordering, substitution and duplicate-position ambiguity change the
+root. Nodes expose a logarithmic inclusion path for a finalized transaction.
+Persistent wallet header history and verified history rendering are the next
+integration layer.
+
 ### Draft score
 
 For an accepted proof `p`:
