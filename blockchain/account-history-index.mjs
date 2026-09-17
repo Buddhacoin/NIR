@@ -354,3 +354,64 @@ export function copyAccountHistoryIndex(sourceDirectory, destinationDirectory, c
   new AccountHistoryIndex(destinationDirectory, chain);
   return { height: chain.height, records: chain.height };
 }
+
+export function readAccountHistoryIndexRecords(directory, chain) {
+  new AccountHistoryIndex(directory, chain);
+  const source = join(resolve(directory), PRIMARY_DIRECTORY);
+  const records = [];
+  let previousIndexHash = ZERO_HASH;
+  for (let height = 1; height <= chain.height; height += 1) {
+    const record = readCandidate(join(source, fileName(height)), {
+      height, networkId: chain.networkId, previousIndexHash,
+    });
+    if (!record) throw new Error(`account history index ${height} changed during export`);
+    records.push(record);
+    previousIndexHash = record.indexHash;
+  }
+  return records;
+}
+
+export function verifyAccountHistoryIndexRecords(records, chain) {
+  if (!Array.isArray(records) || records.length !== chain.height) {
+    throw new Error("account history archive record count is invalid");
+  }
+  const accumulators = new Map();
+  const histories = new Map();
+  const trees = new Map();
+  const transactions = new Map();
+  const retained = retainedBlocks(chain);
+  let previousIndexHash = ZERO_HASH;
+  let tipHash = chain.blocks()[0].hash;
+  const verified = records.map((candidate, offset) => {
+    const height = offset + 1;
+    const record = verifyRecord(candidate, {
+      height, networkId: chain.networkId, previousIndexHash,
+    });
+    const block = retained.get(height);
+    if (block && (record.blockHash !== block.hash ||
+        record.transactionsRoot !== block.transactionsRoot ||
+        record.transactions.length !== block.transactions.length)) {
+      throw new Error(`account history archive conflicts with block ${height}`);
+    }
+    applyRecord(accumulators, histories, trees, transactions, record);
+    previousIndexHash = record.indexHash;
+    tipHash = record.blockHash;
+    return record;
+  });
+  if (tipHash !== chain.tipHash || !matchesChain(accumulators, histories, trees, chain)) {
+    throw new Error("account history archive does not match chain state");
+  }
+  return verified;
+}
+
+export function installAccountHistoryIndexRecords(directory, records, chain) {
+  const verified = verifyAccountHistoryIndexRecords(records, chain);
+  const root = resolve(directory);
+  const directories = [join(root, PRIMARY_DIRECTORY), join(root, BACKUP_DIRECTORY)];
+  directories.forEach((path) => mkdirSync(path, { recursive: true, mode: 0o700 }));
+  for (const record of verified) {
+    for (const path of directories) writeAtomic(join(path, fileName(record.height)), record);
+  }
+  new AccountHistoryIndex(root, chain);
+  return { height: chain.height, records: verified.length, tipHash: chain.tipHash };
+}

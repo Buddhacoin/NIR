@@ -204,6 +204,28 @@ per-account Merkle nodes as it replays the append-only index. These caches alter
 query cost only; clients still verify returned paths against finalized headers
 and authenticated account roots.
 
+### Multi-source archive recovery
+
+Long-term history recovery uses `nir-history-archive-manifest-v1`. A manifest
+commits to one exact finalized checkpoint, the complete history-index content
+root, record count, and a continuous list of bounded chunk hashes. The manifest
+is signed with ML-DSA-65 under a dedicated archive-approval domain.
+
+A receiver has an explicit local set of trusted archive identities and requires
+matching verified content from at least two distinct signers reached through
+distinct source identifiers. One signer presented through several addresses is
+counted once and rejected as false independence. Every chunk is size-bounded,
+canonically encoded and hash-checked before parsing. The reconstructed records
+then pass the same complete index-chain, transaction-inclusion, account-history
+and finalized-checkpoint verification used for local storage. Thus archive
+operators can restore availability but cannot rewrite monetary or transaction
+history.
+
+Operator membership is not currently selected by consensus. Production must
+distribute operators across independent organizations and failure domains,
+publish rotation policy, deploy authenticated transports, and rehearse total
+loss and interrupted-installation recovery.
+
 ### Draft score
 
 For an accepted proof `p`:

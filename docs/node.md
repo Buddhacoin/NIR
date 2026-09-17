@@ -66,6 +66,23 @@ and verify this archive before finalizing deletion of old block bodies: a compac
 state snapshot contains history roots, not the transaction identifiers needed
 to serve old pages.
 
+The archive-recovery core can export those records as bounded canonical chunks.
+Each operator signs a manifest that commits to the network, finalized height,
+tip, state roots, complete index content and every chunk digest. A recovering
+node accepts only configured post-quantum operator identities and requires the
+same content from at least two different signing operators and source
+identifiers. Different chunk layouts may agree because selection is based on
+the verified record content, not transport packaging.
+
+After selection, the node verifies every index-record hash link, every retained
+transaction proof, and every account-history root against its own independently
+verified chain checkpoint before writing either redundant journal. Archive
+signatures authenticate delivery; they cannot create consensus history or
+override a local finalized header. An invalid, stale, oversized, duplicated, or
+insufficiently corroborated archive fails closed. The API is currently in
+`blockchain/archive-sync.mjs`; authenticated download services and an operator
+CLI remain production work.
+
 ## Wallet-to-wallet flow
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses
@@ -118,5 +135,6 @@ separate multi-process network is documented in `docs/network.md`. The durable
 block and history journals detect and repair several partial-write and
 corruption cases, but they are not a production database. Production still
 requires independently operated archive services, multiple remote backup
-targets, authenticated snapshot and archive download from several peers,
-continuous restore drills, metrics, and independent storage review.
+targets, authenticated transport for the implemented signed multi-source archive
+format, crash-safe generation switching during installation, continuous restore
+drills, metrics, and independent storage review.
