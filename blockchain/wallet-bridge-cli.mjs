@@ -6,6 +6,7 @@ import process from "node:process";
 import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
+import { NirChain } from "./chain.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -78,12 +79,22 @@ try {
   );
   const sessionToken = randomBytes(32).toString("hex");
   const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
+  const genesisChain = genesis ? new NirChain(genesis) : null;
+  const genesisBlock = genesisChain?.blocks()[0] ?? null;
   const server = createWalletBridgeServer({
     origin,
     pairingCode,
     sessionToken,
     ...(genesis ? { trustAnchor: {
-      expectedNetworkId: genesis.networkId, handoffs, trustedValidators: genesis.validators,
+      expectedNetworkId: genesis.networkId,
+      genesisCheckpoint: {
+        height: 0,
+        stateRoot: genesisBlock.stateRoot,
+        tipHash: genesisBlock.hash,
+        validatorSetId: genesisChain.validatorSetId,
+      },
+      handoffs,
+      trustedValidators: genesis.validators,
     } } : {}),
     ...(genesis ? { trustCheckpointPath: `${vaultPath}.trust.json` } : {}),
     ...(genesis ? { trustHistoryPath } : {}),

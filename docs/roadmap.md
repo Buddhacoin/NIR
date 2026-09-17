@@ -25,7 +25,9 @@ replays, restarts, message faults and state restoration.
 - wallet screens for available balance, locked stake, credits, delegations and
   pending unlocks;
 - payment requests, address book, human-readable fee and resource quote;
-- light-client balance proofs and independently verified finalized headers;
+- compact light-client headers with block-body commitments, continuous hash
+  links, post-quantum certificates, validator handoffs and rollback-protected
+  wallet checkpoints (implemented locally; independent audit remains);
 - congestion measurements and a sustainable validator-compensation formula;
 - public test network with independent seed, validator, beacon and evaluator
   operators.

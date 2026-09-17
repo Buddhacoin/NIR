@@ -1,0 +1,162 @@
+import { canonicalJson, verifyObject } from "./crypto.mjs";
+import { blockHeader, blockHeaderHash, prepareCertificateHash } from "./chain.mjs";
+import { MAX_VALIDATORS, PROTOCOL_VERSION } from "./constants.mjs";
+import { verifyValidatorHandoff } from "./validator-handoff.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
+
+const HASH = /^[0-9a-f]{64}$/;
+const FORMAT = "nir-finality-proof-v1";
+const HEADER_FORMAT = "nir-finality-header-v1";
+export const MAX_FINALITY_PROOFS = 512;
+export const MAX_FINALITY_CHAIN_BYTES = 32 * 1024 * 1024;
+
+export function createFinalityProof(block) {
+  return {
+    certificate: structuredClone(block.certificate ?? []),
+    format: FORMAT,
+    hash: block.hash,
+    header: blockHeader(block),
+    prepareCertificate: structuredClone(block.prepareCertificate ?? []),
+  };
+}
+
+function normalizeValidators(validators) {
+  if (!Array.isArray(validators) || validators.length < 4 || validators.length > MAX_VALIDATORS) {
+    throw new Error("light client validator set is invalid");
+  }
+  const ordered = [...validators].sort((a, b) => a.address.localeCompare(b.address));
+  if (new Set(ordered.map(({ address }) => address)).size !== ordered.length) {
+    throw new Error("light client validator set contains duplicates");
+  }
+  return ordered;
+}
+
+function verifyVotes(proof, validators, previousValidators = null) {
+  const current = normalizeValidators(validators);
+  const previous = previousValidators ? normalizeValidators(previousValidators) : null;
+  const accepted = new Map([...(previous ?? []), ...current].map((member) => [member.address, member]));
+  const verifyCertificate = (votes, domain, payload, label) => {
+    if (!Array.isArray(votes) || votes.length > accepted.size) {
+      throw new Error(`light client ${label} certificate is invalid`);
+    }
+    const seen = new Set();
+    for (const vote of votes) {
+      const member = accepted.get(vote?.validator);
+      if (!member || seen.has(member.address) || typeof vote.signature !== "string" ||
+          vote.signature.length > 7_000 ||
+          !verifyObject(payload, vote.signature, member.publicKey, domain)) {
+        throw new Error(`light client ${label} vote is invalid`);
+      }
+      seen.add(member.address);
+    }
+    const requireQuorum = (set, kind) => {
+      const addresses = new Set(set.map(({ address }) => address));
+      const count = [...seen].filter((address) => addresses.has(address)).length;
+      if (count < Math.floor((set.length * 2) / 3) + 1) {
+        throw new Error(`light client ${kind} quorum is not reached`);
+      }
+    };
+    requireQuorum(current, label);
+    if (previous) requireQuorum(previous, `old-set ${label}`);
+  };
+  verifyCertificate(
+    proof.prepareCertificate, "BLOCK_PREPARE", { blockHash: proof.hash }, "prepare",
+  );
+  verifyCertificate(proof.certificate, "BLOCK_COMMIT", {
+    blockHash: proof.hash,
+    prepareCertificateHash: prepareCertificateHash(proof.prepareCertificate),
+  }, "finality");
+}
+
+function validateHeader(proof, expectedNetworkId) {
+  const header = proof?.header;
+  const expectedKeys = [
+    "bodyHash", "capabilityMemoryRoot", "format", "height", "networkId",
+    "peerRegistryHash", "previousHash", "protocolVersion", "stateRoot", "timestamp",
+  ];
+  if (!proof || proof.format !== FORMAT || header?.format !== HEADER_FORMAT ||
+      Object.keys(proof).sort().join(",") !==
+        "certificate,format,hash,header,prepareCertificate" ||
+      Object.keys(header ?? {}).sort().join(",") !== expectedKeys.sort().join(",") ||
+      proof.hash !== blockHeaderHash(header) || !HASH.test(proof.hash ?? "") ||
+      header.networkId !== expectedNetworkId || header.protocolVersion !== PROTOCOL_VERSION ||
+      !Number.isSafeInteger(header.height) || header.height < 1 ||
+      !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
+      !HASH.test(header.previousHash ?? "") || !HASH.test(header.stateRoot ?? "") ||
+      !HASH.test(header.bodyHash ?? "") || !HASH.test(header.capabilityMemoryRoot ?? "") ||
+      !HASH.test(header.peerRegistryHash ?? "")) {
+    throw new Error("light client finality header is invalid");
+  }
+  return header;
+}
+
+export function verifyFinalityProofChain(proofs, {
+  checkpoint,
+  expectedNetworkId,
+  handoffs = [],
+  trustedValidators,
+} = {}) {
+  if (!checkpoint || !Number.isSafeInteger(checkpoint.height) || checkpoint.height < 0 ||
+      !HASH.test(checkpoint.tipHash ?? "") || !HASH.test(checkpoint.stateRoot ?? "") ||
+      typeof expectedNetworkId !== "string" || !Array.isArray(proofs) || proofs.length < 1 ||
+      proofs.length > MAX_FINALITY_PROOFS ||
+      Buffer.byteLength(canonicalJson(proofs)) > MAX_FINALITY_CHAIN_BYTES ||
+      !Array.isArray(handoffs) || handoffs.length > MAX_VALIDATORS) {
+    throw new Error("light client proof chain envelope is invalid");
+  }
+  let current = normalizeValidators(trustedValidators);
+  let previousHash = checkpoint.tipHash;
+  let previousHeight = checkpoint.height;
+  let previousTimestamp = null;
+  let handoffIndex = 0;
+  while (handoffIndex < handoffs.length && handoffs[handoffIndex].activationHeight <= checkpoint.height) {
+    const advanced = verifyValidatorHandoff(handoffs[handoffIndex], {
+      expectedNetworkId,
+      minimumActivationHeight: handoffIndex === 0 ? 1 : handoffs[handoffIndex - 1].activationHeight + 1,
+      trustedValidators: current,
+    });
+    current = advanced.trustedValidators;
+    handoffIndex += 1;
+  }
+  if (checkpoint.validatorSetId !== undefined &&
+      checkpoint.validatorSetId !== validatorSetId(current)) {
+    throw new Error("light client checkpoint validator set does not match handoff history");
+  }
+  for (const proof of proofs) {
+    const header = validateHeader(proof, expectedNetworkId);
+    if (header.height !== previousHeight + 1 || header.previousHash !== previousHash ||
+        (previousTimestamp !== null && header.timestamp < previousTimestamp)) {
+      throw new Error("light client finality chain is discontinuous");
+    }
+    let oldSet = null;
+    const handoff = handoffs[handoffIndex];
+    if (handoff && handoff.activationHeight === header.height) {
+      const advanced = verifyValidatorHandoff(handoff, {
+        expectedNetworkId,
+        minimumActivationHeight: handoffIndex === 0 ? 1 : handoffs[handoffIndex - 1].activationHeight + 1,
+        trustedValidators: current,
+      });
+      if (advanced.activationBlockHash !== proof.hash ||
+          advanced.activationStateRoot !== header.stateRoot) {
+        throw new Error("light client validator handoff does not match its activation header");
+      }
+      oldSet = current;
+      current = advanced.trustedValidators;
+      handoffIndex += 1;
+    } else if (handoff && handoff.activationHeight < header.height) {
+      throw new Error("light client validator handoff history is incomplete");
+    }
+    verifyVotes(proof, current, oldSet);
+    previousHash = proof.hash;
+    previousHeight = header.height;
+    previousTimestamp = header.timestamp;
+  }
+  const last = proofs.at(-1);
+  return {
+    height: last.header.height,
+    networkId: expectedNetworkId,
+    stateRoot: last.header.stateRoot,
+    tipHash: last.hash,
+    validatorSetId: validatorSetId(current),
+  };
+}

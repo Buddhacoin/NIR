@@ -17,6 +17,10 @@ identically.
   a block-epoch quota for zero-fee transfers; the stake owner may consume a
   credit for an exact transfer through the same two-signature sponsorship path,
   and a separate per-block limit bounds credit-paid traffic;
+- protocol-v20 compact finality headers: the block hash commits to a small
+  header and that header commits to the complete block body, allowing wallets
+  to verify the continuous finalized chain and post-quantum validator quorums
+  without downloading transaction bodies;
 - ML-DSA-65 post-quantum signatures for accounts and validators;
 - native M-of-N ML-DSA-65 multisignature accounts for treasury custody;
 - deterministic round-robin block proposers;

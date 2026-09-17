@@ -44,11 +44,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  for (const asset of ["style.css", "app.js", "nir-coin-icon.png"]) {
+  for (const asset of ["style.css", "nir-coin-icon.png"]) {
     assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=22`));
     assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=22`));
   }
-  assert.match(serviceWorker, /nir-wallet-shell-v22/);
+  assert.match(html, /app\.js\?v=23/);
+  assert.match(serviceWorker, /app\.js\?v=23/);
+  assert.match(serviceWorker, /nir-wallet-shell-v23/);
   assert.match(serviceWorker, /node-selection\.js/);
   assert.match(serviceWorker, /nodes\.json/);
 });

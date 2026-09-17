@@ -80,6 +80,7 @@ import {
   verifyAccountProof,
   verifyAccountProofCandidate,
 } from "./account-proof.mjs";
+import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -1090,6 +1091,15 @@ export class DistributedCoordinator {
   get mempoolSize() { return this.#mempool.size; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
+
+  finalityProofsAfter(fromHeight, limit = MAX_FINALITY_PROOFS) {
+    if (!Number.isSafeInteger(fromHeight) || fromHeight < 0 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_FINALITY_PROOFS) {
+      throw new Error("finality proof range is invalid");
+    }
+    return this.#chain.blocks().filter(({ height }) => height > fromHeight)
+      .slice(0, limit).map(createFinalityProof);
+  }
 
   async validatorHandoffHistory() {
     const trustAnchor = {

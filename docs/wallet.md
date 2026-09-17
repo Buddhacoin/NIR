@@ -73,6 +73,16 @@ The bridge also writes `<vault>.trust.json`, a non-secret atomic checkpoint that
 prevents an older height, conflicting state or truncated rotation history from
 being accepted after restart. It should be backed up with the encrypted vault.
 
+With an explicit genesis file, the bridge deterministically derives block zero
+and its validator-set checkpoint. Even the first higher balance is not accepted
+merely because RPC servers report it. The wallet downloads bounded pages from
+`/v1/finality-proofs` and asks the local bridge to check every
+protocol-v20 compact header, previous-hash link, block-body commitment, prepare
+quorum, commit quorum and dual-quorum validator activation. Only an account
+proof matching the resulting height, block hash, state root and validator-set
+identifier can replace the atomic checkpoint. Full transaction bodies are not
+downloaded by the wallet.
+
 ## Multiple node policy
 
 The signed wallet package contains `wallet-ui/nodes.json`. It lists exact node

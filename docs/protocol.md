@@ -140,6 +140,16 @@ liquid fee balance. The present values are test-network parameters. Wallet
 controls and validator compensation for credit traffic remain required before
 mainnet.
 
+## Protocol v20 compact finality headers
+
+Every non-genesis block hash is the domain-separated hash of a compact finality
+header. The header contains the network, height, previous block hash, timestamp,
+protocol version, state root, capability root, peer-registry hash and a
+domain-separated commitment to every remaining unsigned block field. Validators
+prepare and commit that header hash. A light client can therefore verify the
+continuous finalized history and the exact active validator quorum while a full
+node retains and executes the committed block body.
+
 ### Draft score
 
 For an accepted proof `p`:

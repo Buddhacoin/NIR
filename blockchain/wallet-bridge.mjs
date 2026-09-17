@@ -18,6 +18,10 @@ import {
   saveWalletTrustCheckpoint,
 } from "./wallet-trust-store.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
+import {
+  MAX_FINALITY_CHAIN_BYTES,
+  verifyFinalityProofChain,
+} from "./light-client.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
@@ -161,7 +165,13 @@ export function createWalletBridgeServer({
       (trustAnchor !== undefined &&
         (typeof trustAnchor?.expectedNetworkId !== "string" ||
          !Array.isArray(trustAnchor?.trustedValidators) ||
-         trustAnchor.trustedValidators.length < 4)) ||
+         trustAnchor.trustedValidators.length < 4 ||
+         (trustAnchor.genesisCheckpoint !== undefined &&
+          (!Number.isSafeInteger(trustAnchor.genesisCheckpoint?.height) ||
+           trustAnchor.genesisCheckpoint.height !== 0 ||
+           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.tipHash ?? "") ||
+           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.stateRoot ?? "") ||
+           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))))) ||
       (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
       (trustHistoryPath !== undefined && typeof trustHistoryPath !== "string") ||
@@ -173,6 +183,8 @@ export function createWalletBridgeServer({
     handoffs: structuredClone(trustAnchor.handoffs ?? []),
     trustedValidators: structuredClone(trustAnchor.trustedValidators),
   } : null;
+  const genesisCheckpoint = trustAnchor?.genesisCheckpoint
+    ? structuredClone(trustAnchor.genesisCheckpoint) : null;
   if (accountTrust) {
     advanceValidatorTrust(accountTrust);
   }
@@ -181,6 +193,7 @@ export function createWalletBridgeServer({
   }
   let trustCheckpoint = trustCheckpointPath
     ? loadWalletTrustCheckpoint(trustCheckpointPath, accountTrust.expectedNetworkId) : null;
+  let verifiedFinalityTip = null;
   if (trustCheckpoint) requireCheckpointHandoff(trustCheckpoint, accountTrust.handoffs);
   const seen = new Set();
   let pending = false;
@@ -236,9 +249,9 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/trust-info") {
         return send(response, 200, {
           enabled: Boolean(accountTrust),
-          minimumHeight: trustCheckpoint?.height ?? 0,
+          minimumHeight: trustCheckpoint?.height ?? genesisCheckpoint?.height ?? 0,
           networkId: accountTrust?.expectedNetworkId ?? null,
-          tipHash: trustCheckpoint?.tipHash ?? null,
+          tipHash: trustCheckpoint?.tipHash ?? genesisCheckpoint?.tipHash ?? null,
         }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-payment-request") {
@@ -275,11 +288,32 @@ export function createWalletBridgeServer({
           saveWalletHandoffHistory(trustHistoryPath, body.handoffs);
         }
         accountTrust.handoffs = structuredClone(body.handoffs);
+        verifiedFinalityTip = null;
         return send(response, 200, {
           activationHeight: advanced.lastHandoff?.activationHeight ?? 0,
           handoffs: accountTrust.handoffs.length,
           updated: true,
         }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/verify-finality-chain") {
+        if (!accountTrust || (!trustCheckpoint && !genesisCheckpoint)) {
+          throw new Error("a genesis or account checkpoint is required before light sync");
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("finality proof verification requires application/json");
+        }
+        const body = await readBody(request, MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
+        const persistedBase = trustCheckpoint ?? genesisCheckpoint;
+        const restartsFromPersisted = body?.proofs?.[0]?.header?.height === persistedBase.height + 1 &&
+          body.proofs[0].header.previousHash === persistedBase.tipHash;
+        const base = restartsFromPersisted ? persistedBase : (verifiedFinalityTip ?? persistedBase);
+        verifiedFinalityTip = verifyFinalityProofChain(body?.proofs, {
+          checkpoint: base,
+          expectedNetworkId: accountTrust.expectedNetworkId,
+          handoffs: accountTrust.handoffs,
+          trustedValidators: accountTrust.trustedValidators,
+        });
+        return send(response, 200, { tip: verifiedFinalityTip, verified: true }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/verify-account-proof") {
         if (!accountTrust) throw new Error("bridge account trust anchor is not configured");
@@ -309,11 +343,20 @@ export function createWalletBridgeServer({
             trustedValidators: activeTrust.trustedValidators,
           });
         enforceWalletTrustCheckpoint(trustCheckpoint, statement);
+        const requiredBase = trustCheckpoint ?? genesisCheckpoint;
+        if (requiredBase && statement.height > requiredBase.height &&
+            (!verifiedFinalityTip || verifiedFinalityTip.height !== statement.height ||
+             verifiedFinalityTip.tipHash !== statement.tipHash ||
+             verifiedFinalityTip.stateRoot !== statement.stateRoot ||
+             verifiedFinalityTip.validatorSetId !== statement.validatorSetId)) {
+          throw new Error("account proof has no matching verified finality chain");
+        }
         if (trustCheckpointPath &&
             (!trustCheckpoint || statement.height > trustCheckpoint.height)) {
           trustCheckpoint = saveWalletTrustCheckpoint(
             trustCheckpointPath, statement, activeTrust.lastHandoff,
           );
+          verifiedFinalityTip = null;
         }
         return send(response, 200, {
           statement,

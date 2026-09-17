@@ -121,6 +121,27 @@ async function readAccount() {
         method: "POST", body: JSON.stringify({ handoffs: history.handoffs }),
       });
     }
+    const trust = await bridgeRequest("/v1/trust-info");
+    if (trust.enabled && trust.tipHash && networkInfo.height > trust.minimumHeight) {
+      let verifiedHeight = trust.minimumHeight;
+      while (verifiedHeight < networkInfo.height) {
+        const finalityResponse = await fetch(nodeUrl(
+          `/v1/finality-proofs?fromHeight=${verifiedHeight}&limit=512`,
+        ));
+        if (!finalityResponse.ok) throw new Error("finality proofs unavailable");
+        const { proofs } = await finalityResponse.json();
+        if (!Array.isArray(proofs) || proofs.length === 0) {
+          throw new Error("finality proof chain is incomplete");
+        }
+        const verifiedChain = await bridgeRequest("/v1/verify-finality-chain", {
+          method: "POST", body: JSON.stringify({ proofs }),
+        });
+        if (!verifiedChain.verified || verifiedChain.tip.height <= verifiedHeight) {
+          throw new Error("finality proof chain did not advance");
+        }
+        verifiedHeight = verifiedChain.tip.height;
+      }
+    }
     const proofResponse = await fetch(
       nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`),
     );

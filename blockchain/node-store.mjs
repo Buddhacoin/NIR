@@ -22,6 +22,7 @@ import {
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
 import { createAccountProof } from "./account-proof.mjs";
+import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -101,6 +102,15 @@ export class PersistentDevNode {
   get tipHash() { return this.#chain.tipHash; }
 
   validatorHandoffHistory() { return []; }
+
+  finalityProofsAfter(fromHeight, limit = MAX_FINALITY_PROOFS) {
+    if (!Number.isSafeInteger(fromHeight) || fromHeight < 0 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_FINALITY_PROOFS) {
+      throw new Error("finality proof range is invalid");
+    }
+    return this.#chain.blocks().filter(({ height }) => height > fromHeight)
+      .slice(0, limit).map(createFinalityProof);
+  }
 
   account(address) {
     const transactions = this.#chain.blocks().flatMap((block) => block.transactions)

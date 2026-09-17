@@ -69,6 +69,16 @@ export function createNodeHttpServer(node) {
         const history = await node.validatorHandoffHistory();
         return send(response, 200, Array.isArray(history) ? { handoffs: history } : history, origin);
       }
+      if (request.method === "GET" && url.pathname === "/v1/finality-proofs") {
+        if (typeof node.finalityProofsAfter !== "function") {
+          return send(response, 501, { error: "finality proofs are unavailable" }, origin);
+        }
+        const fromHeight = Number(url.searchParams.get("fromHeight"));
+        const limitValue = url.searchParams.get("limit");
+        const limit = limitValue === null ? undefined : Number(limitValue);
+        const proofs = await node.finalityProofsAfter(fromHeight, limit);
+        return send(response, 200, { proofs }, origin);
+      }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
         const accountPath = url.pathname.slice("/v1/accounts/".length);
         const proofRequest = accountPath.endsWith("/proof");

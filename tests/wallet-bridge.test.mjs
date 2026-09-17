@@ -9,6 +9,9 @@ import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
 import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
+import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
+import { SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
+import { createFinalityProof } from "../blockchain/light-client.mjs";
 
 async function close(server) {
   if (!server.listening) return;
@@ -34,6 +37,110 @@ function validatorMembers(wallets) {
     ...publicWallet(wallet), operatorId: `validator-${wallet.address.slice(4, 16)}`,
   }));
 }
+
+test("wallet checkpoint advances only through a verified finality header chain", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-light-client-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const wallet = createWalletFile({ path: vaultPath, password: "wallet-light-client-password" });
+  const validators = Array.from({ length: 4 }, generateWallet);
+  const evaluators = Array.from({ length: 4 }, generateWallet);
+  const beacons = Array.from({ length: 4 }, generateWallet);
+  const members = validatorMembers(validators);
+  const networkId = "nir-wallet-light-client";
+  const chain = new NirChain({
+    beaconAuthorities: beacons.map((entry, index) => ({
+      ...publicWallet(entry), operatorId: `beacon-${index}`,
+    })),
+    capabilityReferences: [{
+      artifactHash: `sha256:${"1".repeat(64)}`,
+      behaviorCommitment: "2".repeat(64), capabilitiesBps: { "reasoning-v1": 1 },
+    }],
+    evaluators: evaluators.map((entry, index) => ({
+      ...publicWallet(entry), operatorId: `evaluator-${index}`,
+    })),
+    genesisTimestamp: 0,
+    networkId,
+    safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
+    treasuryAddress: generateWallet().address,
+    validators: members,
+  });
+  const append = (timestamp) => {
+    const block = finalizeBlock(chain.buildBlock({ timestamp }), validators.slice(0, 3));
+    chain.appendBlock(block);
+    return block;
+  };
+  const account = (height) => createAccountProof({
+    account: {
+      address: wallet.address, atomicBalance: "0", nextNonce: 0,
+      resources: {
+        atomicStake: "0", availableTransferCredits: "0", delegations: [], pendingUnstake: null,
+      },
+    },
+    height, networkId, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
+    validators: members, validatorWallets: validators.slice(0, 3),
+  });
+  const genesisBlock = chain.blocks()[0];
+  const firstBlock = append(1);
+  const origin = "http://127.0.0.1:8765";
+  const token = "6".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    origin, sessionToken: token,
+    trustAnchor: {
+      expectedNetworkId: networkId,
+      genesisCheckpoint: {
+        height: 0,
+        stateRoot: genesisBlock.stateRoot,
+        tipHash: genesisBlock.hash,
+        validatorSetId: chain.validatorSetId,
+      },
+      handoffs: [], trustedValidators: members,
+    },
+    trustCheckpointPath: join(directory, "wallet.trust.json"), vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const unverifiedBootstrap = await request(
+      `${base}/v1/verify-account-proof`, origin, token, {
+        body: JSON.stringify({ address: wallet.address, minimumHeight: 1, proof: account(1) }),
+        method: "POST",
+      },
+    );
+    assert.equal(unverifiedBootstrap.status, 400);
+    assert.match((await unverifiedBootstrap.json()).error, /verified finality chain/);
+    const firstSync = await request(`${base}/v1/verify-finality-chain`, origin, token, {
+      body: JSON.stringify({ proofs: [createFinalityProof(firstBlock)] }), method: "POST",
+    });
+    assert.equal(firstSync.status, 200);
+    const bootstrap = await request(`${base}/v1/verify-account-proof`, origin, token, {
+      body: JSON.stringify({ address: wallet.address, minimumHeight: 1, proof: account(1) }),
+      method: "POST",
+    });
+    assert.equal(bootstrap.status, 200);
+    const second = append(2);
+    const laterProof = account(2);
+    const premature = await request(`${base}/v1/verify-account-proof`, origin, token, {
+      body: JSON.stringify({ address: wallet.address, minimumHeight: 2, proof: laterProof }),
+      method: "POST",
+    });
+    assert.equal(premature.status, 400);
+    assert.match((await premature.json()).error, /verified finality chain/);
+    const lightSync = await request(`${base}/v1/verify-finality-chain`, origin, token, {
+      body: JSON.stringify({ proofs: [createFinalityProof(second)] }), method: "POST",
+    });
+    assert.equal(lightSync.status, 200);
+    assert.equal((await lightSync.json()).tip.height, 2);
+    const accepted = await request(`${base}/v1/verify-account-proof`, origin, token, {
+      body: JSON.stringify({ address: wallet.address, minimumHeight: 2, proof: laterProof }),
+      method: "POST",
+    });
+    assert.equal(accepted.status, 200);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("wallet account trust advances through verified validator handoffs", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-proof-rotation-test-"));

@@ -219,6 +219,11 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
     assert.equal(account.atomicBalance, (10n * ATOMIC_UNITS).toString());
     const handoffs = await fetch(`${base}/v1/validator-handoffs`).then((response) => response.json());
     assert.deepEqual(handoffs, { handoffs: [] });
+    const finality = await fetch(`${base}/v1/finality-proofs?fromHeight=0&limit=8`)
+      .then((response) => response.json());
+    assert.equal(finality.proofs.length, 1);
+    assert.equal(finality.proofs[0].header.height, 1);
+    assert.match(finality.proofs[0].hash, /^[0-9a-f]{64}$/);
 
     const rejected = await fetch(`${base}/health`, { headers: { origin: "https://example.com" } });
     assert.equal(rejected.status, 403);

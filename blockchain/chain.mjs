@@ -578,8 +578,41 @@ function unsignedBlock(block) {
   return unsigned;
 }
 
+const FINALITY_HEADER_FORMAT = "nir-finality-header-v1";
+
+export function blockHeader(block) {
+  const unsigned = unsignedBlock(block);
+  const {
+    capabilityMemoryRoot,
+    height,
+    networkId,
+    peerRegistryHash,
+    previousHash,
+    protocolVersion,
+    stateRoot,
+    timestamp,
+    ...body
+  } = unsigned;
+  return {
+    bodyHash: hashObject(body, "BLOCK_BODY"),
+    capabilityMemoryRoot,
+    format: FINALITY_HEADER_FORMAT,
+    height,
+    networkId,
+    peerRegistryHash,
+    previousHash,
+    protocolVersion,
+    stateRoot,
+    timestamp,
+  };
+}
+
+export function blockHeaderHash(header) {
+  return hashObject(header, "BLOCK");
+}
+
 export function blockHash(block) {
-  return hashObject(unsignedBlock(block), "BLOCK");
+  return blockHeaderHash(blockHeader(block));
 }
 
 export function prepareVoteForBlock(block, validatorWallet) {
