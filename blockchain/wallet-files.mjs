@@ -20,6 +20,7 @@ import {
 import { addressFromPublicKey, generateWallet } from "./crypto.mjs";
 import { createPaymentRequest } from "./payment-request.mjs";
 import { createSignedHistoryArchive } from "./archive-sync.mjs";
+import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 
 function readVault(path) {
@@ -150,6 +151,15 @@ export function signWalletHistoryArchive({ path, password, directory, chain, opt
   const wallet = decryptWallet(readVault(path), password);
   try {
     return createSignedHistoryArchive(directory, chain, wallet, options);
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function signWalletBackupReceipt({ path, password, directory, genesis, options }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    return createSignedBackupReceipt(directory, genesis, wallet, options);
   } finally {
     wallet.privateKey = "";
   }
