@@ -19,12 +19,21 @@ const SNAPSHOT_CATCHUP_THRESHOLD = 16;
 const MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES =
   MAX_HANDOFF_STORE_BYTES + MAX_TOPOLOGY_STORE_BYTES + 64 * 1024;
 const SIGNER = /^nir1[0-9a-f]{64}$/;
+const VALIDATOR_AUTH_PATHS = new Set([
+  "/v1/gossip/transactions", "/v1/p2p/blocks", "/v1/p2p/blocks/range",
+  "/v1/p2p/commits", "/v1/p2p/handoffs", "/v1/p2p/handoffs/history",
+  "/v1/p2p/health", "/v1/p2p/locks", "/v1/p2p/produce",
+  "/v1/p2p/proposals", "/v1/p2p/snapshots/candidate", "/v1/p2p/timeouts",
+  "/v1/p2p/topologies/history",
+]);
+const COORDINATOR_AUTH_PATHS = new Set([
+  "/v1/accounts/proof-attest", "/v1/accounts/proof-candidate", "/v1/blocks",
+  "/v1/commits", "/v1/handoffs", "/v1/handoffs/history", "/v1/health",
+  "/v1/mempool", "/v1/mempool/transactions", "/v1/proposals",
+  "/v1/snapshots/attest", "/v1/snapshots/candidate", "/v1/timeouts",
+]);
 
-function requestIdentity(path, body) {
-  if (SIGNER.test(body?.auth?.signer ?? "")) return `peer:${body.auth.signer}`;
-  if (path === "/v1/transactions" && SIGNER.test(body?.sender ?? "")) {
-    return `transaction:${body.sender}`;
-  }
+function publicRequestIdentity(path) {
   return `public:${path.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160)}`;
 }
 
@@ -363,9 +372,17 @@ export function createValidatorHttpServer(validator, options = {}) {
     throw new Error("validator ingress limiter is invalid");
   }
   const verificationScheduler = options.verificationScheduler ?? new VerificationScheduler();
+  const authenticationScheduler = options.authenticationScheduler ?? new VerificationScheduler({
+    maxConcurrent: 8,
+    maxPerIdentity: 8,
+    maxQueued: 128,
+    maxQueuedPerIdentity: 128,
+  });
   const peerReputation = options.peerReputation ?? new PeerReputation();
   if (typeof verificationScheduler.run !== "function" ||
       typeof verificationScheduler.metrics !== "function" ||
+      typeof authenticationScheduler.run !== "function" ||
+      typeof authenticationScheduler.metrics !== "function" ||
       typeof peerReputation.assertAllowed !== "function" ||
       typeof peerReputation.recordViolation !== "function" ||
       typeof peerReputation.metrics !== "function") {
@@ -386,14 +403,17 @@ export function createValidatorHttpServer(validator, options = {}) {
     try {
       const url = new URL(request.url, "http://validator.local");
       if (request.method === "GET" && url.pathname === "/health") {
-        return send(response, 200, {
-          address: validator.address,
-          height: validator.height,
-          networkId: validator.networkId,
-          status: "ready",
-          tipHash: validator.tipHash,
-          mempoolSize: validator.mempoolSize,
-        });
+        identity = "public:health";
+        consumeIngress(identity);
+        peerReputation.assertAllowed(identity);
+        return await verificationScheduler.run(identity, () => send(response, 200, {
+            address: validator.address,
+            height: validator.height,
+            networkId: validator.networkId,
+            status: "ready",
+            tipHash: validator.tipHash,
+            mempoolSize: validator.mempoolSize,
+          }));
       }
       if (request.method === "GET" && url.pathname === "/v1/discovery") {
         identity = "public:discovery";
@@ -403,7 +423,11 @@ export function createValidatorHttpServer(validator, options = {}) {
           send(response, 200, validator.peerAnnouncement()));
       }
       if (request.method === "GET" && url.pathname === "/metrics") {
+        identity = "public:metrics";
+        consumeIngress(identity);
+        peerReputation.assertAllowed(identity);
         return send(response, 200, {
+          authentication: authenticationScheduler.metrics(),
           ingressIdentities: ingressLimiter.size,
           nonces: validator.securityMetrics(),
           reputation: peerReputation.metrics(),
@@ -414,17 +438,40 @@ export function createValidatorHttpServer(validator, options = {}) {
         ["/v1/sync", "/v1/blocks/produce"].includes(url.pathname);
       const parsedBody = request.method === "POST" && !bodyless
         ? await readBody(request) : null;
-      identity = requestIdentity(url.pathname, parsedBody);
+      const authRole = request.method !== "POST" ? null
+        : VALIDATOR_AUTH_PATHS.has(url.pathname) ? "validator"
+          : COORDINATOR_AUTH_PATHS.has(url.pathname) ? "coordinator" : null;
+      let authenticatedNonce = null;
+      if (authRole !== null) {
+        const { auth, payload } = parsedBody ?? {};
+        authenticatedNonce = await authenticationScheduler.run(
+          `preauth:${authRole}`,
+          () => authRole === "validator"
+            ? validator.authorizeValidator(auth, request.method, url.pathname, payload)
+            : validator.authorize(auth, request.method, url.pathname, payload),
+        );
+        if (!SIGNER.test(auth?.signer ?? "")) {
+          throw new Error("authenticated peer identity is invalid");
+        }
+        authenticatedIdentity = `peer:${auth.signer}`;
+        identity = authenticatedIdentity;
+      } else {
+        identity = publicRequestIdentity(url.pathname);
+      }
       peerReputation.assertAllowed(identity);
       const authorizeValidator = (auth, method, path, payload) => {
-        const nonce = validator.authorizeValidator(auth, method, path, payload);
-        authenticatedIdentity = identity;
-        return nonce;
+        if (authRole !== "validator" || auth !== parsedBody?.auth || payload !== parsedBody?.payload ||
+            method !== request.method || path !== url.pathname || authenticatedNonce === null) {
+          throw new Error("validator authentication stage mismatch");
+        }
+        return authenticatedNonce;
       };
       const authorizeCoordinator = (auth, method, path, payload) => {
-        const nonce = validator.authorize(auth, method, path, payload);
-        authenticatedIdentity = identity;
-        return nonce;
+        if (authRole !== "coordinator" || auth !== parsedBody?.auth || payload !== parsedBody?.payload ||
+            method !== request.method || path !== url.pathname || authenticatedNonce === null) {
+          throw new Error("coordinator authentication stage mismatch");
+        }
+        return authenticatedNonce;
       };
       return await verificationScheduler.run(identity, async () => {
       if (request.method === "POST" && url.pathname === "/v1/transactions") {

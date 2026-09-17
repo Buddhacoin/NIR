@@ -29,6 +29,61 @@ async function close(server) {
   }
 }
 
+class RecordingScheduler {
+  identities = [];
+
+  async run(identity, operation) {
+    this.identities.push(identity);
+    return operation();
+  }
+
+  metrics() {
+    return { active: 0, queued: 0 };
+  }
+}
+
+test("claimed peer identities are scheduled only after authentication", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-auth-scheduler-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const authenticationScheduler = new RecordingScheduler();
+  const verificationScheduler = new RecordingScheduler();
+  const server = createValidatorHttpServer(replicas[0], {
+    authenticationScheduler,
+    verificationScheduler,
+  });
+  try {
+    const url = await listen(server);
+    const path = "/v1/p2p/health";
+    const payload = {};
+    const forgedAuth = replicas[1].createValidatorRequest(path, payload);
+    forgedAuth.signature = "0".repeat(forgedAuth.signature.length);
+    const forged = await fetch(`${url}${path}`, {
+      body: JSON.stringify({ auth: forgedAuth, payload }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(forged.status, 400);
+    assert.deepEqual(authenticationScheduler.identities, ["preauth:validator"]);
+    assert.deepEqual(verificationScheduler.identities, []);
+
+    const validAuth = replicas[1].createValidatorRequest(path, payload);
+    const valid = await fetch(`${url}${path}`, {
+      body: JSON.stringify({ auth: validAuth, payload }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(valid.status, 200);
+    assert.deepEqual(authenticationScheduler.identities,
+      ["preauth:validator", "preauth:validator"]);
+    assert.deepEqual(verificationScheduler.identities, [`peer:${validAuth.signer}`]);
+  } finally {
+    await close(server);
+    replicas.forEach((replica) => replica.closeSecurityState());
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("independent HTTP validator replicas finalize with one peer offline", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-distributed-test-"));
   const layout = initializeDistributedDevnet(join(temporary, "network"));
