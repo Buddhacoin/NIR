@@ -71,7 +71,7 @@ export function createNodeHttpServer(node) {
           if (typeof node.accountProof !== "function") {
             return send(response, 501, { error: "account proof is unavailable" }, origin);
           }
-          return send(response, 200, node.accountProof(address), origin);
+          return send(response, 200, await node.accountProof(address), origin);
         }
         return send(response, 200, node.account(address), origin);
       }

@@ -74,6 +74,11 @@ import {
   authorizeTransportAction,
   buildValidatorTransportView,
 } from "./validator-transport-view.mjs";
+import {
+  createAccountProof,
+  verifyAccountProof,
+  verifyAccountProofCandidate,
+} from "./account-proof.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -384,6 +389,36 @@ export class ValidatorReplica {
       atomicBalance: this.#chain.balance(address).toString(),
       resources: accountResources(this.#chain, address),
     };
+  }
+
+  accountProofCandidate(address) {
+    const { address: accountAddress, atomicBalance, resources } = this.account(address);
+    return createAccountProof({
+      account: {
+        address: accountAddress,
+        atomicBalance,
+        nextNonce: this.#chain.nextNonce(address),
+        resources,
+      },
+      height: this.#chain.height,
+      networkId: this.#chain.networkId,
+      stateRoot: this.#chain.stateRoot,
+      tipHash: this.#chain.tipHash,
+      validators: this.#chain.validatorMembers,
+      validatorWallets: [this.#wallet],
+    });
+  }
+
+  accountProofAttestation({ address, height, statementHash }) {
+    if (!ADDRESS.test(address ?? "") || !Number.isSafeInteger(height) || height < 0 ||
+        !/^[0-9a-f]{64}$/.test(statementHash ?? "")) {
+      throw new Error("account proof attestation request is invalid");
+    }
+    const candidate = this.accountProofCandidate(address);
+    if (candidate.height !== height || candidate.statementHash !== statementHash) {
+      throw new Error("account proof attestation does not match local finalized state");
+    }
+    return candidate.attestations[0];
   }
 
   authorize(auth, method, path, body) {
@@ -1063,6 +1098,46 @@ export class DistributedCoordinator {
     return { address, atomicBalance: balance.toString(), balance: formatNir(balance),
       nextNonce: this.#chain.nextNonce(address),
       resources: accountResources(this.#chain, address), transactions };
+  }
+
+  async accountProof(address) {
+    if (!ADDRESS.test(address)) throw new Error("address is invalid");
+    const synchronization = await Promise.allSettled(this.#peers.map((_, index) =>
+      this.#synchronizePeer(index)));
+    const synchronized = synchronization.map((result, index) =>
+      result.status === "fulfilled" ? index : -1).filter((index) => index >= 0);
+    const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+    if (synchronized.length < quorum) {
+      throw new Error(`account proof synchronization quorum not reached (${synchronized.length}/${quorum})`);
+    }
+    const trustAnchor = {
+      expectedAddress: address,
+      expectedNetworkId: this.networkId,
+      minimumHeight: this.height,
+      trustedValidators: this.#validators,
+    };
+    for (const candidateIndex of synchronized) {
+      try {
+        const { proof } = await this.#request(
+          candidateIndex, "/v1/accounts/proof-candidate", { address },
+        );
+        verifyAccountProofCandidate(
+          proof, trustAnchor, this.#validators[candidateIndex].address,
+        );
+        const requests = await Promise.allSettled(synchronized.map((index) =>
+          this.#request(index, "/v1/accounts/proof-attest", {
+            address, height: proof.height, statementHash: proof.statementHash,
+          })));
+        const attestations = requests.filter(({ status }) => status === "fulfilled")
+          .map(({ value }) => value.attestation);
+        const assembled = { ...proof, attestations };
+        verifyAccountProof(assembled, trustAnchor);
+        return assembled;
+      } catch {
+        // Try another independently authenticated validator as the state source.
+      }
+    }
+    throw new Error("account proof quorum is not reached");
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {

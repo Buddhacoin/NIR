@@ -76,9 +76,9 @@ export function createAccountProof({
   };
 }
 
-export function verifyAccountProof(proof, {
+function verifyAccountProofEnvelope(proof, {
   expectedAddress, expectedNetworkId, minimumHeight = 0, trustedValidators,
-} = {}) {
+} = {}, requiredAttestations) {
   if (!proof || Buffer.byteLength(canonicalJson(proof)) > MAX_PROOF_BYTES ||
       !HASH.test(proof.statementHash ?? "") || !Array.isArray(proof.attestations) ||
       !Array.isArray(trustedValidators) || trustedValidators.length < 4 ||
@@ -106,7 +106,22 @@ export function verifyAccountProof(proof, {
     }
     seen.add(validator.address);
   }
-  const quorum = Math.floor((validators.size * 2) / 3) + 1;
-  if (seen.size < quorum) throw new Error("account proof quorum is not reached");
+  if (seen.size < requiredAttestations) {
+    throw new Error("account proof quorum is not reached");
+  }
   return structuredClone(statement);
+}
+
+export function verifyAccountProofCandidate(proof, options = {}, expectedValidator) {
+  if (typeof expectedValidator !== "string" || proof?.attestations?.length !== 1 ||
+      proof.attestations[0]?.validator !== expectedValidator) {
+    throw new Error("account proof candidate signer is invalid");
+  }
+  return verifyAccountProofEnvelope(proof, options, 1);
+}
+
+export function verifyAccountProof(proof, options = {}) {
+  const validatorCount = options.trustedValidators?.length ?? 0;
+  const quorum = Math.floor((validatorCount * 2) / 3) + 1;
+  return verifyAccountProofEnvelope(proof, options, quorum);
 }

@@ -14,6 +14,7 @@ import {
 } from "../blockchain/distributed-node.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
+import { verifyAccountProof } from "../blockchain/account-proof.mjs";
 
 async function listen(server, port = 0) {
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
@@ -149,6 +150,36 @@ test("validators independently attest one snapshot and the coordinator stages it
     assert.equal(degraded.synchronizedValidators, 3);
   } finally {
     if (coordinatorServer) await close(coordinatorServer);
+    await Promise.all(servers.map(close));
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("validators independently attest an account proof with one peer offline", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-distributed-account-proof-test-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const servers = replicas.map(createValidatorHttpServer);
+  try {
+    const urls = await Promise.all(servers.map((server) => listen(server)));
+    const account = generateWallet();
+    let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    await coordinator.faucet(account.address);
+    await close(servers[3]);
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const proof = await coordinator.accountProof(account.address);
+    const genesis = JSON.parse(readFileSync(
+      join(layout.coordinatorDirectory, "genesis.json"), "utf8",
+    ));
+    const verified = verifyAccountProof(proof, {
+      expectedAddress: account.address,
+      expectedNetworkId: coordinator.networkId,
+      minimumHeight: coordinator.height,
+      trustedValidators: genesis.validators,
+    });
+    assert.equal(verified.account.atomicBalance, (10n * ATOMIC_UNITS).toString());
+    assert.equal(proof.attestations.length, 3);
+  } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });
   }

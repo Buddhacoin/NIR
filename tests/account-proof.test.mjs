@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createAccountProof, verifyAccountProof } from "../blockchain/account-proof.mjs";
+import {
+  createAccountProof,
+  verifyAccountProof,
+  verifyAccountProofCandidate,
+} from "../blockchain/account-proof.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 
 function fixture() {
@@ -40,6 +44,33 @@ test("an account view needs a matching post-quantum validator quorum", () => {
   });
   assert.deepEqual(verified.account, account);
   assert.equal(verified.height, 17);
+});
+
+test("a proof candidate is bound to exactly one expected validator", () => {
+  const { account, validators } = fixture();
+  const validatorWallet = generateWallet();
+  const trustedValidators = [publicWallet(validatorWallet), ...validators.slice(0, 3)];
+  const candidate = createAccountProof({
+    account,
+    height: 17,
+    networkId: "nir-testnet",
+    stateRoot: "a".repeat(64),
+    tipHash: "b".repeat(64),
+    validators: trustedValidators,
+    validatorWallets: [validatorWallet],
+  });
+  const options = {
+    expectedAddress: account.address,
+    expectedNetworkId: "nir-testnet",
+    minimumHeight: 17,
+    trustedValidators,
+  };
+  assert.equal(verifyAccountProofCandidate(
+    candidate, options, validatorWallet.address,
+  ).height, 17);
+  assert.throws(() => verifyAccountProofCandidate(
+    candidate, options, trustedValidators[1].address,
+  ), /candidate signer/);
 });
 
 test("account proofs reject mutation, stale height, minority, and a self-declared set", () => {

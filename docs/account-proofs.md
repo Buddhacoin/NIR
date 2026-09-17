@@ -43,10 +43,19 @@ If no trust anchor is configured or verification fails, the wallet clearly
 labels the balance as `single-node data`. The valueless development interface
 may still be used, but that label must not be treated as proof of funds.
 
+## Independent validator flow
+
+In distributed mode, no coordinator holds validator signing keys. It first
+synchronizes the replicas, requests a candidate statement from one authenticated
+validator and asks the others to attest that exact address, height and statement
+hash. Each validator reconstructs the account view from its own finalized state
+and refuses to sign a mismatch. The coordinator returns a proof only after an
+independent two-thirds-plus-one quorum agrees. One of four validators may be
+offline; two signatures are never enough.
+
 ## Remaining production work
 
-The local development node can assemble a quorum proof because it owns temporary
-test validator keys. Production validators must instead sign independently and
-the requesting node must merge their matching statements. Trust must advance
-through already verified validator handoffs, never through a validator list
-supplied by the same untrusted node.
+The wallet currently pins the genesis validator set. Its trust anchor must next
+advance through the already verified validator-handoff history so that account
+proofs remain verifiable after a production validator rotation. Authority must
+never come from a validator list supplied by the same untrusted proof response.
