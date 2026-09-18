@@ -98,10 +98,36 @@ responsibility. This is server TLS plus signed application requests, not mTLS.
 
 Capacity exhaustion is fail-safe: existing contexts remain available to newly signed requests, but
 new contexts receive 503 and no randomness is generated. Operators must alert well before the
-10,000-share or 100,000-nonce bound. They
-must not delete or truncate the log, because doing so could let the authority sign a second random
-share for an old context. Raising/archiving that bound requires an offline, audited state-migration
-procedure; this increment intentionally does not automate destructive recovery.
+10,000-share or 100,000-nonce bound. `/metrics` reports aggregate anti-replay generation,
+high-water, file size, active/capacity/remaining nonce counts, without requester identities or
+nonces. Operators must not delete or truncate any generation, because doing so could let the
+authority sign a second random share for an old context.
+
+Bounded nonce compaction is an explicit offline operation. With the beacon stopped, run:
+
+```text
+node blockchain/beacon-state-cli.mjs plan <vault> <beacon-address> <network-id> <trusted-now-ms> [safety-margin-ms]
+node blockchain/beacon-state-cli.mjs compact <vault> <beacon-address> <network-id> <trusted-now-ms> [safety-margin-ms]
+node blockchain/beacon-state-cli.mjs verify <vault> <beacon-address> <network-id>
+```
+
+`trusted-now-ms` is an operator-observed monotonic time assertion; it may equal but cannot precede
+the persisted high-water. It advances high-water even after an idle period, so a later wall-clock
+rollback cannot make an expired signed request valid again. A dangerously future assertion fails
+safe by rejecting requests until wall time catches up, so operators must source and review it. A
+nonce is pruned only when `expiresAt <= trusted-now - safety-margin`; all shares and all remaining
+nonces are copied.
+
+Compaction acquires the normal single-writer lock, hashes and rechecks the active source immediately
+before creating the next exact generation with `O_EXCL`, fsyncs a self-contained checkpoint and
+seal, and never replaces or deletes an earlier generation. Each checkpoint binds the full previous
+generation hash. A partial/gapped/conflicting generation makes startup and `verify` fail closed.
+After success the old open handle rejects appends and the process must restart onto the new
+generation. This retains disk usage intentionally: reviewed removal or off-host archival of old
+generations is a separate manual policy, not part of this tool. Verification also caps the chain at
+64 total generations and 1 GiB, while each generation remains capped at 128 MiB; reaching those
+bounds is a fail-closed operator event, not an automatic deletion trigger.
+
 After an unclean process death, the exclusive `.lock` file is deliberately left in place. An
 operator must first prove that no beacon process still owns the state and that the append-only log
 reverifies, then remove that exact lock while the service is stopped. Automatic stale-lock deletion

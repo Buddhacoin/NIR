@@ -52,6 +52,10 @@ export function createBeaconHttpServer({
   }
   const randomBytesImpl = options.randomBytesImpl ?? randomBytes;
   const clock = options.clock ?? (() => Date.now());
+  const timeHighWater = options.timeHighWater ?? (() => 0);
+  const stateMetrics = options.stateMetrics ?? (() => ({
+    activeNonces: nonces.size, generation: 0, highWater: timeHighWater(), maxNonces,
+  }));
   if (typeof randomBytesImpl !== "function") throw new Error("beacon randomness source is invalid");
   const httpIngressOptions = {
     burst: 30,
@@ -102,6 +106,7 @@ export function createBeaconHttpServer({
         if (url.pathname === "/metrics") {
           json(response, 200, {
             beacon: { ...totals, issuedShares: issued.size },
+            antiReplay: stateMetrics(),
             authentication: authentication.metrics(),
             httpIngress: httpIngress.metrics(),
           });
@@ -119,7 +124,7 @@ export function createBeaconHttpServer({
         throw new Error("beacon share requester is unauthorized");
       }
       const auth = await authentication.run("beacon-preauth", () => verifyBeaconShareRequest(envelope, {
-        beaconAddress: wallet.address, clock, networkId, requesters,
+        beaconAddress: wallet.address, clock, minimumTime: timeHighWater(), networkId, requesters,
       }));
       const { candidateId, purpose, replayKey, round } = auth;
       if (nonces.has(replayKey) || failedNonces.has(replayKey)) {
@@ -137,6 +142,7 @@ export function createBeaconHttpServer({
             throw new HttpIngressError("replay", "beacon share request nonce was already used", 409);
           }
           if (nonces.size >= maxNonces) {
+            totals.capacityRejected += 1;
             throw new HttpIngressError("capacity", "beacon nonce capacity is exhausted", 503);
           }
           const known = issued.get(key) ??
@@ -185,6 +191,7 @@ export function createBeaconHttpServer({
     }, handler);
   server.httpIngressMetrics = () => ({
     beacon: { ...totals, issuedShares: issued.size },
+    antiReplay: stateMetrics(),
     authentication: authentication.metrics(),
     httpIngress: httpIngress.metrics(),
   });

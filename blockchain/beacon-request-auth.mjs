@@ -80,17 +80,20 @@ export function createBeaconShareRequest(fields, wallet, {
 }
 
 export function verifyBeaconShareRequest(envelope, {
-  beaconAddress, clock = () => Date.now(), networkId, requesters,
+  beaconAddress, clock = () => Date.now(), minimumTime = 0, networkId, requesters,
 }) {
   exact(envelope, ["format", "payload", "signature"], "beacon share request");
   if (envelope.format !== FORMAT || !(requesters instanceof Map)) {
     throw new Error("beacon share request format is invalid");
   }
   const unsigned = payload(envelope.payload);
-  const now = clock();
-  if (!Number.isSafeInteger(now) || now < 0 || unsigned.networkId !== networkId ||
-      unsigned.beaconAddress !== beaconAddress || unsigned.issuedAt > now + 5_000 ||
-      unsigned.expiresAt <= now || unsigned.issuedAt < now - 60_000) {
+  const wallNow = clock();
+  if (!Number.isSafeInteger(wallNow) || wallNow < 0 || !Number.isSafeInteger(minimumTime) ||
+      minimumTime < 0) throw new Error("beacon request clock is invalid");
+  const now = Math.max(wallNow, minimumTime);
+  if (unsigned.networkId !== networkId || unsigned.beaconAddress !== beaconAddress ||
+      unsigned.issuedAt > wallNow + 5_000 || unsigned.expiresAt <= now ||
+      unsigned.issuedAt < now - 60_000) {
     throw new Error("beacon share request context or validity window is invalid");
   }
   const requester = requesters.get(unsigned.requester);
@@ -99,5 +102,5 @@ export function verifyBeaconShareRequest(envelope, {
       !verifyObject(unsigned, envelope.signature, requester.publicKey, DOMAIN)) {
     throw new Error("beacon share request signature is invalid");
   }
-  return { ...unsigned, replayKey: `${unsigned.requester}:${unsigned.nonce}` };
+  return { ...unsigned, replayKey: `${unsigned.requester}:${unsigned.nonce}`, verifiedAt: now };
 }

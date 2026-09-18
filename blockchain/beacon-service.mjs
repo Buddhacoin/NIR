@@ -89,16 +89,25 @@ try {
   const issued = stateStore.issued;
   const nonces = stateStore.nonces;
   const persist = (record) => record.type === "nonce"
-    ? stateStore.appendNonce({ expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey })
+    ? stateStore.appendNonce({ expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey,
+      verifiedAt: record.auth.verifiedAt })
     : stateStore.appendShareAndNonce(record.key, record.share, {
       expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey,
+      verifiedAt: record.auth.verifiedAt,
     });
   const tls = tlsCertPath === undefined ? null : {
     cert: readBoundedFile(resolve(tlsCertPath), { privateFile: false }),
     key: readBoundedFile(resolve(tlsKeyPath)),
   };
   const server = createBeaconHttpServer({ issued, networkId, nonces, persist, requesters, wallet }, {
-    tls,
+    stateMetrics: () => ({
+      activeNonces: stateStore.nonces.size, fileBytes: stateStore.fileBytes,
+      chainBytes: stateStore.chainBytes,
+      generation: stateStore.generation, highWater: stateStore.highWater,
+      maxNonces: stateStore.maxNonces,
+      remainingNonces: stateStore.maxNonces - stateStore.nonces.size,
+    }),
+    timeHighWater: () => stateStore.highWater, tls,
   });
   server.once("close", () => stateStore?.close());
   const shutdown = async () => {

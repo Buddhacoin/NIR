@@ -236,6 +236,9 @@ test("beacon validates exact signed shape and rejects a replayed durable nonce",
     assert.deepEqual(metrics.beacon, {
       capacityRejected: 1, issuedShares: 1, sharesCreated: 1, sharesReplayed: 0,
     });
+    assert.deepEqual(metrics.antiReplay, {
+      activeNonces: 1, generation: 0, highWater: 0, maxNonces: 100_000,
+    });
     assert.equal(JSON.stringify(metrics).includes(fixture.wallet.address), false);
   } finally {
     await close(fixture.server);
@@ -452,7 +455,10 @@ test("beacon state is append-only, restartable, private, and rejects symlinks", 
     assert.equal(statSync(path).mode & 0o777, 0o600);
     store = openBeaconStateStore({ address, networkId, vaultPath });
     assert.equal(store.issued.size, 1);
-    store.appendNonce({ expiresAt: Date.now() + 1_000, replayKey: `${address}:${"1".repeat(64)}` });
+    store.appendNonce({
+      expiresAt: Date.now() + 1_000, replayKey: `${address}:${"1".repeat(64)}`,
+      verifiedAt: Date.now(),
+    });
     store.close(); store = null;
     store = openBeaconStateStore({ address, networkId, vaultPath });
     assert.equal(store.nonces.has(`${address}:${"1".repeat(64)}`), true);
@@ -523,12 +529,14 @@ test("durable beacon nonce rejects the same signed envelope after restart", asyn
   const start = async () => {
     store = openBeaconStateStore({ address: wallet.address, networkId, vaultPath });
     const persist = (record) => record.type === "nonce"
-      ? store.appendNonce({ expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey })
+      ? store.appendNonce({ expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey,
+        verifiedAt: record.auth.verifiedAt })
       : store.appendShareAndNonce(record.key, record.share,
-        { expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey });
+        { expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey,
+          verifiedAt: record.auth.verifiedAt });
     server = createBeaconHttpServer({
       issued: store.issued, networkId, nonces: store.nonces, persist, requesters, wallet,
-    });
+    }, { timeHighWater: () => store.highWater });
     return listen(server);
   };
   try {
