@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { blockHash, createTransfer, finalizeBlock, NirChain, transactionId } from "../blockchain/chain.mjs";
+import { blockHash, createTransfer, finalizeBlock, nativeAssetId, NirChain, transactionId } from "../blockchain/chain.mjs";
 import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {
@@ -15,6 +15,7 @@ import {
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { verifyAccountProof } from "../blockchain/account-proof.mjs";
+import { verifyAssetProof } from "../blockchain/asset-proof.mjs";
 
 async function listen(server, port = 0) {
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
@@ -247,6 +248,14 @@ test("validators independently attest an account proof with one peer offline", a
     });
     assert.equal(verified.account.atomicBalance, (10n * ATOMIC_UNITS).toString());
     assert.equal(proof.attestations.length, 3);
+    const assetId = nativeAssetId({ creator: account.address, networkId: coordinator.networkId, nonce: 0 });
+    const assetProof = await coordinator.assetProof(assetId, account.address);
+    const assetState = verifyAssetProof(assetProof, { expectedAssetId: assetId,
+      expectedHolder: account.address, expectedNetworkId: coordinator.networkId,
+      minimumHeight: coordinator.height, trustedValidators: genesis.validators });
+    assert.equal(assetState.asset, null);
+    assert.equal(assetState.balance, "0");
+    assert.equal(assetProof.attestations.length, 3);
   } finally {
     await Promise.all(servers.map(close));
     rmSync(temporary, { recursive: true, force: true });

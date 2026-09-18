@@ -16,6 +16,7 @@ import {
 } from "./offline-signer.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
+import { verifyAssetProof, MAX_ASSET_PROOF_BYTES } from "./asset-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import {
@@ -207,7 +208,14 @@ function simulationParticipants(intent, walletAddress) {
   return [...participants];
 }
 
-function bridgeSimulationEvidence({ body, intent, verifiedAccountStates, walletAddress }) {
+function assetSimulationParticipants(intent) {
+  if (!intent.type?.startsWith("asset-")) return [];
+  return intent.type === "asset-transfer"
+    ? [[intent.assetId, intent.sender], [intent.assetId, intent.recipient]]
+    : [[intent.assetId, intent.sender]];
+}
+
+function bridgeSimulationEvidence({ body, intent, verifiedAccountStates, verifiedAssetStates, walletAddress }) {
   if (!body?.verifiedAccount || body.verifiedAccount.proofVerified !== true ||
       !body?.network || typeof body.network.networkId !== "string" ||
       !Number.isSafeInteger(body.network.height) || body.network.height < 0) {
@@ -226,6 +234,16 @@ function bridgeSimulationEvidence({ body, intent, verifiedAccountStates, walletA
     }
     accounts[address] = structuredClone(state.account);
   }
+  const assetProofs = [];
+  for (const [assetId, holder] of assetSimulationParticipants(intent)) {
+    const statement = verifiedAssetStates.get(`${assetId}:${holder}`);
+    if (!statement) throw new Error("simulation participant has no independently verified asset proof");
+    if (!checkpoint || statement.networkId !== checkpoint.networkId || statement.height !== checkpoint.height ||
+        statement.tipHash !== checkpoint.tipHash || statement.stateRoot !== checkpoint.stateRoot) {
+      throw new Error("asset and account proofs are not proven at one finalized state");
+    }
+    assetProofs.push(structuredClone(statement));
+  }
   if (!checkpoint || body.network.networkId !== checkpoint.networkId ||
       body.network.height !== checkpoint.height || intent.networkId !== checkpoint.networkId ||
       (body.verifiedAccount.address !== undefined && body.verifiedAccount.address !== walletAddress) ||
@@ -233,7 +251,7 @@ function bridgeSimulationEvidence({ body, intent, verifiedAccountStates, walletA
     throw new Error("simulation checkpoint does not match protected verified state");
   }
   return {
-    accounts, height: checkpoint.height, networkId: checkpoint.networkId,
+    accounts, assetProofs, height: checkpoint.height, networkId: checkpoint.networkId,
     proofVerified: true, stateRoot: checkpoint.stateRoot, tipHash: checkpoint.tipHash, verified: true,
   };
 }
@@ -350,6 +368,7 @@ export function createWalletBridgeServer({
   }
   const walletAddress = walletPublicInfo(vaultPath).address;
   const verifiedAccountStates = new Map();
+  const verifiedAssetStates = new Map();
   const simulations = new Map();
   const seen = new Set();
   let pending = false;
@@ -405,6 +424,7 @@ export function createWalletBridgeServer({
         pairingAvailable = false;
         verifiedAccountState = null;
         verifiedAccountStates.clear();
+        verifiedAssetStates.clear();
         simulations.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
@@ -458,6 +478,7 @@ export function createWalletBridgeServer({
         verifiedFinalityTip = null;
         verifiedAccountState = null;
         verifiedAccountStates.clear();
+        verifiedAssetStates.clear();
         simulations.clear();
         return send(response, 200, {
           activationHeight: advanced.lastHandoff?.activationHeight ?? 0,
@@ -495,6 +516,7 @@ export function createWalletBridgeServer({
         // A previously attested account is not a simulation snapshot for a newer finalized tip.
         verifiedAccountState = null;
         verifiedAccountStates.clear();
+        verifiedAssetStates.clear();
         simulations.clear();
         return send(response, 200, { tip: verifiedFinalityTip, verified: true }, origin);
       }
@@ -635,6 +657,34 @@ export function createWalletBridgeServer({
           verified: true,
         }, origin);
       }
+      if (request.method === "POST" && url.pathname === "/v1/verify-asset-proof") {
+        const finalizedCheckpoint = verifiedFinalityTip ?? trustCheckpoint ?? genesisCheckpoint;
+        if (!accountTrust || !finalizedCheckpoint) throw new Error("verify a finality chain before asset state");
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("asset proof verification requires application/json");
+        }
+        const body = await readBody(request, MAX_ASSET_PROOF_BYTES + 1_024);
+        if (!/^[0-9a-f]{64}$/.test(body?.assetId ?? "") || !ADDRESS.test(body?.holder ?? "") ||
+            !Number.isSafeInteger(body?.minimumHeight) || body.minimumHeight < 0) {
+          throw new Error("asset proof request is invalid");
+        }
+        const activeTrust = advanceValidatorTrust({ expectedNetworkId: accountTrust.expectedNetworkId,
+          handoffs: accountTrust.handoffs.filter(({ activationHeight }) =>
+            Number.isSafeInteger(body.proof?.height) && activationHeight <= body.proof.height),
+          trustedValidators: accountTrust.trustedValidators });
+        const statement = verifyAssetProof(body.proof, { expectedAssetId: body.assetId,
+          expectedHolder: body.holder, expectedNetworkId: accountTrust.expectedNetworkId,
+          minimumHeight: body.minimumHeight, trustedValidators: activeTrust.trustedValidators });
+        if (statement.height !== finalizedCheckpoint.height || statement.tipHash !== finalizedCheckpoint.tipHash ||
+            statement.stateRoot !== finalizedCheckpoint.stateRoot ||
+            statement.validatorSetId !== finalizedCheckpoint.validatorSetId) {
+          throw new Error("asset proof has no matching verified finality chain");
+        }
+        verifiedAssetStates.set(`${statement.assetId}:${statement.holder}`, structuredClone(statement));
+        if (verifiedAssetStates.size > 16) verifiedAssetStates.delete(verifiedAssetStates.keys().next().value);
+        simulations.clear();
+        return send(response, 200, { statement, verified: true }, origin);
+      }
       if (request.method === "POST" && url.pathname === "/v1/simulate-transaction") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("transaction simulation requires application/json");
@@ -642,7 +692,7 @@ export function createWalletBridgeServer({
         const body = await readBody(request);
         const intent = simulationIntent(body, walletAddress);
         const stateEvidence = bridgeSimulationEvidence({
-          body, intent, verifiedAccountStates, walletAddress,
+          body, intent, verifiedAccountStates, verifiedAssetStates, walletAddress,
         });
         const simulation = simulateWalletOperation({ intent, stateEvidence });
         const simulationId = randomBytes(32).toString("hex");
@@ -675,18 +725,19 @@ export function createWalletBridgeServer({
         }
         const stored = simulations.get(body.simulationId);
         if (!stored || stored.expiresAt <= Date.now()) throw new Error("simulation is missing or expired; re-simulate before export");
-        if (!verifiedFinalityTip || stored.proof.networkId !== verifiedFinalityTip.networkId ||
-            stored.proof.tipHash !== verifiedFinalityTip.tipHash ||
-            stored.proof.stateRoot !== verifiedFinalityTip.stateRoot ||
-            stored.stateEvidence.height !== verifiedFinalityTip.height) {
+        const protectedCheckpoint = verifiedFinalityTip ?? trustCheckpoint ?? genesisCheckpoint;
+        if (!protectedCheckpoint || stored.proof.networkId !== accountTrust?.expectedNetworkId ||
+            stored.proof.tipHash !== protectedCheckpoint.tipHash ||
+            stored.proof.stateRoot !== protectedCheckpoint.stateRoot ||
+            stored.stateEvidence.height !== protectedCheckpoint.height) {
           throw new Error("verified finality state changed; re-simulate before offline export");
         }
         const checkpoint = {
-          height: verifiedFinalityTip.height,
-          networkId: verifiedFinalityTip.networkId,
-          stateRoot: verifiedFinalityTip.stateRoot,
-          tipHash: verifiedFinalityTip.tipHash,
-          validatorSetId: verifiedFinalityTip.validatorSetId,
+          height: protectedCheckpoint.height,
+          networkId: accountTrust.expectedNetworkId,
+          stateRoot: protectedCheckpoint.stateRoot,
+          tipHash: protectedCheckpoint.tipHash,
+          validatorSetId: protectedCheckpoint.validatorSetId,
         };
         const signingPackage = createOfflineSigningPackage({
           intent: stored.intent, stateEvidence: stored.stateEvidence, checkpoint,

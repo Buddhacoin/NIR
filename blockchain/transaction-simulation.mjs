@@ -11,6 +11,7 @@ const AMOUNT = /^(0|[1-9][0-9]{0,31})$/;
 const HASH = /^[0-9a-f]{64}$/;
 const NETWORK = /^[a-zA-Z0-9._:-]{3,128}$/;
 const MAX_DELEGATIONS = 256;
+const SYSTEM_NIR_ASSET_ID = "0".repeat(64);
 
 function fail(message) { throw new Error(`transaction simulation: ${message}`); }
 
@@ -81,7 +82,7 @@ function account(value, expectedAddress) {
 
 function evidence(value) {
   exactKeys(value, new Set([
-    "accounts", "height", "networkId", "proofVerified", "stateRoot", "tipHash", "verified",
+    "accounts", "assetProofs", "height", "networkId", "proofVerified", "stateRoot", "tipHash", "verified",
   ]), "simulation evidence");
   if (value.verified !== true || value.proofVerified !== true || !NETWORK.test(value.networkId ?? "") ||
       !Number.isSafeInteger(value.height) || value.height < 0 ||
@@ -95,7 +96,31 @@ function evidence(value) {
     result.set(key, account(valueAccount, key));
   }
   if (result.size === 0 || result.size > 3) fail("verified account evidence is invalid");
-  return { accounts: result, height: value.height, networkId: value.networkId, stateRoot: value.stateRoot, tipHash: value.tipHash };
+  const assetProofs = new Map();
+  if (value.assetProofs !== undefined) {
+    if (!Array.isArray(value.assetProofs) || value.assetProofs.length > 3) fail("verified asset evidence is invalid");
+    for (const statement of value.assetProofs) {
+      exactKeys(statement, new Set(["asset", "assetId", "balance", "format", "height", "holder",
+        "networkId", "pendingProtocolUpgrade", "protocolVersion", "stateRoot", "tipHash", "validatorSetId"]), "asset proof statement");
+      if (!HASH.test(statement.assetId ?? "") || statement.assetId === SYSTEM_NIR_ASSET_ID ||
+          address(statement.holder, "asset holder") !== statement.holder ||
+          statement.networkId !== value.networkId || statement.height !== value.height ||
+          statement.tipHash !== value.tipHash || statement.stateRoot !== value.stateRoot ||
+          statement.format !== "nir-native-asset-proof-v1") fail("asset proof does not match simulation checkpoint");
+      const key = `${statement.assetId}:${statement.holder}`;
+      if (assetProofs.has(key)) fail("asset proof is duplicated");
+      const parsed = { ...structuredClone(statement), balance: atomic(statement.balance, "asset balance") };
+      if (statement.asset !== null) {
+        exactKeys(statement.asset, new Set(["assetId", "authority", "creationNonce", "creator", "fixedSupply",
+          "maxSupply", "metadataHash", "minted", "supply"]), "asset state");
+        if (statement.asset.assetId !== statement.assetId) fail("asset state id does not match proof");
+        parsed.asset = { ...statement.asset, maxSupply: atomic(statement.asset.maxSupply, "asset cap"),
+          minted: atomic(statement.asset.minted, "asset minted"), supply: atomic(statement.asset.supply, "asset supply") };
+      } else if (parsed.balance !== 0n) fail("absent asset has a balance");
+      assetProofs.set(key, parsed);
+    }
+  }
+  return { accounts: result, assetProofs, height: value.height, networkId: value.networkId, stateRoot: value.stateRoot, tipHash: value.tipHash };
 }
 
 function operationKeys(intent, permitted) {
@@ -116,6 +141,14 @@ function requireAccount(evidenceValue, addressValue, role) {
   const value = evidenceValue.accounts.get(addressValue);
   if (!value) fail(`${role} account lacks independently verified state`);
   return value;
+}
+
+function requireAsset(evidenceValue, assetId, holder, { absent = false } = {}) {
+  if (!HASH.test(assetId ?? "") || assetId === SYSTEM_NIR_ASSET_ID) fail("asset id is invalid or reserved");
+  const proof = evidenceValue.assetProofs.get(`${assetId}:${holder}`);
+  if (!proof) fail("asset operation lacks independently verified asset proof");
+  if (absent ? proof.asset !== null : proof.asset === null) fail(absent ? "asset already exists" : "asset is unknown");
+  return proof;
 }
 
 function delta(addressValue, atomicDelta, role) {
@@ -278,6 +311,73 @@ function unstakeClaim(intent, evidenceValue) {
     risks: ["Claim availability is checked against the next finalized block height."], };
 }
 
+function assetOperation(intent, evidenceValue) {
+  const keys = {
+    "asset-create": ["assetId", "fee", "fixedSupply", "initialSupply", "maxSupply", "metadataHash", "networkId", "nonce", "sender"],
+    "asset-mint": ["amount", "assetId", "fee", "networkId", "nonce", "sender"],
+    "asset-transfer": ["amount", "assetId", "fee", "networkId", "nonce", "recipient", "sender"],
+    "asset-burn": ["amount", "assetId", "fee", "networkId", "nonce", "sender"],
+    "asset-revoke-authority": ["assetId", "fee", "networkId", "nonce", "sender"],
+  };
+  operationKeys(intent, keys[intent.type]);
+  const sender = common({ intent, evidence: evidenceValue });
+  const feeValue = fee(intent);
+  if (sender.balance < feeValue) fail("insufficient independently verified NIR balance for fee");
+  const balance = [delta(intent.sender, -feeValue, "fee-payer"), delta(null, feeValue, "next-block-fee-recipient")];
+  const nonce = [nonceDelta(intent.sender, sender.nonce, "asset-authority")];
+  const risks = ["Asset state may change before signing; re-prove and re-simulate after any finalized-state change."];
+  let assetDeltas;
+  let authorityRole = "holder";
+  if (intent.type === "asset-create") {
+    const proof = requireAsset(evidenceValue, intent.assetId, intent.sender, { absent: true });
+    const expectedId = hashObject({ creator: intent.sender, networkId: intent.networkId, nonce: intent.nonce }, "NATIVE_ASSET_ID_V1");
+    const initial = atomic(intent.initialSupply, "initial supply"); const cap = atomic(intent.maxSupply, "maximum supply", { positive: true });
+    if (intent.assetId !== expectedId || !HASH.test(intent.metadataHash ?? "") || typeof intent.fixedSupply !== "boolean" ||
+        initial > cap || (intent.fixedSupply && initial !== cap)) fail("asset definition is invalid");
+    assetDeltas = [{ assetId: intent.assetId, holder: intent.sender, balanceBefore: proof.balance.toString(),
+      balanceAfter: initial.toString(), supplyBefore: null, supplyAfter: initial.toString(), mintedAfter: initial.toString() }];
+    authorityRole = "creator";
+    risks.push("The asset ID, metadata hash, fixed-supply flag, and maximum supply are immutable.");
+  } else {
+    const proof = requireAsset(evidenceValue, intent.assetId, intent.sender);
+    const asset = proof.asset;
+    if (intent.type === "asset-mint") {
+      const amount = atomic(intent.amount, "mint amount", { positive: true });
+      if (asset.authority !== intent.sender || asset.minted + amount > asset.maxSupply) fail("mint is unauthorized or exceeds the immutable cap");
+      assetDeltas = [{ assetId: intent.assetId, holder: intent.sender, balanceBefore: proof.balance.toString(),
+        balanceAfter: (proof.balance + amount).toString(), supplyBefore: asset.supply.toString(),
+        supplyAfter: (asset.supply + amount).toString(), mintedAfter: (asset.minted + amount).toString() }];
+      authorityRole = "mint-authority";
+      risks.push("Minting consumes part of the immutable lifetime cap; burned units do not restore mint capacity.");
+    } else if (intent.type === "asset-transfer") {
+      const recipient = address(intent.recipient, "recipient"); const amount = atomic(intent.amount, "asset amount", { positive: true });
+      if (recipient === intent.sender || proof.balance < amount) fail("asset transfer is invalid or unfunded");
+      const recipientProof = requireAsset(evidenceValue, intent.assetId, recipient);
+      if (["assetId", "authority", "creationNonce", "creator", "fixedSupply", "metadataHash"]
+        .some((field) => recipientProof.asset[field] !== proof.asset[field]) ||
+        ["maxSupply", "minted", "supply"].some((field) => recipientProof.asset[field] !== proof.asset[field])) {
+        fail("asset proofs disagree on asset state");
+      }
+      assetDeltas = [{ assetId: intent.assetId, holder: intent.sender, balanceBefore: proof.balance.toString(), balanceAfter: (proof.balance - amount).toString() },
+        { assetId: intent.assetId, holder: recipient, balanceBefore: recipientProof.balance.toString(), balanceAfter: (recipientProof.balance + amount).toString() }];
+    } else if (intent.type === "asset-burn") {
+      const amount = atomic(intent.amount, "burn amount", { positive: true });
+      if (proof.balance < amount) fail("asset burn is unfunded");
+      assetDeltas = [{ assetId: intent.assetId, holder: intent.sender, balanceBefore: proof.balance.toString(),
+        balanceAfter: (proof.balance - amount).toString(), supplyBefore: asset.supply.toString(), supplyAfter: (asset.supply - amount).toString() }];
+      risks.push("Burn is irreversible and does not restore lifetime mint capacity.");
+    } else {
+      if (asset.fixedSupply || asset.authority !== intent.sender) fail("authority revocation is unauthorized or already final");
+      assetDeltas = [{ assetId: intent.assetId, authorityBefore: intent.sender, authorityAfter: null }];
+      authorityRole = "mint-authority";
+      risks.push("Revoking mint authority is irreversible; no future mint is possible.");
+    }
+  }
+  return { title: intent.type.replaceAll("-", " "), authority: [{ address: intent.sender, role: authorityRole, required: true }],
+    deltas: { asset: assetDeltas, balance, fee: { atomic: feeValue.toString(), payer: intent.sender,
+      recipient: "next-block-fee-recipient" }, nonce, resources: [] }, risks };
+}
+
 function paymentRequest(intent, evidenceValue, now) {
   let request;
   if (intent.signature === undefined) {
@@ -317,6 +417,8 @@ export function simulateWalletOperation({ intent, stateEvidence, now = Date.now(
     case "credit-unstake-request": decoded = unstakeRequest(intent, evidenceValue); break;
     case "credit-unstake-claim": decoded = unstakeClaim(intent, evidenceValue); break;
     case "payment-request": decoded = paymentRequest(intent, evidenceValue, now); break;
+    case "asset-create": case "asset-mint": case "asset-transfer": case "asset-burn":
+    case "asset-revoke-authority": decoded = assetOperation(intent, evidenceValue); break;
     default: fail("operation type is not supported");
   }
   const canonicalIntent = JSON.parse(canonicalJson(intent));

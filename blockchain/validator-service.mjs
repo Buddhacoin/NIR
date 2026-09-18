@@ -32,6 +32,7 @@ const VALIDATOR_AUTH_PATHS = new Set([
 ]);
 const COORDINATOR_AUTH_PATHS = new Set([
   "/v1/accounts/proof-attest", "/v1/accounts/proof-candidate", "/v1/blocks",
+  "/v1/assets/proof-attest", "/v1/assets/proof-candidate",
   "/v1/commits", "/v1/handoffs", "/v1/handoffs/history", "/v1/health",
   "/v1/mempool", "/v1/mempool/transactions", "/v1/proposals",
   "/v1/snapshots/attest", "/v1/snapshots/candidate", "/v1/timeouts",
@@ -720,6 +721,18 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = parsedBody;
         const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = { attestation: validator.accountProofAttestation(payload) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/assets/proof-candidate") {
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
+        const result = { proof: validator.assetProofCandidate(payload?.assetId, payload?.holder) };
+        return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/assets/proof-attest") {
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
+        const result = { attestation: validator.assetProofAttestation(payload) };
         return send(response, 200, { result, auth: validator.authenticateResponse(nonce, result) });
       }
       if (request.method === "POST" && url.pathname === "/v1/proposals") {

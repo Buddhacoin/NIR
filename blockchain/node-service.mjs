@@ -116,6 +116,14 @@ export function createNodeHttpServer(node) {
         }
         return send(response, 200, node.account(address), origin);
       }
+      if (request.method === "GET" && url.pathname.startsWith("/v1/assets/") &&
+          url.pathname.endsWith("/proof")) {
+        if (typeof node.assetProof !== "function") return send(response, 501, { error: "asset proofs are unavailable" }, origin);
+        const assetId = decodeURIComponent(url.pathname.slice("/v1/assets/".length, -6));
+        const holder = url.searchParams.get("holder");
+        if (!/^[0-9a-f]{64}$/.test(assetId) || !ADDRESS.test(holder ?? "")) throw new Error("asset proof request is invalid");
+        return send(response, 200, await node.assetProof(assetId, holder), origin);
+      }
       if (request.method === "GET" && url.pathname === "/v1/fees") {
         return send(response, 200, node.feeQuote(url.searchParams.get("amount"),
           url.searchParams.get("fee") ?? undefined), origin);

@@ -8,8 +8,9 @@ import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
+import { createAssetProof } from "../blockchain/asset-proof.mjs";
 import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
-import { createTransfer, finalizeBlock, NirChain } from "../blockchain/chain.mjs";
+import { createTransfer, finalizeBlock, nativeAssetId, NirChain } from "../blockchain/chain.mjs";
 import {
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
@@ -188,6 +189,41 @@ test("wallet checkpoint advances only through a verified finality header chain",
       method: "POST",
     });
     assert.equal(accepted.status, 200);
+    const newAssetId = nativeAssetId({ creator: wallet.address, networkId, nonce: 0 });
+    const assetProof = createAssetProof({ asset: null, assetId: newAssetId, balance: "0",
+      height: 2, holder: wallet.address, networkId, stateRoot: chain.stateRoot,
+      tipHash: chain.tipHash, validators: members, validatorWallets: validators.slice(0, 3) });
+    const verifiedAsset = await request(`${base}/v1/verify-asset-proof`, origin, token, {
+      body: JSON.stringify({ assetId: newAssetId, holder: wallet.address, minimumHeight: 2, proof: assetProof }),
+      method: "POST",
+    });
+    assert.equal(verifiedAsset.status, 200);
+    const staleAsset = await request(`${base}/v1/verify-asset-proof`, origin, token, {
+      body: JSON.stringify({ assetId: newAssetId, holder: wallet.address, minimumHeight: 3, proof: assetProof }),
+      method: "POST",
+    });
+    assert.equal(staleAsset.status, 400);
+    const assetSimulation = await request(`${base}/v1/simulate-transaction`, origin, token, {
+      body: JSON.stringify({ intent: { type: "asset-create", assetId: newAssetId,
+        fee: MIN_TRANSFER_FEE.toString(), fixedSupply: false, initialSupply: "10", maxSupply: "100",
+        metadataHash: "9".repeat(64), networkId, nonce: 0 }, network: { height: 2, networkId },
+      verifiedAccount: { address: wallet.address, height: 2, proofVerified: true } }), method: "POST",
+    });
+    assert.equal(assetSimulation.status, 200);
+    const assetSimulationBody = await assetSimulation.json();
+    assert.equal(assetSimulationBody.simulation.deltas.asset[0].supplyAfter, "10");
+    const offlineAsset = await request(`${base}/v1/create-offline-signing-package`, origin, token, {
+      body: JSON.stringify({ simulationId: assetSimulationBody.simulation.simulationId }), method: "POST",
+    });
+    assert.equal(offlineAsset.status, 200);
+    assert.equal((await offlineAsset.json()).signingPackage.intent.type, "asset-create");
+    const browserAssetSigning = await request(`${base}/v1/sign-resource`, origin, token, {
+      body: JSON.stringify({ ...assetSimulationBody.simulation.intent,
+        requestId: "8".repeat(64), simulationId: assetSimulationBody.simulation.simulationId }),
+      method: "POST",
+    });
+    assert.equal(browserAssetSigning.status, 400);
+    assert.match((await browserAssetSigning.json()).error, /resource intent is invalid/);
     const unprovenSimulation = await request(`${base}/v1/simulate-transaction`, origin, token, {
       body: JSON.stringify({
         intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,

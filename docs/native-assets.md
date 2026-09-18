@@ -29,3 +29,31 @@ state. Definitions, supplies, balances, and revoked authority are committed in
 the protocol-25 chain state root and in verified snapshots. Protocol-24 state
 roots remain unchanged, and asset transactions fail before version 25 is
 activated through the existing quorum-scheduled protocol-upgrade mechanism.
+
+## Tool and offline-signing flow
+
+Asset state is never accepted from an unauthenticated read response. A tool
+requests `/v1/assets/<assetId>/proof?holder=<address>` from a coordinator. The
+coordinator synchronizes a validator quorum and returns a
+`nir-native-asset-proof-v1` statement signed by that quorum. The statement
+binds the complete asset definition (or authenticated non-existence), holder
+balance, network, height, tip hash, state root, protocol version, and
+validator-set id. Consumers reject unknown fields, insufficient or duplicate
+signatures, a stale minimum height, and a statement that does not match their
+independently verified finality tip.
+
+The wallet bridge accepts the statement only through
+`POST /v1/verify-asset-proof`. It keeps the verified result in memory and uses
+it with a separately verified account proof for
+`POST /v1/simulate-transaction`. Create, mint, transfer, burn, and revoke
+previews show the exact NIR fee and nonce change, asset balance/supply changes,
+required authority, cap risk, and irreversible burn or revoke consequences.
+Sender and recipient proofs must refer to exactly the same finalized state.
+
+Asset operations are excluded from the bridge's direct signing routes. After
+reviewing a fresh simulation, a tool may export an offline signing package
+through `POST /v1/create-offline-signing-package`. The air-gapped signer
+re-runs the proof-bound simulation before signing, and import verification
+checks that the signed transaction did not change a reviewed field. Neither
+simulation nor package creation broadcasts, and no browser-side signing or
+private-key exposure is introduced.

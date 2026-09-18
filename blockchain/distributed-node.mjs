@@ -81,6 +81,11 @@ import {
   verifyAccountProof,
   verifyAccountProofCandidate,
 } from "./account-proof.mjs";
+import {
+  createAssetProof,
+  verifyAssetProof,
+  verifyAssetProofCandidate,
+} from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
@@ -459,6 +464,30 @@ export class ValidatorReplica {
     const candidate = this.accountProofCandidate(address);
     if (candidate.height !== height || candidate.statementHash !== statementHash) {
       throw new Error("account proof attestation does not match local finalized state");
+    }
+    return candidate.attestations[0];
+  }
+
+  assetProofCandidate(assetId, holder) {
+    return createAssetProof({
+      asset: this.#chain.nativeAsset(assetId), assetId,
+      balance: this.#chain.nativeAssetBalance(assetId, holder).toString(),
+      height: this.#chain.height, holder, networkId: this.#chain.networkId,
+      pendingProtocolUpgrade: this.#chain.pendingProtocolUpgrade,
+      protocolVersion: this.#chain.protocolVersion, stateRoot: this.#chain.stateRoot,
+      tipHash: this.#chain.tipHash, validators: this.#chain.validatorMembers,
+      validatorWallets: [this.#wallet],
+    });
+  }
+
+  assetProofAttestation({ assetId, holder, height, statementHash }) {
+    if (!/^[0-9a-f]{64}$/.test(assetId ?? "") || !ADDRESS.test(holder ?? "") ||
+        !Number.isSafeInteger(height) || height < 0 || !/^[0-9a-f]{64}$/.test(statementHash ?? "")) {
+      throw new Error("asset proof attestation request is invalid");
+    }
+    const candidate = this.assetProofCandidate(assetId, holder);
+    if (candidate.height !== height || candidate.statementHash !== statementHash) {
+      throw new Error("asset proof attestation does not match local finalized state");
     }
     return candidate.attestations[0];
   }
@@ -1278,6 +1307,32 @@ export class DistributedCoordinator {
       }
     }
     throw new Error("account proof quorum is not reached");
+  }
+
+  async assetProof(assetId, holder) {
+    if (!/^[0-9a-f]{64}$/.test(assetId ?? "") || !ADDRESS.test(holder ?? "")) {
+      throw new Error("asset proof request is invalid");
+    }
+    const synchronization = await boundedAllSettled(this.#peers, (_, index) => this.#synchronizePeer(index));
+    const synchronized = synchronization.map((result, index) => result.status === "fulfilled" ? index : -1)
+      .filter((index) => index >= 0);
+    const quorum = Math.floor((this.#peers.length * 2) / 3) + 1;
+    if (synchronized.length < quorum) throw new Error(`asset proof synchronization quorum not reached (${synchronized.length}/${quorum})`);
+    const trustAnchor = { expectedAssetId: assetId, expectedHolder: holder,
+      expectedNetworkId: this.networkId, minimumHeight: this.height, trustedValidators: this.#validators };
+    for (const candidateIndex of synchronized) {
+      try {
+        const { proof } = await this.#request(candidateIndex, "/v1/assets/proof-candidate", { assetId, holder });
+        verifyAssetProofCandidate(proof, trustAnchor, this.#validators[candidateIndex].address);
+        const requests = await boundedAllSettled(synchronized, (index) => this.#request(index,
+          "/v1/assets/proof-attest", { assetId, holder, height: proof.height, statementHash: proof.statementHash }));
+        const assembled = { ...proof, attestations: requests.filter(({ status }) => status === "fulfilled")
+          .map(({ value }) => value.attestation) };
+        verifyAssetProof(assembled, trustAnchor);
+        return assembled;
+      } catch { /* Try another authenticated validator. */ }
+    }
+    throw new Error("asset proof quorum is not reached");
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {

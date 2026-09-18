@@ -6,7 +6,8 @@ import { resolve } from "node:path";
 import {
   createCreditDelegation, createCreditStake, createCreditTransfer,
   createCreditUnstakeClaim, createCreditUnstakeRequest, createDelegatedCreditTransfer,
-  createTransfer,
+  createTransfer, createNativeAsset, createNativeAssetMint, createNativeAssetTransfer,
+  createNativeAssetBurn, createNativeAssetAuthorityRevoke,
 } from "./chain.mjs";
 import { addressFromPublicKey, canonicalJson, hashObject, verifyObject } from "./crypto.mjs";
 import { createPaymentRequest, verifyPaymentRequest } from "./payment-request.mjs";
@@ -179,6 +180,17 @@ function signedOperation(intent, wallet) {
   if (intent.type === "credit-unstake-claim") return createCreditUnstakeClaim({ wallet, networkId: intent.networkId, nonce: intent.nonce });
   if (intent.type === "payment-request") return createPaymentRequest({ wallet, networkId: intent.networkId,
     amount: intent.amount, memo: intent.memo, expiresAt: intent.expiresAt, requestId: intent.requestId });
+  if (intent.type === "asset-create") return createNativeAsset({ wallet, networkId: intent.networkId,
+    metadataHash: intent.metadataHash, maxSupply: intent.maxSupply, initialSupply: intent.initialSupply,
+    fixedSupply: intent.fixedSupply, nonce: intent.nonce, fee: intent.fee });
+  if (intent.type === "asset-mint") return createNativeAssetMint({ wallet, networkId: intent.networkId,
+    assetId: intent.assetId, amount: intent.amount, nonce: intent.nonce, fee: intent.fee });
+  if (intent.type === "asset-transfer") return createNativeAssetTransfer({ wallet, networkId: intent.networkId,
+    assetId: intent.assetId, recipient: intent.recipient, amount: intent.amount, nonce: intent.nonce, fee: intent.fee });
+  if (intent.type === "asset-burn") return createNativeAssetBurn({ wallet, networkId: intent.networkId,
+    assetId: intent.assetId, amount: intent.amount, nonce: intent.nonce, fee: intent.fee });
+  if (intent.type === "asset-revoke-authority") return createNativeAssetAuthorityRevoke({ wallet,
+    networkId: intent.networkId, assetId: intent.assetId, nonce: intent.nonce, fee: intent.fee });
   fail("operation type is not supported");
 }
 
@@ -222,7 +234,10 @@ export function verifyOfflineSignedPackage(value, { now = Date.now() } = {}) {
     verifyPaymentRequest(transaction, { networkId: value.networkId, now });
   } else {
     const domains = { transfer: "TRANSFER", "credit-stake": "CREDIT_STAKE", "credit-delegation": "CREDIT_DELEGATION",
-      "credit-unstake-request": "CREDIT_UNSTAKE_REQUEST", "credit-unstake-claim": "CREDIT_UNSTAKE_CLAIM" };
+      "credit-unstake-request": "CREDIT_UNSTAKE_REQUEST", "credit-unstake-claim": "CREDIT_UNSTAKE_CLAIM",
+      "asset-create": "NATIVE_ASSET_CREATE", "asset-mint": "NATIVE_ASSET_MINT",
+      "asset-transfer": "NATIVE_ASSET_TRANSFER", "asset-burn": "NATIVE_ASSET_BURN",
+      "asset-revoke-authority": "NATIVE_ASSET_REVOKE_AUTHORITY" };
     if (!domains[transaction?.type] || transaction.type !== verified.simulation.type ||
         transaction.networkId !== value.networkId || transaction.sender !== verified.package.intent.sender ||
         transaction.nonce !== verified.package.intent.nonce || transaction.algorithm !== "ml-dsa-65" ||
