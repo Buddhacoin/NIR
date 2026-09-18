@@ -85,6 +85,17 @@ test("manifest hash, missing inventory, duplicate IDs, and reordered IDs fail cl
   assert.throws(() => verifyProtocolConformanceManifest(rehash(forgedDrift), ROOT), /drift/);
 });
 
+test("manifest ordering is locale-independent code-point order", () => {
+  const generated = buildProtocolConformanceManifest(ROOT);
+  const ids = generated.domainSeparators.map(({ id }) => id);
+  const developer = ids.indexOf("DEVELOPER_TESTNET_PREFLIGHT_REPORT_V1");
+  const devPlaceholder = ids.indexOf("DEV_TESTNET_CAPABILITY_PLACEHOLDER_V1");
+  assert.ok(developer >= 0 && devPlaceholder >= 0);
+  assert.ok(developer < devPlaceholder,
+    "DEVELOPER... must precede DEV_TESTNET... in locale-independent code-point order");
+  assert.doesNotThrow(() => validateProtocolConformanceManifest(generated));
+});
+
 test("source and security-document drift are independently detected", () => {
   const sourceRoot = copyInventoryRoot();
   const docsRoot = copyInventoryRoot();

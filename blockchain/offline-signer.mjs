@@ -48,6 +48,23 @@ function simulationCommitment(simulation) {
   return hashObject(simulation, "OFFLINE_SIGNING_SIMULATION_V1");
 }
 
+function validateAssetEvidenceTrustContext(evidence, checked) {
+  if (evidence.assetProofs === undefined) return;
+  if (!Array.isArray(evidence.assetProofs)) fail("asset proof evidence is invalid");
+  let protocolContext = null;
+  for (const statement of evidence.assetProofs) {
+    if (!statement || statement.validatorSetId !== checked.validatorSetId) {
+      fail("asset proof validator set does not match checkpoint");
+    }
+    const current = canonicalJson({ pendingProtocolUpgrade: statement.pendingProtocolUpgrade,
+      protocolVersion: statement.protocolVersion });
+    if (protocolContext !== null && current !== protocolContext) {
+      fail("asset proofs disagree on protocol trust context");
+    }
+    protocolContext = current;
+  }
+}
+
 function redactedSimulation(result) {
   return {
     authority: result.authority, deltas: result.deltas, intent: result.intent,
@@ -66,7 +83,8 @@ export function createOfflineSigningPackage({ intent, stateEvidence, checkpoint:
   if (checked.height !== result.stateHeight || checked.tipHash !== result.proof.tipHash ||
       checked.stateRoot !== result.proof.stateRoot || stateEvidence.networkId !== result.networkId ||
       stateEvidence.height !== checked.height || stateEvidence.tipHash !== checked.tipHash ||
-      stateEvidence.stateRoot !== checked.stateRoot) {
+      stateEvidence.stateRoot !== checked.stateRoot ||
+      stateEvidence.assetProofs?.some((proof) => proof.validatorSetId !== checked.validatorSetId)) {
     fail("checkpoint does not match independently verified simulation state");
   }
   const rendered = redactedSimulation(result);
@@ -95,6 +113,7 @@ export function validateOfflineSigningPackage(value, { now = Date.now() } = {}) 
       evidence.tipHash !== checked.tipHash || evidence.stateRoot !== checked.stateRoot) {
     fail("simulation evidence does not match checkpoint");
   }
+  validateAssetEvidenceTrustContext(evidence, checked);
   const rerun = simulateWalletOperation({ intent: value.intent, stateEvidence: evidence, now });
   const rendered = redactedSimulation(rerun);
   if (canonicalJson(value.simulation.result) !== canonicalJson(rendered) ||

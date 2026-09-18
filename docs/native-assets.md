@@ -58,6 +58,13 @@ checks that the signed transaction did not change a reviewed field. Neither
 simulation nor package creation broadcasts, and no browser-side signing or
 private-key exposure is introduced.
 
+Every asset statement in an exported package is bound to the checkpoint's
+network, height, tip, state root, and validator-set id. All statements must also
+agree on protocol version and pending protocol upgrade. Simulation and the
+offline signer recheck the deterministic asset id, creator and authority,
+lifetime minted amount, current supply, immutable cap, holder balance, and
+fixed-supply rules.
+
 ### Wallet UI
 
 The existing wallet exposes native assets from **Resources → User assets**
@@ -76,3 +83,33 @@ that identifier. Before export, the wallet reloads the account proof, reloads
 every required holder proof, repeats simulation, and requires identical
 consequences. Asset intents have no browser signing or broadcast action: their
 only continuation is export of the versioned offline signing package.
+
+## Adversarial audit boundary
+
+The bounded audit model runs seeded schedules containing valid and invalid
+create, mint, transfer, burn, revoke, replay, wrong-authority, over-cap, and
+cross-network operations. It checks that cumulative minted supply never falls,
+the sum of balances equals current supply, supply is no greater than cumulative
+minted supply or the cap, authority revocation is irreversible, rejection is
+atomic, a successful operation consumes exactly one nonce and one NIR fee, and
+asset activity never changes issued or burned NIR. At the global balance-entry
+limit a full-balance transfer may replace the sender entry with a recipient
+entry; any operation that would grow the number of entries is rejected.
+
+These checks do not define semantic identity for human-readable metadata.
+Consensus stores only an opaque 32-byte metadata hash; applications that attach
+Unicode names, symbols, URIs, or issuer claims must specify and authenticate
+their own canonical representation. Proof freshness is meaningful only against
+an independently verified finalized checkpoint and a caller-selected minimum
+height.
+
+The portable offline package contains normalized proven statements and their
+checkpoint binding, not the original validator signatures. The isolated signer
+therefore detects internal substitution and cross-context replay but cannot
+establish finality by itself. Obtain packages only from the exact-origin
+loopback bridge after proof verification and compare the checkpoint through an
+independent channel. A stale or unauthorized transaction is still rejected by
+consensus, but can waste review effort; the tooling does not automatically
+broadcast or retry it. Global definition and balance-entry caps bound resource
+use but can deny creation of new assets or holders and do not prevent economic
+concentration.

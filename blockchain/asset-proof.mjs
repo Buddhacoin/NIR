@@ -20,7 +20,7 @@ function orderedValidators(validators) {
   return [...validators].sort((left, right) => left.address.localeCompare(right.address));
 }
 
-function validateAsset(asset, assetId) {
+function validateAsset(asset, assetId, networkId) {
   if (asset === null) return;
   exact(asset, new Set(["assetId", "authority", "creationNonce", "creator", "fixedSupply",
     "maxSupply", "metadataHash", "minted", "supply"]), "asset");
@@ -31,6 +31,8 @@ function validateAsset(asset, assetId) {
       !ATOMIC.test(asset.maxSupply ?? "") || !ATOMIC.test(asset.minted ?? "") ||
       !ATOMIC.test(asset.supply ?? "") || BigInt(asset.maxSupply) === 0n ||
       BigInt(asset.supply) > BigInt(asset.minted) || BigInt(asset.minted) > BigInt(asset.maxSupply) ||
+      assetId !== hashObject({ creator: asset.creator, networkId, nonce: asset.creationNonce },
+        "NATIVE_ASSET_ID_V1") ||
       (asset.authority !== null && asset.authority !== asset.creator) ||
       (asset.fixedSupply && (asset.authority !== null || asset.minted !== asset.maxSupply))) {
     throw new Error("asset proof asset state is invalid");
@@ -52,7 +54,10 @@ function validateStatement(statement) {
       (statement.asset === null && statement.balance !== "0")) {
     throw new Error("asset proof statement is invalid");
   }
-  validateAsset(statement.asset, statement.assetId);
+  validateAsset(statement.asset, statement.assetId, statement.networkId);
+  if (statement.asset !== null && BigInt(statement.balance) > BigInt(statement.asset.supply)) {
+    throw new Error("asset proof holder balance exceeds current supply");
+  }
   normalizePendingProtocolUpgrade(statement.pendingProtocolUpgrade, {
     currentHeight: statement.height, currentVersion: statement.protocolVersion,
   });

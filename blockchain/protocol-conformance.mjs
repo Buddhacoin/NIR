@@ -22,6 +22,10 @@ function digest(bytes) {
   return `sha3-256:${createHash("sha3-256").update(bytes).digest("hex")}`;
 }
 
+function compareCodePoints(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function filesBelow(root, directory, extension) {
   const start = join(root, directory);
   const output = [];
@@ -205,16 +209,16 @@ export function buildProtocolConformanceManifest(rootValue) {
     if (DOC_SIGNAL.test(text)) docs.push({ file: relative(root, path).split(sep).join("/"),
       sha3_256: digest(Buffer.from(text)) });
   }
-  const mapEntries = (map) => [...map].sort(([a], [b]) => a.localeCompare(b)).map(([id, sources]) =>
-    ({ id, sources: sources.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line) }));
-  const payload = { docs: docs.sort((a, b) => a.file.localeCompare(b.file)),
+  const mapEntries = (map) => [...map].sort(([a], [b]) => compareCodePoints(a, b)).map(([id, sources]) =>
+    ({ id, sources: sources.sort((a, b) => compareCodePoints(a.file, b.file) || a.line - b.line) }));
+  const payload = { docs: docs.sort((a, b) => compareCodePoints(a.file, b.file)),
     domainSeparators: mapEntries(domains), dynamicDomainCalls: dynamicDomainCalls.sort((a, b) =>
-      a.file.localeCompare(b.file) || a.line - b.line), featureGates: featureGates.sort((a, b) =>
-      a.file.localeCompare(b.file) || a.line - b.line), format: FORMAT,
-    networkBindings: networkBindings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line),
+      compareCodePoints(a.file, b.file) || a.line - b.line), featureGates: featureGates.sort((a, b) =>
+      compareCodePoints(a.file, b.file) || a.line - b.line), format: FORMAT,
+    networkBindings: networkBindings.sort((a, b) => compareCodePoints(a.file, b.file) || a.line - b.line),
     schemas: mapEntries(schemas), securityParameters: securityParameters.sort((a, b) =>
-      a.id.localeCompare(b.id) || a.file.localeCompare(b.file) || a.line - b.line),
-    sourceFiles: sourceFiles.sort((a, b) => a.file.localeCompare(b.file)), version: 1 };
+      compareCodePoints(a.id, b.id) || compareCodePoints(a.file, b.file) || a.line - b.line),
+    sourceFiles: sourceFiles.sort((a, b) => compareCodePoints(a.file, b.file)), version: 1 };
   return { ...payload, manifestHash:
     `sha3-256:${hashObject(payload, "PROTOCOL_CONFORMANCE_MANIFEST_V1")}` };
 }
@@ -241,7 +245,7 @@ export function validateProtocolConformanceManifest(value) {
   for (const category of ["schemas", "domainSeparators"]) {
     const ids = value[category].map((entry) => entry?.id);
     if (ids.some((id) => typeof id !== "string") || new Set(ids).size !== ids.length ||
-        ids.some((id, index) => index > 0 && ids[index - 1] >= id)) {
+        ids.some((id, index) => index > 0 && compareCodePoints(ids[index - 1], id) >= 0)) {
       throw new Error(`protocol conformance ${category} has missing, duplicate, or unordered ids`);
     }
     for (const entry of value[category]) {
@@ -253,7 +257,9 @@ export function validateProtocolConformanceManifest(value) {
       for (const source of entry.sources) {
         validateLocation(source, `protocol conformance ${category} source`);
         const key = `${source.file}:${String(source.line).padStart(12, "0")}`;
-        if (key <= prior) throw new Error(`protocol conformance ${category} sources are duplicate or unordered`);
+        if (compareCodePoints(key, prior) <= 0) {
+          throw new Error(`protocol conformance ${category} sources are duplicate or unordered`);
+        }
         prior = key;
       }
     }
@@ -263,7 +269,8 @@ export function validateProtocolConformanceManifest(value) {
     for (const entry of value[category]) {
       exact(entry, ["file", "sha3_256"], `protocol conformance ${category} entry`);
       validatePath(entry.file, `protocol conformance ${category} path`);
-      if (!/^sha3-256:[0-9a-f]{64}$/.test(entry.sha3_256 ?? "") || entry.file <= prior) {
+      if (!/^sha3-256:[0-9a-f]{64}$/.test(entry.sha3_256 ?? "") ||
+          compareCodePoints(entry.file, prior) <= 0) {
         throw new Error(`protocol conformance ${category} is duplicate, unordered, or invalid`);
       }
       prior = entry.file;

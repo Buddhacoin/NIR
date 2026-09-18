@@ -1,10 +1,12 @@
 import {
   CREDIT_UNSTAKE_DELAY_BLOCKS,
   MIN_TRANSFER_FEE,
+  SUPPORTED_PROTOCOL_VERSIONS,
   TRANSFER_CREDIT_STAKE_UNIT,
 } from "./constants.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { verifyPaymentRequest } from "./payment-request.mjs";
+import { normalizePendingProtocolUpgrade } from "./protocol-upgrade.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const AMOUNT = /^(0|[1-9][0-9]{0,31})$/;
@@ -106,16 +108,47 @@ function evidence(value) {
           address(statement.holder, "asset holder") !== statement.holder ||
           statement.networkId !== value.networkId || statement.height !== value.height ||
           statement.tipHash !== value.tipHash || statement.stateRoot !== value.stateRoot ||
-          statement.format !== "nir-native-asset-proof-v1") fail("asset proof does not match simulation checkpoint");
+          statement.format !== "nir-native-asset-proof-v1" ||
+          !HASH.test(statement.validatorSetId ?? "") ||
+          !SUPPORTED_PROTOCOL_VERSIONS.includes(statement.protocolVersion)) {
+        fail("asset proof does not match simulation checkpoint");
+      }
+      try {
+        normalizePendingProtocolUpgrade(statement.pendingProtocolUpgrade, {
+          currentHeight: statement.height, currentVersion: statement.protocolVersion,
+        });
+      } catch { fail("asset proof protocol state is invalid"); }
       const key = `${statement.assetId}:${statement.holder}`;
       if (assetProofs.has(key)) fail("asset proof is duplicated");
+      const firstProof = assetProofs.values().next().value;
+      if (firstProof && (firstProof.validatorSetId !== statement.validatorSetId ||
+          firstProof.protocolVersion !== statement.protocolVersion ||
+          canonicalJson(firstProof.pendingProtocolUpgrade) !==
+            canonicalJson(statement.pendingProtocolUpgrade))) {
+        fail("asset proofs disagree on protocol trust context");
+      }
       const parsed = { ...structuredClone(statement), balance: atomic(statement.balance, "asset balance") };
       if (statement.asset !== null) {
         exactKeys(statement.asset, new Set(["assetId", "authority", "creationNonce", "creator", "fixedSupply",
           "maxSupply", "metadataHash", "minted", "supply"]), "asset state");
-        if (statement.asset.assetId !== statement.assetId) fail("asset state id does not match proof");
+        if (statement.asset.assetId !== statement.assetId ||
+            address(statement.asset.creator, "asset creator") !== statement.asset.creator ||
+            !(statement.asset.authority === null ||
+              address(statement.asset.authority, "asset authority") === statement.asset.creator) ||
+            !Number.isSafeInteger(statement.asset.creationNonce) || statement.asset.creationNonce < 0 ||
+            typeof statement.asset.fixedSupply !== "boolean" ||
+            !HASH.test(statement.asset.metadataHash ?? "") ||
+            statement.assetId !== hashObject({ creator: statement.asset.creator,
+              networkId: statement.networkId, nonce: statement.asset.creationNonce },
+            "NATIVE_ASSET_ID_V1")) fail("asset state definition does not match proof");
         parsed.asset = { ...statement.asset, maxSupply: atomic(statement.asset.maxSupply, "asset cap"),
           minted: atomic(statement.asset.minted, "asset minted"), supply: atomic(statement.asset.supply, "asset supply") };
+        if (parsed.asset.maxSupply === 0n || parsed.asset.supply > parsed.asset.minted ||
+            parsed.asset.minted > parsed.asset.maxSupply || parsed.balance > parsed.asset.supply ||
+            (parsed.asset.fixedSupply && (parsed.asset.authority !== null ||
+              parsed.asset.minted !== parsed.asset.maxSupply))) {
+          fail("asset state supply or authority invariant is invalid");
+        }
       } else if (parsed.balance !== 0n) fail("absent asset has a balance");
       assetProofs.set(key, parsed);
     }

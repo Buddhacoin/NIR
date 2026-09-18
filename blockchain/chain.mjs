@@ -3041,7 +3041,8 @@ export class NirChain {
         if (amount === 0n || transaction.recipient === transaction.sender || senderBalance < amount) {
           throw new Error("native asset transfer is invalid or unfunded");
         }
-        if (!assetBalances.has(recipientKey) && assetBalances.size >= MAX_NATIVE_ASSET_BALANCES) {
+        if (!assetBalances.has(recipientKey) && assetBalances.size >= MAX_NATIVE_ASSET_BALANCES &&
+            senderBalance !== amount) {
           throw new Error("native asset balance capacity is exhausted");
         }
         if (senderBalance === amount) assetBalances.delete(senderKey);
