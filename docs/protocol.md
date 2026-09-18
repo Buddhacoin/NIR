@@ -167,6 +167,16 @@ liquid fee balance. The present values are test-network parameters. Wallet
 controls and validator compensation for credit traffic remain required before
 mainnet.
 
+All direct, sponsored and delegated use is charged to one stake owner's common
+epoch counter; delegated use also consumes its signed per-delegate limit.
+Account-level rounding means splitting fixed stake across Sybil addresses never
+increases the aggregate quota. Positive delegation limits cannot be lowered
+below current-epoch consumption, keeping live state identical to the snapshot
+invariant; limit zero is an explicit revocation. These rules do not provide
+fair scheduling: capital can buy more quota, validators can censor, and aligned
+epoch renewal permits a bounded two-block boundary burst. The separate
+per-block cap remains the final consensus bound on credit-paid ingress.
+
 ## Protocol v20 compact finality headers
 
 Every non-genesis block hash is the domain-separated hash of a compact finality

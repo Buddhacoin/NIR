@@ -7,6 +7,7 @@ import {
   MAX_PROGRESS_COMMITMENT_AGE,
   PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS,
   allocateProgressRewards,
+  blockHash,
   computeProgressScore,
   createBeaconBond,
   createCreditStake,
@@ -31,10 +32,12 @@ import {
   transactionId,
 } from "../blockchain/chain.mjs";
 import { accountHistoryCommitment } from "../blockchain/account-history.mjs";
+import { verifyAccountStateProof } from "../blockchain/account-tree.mjs";
 import {
   BEACON_NON_REVEAL_SLASH_BPS,
   CREDIT_UNSTAKE_DELAY_BLOCKS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
+  MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
@@ -1630,6 +1633,247 @@ test("credit delegation is revocable and stake exits only after the delay", () =
   chain.appendBlock(finalizeBlock(claimBlock, quorumFor(claimBlock, validators)));
   assert.equal(chain.creditUnstake(owner.address), null);
   assert.equal(chain.balance(owner.address), TRANSFER_CREDIT_STAKE_UNIT - 2n * MIN_TRANSFER_FEE);
+});
+
+test("a delegation cannot be reduced below current-epoch consumption", () => {
+  const { chain, genesisConfig, treasury, validators } = fixture();
+  const owner = generateWallet();
+  const delegate = generateWallet();
+  const recipient = generateWallet();
+  const timestamp = TREASURY_VESTING_MS;
+  const funding = chain.buildBlock({
+    transactions: [
+      createTransfer({
+        wallet: treasury, networkId: chain.networkId, recipient: owner.address,
+        amount: (TRANSFER_CREDIT_STAKE_UNIT + 3n * MIN_TRANSFER_FEE).toString(), nonce: 0,
+      }),
+      createTransfer({
+        wallet: treasury, networkId: chain.networkId, recipient: delegate.address,
+        amount: "2", nonce: 1,
+      }),
+    ],
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(funding, quorumFor(funding, validators)));
+  const stake = createCreditStake({
+    wallet: owner, networkId: chain.networkId,
+    amount: TRANSFER_CREDIT_STAKE_UNIT.toString(), nonce: 0,
+  });
+  const delegation = createCreditDelegation({
+    wallet: owner, delegate: delegate.address, networkId: chain.networkId,
+    limit: 3, nonce: 1,
+  });
+  const setup = chain.buildBlock({ transactions: [stake, delegation], timestamp });
+  chain.appendBlock(finalizeBlock(setup, quorumFor(setup, validators)));
+  const spends = [0, 1].map((nonce) => createDelegatedCreditTransfer({
+    wallet: delegate, creditOwner: owner.address, networkId: chain.networkId,
+    recipient: recipient.address, amount: "1", nonce,
+  }));
+  const spendBlock = chain.buildBlock({ transactions: spends, timestamp });
+  chain.appendBlock(finalizeBlock(spendBlock, quorumFor(spendBlock, validators)));
+  assert.equal(chain.creditDelegation(owner.address, delegate.address).spent, 2);
+
+  const invalidReduction = createCreditDelegation({
+    wallet: owner, delegate: delegate.address, networkId: chain.networkId,
+    limit: 1, nonce: 2,
+  });
+  const rootBefore = chain.stateRoot;
+  const nonceBefore = chain.nextNonce(owner.address);
+  const rejected = chain.buildBlock({ transactions: [invalidReduction], timestamp });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(rejected, quorumFor(rejected, validators))),
+    /below already spent credits/,
+  );
+  assert.equal(chain.stateRoot, rootBefore);
+  assert.equal(chain.nextNonce(owner.address), nonceBefore);
+  assert.deepEqual(chain.creditDelegation(owner.address, delegate.address), {
+    delegate: delegate.address,
+    epoch: 0,
+    limit: 3,
+    owner: owner.address,
+    spent: 2,
+  });
+
+  const snapshot = chain.consensusSnapshot();
+  const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: snapshot.capabilityMemory,
+    checkpoint: chain.blocks().at(-1),
+    height: chain.height,
+    networkId: chain.networkId,
+    state: snapshot.state,
+    stateRoot: chain.stateRoot,
+    tipHash: chain.tipHash,
+  });
+  assert.equal(restored.stateRoot, chain.stateRoot);
+  assert.deepEqual(
+    restored.creditDelegation(owner.address, delegate.address),
+    chain.creditDelegation(owner.address, delegate.address),
+  );
+});
+
+test("one thousand credit transfers conserve NIR across fork restart and replay", () => {
+  const { chain, genesisConfig, treasury, validators } = fixture();
+  const owner = generateWallet();
+  const recipient = generateWallet();
+  const timestamp = TREASURY_VESTING_MS;
+  const stakeAmount = 100n * TRANSFER_CREDIT_STAKE_UNIT;
+  const transferCount = 1_000;
+  const fundingAmount = stakeAmount + 2n * MIN_TRANSFER_FEE + BigInt(transferCount + 1);
+  const fundingTransaction = createTransfer({
+    wallet: treasury, networkId: chain.networkId, recipient: owner.address,
+    amount: fundingAmount.toString(), nonce: 0,
+  });
+  const funding = chain.buildBlock({ transactions: [fundingTransaction], timestamp });
+  chain.appendBlock(finalizeBlock(funding, quorumFor(funding, validators)));
+  const stake = createCreditStake({
+    wallet: owner, networkId: chain.networkId, amount: stakeAmount.toString(), nonce: 0,
+  });
+  const stakeBlock = chain.buildBlock({ transactions: [stake], timestamp });
+  chain.appendBlock(finalizeBlock(stakeBlock, quorumFor(stakeBlock, validators)));
+  assert.equal(chain.transferCredits(owner.address), 1_000n);
+
+  let replicas = [chain];
+  for (let batch = 0; batch < transferCount / MAX_CREDIT_TRANSFERS_PER_BLOCK; batch += 1) {
+    const firstNonce = 1 + batch * MAX_CREDIT_TRANSFERS_PER_BLOCK;
+    const transactions = Array.from(
+      { length: MAX_CREDIT_TRANSFERS_PER_BLOCK },
+      (_, index) => createCreditTransfer({
+        wallet: owner, networkId: chain.networkId, recipient: recipient.address,
+        amount: "1", nonce: firstNonce + index,
+      }),
+    );
+    const proposal = chain.buildBlock({ transactions, timestamp });
+    const finalized = finalizeBlock(proposal, quorumFor(proposal, validators));
+    for (const replica of replicas) replica.appendBlock(finalized);
+
+    if (batch === 4) {
+      const snapshot = chain.consensusSnapshot();
+      const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
+        capabilityMemory: snapshot.capabilityMemory,
+        checkpoint: chain.blocks().at(-1),
+        height: chain.height,
+        networkId: chain.networkId,
+        state: snapshot.state,
+        stateRoot: chain.stateRoot,
+        tipHash: chain.tipHash,
+      });
+      const replayed = new NirChain(genesisConfig);
+      for (const block of chain.blocks().slice(1)) replayed.appendBlock(block);
+      replicas = [chain, chain.fork(), restored, replayed];
+      assert.ok(replicas.every((replica) => replica.stateRoot === chain.stateRoot));
+    }
+  }
+
+  for (const replica of replicas) {
+    assert.equal(replica.balance(recipient.address), 1_000n);
+    assert.equal(replica.transferCredits(owner.address), 0n);
+    assert.equal(replica.creditStake(owner.address), stakeAmount);
+    assert.equal(replica.stateRoot, chain.stateRoot);
+  }
+
+  const exhausted = createCreditTransfer({
+    wallet: owner, networkId: chain.networkId, recipient: recipient.address,
+    amount: "1", nonce: transferCount + 1,
+  });
+  const rootBefore = chain.stateRoot;
+  const rejected = chain.buildBlock({ transactions: [exhausted], timestamp });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(rejected, quorumFor(rejected, validators))),
+    /quota is exhausted/,
+  );
+  assert.equal(chain.stateRoot, rootBefore);
+  assert.equal(chain.nextNonce(owner.address), transferCount + 1);
+
+  const underpricedFallback = createTransfer({
+    wallet: owner, networkId: chain.networkId, recipient: recipient.address,
+    amount: "1", fee: "0", nonce: transferCount + 1,
+  });
+  const underpricedBlock = chain.buildBlock({ transactions: [underpricedFallback], timestamp });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(underpricedBlock, quorumFor(underpricedBlock, validators))),
+    /fee is below the protocol minimum/,
+  );
+  assert.equal(chain.stateRoot, rootBefore);
+  assert.equal(chain.nextNonce(owner.address), transferCount + 1);
+
+  const feeFallback = createTransfer({
+    wallet: owner, networkId: chain.networkId, recipient: recipient.address,
+    amount: "1", fee: MIN_TRANSFER_FEE.toString(), nonce: transferCount + 1,
+  });
+  const fallbackBlock = chain.buildBlock({ transactions: [feeFallback], timestamp });
+  chain.appendBlock(finalizeBlock(fallbackBlock, quorumFor(fallbackBlock, validators)));
+  assert.equal(chain.balance(recipient.address), 1_001n);
+  const state = chain.consensusSnapshot().state;
+  const liquid = state.balances.reduce((sum, [, amount]) => sum + BigInt(amount), 0n);
+  const locked = state.creditStakes.reduce((sum, [, amount]) => sum + BigInt(amount), 0n);
+  const pending = state.creditUnstakes.reduce(
+    (sum, [, unstake]) => sum + BigInt(unstake.amount), 0n,
+  );
+  assert.equal(liquid + locked + pending + chain.burned, chain.issued);
+  assert.equal(chain.issued, TREASURY_ALLOCATION);
+});
+
+test("account proof and snapshot credit views reset after, not at, the epoch boundary", () => {
+  const { chain, genesisConfig, treasury, validators } = fixture();
+  const owner = generateWallet();
+  const recipient = generateWallet();
+  const timestamp = TREASURY_VESTING_MS;
+  const funding = chain.buildBlock({
+    transactions: [createTransfer({
+      wallet: treasury, networkId: chain.networkId, recipient: owner.address,
+      amount: (TRANSFER_CREDIT_STAKE_UNIT + MIN_TRANSFER_FEE + 1n).toString(), nonce: 0,
+    })],
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(funding, quorumFor(funding, validators)));
+  const stake = chain.buildBlock({
+    transactions: [createCreditStake({
+      wallet: owner, networkId: chain.networkId,
+      amount: TRANSFER_CREDIT_STAKE_UNIT.toString(), nonce: 0,
+    })],
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(stake, quorumFor(stake, validators)));
+  const spend = chain.buildBlock({
+    transactions: [createCreditTransfer({
+      wallet: owner, networkId: chain.networkId, recipient: recipient.address,
+      amount: "1", nonce: 1,
+    })],
+    timestamp,
+  });
+  chain.appendBlock(finalizeBlock(spend, quorumFor(spend, validators)));
+  const exported = chain.consensusSnapshot();
+
+  for (const [height, expected] of [[719, "9"], [720, "9"], [721, "10"]]) {
+    const snapshot = structuredClone({
+      capabilityMemory: exported.capabilityMemory,
+      checkpoint: chain.blocks().at(-1),
+      height,
+      networkId: chain.networkId,
+      state: exported.state,
+      stateRoot: chain.stateRoot,
+      tipHash: chain.tipHash,
+    });
+    snapshot.checkpoint.height = height;
+    snapshot.checkpoint.hash = blockHash(snapshot.checkpoint);
+    snapshot.tipHash = snapshot.checkpoint.hash;
+    const view = NirChain.fromVerifiedSnapshot(genesisConfig, snapshot);
+    snapshot.checkpoint.accountStateRoot = view.accountStateRoot;
+    snapshot.checkpoint.hash = blockHash(snapshot.checkpoint);
+    snapshot.tipHash = snapshot.checkpoint.hash;
+    const restored = NirChain.fromVerifiedSnapshot(genesisConfig, snapshot);
+    const proof = restored.accountStateProof(owner.address);
+
+    assert.equal(restored.height, height);
+    assert.equal(restored.accountState(owner.address).resources.availableTransferCredits, expected);
+    assert.equal(proof.account.resources.availableTransferCredits, expected);
+    assert.equal(proof.accountStateRoot, restored.accountStateRoot);
+    assert.deepEqual(
+      verifyAccountStateProof(proof.account, proof.inclusionProof, proof.accountStateRoot),
+      proof.account,
+    );
+    assert.deepEqual(restored.consensusSnapshot().state.creditUsage, exported.state.creditUsage);
+  }
 });
 
 test("a transfer cannot spend more than the sender owns", () => {

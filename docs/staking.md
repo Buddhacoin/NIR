@@ -17,6 +17,24 @@ to another account without giving it control of the locked NIR.
 These are test-network parameters. Production values require public load and
 economic measurements.
 
+The quota is computed from the owner's total locked atomic stake and rounded
+down once per account. Splitting the same stake across more addresses can only
+preserve or reduce the combined quota; it cannot create credits. Direct,
+sponsored and delegated transfers all increment the same owner/epoch usage
+counter. Each delegated transfer additionally increments that delegate's
+smaller allowance, so mutual or cyclic delegations do not duplicate capacity.
+An allowance update cannot be reduced below credits already spent in its
+current epoch; revocation to zero remains immediate for later blocks.
+
+This is bounded resource pricing, not a complete DoS or decentralization
+solution. A wealthy operator can lock more NIR, distribute traffic across many
+accounts and use the global 100-transfer block allowance before smaller users.
+Aligned 720-block epochs also permit a bounded burst at the boundary: the last
+old-epoch block and first new-epoch block may each consume a full allowance.
+Validators can still censor transactions, and current credit traffic does not
+pay the proposer. Production parameters therefore require measured load,
+fair-queueing/mempool policy and an explicit validator-compensation policy.
+
 ## Use it in the local wallet
 
 1. Start the local node, wallet preview and signing bridge as described in the

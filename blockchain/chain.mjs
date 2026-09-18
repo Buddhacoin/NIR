@@ -103,6 +103,22 @@ function creditDelegationKey(owner, delegate) {
   return `${owner}:${delegate}`;
 }
 
+export function transferCreditAllowance(stake) {
+  if (typeof stake !== "bigint" || stake < 0n) {
+    throw new Error("credit stake must be a non-negative bigint");
+  }
+  return (stake * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
+    TRANSFER_CREDIT_STAKE_UNIT;
+}
+
+export function transferCreditEpoch(height) {
+  if (!Number.isSafeInteger(height) || height < 0) {
+    throw new Error("credit height is invalid");
+  }
+  if (height === 0) return 0;
+  return Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+}
+
 export const SYSTEM_NIR_ASSET_ID = "0".repeat(64);
 
 export function nativeAssetId({ networkId, creator, nonce }) {
@@ -191,11 +207,10 @@ function accountStatesFromMaps({
     ...creditUsage.keys(), ...nonces.keys(),
     ...[...creditDelegations.values()].map(({ owner }) => owner),
   ]);
-  const epoch = Math.floor(height / TRANSFER_CREDIT_EPOCH_BLOCKS);
+  const epoch = transferCreditEpoch(height);
   return [...addresses].sort().map((address) => {
     const stake = creditStakes.get(address) ?? 0n;
-    const allowance = (stake * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
-      TRANSFER_CREDIT_STAKE_UNIT;
+    const allowance = transferCreditAllowance(stake);
     const usage = creditUsage.get(address);
     const spent = usage?.epoch === epoch ? BigInt(usage.spent) : 0n;
     const pending = creditUnstakes.get(address) ?? null;
@@ -1771,10 +1786,8 @@ export class NirChain {
   creditUnstake(address) { return structuredClone(this.#creditUnstakes.get(address) ?? null); }
 
   transferCredits(address, height = this.height + 1) {
-    if (!Number.isSafeInteger(height) || height < 1) throw new Error("credit height is invalid");
-    const allowance = (this.creditStake(address) * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
-      TRANSFER_CREDIT_STAKE_UNIT;
-    const epoch = Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+    const allowance = transferCreditAllowance(this.creditStake(address));
+    const epoch = transferCreditEpoch(height);
     const usage = this.#creditUsage.get(address);
     const spent = usage?.epoch === epoch ? BigInt(usage.spent) : 0n;
     return allowance > spent ? allowance - spent : 0n;
@@ -2301,9 +2314,8 @@ export class NirChain {
     address, height, creditStakes, creditUsage, creditDelegations, delegate = null,
   ) {
     const stake = creditStakes.get(address) ?? 0n;
-    const allowance = (stake * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
-      TRANSFER_CREDIT_STAKE_UNIT;
-    const epoch = Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+    const allowance = transferCreditAllowance(stake);
+    const epoch = transferCreditEpoch(height);
     const previous = creditUsage.get(address);
     const spent = previous?.epoch === epoch ? previous.spent : 0;
     if (allowance <= BigInt(spent)) throw new Error("transfer credit quota is exhausted");
@@ -2752,13 +2764,17 @@ export class NirChain {
       if (!previous && owned >= MAX_CREDIT_DELEGATIONS_PER_OWNER) {
         throw new Error("credit delegation capacity is exhausted");
       }
-      const epoch = Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+      const epoch = transferCreditEpoch(height);
+      const spent = previous?.epoch === epoch ? previous.spent : 0;
+      if (transaction.limit < spent) {
+        throw new Error("credit delegation limit is below already spent credits");
+      }
       creditDelegations.set(key, {
         delegate: transaction.delegate,
         epoch,
         limit: transaction.limit,
         owner: transaction.sender,
-        spent: previous?.epoch === epoch ? previous.spent : 0,
+        spent,
       });
     }
     if (payRevocationFromStake) creditStakes.set(transaction.sender, stake - fee);
