@@ -1,13 +1,21 @@
 import { createServer } from "node:http";
-import { parseConsensusJson } from "./consensus-json.mjs";
+import {
+  hardenHttpServer,
+  HTTP_MAX_HEADER_BYTES,
+  HttpIngressGuard,
+  ingressErrorResponse,
+  readBoundedConsensusJson,
+} from "./http-ingress.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 
 function send(response, status, value, origin = null) {
   const body = JSON.stringify(value);
   const headers = {
+    "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
     "content-type": "application/json; charset=utf-8",
+    "x-content-type-options": "nosniff",
   };
   if (origin) headers["access-control-allow-origin"] = origin;
   response.writeHead(status, headers);
@@ -20,41 +28,26 @@ function allowedOrigin(request) {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$/.test(origin) ? origin : false;
 }
 
-function readBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    let failed = false;
-    request.setEncoding("utf8");
-    request.on("data", (chunk) => {
-      if (failed) return;
-      body += chunk;
-      if (Buffer.byteLength(body) > 64 * 1024) {
-        failed = true;
-        reject(new Error("request body is too large"));
-      }
-    });
-    request.on("end", () => {
-      if (failed) return;
-      try { resolve(parseConsensusJson(body)); }
-      catch { reject(new Error("request body is not valid consensus JSON")); }
-    });
-    request.on("error", reject);
-  });
-}
-
-export function createNodeHttpServer(node) {
-  return createServer(async (request, response) => {
+export function createNodeHttpServer(node, options = {}) {
+  const httpIngressOptions = {
+    maxBodyBytes: 64 * 1024,
+    ...(options.httpIngress ?? {}),
+  };
+  const httpIngress = new HttpIngressGuard(httpIngressOptions);
+  const server = createServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, async (request, response) => {
+    let finishIngress = null;
     const origin = allowedOrigin(request);
-    if (origin === false) return send(response, 403, { error: "origin is not allowed" });
-    if (request.method === "OPTIONS") {
-      response.writeHead(204, {
-        "access-control-allow-headers": "content-type",
-        "access-control-allow-methods": "GET, POST, OPTIONS",
-        ...(origin ? { "access-control-allow-origin": origin } : {}),
-      });
-      response.end(); return;
-    }
     try {
+      finishIngress = httpIngress.begin(request);
+      if (origin === false) return send(response, 403, { error: "origin is not allowed" });
+      if (request.method === "OPTIONS") {
+        response.writeHead(204, {
+          "access-control-allow-headers": "content-type",
+          "access-control-allow-methods": "GET, POST, OPTIONS",
+          ...(origin ? { "access-control-allow-origin": origin } : {}),
+        });
+        response.end(); return;
+      }
       const url = new URL(request.url, "http://node.local");
       if (request.method === "GET" && url.pathname === "/health") {
         return send(response, 200, {
@@ -131,12 +124,15 @@ export function createNodeHttpServer(node) {
         return send(response, 200, node.feeQuote(url.searchParams.get("amount"),
           url.searchParams.get("fee") ?? undefined), origin);
       }
+      if (request.method === "GET" && url.pathname === "/metrics") {
+        return send(response, 200, { httpIngress: httpIngress.metrics() }, origin);
+      }
       if (request.method === "POST" && url.pathname === "/v1/transactions") {
-        const body = await readBody(request);
+        const body = await readBoundedConsensusJson(request, httpIngressOptions);
         return send(response, 202, await node.submitTransaction(body), origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/faucet") {
-        const { recipient, amount } = await readBody(request);
+        const { recipient, amount } = await readBoundedConsensusJson(request, httpIngressOptions);
         if (!ADDRESS.test(recipient ?? "")) throw new Error("recipient is invalid");
         return send(response, 202, await node.faucet(recipient, amount), origin);
       }
@@ -148,7 +144,12 @@ export function createNodeHttpServer(node) {
       }
       return send(response, 404, { error: "not found" }, origin);
     } catch (error) {
-      return send(response, 400, { error: error.message }, origin);
+      httpIngress.record(error);
+      const rejected = ingressErrorResponse(error);
+      return send(response, rejected.status, { error: rejected.message }, origin);
+    } finally {
+      finishIngress?.();
     }
   });
+  return hardenHttpServer(server, httpIngressOptions);
 }

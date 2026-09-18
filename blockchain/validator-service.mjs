@@ -2,9 +2,15 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 
 import { blockHash, transactionId } from "./chain.mjs";
-import { parseConsensusJson } from "./consensus-json.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
+import {
+  hardenHttpServer,
+  HTTP_MAX_HEADER_BYTES,
+  HttpIngressGuard,
+  ingressErrorResponse,
+  readBoundedConsensusJson,
+} from "./http-ingress.mjs";
 import { IngressLimiter } from "./ingress-limiter.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
@@ -50,27 +56,12 @@ function objectivePeerViolation(error) {
 function send(response, status, value) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
+    "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
     "content-type": "application/json; charset=utf-8",
+    "x-content-type-options": "nosniff",
   });
   response.end(body);
-}
-
-function readBody(request) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    request.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > 2 * 1024 * 1024) reject(new Error("validator request is too large"));
-      else chunks.push(chunk);
-    });
-    request.on("end", () => {
-      try { resolve(parseConsensusJson(Buffer.concat(chunks).toString("utf8"))); }
-      catch { reject(new Error("validator request is not valid consensus JSON")); }
-    });
-    request.on("error", reject);
-  });
 }
 
 async function gossipPeerRequest(
@@ -418,18 +409,19 @@ export function createValidatorHttpServer(validator, options = {}) {
     throw new Error("validator operator-defense configuration is invalid");
   }
   const consumeIngress = (identity) => ingressLimiter.consume(identity);
+  const httpIngressOptions = options.httpIngress ?? {};
+  const httpIngress = new HttpIngressGuard(httpIngressOptions);
   const tls = options.tls ?? null;
   if (tls !== null && (typeof tls.key !== "string" && !Buffer.isBuffer(tls.key) ||
       typeof tls.cert !== "string" && !Buffer.isBuffer(tls.cert))) {
     throw new Error("validator TLS key and certificate are required");
   }
-  const createServer = tls === null
-    ? (handler) => createHttpServer(handler)
-    : (handler) => createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: "TLSv1.3" }, handler);
-  const server = createServer(async (request, response) => {
+  const handler = async (request, response) => {
     let authenticatedIdentity = null;
     let identity = "public:unknown";
+    let finishIngress = null;
     try {
+      finishIngress = httpIngress.begin(request);
       const url = new URL(request.url, "http://validator.local");
       if (request.method === "GET" && url.pathname === "/health") {
         identity = "public:health";
@@ -460,6 +452,7 @@ export function createValidatorHttpServer(validator, options = {}) {
         peerReputation.assertAllowed(identity);
         return send(response, 200, {
           authentication: authenticationScheduler.metrics(),
+          httpIngress: httpIngress.metrics(),
           ingressIdentities: ingressLimiter.size,
           nonces: validator.securityMetrics(),
           reputation: peerReputation.metrics(),
@@ -469,22 +462,25 @@ export function createValidatorHttpServer(validator, options = {}) {
       const bodyless = request.method === "POST" &&
         ["/v1/sync", "/v1/blocks/produce"].includes(url.pathname);
       const parsedBody = request.method === "POST" && !bodyless
-        ? await readBody(request) : null;
+        ? await readBoundedConsensusJson(request, httpIngressOptions) : null;
       const authRole = request.method !== "POST" ? null
         : VALIDATOR_AUTH_PATHS.has(url.pathname) ? "validator"
           : COORDINATOR_AUTH_PATHS.has(url.pathname) ? "coordinator" : null;
       let authenticatedNonce = null;
       if (authRole !== null) {
         const { auth, payload } = parsedBody ?? {};
+        if (auth === null || typeof auth !== "object" || Array.isArray(auth)) {
+          throw new Error("authentication is required");
+        }
+        if (!SIGNER.test(auth?.signer ?? "")) {
+          throw new Error("authenticated peer identity is invalid");
+        }
         authenticatedNonce = await authenticationScheduler.run(
           `preauth:${authRole}`,
           () => authRole === "validator"
             ? validator.authorizeValidator(auth, request.method, url.pathname, payload)
             : validator.authorize(auth, request.method, url.pathname, payload),
         );
-        if (!SIGNER.test(auth?.signer ?? "")) {
-          throw new Error("authenticated peer identity is invalid");
-        }
         authenticatedIdentity = `peer:${auth.signer}`;
         identity = authenticatedIdentity;
       } else {
@@ -774,20 +770,24 @@ export function createValidatorHttpServer(validator, options = {}) {
       return send(response, 404, { error: "not found" });
       });
     } catch (error) {
+      httpIngress.record(error);
       if (authenticatedIdentity !== null && objectivePeerViolation(error)) {
         peerReputation.recordViolation(authenticatedIdentity, "objective-protocol-violation");
       }
-      return send(response, 400, { error: error.message });
+      const rejected = ingressErrorResponse(error);
+      return send(response, rejected.status, { error: rejected.message });
+    } finally {
+      finishIngress?.();
     }
-  });
+  };
+  const server = tls === null
+    ? createHttpServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, handler)
+    : createHttpsServer({
+      cert: tls.cert, key: tls.key, maxHeaderSize: HTTP_MAX_HEADER_BYTES, minVersion: "TLSv1.3",
+    }, handler);
   const maxConnections = options.maxConnections ?? 128;
   if (!Number.isSafeInteger(maxConnections) || maxConnections < 4 || maxConnections > 10_000) {
     throw new Error("validator connection limit is invalid");
   }
-  server.maxConnections = maxConnections;
-  server.maxHeadersCount = 64;
-  server.headersTimeout = 5_000;
-  server.requestTimeout = 10_000;
-  server.keepAliveTimeout = 2_000;
-  return server;
+  return hardenHttpServer(server, { ...httpIngressOptions, maxConnections });
 }
