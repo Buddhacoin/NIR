@@ -207,8 +207,13 @@ contributions according to their verified progress score, with an efficiency
 adjustment for the energy used.
 
 The evaluator runner now builds a deterministic, content-addressed proof bundle
-before a reward can be proposed. A signed `progress-commitment` transaction
-first fixes the baseline, candidate, benchmark and recipient in finalized chain
+before a reward can be proposed. Its bounded `nir-model-content-v1` profile
+recomputes the admitted digest from an exact regular-file allowlist while
+ignoring tar ordering, timestamps, compression and one outer wrapper directory.
+It rejects exact content reuse; it does not recognize semantically equivalent
+models with different commitments.
+A signed `progress-commitment` transaction first fixes the baseline, candidate,
+canonical content, parent lineage, benchmark and recipient in finalized chain
 state and records the currently unfinished randomness round. It cannot receive
 a beacon committee until that exact round completes through on-chain
 post-quantum commit/reveal in later blocks. The final epoch seed selects one
@@ -362,6 +367,7 @@ candidate runs are committed.
 - `nir/evaluator.py` — hidden-suite commitment and progress evaluation.
 - `nir/runner.py` — content-addressed execution transcripts, proof bundles, and
   replay protection for evaluator runners.
+- `nir/model_content.py` — bounded directory/tar canonical content commitments;
 - `nir/memory.py` — world capability frontier, lineage, and novelty registry.
 - `nir/genesis.py` — command-line commit/reveal demonstrator.
 - `nir/simulation.py` — a small example epoch.

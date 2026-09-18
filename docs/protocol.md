@@ -67,8 +67,9 @@ publishing its bytes. The admission also commits to 1–32 sorted, unique parent
 artifact hashes. For a production evaluation family, assigned evaluators must
 recompute that canonical commitment inside the isolated runner; changing a
 container label, archive ordering, submitter key, recipient, or wrapper metadata
-must not change it. The current reference runner only binds the supplied digest
-into its proof bundle and does not define a general model canonicalizer.
+must not change it. The reference runner implements only the bounded
+[`nir-model-content-v1`](model-content.md) directory/tar profile; it is not a
+general model canonicalizer.
 
 The executable runner format makes that boundary explicit. A candidate is
 content-addressed before the challenge epoch. Each baseline/candidate transcript

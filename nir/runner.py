@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 from .evaluator import BenchmarkSuite, EvaluationReport, RunRecord, evaluate_progress
 from .model import ProtocolError
+from .model_content import canonical_model_content_commitment
 
 
 MAX_ARTIFACT_BYTES = 1 << 30
@@ -342,7 +343,7 @@ class EvaluationBundle:
             suite = BenchmarkSuite.from_dict(data["suite"])
             baseline = tuple(ExecutionTranscript.from_dict(item) for item in data["baseline"])
             candidate = tuple(ExecutionTranscript.from_dict(item) for item in data["candidate"])
-            bundle = create_bundle(
+            bundle = _create_bundle(
                 commitment=commitment,
                 challenge_seed=str(data["challenge_seed"]),
                 challenge_epoch=int(data["challenge_epoch"]),
@@ -388,7 +389,7 @@ class EvaluationBundle:
         return {**self._payload(), "bundle_hash": self.bundle_hash}
 
 
-def create_bundle(
+def _create_bundle(
     *,
     commitment: CandidateCommitment,
     challenge_seed: str,
@@ -398,8 +399,13 @@ def create_bundle(
     suite_salt: str,
     baseline: Iterable[ExecutionTranscript],
     candidate: Iterable[ExecutionTranscript],
+    candidate_content_path: str | Path | None = None,
 ) -> EvaluationBundle:
     commitment.validate()
+    if candidate_content_path is not None and (
+        canonical_model_content_commitment(candidate_content_path) != commitment.content_hash
+    ):
+        raise ProtocolError("candidate canonical content does not match admission")
     _require_digest(challenge_seed, "challenge seed")
     if challenge_epoch <= commitment.committed_epoch:
         raise ProtocolError("challenge must be created after artifact commitment")
@@ -443,15 +449,42 @@ def create_bundle(
     )
 
 
+def create_bundle(
+    *,
+    commitment: CandidateCommitment,
+    candidate_content_path: str | Path,
+    challenge_seed: str,
+    challenge_epoch: int,
+    environment: EnvironmentManifest,
+    suite: BenchmarkSuite,
+    suite_salt: str,
+    baseline: Iterable[ExecutionTranscript],
+    candidate: Iterable[ExecutionTranscript],
+) -> EvaluationBundle:
+    """Create a proof bundle only after recomputing the admitted canonical content."""
+    return _create_bundle(
+        commitment=commitment,
+        candidate_content_path=candidate_content_path,
+        challenge_seed=challenge_seed,
+        challenge_epoch=challenge_epoch,
+        environment=environment,
+        suite=suite,
+        suite_salt=suite_salt,
+        baseline=baseline,
+        candidate=candidate,
+    )
+
+
 def verify_bundle(
     bundle: EvaluationBundle,
     *,
     expected_hash: str | None = None,
     baseline_path: str | Path | None = None,
     candidate_path: str | Path | None = None,
+    candidate_content_path: str | Path | None = None,
 ) -> None:
     """Recompute every public binding and optionally rehash local artifacts."""
-    rebuilt = create_bundle(
+    rebuilt = _create_bundle(
         commitment=bundle.commitment,
         challenge_seed=bundle.challenge_seed,
         challenge_epoch=bundle.challenge_epoch,
@@ -460,6 +493,7 @@ def verify_bundle(
         suite_salt=bundle.suite_salt,
         baseline=bundle.baseline,
         candidate=bundle.candidate,
+        candidate_content_path=candidate_content_path,
     )
     if rebuilt.report.as_dict() != bundle.report.as_dict():
         raise ProtocolError("evaluation report does not match execution transcripts")

@@ -103,11 +103,13 @@ Canonical content uniqueness is deliberately narrower than semantic novelty.
 The commitment is intended to hide artifact bytes and ignore packaging metadata
 under an evaluation family's published canonicalization profile, but validators
 cannot detect a false commitment or recognize transformed copies by themselves.
-The current reference runner binds the supplied commitment into its bundle; it
-does not yet define a general canonicalizer for every model format. Production
-families need that deterministic canonicalizer and assigned independent runners
-must recompute it. Exact commitment history already survives state snapshots,
-forks and replay through the capability-memory root.
+The reference runner implements the bounded
+[`nir-model-content-v1`](model-content.md) directory/tar profile and recomputes
+it before creating a bundle; it does not canonicalize arbitrary model formats.
+Production families must restrict execution to the allowlisted content and run
+the same check in independently administered environments. Exact commitment
+history survives state snapshots, forks and replay through the
+capability-memory root.
 
 Admission does not charge NIR, because requiring an existing coin would make
 the first intelligence reward impossible. Spam is bounded by block limits, one

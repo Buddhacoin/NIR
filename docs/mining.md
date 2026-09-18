@@ -99,7 +99,8 @@ The local consensus rejects reuse of an already accepted canonical content
 commitment even when the submitter key, package hash, metadata and evaluation
 transcript change. This is not a claim that NIR can identify semantically copied
 ideas or inspect private weights: isolated evaluators must recompute and attest
-the canonical digest, and distinct commitments can still conceal related work.
+the bounded [`nir-model-content-v1`](model-content.md) digest, and distinct
+commitments can still conceal related work.
 
 ## Connecting today
 
