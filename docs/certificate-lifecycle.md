@@ -160,10 +160,35 @@ The selected history is installed with crash-safe primary and backup writes. A s
 history is treated as a stale prefix and can never roll back the local store. This
 propagation is deliberately bounded and transports only public certificate records;
 it does not issue certificates, copy TLS private keys, switch the server key, or replace
-an external CA/operator procedure. A node must already have active pins with which to
-authenticate the quorum, so an empty lifecycle store is not bootstrapped from the
-network and never falls back to genesis pins. Operators must distribute the initial
-authorized history out of band and propagate renewals before the old pin expires.
+an external CA/operator procedure. Ordinary node requests still require active lifecycle
+pins and never fall back to genesis pins.
+
+## One-time migration bootstrap
+
+A validator whose lifecycle store has never existed can explicitly migrate from the
+consensus peer-registry pins. Stop that validator, confirm the genesis/consensus state
+and the expected peer URLs out of band, then run:
+
+```sh
+npm run certificate:bootstrap -- ./network/validators/validator-0 \
+  https://validator-0.example https://validator-1.example \
+  https://validator-2.example https://validator-3.example
+```
+
+This is a dedicated operator action, not an automatic request fallback. It uses only
+the TLS fingerprints committed by the node's consensus state, signs each history
+request with the validator transport identity, verifies every peer response against
+its authenticated transport identity, and installs only one fully verified history
+head reported by a validator quorum. Plain HTTP, missing consensus pins, forged
+records, a 2/2 split, or a wrong genesis certificate cannot create a store.
+
+Successful migration writes both redundant history copies and the durable
+`CERTIFICATE-LIFECYCLE-BOOTSTRAPPED.json` receipt. The existence of either store copy
+or that receipt permanently disables the bootstrap path. Thus an interrupted primary
+write is repaired from the verified backup on restart, while deleting or rolling back
+the lifecycle store fails closed instead of re-enabling genesis pins. Preserve the
+receipt with node state and backups; local deletion of both the store and receipt is
+outside the protocol's ability to detect without external monotonic storage.
 
 Before a public test network, operators still need isolated key generation, documented
 certificate issuance procedures, independent deployment on real hosts, monitoring,
