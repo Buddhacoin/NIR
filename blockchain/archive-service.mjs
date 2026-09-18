@@ -27,6 +27,13 @@ import {
   consensusValueBytes,
 } from "./consensus-codec.mjs";
 import { canonicalJson } from "./crypto.mjs";
+import {
+  hardenHttpServer,
+  HTTP_MAX_HEADER_BYTES,
+  HttpIngressGuard,
+  ingressErrorResponse,
+  rejectUnexpectedRequestBody,
+} from "./http-ingress.mjs";
 
 const MAX_SOURCES = 128;
 const MAX_SOURCE_BYTES = 256;
@@ -34,8 +41,9 @@ const MAX_JSON_OVERHEAD = 32 * 1024;
 const DEFAULT_MAX_CHUNKS = 4096;
 const DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
 
-function json(response, status, value, headers = {}) {
+function json(response, status, value, headers = {}, maximumBytes = 128 * 1024) {
   const body = JSON.stringify(value);
+  if (Buffer.byteLength(body) > maximumBytes) throw new Error("archive response exceeds its bound");
   response.writeHead(status, {
     "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
@@ -46,7 +54,41 @@ function json(response, status, value, headers = {}) {
   response.end(body);
 }
 
-export function createHistoryArchiveHttpServer(archive) {
+async function streamChunk(response, chunk, manifest) {
+  const prefix = `{"data":"`;
+  const suffix = `","index":${chunk.index}}`;
+  const length = Buffer.byteLength(prefix) + Buffer.byteLength(chunk.data) + Buffer.byteLength(suffix);
+  const maximum = Math.ceil(manifest.size / 3) * 4 + 128;
+  if (length > maximum) throw new Error("archive chunk response exceeds its bound");
+  response.writeHead(200, {
+    "accept-ranges": "none",
+    "cache-control": "public, immutable, max-age=31536000",
+    "content-length": length,
+    "content-type": "application/json; charset=utf-8",
+    etag: `"${manifest.sha3_256}"`,
+    "x-content-type-options": "nosniff",
+  });
+  response.write(prefix);
+  for (let offset = 0; offset < chunk.data.length; offset += 64 * 1024) {
+    if (!response.write(chunk.data.slice(offset, offset + 64 * 1024))) {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          response.off("drain", drained);
+          response.off("close", closed);
+        };
+        const drained = () => { cleanup(); resolve(); };
+        const closed = () => { cleanup(); reject(new Error("archive download was aborted")); };
+        response.once("drain", drained);
+        response.once("close", closed);
+      });
+    }
+  }
+  response.end(suffix);
+}
+
+export function createHistoryArchiveHttpServer(archive, suppliedOptions = {}) {
+  const options = suppliedOptions && typeof suppliedOptions === "object" &&
+    !Array.isArray(suppliedOptions) ? suppliedOptions : {};
   if (!archive?.manifest || !archive?.signer || !archive?.signature ||
       !Array.isArray(archive.chunks) ||
       archive.chunks.length !== archive.manifest.chunks?.length) {
@@ -58,52 +100,90 @@ export function createHistoryArchiveHttpServer(archive) {
     signature: stored.signature,
     signer: stored.signer,
   };
-  const server = createServer((request, response) => {
-    if (request.method !== "GET") {
-      json(response, 405, { error: "method not allowed" }, { allow: "GET" }); return;
+  if (Buffer.byteLength(JSON.stringify(manifestEnvelope)) >
+      MAX_HISTORY_ARCHIVE_MANIFEST_BYTES + 64 * 1024) {
+    throw new Error("history archive manifest envelope is too large");
+  }
+  stored.chunks.forEach((chunk, index) => {
+    const expected = stored.manifest.chunks[index];
+    const maximumBase64Length = Math.ceil((expected?.size ?? 0) / 3) * 4;
+    if (chunk?.index !== index || typeof chunk.data !== "string" ||
+        !Number.isSafeInteger(expected?.size) || expected.size < 0 ||
+        expected.size > MAX_HISTORY_ARCHIVE_CHUNK_BYTES ||
+        chunk.data.length !== maximumBase64Length ||
+        Buffer.byteLength(chunk.data) !== maximumBase64Length) {
+      throw new Error("history archive response chunk is outside service bounds");
     }
-    let url;
-    try { url = new URL(request.url, "http://archive.invalid"); }
-    catch { json(response, 400, { error: "request URL is invalid" }); return; }
-    if (url.search || url.hash) {
-      json(response, 400, { error: "query parameters are not supported" }); return;
-    }
-    if (url.pathname === "/health") {
-      json(response, 200, {
-        archiveHash: stored.manifest.archiveHash,
-        height: stored.manifest.height,
-        networkId: stored.manifest.networkId,
-        operator: stored.signer.address,
-      });
-      return;
-    }
-    if (url.pathname === "/v1/history-archive/manifest") {
-      json(response, 200, manifestEnvelope, {
-        "cache-control": "public, max-age=60",
-        etag: `"${stored.manifest.archiveHash}"`,
-      });
-      return;
-    }
-    const match = /^\/v1\/history-archive\/chunks\/(0|[1-9][0-9]*)$/.exec(url.pathname);
-    if (match) {
-      const index = Number(match[1]);
-      const chunk = stored.chunks[index];
-      if (!Number.isSafeInteger(index) || !chunk || chunk.index !== index) {
-        json(response, 404, { error: "chunk not found" }); return;
-      }
-      json(response, 200, chunk, {
-        "cache-control": "public, immutable, max-age=31536000",
-        etag: `"${stored.manifest.chunks[index].sha3_256}"`,
-      });
-      return;
-    }
-    json(response, 404, { error: "not found" });
   });
-  server.headersTimeout = 5_000;
-  server.requestTimeout = 10_000;
-  server.keepAliveTimeout = 5_000;
-  server.maxHeadersCount = 64;
-  return server;
+  const httpIngressOptions = {
+    burst: 128,
+    maxActive: 32,
+    maxActivePerAddress: 8,
+    maxConnections: 64,
+    requestsPerMinute: 240,
+    ...(options.httpIngress ?? {}),
+  };
+  const httpIngress = new HttpIngressGuard(httpIngressOptions);
+  const server = createServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, async (request, response) => {
+    let release = null;
+    try {
+      release = httpIngress.begin(request);
+      response.once("finish", release);
+      response.once("close", release);
+      rejectUnexpectedRequestBody(request);
+      if (request.method !== "GET") {
+        json(response, 405, { error: "method not allowed" }, { allow: "GET" }); return;
+      }
+      if (request.headers.range !== undefined) {
+        json(response, 416, { error: "range requests are not supported" }, {
+          "accept-ranges": "none",
+        });
+        return;
+      }
+      const url = new URL(request.url, "http://archive.invalid");
+      if (url.search || url.hash) {
+        json(response, 400, { error: "query parameters are not supported" }); return;
+      }
+      if (url.pathname === "/health") {
+        json(response, 200, {
+          archiveHash: stored.manifest.archiveHash,
+          height: stored.manifest.height,
+          networkId: stored.manifest.networkId,
+          operator: stored.signer.address,
+        });
+        return;
+      }
+      if (url.pathname === "/metrics") {
+        json(response, 200, { httpIngress: httpIngress.metrics() }); return;
+      }
+      if (url.pathname === "/v1/history-archive/manifest") {
+        json(response, 200, manifestEnvelope, {
+          "cache-control": "public, max-age=60",
+          etag: `"${stored.manifest.archiveHash}"`,
+        }, MAX_HISTORY_ARCHIVE_MANIFEST_BYTES + 64 * 1024);
+        return;
+      }
+      const match = /^\/v1\/history-archive\/chunks\/(0|[1-9][0-9]*)$/.exec(url.pathname);
+      if (match) {
+        const index = Number(match[1]);
+        const chunk = stored.chunks[index];
+        if (!Number.isSafeInteger(index) || !chunk || chunk.index !== index) {
+          json(response, 404, { error: "chunk not found" }); return;
+        }
+        await streamChunk(response, chunk, stored.manifest.chunks[index]);
+        return;
+      }
+      json(response, 404, { error: "not found" });
+    } catch (error) {
+      httpIngress.record(error);
+      if (!response.headersSent) {
+        const rejected = ingressErrorResponse(error);
+        json(response, rejected.status, { error: rejected.message });
+      } else response.destroy();
+    }
+  });
+  server.httpIngressMetrics = () => httpIngress.metrics();
+  return hardenHttpServer(server, httpIngressOptions);
 }
 
 function normalizedSource(value, allowInsecureLocalhost) {

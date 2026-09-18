@@ -61,6 +61,20 @@ function validateContentLength(request, maximumBytes) {
   }
 }
 
+export function rejectUnexpectedRequestBody(request) {
+  try {
+    validateContentLength(request, 0);
+    if (request.headers["transfer-encoding"] !== undefined ||
+        request.headers["content-length"] !== undefined &&
+        request.headers["content-length"] !== "0") {
+      throw new HttpIngressError("bodyTooLarge", "request body is not accepted", 413);
+    }
+  } catch (error) {
+    discard(request);
+    throw error;
+  }
+}
+
 function countJsonNodes(value, maximum) {
   const pending = [value];
   let count = 0;

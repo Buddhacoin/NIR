@@ -125,6 +125,15 @@ try {
     }
     const archive = readBoundedJson(directory, MAX_ARCHIVE_FILE_BYTES);
     const server = createHistoryArchiveHttpServer(archive);
+    const shutdown = async () => {
+      try { await server.gracefulShutdown(); }
+      catch (error) {
+        console.error(`Archive shutdown failed: ${error.message}`);
+        process.exitCode = 1;
+      }
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
     server.listen(port, host, () => {
       console.log(`NIR history archive listening on http://${host}:${port}`);
     });

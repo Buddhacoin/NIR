@@ -56,13 +56,44 @@ The audited server surfaces are:
 - `wallet-bridge.mjs`: loopback wallet signing/verification bridge. It already has per-route body,
   connection, header, request, and pending-operation limits plus pairing/session authorization. It
   must remain loopback-only; this change does not turn it into a public service.
-- `archive-service.mjs`: immutable GET-only archive serving with bounded stored chunks and HTTP
-  timeouts/header count. A high-volume public deployment still needs connection/rate limiting at a
-  reverse proxy or a later adoption of the shared boundary.
-- `beacon-service.mjs`: operator beacon share service, loopback by default. Its CLI permits a custom
-  bind host and therefore must not be Internet-exposed without authenticated transport and an
-  ingress proxy; its current 8 KiB body cap alone is not a public-service defense.
+- `archive-service.mjs`: immutable GET-only archive serving behind the shared admission boundary.
+  It rejects request bodies and byte ranges, validates every stored chunk against its declared
+  index/size service bound before listening, bounds manifest envelopes, and streams chunk JSON in
+  64 KiB pieces while honoring socket backpressure. Clients still cryptographically verify chunk
+  hashes, so a faulty/malicious source remains detectable and recovery can fall back to another.
+  Aborted downloads release their concurrency admission on response close. Its CLI binds only to a
+  loopback host; remote HTTPS termination belongs to the deployment proxy.
+- `beacon-http-service.mjs` / `beacon-service.mjs`: the operator share endpoint uses an 8 KiB exact
+  consensus-JSON request, validates the complete shape and context before random generation and
+  post-quantum signing, persists a new share before replying, and serves duplicate requests from the
+  durable idempotency map. Unique persisted shares are capped (10,000 by default) rather than
+  allowing unbounded attacker-selected candidate IDs. The CLI now permits loopback binding only and
+  handles SIGINT/SIGTERM with bounded graceful shutdown. Its vault is read descriptor-bound with
+  `O_NOFOLLOW`; share state is an append-only 0600 fsync-backed log held open by descriptor, with
+  operator-directory identity checks before and after append and an exclusive single-writer lock.
+  Existing bounded JSON state is migrated once without following symlinks.
 - backup/recovery listeners are test/operator recovery transports, not production public RPC.
+
+Archive content authentication is end-to-end: clients verify the archive operator's signed manifest
+and every chunk hash. HTTP requests themselves are intentionally unauthenticated because archives
+are public immutable data. Beacon share requests also retain the existing unauthenticated wire
+protocol; admission, exact parsing, idempotency, and capacity checks therefore all occur before
+share generation/signing. New contexts are globally serialized; concurrent duplicates wait for the
+same durable commit and never observe an uncommitted random share. An ambiguous persistence failure
+poisons that context until restart, when the fsynced log decides whether the share exists. Operators
+must expose the loopback beacon through an authenticated TLS control plane if callers need to be
+restricted. The service does not trust forwarding headers and does not claim that rate limiting is
+caller authentication.
+
+Capacity exhaustion is fail-safe: existing contexts remain replayable, but new contexts receive
+503 and no randomness is generated. Operators must alert well before the 10,000-record bound. They
+must not delete or truncate the log, because doing so could let the authority sign a second random
+share for an old context. Raising/archiving that bound requires an offline, audited state-migration
+procedure; this increment intentionally does not automate destructive recovery.
+After an unclean process death, the exclusive `.lock` file is deliberately left in place. An
+operator must first prove that no beacon process still owns the state and that the append-only log
+reverifies, then remove that exact lock while the service is stopped. Automatic stale-lock deletion
+would risk two live signers and is intentionally absent.
 
 These controls bound one process, not a distributed botnet. They also do not provide bandwidth
 scrubbing, trusted-proxy identity, TLS termination policy, or cross-restart rate history. Production
