@@ -79,6 +79,8 @@
     "release:bundle-verify": "node blockchain/offline-release-cli.mjs verify",
     "release:governance": "node blockchain/offline-release-governance-cli.mjs",
     "release:witness": "node blockchain/offline-release-witness-cli.mjs",
+    "protocol:manifest-generate": "node blockchain/protocol-conformance-cli.mjs generate . protocol/conformance-manifest.json",
+    "protocol:manifest-verify": "node blockchain/protocol-conformance-cli.mjs verify . protocol/conformance-manifest.json",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
     "benchmark:history": "node benchmarks/account-history-storage.mjs",
     "benchmark:storage-lifecycle": "node benchmarks/storage-lifecycle.mjs",
