@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
@@ -10,9 +9,9 @@ import {
 } from "./distributed-node.mjs";
 import { createNodeHttpServer } from "./node-service.mjs";
 import { createValidatorHttpServer } from "./validator-service.mjs";
-import { certificateSha256 } from "./http-client.mjs";
 import { discoverPeersFromSeeds } from "./peer-discovery.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
+import { installValidatorTlsReloader, loadTlsKeyPair } from "./tls-context-reload.mjs";
 import {
   CERTIFICATE_MODE_DEV_GENESIS,
   CERTIFICATE_MODE_LIFECYCLE,
@@ -33,9 +32,7 @@ function tlsFromEnvironment() {
   if (!keyPath || !certPath) {
     throw new Error("NIR_TLS_KEY_PATH and NIR_TLS_CERT_PATH must be set together");
   }
-  const key = readFileSync(keyPath);
-  const cert = readFileSync(certPath);
-  return { cert, key, fingerprint: certificateSha256(new X509Certificate(cert).raw) };
+  return { ...loadTlsKeyPair({ certPath, keyPath }), certPath, keyPath };
 }
 
 function certificateModeFromEnvironment() {
@@ -65,7 +62,16 @@ try {
         (tls !== null && !expectedPins.includes(tls.fingerprint))) {
       throw new Error("TLS certificate does not match the validator's active certificate mode");
     }
-    createValidatorHttpServer(validator, { tls }).listen(port, "127.0.0.1", () => {
+    const server = createValidatorHttpServer(validator, { tls });
+    if (validator.certificateMode === CERTIFICATE_MODE_LIFECYCLE && tls !== null) {
+      installValidatorTlsReloader({
+        certPath: tls.certPath,
+        keyPath: tls.keyPath,
+        server,
+        validator,
+      });
+    }
+    server.listen(port, "127.0.0.1", () => {
       const protocol = tls ? "https" : "http";
       console.log(`NIR validator ${validator.address} listening on ${protocol}://127.0.0.1:${port}`);
     });

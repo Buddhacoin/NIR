@@ -190,6 +190,22 @@ the lifecycle store fails closed instead of re-enabling genesis pins. Preserve t
 receipt with node state and backups; local deletion of both the store and receipt is
 outside the protocol's ability to detect without external monotonic storage.
 
+## Live server-certificate rotation
+
+A lifecycle validator started with `NIR_TLS_CERT_PATH` and `NIR_TLS_KEY_PATH` handles
+`SIGHUP` as an explicit local reload request. It opens both regular files without
+following symlinks, binds every read to the opened descriptor, verifies the certificate
+validity period and matching private key, and resolves the validator's own active pins
+from the verified lifecycle history at the current finalized height. Only then does it
+atomically replace the HTTPS secure context. New connections see the new certificate;
+existing connections are not rewritten.
+
+During a signed renewal overlap, operators can deploy the new cert/key files and send
+`SIGHUP` after the activation height. An inactive fingerprint, revocation, wrong key,
+unsafe file, corrupt lifecycle state, or secure-context error is logged as an explicit
+reload failure and leaves the previous server context in service. This control is not
+installed in `dev-genesis` mode and does not add automatic certificate fallback.
+
 Before a public test network, operators still need isolated key generation, documented
 certificate issuance procedures, independent deployment on real hosts, monitoring,
 incident drills, and external review. Local processes are useful for testing but must
