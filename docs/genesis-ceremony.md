@@ -105,6 +105,45 @@ verification revalidates every release signature against the externally supplied
 trusted signer, respects the combined store bound, and rejects a decreasing release
 version as an older-release replay.
 
+## External monotonic anchor
+
+Two local copies and a hash chain cannot detect a coordinated rollback of both copies.
+After each accepted append, export the exact latest-head payload:
+
+```bash
+npm run genesis:ceremony -- export-anchor-payload \
+  ceremony-registry nir1TRUSTED_RELEASE_SIGNER anchor-payload.json
+```
+
+The payload contains exactly `registryHead`, `count`, `latestPlanCommitment`,
+`latestGenesisHash`, and `releaseManifestHash`. Latest-plan ceremony operators sign
+that payload offline in the separate anchor domain:
+
+```bash
+npm run genesis:ceremony -- sign-anchor \
+  anchor-payload.json genesis-plan.json signed-release.json \
+  nir1TRUSTED_RELEASE_SIGNER operator-vault.json anchor-approval.json
+```
+
+Collect approvals into a JSON array and require a unique greater-than-two-thirds
+latest-operator quorum:
+
+```bash
+npm run genesis:ceremony -- assemble-anchor \
+  anchor-payload.json genesis-plan.json signed-release.json \
+  nir1TRUSTED_RELEASE_SIGNER anchor-approvals.json anchor.json
+npm run genesis:ceremony -- verify-with-anchor \
+  ceremony-registry nir1TRUSTED_RELEASE_SIGNER anchor.json
+```
+
+Store or publish `anchor.json` outside the node and outside the registry storage
+failure domain. Supplying it as the optional final argument to `registry-append`,
+`registry-verify`, or `registry-repair-one-copy` rejects a local history below the
+anchored count/head or one whose hash chain does not contain the anchor as an exact
+prefix. A newer local history is accepted only when it extends that anchor. Without
+an independently retained anchor, coordinated rollback of both local copies remains
+undetectable.
+
 Compile only after verification:
 
 ```bash

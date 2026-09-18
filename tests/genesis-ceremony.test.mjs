@@ -29,6 +29,12 @@ import {
   verifyGenesisPlan,
 } from "../blockchain/genesis-ceremony.mjs";
 import {
+  assembleCeremonyRegistryAnchor,
+  createCeremonyRegistryAnchorPayload,
+  signCeremonyRegistryAnchor,
+  verifyCeremonyRegistryAnchor,
+} from "../blockchain/genesis-ceremony-anchor.mjs";
+import {
   appendCeremonyRegistry,
   ceremonyRegistryPaths,
   repairCeremonyRegistryOneCopy,
@@ -406,6 +412,81 @@ test("ceremony registry pins its root descriptor against a post-open symlink swa
   }
 });
 
+test("external operator anchor detects coordinated rollback and permits anchored extensions", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-genesis-anchor-"));
+  try {
+    const registry = join(root, "registry");
+    const releaseSigner = generateWallet();
+    const firstValues = fixture("anchor-first", { releaseSigner, releaseVersion: "0.2.0" });
+    const secondValues = fixture("anchor-second", { releaseSigner, releaseVersion: "0.3.0" });
+    const thirdValues = fixture("anchor-third", { releaseSigner, releaseVersion: "0.4.0" });
+    const first = approved(firstValues);
+    const second = approved(secondValues);
+    const third = approved(thirdValues);
+    const trust = { trustedAddress: releaseSigner.address };
+    appendCeremonyRegistry(registry, first.plan, first.envelope, firstValues.releaseOptions);
+    const firstRecords = verifyCeremonyRegistry(registry, trust).records;
+    appendCeremonyRegistry(registry, second.plan, second.envelope, secondValues.releaseOptions);
+    const state = verifyCeremonyRegistry(registry, trust);
+    const payload = createCeremonyRegistryAnchorPayload(state);
+    const approvals = secondValues.operators.slice(0, 3).map((wallet) =>
+      signCeremonyRegistryAnchor(payload, second.plan, wallet, secondValues.releaseOptions));
+    const anchor = assembleCeremonyRegistryAnchor(
+      payload, second.plan, approvals, secondValues.releaseOptions,
+    );
+    assert.equal(verifyCeremonyRegistryAnchor(anchor, state.records, trust).verified, true);
+
+    assert.throws(() => assembleCeremonyRegistryAnchor(
+      payload, second.plan, approvals.slice(0, 2), secondValues.releaseOptions,
+    ), /quorum/);
+    assert.throws(() => assembleCeremonyRegistryAnchor(
+      payload, second.plan, [approvals[0], approvals[0], approvals[1]],
+      secondValues.releaseOptions,
+    ), /duplicated/);
+    assert.throws(() => assembleCeremonyRegistryAnchor(
+      payload, second.plan, [
+        approvals[0], approvals[1], { ...approvals[2], operatorId: "unknown-anchor" },
+      ], secondValues.releaseOptions,
+    ), /unknown/);
+
+    appendCeremonyRegistry(registry, third.plan, third.envelope, {
+      ...thirdValues.releaseOptions, anchor,
+    });
+    const extended = verifyCeremonyRegistry(registry, { ...trust, anchor });
+    assert.equal(extended.count, 3);
+    assert.equal(verifyCeremonyRegistryAnchor(anchor, extended.records, trust).localCount, 3);
+
+    const paths = ceremonyRegistryPaths(registry);
+    const extendedContents = readFileSync(paths.primary);
+    const rolledBackContents = Buffer.from(`${JSON.stringify(firstRecords)}\n`);
+    writeFileSync(paths.primary, rolledBackContents);
+    writeFileSync(paths.backup, rolledBackContents);
+    assert.throws(() => verifyCeremonyRegistry(registry, { ...trust, anchor }), /behind/);
+    assert.throws(() => appendCeremonyRegistry(
+      registry, third.plan, third.envelope, { ...thirdValues.releaseOptions, anchor },
+    ), /behind/);
+    assert.throws(() => repairCeremonyRegistryOneCopy(registry, { ...trust, anchor }), /behind/);
+    writeFileSync(paths.primary, extendedContents);
+    writeFileSync(paths.backup, extendedContents);
+
+    const wrongHead = structuredClone(anchor);
+    wrongHead.payload.registryHead = "f".repeat(64);
+    assert.throws(() => verifyCeremonyRegistry(registry, { ...trust, anchor: wrongHead }),
+      /not a prefix/);
+    const mutated = structuredClone(anchor);
+    mutated.payload.latestGenesisHash = "e".repeat(64);
+    assert.throws(() => verifyCeremonyRegistry(registry, { ...trust, anchor: mutated }),
+      /not a prefix/);
+
+    rmSync(paths.primary);
+    symlinkSync(paths.backup, paths.primary);
+    assert.equal(repairCeremonyRegistryOneCopy(registry, { ...trust, anchor }).repaired, true);
+    assert.equal(verifyCeremonyRegistry(registry, { ...trust, anchor }).count, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("genesis ceremony CLI plans, assembles, verifies, and compiles public artifacts", () => {
   const root = mkdtempSync(join(tmpdir(), "nir-genesis-ceremony-"));
   const cli = new URL("../blockchain/genesis-ceremony-cli.mjs", import.meta.url).pathname;
@@ -418,6 +499,9 @@ test("genesis ceremony CLI plans, assembles, verifies, and compiles public artif
     const envelopePath = join(root, "envelope.json");
     const genesisPath = join(root, "genesis.json");
     const registryPath = join(root, "registry");
+    const anchorPayloadPath = join(root, "anchor-payload.json");
+    const anchorApprovalsPath = join(root, "anchor-approvals.json");
+    const anchorPath = join(root, "anchor.json");
     writeFileSync(inputPath, JSON.stringify(values.input));
     writeFileSync(releasePath, JSON.stringify(values.releaseOptions.signedRelease));
     const planned = spawnSync(process.execPath, [
@@ -457,6 +541,24 @@ test("genesis ceremony CLI plans, assembles, verifies, and compiles public artif
       values.releaseOptions.trustedAddress,
     ], { encoding: "utf8" });
     assert.equal(appended.status, 0, appended.stderr);
+    const exportedAnchor = spawnSync(process.execPath, [
+      cli, "export-anchor-payload", registryPath, values.releaseOptions.trustedAddress,
+      anchorPayloadPath,
+    ], { encoding: "utf8" });
+    assert.equal(exportedAnchor.status, 0, exportedAnchor.stderr);
+    const anchorPayload = JSON.parse(readFileSync(anchorPayloadPath, "utf8"));
+    const anchorApprovals = values.operators.slice(0, 3).map((wallet) =>
+      signCeremonyRegistryAnchor(anchorPayload, plan, wallet, values.releaseOptions));
+    writeFileSync(anchorApprovalsPath, JSON.stringify(anchorApprovals));
+    const assembledAnchor = spawnSync(process.execPath, [
+      cli, "assemble-anchor", anchorPayloadPath, planPath, releasePath,
+      values.releaseOptions.trustedAddress, anchorApprovalsPath, anchorPath,
+    ], { encoding: "utf8" });
+    assert.equal(assembledAnchor.status, 0, assembledAnchor.stderr);
+    const anchoredVerify = spawnSync(process.execPath, [
+      cli, "verify-with-anchor", registryPath, values.releaseOptions.trustedAddress, anchorPath,
+    ], { encoding: "utf8" });
+    assert.equal(anchoredVerify.status, 0, anchoredVerify.stderr);
     const registryPaths = ceremonyRegistryPaths(registryPath);
     rmSync(registryPaths.primary);
     symlinkSync(registryPaths.backup, registryPaths.primary);
@@ -466,10 +568,12 @@ test("genesis ceremony CLI plans, assembles, verifies, and compiles public artif
     assert.equal(failedVerify.status, 1);
     const repaired = spawnSync(process.execPath, [
       cli, "registry-repair-one-copy", registryPath, values.releaseOptions.trustedAddress,
+      anchorPath,
     ], { encoding: "utf8" });
     assert.equal(repaired.status, 0, repaired.stderr);
     const registryVerified = spawnSync(process.execPath, [
       cli, "registry-verify", registryPath, values.releaseOptions.trustedAddress,
+      anchorPath,
     ], { encoding: "utf8" });
     assert.equal(registryVerified.status, 0, registryVerified.stderr);
   } finally {

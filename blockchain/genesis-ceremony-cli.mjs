@@ -14,6 +14,11 @@ import {
   verifyGenesisCeremony,
 } from "./genesis-ceremony.mjs";
 import {
+  assembleCeremonyRegistryAnchor,
+  createCeremonyRegistryAnchorPayload,
+  signCeremonyRegistryAnchor,
+} from "./genesis-ceremony-anchor.mjs";
+import {
   appendCeremonyRegistry,
   repairCeremonyRegistryOneCopy,
   verifyCeremonyRegistry,
@@ -132,24 +137,67 @@ try {
     );
     writeExclusive(outputPath, result.genesis);
     console.log(`Genesis ${result.genesisHash} compiled for valueless developer testnet only.`);
-  } else if (command === "registry-append" && args.length === 5) {
-    const [directory, planPath, envelopePath, releasePath, trustedAddress] = args;
+  } else if (command === "registry-append" && (args.length === 5 || args.length === 6)) {
+    const [directory, planPath, envelopePath, releasePath, trustedAddress, anchorPath] = args;
     const result = appendCeremonyRegistry(
       directory, readJson(planPath, "genesis plan"),
       readJson(envelopePath, "approval envelope"), {
+        anchor: anchorPath === undefined ? null : readJson(anchorPath, "registry anchor"),
         signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
       },
     );
     console.log(JSON.stringify(result));
-  } else if (command === "registry-verify" && args.length === 2) {
-    const result = verifyCeremonyRegistry(args[0], { trustedAddress: args[1] });
+  } else if (command === "registry-verify" && (args.length === 2 || args.length === 3)) {
+    const result = verifyCeremonyRegistry(args[0], {
+      anchor: args[2] === undefined ? null : readJson(args[2], "registry anchor"),
+      trustedAddress: args[1],
+    });
     console.log(JSON.stringify({ count: result.count, head: result.head, verified: true }));
-  } else if (command === "registry-repair-one-copy" && args.length === 2) {
+  } else if (command === "registry-repair-one-copy" &&
+      (args.length === 2 || args.length === 3)) {
     console.log(JSON.stringify(repairCeremonyRegistryOneCopy(
-      args[0], { trustedAddress: args[1] },
+      args[0], {
+        anchor: args[2] === undefined ? null : readJson(args[2], "registry anchor"),
+        trustedAddress: args[1],
+      },
     )));
+  } else if (command === "export-anchor-payload" && args.length === 3) {
+    const [directory, trustedAddress, outputPath] = args;
+    const payload = createCeremonyRegistryAnchorPayload(
+      verifyCeremonyRegistry(directory, { trustedAddress }),
+    );
+    writeExclusive(outputPath, payload);
+    console.log(`Ceremony registry anchor payload ${payload.registryHead} exported.`);
+  } else if (command === "sign-anchor" && args.length === 6) {
+    const [payloadPath, planPath, releasePath, trustedAddress, vaultPath, outputPath] = args;
+    const password = await readSecret("Latest ceremony operator vault password: ");
+    const wallet = decryptWallet(readJson(vaultPath, "ceremony operator vault"), password);
+    try {
+      writeExclusive(outputPath, signCeremonyRegistryAnchor(
+        readJson(payloadPath, "anchor payload"), readJson(planPath, "genesis plan"), wallet, {
+          signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+        },
+      ));
+      console.log(`Ceremony registry anchor signed offline by ${wallet.address}.`);
+    } finally { wallet.privateKey = ""; }
+  } else if (command === "assemble-anchor" && args.length === 6) {
+    const [payloadPath, planPath, releasePath, trustedAddress, approvalsPath, outputPath] = args;
+    const anchor = assembleCeremonyRegistryAnchor(
+      readJson(payloadPath, "anchor payload"), readJson(planPath, "genesis plan"),
+      readJson(approvalsPath, "anchor approvals"), {
+        signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+      },
+    );
+    writeExclusive(outputPath, anchor);
+    console.log(`Ceremony registry anchor ${anchor.payload.registryHead} assembled.`);
+  } else if (command === "verify-with-anchor" && args.length === 3) {
+    const [directory, trustedAddress, anchorPath] = args;
+    const result = verifyCeremonyRegistry(directory, {
+      anchor: readJson(anchorPath, "registry anchor"), trustedAddress,
+    });
+    console.log(JSON.stringify({ count: result.count, head: result.head, verified: true }));
   } else {
-    throw new Error("usage: genesis:ceremony <plan input.json signed-release.json trusted-address plan.json | sign plan.json signed-release.json trusted-address encrypted-vault.json approval.json | sign-peer-registry plan.json signed-release.json trusted-address validator-vault.json approval.json | assemble plan.json signed-release.json trusted-address approvals.json envelope.json | verify plan.json envelope.json signed-release.json trusted-address [prior-plans.json] | compile plan.json envelope.json signed-release.json trusted-address genesis.json [prior-plans.json] | registry-append registry-dir plan.json envelope.json signed-release.json trusted-address | registry-verify registry-dir trusted-address | registry-repair-one-copy registry-dir trusted-address>");
+    throw new Error("usage: genesis:ceremony <plan ... | sign ... | sign-peer-registry ... | assemble ... | verify ... | compile ... | registry-append registry-dir plan.json envelope.json signed-release.json trusted-address [anchor.json] | registry-verify registry-dir trusted-address [anchor.json] | registry-repair-one-copy registry-dir trusted-address [anchor.json] | export-anchor-payload registry-dir trusted-address payload.json | sign-anchor payload.json plan.json signed-release.json trusted-address operator-vault.json approval.json | assemble-anchor payload.json plan.json signed-release.json trusted-address approvals.json anchor.json | verify-with-anchor registry-dir trusted-address anchor.json>");
   }
 } catch (error) {
   console.error(`Genesis ceremony failed: ${error.message}`);
