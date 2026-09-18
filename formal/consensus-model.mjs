@@ -321,6 +321,82 @@ function advanceTransition(state, certificate) {
   return next;
 }
 
+export function acceptsBoundedTransitionCertificate(state, certificate) {
+  if (!state || !certificate || !["old", "joint", "active-new"].includes(state.phase)) {
+    throw new Error("bounded transition certificate inputs are invalid");
+  }
+  return transitionCertificateAccepted(state, certificate);
+}
+
+export function selectHighestCertifiedModelValue(candidates) {
+  if (!Array.isArray(candidates)) throw new Error("bounded recovery candidates are invalid");
+  const eligible = candidates.filter(({ certified }) => certified === true);
+  for (const candidate of eligible) {
+    if (!Number.isSafeInteger(candidate.round) || candidate.round < 0 ||
+        !VALUES.includes(candidate.value)) throw new Error("bounded recovery candidate is invalid");
+  }
+  if (eligible.length === 0) return null;
+  const highestRound = Math.max(...eligible.map(({ round }) => round));
+  const highest = eligible.filter(({ round }) => round === highestRound);
+  if (new Set(highest.map(({ value }) => value)).size > 1) {
+    throw new Error("conflicting values carry the same highest view certificate");
+  }
+  return { round: highestRound, value: highest[0].value };
+}
+
+export function runBoundedRoundChangeSlice() {
+  const bounds = { byzantine: 1, quorum: 3, validators: 4 };
+  const quorums = quorumMasks(bounds.validators, bounds.quorum);
+  let assignments = 0;
+  let finalizedRound1States = 0;
+  for (let firstValue = 0; firstValue < VALUES.length; firstValue += 1) {
+    for (const firstCommits of [0, ...quorums]) {
+      const firstFinalized = popcount(firstCommits) >= bounds.quorum;
+      const locks = Array(bounds.validators).fill(NONE);
+      for (let validator = 0; validator < bounds.validators; validator += 1) {
+        if ((firstCommits & bit(validator)) && !isByzantine(validator, bounds)) {
+          locks[validator] = firstValue;
+        }
+      }
+      for (let nextValue = 0; nextValue < VALUES.length; nextValue += 1) {
+        for (const timeoutMask of quorums) {
+          const timeoutAllowed = locks.every((lock, validator) =>
+            !(timeoutMask & bit(validator)) || isByzantine(validator, bounds) ||
+            lock === NONE || lock === nextValue);
+          if (!timeoutAllowed) continue;
+          for (const prepareMask of quorums) {
+            for (const commitMask of quorums) {
+              assignments += 1;
+              const commitAllowed = locks.every((lock, validator) =>
+                !(commitMask & bit(validator)) || isByzantine(validator, bounds) ||
+                lock === NONE || lock === nextValue);
+              if (!commitAllowed) continue;
+              finalizedRound1States += 1;
+              if (firstFinalized && firstValue !== nextValue) {
+                return {
+                  assignments,
+                  counterexample: { commitMask, firstCommits, firstValue: VALUES[firstValue],
+                    invariant: "no-cross-round-conflicting-finality", nextValue: VALUES[nextValue],
+                    prepareMask, timeoutMask },
+                  finalizedRound1States,
+                  ok: false,
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return {
+    assignments,
+    counterexample: null,
+    finalizedRound1States,
+    ok: true,
+    scope: "exhaustive quorum-mask slice over round-0 commits and round-1 timeout/prepare/commit",
+  };
+}
+
 export function runBoundedValidatorTransitionModel() {
   let assignments = 0;
   let jointCertificates = 0;
@@ -413,13 +489,16 @@ export function runConsensusScenarioSmokeChecks() {
 
 export function runFormalConsensusSuite(options = {}) {
   const finality = runBoundedFinalityModel(options);
+  const roundChangeSlice = runBoundedRoundChangeSlice();
   const transition = runBoundedValidatorTransitionModel();
   const scenarios = runConsensusScenarioSmokeChecks();
   return {
-    counterexample: finality.counterexample ?? transition.counterexample ?? null,
+    counterexample: finality.counterexample ?? roundChangeSlice.counterexample ??
+      transition.counterexample ?? null,
     finality,
     format: "nir-bounded-consensus-model-v2",
-    ok: finality.ok && transition.ok && scenarios.ok,
+    ok: finality.ok && roundChangeSlice.ok && transition.ok && scenarios.ok,
+    roundChangeSlice,
     scenarios,
     transition,
   };

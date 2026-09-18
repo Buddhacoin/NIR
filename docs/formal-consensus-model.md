@@ -45,6 +45,15 @@ validator rounds, timeout-certificate states, and finalized states. It does not
 claim to cover executions longer than `maxDepth` or every ordering outside the
 reported state graph.
 
+Because a fully interleaved search deep enough for two complete rounds grows
+quickly, the report also contains `roundChangeSlice`. This is a separate
+exhaustive quorum-mask slice over a possible round-zero commit, value-bound
+round-one timeout quorum, round-one prepare quorum, and round-one commit quorum.
+It reports `finalizedRound1States`, which must be nonzero, and checks explicitly
+that no assignment can finalize conflicting values across those two rounds.
+This slice does not claim to enumerate the delivery and restart interleavings of
+the main BFS.
+
 ## Validator-set transition model
 
 The transition checker uses overlapping old `[0,1,2,3]` and new `[2,3,4,5]`
@@ -72,6 +81,15 @@ trace that finalizes `A`, obtains a conflicting timeout certificate, advances
 validators, and finalizes `B`. The required result is an actual
 `no-conflicting-finality` counterexample with final state `CONFLICT`, not a
 synthetic rejection marker.
+
+Differential conformance tests execute matching transitions through the bounded
+model and production `ValidatorReplica`, finalized-chain validator-set checks,
+and the recovery selector used by `validator-service`. They cover round-local
+prepare, commit-lock persistence across restart, value-bound timeout
+certificates, highest-certified recovery, and old/joint/new set acceptance. An
+intentional durable-prepare-lock adapter mutant must be rejected by the
+conformance comparison so that a return to the original model mismatch fails
+the test suite.
 
 The model does not verify serialization, signatures, cryptographic primitives,
 filesystem durability, HTTP behavior, arbitrary validator counts, multiple
