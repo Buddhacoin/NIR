@@ -10,6 +10,8 @@ import {
   TREASURY_VESTING_MS,
 } from "./constants.mjs";
 import { addressFromPublicKey, canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
+import { EMPTY_PEER_REGISTRY_HASH, peerRegistryHash } from "./peer-registry.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
@@ -17,10 +19,17 @@ const OPERATOR_ID = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 const PLAN_FIELDS = [
   "beaconAuthorities", "ceremonyOperators", "commitment", "format", "genesisTimestamp",
   "networkId", "protocolVersion", "purpose", "sourceReleaseManifestHash", "treasury",
-  "validators", "evaluators",
+  "validators", "evaluators", "peerRegistryCommitment", "validatorSetCommitment",
 ];
-const INPUT_FIELDS = PLAN_FIELDS.filter((field) => !["commitment", "format", "purpose"].includes(field));
+const INPUT_FIELDS = PLAN_FIELDS.filter((field) =>
+  !["commitment", "format", "peerRegistryCommitment", "purpose",
+    "validatorSetCommitment"].includes(field));
 const ROLE_FIELDS = ["address", "algorithm", "endpoint", "operatorId", "publicKey"];
+const VALIDATOR_FIELDS = [
+  "address", "algorithm", "endpoint", "operatorId", "publicKey", "tlsCertificateSha256",
+  "transport",
+];
+const TRANSPORT_FIELDS = ["address", "algorithm", "publicKey"];
 const OPERATOR_FIELDS = [
   "address", "algorithm", "contribution", "nonce", "operatorId", "publicKey",
 ];
@@ -28,8 +37,9 @@ const TREASURY_FIELDS = [
   "address", "algorithm", "memberPublicKeys", "threshold", "vestingPolicy",
 ];
 const VESTING_FIELDS = ["allocationBps", "durationMs", "model"];
-const ENVELOPE_FIELDS = ["approvals", "commitment", "format"];
+const ENVELOPE_FIELDS = ["approvals", "commitment", "format", "peerRegistryApprovals"];
 const APPROVAL_FIELDS = ["operatorId", "signature"];
+const REGISTRY_APPROVAL_FIELDS = ["signature", "validator"];
 const PURPOSE = "valueless-developer-testnet";
 const FORMAT = "nir-public-genesis-plan-v1";
 const ENVELOPE_FORMAT = "nir-public-genesis-approvals-v1";
@@ -90,7 +100,7 @@ function endpoint(value) {
   return parsed.origin;
 }
 
-function roleList(entries, label) {
+function roleList(entries, label, validatorRole = false) {
   if (!Array.isArray(entries) || entries.length < 4 || entries.length > 256) {
     throw new Error(`${label} must contain four to 256 public identities`);
   }
@@ -98,15 +108,49 @@ function roleList(entries, label) {
   const seenOperator = new Set();
   const seenEndpoint = new Set();
   const result = entries.map((entry) => {
-    const identity = publicIdentity(entry, ROLE_FIELDS, label);
+    const identity = publicIdentity(entry, validatorRole ? VALIDATOR_FIELDS : ROLE_FIELDS, label);
     const normalizedEndpoint = endpoint(entry.endpoint);
     if (seenAddress.has(identity.address) || seenOperator.has(identity.operatorId) ||
         seenEndpoint.has(normalizedEndpoint)) throw new Error(`${label} entries must be unique`);
     seenAddress.add(identity.address); seenOperator.add(identity.operatorId);
     seenEndpoint.add(normalizedEndpoint);
-    return { ...identity, endpoint: normalizedEndpoint };
+    if (!validatorRole) return { ...identity, endpoint: normalizedEndpoint };
+    exactObject(entry.transport, TRANSPORT_FIELDS, "validator transport");
+    const transport = publicIdentity(
+      { ...entry.transport, operatorId: identity.operatorId },
+      ["address", "algorithm", "operatorId", "publicKey"], "validator transport",
+    );
+    delete transport.operatorId;
+    if (transport.address === identity.address ||
+        (new URL(normalizedEndpoint).protocol === "https:" &&
+          !HASH.test(entry.tlsCertificateSha256 ?? "")) ||
+        (new URL(normalizedEndpoint).protocol === "http:" && entry.tlsCertificateSha256 !== null)) {
+      throw new Error("validator endpoint transport identity or TLS pin is invalid");
+    }
+    return {
+      ...identity, endpoint: normalizedEndpoint, tlsCertificateSha256: entry.tlsCertificateSha256,
+      transport,
+    };
   }).sort((left, right) => left.operatorId.localeCompare(right.operatorId));
+  if (validatorRole && new Set(result.map(({ transport }) => transport.address)).size !== result.length) {
+    throw new Error("validator transport identities must be unique");
+  }
   return result;
+}
+
+function peerRegistryPayload(plan) {
+  return {
+    activationHeight: 0,
+    epoch: 0,
+    networkId: plan.networkId,
+    peers: plan.validators.map((validator) => ({
+      tlsCertificateSha256: validator.tlsCertificateSha256,
+      transport: validator.transport,
+      url: validator.endpoint,
+      validatorAddress: validator.address,
+    })).sort((left, right) => left.validatorAddress.localeCompare(right.validatorAddress)),
+    previousRegistryHash: EMPTY_PEER_REGISTRY_HASH,
+  };
 }
 
 function ceremonyOperators(entries) {
@@ -172,7 +216,7 @@ function planPayload(input, withHeader) {
       !HASH.test(input.sourceReleaseManifestHash ?? "")) {
     throw new Error("genesis plan header is invalid or unsupported");
   }
-  const validators = roleList(input.validators, "validator");
+  const validators = roleList(input.validators, "validator", true);
   const evaluators = roleList(input.evaluators, "evaluator");
   const beaconAuthorities = roleList(input.beaconAuthorities, "beacon authority");
   const occupiedAddresses = [...validators, ...evaluators, ...beaconAuthorities]
@@ -181,10 +225,24 @@ function planPayload(input, withHeader) {
     .map(({ operatorId }) => operatorId);
   const occupiedEndpoints = [...validators, ...evaluators, ...beaconAuthorities]
     .map(({ endpoint: participantEndpoint }) => participantEndpoint);
+  const transportAddresses = validators.map(({ transport }) => transport.address);
   if (new Set(occupiedAddresses).size !== occupiedAddresses.length ||
       new Set(occupiedOperators).size !== occupiedOperators.length ||
-      new Set(occupiedEndpoints).size !== occupiedEndpoints.length) {
+      new Set(occupiedEndpoints).size !== occupiedEndpoints.length ||
+      transportAddresses.some((address) => occupiedAddresses.includes(address))) {
     throw new Error("validator, evaluator, and beacon identities and endpoints must be disjoint");
+  }
+  const validatorIdentities = validators.map(
+    ({ endpoint: _endpoint, tlsCertificateSha256: _tls, transport: _transport, ...identity }) =>
+      identity,
+  );
+  const validatorSetCommitment = validatorSetId(validatorIdentities);
+  const peerRegistryCommitment = peerRegistryHash(peerRegistryPayload({
+    networkId: input.networkId, validators,
+  }));
+  if (withHeader && (input.validatorSetCommitment !== validatorSetCommitment ||
+      input.peerRegistryCommitment !== peerRegistryCommitment)) {
+    throw new Error("genesis validator-set or topology commitment is invalid");
   }
   return {
     beaconAuthorities,
@@ -194,8 +252,10 @@ function planPayload(input, withHeader) {
     networkId: input.networkId,
     protocolVersion: input.protocolVersion,
     purpose: PURPOSE,
+    peerRegistryCommitment,
     sourceReleaseManifestHash: input.sourceReleaseManifestHash,
     treasury: treasuryPolicy(input.treasury),
+    validatorSetCommitment,
     validators,
     evaluators,
   };
@@ -231,7 +291,20 @@ export function signGenesisPlan(planValue, wallet) {
   };
 }
 
-export function createGenesisApprovalEnvelope(planValue, approvals) {
+export function signGenesisPeerRegistry(planValue, wallet) {
+  const plan = verifyGenesisPlan(planValue);
+  const validator = plan.validators.find(({ address }) => address === wallet?.address);
+  if (!validator || wallet.algorithm !== SIGNATURE_ALGORITHM ||
+      addressFromPublicKey(wallet.publicKey) !== wallet.address) {
+    throw new Error("peer-registry signer is not a genesis validator");
+  }
+  return {
+    signature: signObject(peerRegistryPayload(plan), wallet, "PEER_REGISTRY_APPROVAL"),
+    validator: validator.address,
+  };
+}
+
+export function createGenesisApprovalEnvelope(planValue, approvals, peerRegistryApprovals = []) {
   const plan = verifyGenesisPlan(planValue);
   if (!Array.isArray(approvals)) throw new Error("genesis approvals must be an array");
   return {
@@ -239,6 +312,8 @@ export function createGenesisApprovalEnvelope(planValue, approvals) {
       .sort((left, right) => String(left.operatorId).localeCompare(String(right.operatorId))),
     commitment: plan.commitment,
     format: ENVELOPE_FORMAT,
+    peerRegistryApprovals: peerRegistryApprovals.map((approval) => structuredClone(approval))
+      .sort((left, right) => String(left.validator).localeCompare(String(right.validator))),
   };
 }
 
@@ -279,7 +354,35 @@ export function verifyGenesisCeremony(planValue, envelope, { priorPlans = [] } =
   }
   const quorum = Math.floor((operators.size * 2) / 3) + 1;
   if (seen.size < quorum) throw new Error("genesis ceremony approval quorum not reached");
-  return { commitment: plan.commitment, quorum, signers: [...seen].sort(), verified: true };
+  if (!Array.isArray(envelope.peerRegistryApprovals) ||
+      envelope.peerRegistryApprovals.length > plan.validators.length) {
+    throw new Error("genesis peer-registry approvals are invalid");
+  }
+  const validators = new Map(plan.validators.map((validator) => [validator.address, validator]));
+  const registryVoters = new Set();
+  for (const approval of envelope.peerRegistryApprovals) {
+    exactObject(approval, REGISTRY_APPROVAL_FIELDS, "genesis peer-registry approval");
+    const validator = validators.get(approval.validator);
+    if (!validator || registryVoters.has(approval.validator) ||
+        typeof approval.signature !== "string" || approval.signature.length > 7_000 ||
+        !verifyObject(peerRegistryPayload(plan), approval.signature, validator.publicKey,
+          "PEER_REGISTRY_APPROVAL")) {
+      throw new Error("genesis peer-registry approval is unknown, duplicated, or invalid");
+    }
+    registryVoters.add(approval.validator);
+  }
+  const registryQuorum = Math.floor((validators.size * 2) / 3) + 1;
+  if (registryVoters.size < registryQuorum) {
+    throw new Error("genesis peer-registry approval quorum not reached");
+  }
+  return {
+    commitment: plan.commitment,
+    peerRegistrySigners: [...registryVoters].sort(),
+    quorum,
+    registryQuorum,
+    signers: [...seen].sort(),
+    verified: true,
+  };
 }
 
 export function compileGenesis(planValue, envelope, options = {}) {
@@ -298,10 +401,16 @@ export function compileGenesis(planValue, envelope, options = {}) {
     evaluators: plan.evaluators.map(({ endpoint: _endpoint, ...identity }) => identity),
     genesisTimestamp: plan.genesisTimestamp,
     networkId: plan.networkId,
-    peerRegistry: null,
+    peerRegistry: {
+      ...peerRegistryPayload(plan),
+      signatures: envelope.peerRegistryApprovals.map((approval) => structuredClone(approval))
+        .sort((left, right) => left.validator.localeCompare(right.validator)),
+    },
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: plan.treasury.address,
-    validators: plan.validators.map(({ endpoint: _endpoint, ...identity }) => identity),
+    validators: plan.validators.map(({
+      endpoint: _endpoint, tlsCertificateSha256: _tls, transport: _transport, ...identity
+    }) => identity),
   };
   const first = new NirChain(genesis, { supportedProtocolVersions: [plan.protocolVersion] });
   const genesisHash = first.blocks()[0].hash;
@@ -309,6 +418,10 @@ export function compileGenesis(planValue, envelope, options = {}) {
   if (new NirChain(roundTrip, { supportedProtocolVersions: [plan.protocolVersion] })
     .blocks()[0].hash !== genesisHash) {
     throw new Error("compiled genesis failed canonical chain hash round trip");
+  }
+  if (peerRegistryHash(roundTrip.peerRegistry) !== plan.peerRegistryCommitment ||
+      validatorSetId(roundTrip.validators) !== plan.validatorSetCommitment) {
+    throw new Error("compiled genesis topology commitments do not round trip");
   }
   return { genesis: roundTrip, genesisHash, planCommitment: plan.commitment };
 }

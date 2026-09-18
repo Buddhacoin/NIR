@@ -9,7 +9,9 @@ The input is public JSON containing:
 - network ID, genesis timestamp, current protocol version, and signed source-release
   manifest hash;
 - four or more disjoint validator, evaluator, and beacon public ML-DSA-65 identities,
-  operator IDs, and HTTPS endpoints (loopback HTTP is allowed for local drills);
+  operator IDs, and HTTPS endpoints (loopback HTTP is allowed for local drills).
+  Every validator also supplies a separate public transport identity and the required
+  TLS certificate pin for HTTPS;
 - a public treasury descriptor whose address is exactly the protocol 2-of-3
   multisignature address and whose policy is the protocol's 12% allocation with
   linear vesting from genesis over `TREASURY_VESTING_MS`;
@@ -36,18 +38,50 @@ using an existing encrypted NIR vault:
 npm run genesis:ceremony -- sign genesis-plan.json operator-vault.json approval.json
 ```
 
-Collect the individual approval JSON objects into a JSON array, assemble an envelope,
-and verify the greater-than-two-thirds quorum:
+Genesis validators separately sign the exact epoch-zero peer-registry payload in its
+existing consensus domain:
+
+```bash
+npm run genesis:ceremony -- sign-peer-registry \
+  genesis-plan.json validator-vault.json peer-registry-approval.json
+```
+
+This second quorum is necessary because `NirChain` already requires peer-registry
+signatures from the consensus validator keys. The plan contains explicit
+`validatorSetCommitment` and `peerRegistryCommitment` values; compilation checks both.
+
+Collect approvals into an object with `approvals` and `peerRegistryApprovals` arrays,
+assemble an envelope, and verify both greater-than-two-thirds quorums:
 
 ```bash
 npm run genesis:ceremony -- assemble genesis-plan.json approvals.json envelope.json
 npm run genesis:ceremony -- verify genesis-plan.json envelope.json prior-plans.json
 ```
 
-`prior-plans.json` is an optional JSON array of previously accepted public plans.
-Supplying it makes verification reject a reused network ID, plan commitment, or
-operator contribution. The registry is explicit because a standalone offline tool
-cannot infer ceremonies performed elsewhere.
+`prior-plans.json` remains a portable optional JSON array. For durable local reuse
+protection, append each accepted ceremony to the fsync-backed registry:
+
+```bash
+npm run genesis:ceremony -- registry-append \
+  ceremony-registry genesis-plan.json envelope.json
+npm run genesis:ceremony -- registry-verify ceremony-registry
+```
+
+The registry is an append-only hash chain stored in primary and backup copies. A
+normal read fails closed if either copy is missing, invalid, rolled back, divergent,
+or a symlink. The operator root is pinned with `O_DIRECTORY|O_NOFOLLOW` and its
+descriptor identity is rechecked around lock, read, rename, and repair operations;
+platforms without those flags are unsupported. It never silently chooses a copy.
+After investigating an interrupted write, repair exactly one invalid or strict-prefix
+copy under the exclusive writer lock:
+
+```bash
+npm run genesis:ceremony -- registry-repair-one-copy ceremony-registry
+```
+
+Conflicting valid histories are ambiguous and cannot be repaired by this command.
+Registry append automatically rejects reused network IDs, plan commitments, and
+operator contributions against every archived record.
 
 Compile only after verification:
 
@@ -56,12 +90,12 @@ npm run genesis:ceremony -- compile \
   genesis-plan.json envelope.json genesis.json prior-plans.json
 ```
 
-Compilation emits the existing `NirChain` genesis configuration, constructs the
-chain twice through canonical JSON, and requires the genesis block hash to round-trip
-exactly. Public endpoints and ceremony entropy remain committed by the plan but are
-not inserted into fields that the current chain genesis schema does not contain.
-Consequently the initial `peerRegistry` is `null`; authenticated peer-registry setup
-is a separate reviewed operation. The mandatory capability reference is an explicit
+Compilation emits the existing `NirChain` genesis configuration, including the
+quorum-signed epoch-zero `peerRegistry`, constructs the chain twice through canonical
+JSON, and requires the genesis block hash and validator/topology commitments to
+round-trip exactly. Evaluator and beacon endpoints and ceremony entropy remain bound
+by the public plan because the chain genesis schema has no fields for them. The
+mandatory capability reference is an explicit
 zero-score developer-test placeholder derived from the source release and plan—it is
 not evidence of model uniqueness or production capability.
 

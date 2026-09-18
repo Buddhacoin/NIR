@@ -10,8 +10,14 @@ import {
   createGenesisApprovalEnvelope,
   createGenesisPlan,
   signGenesisPlan,
+  signGenesisPeerRegistry,
   verifyGenesisCeremony,
 } from "./genesis-ceremony.mjs";
+import {
+  appendCeremonyRegistry,
+  repairCeremonyRegistryOneCopy,
+  verifyCeremonyRegistry,
+} from "./genesis-ceremony-store.mjs";
 import { decryptWallet } from "./vault.mjs";
 
 function readJson(path, label) {
@@ -73,11 +79,25 @@ try {
       writeExclusive(outputPath, signGenesisPlan(readJson(planPath, "genesis plan"), wallet));
       console.log(`Genesis commitment signed offline by ${wallet.address}.`);
     } finally { wallet.privateKey = ""; }
+  } else if (command === "sign-peer-registry" && args.length === 3) {
+    const [planPath, vaultPath, outputPath] = args;
+    const password = await readSecret("Genesis validator vault password: ");
+    const wallet = decryptWallet(readJson(vaultPath, "validator vault"), password);
+    try {
+      writeExclusive(
+        outputPath, signGenesisPeerRegistry(readJson(planPath, "genesis plan"), wallet),
+      );
+      console.log(`Genesis peer registry signed offline by ${wallet.address}.`);
+    } finally { wallet.privateKey = ""; }
   } else if (command === "assemble" && args.length === 3) {
     const [planPath, approvalsPath, outputPath] = args;
     const approvals = readJson(approvalsPath, "genesis approvals");
+    if (!approvals || !Array.isArray(approvals.approvals) ||
+        !Array.isArray(approvals.peerRegistryApprovals)) {
+      throw new Error("genesis approvals file must contain both approval arrays");
+    }
     const envelope = createGenesisApprovalEnvelope(
-      readJson(planPath, "genesis plan"), approvals,
+      readJson(planPath, "genesis plan"), approvals.approvals, approvals.peerRegistryApprovals,
     );
     writeExclusive(outputPath, envelope);
     console.log(`Approval envelope for ${envelope.commitment} assembled.`);
@@ -96,8 +116,20 @@ try {
     );
     writeExclusive(outputPath, result.genesis);
     console.log(`Genesis ${result.genesisHash} compiled for valueless developer testnet only.`);
+  } else if (command === "registry-append" && args.length === 3) {
+    const [directory, planPath, envelopePath] = args;
+    const result = appendCeremonyRegistry(
+      directory, readJson(planPath, "genesis plan"),
+      readJson(envelopePath, "approval envelope"),
+    );
+    console.log(JSON.stringify(result));
+  } else if (command === "registry-verify" && args.length === 1) {
+    const result = verifyCeremonyRegistry(args[0]);
+    console.log(JSON.stringify({ count: result.count, head: result.head, verified: true }));
+  } else if (command === "registry-repair-one-copy" && args.length === 1) {
+    console.log(JSON.stringify(repairCeremonyRegistryOneCopy(args[0])));
   } else {
-    throw new Error("usage: genesis:ceremony <plan input.json plan.json | sign plan.json encrypted-vault.json approval.json | assemble plan.json approvals.json envelope.json | verify plan.json envelope.json [prior-plans.json] | compile plan.json envelope.json genesis.json [prior-plans.json]>");
+    throw new Error("usage: genesis:ceremony <plan input.json plan.json | sign plan.json encrypted-vault.json approval.json | sign-peer-registry plan.json validator-vault.json approval.json | assemble plan.json approvals.json envelope.json | verify plan.json envelope.json [prior-plans.json] | compile plan.json envelope.json genesis.json [prior-plans.json] | registry-append registry-dir plan.json envelope.json | registry-verify registry-dir | registry-repair-one-copy registry-dir>");
   }
 } catch (error) {
   console.error(`Genesis ceremony failed: ${error.message}`);
