@@ -10,6 +10,8 @@ import {
   MAX_DECIMAL_DIGITS,
   MAX_FUTURE_DRIFT_MS,
   MAX_MULTISIG_MEMBERS,
+  MAX_NATIVE_ASSETS,
+  MAX_NATIVE_ASSET_BALANCES,
   MIN_TRANSFER_FEE,
   MIN_REWARD_INTERVAL_MS,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
@@ -99,6 +101,18 @@ function assertAddress(address, field) {
 function creditDelegationKey(owner, delegate) {
   return `${owner}:${delegate}`;
 }
+
+export const SYSTEM_NIR_ASSET_ID = "0".repeat(64);
+
+export function nativeAssetId({ networkId, creator, nonce }) {
+  if (typeof networkId !== "string" || networkId.length === 0 ||
+      Buffer.byteLength(networkId) > 64) throw new Error("asset network id is invalid");
+  assertAddress(creator, "asset creator");
+  if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error("asset nonce is invalid");
+  return hashObject({ creator, networkId, nonce }, "NATIVE_ASSET_ID_V1");
+}
+
+function assetBalanceKey(assetId, address) { return `${assetId}:${address}`; }
 
 const MAX_PENDING_PROGRESS_COMMITMENTS = 4_096;
 const MAX_PROGRESS_COMMITMENT_AGE = 1_024;
@@ -220,6 +234,26 @@ const SPONSOR_FIELDS = [
   "feePayerSignature",
 ];
 const TRANSACTION_SCHEMAS = Object.freeze({
+  "asset-burn": [[
+    "algorithm", "amount", "assetId", "fee", "networkId", "nonce", "publicKey",
+    "sender", "signature", "type",
+  ]],
+  "asset-create": [[
+    "algorithm", "assetId", "fee", "fixedSupply", "initialSupply", "maxSupply",
+    "metadataHash", "networkId", "nonce", "publicKey", "sender", "signature", "type",
+  ]],
+  "asset-mint": [[
+    "algorithm", "amount", "assetId", "fee", "networkId", "nonce", "publicKey",
+    "sender", "signature", "type",
+  ]],
+  "asset-revoke-authority": [[
+    "algorithm", "assetId", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ]],
+  "asset-transfer": [[
+    "algorithm", "amount", "assetId", "fee", "networkId", "nonce", "publicKey",
+    "recipient", "sender", "signature", "type",
+  ]],
   "beacon-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
     "signature", "type",
@@ -320,6 +354,65 @@ export function createTransfer({
     ...transaction,
     signature: signObject(transaction, wallet, "TRANSFER"),
   };
+}
+
+function createSignedAssetTransaction(fields, wallet, domain) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    fee: String(fields.fee ?? MIN_TRANSFER_FEE),
+    networkId: fields.networkId,
+    nonce: fields.nonce,
+    publicKey: wallet.publicKey,
+    sender: wallet.address,
+    ...fields,
+  };
+  delete transaction.wallet;
+  return { ...transaction, signature: signObject(transaction, wallet, domain) };
+}
+
+export function createNativeAsset({
+  wallet, networkId, metadataHash, maxSupply, initialSupply, fixedSupply, nonce,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  return createSignedAssetTransaction({
+    assetId: nativeAssetId({ networkId, creator: wallet.address, nonce }),
+    fee: String(fee), fixedSupply, initialSupply: String(initialSupply), maxSupply: String(maxSupply),
+    metadataHash, networkId, nonce, type: "asset-create",
+  }, wallet, "NATIVE_ASSET_CREATE");
+}
+
+export function createNativeAssetMint({
+  wallet, networkId, assetId, amount, nonce, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  return createSignedAssetTransaction({
+    amount: String(amount), assetId, fee: String(fee), networkId, nonce, type: "asset-mint",
+  }, wallet, "NATIVE_ASSET_MINT");
+}
+
+export function createNativeAssetTransfer({
+  wallet, networkId, assetId, recipient, amount, nonce,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  return createSignedAssetTransaction({
+    amount: String(amount), assetId, fee: String(fee), networkId, nonce, recipient,
+    type: "asset-transfer",
+  }, wallet, "NATIVE_ASSET_TRANSFER");
+}
+
+export function createNativeAssetBurn({
+  wallet, networkId, assetId, amount, nonce, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  return createSignedAssetTransaction({
+    amount: String(amount), assetId, fee: String(fee), networkId, nonce, type: "asset-burn",
+  }, wallet, "NATIVE_ASSET_BURN");
+}
+
+export function createNativeAssetAuthorityRevoke({
+  wallet, networkId, assetId, nonce, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  return createSignedAssetTransaction({
+    assetId, fee: String(fee), networkId, nonce, type: "asset-revoke-authority",
+  }, wallet, "NATIVE_ASSET_REVOKE_AUTHORITY");
 }
 
 export function createSponsoredTransfer({
@@ -912,6 +1005,8 @@ function snapshotSignedInteger(value, field) {
 
 export class NirChain {
   #accountHistories;
+  #assetBalances;
+  #assets;
   #balances;
   #beaconBondingActive;
   #beaconBonds;
@@ -1035,6 +1130,8 @@ export class NirChain {
     });
     assertAddress(treasuryAddress, "treasury address");
     this.#accountHistories = new Map();
+    this.#assetBalances = new Map();
+    this.#assets = new Map();
     this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
     this.#beaconBondingActive = false;
     this.#beaconBonds = new Map();
@@ -1142,6 +1239,56 @@ export class NirChain {
     for (const [address, value] of balances) {
       assertAddress(address, "snapshot balance address");
       balances.set(address, snapshotAtomic(value, "balance"));
+    }
+    const snapshotProtocolVersion = snapshotInteger(state.protocolVersion, "protocol version");
+    const assets = snapshotProtocolVersion >= 25
+      ? snapshotEntries(state.assets, "native assets") : new Map();
+    const assetBalances = snapshotProtocolVersion >= 25
+      ? snapshotEntries(state.assetBalances, "native asset balances") : new Map();
+    if (snapshotProtocolVersion < 25 &&
+        (state.assets !== undefined || state.assetBalances !== undefined)) {
+      throw new Error("native asset snapshot state predates protocol support");
+    }
+    if (assets.size > MAX_NATIVE_ASSETS || assetBalances.size > MAX_NATIVE_ASSET_BALANCES) {
+      throw new Error("native asset snapshot capacity is exceeded");
+    }
+    for (const [assetId, asset] of assets) {
+      if (assetId === SYSTEM_NIR_ASSET_ID || !/^[0-9a-f]{64}$/.test(assetId) || !asset ||
+          asset.assetId !== assetId || !/^nir1[0-9a-f]{64}$/.test(asset.creator ?? "") ||
+          !(asset.authority === null || asset.authority === asset.creator) ||
+          !Number.isSafeInteger(asset.creationNonce) || asset.creationNonce < 0 ||
+          assetId !== nativeAssetId({ creator: asset.creator, networkId: chain.#networkId,
+            nonce: asset.creationNonce }) ||
+          typeof asset.fixedSupply !== "boolean" ||
+          !/^[0-9a-f]{64}$/.test(asset.metadataHash ?? "")) {
+        throw new Error("native asset snapshot definition is invalid");
+      }
+      const maxSupply = snapshotAtomic(asset.maxSupply, "native asset maximum supply");
+      const minted = snapshotAtomic(asset.minted, "native asset minted supply");
+      const supply = snapshotAtomic(asset.supply, "native asset supply");
+      if (maxSupply === 0n || minted > maxSupply || supply > minted ||
+          (asset.fixedSupply && (asset.authority !== null || minted !== maxSupply))) {
+        throw new Error("native asset snapshot supply is invalid");
+      }
+      assets.set(assetId, { ...asset, maxSupply, minted, supply });
+    }
+    const assetTotals = new Map();
+    for (const [key, value] of assetBalances) {
+      const separator = key.indexOf(":");
+      const assetId = key.slice(0, separator);
+      const address = key.slice(separator + 1);
+      const amount = snapshotAtomic(value, "native asset balance");
+      if (separator !== 64 || !assets.has(assetId) || amount === 0n) {
+        throw new Error("native asset snapshot balance is invalid");
+      }
+      assertAddress(address, "native asset snapshot holder");
+      assetBalances.set(key, amount);
+      assetTotals.set(assetId, (assetTotals.get(assetId) ?? 0n) + amount);
+    }
+    for (const [assetId, asset] of assets) {
+      if ((assetTotals.get(assetId) ?? 0n) !== asset.supply) {
+        throw new Error("native asset snapshot balances do not match supply");
+      }
     }
     if (typeof state.beaconBondingActive !== "boolean") {
       throw new Error("beacon bonding activation snapshot is invalid");
@@ -1294,6 +1441,8 @@ export class NirChain {
       throw new Error("capability memory snapshot root is invalid");
     }
     chain.#accountHistories = accountHistories;
+    chain.#assetBalances = assetBalances;
+    chain.#assets = assets;
     chain.#balances = balances;
     chain.#beaconBondingActive = state.beaconBondingActive;
     chain.#beaconBonds = beaconBonds;
@@ -1368,6 +1517,22 @@ export class NirChain {
     return this.#balances.get(address) ?? 0n;
   }
 
+  nativeAsset(assetId) {
+    if (!/^[0-9a-f]{64}$/.test(assetId ?? "") || assetId === SYSTEM_NIR_ASSET_ID) {
+      throw new Error("native asset id is invalid");
+    }
+    const asset = this.#assets.get(assetId);
+    return asset ? structuredClone(asset) : null;
+  }
+
+  nativeAssetBalance(assetId, address) {
+    if (!/^[0-9a-f]{64}$/.test(assetId ?? "") || assetId === SYSTEM_NIR_ASSET_ID) {
+      throw new Error("native asset id is invalid");
+    }
+    assertAddress(address, "native asset holder");
+    return this.#assetBalances.get(assetBalanceKey(assetId, address)) ?? 0n;
+  }
+
   nextNonce(address) {
     return this.#nonces.get(address) ?? 0;
   }
@@ -1425,8 +1590,13 @@ export class NirChain {
   }
 
   #stateRoot(overrides = {}) {
+    const protocolVersion = overrides.protocolVersion ?? this.#protocolVersion;
     return computeChainStateRoot({
       accountHistories: overrides.accountHistories ?? this.#accountHistories,
+      ...(protocolVersion >= 25 ? {
+        assetBalances: overrides.assetBalances ?? this.#assetBalances,
+        assets: overrides.assets ?? this.#assets,
+      } : {}),
       balances: overrides.balances ?? this.#balances,
       beaconBondingActive: overrides.beaconBondingActive ?? this.#beaconBondingActive,
       beaconBonds: overrides.beaconBonds ?? this.#beaconBonds,
@@ -1450,7 +1620,7 @@ export class NirChain {
           ? this.#pendingProtocolUpgrade : overrides.pendingProtocolUpgrade,
       peerRegistry: overrides.peerRegistry === undefined ? this.#peerRegistry : overrides.peerRegistry,
       progressCommitments: overrides.progressCommitments ?? this.#progressCommitments,
-      protocolVersion: overrides.protocolVersion ?? this.#protocolVersion,
+      protocolVersion,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
       registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
       rewardEpoch: overrides.rewardEpoch ?? this.#rewardEpoch,
@@ -1467,6 +1637,10 @@ export class NirChain {
       capabilityMemory: this.#capabilityMemory.snapshot(),
       state: normalizedStateValue({
         accountHistories: this.#accountHistories,
+        ...(this.#protocolVersion >= 25 ? {
+          assetBalances: this.#assetBalances,
+          assets: this.#assets,
+        } : {}),
         balances: this.#balances,
         beaconBondingActive: this.#beaconBondingActive,
         beaconBonds: this.#beaconBonds,
@@ -2558,6 +2732,136 @@ export class NirChain {
     nonces.set(transaction.sender, expectedNonce + 1);
   }
 
+  #assetFeeDecision(transaction, balances, nonces, timestamp, domain) {
+    if (transaction.algorithm !== SIGNATURE_ALGORITHM || transaction.networkId !== this.#networkId ||
+        typeof transaction.publicKey !== "string" || transaction.publicKey.length > 4_000 ||
+        typeof transaction.signature !== "string" || transaction.signature.length > 7_000 ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, domain)) {
+      throw new Error("native asset transaction signature is invalid");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const fee = parseAtomic(transaction.fee, "native asset fee");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee) throw new Error("native asset fee is invalid");
+    if (transaction.sender === this.#treasuryAddress) {
+      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
+        this.#genesisTimestamp, timestamp,
+      );
+      if (balance - fee < locked) throw new Error("treasury funds are still vesting");
+    }
+    return { balance, expectedNonce, fee };
+  }
+
+  #chargeAssetFee(transaction, decision, balances, nonces, proposer) {
+    balances.set(transaction.sender, decision.balance - decision.fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + decision.fee);
+    nonces.set(transaction.sender, decision.expectedNonce + 1);
+  }
+
+  #applyNativeAssetTransaction(
+    transaction, balances, nonces, assets, assetBalances, proposer, timestamp,
+  ) {
+    if (transaction.assetId === SYSTEM_NIR_ASSET_ID ||
+        !/^[0-9a-f]{64}$/.test(transaction.assetId ?? "")) {
+      throw new Error("native asset id is invalid or reserved");
+    }
+    const domains = {
+      "asset-burn": "NATIVE_ASSET_BURN",
+      "asset-create": "NATIVE_ASSET_CREATE",
+      "asset-mint": "NATIVE_ASSET_MINT",
+      "asset-revoke-authority": "NATIVE_ASSET_REVOKE_AUTHORITY",
+      "asset-transfer": "NATIVE_ASSET_TRANSFER",
+    };
+    const decision = this.#assetFeeDecision(
+      transaction, balances, nonces, timestamp, domains[transaction.type],
+    );
+    if (transaction.type === "asset-create") {
+      if (assets.size >= MAX_NATIVE_ASSETS || assets.has(transaction.assetId) ||
+          transaction.assetId !== nativeAssetId({
+            creator: transaction.sender, networkId: transaction.networkId, nonce: transaction.nonce,
+          }) || !/^[0-9a-f]{64}$/.test(transaction.metadataHash ?? "") ||
+          typeof transaction.fixedSupply !== "boolean") {
+        throw new Error("native asset definition is invalid or duplicated");
+      }
+      const initialSupply = parseAtomic(transaction.initialSupply, "native asset initial supply");
+      const maxSupply = parseAtomic(transaction.maxSupply, "native asset maximum supply");
+      if (maxSupply === 0n || initialSupply > maxSupply ||
+          (transaction.fixedSupply && initialSupply !== maxSupply)) {
+        throw new Error("native asset supply definition is invalid");
+      }
+      if (initialSupply > 0n && assetBalances.size >= MAX_NATIVE_ASSET_BALANCES) {
+        throw new Error("native asset balance capacity is exhausted");
+      }
+      assets.set(transaction.assetId, {
+        assetId: transaction.assetId,
+        authority: transaction.fixedSupply ? null : transaction.sender,
+        creationNonce: transaction.nonce,
+        creator: transaction.sender,
+        fixedSupply: transaction.fixedSupply,
+        maxSupply,
+        metadataHash: transaction.metadataHash,
+        minted: initialSupply,
+        supply: initialSupply,
+      });
+      if (initialSupply > 0n) {
+        assetBalances.set(assetBalanceKey(transaction.assetId, transaction.sender), initialSupply);
+      }
+    } else {
+      const asset = assets.get(transaction.assetId);
+      if (!asset) throw new Error("native asset is unknown");
+      if (transaction.type === "asset-mint") {
+        const amount = parseAtomic(transaction.amount, "native asset mint amount");
+        if (amount === 0n || asset.authority !== transaction.sender ||
+            asset.minted + amount > asset.maxSupply) {
+          throw new Error("native asset mint is unauthorized or exceeds its cap");
+        }
+        const key = assetBalanceKey(transaction.assetId, transaction.sender);
+        if (!assetBalances.has(key) && assetBalances.size >= MAX_NATIVE_ASSET_BALANCES) {
+          throw new Error("native asset balance capacity is exhausted");
+        }
+        assets.set(transaction.assetId, {
+          ...asset, minted: asset.minted + amount, supply: asset.supply + amount,
+        });
+        assetBalances.set(key, (assetBalances.get(key) ?? 0n) + amount);
+      } else if (transaction.type === "asset-transfer") {
+        assertAddress(transaction.recipient, "native asset recipient");
+        const amount = parseAtomic(transaction.amount, "native asset transfer amount");
+        const senderKey = assetBalanceKey(transaction.assetId, transaction.sender);
+        const recipientKey = assetBalanceKey(transaction.assetId, transaction.recipient);
+        const senderBalance = assetBalances.get(senderKey) ?? 0n;
+        if (amount === 0n || transaction.recipient === transaction.sender || senderBalance < amount) {
+          throw new Error("native asset transfer is invalid or unfunded");
+        }
+        if (!assetBalances.has(recipientKey) && assetBalances.size >= MAX_NATIVE_ASSET_BALANCES) {
+          throw new Error("native asset balance capacity is exhausted");
+        }
+        if (senderBalance === amount) assetBalances.delete(senderKey);
+        else assetBalances.set(senderKey, senderBalance - amount);
+        assetBalances.set(recipientKey, (assetBalances.get(recipientKey) ?? 0n) + amount);
+      } else if (transaction.type === "asset-burn") {
+        const amount = parseAtomic(transaction.amount, "native asset burn amount");
+        const key = assetBalanceKey(transaction.assetId, transaction.sender);
+        const holderBalance = assetBalances.get(key) ?? 0n;
+        if (amount === 0n || holderBalance < amount) {
+          throw new Error("native asset burn is invalid or unfunded");
+        }
+        if (holderBalance === amount) assetBalances.delete(key);
+        else assetBalances.set(key, holderBalance - amount);
+        assets.set(transaction.assetId, { ...asset, supply: asset.supply - amount });
+      } else if (transaction.type === "asset-revoke-authority") {
+        if (asset.fixedSupply || asset.authority !== transaction.sender) {
+          throw new Error("native asset authority revocation is unauthorized or already final");
+        }
+        assets.set(transaction.assetId, { ...asset, authority: null });
+      }
+    }
+    this.#chargeAssetFee(transaction, decision, balances, nonces, proposer);
+  }
+
   appendBlock(block) {
     return this.#applyBlock(block, true);
   }
@@ -2566,6 +2870,9 @@ export class NirChain {
     const fork = new NirChain(this.#genesisConfig);
     fork.#accountHistories = new Map([...this.#accountHistories]
       .map(([address, history]) => [address, { ...history }]));
+    fork.#assetBalances = new Map(this.#assetBalances);
+    fork.#assets = new Map([...this.#assets]
+      .map(([assetId, asset]) => [assetId, { ...asset }]));
     fork.#balances = new Map(this.#balances);
     fork.#beaconBondingActive = this.#beaconBondingActive;
     fork.#beaconBonds = new Map(this.#beaconBonds);
@@ -2786,6 +3093,9 @@ export class NirChain {
 
     const accountHistories = new Map([...this.#accountHistories]
       .map(([address, history]) => [address, { ...history }]));
+    const assetBalances = new Map(this.#assetBalances);
+    const assets = new Map([...this.#assets]
+      .map(([assetId, asset]) => [assetId, { ...asset }]));
     const balances = new Map(this.#balances);
     let beaconBondingActive = this.#beaconBondingActive;
     const beaconBonds = new Map(this.#beaconBonds);
@@ -2941,6 +3251,14 @@ export class NirChain {
         this.#applyCreditUnstakeClaim(
           transaction, nonces, creditUnstakes, balances, block.height,
           creditStakes, creditUsage, creditDelegations,
+        );
+      } else if (transaction.type.startsWith("asset-")) {
+        if (protocolState.protocolVersion < 25) {
+          throw new Error("native assets require protocol version 25");
+        }
+        this.#applyNativeAssetTransaction(
+          transaction, balances, nonces, assets, assetBalances,
+          block.feeRecipient, block.timestamp,
         );
       } else {
         throw new Error("unknown transaction type");
@@ -3146,6 +3464,8 @@ export class NirChain {
       ? block.timestamp : this.#lastRewardTimestamp;
     const expectedStateRoot = this.#stateRoot({
       accountHistories,
+      assetBalances,
+      assets,
       balances,
       beaconBondingActive,
       beaconBonds,
@@ -3194,6 +3514,8 @@ export class NirChain {
       }
     }
     this.#accountHistories = accountHistories;
+    this.#assetBalances = assetBalances;
+    this.#assets = assets;
     this.#balances = balances;
     this.#beaconBondingActive = beaconBondingActive;
     this.#beaconBonds = beaconBonds;
