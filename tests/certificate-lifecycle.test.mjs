@@ -1,0 +1,149 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import {
+  certificatePinsAtHeight,
+  createCertificateRecord,
+  EMPTY_CERTIFICATE_RECORD_HASH,
+  verifyCertificateHistory,
+  verifyCertificateRecord,
+} from "../blockchain/certificate-lifecycle.mjs";
+import { requestValidatorJson } from "../blockchain/http-client.mjs";
+
+const NETWORK = "nir-certificate-test";
+const REGISTRY = "a".repeat(64);
+const TOPOLOGY = "b".repeat(64);
+const wallets = Array.from({ length: 4 }, generateWallet);
+const validators = wallets.map(publicWallet);
+const operator = wallets[0].address;
+
+function record({
+  activationHeight,
+  certificate,
+  history = [],
+  operation,
+  overlapUntilHeight = activationHeight,
+  signers = wallets.slice(0, 3),
+  peerRegistryHash = REGISTRY,
+  topologyHistoryHash = TOPOLOGY,
+}) {
+  const previous = history.filter(({ validatorAddress }) =>
+    validatorAddress === operator).at(-1);
+  return createCertificateRecord({
+    activationHeight,
+    certificate,
+    networkId: NETWORK,
+    operation,
+    overlapUntilHeight,
+    peerRegistryHash,
+    previousRecordHash: previous?.recordHash ?? EMPTY_CERTIFICATE_RECORD_HASH,
+    sequence: previous ? previous.sequence + 1 : 0,
+    topologyHistoryHash,
+    validatorAddress: operator,
+  }, signers);
+}
+
+const firstCertificate = { serial: "1a", sha256: "1".repeat(64) };
+const secondCertificate = { serial: "2b", sha256: "2".repeat(64) };
+
+test("certificate renewal has a bounded old/new overlap and then drops the old pin", () => {
+  const issued = record({
+    activationHeight: 10, certificate: firstCertificate, operation: "issue",
+  });
+  const renewed = record({
+    activationHeight: 20,
+    certificate: secondCertificate,
+    history: [issued],
+    operation: "renew",
+    overlapUntilHeight: 24,
+  });
+  const history = verifyCertificateHistory([issued, renewed], {
+    networkId: NETWORK, validators,
+  });
+  assert.deepEqual(certificatePinsAtHeight(history, operator, 9), []);
+  assert.deepEqual(certificatePinsAtHeight(history, operator, 19), [firstCertificate.sha256]);
+  assert.deepEqual(certificatePinsAtHeight(history, operator, 20), [
+    secondCertificate.sha256, firstCertificate.sha256,
+  ]);
+  assert.deepEqual(certificatePinsAtHeight(history, operator, 25), [secondCertificate.sha256]);
+});
+
+test("stale, minority, forged, replayed, and topology-detached records fail closed", () => {
+  const issued = record({
+    activationHeight: 10, certificate: firstCertificate, operation: "issue",
+  });
+  assert.throws(() => verifyCertificateRecord(issued, {
+    currentHeight: 9,
+    history: [],
+    minimumActivationDelay: 2,
+    networkId: NETWORK,
+    peerRegistryHash: REGISTRY,
+    topologyHistoryHash: TOPOLOGY,
+    validators,
+  }), /stale|required delay/);
+
+  const minority = record({
+    activationHeight: 10,
+    certificate: firstCertificate,
+    operation: "issue",
+    signers: wallets.slice(0, 2),
+  });
+  assert.throws(() => verifyCertificateHistory([minority], { networkId: NETWORK, validators }),
+    /quorum/);
+
+  const forged = structuredClone(issued);
+  forged.activationHeight = 11;
+  forged.overlapUntilHeight = 11;
+  forged.recordHash = "f".repeat(64);
+  assert.throws(() => verifyCertificateHistory([forged], { networkId: NETWORK, validators }),
+    /hash|forged/);
+
+  const reused = record({
+    activationHeight: 20,
+    certificate: { serial: firstCertificate.serial, sha256: "3".repeat(64) },
+    history: [issued],
+    operation: "renew",
+  });
+  assert.throws(() => verifyCertificateHistory([issued, reused], {
+    networkId: NETWORK, validators,
+  }), /already used/);
+
+  const detached = record({
+    activationHeight: 30,
+    certificate: secondCertificate,
+    history: [issued],
+    operation: "renew",
+    topologyHistoryHash: "c".repeat(64),
+  });
+  assert.throws(() => verifyCertificateRecord(detached, {
+    currentHeight: 20,
+    history: [issued],
+    networkId: NETWORK,
+    peerRegistryHash: REGISTRY,
+    topologyHistoryHash: TOPOLOGY,
+    validators,
+  }), /different network topology/);
+});
+
+test("revocation removes all pins and replay cannot roll the lineage back", async () => {
+  const issued = record({
+    activationHeight: 10, certificate: firstCertificate, operation: "issue",
+  });
+  const revoked = record({
+    activationHeight: 20, certificate: null, history: [issued], operation: "revoke",
+  });
+  const history = verifyCertificateHistory([issued, revoked], {
+    networkId: NETWORK, validators,
+  });
+  assert.deepEqual(certificatePinsAtHeight(history, operator, 19), [firstCertificate.sha256]);
+  assert.deepEqual(certificatePinsAtHeight(history, operator, 20), []);
+  await assert.rejects(() => requestValidatorJson("https://127.0.0.1:1/health", {
+    certificateHistory: history,
+    height: 20,
+    validatorAddress: operator,
+  }), /no active authenticated TLS certificate/);
+  assert.throws(() => verifyCertificateHistory([issued, revoked, issued], {
+    networkId: NETWORK, validators,
+  }), /lineage|sequence/);
+});

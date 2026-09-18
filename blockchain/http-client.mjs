@@ -2,6 +2,7 @@ import { createHash, X509Certificate } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { certificatePinsAtHeight } from "./certificate-lifecycle.mjs";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -17,6 +18,7 @@ export function requestJson(url, {
   method = body === undefined ? "GET" : "POST",
   timeoutMs = 3_000,
   tlsCertificateSha256 = null,
+  tlsCertificateSha256Pins = null,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
 } = {}) {
   const target = new URL(url);
@@ -33,7 +35,19 @@ export function requestJson(url, {
   if (tlsCertificateSha256 !== null && !/^[0-9a-f]{64}$/.test(tlsCertificateSha256)) {
     return Promise.reject(new Error("TLS certificate pin is invalid"));
   }
-  if (target.protocol === "http:" && tlsCertificateSha256 !== null) {
+  if (tlsCertificateSha256Pins !== null &&
+      (!Array.isArray(tlsCertificateSha256Pins) || tlsCertificateSha256Pins.length < 1 ||
+       tlsCertificateSha256Pins.length > 2 ||
+       tlsCertificateSha256Pins.some((pin) => !/^[0-9a-f]{64}$/.test(pin)) ||
+       new Set(tlsCertificateSha256Pins).size !== tlsCertificateSha256Pins.length)) {
+    return Promise.reject(new Error("TLS certificate pin set is invalid"));
+  }
+  if (tlsCertificateSha256 !== null && tlsCertificateSha256Pins !== null) {
+    return Promise.reject(new Error("TLS certificate pin options conflict"));
+  }
+  const certificatePins = tlsCertificateSha256Pins ??
+    (tlsCertificateSha256 === null ? null : [tlsCertificateSha256]);
+  if (target.protocol === "http:" && certificatePins !== null) {
     return Promise.reject(new Error("TLS certificate pin cannot be used with plaintext HTTP"));
   }
   const encoded = body === undefined ? null : Buffer.from(JSON.stringify(body));
@@ -46,15 +60,16 @@ export function requestJson(url, {
       reject(error);
     };
     const outgoing = request(target, {
+      agent: certificatePins === null ? undefined : false,
       headers: encoded ? {
         "content-length": encoded.length,
         "content-type": "application/json",
       } : undefined,
       method,
       minVersion: target.protocol === "https:" ? "TLSv1.3" : undefined,
-      rejectUnauthorized: target.protocol === "https:" && tlsCertificateSha256 === null,
+      rejectUnauthorized: target.protocol === "https:" && certificatePins === null,
     }, (response) => {
-      if (target.protocol === "https:" && tlsCertificateSha256 !== null) {
+      if (target.protocol === "https:" && certificatePins !== null) {
         const certificate = response.socket.getPeerCertificate?.();
         let fingerprint;
         try { fingerprint = certificateSha256(certificate?.raw); }
@@ -62,7 +77,7 @@ export function requestJson(url, {
           response.destroy();
           return fail(error);
         }
-        if (fingerprint !== tlsCertificateSha256) {
+        if (!certificatePins.includes(fingerprint)) {
           response.destroy();
           return fail(new Error("TLS peer certificate pin mismatch"));
         }
@@ -103,4 +118,26 @@ export function requestJson(url, {
     if (encoded) outgoing.write(encoded);
     outgoing.end();
   });
+}
+
+export function requestValidatorJson(url, {
+  certificateHistory,
+  height,
+  validatorAddress,
+  ...options
+} = {}) {
+  let pins;
+  try {
+    pins = certificatePinsAtHeight(certificateHistory, validatorAddress, height);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  if (pins.length === 0) {
+    return Promise.reject(new Error("validator has no active authenticated TLS certificate"));
+  }
+  if (options.tlsCertificateSha256 !== undefined ||
+      options.tlsCertificateSha256Pins !== undefined) {
+    return Promise.reject(new Error("validator TLS pins must come from certificate history"));
+  }
+  return requestJson(url, { ...options, tlsCertificateSha256Pins: pins });
 }

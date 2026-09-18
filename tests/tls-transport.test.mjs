@@ -54,6 +54,16 @@ test("validator HTTPS terminates TLS and enforces its on-chain certificate pin",
     await assert.rejects(() => requestJson("http://127.0.0.1:1/health", {
       tlsCertificateSha256: fingerprint,
     }), /plaintext HTTP/);
+    const overlapResponse = await requestJson(url, {
+      tlsCertificateSha256Pins: ["f".repeat(64), fingerprint],
+    });
+    assert.equal(overlapResponse.status, 200);
+    await assert.rejects(() => requestJson(url, {
+      tlsCertificateSha256Pins: [],
+    }), /pin set is invalid/);
+    await assert.rejects(() => requestJson(url, {
+      tlsCertificateSha256Pins: ["f".repeat(64)],
+    }), /certificate pin mismatch/);
   } finally {
     if (server) await close(server);
     rmSync(temporary, { recursive: true, force: true });
