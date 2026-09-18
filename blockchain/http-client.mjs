@@ -2,7 +2,10 @@ import { createHash, X509Certificate } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { parseConsensusJson } from "./consensus-json.mjs";
-import { certificatePinsAtHeight } from "./certificate-lifecycle.mjs";
+import {
+  certificatePinsAtHeight,
+  verifyCertificateHistory,
+} from "./certificate-lifecycle.mjs";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -121,6 +124,7 @@ export function requestJson(url, {
 }
 
 export function requestValidatorJson(url, {
+  certificateContext,
   certificateHistory,
   height,
   validatorAddress,
@@ -128,7 +132,11 @@ export function requestValidatorJson(url, {
 } = {}) {
   let pins;
   try {
-    pins = certificatePinsAtHeight(certificateHistory, validatorAddress, height);
+    if (!certificateContext || typeof certificateContext !== "object") {
+      throw new Error("verified certificate context is required");
+    }
+    const verifiedHistory = verifyCertificateHistory(certificateHistory, certificateContext);
+    pins = certificatePinsAtHeight(verifiedHistory, validatorAddress, height);
   } catch (error) {
     return Promise.reject(error);
   }

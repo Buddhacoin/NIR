@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -47,8 +49,13 @@ test("certificate history survives restart and repairs one torn copy", () => {
     assert.equal(recovered.history.length, 1);
     assert.equal(recovered.recoveredCopies, 1);
     assert.equal(readFileSync(paths.primary, "utf8"), readFileSync(paths.backup, "utf8"));
+
+    rmSync(paths.primary);
+    symlinkSync(paths.backup, paths.primary);
+    const symlinkRecovered = loadCertificateHistory(directory, context);
+    assert.equal(symlinkRecovered.recoveredCopies, 1);
+    assert.equal(lstatSync(paths.primary).isSymbolicLink(), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
-

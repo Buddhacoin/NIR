@@ -1,7 +1,8 @@
 import {
-  chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
-  readFileSync, renameSync, rmSync, statSync, writeFileSync,
+  chmodSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync,
+  mkdirSync, openSync, readSync, renameSync, rmSync, writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import {
@@ -29,7 +30,7 @@ function syncDirectory(path) {
 }
 
 function atomicWrite(path, contents) {
-  const temporary = `${path}.${process.pid}.tmp`;
+  const temporary = `${path}.${process.pid}.${randomBytes(16).toString("hex")}.tmp`;
   let descriptor;
   try {
     descriptor = openSync(temporary, "wx", 0o600);
@@ -46,11 +47,36 @@ function atomicWrite(path, contents) {
   }
 }
 
+function readSafe(path) {
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink() ||
+      before.size > MAX_CERTIFICATE_STORE_BYTES) return null;
+  let descriptor;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
+        opened.size !== before.size) return null;
+    const contents = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < contents.length) {
+      const length = readSync(descriptor, contents, offset, contents.length - offset, offset);
+      if (length === 0) return null;
+      offset += length;
+    }
+    const after = fstatSync(descriptor);
+    if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return null;
+    return contents.toString("utf8");
+  } catch { return null; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
 function readCopy(path, context) {
   try {
-    if (!existsSync(path) || lstatSync(path).isSymbolicLink() ||
-        statSync(path).size > MAX_CERTIFICATE_STORE_BYTES) return null;
-    const history = parseConsensusJson(readFileSync(path, "utf8"));
+    if (!existsSync(path)) return null;
+    const contents = readSafe(path);
+    if (contents === null) return null;
+    const history = parseConsensusJson(contents);
     if (!Array.isArray(history) || history.length > MAX_CERTIFICATE_RECORDS) return null;
     const verified = verifyCertificateHistory(history, context);
     return { contents: serialized(verified), history: verified };

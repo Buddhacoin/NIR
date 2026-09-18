@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { lstatSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync, constants, fstatSync, lstatSync, openSync, readFileSync,
+} from "node:fs";
 import process from "node:process";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import {
@@ -17,10 +19,24 @@ const MAX_INPUT_BYTES = 4 * 1024 * 1024;
 const [command, contextPath, directory, inputPath = ""] = process.argv.slice(2);
 
 function readBoundedJson(path, name) {
-  if (!path || lstatSync(path).isSymbolicLink() || statSync(path).size > MAX_INPUT_BYTES) {
+  if (!path) throw new Error(`${name} file is unsafe or too large`);
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_INPUT_BYTES) {
     throw new Error(`${name} file is unsafe or too large`);
   }
-  return parseConsensusJson(readFileSync(path, "utf8"));
+  let descriptor;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
+        opened.size !== before.size) throw new Error(`${name} file changed during open`);
+    const contents = readFileSync(descriptor, "utf8");
+    const after = fstatSync(descriptor);
+    if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+      throw new Error(`${name} file changed during read`);
+    }
+    return parseConsensusJson(contents);
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
 function contextFrom(path) {

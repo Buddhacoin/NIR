@@ -139,6 +139,7 @@ test("revocation removes all pins and replay cannot roll the lineage back", asyn
   assert.deepEqual(certificatePinsAtHeight(history, operator, 19), [firstCertificate.sha256]);
   assert.deepEqual(certificatePinsAtHeight(history, operator, 20), []);
   await assert.rejects(() => requestValidatorJson("https://127.0.0.1:1/health", {
+    certificateContext: { networkId: NETWORK, validators },
     certificateHistory: history,
     height: 20,
     validatorAddress: operator,
@@ -146,4 +147,27 @@ test("revocation removes all pins and replay cannot roll the lineage back", asyn
   assert.throws(() => verifyCertificateHistory([issued, revoked, issued], {
     networkId: NETWORK, validators,
   }), /lineage|sequence/);
+});
+
+test("unknown fields and unauthenticated certificate history fail closed", async () => {
+  const issued = record({
+    activationHeight: 10, certificate: firstCertificate, operation: "issue",
+  });
+  assert.throws(() => verifyCertificateHistory([
+    { ...issued, unexpected: true },
+  ], { networkId: NETWORK, validators }), /shape/);
+  assert.throws(() => verifyCertificateHistory([
+    { ...issued, certificate: { ...issued.certificate, unexpected: true } },
+  ], { networkId: NETWORK, validators }), /shape/);
+  assert.throws(() => verifyCertificateHistory([
+    { ...issued, approvals: issued.approvals.map((approval, index) =>
+      index === 0 ? { ...approval, unexpected: true } : approval) },
+  ], { networkId: NETWORK, validators }), /shape/);
+  await assert.rejects(() => requestValidatorJson("https://127.0.0.1:1/health", {
+    certificateHistory: [issued], height: 10, validatorAddress: operator,
+  }), /context is required/);
+
+  const reversed = { ...issued, approvals: [...issued.approvals].reverse() };
+  const normalized = verifyCertificateHistory([reversed], { networkId: NETWORK, validators });
+  assert.deepEqual(normalized[0].approvals, issued.approvals);
 });

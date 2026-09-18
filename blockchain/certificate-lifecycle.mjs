@@ -8,6 +8,18 @@ export const MAX_CERTIFICATE_OVERLAP_BLOCKS = 10_000;
 const HASH = /^[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const SERIAL = /^(?:[1-9a-f][0-9a-f]{0,63})$/;
+const PAYLOAD_KEYS = [
+  "activationHeight", "certificate", "format", "networkId", "operation",
+  "overlapUntilHeight", "peerRegistryHash", "previousRecordHash", "sequence",
+  "topologyHistoryHash", "validatorAddress",
+];
+
+function exactKeys(value, expected, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).sort().join("\0") !== [...expected].sort().join("\0")) {
+    throw new Error(`${name} shape is invalid`);
+  }
+}
 
 function boundedText(value, name, minimum = 1, maximum = 128) {
   if (typeof value !== "string" || value.length < minimum || value.length > maximum) {
@@ -17,6 +29,7 @@ function boundedText(value, name, minimum = 1, maximum = 128) {
 }
 
 function certificate(value) {
+  exactKeys(value, ["serial", "sha256"], "certificate identity");
   if (!value || !SERIAL.test(value.serial ?? "") || !HASH.test(value.sha256 ?? "")) {
     throw new Error("certificate identity is invalid");
   }
@@ -24,6 +37,12 @@ function certificate(value) {
 }
 
 function payload(record) {
+  const keys = Object.keys(record ?? {}).sort().join("\0");
+  const unsignedKeys = [...PAYLOAD_KEYS].sort().join("\0");
+  const signedKeys = [...PAYLOAD_KEYS, "approvals", "recordHash"].sort().join("\0");
+  if (keys !== unsignedKeys && keys !== signedKeys) {
+    throw new Error("certificate record shape is invalid");
+  }
   const operation = record?.operation;
   if (!['issue', 'renew', 'revoke'].includes(operation) ||
       record?.format !== CERTIFICATE_RECORD_FORMAT ||
@@ -108,6 +127,7 @@ function verifyApprovals(record, unsigned, validators) {
   }
   const voters = new Set();
   for (const approval of record.approvals) {
+    exactKeys(approval, ["signature", "validator"], "certificate approval");
     const validator = validatorMap.get(approval?.validator);
     if (!validator || voters.has(approval.validator) ||
         typeof approval.signature !== "string" || approval.signature.length > 7_000 ||
@@ -120,6 +140,8 @@ function verifyApprovals(record, unsigned, validators) {
   if (voters.size < Math.floor((validators.length * 2) / 3) + 1) {
     throw new Error("certificate approval quorum not reached");
   }
+  return structuredClone(record.approvals)
+    .sort((left, right) => left.validator.localeCompare(right.validator));
 }
 
 function historiesByValidator(history) {
@@ -201,8 +223,8 @@ export function verifyCertificateHistory(history, {
     if (!recordValidators?.some(({ address }) => address === unsigned.validatorAddress)) {
       throw new Error("certificate owner is not in its bound validator topology");
     }
-    verifyApprovals(record, unsigned, recordValidators);
-    const verified = { ...unsigned, approvals: structuredClone(record.approvals), recordHash };
+    const approvals = verifyApprovals(record, unsigned, recordValidators);
+    const verified = { ...unsigned, approvals, recordHash };
     normalized.push(verified);
     previousByValidator.set(unsigned.validatorAddress, verified);
   }
