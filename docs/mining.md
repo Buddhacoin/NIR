@@ -22,6 +22,19 @@ reclaimed only after 64 blocks, preventing free pre-admission committee probing.
 This raises the cost of multi-key grinding
 but does not prevent a well-funded participant from purchasing multiple tries.
 
+Every rewarded block has one fixed scheduled budget, shared proportionally by
+all accepted proof scores in that block. Splitting work across more funded keys,
+candidate ids, or machines does not create another budget, and reward blocks
+must remain at least ten minutes apart. Allocation is canonical and independent
+of claim order; near the supply cap the final budget is truncated to the
+remaining mining pool exactly. These rules limit emission, not market power. A
+well-funded organization may still submit many distinct bonded improvements,
+and validators can censor competing claims so that the included set divides the
+budget differently. Exact canonical content and an already-recorded frontier
+delta cannot be rewarded twice, while semantically equivalent but genuinely
+different representations remain an explicit limitation of the bounded
+canonicalizer and evaluator policy.
+
 ### 2. Reproduction operator
 
 Provide compatible compute, lock an operator bond, receive randomly assigned

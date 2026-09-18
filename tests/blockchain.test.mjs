@@ -2112,6 +2112,26 @@ test("the hard cap truncates the final mining reward", () => {
   assert.equal(TREASURY_ALLOCATION + MINING_POOL, MAX_SUPPLY);
 });
 
+test("a coalition cannot replace one epoch budget with the remaining mining pool", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const proposal = chain.buildBlock({
+    rewardClaims: [progressClaim(chain, evaluators, validators, miner, "giant-block")],
+    timestamp: currentTimestamp(chain),
+  });
+  const rootBefore = chain.stateRoot;
+  const issuedBefore = chain.issued;
+  proposal.progressRewards[0].amount = MINING_POOL.toString();
+
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
+    /invalid progress reward allocation/,
+  );
+  assert.equal(chain.stateRoot, rootBefore);
+  assert.equal(chain.issued, issuedBefore);
+  assert.equal(chain.balance(miner.address), 0n);
+});
+
 test("reward allocation is deterministic and conserves every atomic unit", () => {
   const recipients = Array.from({ length: 5 }, generateWallet);
   for (let round = 0; round < 100; round += 1) {

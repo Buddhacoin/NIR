@@ -308,8 +308,23 @@ An epoch has a fixed issuance budget. Accepted proofs split it proportionally:
 reward(p) = epoch_budget × score(p) / sum(score(all accepted proofs))
 ```
 
-This prevents a submitter from choosing the number of minted coins. It also
-means efficient algorithmic progress can beat brute-force expenditure.
+Consensus computes this allocation over the fingerprint-sorted accepted set,
+uses integer atomic units, and assigns any rounding remainder by score and then
+fingerprint. Thus claim order, recipient-key count, and candidate count
+cannot increase the epoch budget. A non-empty rewarded block consumes exactly
+`min(scheduled_epoch_budget, remaining_mining_pool)`; an empty block consumes no
+issuance epoch. The ten-minute consensus interval still applies between
+rewarded blocks, and the 21 million NIR cap truncates the last budget.
+
+This prevents a submitter from choosing the number of minted coins, but it does
+not make allocation independent of censorship. A proposer or finality cartel
+can omit otherwise valid claims; the claims that remain in the block then split
+the same epoch budget. Canonical content, behavior and frontier memory prevent
+an exact accepted contribution from being paid again across restart, replay or
+fork, but do not prove broad semantic equivalence. A wealthy organization can
+fund many genuinely distinct bonded candidates and can capture an epoch if all
+included valid progress is its own. The rules bound the issuance rate; they do
+not promise company-neutral reward distribution or monopoly resistance.
 
 ### What the score does not claim
 
