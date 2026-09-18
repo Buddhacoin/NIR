@@ -8,6 +8,7 @@ import {
   createNativeAssetMint,
   createNativeAssetTransfer,
   createTransfer,
+  computeChainStateRoot,
   finalizeBlock,
   nativeAssetId,
   NirChain,
@@ -16,6 +17,8 @@ import {
 import {
   ATOMIC_UNITS,
   MAX_SUPPLY,
+  MAX_NATIVE_ASSETS,
+  MAX_NATIVE_ASSET_BALANCES,
   MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   MIN_TRANSFER_FEE,
   PROTOCOL_VERSION,
@@ -173,6 +176,9 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
     assetBalances: new Map(), assets: new Map(),
     nir: new Map([[treasury.address, TREASURY_ALLOCATION]]), nonces: new Map(),
   };
+  const immutableCaps = new Map();
+  const lastMinted = new Map();
+  const revokedAuthorities = new Set();
   let timestamp = TREASURY_VESTING_MS;
   const append = (transactions, options = {}) => {
     const proposal = chain.buildBlock({ timestamp: timestamp++, transactions, ...options });
@@ -204,6 +210,7 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
         supply: initial,
       });
       if (initial > 0n) model.assetBalances.set(key, initial);
+      immutableCaps.set(transaction.assetId, BigInt(transaction.maxSupply));
     } else if (transaction.type === "asset-mint") {
       const amount = BigInt(transaction.amount);
       const asset = model.assets.get(transaction.assetId);
@@ -222,6 +229,7 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
       model.assets.get(transaction.assetId).supply -= amount;
     } else if (transaction.type === "asset-revoke-authority") {
       model.assets.get(transaction.assetId).authority = null;
+      revokedAuthorities.add(transaction.assetId);
     }
   };
   const assertState = () => {
@@ -233,8 +241,16 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
     }
     assert.equal(chain.issued, TREASURY_ALLOCATION);
     assert.equal(chain.burned, 0n);
+    assert.equal(addresses.reduce((total, address) => total + chain.balance(address), 0n),
+      chain.issued - chain.burned);
+    assert.ok(model.assets.size <= MAX_NATIVE_ASSETS);
+    assert.ok(model.assetBalances.size <= MAX_NATIVE_ASSET_BALANCES);
     for (const [assetId, asset] of model.assets) {
       assert.deepEqual(chain.nativeAsset(assetId), asset);
+      assert.equal(asset.maxSupply, immutableCaps.get(assetId));
+      assert.ok(asset.minted >= (lastMinted.get(assetId) ?? 0n));
+      lastMinted.set(assetId, asset.minted);
+      if (revokedAuthorities.has(assetId)) assert.equal(asset.authority, null);
       let total = 0n;
       for (const { address } of users) {
         const expected = get(model.assetBalances, balanceKey(assetId, address));
@@ -274,7 +290,7 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
     metadataHash: "d".repeat(64), networkId: chain.networkId, nonce: 0, wallet: users[1],
   });
   block = append([fixed]); apply(fixed, block);
-  const coverage = { burn: 0, invalid: 0, mint: 0, revoke: 0, transfer: 0 };
+  const coverage = { burn: 0, create: 2, fork: 0, invalid: 0, mint: 0, revoke: 0, transfer: 0 };
   const initialMint = createNativeAssetMint({
     amount: "100", assetId: capped.assetId, networkId: chain.networkId,
     nonce: model.nonces.get(users[0].address) ?? 0, wallet: users[0],
@@ -290,6 +306,32 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
     nonce: model.nonces.get(users[2].address) ?? 0, wallet: users[2],
   });
   block = append([initialBurn]); apply(initialBurn, block); coverage.burn += 1;
+
+  const replayBefore = chain.consensusSnapshot();
+  const replayProposal = chain.buildBlock({ transactions: [initialBurn], timestamp: timestamp++ });
+  assert.throws(() => chain.appendBlock(finalizeBlock(
+    replayProposal, quorum(replayProposal, validators),
+  )), /unexpected nonce|replay/);
+  assert.deepEqual(chain.consensusSnapshot(), replayBefore);
+  coverage.invalid += 1;
+
+  const validPrefix = createNativeAssetBurn({
+    amount: "1", assetId: capped.assetId, networkId: chain.networkId,
+    nonce: model.nonces.get(users[2].address) ?? 0, wallet: users[2],
+  });
+  const invalidSuffix = createNativeAssetMint({
+    amount: "1", assetId: capped.assetId, networkId: chain.networkId,
+    nonce: model.nonces.get(users[4].address) ?? 0, wallet: users[4],
+  });
+  const atomicBefore = chain.consensusSnapshot();
+  const atomicProposal = chain.buildBlock({
+    transactions: [validPrefix, invalidSuffix], timestamp: timestamp++,
+  });
+  assert.throws(() => chain.appendBlock(finalizeBlock(
+    atomicProposal, quorum(atomicProposal, validators),
+  )), /unauthorized/);
+  assert.deepEqual(chain.consensusSnapshot(), atomicBefore);
+  coverage.invalid += 1;
 
   for (let step = 0; step < 100; step += 1) {
     const actions = [];
@@ -350,12 +392,37 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
         });
       const rejected = chain.buildBlock({ transactions: [unauthorized], timestamp });
       const root = chain.stateRoot;
+      const height = chain.height;
+      const before = chain.consensusSnapshot();
       assert.throws(() => chain.appendBlock(finalizeBlock(rejected, quorum(rejected, validators))),
         /unauthorized|unfunded/);
       assert.equal(chain.stateRoot, root);
+      assert.equal(chain.height, height);
+      assert.deepEqual(chain.consensusSnapshot(), before);
       coverage.invalid += 1;
     }
     assertState();
+    if (step === 30) {
+      const fork = chain.fork();
+      assert.equal(fork.stateRoot, chain.stateRoot);
+      const holderEntry = [...model.assetBalances.entries()]
+        .find(([, amount]) => amount > 0n);
+      const separator = holderEntry[0].indexOf(":");
+      const assetId = holderEntry[0].slice(0, separator);
+      const holderAddress = holderEntry[0].slice(separator + 1);
+      const holder = users.find(({ address }) => address === holderAddress);
+      const forkBurn = createNativeAssetBurn({
+        amount: "1", assetId, networkId: fork.networkId,
+        nonce: fork.nextNonce(holderAddress), wallet: holder,
+      });
+      const forkProposal = fork.buildBlock({ transactions: [forkBurn], timestamp });
+      fork.appendBlock(finalizeBlock(forkProposal, quorum(forkProposal, validators)));
+      assert.notEqual(fork.stateRoot, chain.stateRoot);
+      assert.equal(fork.nativeAsset(assetId).supply,
+        chain.nativeAsset(assetId).supply - 1n);
+      assert.equal(chain.nextNonce(holderAddress), model.nonces.get(holderAddress) ?? 0);
+      coverage.fork += 1;
+    }
     if (step % 20 === 0) {
       const replay = new NirChain(genesis);
       for (const recorded of history) replay.appendBlock(recorded);
@@ -372,5 +439,17 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
   assert.equal(restored.stateRoot, chain.stateRoot);
   for (const assetId of model.assets.keys()) {
     assert.deepEqual(restored.nativeAsset(assetId), chain.nativeAsset(assetId));
+    for (const { address } of users) {
+      assert.equal(restored.nativeAssetBalance(assetId, address),
+        chain.nativeAssetBalance(assetId, address));
+    }
   }
+  const oversized = structuredClone(snapshot);
+  const template = structuredClone(oversized.state.assets[0][1]);
+  oversized.state.assets = Array.from({ length: MAX_NATIVE_ASSETS + 1 }, (_, index) => [
+    index.toString(16).padStart(64, "0"), { ...template },
+  ]);
+  oversized.stateRoot = computeChainStateRoot(oversized.state);
+  oversized.checkpoint.stateRoot = oversized.stateRoot;
+  assert.throws(() => NirChain.fromVerifiedSnapshot(genesis, oversized), /capacity/);
 });
