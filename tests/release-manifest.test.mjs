@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -6,6 +7,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -14,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { generateWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, hashObject } from "../blockchain/crypto.mjs";
 import { createDeterministicZip, zipSha3 } from "../blockchain/deterministic-zip.mjs";
 import {
   artifactPaths,
@@ -52,6 +55,49 @@ function fixture() {
     sourceRevision: "a".repeat(40),
   });
   return { manifest, paths, root };
+}
+
+function manualNodePackage(path, contents, wallet) {
+  const sourceEntry = {
+    executable: false,
+    path,
+    sha3_256: createHash("sha3-256")
+      .update("NIR/RELEASE_FILE/v1\0").update(contents).digest("hex"),
+    size: contents.length,
+  };
+  const manifestPayload = {
+    files: [sourceEntry],
+    format: "nir-source-release-v1",
+    releaseVersion: "0.2.0",
+    sourceRevision: "a".repeat(40),
+  };
+  const manifest = {
+    ...manifestPayload,
+    manifestHash: hashObject(manifestPayload, "RELEASE_MANIFEST_HASH"),
+  };
+  const artifactEntry = {
+    content: contents.toString("base64"),
+    executable: false,
+    path,
+    sha3_256: createHash("sha3-256")
+      .update("NIR/ARTIFACT_FILE/v1\0").update(contents).digest("hex"),
+    size: contents.length,
+  };
+  const artifactPayload = {
+    entries: [artifactEntry],
+    format: "nir-reproducible-package-v1",
+    kind: "node",
+    releaseVersion: manifest.releaseVersion,
+    sourceManifestHash: manifest.manifestHash,
+    sourceRevision: manifest.sourceRevision,
+  };
+  return {
+    artifact: {
+      ...artifactPayload,
+      artifactHash: hashObject(artifactPayload, "RELEASE_ARTIFACT_HASH"),
+    },
+    signedRelease: signReleaseManifest(manifest, wallet),
+  };
 }
 
 test("a post-quantum release signature binds revision, file bytes, and executable mode", () => {
@@ -277,6 +323,15 @@ test("verified node packages install and reverify an exact safe file set", () =>
       signedRelease, trustedAddress: wallet.address,
     }), /new directory/);
 
+    const preservedTarget = join(values.root, "preserved-node");
+    mkdirSync(preservedTarget);
+    writeFileSync(join(preservedTarget, "sentinel"), "keep\n");
+    assert.throws(() => installNodeArtifact(artifact, preservedTarget, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /new directory/);
+    assert.equal(readFileSync(join(preservedTarget, "sentinel"), "utf8"), "keep\n");
+    assert.equal(readdirSync(values.root).some((name) => name.includes("nir-staging")), false);
+
     const tampered = structuredClone(artifact);
     tampered.entries[0].content = Buffer.from("tampered").toString("base64");
     const rejectedTarget = join(values.root, "rejected-node");
@@ -300,6 +355,21 @@ test("verified node packages install and reverify an exact safe file set", () =>
       signedRelease, trustedAddress: wallet.address,
     }), /contents differ/);
     chmodSync(join(target, "blockchain", "node.mjs"), 0o644);
+    chmodSync(join(target, "NIR-INSTALL.json"), 0o600);
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /provenance/);
+    chmodSync(join(target, "NIR-INSTALL.json"), 0o644);
+    chmodSync(join(target, "blockchain"), 0o700);
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /directory mode/);
+    chmodSync(join(target, "blockchain"), 0o755);
+    chmodSync(target, 0o755);
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /directory mode/);
+    chmodSync(target, 0o700);
     writeFileSync(join(target, "blockchain", "node.mjs"), "modified\n");
     assert.throws(() => verifyNodeInstallation(target, {
       signedRelease, trustedAddress: wallet.address,
@@ -310,10 +380,57 @@ test("verified node packages install and reverify an exact safe file set", () =>
       signedRelease, trustedAddress: wallet.address,
     });
     rmSync(join(target, "blockchain", "node.mjs"));
-    symlinkSync("../package.json", join(target, "blockchain", "node.mjs"));
+    const identicalOutsideFile = join(values.root, "identical-node.mjs");
+    writeFileSync(identicalOutsideFile, "export const node = true;\n");
+    symlinkSync(identicalOutsideFile, join(target, "blockchain", "node.mjs"));
     assert.throws(() => verifyNodeInstallation(target, {
       signedRelease, trustedAddress: wallet.address,
     }), /symbolic link/);
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
+  }
+});
+
+test("failed staged installation removes only its exclusive staging directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-release-staging-test-"));
+  try {
+    const wallet = generateWallet();
+    const { artifact, signedRelease } = manualNodePackage(
+      `blockchain/${"x".repeat(300)}`, Buffer.from("cannot materialize\n"), wallet,
+    );
+    const target = join(root, "node");
+    assert.throws(() => installNodeArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /name too long|ENAMETOOLONG/i);
+    assert.equal(existsSync(target), false);
+    assert.deepEqual(readdirSync(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reverification fails closed when an installed directory is swapped for a symlink", () => {
+  const values = fixture();
+  const target = join(values.root, "swap-node");
+  const moved = join(values.root, "swap-node-original");
+  try {
+    const wallet = generateWallet();
+    const signedRelease = signReleaseManifest(values.manifest, wallet);
+    const artifact = createReleaseArtifact(
+      values.root, artifactPaths("node", values.paths), {
+        kind: "node", sourceManifest: values.manifest,
+      },
+    );
+    installNodeArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    });
+    renameSync(target, moved);
+    symlinkSync(moved, target);
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /regular directory|symbolic|no-follow|ELOOP/i);
+    assert.equal(readFileSync(join(moved, "package.json"), "utf8"),
+      '{"version":"0.2.0"}\n');
   } finally {
     rmSync(values.root, { recursive: true, force: true });
   }

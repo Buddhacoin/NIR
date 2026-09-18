@@ -1,15 +1,21 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
-  chmodSync,
-  existsSync,
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import {
@@ -22,6 +28,129 @@ const KINDS = new Set(["node", "wallet"]);
 const MAX_ENTRIES = 20_000;
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
+
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function entryExists(path) {
+  try { lstatSync(path); return true; }
+  catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function openDirectory(path, label) {
+  if (!Number.isInteger(constants.O_NOFOLLOW) || !Number.isInteger(constants.O_DIRECTORY)) {
+    throw new Error(`${label} requires no-follow directory support`);
+  }
+  const before = lstatSync(path);
+  if (!before.isDirectory() || before.isSymbolicLink()) {
+    throw new Error(`${label} is not a regular directory`);
+  }
+  const descriptor = openSync(
+    path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  const opened = fstatSync(descriptor);
+  if (!opened.isDirectory() || !sameIdentity(before, opened)) {
+    closeSync(descriptor);
+    throw new Error(`${label} changed during open`);
+  }
+  return { descriptor, metadata: opened };
+}
+
+function assertDirectoryIdentity(path, opened, label, requireStableMetadata = false) {
+  const current = lstatSync(path);
+  const descriptorMetadata = fstatSync(opened.descriptor);
+  if (!current.isDirectory() || current.isSymbolicLink() ||
+      !sameIdentity(current, opened.metadata) || !sameIdentity(descriptorMetadata, opened.metadata) ||
+      (requireStableMetadata &&
+       (descriptorMetadata.mtimeMs !== opened.metadata.mtimeMs ||
+        descriptorMetadata.ctimeMs !== opened.metadata.ctimeMs ||
+        descriptorMetadata.mode !== opened.metadata.mode))) {
+    throw new Error(`${label} changed during operation`);
+  }
+}
+
+function readRegularFile(path, { label, maximum = MAX_ENTRY_BYTES } = {}) {
+  if (!Number.isInteger(constants.O_NOFOLLOW)) {
+    throw new Error(`${label} requires no-follow file support`);
+  }
+  let descriptor;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.size < 0 || opened.size > maximum) {
+      throw new Error(`${label} is not a bounded regular file`);
+    }
+    const contents = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < contents.length) {
+      const length = readSync(descriptor, contents, offset, contents.length - offset, offset);
+      if (length === 0) throw new Error(`${label} changed during read`);
+      offset += length;
+    }
+    const after = fstatSync(descriptor);
+    if (!sameIdentity(after, opened) || after.size !== opened.size ||
+        after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs ||
+        after.mode !== opened.mode) {
+      throw new Error(`${label} changed during read`);
+    }
+    const linked = lstatSync(path);
+    if (!linked.isFile() || linked.isSymbolicLink() || !sameIdentity(linked, opened)) {
+      throw new Error(`${label} changed during read`);
+    }
+    return { contents, metadata: opened };
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function writeRegularFile(path, contents, mode, label) {
+  if (!Number.isInteger(constants.O_NOFOLLOW)) {
+    throw new Error(`${label} requires no-follow file support`);
+  }
+  let descriptor;
+  try {
+    descriptor = openSync(
+      path,
+      constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      mode,
+    );
+    writeFileSync(descriptor, contents);
+    fchmodSync(descriptor, mode);
+    fsyncSync(descriptor);
+    const written = fstatSync(descriptor);
+    if (!written.isFile() || written.size !== contents.length || (written.mode & 0o777) !== mode) {
+      throw new Error(`${label} write verification failed`);
+    }
+    const check = Buffer.alloc(contents.length);
+    let offset = 0;
+    while (offset < check.length) {
+      const length = readSync(descriptor, check, offset, check.length - offset, offset);
+      if (length === 0) throw new Error(`${label} changed during verification`);
+      offset += length;
+    }
+    const after = fstatSync(descriptor);
+    const linked = lstatSync(path);
+    if (!sameIdentity(written, after) || !sameIdentity(written, linked) ||
+        after.size !== written.size || after.mtimeMs !== written.mtimeMs ||
+        after.ctimeMs !== written.ctimeMs || !check.equals(contents)) {
+      throw new Error(`${label} changed during verification`);
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function syncDirectory(path, label) {
+  const opened = openDirectory(path, label);
+  try {
+    fsyncSync(opened.descriptor);
+    assertDirectoryIdentity(path, opened, label);
+  } finally { closeSync(opened.descriptor); }
+}
 
 function canonicalPath(value) {
   if (typeof value !== "string" || value.length < 1 || value.length > 512 ||
@@ -208,24 +337,50 @@ function installArtifact(artifact, targetPath, { kind, signedRelease, trustedAdd
   }));
   const target = resolve(targetPath);
   const parent = dirname(target);
-  const parentMetadata = lstatSync(parent);
-  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink() || existsSync(target)) {
+  const parentOpened = openDirectory(parent, `${kind} installation parent`);
+  if (entryExists(target)) {
+    closeSync(parentOpened.descriptor);
     throw new Error(`${kind} installation requires a new directory in a regular parent`);
   }
-  mkdirSync(target, { mode: 0o700 });
+  let staging = null;
+  let stagingIdentity = null;
   try {
-    for (const { entry, relative } of entries) {
-      const destination = join(target, ...relative.split("/"));
-      const directory = dirname(destination);
-      mkdirSync(directory, { recursive: true, mode: 0o755 });
-      const directoryMetadata = lstatSync(directory);
-      if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
-        throw new Error(`${kind} installation directory is unsafe`);
+    for (let attempt = 0; attempt < 16 && staging === null; attempt += 1) {
+      const candidate = join(parent,
+        `.${basename(target)}.nir-staging-${randomBytes(16).toString("hex")}`);
+      try {
+        mkdirSync(candidate, { mode: 0o700 });
+        staging = candidate;
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
       }
-      writeFileSync(destination, Buffer.from(entry.content, "base64"), {
-        flag: "wx", mode: entry.executable ? 0o755 : 0o644,
-      });
-      chmodSync(destination, entry.executable ? 0o755 : 0o644);
+    }
+    if (staging === null) throw new Error(`${kind} installation cannot allocate staging`);
+    stagingIdentity = lstatSync(staging);
+    if (!stagingIdentity.isDirectory() || stagingIdentity.isSymbolicLink() ||
+        (stagingIdentity.mode & 0o777) !== 0o700) {
+      throw new Error(`${kind} installation staging directory is unsafe`);
+    }
+    const directories = new Set([staging]);
+    for (const { entry, relative } of entries) {
+      const parts = relative.split("/");
+      let directory = staging;
+      for (const part of parts.slice(0, -1)) {
+        directory = join(directory, part);
+        if (!entryExists(directory)) mkdirSync(directory, { mode: 0o755 });
+        const directoryMetadata = lstatSync(directory);
+        if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink() ||
+            (directoryMetadata.mode & 0o777) !== 0o755) {
+          throw new Error(`${kind} installation directory is unsafe`);
+        }
+        directories.add(directory);
+      }
+      const destination = join(directory, parts.at(-1));
+      const contents = Buffer.from(entry.content, "base64");
+      writeRegularFile(
+        destination, contents, entry.executable ? 0o755 : 0o644,
+        `${kind} installation file`,
+      );
     }
     const provenance = {
       artifactHash: verified.artifactHash,
@@ -235,14 +390,46 @@ function installArtifact(artifact, targetPath, { kind, signedRelease, trustedAdd
       sourceManifestHash: verified.sourceManifestHash,
       sourceRevision: verified.sourceRevision,
     };
-    writeFileSync(join(target, "NIR-INSTALL.json"), `${canonicalJson(provenance)}\n`, {
-      flag: "wx", mode: 0o644,
-    });
+    writeRegularFile(
+      join(staging, "NIR-INSTALL.json"), Buffer.from(`${canonicalJson(provenance)}\n`),
+      0o644, `${kind} installation provenance`,
+    );
+    for (const directory of [...directories]
+      .sort((left, right) => right.split(sep).length - left.split(sep).length)) {
+      syncDirectory(directory, `${kind} installation directory`);
+    }
+    verifyInstallation(staging, { kind, signedRelease, trustedAddress });
+    assertDirectoryIdentity(parent, parentOpened, `${kind} installation parent`);
+    const stagingOpened = openDirectory(staging, `${kind} installation staging directory`);
+    try {
+      if (!sameIdentity(stagingOpened.metadata, stagingIdentity) || entryExists(target)) {
+        throw new Error(`${kind} installation target changed before activation`);
+      }
+      renameSync(staging, target);
+      staging = null;
+      fsyncSync(parentOpened.descriptor);
+      const installed = lstatSync(target);
+      if (!installed.isDirectory() || installed.isSymbolicLink() ||
+          !sameIdentity(installed, stagingIdentity)) {
+        throw new Error(`${kind} installation activation is inconsistent`);
+      }
+    } finally { closeSync(stagingOpened.descriptor); }
     return provenance;
   } catch (error) {
-    rmSync(target, { recursive: true, force: true });
+    if (staging !== null && stagingIdentity !== null) {
+      try {
+        const current = lstatSync(staging);
+        if (current.isDirectory() && !current.isSymbolicLink() &&
+            sameIdentity(current, stagingIdentity)) {
+          rmSync(staging, { recursive: true, force: true });
+          fsyncSync(parentOpened.descriptor);
+        }
+      } catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") error.cleanupError = cleanupError.message;
+      }
+    }
     throw error;
-  }
+  } finally { closeSync(parentOpened.descriptor); }
 }
 
 export function installWalletArtifact(artifact, targetPath, options = {}) {
@@ -257,23 +444,33 @@ function installedFiles(directory, kind, prefix = "", result = []) {
   if (prefix.split("/").filter(Boolean).length > 32) {
     throw new Error(`${kind} installation directory depth is excessive`);
   }
-  const names = readdirSync(directory).sort();
-  result.seen = (result.seen ?? 0) + names.length;
-  if (names.length > MAX_ENTRIES || result.seen > MAX_ENTRIES) {
-    throw new Error(`${kind} installation contains too many entries`);
-  }
-  for (const name of names) {
-    const relative = prefix ? `${prefix}/${name}` : name;
-    const path = join(directory, name);
-    const metadata = lstatSync(path);
-    if (metadata.isSymbolicLink()) throw new Error(`${kind} installation contains a symbolic link`);
-    if ((metadata.mode & 0o022) !== 0) {
-      throw new Error(`${kind} installation contains a group- or world-writable entry`);
+  const opened = openDirectory(directory, `${kind} installation directory`);
+  try {
+    const expectedMode = prefix === "" ? 0o700 : 0o755;
+    if ((opened.metadata.mode & 0o777) !== expectedMode) {
+      throw new Error(`${kind} installation directory mode is invalid`);
     }
-    if (metadata.isDirectory()) installedFiles(path, kind, relative, result);
-    else if (metadata.isFile()) result.push(relative);
-    else throw new Error(`${kind} installation contains an unsupported entry`);
-  }
+    const names = readdirSync(directory).sort();
+    result.seen = (result.seen ?? 0) + names.length;
+    if (names.length > MAX_ENTRIES || result.seen > MAX_ENTRIES) {
+      throw new Error(`${kind} installation contains too many entries`);
+    }
+    for (const name of names) {
+      const relative = prefix ? `${prefix}/${name}` : name;
+      const path = join(directory, name);
+      const metadata = lstatSync(path);
+      if (metadata.isSymbolicLink()) {
+        throw new Error(`${kind} installation contains a symbolic link`);
+      }
+      if ((metadata.mode & 0o022) !== 0) {
+        throw new Error(`${kind} installation contains a group- or world-writable entry`);
+      }
+      if (metadata.isDirectory()) installedFiles(path, kind, relative, result);
+      else if (metadata.isFile()) result.push(relative);
+      else throw new Error(`${kind} installation contains an unsupported entry`);
+    }
+    assertDirectoryIdentity(directory, opened, `${kind} installation directory`, true);
+  } finally { closeSync(opened.descriptor); }
   return result;
 }
 
@@ -281,68 +478,74 @@ function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } 
   const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
   const spec = installationSpec(kind);
   const target = resolve(targetPath);
-  const targetMetadata = lstatSync(target);
-  if (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink() ||
-      (targetMetadata.mode & 0o022) !== 0) {
-    throw new Error(`${kind} installation must be a regular directory`);
+  const targetOpened = openDirectory(target, `${kind} installation`);
+  if ((targetOpened.metadata.mode & 0o777) !== 0o700) {
+    closeSync(targetOpened.descriptor);
+    throw new Error(`${kind} installation directory mode is invalid`);
   }
-  const sourceEntries = new Map(manifest.files.map((entry) => [entry.path, entry]));
-  const sourcePaths = artifactPaths(kind, manifest.files.map(({ path }) => path));
-  const expectedRelative = sourcePaths.map((path) => spec.relativePath(path));
-  const actualRelative = installedFiles(target, kind);
-  const expectedFiles = [...expectedRelative, "NIR-INSTALL.json"].sort();
-  if (actualRelative.length !== expectedFiles.length ||
-      actualRelative.some((path, index) => path !== expectedFiles[index])) {
-    throw new Error(`${kind} installation file set does not match the signed release`);
-  }
-  const entries = sourcePaths.map((path, index) => {
-    const relative = expectedRelative[index];
-    if (!relative) throw new Error(`${kind} installation path is invalid`);
-    const destination = join(target, ...relative.split("/"));
-    const metadata = lstatSync(destination);
-    const contents = readFileSync(destination);
-    const source = sourceEntries.get(path);
-    const sourceDigest = createHash("sha3-256")
-      .update("NIR/RELEASE_FILE/v1\0").update(contents).digest("hex");
-    const executable = (metadata.mode & 0o111) !== 0;
-    if (!metadata.isFile() || metadata.isSymbolicLink() || !source ||
-        contents.length !== source.size || executable !== source.executable ||
-        sourceDigest !== source.sha3_256) {
-      throw new Error(`${kind} installation contents differ from the signed release`);
+  try {
+    const sourceEntries = new Map(manifest.files.map((entry) => [entry.path, entry]));
+    const sourcePaths = artifactPaths(kind, manifest.files.map(({ path }) => path));
+    const expectedRelative = sourcePaths.map((path) => spec.relativePath(path));
+    const actualRelative = installedFiles(target, kind);
+    const expectedFiles = [...expectedRelative, "NIR-INSTALL.json"].sort();
+    if (actualRelative.length !== expectedFiles.length ||
+        actualRelative.some((path, index) => path !== expectedFiles[index])) {
+      throw new Error(`${kind} installation file set does not match the signed release`);
     }
-    return {
-      content: contents.toString("base64"), executable, path,
-      sha3_256: digest(contents), size: contents.length,
+    const entries = sourcePaths.map((path, index) => {
+      const relative = expectedRelative[index];
+      if (!relative) throw new Error(`${kind} installation path is invalid`);
+      const destination = join(target, ...relative.split("/"));
+      const { contents, metadata } = readRegularFile(destination, {
+        label: `${kind} installation file`, maximum: MAX_ENTRY_BYTES,
+      });
+      const source = sourceEntries.get(path);
+      const sourceDigest = createHash("sha3-256")
+        .update("NIR/RELEASE_FILE/v1\0").update(contents).digest("hex");
+      const executable = (metadata.mode & 0o111) !== 0;
+      const expectedMode = source?.executable ? 0o755 : 0o644;
+      if (!source || contents.length !== source.size || executable !== source.executable ||
+          (metadata.mode & 0o777) !== expectedMode ||
+          sourceDigest !== source.sha3_256) {
+        throw new Error(`${kind} installation contents differ from the signed release`);
+      }
+      return {
+        content: contents.toString("base64"), executable, path,
+        sha3_256: digest(contents), size: contents.length,
+      };
+    });
+    const payload = payloadFrom({
+      entries,
+      format: "nir-reproducible-package-v1",
+      kind,
+      releaseVersion: manifest.releaseVersion,
+      sourceManifestHash: manifest.manifestHash,
+      sourceRevision: manifest.sourceRevision,
+    });
+    const artifactHash = hashObject(payload, "RELEASE_ARTIFACT_HASH");
+    const provenancePath = join(target, "NIR-INSTALL.json");
+    const { contents: provenanceContents, metadata: provenanceMetadata } = readRegularFile(
+      provenancePath, { label: `${kind} installation provenance`, maximum: 16 * 1024 },
+    );
+    if ((provenanceMetadata.mode & 0o777) !== 0o644) {
+      throw new Error(`${kind} installation provenance is invalid`);
+    }
+    const provenance = JSON.parse(provenanceContents.toString("utf8"));
+    const expectedProvenance = {
+      artifactHash,
+      format: spec.format,
+      releaseVersion: manifest.releaseVersion,
+      signerAddress: signer.address,
+      sourceManifestHash: manifest.manifestHash,
+      sourceRevision: manifest.sourceRevision,
     };
-  });
-  const payload = payloadFrom({
-    entries,
-    format: "nir-reproducible-package-v1",
-    kind,
-    releaseVersion: manifest.releaseVersion,
-    sourceManifestHash: manifest.manifestHash,
-    sourceRevision: manifest.sourceRevision,
-  });
-  const artifactHash = hashObject(payload, "RELEASE_ARTIFACT_HASH");
-  const provenancePath = join(target, "NIR-INSTALL.json");
-  const provenanceMetadata = lstatSync(provenancePath);
-  if (!provenanceMetadata.isFile() || provenanceMetadata.isSymbolicLink() ||
-      provenanceMetadata.size > 16 * 1024) {
-    throw new Error(`${kind} installation provenance is invalid`);
-  }
-  const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
-  const expectedProvenance = {
-    artifactHash,
-    format: spec.format,
-    releaseVersion: manifest.releaseVersion,
-    signerAddress: signer.address,
-    sourceManifestHash: manifest.manifestHash,
-    sourceRevision: manifest.sourceRevision,
-  };
-  if (canonicalJson(provenance) !== canonicalJson(expectedProvenance)) {
-    throw new Error(`${kind} installation provenance does not match its contents`);
-  }
-  return { ...expectedProvenance, files: entries.length, verified: true };
+    if (canonicalJson(provenance) !== canonicalJson(expectedProvenance)) {
+      throw new Error(`${kind} installation provenance does not match its contents`);
+    }
+    assertDirectoryIdentity(target, targetOpened, `${kind} installation`, true);
+    return { ...expectedProvenance, files: entries.length, verified: true };
+  } finally { closeSync(targetOpened.descriptor); }
 }
 
 export function verifyWalletInstallation(targetPath, options = {}) {
