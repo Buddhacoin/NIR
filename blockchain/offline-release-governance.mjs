@@ -470,7 +470,7 @@ function checkpointValue(anchor, state) {
     `sha3-256:${hashObject(payload, "RELEASE_TRANSPARENCY_CHECKPOINT_V1")}` };
 }
 
-function validateCheckpoint(value, anchor) {
+export function validateReleaseTransparencyCheckpoint(value, anchor) {
   exact(value, ["activationSetId", "activeSetId", "anchorHash", "checkpointHash", "entryHash", "format", "lastBundleHash",
     "logId", "networkId", "pendingChange", "sequence", "version"], "release checkpoint");
   const { checkpointHash, ...payload } = value;
@@ -504,7 +504,8 @@ export function verifyReleaseTransparencyCheckpoints(anchorValue, state, checkpo
     for (const name of readdirSync(directory.path).sort()) {
       const match = ENTRY_NAME.exec(name);
       if (!match) throw new Error("release checkpoint directory contains an unknown file");
-      const checkpoint = validateCheckpoint(readCanonicalFile(join(directory.path, name)), anchor);
+      const checkpoint = validateReleaseTransparencyCheckpoint(
+        readCanonicalFile(join(directory.path, name)), anchor);
       if (name !== entryName(checkpoint.sequence, checkpoint.checkpointHash) ||
           bySequence.has(checkpoint.sequence)) throw new Error("release checkpoints are forked or duplicate");
       bySequence.set(checkpoint.sequence, checkpoint);

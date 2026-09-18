@@ -76,9 +76,10 @@ it is idempotent and does not require or append another release entry.
 ## Residual risks
 
 - A colluding threshold can authorize malicious releases or key changes.
-- This is local consistency, not globally witnessed transparency. Two operators
-  detect a split only by comparing independently persisted anchors/checkpoints;
-  there is no gossip, witness cosigning, or network availability promise.
+- Local witness receipts and bounded checkpoint exchange are described in
+  `offline-release-witnesses.md`. They make independently observed split views
+  detectable once receipts are exchanged, but do not provide gossip or a
+  network availability promise.
 - Deleting every external checkpoint together with local history defeats local
   rollback detection. Store anchors outside the log host.
 - Delayed joint activation reduces key-loss risk but can halt rotation if either
