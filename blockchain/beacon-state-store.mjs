@@ -140,7 +140,7 @@ function header(address, networkId) {
   return { address, format: FORMAT, networkId };
 }
 
-function parseLog(bytes, address, networkId, maxEntries) {
+function parseLog(bytes, address, networkId, maxEntries, maxNonces) {
   const text = bytes.toString("utf8");
   if (!text.endsWith("\n")) throw new Error("beacon state log is truncated");
   const lines = text.slice(0, -1).split("\n");
@@ -149,24 +149,47 @@ function parseLog(bytes, address, networkId, maxEntries) {
     throw new Error("beacon state log header does not match wallet or network");
   }
   const issued = new Map();
+  const nonces = new Map();
   for (const line of lines) {
     if (Buffer.byteLength(line) + 1 > MAX_RECORD_BYTES) throw new Error("beacon state record is too large");
     const record = parseConsensusJson(line);
-    if (record === null || typeof record !== "object" || Array.isArray(record) ||
-        Object.keys(record).sort().join(",") !== "key,share" ||
-        typeof record.key !== "string" || record.key.length < 1 || record.key.length > 160 ||
-        record.share === null || typeof record.share !== "object" || Array.isArray(record.share) ||
-        issued.has(record.key)) throw new Error("beacon state record is invalid or duplicated");
-    issued.set(record.key, record.share);
-    if (issued.size > maxEntries) throw new Error("beacon state exceeds its entry bound");
+    if (record?.type === "nonce") {
+      if (Object.keys(record).sort().join(",") !== "expiresAt,nonceKey,type" ||
+          typeof record.nonceKey !== "string" || record.nonceKey.length > 160 ||
+          !Number.isSafeInteger(record.expiresAt) || record.expiresAt < 0 ||
+          nonces.has(record.nonceKey)) throw new Error("beacon nonce record is invalid or duplicated");
+      nonces.set(record.nonceKey, record.expiresAt);
+    } else {
+      const combined = record?.type === "share-and-nonce";
+      if (record === null || typeof record !== "object" || Array.isArray(record) ||
+          Object.keys(record).sort().join(",") !==
+            (combined ? "auth,key,share,type" : "key,share") ||
+          typeof record.key !== "string" || record.key.length < 1 || record.key.length > 160 ||
+          record.share === null || typeof record.share !== "object" || Array.isArray(record.share) ||
+          issued.has(record.key)) throw new Error("beacon state record is invalid or duplicated");
+      if (combined) {
+        if (record.auth === null || typeof record.auth !== "object" ||
+            Object.keys(record.auth).sort().join(",") !== "expiresAt,nonceKey" ||
+            typeof record.auth.nonceKey !== "string" || record.auth.nonceKey.length > 160 ||
+            !Number.isSafeInteger(record.auth.expiresAt) || record.auth.expiresAt < 0 ||
+            nonces.has(record.auth.nonceKey)) throw new Error("beacon nonce record is invalid or duplicated");
+        nonces.set(record.auth.nonceKey, record.auth.expiresAt);
+      }
+      issued.set(record.key, record.share);
+      if (issued.size > maxEntries) throw new Error("beacon state exceeds its entry bound");
+    }
+    if (nonces.size > maxNonces) throw new Error("beacon nonce state exceeds its entry bound");
   }
-  return issued;
+  return { issued, nonces };
 }
 
-export function openBeaconStateStore({ address, maxEntries = 10_000, networkId, vaultPath }) {
+export function openBeaconStateStore({
+  address, maxEntries = 10_000, maxNonces = 100_000, networkId, vaultPath,
+}) {
   if (typeof address !== "string" || typeof networkId !== "string" || networkId.length < 1 ||
       Buffer.byteLength(networkId) > 64 || !Number.isSafeInteger(maxEntries) ||
-      maxEntries < 1 || maxEntries > 1_000_000 || typeof vaultPath !== "string") {
+      maxEntries < 1 || maxEntries > 1_000_000 || !Number.isSafeInteger(maxNonces) ||
+      maxNonces < 1 || maxNonces > 1_000_000 || typeof vaultPath !== "string") {
     throw new Error("beacon state store configuration is invalid");
   }
   const resolvedVault = resolve(vaultPath);
@@ -212,30 +235,52 @@ export function openBeaconStateStore({ address, maxEntries = 10_000, networkId, 
     if (bytes.length !== opened.size || !same(readAfter, opened) ||
         readAfter.size !== opened.size || readAfter.mtimeMs !== opened.mtimeMs ||
         readAfter.ctimeMs !== opened.ctimeMs) throw new Error("beacon state log changed during read");
-    const issued = parseLog(bytes, address, networkId, maxEntries);
+    const { issued, nonces } = parseLog(bytes, address, networkId, maxEntries, maxNonces);
     const identity = { dev: opened.dev, ino: opened.ino };
     assertParent(parent);
     let closed = false;
+    const appendRecord = (line) => {
+      assertParent(parent);
+      const linkedNow = lstatSync(logPath);
+      const openedNow = fstatSync(descriptor);
+      if (!same(linkedNow, identity) || !same(openedNow, identity) ||
+          openedNow.size + line.length > MAX_FILE_BYTES) throw new Error("beacon state log changed or full");
+      writeAll(descriptor, line); fsyncSync(descriptor); fsyncSync(parent.descriptor);
+      assertParent(parent);
+      const after = fstatSync(descriptor);
+      if (!same(after, identity) || after.size !== openedNow.size + line.length ||
+          !same(lstatSync(logPath), identity)) throw new Error("beacon state append was not durable");
+    };
     return {
       issued,
+      nonces,
       append(key, share) {
         if (closed) throw new Error("beacon state store is closed");
         if (issued.has(key) || issued.size >= maxEntries) throw new Error("beacon state append is invalid");
-        assertParent(parent);
-        const linkedNow = lstatSync(logPath);
-        const openedNow = fstatSync(descriptor);
-        if (!same(linkedNow, identity) || !same(openedNow, identity) ||
-            openedNow.size > MAX_FILE_BYTES) throw new Error("beacon state log changed");
         const line = recordLine({ key, share });
-        if (openedNow.size + line.length > MAX_FILE_BYTES) throw new Error("beacon state log is full");
-        writeAll(descriptor, line);
-        fsyncSync(descriptor);
-        fsyncSync(parent.descriptor);
-        assertParent(parent);
-        const after = fstatSync(descriptor);
-        if (!same(after, identity) || after.size !== openedNow.size + line.length ||
-            !same(lstatSync(logPath), identity)) throw new Error("beacon state append was not durable");
+        appendRecord(line);
         issued.set(key, structuredClone(share));
+      },
+      appendNonce({ expiresAt, replayKey }) {
+        if (closed || typeof replayKey !== "string" || replayKey.length < 1 ||
+            replayKey.length > 160 || !Number.isSafeInteger(expiresAt) || expiresAt < 0 ||
+            nonces.has(replayKey) || nonces.size >= maxNonces) {
+          throw new Error("beacon nonce append is invalid");
+        }
+        const line = recordLine({ expiresAt, nonceKey: replayKey, type: "nonce" });
+        appendRecord(line);
+        nonces.set(replayKey, expiresAt);
+      },
+      appendShareAndNonce(key, share, { expiresAt, replayKey }) {
+        if (closed || typeof replayKey !== "string" || replayKey.length < 1 ||
+            replayKey.length > 160 || !Number.isSafeInteger(expiresAt) || expiresAt < 0 ||
+            issued.has(key) || issued.size >= maxEntries || nonces.has(replayKey) ||
+            nonces.size >= maxNonces) throw new Error("beacon atomic append is invalid");
+        const line = recordLine({
+          auth: { expiresAt, nonceKey: replayKey }, key, share, type: "share-and-nonce",
+        });
+        appendRecord(line);
+        issued.set(key, structuredClone(share)); nonces.set(replayKey, expiresAt);
       },
       close() {
         if (closed) return;

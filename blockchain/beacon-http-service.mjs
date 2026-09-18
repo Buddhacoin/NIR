@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { randomBytes } from "node:crypto";
 
 import {
@@ -11,8 +12,9 @@ import {
   rejectUnexpectedRequestBody,
 } from "./http-ingress.mjs";
 import { createFallbackBeaconShare, createProgressBeaconShare } from "./operators.mjs";
+import { VerificationScheduler } from "./operator-defense.mjs";
+import { verifyBeaconShareRequest } from "./beacon-request-auth.mjs";
 
-const HASH = /^[0-9a-f]{64}$/;
 const MAX_BEACON_RESPONSE_BYTES = 32 * 1024;
 
 function json(response, status, value) {
@@ -29,40 +31,27 @@ function json(response, status, value) {
   response.end(body);
 }
 
-function exactShareRequest(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("beacon share request is invalid");
-  }
-  const keys = Object.keys(value).sort();
-  const expected = value.purpose === undefined
-    ? ["candidateId", "round"] : ["candidateId", "purpose", "round"];
-  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) ||
-      !HASH.test(value.candidateId ?? "") || !Number.isSafeInteger(value.round) ||
-      value.round < 1 ||
-      value.purpose !== undefined && !["fallback", "progress"].includes(value.purpose)) {
-    throw new Error("beacon share request is invalid");
-  }
-  return {
-    candidateId: value.candidateId,
-    purpose: value.purpose ?? "fallback",
-    round: value.round,
-  };
-}
-
 export function createBeaconHttpServer({
   issued,
   networkId,
+  nonces,
   persist,
+  requesters,
   wallet,
 }, options = {}) {
   const maxIssuedShares = options.maxIssuedShares ?? 10_000;
-  if (!(issued instanceof Map) || typeof persist !== "function" ||
+  const maxNonces = options.maxNonces ?? 100_000;
+  if (!(issued instanceof Map) || !(nonces instanceof Map) || !(requesters instanceof Map) ||
+      requesters.size < 1 || typeof persist !== "function" ||
       !wallet || typeof networkId !== "string" || networkId.length < 1 ||
       Buffer.byteLength(networkId) > 64 || !Number.isSafeInteger(maxIssuedShares) ||
-      maxIssuedShares < 1 || maxIssuedShares > 1_000_000 || issued.size > maxIssuedShares) {
+      maxIssuedShares < 1 || maxIssuedShares > 1_000_000 || issued.size > maxIssuedShares ||
+      !Number.isSafeInteger(maxNonces) || maxNonces < 1 || maxNonces > 1_000_000 ||
+      nonces.size > maxNonces) {
     throw new Error("beacon HTTP service configuration is invalid");
   }
   const randomBytesImpl = options.randomBytesImpl ?? randomBytes;
+  const clock = options.clock ?? (() => Date.now());
   if (typeof randomBytesImpl !== "function") throw new Error("beacon randomness source is invalid");
   const httpIngressOptions = {
     burst: 30,
@@ -74,16 +63,27 @@ export function createBeaconHttpServer({
     ...(options.httpIngress ?? {}),
   };
   const httpIngress = new HttpIngressGuard(httpIngressOptions);
+  const authentication = options.authenticationScheduler ?? new VerificationScheduler({
+    maxConcurrent: 2, maxPerIdentity: 2, maxQueued: 16, maxQueuedPerIdentity: 16,
+  });
+  if (typeof authentication.run !== "function" || typeof authentication.metrics !== "function") {
+    throw new Error("beacon authentication scheduler is invalid");
+  }
   const totals = { capacityRejected: 0, sharesCreated: 0, sharesReplayed: 0 };
   const failedKeys = new Set();
-  const pending = new Map();
+  const failedNonces = new Set();
   let mutationTail = Promise.resolve();
   const serialize = (operation) => {
     const result = mutationTail.then(operation);
     mutationTail = result.catch(() => {});
     return result;
   };
-  const server = createServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, async (request, response) => {
+  const tls = options.tls ?? null;
+  if (tls !== null && ((typeof tls.key !== "string" && !Buffer.isBuffer(tls.key)) ||
+      (typeof tls.cert !== "string" && !Buffer.isBuffer(tls.cert)))) {
+    throw new Error("beacon TLS key and certificate are required together");
+  }
+  const handler = async (request, response) => {
     let release = null;
     try {
       release = httpIngress.begin(request);
@@ -102,6 +102,7 @@ export function createBeaconHttpServer({
         if (url.pathname === "/metrics") {
           json(response, 200, {
             beacon: { ...totals, issuedShares: issued.size },
+            authentication: authentication.metrics(),
             httpIngress: httpIngress.metrics(),
           });
           return;
@@ -112,9 +113,18 @@ export function createBeaconHttpServer({
         rejectUnexpectedRequestBody(request);
         json(response, 404, { error: "not found" }); return;
       }
-      const { candidateId, purpose, round } = exactShareRequest(
-        await readBoundedConsensusJson(request, httpIngressOptions),
-      );
+      const envelope = await readBoundedConsensusJson(request, httpIngressOptions);
+      const claimed = envelope?.payload?.requester;
+      if (typeof claimed !== "string" || !requesters.has(claimed)) {
+        throw new Error("beacon share requester is unauthorized");
+      }
+      const auth = await authentication.run("beacon-preauth", () => verifyBeaconShareRequest(envelope, {
+        beaconAddress: wallet.address, clock, networkId, requesters,
+      }));
+      const { candidateId, purpose, replayKey, round } = auth;
+      if (nonces.has(replayKey) || failedNonces.has(replayKey)) {
+        throw new HttpIngressError("replay", "beacon share request nonce was already used", 409);
+      }
       const key = `${purpose}:${candidateId}:${round}`;
       const legacyKey = `${candidateId}:${round}`;
       if (failedKeys.has(key)) {
@@ -122,17 +132,22 @@ export function createBeaconHttpServer({
           "durability", "beacon share context requires operator recovery", 503,
         );
       }
-      let share = issued.get(key) ?? (purpose === "fallback" ? issued.get(legacyKey) : undefined);
-      if (share) {
-        totals.sharesReplayed += 1;
-        json(response, 200, share); return;
-      }
-      let operation = pending.get(key);
-      if (operation === undefined) {
-        operation = serialize(async () => {
+      const operation = serialize(async () => {
+          if (nonces.has(replayKey) || failedNonces.has(replayKey)) {
+            throw new HttpIngressError("replay", "beacon share request nonce was already used", 409);
+          }
+          if (nonces.size >= maxNonces) {
+            throw new HttpIngressError("capacity", "beacon nonce capacity is exhausted", 503);
+          }
           const known = issued.get(key) ??
             (purpose === "fallback" ? issued.get(legacyKey) : undefined);
-          if (known) return { created: false, share: known };
+          if (known) {
+            try { await persist({ auth, type: "nonce" }); }
+            catch (error) { failedNonces.add(replayKey); throw error; }
+            nonces.set(replayKey, auth.expiresAt);
+            totals.sharesReplayed += 1;
+            return known;
+          }
           if (issued.size >= maxIssuedShares) {
             totals.capacityRejected += 1;
             throw new HttpIngressError("capacity", "beacon share capacity is exhausted", 503);
@@ -146,20 +161,14 @@ export function createBeaconHttpServer({
           const created = createShare({
             wallet, networkId, candidateId, round, value: value.toString("hex"),
           });
-          try { await persist(key, created); }
-          catch (error) { failedKeys.add(key); throw error; }
+          try { await persist({ auth, key, share: created, type: "share-and-nonce" }); }
+          catch (error) { failedKeys.add(key); failedNonces.add(replayKey); throw error; }
           issued.set(key, created);
+          nonces.set(replayKey, auth.expiresAt);
           totals.sharesCreated += 1;
-          return { created: true, share: created };
+          return created;
         });
-        pending.set(key, operation);
-        operation.finally(() => {
-          if (pending.get(key) === operation) pending.delete(key);
-        }).catch(() => {});
-      } else {
-        totals.sharesReplayed += 1;
-      }
-      ({ share } = await operation);
+      const share = await operation;
       json(response, 200, share);
     } catch (error) {
       httpIngress.record(error);
@@ -168,9 +177,15 @@ export function createBeaconHttpServer({
         json(response, rejected.status, { error: rejected.message });
       } else response.destroy();
     }
-  });
+  };
+  const server = tls === null
+    ? createServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, handler)
+    : createHttpsServer({
+      cert: tls.cert, key: tls.key, maxHeaderSize: HTTP_MAX_HEADER_BYTES, minVersion: "TLSv1.3",
+    }, handler);
   server.httpIngressMetrics = () => ({
     beacon: { ...totals, issuedShares: issued.size },
+    authentication: authentication.metrics(),
     httpIngress: httpIngress.metrics(),
   });
   return hardenHttpServer(server, httpIngressOptions);

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import {
   chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync,
   symlinkSync, writeFileSync,
@@ -12,10 +14,14 @@ import test from "node:test";
 import { createSignedHistoryArchive } from "../blockchain/archive-sync.mjs";
 import { createHistoryArchiveHttpServer } from "../blockchain/archive-service.mjs";
 import { createBeaconHttpServer } from "../blockchain/beacon-http-service.mjs";
+import {
+  createBeaconShareRequest, validateBeaconRequesterPolicy,
+} from "../blockchain/beacon-request-auth.mjs";
 import { openBeaconStateStore } from "../blockchain/beacon-state-store.mjs";
 import { loadBlockStore } from "../blockchain/block-store.mjs";
-import { generateWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
+import { certificateSha256, requestJson } from "../blockchain/http-client.mjs";
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -67,18 +73,33 @@ function archiveFixture() {
 
 function beaconFixture(options = {}) {
   const wallet = generateWallet();
+  const requester = generateWallet();
   const issued = new Map();
+  const nonces = new Map();
   let persists = 0;
   const server = createBeaconHttpServer({
     issued,
     networkId: "nir-beacon-ingress-test",
+    nonces,
     persist: async (...arguments_) => {
       persists += 1;
       return options.persist?.(...arguments_);
     },
+    requesters: new Map([[requester.address, { ...publicWallet(requester), operatorId: "requester-one" }]]),
     wallet,
   }, { ...options, persist: undefined });
-  return { issued, persists: () => persists, server, wallet };
+  return { issued, networkId: "nir-beacon-ingress-test", nonces,
+    persists: () => persists, requester, server, wallet };
+}
+
+function beaconBody(fixture, fields = {}, options = {}) {
+  return JSON.stringify(createBeaconShareRequest({
+    beaconAddress: fixture.wallet.address,
+    candidateId: fields.candidateId ?? "a".repeat(64),
+    networkId: fields.networkId ?? fixture.networkId,
+    purpose: fields.purpose ?? "fallback",
+    round: fields.round ?? 1,
+  }, options.wallet ?? fixture.requester, options));
 }
 
 test("archive rejects request bodies and ranges and releases aborted downloads", async () => {
@@ -169,11 +190,11 @@ test("archive duplicate flood is bounded before repeated download dispatch", asy
   }
 });
 
-test("beacon validates exact shape before signing and replays one durable share", async () => {
+test("beacon validates exact signed shape and rejects a replayed durable nonce", async () => {
   const fixture = beaconFixture({ maxIssuedShares: 1 });
   const url = await listen(fixture.server);
   try {
-    const payload = JSON.stringify({ candidateId: "a".repeat(64), round: 1 });
+    const payload = beaconBody(fixture);
     const first = await request(url, {
       body: payload,
       headers: { "content-length": String(Buffer.byteLength(payload)) },
@@ -187,10 +208,12 @@ test("beacon validates exact shape before signing and replays one durable share"
       path: "/v1/share",
     });
     assert.equal(first.status, 200);
-    assert.deepEqual(replay.body, first.body);
+    assert.equal(replay.status, 409);
     assert.equal(fixture.persists(), 1);
 
-    const extra = JSON.stringify({ candidateId: "a".repeat(64), extra: true, round: 1 });
+    const parsedExtra = JSON.parse(beaconBody(fixture, {}, { nonce: "1".repeat(64) }));
+    parsedExtra.extra = true;
+    const extra = JSON.stringify(parsedExtra);
     const malformed = await request(url, {
       body: extra,
       headers: { "content-length": String(Buffer.byteLength(extra)) },
@@ -200,7 +223,7 @@ test("beacon validates exact shape before signing and replays one durable share"
     assert.equal(malformed.status, 400);
     assert.equal(fixture.persists(), 1);
 
-    const second = JSON.stringify({ candidateId: "b".repeat(64), round: 1 });
+    const second = beaconBody(fixture, { candidateId: "b".repeat(64) }, { nonce: "2".repeat(64) });
     const exhausted = await request(url, {
       body: second,
       headers: { "content-length": String(Buffer.byteLength(second)) },
@@ -211,7 +234,7 @@ test("beacon validates exact shape before signing and replays one durable share"
     assert.equal(fixture.issued.size, 1);
     const metrics = fixture.server.httpIngressMetrics();
     assert.deepEqual(metrics.beacon, {
-      capacityRejected: 1, issuedShares: 1, sharesCreated: 1, sharesReplayed: 1,
+      capacityRejected: 1, issuedShares: 1, sharesCreated: 1, sharesReplayed: 0,
     });
     assert.equal(JSON.stringify(metrics).includes(fixture.wallet.address), false);
   } finally {
@@ -265,11 +288,13 @@ test("beacon rejects oversized and slow bodies before share generation", async (
   }
 });
 
-test("beacon unauthenticated duplicate flood is rate bounded and remains idempotent", async () => {
+test("beacon authenticated replay flood is nonce- and rate-bounded", async () => {
   const fixture = beaconFixture({ httpIngress: { burst: 2, requestsPerMinute: 1 } });
   const url = await listen(fixture.server);
   try {
-    const body = JSON.stringify({ candidateId: "c".repeat(64), purpose: "progress", round: 2 });
+    const body = beaconBody(fixture, {
+      candidateId: "c".repeat(64), purpose: "progress", round: 2,
+    });
     const send = () => request(url, {
       body,
       headers: { "content-length": String(Buffer.byteLength(body)) },
@@ -277,12 +302,95 @@ test("beacon unauthenticated duplicate flood is rate bounded and remains idempot
       path: "/v1/share",
     });
     assert.equal((await send()).status, 200);
-    assert.equal((await send()).status, 200);
+    assert.equal((await send()).status, 409);
     assert.equal((await send()).status, 429);
     assert.equal(fixture.persists(), 1);
     assert.equal(fixture.server.httpIngressMetrics().httpIngress.rateRejected, 1);
   } finally {
     await close(fixture.server);
+  }
+});
+
+test("beacon rejects forged, misbound, expired, future, and unauthorized envelopes before shares", async () => {
+  const fixture = beaconFixture();
+  const url = await listen(fixture.server);
+  try {
+    const outsider = generateWallet();
+    const cases = [
+      (() => { const value = JSON.parse(beaconBody(fixture, {}, { nonce: "3".repeat(64) }));
+        value.signature = "0".repeat(value.signature.length); return JSON.stringify(value); })(),
+      beaconBody(fixture, { networkId: "wrong-network" }, { nonce: "4".repeat(64) }),
+      beaconBody(fixture, {}, { clock: () => Date.now() - 120_000, nonce: "5".repeat(64) }),
+      beaconBody(fixture, {}, { clock: () => Date.now() + 120_000, nonce: "6".repeat(64) }),
+    ];
+    const unauthorized = beaconBody(fixture, {}, { nonce: "7".repeat(64), wallet: outsider });
+    assert.equal((await request(url, {
+      body: unauthorized, headers: { "content-length": String(Buffer.byteLength(unauthorized)) },
+      method: "POST", path: "/v1/share",
+    })).status, 400);
+    assert.equal(fixture.server.httpIngressMetrics().authentication.started, 0);
+    const wrongBeacon = createBeaconShareRequest({
+      beaconAddress: generateWallet().address, candidateId: "a".repeat(64),
+      networkId: fixture.networkId, purpose: "fallback", round: 1,
+    }, fixture.requester, { nonce: "8".repeat(64) });
+    cases.push(JSON.stringify(wrongBeacon));
+    for (const body of cases) {
+      const rejected = await request(url, {
+        body, headers: { "content-length": String(Buffer.byteLength(body)) },
+        method: "POST", path: "/v1/share",
+      });
+      assert.equal(rejected.status, 400);
+    }
+    assert.equal(fixture.persists(), 0);
+    assert.equal(fixture.issued.size, 0);
+  } finally { await close(fixture.server); }
+});
+
+test("requester policy rejects beacon keys and duplicated operators", () => {
+  const beacon = generateWallet();
+  const requester = generateWallet();
+  const base = {
+    beaconAddress: beacon.address,
+    format: "nir-beacon-requester-policy-v1",
+    networkId: "nir-policy-test",
+    requesters: [{ ...publicWallet(requester), operatorId: "requester-one" }],
+    reservedAddresses: [beacon.address],
+    reservedOperatorIds: ["beacon-operator"],
+  };
+  assert.equal(validateBeaconRequesterPolicy(base, {
+    beaconAddress: beacon.address, networkId: base.networkId,
+  }).size, 1);
+  assert.throws(() => validateBeaconRequesterPolicy({
+    ...base, requesters: [{ ...publicWallet(beacon), operatorId: "requester-one" }],
+  }, { beaconAddress: beacon.address, networkId: base.networkId }), /reserved/);
+  assert.throws(() => validateBeaconRequesterPolicy({
+    ...base, requesters: [{ ...publicWallet(requester), operatorId: "beacon-operator" }],
+  }, { beaconAddress: beacon.address, networkId: base.networkId }), /reserved/);
+  assert.throws(() => validateBeaconRequesterPolicy({
+    ...base,
+    requesters: [base.requesters[0], { ...publicWallet(generateWallet()), operatorId: "requester-one" }],
+  }, { beaconAddress: beacon.address, networkId: base.networkId }), /duplicated/);
+});
+
+test("beacon optional TLS 1.3 endpoint honors certificate pin and incomplete TLS fails closed", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-beacon-tls-"));
+  const keyPath = join(temporary, "key.pem");
+  const certPath = join(temporary, "cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+  { stdio: "ignore" });
+  const key = readFileSync(keyPath); const cert = readFileSync(certPath);
+  const fingerprint = certificateSha256(new X509Certificate(cert).raw);
+  const fixture = beaconFixture({ tls: { cert, key } });
+  try {
+    await listen(fixture.server);
+    const url = `https://127.0.0.1:${fixture.server.address().port}/health`;
+    assert.equal((await requestJson(url, { tlsCertificateSha256: fingerprint })).status, 200);
+    await assert.rejects(() => requestJson(url, { tlsCertificateSha256: "0".repeat(64) }),
+      /certificate pin mismatch/);
+    assert.throws(() => beaconFixture({ tls: { cert } }), /key and certificate/);
+  } finally {
+    await close(fixture.server); rmSync(temporary, { force: true, recursive: true });
   }
 });
 
@@ -296,7 +404,7 @@ test("concurrent duplicate beacon requests wait for one durable commit and share
   });
   const url = await listen(fixture.server);
   try {
-    const body = JSON.stringify({ candidateId: "d".repeat(64), round: 3 });
+    const body = beaconBody(fixture, { candidateId: "d".repeat(64), round: 3 });
     const send = () => request(url, {
       body,
       headers: { "content-length": String(Buffer.byteLength(body)) },
@@ -310,10 +418,17 @@ test("concurrent duplicate beacon requests wait for one durable commit and share
     assert.equal(fixture.persists(), 1);
     rejectPersist(new Error("simulated ambiguous persistence failure"));
     assert.equal((await first).status, 400);
-    assert.equal((await duplicate).status, 400);
+    assert.equal((await duplicate).status, 409);
     assert.equal(fixture.issued.size, 0);
     assert.equal(randomCalls, 1);
-    const poisoned = await send();
+    const poisonedBody = beaconBody(fixture, { candidateId: "d".repeat(64), round: 3 }, {
+      nonce: "6".repeat(64),
+    });
+    const poisoned = await request(url, {
+      body: poisonedBody,
+      headers: { "content-length": String(Buffer.byteLength(poisonedBody)) },
+      method: "POST", path: "/v1/share",
+    });
     assert.equal(poisoned.status, 503);
     assert.match(poisoned.body.error, /operator recovery/);
     assert.equal(randomCalls, 1);
@@ -337,6 +452,10 @@ test("beacon state is append-only, restartable, private, and rejects symlinks", 
     assert.equal(statSync(path).mode & 0o777, 0o600);
     store = openBeaconStateStore({ address, networkId, vaultPath });
     assert.equal(store.issued.size, 1);
+    store.appendNonce({ expiresAt: Date.now() + 1_000, replayKey: `${address}:${"1".repeat(64)}` });
+    store.close(); store = null;
+    store = openBeaconStateStore({ address, networkId, vaultPath });
+    assert.equal(store.nonces.has(`${address}:${"1".repeat(64)}`), true);
     store.close(); store = null;
 
     const linkedVault = join(temporary, "linked.nirvault.json");
@@ -386,5 +505,46 @@ test("beacon state descriptor rejects an operator-root replacement before append
   } finally {
     store?.close();
     rmSync(outer, { force: true, recursive: true });
+  }
+});
+
+test("durable beacon nonce rejects the same signed envelope after restart", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-beacon-replay-restart-"));
+  const wallet = generateWallet(); const requester = generateWallet();
+  const networkId = "nir-beacon-replay-restart";
+  const vaultPath = join(temporary, "beacon.nirvault.json");
+  const requesters = new Map([[requester.address,
+    { ...publicWallet(requester), operatorId: "restart-requester" }]]);
+  const envelope = JSON.stringify(createBeaconShareRequest({
+    beaconAddress: wallet.address, candidateId: "6".repeat(64), networkId,
+    purpose: "fallback", round: 1,
+  }, requester, { nonce: "5".repeat(64) }));
+  let store; let server;
+  const start = async () => {
+    store = openBeaconStateStore({ address: wallet.address, networkId, vaultPath });
+    const persist = (record) => record.type === "nonce"
+      ? store.appendNonce({ expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey })
+      : store.appendShareAndNonce(record.key, record.share,
+        { expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey });
+    server = createBeaconHttpServer({
+      issued: store.issued, networkId, nonces: store.nonces, persist, requesters, wallet,
+    });
+    return listen(server);
+  };
+  try {
+    let url = await start();
+    assert.equal((await request(url, {
+      body: envelope, headers: { "content-length": String(Buffer.byteLength(envelope)) },
+      method: "POST", path: "/v1/share",
+    })).status, 200);
+    await close(server); store.close(); store = null;
+    url = await start();
+    assert.equal((await request(url, {
+      body: envelope, headers: { "content-length": String(Buffer.byteLength(envelope)) },
+      method: "POST", path: "/v1/share",
+    })).status, 409);
+  } finally {
+    if (server?.listening) await close(server);
+    store?.close(); rmSync(temporary, { force: true, recursive: true });
   }
 });

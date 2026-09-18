@@ -6,11 +6,12 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 import { createBeaconHttpServer } from "./beacon-http-service.mjs";
+import { validateBeaconRequesterPolicy } from "./beacon-request-auth.mjs";
 import { openBeaconStateStore } from "./beacon-state-store.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { decryptWallet } from "./vault.mjs";
 
-function readPrivateVault(path) {
+function readBoundedFile(path, { privateFile = true } = {}) {
   if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW === 0) {
     throw new Error("beacon vault requires secure no-follow filesystem support");
   }
@@ -20,18 +21,23 @@ function readPrivateVault(path) {
     const before = fstatSync(descriptor);
     const uid = process.getuid?.();
     if (!before.isFile() || before.nlink !== 1 || before.size < 2 ||
-        before.size > 16 * 1024 * 1024 || (before.mode & 0o777) !== 0o600 ||
-        uid !== undefined && before.uid !== uid) throw new Error("beacon vault is unsafe");
+        before.size > 16 * 1024 * 1024 ||
+        (privateFile ? (before.mode & 0o777) !== 0o600 : (before.mode & 0o022) !== 0) ||
+        uid !== undefined && before.uid !== uid) throw new Error("beacon input file is unsafe");
     const bytes = readFileSync(descriptor);
     const after = fstatSync(descriptor);
     const linked = lstatSync(path);
     if (bytes.length !== before.size || before.dev !== after.dev || before.ino !== after.ino ||
         before.dev !== linked.dev || before.ino !== linked.ino || before.size !== after.size ||
         before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
-      throw new Error("beacon vault changed during read");
+      throw new Error("beacon input file changed during read");
     }
-    return parseConsensusJson(bytes.toString("utf8"));
+    return bytes;
   } finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
+function readPrivateJson(path) {
+  return parseConsensusJson(readBoundedFile(path).toString("utf8"));
 }
 
 function readSecret(prompt) {
@@ -58,11 +64,13 @@ function readSecret(prompt) {
   });
 }
 
-const [vaultPath, networkId, portText = "8791", host = "127.0.0.1"] = process.argv.slice(2);
+const [vaultPath, networkId, requesterPolicyPath, portText = "8791", host = "127.0.0.1",
+  tlsCertPath, tlsKeyPath] = process.argv.slice(2);
 let stateStore = null;
 try {
-  if (!vaultPath || !networkId || Buffer.byteLength(networkId) > 64) {
-    throw new Error("usage: beacon:serve <wallet-vault> <network-id> [port] [host]");
+  if (!vaultPath || !networkId || !requesterPolicyPath || Buffer.byteLength(networkId) > 64 ||
+      (tlsCertPath === undefined) !== (tlsKeyPath === undefined)) {
+    throw new Error("usage: beacon:serve <wallet-vault> <network-id> <requester-policy.json> [port] [loopback-host] [tls-cert tls-key]");
   }
   const port = Number(portText);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535 ||
@@ -71,13 +79,27 @@ try {
   }
   const resolvedVaultPath = resolve(vaultPath);
   const password = await readSecret("Beacon vault password: ");
-  const wallet = decryptWallet(readPrivateVault(resolvedVaultPath), password);
+  const wallet = decryptWallet(readPrivateJson(resolvedVaultPath), password);
+  const requesters = validateBeaconRequesterPolicy(readPrivateJson(resolve(requesterPolicyPath)), {
+    beaconAddress: wallet.address, networkId,
+  });
   stateStore = openBeaconStateStore({
     address: wallet.address, networkId, vaultPath: resolvedVaultPath,
   });
   const issued = stateStore.issued;
-  const persist = (key, share) => stateStore.append(key, share);
-  const server = createBeaconHttpServer({ issued, networkId, persist, wallet });
+  const nonces = stateStore.nonces;
+  const persist = (record) => record.type === "nonce"
+    ? stateStore.appendNonce({ expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey })
+    : stateStore.appendShareAndNonce(record.key, record.share, {
+      expiresAt: record.auth.expiresAt, replayKey: record.auth.replayKey,
+    });
+  const tls = tlsCertPath === undefined ? null : {
+    cert: readBoundedFile(resolve(tlsCertPath), { privateFile: false }),
+    key: readBoundedFile(resolve(tlsKeyPath)),
+  };
+  const server = createBeaconHttpServer({ issued, networkId, nonces, persist, requesters, wallet }, {
+    tls,
+  });
   server.once("close", () => stateStore?.close());
   const shutdown = async () => {
     try { await server.gracefulShutdown(); }
@@ -89,7 +111,7 @@ try {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   server.listen(port, host, () => {
-    console.log(`NIR beacon ${wallet.address} listening on http://${host}:${port}`);
+    console.log(`NIR beacon ${wallet.address} listening on ${tls ? "https" : "http"}://${host}:${port}`);
   });
 } catch (error) {
   stateStore?.close();

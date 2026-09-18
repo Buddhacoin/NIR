@@ -64,9 +64,10 @@ The audited server surfaces are:
   Aborted downloads release their concurrency admission on response close. Its CLI binds only to a
   loopback host; remote HTTPS termination belongs to the deployment proxy.
 - `beacon-http-service.mjs` / `beacon-service.mjs`: the operator share endpoint uses an 8 KiB exact
-  consensus-JSON request, validates the complete shape and context before random generation and
-  post-quantum signing, persists a new share before replying, and serves duplicate requests from the
-  durable idempotency map. Unique persisted shares are capped (10,000 by default) rather than
+  versioned, post-quantum signed consensus-JSON envelope. It binds network, beacon address, purpose,
+  candidate, round, requester, timestamp/expiry and nonce, then validates authorization, validity
+  window and durable replay state before random generation and share signing. Unique persisted
+  shares are capped (10,000 by default) rather than
   allowing unbounded attacker-selected candidate IDs. The CLI now permits loopback binding only and
   handles SIGINT/SIGTERM with bounded graceful shutdown. Its vault is read descriptor-bound with
   `O_NOFOLLOW`; share state is an append-only 0600 fsync-backed log held open by descriptor, with
@@ -76,17 +77,28 @@ The audited server surfaces are:
 
 Archive content authentication is end-to-end: clients verify the archive operator's signed manifest
 and every chunk hash. HTTP requests themselves are intentionally unauthenticated because archives
-are public immutable data. Beacon share requests also retain the existing unauthenticated wire
-protocol; admission, exact parsing, idempotency, and capacity checks therefore all occur before
-share generation/signing. New contexts are globally serialized; concurrent duplicates wait for the
-same durable commit and never observe an uncommitted random share. An ambiguous persistence failure
-poisons that context until restart, when the fsynced log decides whether the share exists. Operators
-must expose the loopback beacon through an authenticated TLS control plane if callers need to be
-restricted. The service does not trust forwarding headers and does not claim that rate limiting is
-caller authentication.
+are public immutable data. Beacon share requests are accepted only from explicitly configured,
+unique requester transport identities. Requester addresses, public keys and operator IDs must be
+distinct and may not occur in the policy's required `reservedAddresses` / `reservedOperatorIds`
+lists for beacon/finality identities. Unknown claimed
+requesters are rejected before expensive signature verification; authorized signatures run through
+a bounded pre-auth scheduler. New contexts are globally serialized; concurrent nonce duplicates
+cannot observe an uncommitted random share. The nonce and a new share are appended in one fsynced
+record. An ambiguous persistence failure poisons that context until restart, when the log decides
+whether it exists.
 
-Capacity exhaustion is fail-safe: existing contexts remain replayable, but new contexts receive
-503 and no randomness is generated. Operators must alert well before the 10,000-record bound. They
+The beacon CLI now requires
+`<wallet-vault> <network-id> <requester-policy.json> [port] [loopback-host] [tls-cert tls-key]`.
+The exact policy is `nir-beacon-requester-policy-v1` and contains `networkId`, `beaconAddress`,
+public `{address, algorithm, operatorId, publicKey}` requesters, plus complete reviewed
+`reservedAddresses` and `reservedOperatorIds` lists for chain finality and beacon roles.
+The policy and private key are descriptor-bound 0600 inputs. Supplying only one TLS file fails
+closed. Supplying both enables a TLS 1.3 server; certificate pinning remains a client/deployment
+responsibility. This is server TLS plus signed application requests, not mTLS.
+
+Capacity exhaustion is fail-safe: existing contexts remain available to newly signed requests, but
+new contexts receive 503 and no randomness is generated. Operators must alert well before the
+10,000-share or 100,000-nonce bound. They
 must not delete or truncate the log, because doing so could let the authority sign a second random
 share for an old context. Raising/archiving that bound requires an offline, audited state-migration
 procedure; this increment intentionally does not automate destructive recovery.
