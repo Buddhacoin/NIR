@@ -45,6 +45,21 @@ def memory() -> CapabilityMemory:
 
 
 class CapabilityMemoryTests(unittest.TestCase):
+    def test_artifact_to_canonical_content_mapping_is_consensus_state(self):
+        registry = memory()
+        artifact = digest("known-model-a", prefixed=True)
+        self.assertEqual(registry.content_for_artifact(artifact), artifact)
+        before = registry.state_root
+        candidate = snapshot(
+            "mapped-model", "known-model-a", "mapped-behavior",
+            {"code-v1": 8_400, "reasoning-v1": 8_200},
+        )
+        registry.accept(candidate)
+        self.assertEqual(
+            registry.content_for_artifact(candidate.artifact_hash), candidate.content_hash,
+        )
+        self.assertNotEqual(registry.state_root, before)
+
     def test_known_performance_cannot_earn_against_a_weak_parent(self):
         registry = memory()
         candidate = snapshot(

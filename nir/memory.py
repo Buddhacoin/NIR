@@ -102,6 +102,7 @@ class CapabilityMemory:
         self._records: dict[str, dict[str, int]] = {}
         self._behaviors: set[str] = set()
         self._contents: set[str] = set()
+        self._content_by_artifact: dict[str, str] = {}
         self._sealed = False
 
     @property
@@ -114,13 +115,14 @@ class CapabilityMemory:
 
     @property
     def state_root(self) -> str:
-        return self._root(self._records, self._behaviors, self._contents)
+        return self._root(self._records, self._behaviors, self._contents, self._content_by_artifact)
 
     @staticmethod
     def _root(
         records: Mapping[str, Mapping[str, int]],
         behaviors: set[str],
         contents: set[str],
+        content_by_artifact: Mapping[str, str],
     ) -> str:
         records = {
             artifact: dict(sorted(scores.items()))
@@ -128,7 +130,12 @@ class CapabilityMemory:
         }
         return consensus_hash(
             "CAPABILITY_MEMORY",
-            {"behaviors": sorted(behaviors), "contents": sorted(contents), "records": records},
+            {
+                "behaviors": sorted(behaviors),
+                "contentByArtifact": dict(sorted(content_by_artifact.items())),
+                "contents": sorted(contents),
+                "records": records,
+            },
         )
 
     def seed_reference(
@@ -155,6 +162,11 @@ class CapabilityMemory:
         self._records[artifact_hash] = scores
         self._behaviors.add(behavior_commitment)
         self._contents.add(content_hash)
+        self._content_by_artifact[artifact_hash] = content_hash
+
+    def content_for_artifact(self, artifact_hash: str) -> str | None:
+        _require_digest(artifact_hash, "artifact hash", prefixed=True)
+        return self._content_by_artifact.get(artifact_hash)
 
     def seal_world_snapshot(self) -> str:
         if not self._records:
@@ -209,6 +221,7 @@ class CapabilityMemory:
             projected_records,
             self._behaviors | {snapshot.behavior_commitment},
             self._contents | {snapshot.content_hash},
+            {**self._content_by_artifact, snapshot.artifact_hash: snapshot.content_hash},
         )
         return NoveltyReport(
             frontier_root_before=self.state_root,
@@ -223,4 +236,5 @@ class CapabilityMemory:
         self._records[snapshot.artifact_hash] = _validated_scores(snapshot.scores_bps)
         self._behaviors.add(snapshot.behavior_commitment)
         self._contents.add(snapshot.content_hash)
+        self._content_by_artifact[snapshot.artifact_hash] = snapshot.content_hash
         return report

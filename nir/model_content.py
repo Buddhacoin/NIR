@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import os
@@ -24,9 +25,21 @@ MAX_PATH_BYTES = 240
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 1 << 30
 MAX_MANIFEST_BYTES = 64 * 1024
+MAX_ENTRYPOINT_BYTES = 16 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_TOTAL_BYTES + (2 * 1024 * 1024)
 CHUNK_BYTES = 1024 * 1024
 _SEGMENT = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$")
+_ADAPTER = "nir-static-eval-adapter-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalModelContent:
+    commitment: str
+    role: str
+    adapter: str
+    entrypoint: str
+    entrypoint_digest: str
+    entrypoint_bytes: bytes
 
 
 def _require_secure_open_support() -> None:
@@ -60,7 +73,7 @@ def _canonical_path(value: object) -> str:
     return canonical
 
 
-def _parse_manifest(content: bytes) -> tuple[tuple[str, bool], ...]:
+def _parse_manifest(content: bytes) -> tuple[str, str, str, tuple[tuple[str, bool], ...]]:
     if not content or len(content) > MAX_MANIFEST_BYTES:
         raise ProtocolError("model content manifest size is outside limits")
     try:
@@ -75,8 +88,19 @@ def _parse_manifest(content: bytes) -> tuple[tuple[str, bool], ...]:
         value = json.loads(content, object_pairs_hook=strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ProtocolError("model content manifest is not valid JSON") from error
-    if not isinstance(value, dict) or set(value) != {"files", "format"} or value["format"] != FORMAT:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"entrypoint", "files", "format", "role"}
+        or value["format"] != FORMAT
+        or value["role"] not in {"baseline", "candidate"}
+        or not isinstance(value["entrypoint"], dict)
+        or set(value["entrypoint"]) != {"adapter", "path"}
+        or value["entrypoint"]["adapter"] != _ADAPTER
+    ):
         raise ProtocolError("model content manifest schema is invalid")
+    role = value["role"]
+    adapter = value["entrypoint"]["adapter"]
+    entrypoint = _canonical_path(value["entrypoint"]["path"])
     files = value["files"]
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
         raise ProtocolError("model content file count is outside limits")
@@ -94,7 +118,13 @@ def _parse_manifest(content: bytes) -> tuple[tuple[str, bool], ...]:
             raise ProtocolError("model content paths are duplicated or case-colliding")
         folded.add(collision_key)
         normalized.append((path, executable))
-    return tuple(sorted(normalized))
+    ordered = tuple(sorted(normalized))
+    entrypoint_entries = [executable for path, executable in ordered if path == entrypoint]
+    if not entrypoint_entries:
+        raise ProtocolError("model content entrypoint is not allowlisted")
+    if entrypoint_entries[0]:
+        raise ProtocolError("static model content entrypoint must be non-executable")
+    return role, adapter, entrypoint, ordered
 
 
 def _metadata_tuple(metadata: os.stat_result) -> tuple[int, ...]:
@@ -144,23 +174,29 @@ def _open_relative(root_descriptor: int, relative: str, *, directory: bool = Fal
 
 
 def _hash_stream(
-    digest: object, source: BinaryIO, size: int, *, before_check=None, after_check=None,
-) -> None:
+    digest: object, source: BinaryIO, size: int, *, capture: bool = False,
+) -> tuple[str | None, bytes | None]:
     if size < 1 or size > MAX_FILE_BYTES:
         raise ProtocolError("model content file size is outside limits")
-    if before_check is not None:
-        before_check()
+    entrypoint_digest = sha256() if capture else None
+    captured = bytearray() if capture else None
+    if capture and size > MAX_ENTRYPOINT_BYTES:
+        raise ProtocolError("model content entrypoint size is outside limits")
     remaining = size
     while remaining:
         chunk = source.read(min(CHUNK_BYTES, remaining))
         if not chunk:
             raise ProtocolError("model content file ended before its declared size")
         digest.update(chunk)
+        if entrypoint_digest is not None and captured is not None:
+            entrypoint_digest.update(chunk)
+            captured.extend(chunk)
         remaining -= len(chunk)
     if source.read(1):
         raise ProtocolError("model content file exceeds its declared size")
-    if after_check is not None:
-        after_check()
+    if entrypoint_digest is None or captured is None:
+        return None, None
+    return f"sha256:{entrypoint_digest.hexdigest()}", bytes(captured)
 
 
 def _frame_file(digest: object, path: str, executable: bool, size: int) -> None:
@@ -169,6 +205,12 @@ def _frame_file(digest: object, path: str, executable: bool, size: int) -> None:
     digest.update(encoded)
     digest.update(b"\x01" if executable else b"\x00")
     digest.update(struct.pack(">Q", size))
+
+
+def _frame_text(digest: object, value: str) -> None:
+    encoded = value.encode("ascii")
+    digest.update(struct.pack(">I", len(encoded)))
+    digest.update(encoded)
 
 
 def _directory_entries(root_descriptor: int) -> dict[str, os.stat_result]:
@@ -221,7 +263,7 @@ def _directory_entries(root_descriptor: int) -> dict[str, os.stat_result]:
     return entries
 
 
-def _canonicalize_directory(root: Path) -> str:
+def _canonicalize_directory(root: Path) -> CanonicalModelContent:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW | os.O_DIRECTORY
     try:
         root_descriptor = os.open(root, flags)
@@ -244,12 +286,17 @@ def _canonicalize_directory(root: Path) -> str:
                 raise ProtocolError("model content manifest changed while it was read")
         finally:
             os.close(manifest_descriptor)
-        manifest = _parse_manifest(manifest_content)
+        role, adapter, entrypoint, manifest = _parse_manifest(manifest_content)
         expected = {path for path, _ in manifest}
         if set(entries) != expected:
             raise ProtocolError("model content files do not exactly match the manifest allowlist")
         digest = sha256(b"NIR_MODEL_CONTENT_V1\x00")
+        _frame_text(digest, role)
+        _frame_text(digest, adapter)
+        _frame_text(digest, entrypoint)
         total = 0
+        entrypoint_digest = None
+        entrypoint_bytes = None
         for relative, executable in manifest:
             scanned = entries[relative]
             descriptor = _open_relative(root_descriptor, relative)
@@ -267,7 +314,11 @@ def _canonicalize_directory(root: Path) -> str:
                     raise ProtocolError("model content total size is outside limits")
                 _frame_file(digest, relative, executable, before.st_size)
                 with os.fdopen(descriptor, "rb", closefd=False) as source:
-                    _hash_stream(digest, source, before.st_size)
+                    file_digest, file_bytes = _hash_stream(
+                        digest, source, before.st_size, capture=relative == entrypoint,
+                    )
+                    if file_digest is not None:
+                        entrypoint_digest, entrypoint_bytes = file_digest, file_bytes
                 after = os.fstat(descriptor)
                 if _metadata_tuple(before) != _metadata_tuple(after):
                     raise ProtocolError("model content changed while it was being hashed")
@@ -284,7 +335,13 @@ def _canonicalize_directory(root: Path) -> str:
             or (path_after.st_dev, path_after.st_ino) != (root_before.st_dev, root_before.st_ino)
         ):
             raise ProtocolError("model content root changed during hashing")
-        return f"sha256:{digest.hexdigest()}"
+        if entrypoint_digest is None or entrypoint_bytes is None:
+            raise ProtocolError("model content entrypoint was not hashed")
+        return CanonicalModelContent(
+            commitment=f"sha256:{digest.hexdigest()}", role=role, adapter=adapter,
+            entrypoint=entrypoint, entrypoint_digest=entrypoint_digest,
+            entrypoint_bytes=entrypoint_bytes,
+        )
     finally:
         os.close(root_descriptor)
 
@@ -317,7 +374,7 @@ def _strip_archive_wrapper(names: Iterable[str]) -> tuple[str, dict[str, str]]:
     return manifest, mapping
 
 
-def _canonicalize_tar(path: Path) -> str:
+def _canonicalize_tar(path: Path) -> CanonicalModelContent:
     descriptor, before = _open_regular(path)
     try:
         if before.st_size < 1 or before.st_size > MAX_ARCHIVE_BYTES:
@@ -340,13 +397,20 @@ def _canonicalize_tar(path: Path) -> str:
                 manifest_stream = archive.extractfile(manifest_member)
                 if manifest_stream is None or manifest_member.size > MAX_MANIFEST_BYTES:
                     raise ProtocolError("model content manifest is invalid")
-                manifest = _parse_manifest(manifest_stream.read(MAX_MANIFEST_BYTES + 1))
+                role, adapter, entrypoint, manifest = _parse_manifest(
+                    manifest_stream.read(MAX_MANIFEST_BYTES + 1),
+                )
                 expected = {MANIFEST_NAME, *(relative for relative, _ in manifest)}
                 regular = {relative for relative, member in by_relative.items() if member.isreg()}
                 if regular != expected:
                     raise ProtocolError("model content archive does not exactly match the manifest allowlist")
                 digest = sha256(b"NIR_MODEL_CONTENT_V1\x00")
+                _frame_text(digest, role)
+                _frame_text(digest, adapter)
+                _frame_text(digest, entrypoint)
                 total = 0
+                entrypoint_digest = None
+                entrypoint_bytes = None
                 for relative, executable in manifest:
                     member = by_relative[relative]
                     actual_executable = bool(member.mode & 0o111)
@@ -359,21 +423,40 @@ def _canonicalize_tar(path: Path) -> str:
                     if source is None:
                         raise ProtocolError("model content archive member cannot be read")
                     _frame_file(digest, relative, executable, member.size)
-                    _hash_stream(digest, source, member.size)
+                    file_digest, file_bytes = _hash_stream(
+                        digest, source, member.size, capture=relative == entrypoint,
+                    )
+                    if file_digest is not None:
+                        entrypoint_digest, entrypoint_bytes = file_digest, file_bytes
             after = os.fstat(descriptor)
             if _metadata_tuple(before) != _metadata_tuple(after):
                 raise ProtocolError("model content archive changed while it was being read")
-            return f"sha256:{digest.hexdigest()}"
+            if entrypoint_digest is None or entrypoint_bytes is None:
+                raise ProtocolError("model content entrypoint was not hashed")
+            return CanonicalModelContent(
+                commitment=f"sha256:{digest.hexdigest()}", role=role, adapter=adapter,
+                entrypoint=entrypoint, entrypoint_digest=entrypoint_digest,
+                entrypoint_bytes=entrypoint_bytes,
+            )
     finally:
         os.close(descriptor)
 
 
-def canonical_model_content_commitment(path: str | Path) -> str:
-    """Return the bounded `nir-model-content-v1` commitment for a directory or tar archive."""
+def inspect_model_content(path: str | Path, *, expected_role: str | None = None) -> CanonicalModelContent:
+    """Read one bounded bundle and return its descriptor-bound static entrypoint."""
     _require_secure_open_support()
     source = Path(path)
     if source.is_symlink():
         raise ProtocolError("model content source cannot be a symbolic link")
     if source.is_dir():
-        return _canonicalize_directory(source)
-    return _canonicalize_tar(source)
+        result = _canonicalize_directory(source)
+    else:
+        result = _canonicalize_tar(source)
+    if expected_role is not None and result.role != expected_role:
+        raise ProtocolError("model content role does not match the requested execution role")
+    return result
+
+
+def canonical_model_content_commitment(path: str | Path) -> str:
+    """Return the bounded `nir-model-content-v1` commitment for a directory or tar archive."""
+    return inspect_model_content(path).commitment

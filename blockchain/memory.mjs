@@ -43,7 +43,7 @@ function validatedScores(scores) {
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function memoryRoot(records, behaviors, contents) {
+function memoryRoot(records, behaviors, contents, contentByArtifact) {
   const orderedRecords = Object.fromEntries(
     [...records.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -51,6 +51,7 @@ function memoryRoot(records, behaviors, contents) {
   );
   const payload = {
     behaviors: [...behaviors].sort(),
+    contentByArtifact: Object.fromEntries([...contentByArtifact.entries()].sort(([a], [b]) => a.localeCompare(b))),
     contents: [...contents].sort(),
     records: orderedRecords,
   };
@@ -59,10 +60,11 @@ function memoryRoot(records, behaviors, contents) {
 
 export function capabilityMemorySnapshotRoot(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.records) || !Array.isArray(snapshot.behaviors) ||
-      !Array.isArray(snapshot.contents) ||
+      !Array.isArray(snapshot.contents) || !Array.isArray(snapshot.contentByArtifact) ||
       snapshot.records.length === 0 || snapshot.records.length > 100_000 ||
       snapshot.behaviors.length !== snapshot.records.length ||
       snapshot.contents.length !== snapshot.records.length ||
+      snapshot.contentByArtifact.length !== snapshot.records.length ||
       new Set(snapshot.contents).size !== snapshot.contents.length ||
       new Set(snapshot.behaviors).size !== snapshot.behaviors.length) {
     throw new Error("capability memory snapshot is invalid");
@@ -85,17 +87,33 @@ export function capabilityMemorySnapshotRoot(snapshot) {
     requireDigest(content, "snapshot canonical content", true);
     contents.add(content);
   }
-  return memoryRoot(records, behaviors, contents);
+  const contentByArtifact = new Map();
+  for (const entry of snapshot.contentByArtifact) {
+    if (!Array.isArray(entry) || entry.length !== 2 || contentByArtifact.has(entry[0])) {
+      throw new Error("capability memory artifact/content map is invalid");
+    }
+    requireDigest(entry[0], "snapshot artifact", true);
+    requireDigest(entry[1], "snapshot canonical content", true);
+    contentByArtifact.set(entry[0], entry[1]);
+  }
+  if ([...records.keys()].some((artifact) => !contentByArtifact.has(artifact)) ||
+      new Set(contentByArtifact.values()).size !== contentByArtifact.size ||
+      [...contentByArtifact.values()].some((content) => !contents.has(content))) {
+    throw new Error("capability memory artifact/content map is inconsistent");
+  }
+  return memoryRoot(records, behaviors, contents, contentByArtifact);
 }
 
 export class CapabilityMemory {
   #behaviors;
   #contents;
+  #contentByArtifact;
   #records;
 
   constructor(references = [], internal = null) {
     this.#behaviors = new Set();
     this.#contents = new Set();
+    this.#contentByArtifact = new Map();
     this.#records = new Map();
     if (internal?.token === INTERNAL_CLONE) {
       this.#records = new Map(
@@ -106,6 +124,7 @@ export class CapabilityMemory {
       );
       this.#behaviors = new Set(internal.behaviors);
       this.#contents = new Set(internal.contents);
+      this.#contentByArtifact = new Map(internal.contentByArtifact);
       return;
     }
     if (!Array.isArray(references) || references.length === 0) {
@@ -129,6 +148,7 @@ export class CapabilityMemory {
       );
       this.#behaviors.add(reference.behaviorCommitment);
       this.#contents.add(contentHash);
+      this.#contentByArtifact.set(reference.artifactHash, contentHash);
     }
   }
 
@@ -139,6 +159,7 @@ export class CapabilityMemory {
       records: snapshot.records,
       behaviors: snapshot.behaviors,
       contents: snapshot.contents,
+      contentByArtifact: snapshot.contentByArtifact,
     });
   }
 
@@ -148,17 +169,19 @@ export class CapabilityMemory {
       records: [...this.#records.entries()],
       behaviors: [...this.#behaviors],
       contents: [...this.#contents],
+      contentByArtifact: [...this.#contentByArtifact.entries()],
     });
   }
 
   get stateRoot() {
-    return memoryRoot(this.#records, this.#behaviors, this.#contents);
+    return memoryRoot(this.#records, this.#behaviors, this.#contents, this.#contentByArtifact);
   }
 
   snapshot() {
     return {
       behaviors: [...this.#behaviors].sort(),
       contents: [...this.#contents].sort(),
+      contentByArtifact: [...this.#contentByArtifact.entries()].sort(([a], [b]) => a.localeCompare(b)),
       records: [...this.#records.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([artifact, scores]) => [artifact, structuredClone(scores)]),
@@ -178,6 +201,11 @@ export class CapabilityMemory {
   hasContent(contentHash) {
     requireDigest(contentHash, "canonical content", true);
     return this.#contents.has(contentHash);
+  }
+
+  contentForArtifact(artifactHash) {
+    requireDigest(artifactHash, "artifact hash", true);
+    return this.#contentByArtifact.get(artifactHash) ?? null;
   }
 
   assess(evaluation) {
@@ -261,9 +289,11 @@ export class CapabilityMemory {
     projectedBehaviors.add(evaluation.behaviorCommitment);
     const projectedContents = new Set(this.#contents);
     projectedContents.add(evaluation.contentHash);
+    const projectedContentByArtifact = new Map(this.#contentByArtifact);
+    projectedContentByArtifact.set(evaluation.artifactHash, evaluation.contentHash);
     return {
       frontierRootBefore: this.stateRoot,
-      frontierRootAfter: memoryRoot(projectedRecords, projectedBehaviors, projectedContents),
+      frontierRootAfter: memoryRoot(projectedRecords, projectedBehaviors, projectedContents, projectedContentByArtifact),
       marginalGainsBps: gains,
       noveltyBps,
     };
@@ -277,6 +307,7 @@ export class CapabilityMemory {
     );
     this.#behaviors.add(evaluation.behaviorCommitment);
     this.#contents.add(evaluation.contentHash);
+    this.#contentByArtifact.set(evaluation.artifactHash, evaluation.contentHash);
     return report;
   }
 }

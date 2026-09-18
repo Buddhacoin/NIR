@@ -90,8 +90,9 @@ receipts.
 
 `executionBundleHash` is consensus-required and covered by evaluator
 signatures. A reward must also reference a signed candidate admission from an
-earlier finalized block. The chain matches its artifact, canonical content
-commitment, parent lineage, baseline, suite, recipient and height. After
+earlier finalized block. The chain matches its candidate artifact/content,
+baseline artifact and separate baseline canonical content commitment, parent
+lineage, suite, recipient and height. After
 finalization, more than two thirds of a separate
 post-quantum beacon registry must sign domain-separated fresh shares. A
 strictly later finalized epoch first assigns their exact committee from a

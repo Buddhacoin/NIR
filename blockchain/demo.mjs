@@ -34,6 +34,7 @@ const chain = new NirChain({
   capabilityReferences: [
     {
       artifactHash: baselineArtifact,
+      contentHash: `sha256:${createHash("sha256").update("baseline-content").digest("hex")}`,
       behaviorCommitment: createHash("sha256")
         .update("baseline-behavior")
         .digest("hex"),
@@ -72,6 +73,7 @@ const admission = createProgressCommitment({
   recipient: alice.address,
   artifactHash: `sha256:${proofFingerprint}`,
   baselineHash: baselineArtifact,
+  baselineContentHash: `sha256:${createHash("sha256").update("baseline-content").digest("hex")}`,
   suiteCommitment,
   nonce: chain.nextNonce(alice.address),
 });
@@ -124,6 +126,7 @@ const challenge = chain.progressChallenge(admission.candidateId);
 const evaluation = chain.prepareProgressEvaluation({
   artifactHash: `sha256:${proofFingerprint}`,
   baselineHash: baselineArtifact,
+  baselineContentHash: admission.baselineContentHash,
   candidateId: admission.candidateId,
   executionBundleHash: createHash("sha256").update("evaluation-bundle-1").digest("hex"),
   suiteCommitment,

@@ -20,7 +20,7 @@ from typing import Any, Iterable
 
 from .evaluator import BenchmarkSuite, EvaluationReport, RunRecord, evaluate_progress
 from .model import ProtocolError
-from .model_content import canonical_model_content_commitment
+from .model_content import inspect_model_content
 
 
 MAX_ARTIFACT_BYTES = 1 << 30
@@ -140,6 +140,7 @@ class CandidateCommitment:
     candidate_id: str
     artifact_hash: str
     baseline_hash: str
+    baseline_content_hash: str
     content_hash: str
     parents: tuple[str, ...]
     suite_commitment: str
@@ -154,6 +155,7 @@ class CandidateCommitment:
                 candidate_id=str(data["candidate_id"]),
                 artifact_hash=str(data["artifact_hash"]),
                 baseline_hash=str(data["baseline_hash"]),
+                baseline_content_hash=str(data["baseline_content_hash"]),
                 content_hash=str(data["content_hash"]),
                 parents=tuple(str(parent) for parent in data["parents"]),
                 suite_commitment=str(data["suite_commitment"]),
@@ -172,6 +174,7 @@ class CandidateCommitment:
         _require_digest(self.candidate_id, "candidate id")
         _require_digest(self.artifact_hash, "candidate artifact hash", artifact=True)
         _require_digest(self.baseline_hash, "baseline artifact hash", artifact=True)
+        _require_digest(self.baseline_content_hash, "baseline canonical content hash", artifact=True)
         _require_digest(self.content_hash, "canonical content hash", artifact=True)
         if (
             not self.parents
@@ -196,6 +199,7 @@ class CandidateCommitment:
         return {
             "artifact_hash": self.artifact_hash,
             "baseline_hash": self.baseline_hash,
+            "baseline_content_hash": self.baseline_content_hash,
             "candidate_id": self.candidate_id,
             "committed_epoch": self.committed_epoch,
             "content_hash": self.content_hash,
@@ -216,6 +220,10 @@ class ExecutionTranscript:
     challenge_seed: str
     challenge_epoch: int
     environment_hash: str
+    content_hash: str
+    entrypoint_digest: str
+    entrypoint_path: str
+    adapter: str
     run: RunRecord
 
     @classmethod
@@ -226,6 +234,10 @@ class ExecutionTranscript:
                 challenge_seed=str(data["challenge_seed"]),
                 challenge_epoch=int(data["challenge_epoch"]),
                 environment_hash=str(data["environment_hash"]),
+                content_hash=str(data["content_hash"]),
+                entrypoint_digest=str(data["entrypoint_digest"]),
+                entrypoint_path=str(data["entrypoint_path"]),
+                adapter=str(data["adapter"]),
                 run=RunRecord.from_dict(data["run"]),
             )
         except KeyError as error:
@@ -238,6 +250,10 @@ class ExecutionTranscript:
             raise ProtocolError("execution role is invalid")
         _require_digest(self.challenge_seed, "challenge seed")
         _require_digest(self.environment_hash, "environment hash")
+        _require_digest(self.content_hash, "canonical content hash", artifact=True)
+        _require_digest(self.entrypoint_digest, "entrypoint digest", artifact=True)
+        if self.adapter != STATIC_ADAPTER_FORMAT or not self.entrypoint_path:
+            raise ProtocolError("execution entrypoint binding is invalid")
         if (
             not isinstance(self.challenge_epoch, int)
             or isinstance(self.challenge_epoch, bool)
@@ -251,6 +267,10 @@ class ExecutionTranscript:
             "challenge_epoch": self.challenge_epoch,
             "challenge_seed": self.challenge_seed,
             "environment_hash": self.environment_hash,
+            "content_hash": self.content_hash,
+            "entrypoint_digest": self.entrypoint_digest,
+            "entrypoint_path": self.entrypoint_path,
+            "adapter": self.adapter,
             "role": self.role,
             "run": {
                 "answers": dict(sorted(self.run.answers.items())),
@@ -267,9 +287,11 @@ class ExecutionTranscript:
         return _hash_object(self.as_dict(), "NIR_EXECUTION_TRANSCRIPT")
 
 
-def run_static_artifact(
+def read_static_model_content_receipt(
     *,
-    path: str | Path,
+    model_content_path: str | Path,
+    artifact_hash: str,
+    expected_content_hash: str,
     suite: BenchmarkSuite,
     role: str,
     verifier_id: str,
@@ -280,19 +302,23 @@ def run_static_artifact(
     energy_wh: int,
     energy_attested: bool = False,
 ) -> ExecutionTranscript:
-    """Run the data-only reference adapter used by tests and local devnets.
+    """Read the descriptor-bound data-only entrypoint used by tests and local devnets.
 
     Real models require an isolated external runner.  This adapter intentionally
     accepts JSON answers only, so importing this module never executes artifact
     code on the evaluator host.
     """
-    content = _read_artifact(path)
-    digest = f"sha256:{sha256(content).hexdigest()}"
+    _require_digest(artifact_hash, "artifact hash", artifact=True)
+    inspected = inspect_model_content(model_content_path, expected_role=role)
+    if inspected.commitment != expected_content_hash:
+        raise ProtocolError("executed model content does not match finalized admission")
     try:
-        artifact = json.loads(content)
+        artifact = json.loads(inspected.entrypoint_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ProtocolError("static evaluation artifact is not valid JSON") from error
-    if artifact.get("format") != STATIC_ADAPTER_FORMAT:
+    if not isinstance(artifact, dict) or set(artifact) != {"answers", "format"} or (
+        artifact.get("format") != STATIC_ADAPTER_FORMAT
+    ):
         raise ProtocolError("static evaluation artifact format is unsupported")
     answers = artifact.get("answers")
     if not isinstance(answers, dict):
@@ -300,7 +326,7 @@ def run_static_artifact(
     run = RunRecord.from_dict(
         {
             "answers": answers,
-            "artifact_hash": digest,
+            "artifact_hash": artifact_hash,
             "energy_attested": energy_attested,
             "energy_wh": energy_wh,
             "run_id": run_id,
@@ -315,10 +341,46 @@ def run_static_artifact(
         challenge_seed=challenge_seed,
         challenge_epoch=challenge_epoch,
         environment_hash=environment.commitment,
+        content_hash=inspected.commitment,
+        entrypoint_digest=inspected.entrypoint_digest,
+        entrypoint_path=inspected.entrypoint,
+        adapter=inspected.adapter,
         run=run,
     )
     transcript.validate()
     return transcript
+
+
+def _verify_local_execution_binding(
+    inspected: object,
+    items: tuple[ExecutionTranscript, ...],
+    suite: BenchmarkSuite,
+    role: str,
+) -> None:
+    try:
+        payload = json.loads(inspected.entrypoint_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ProtocolError(f"{role} static entrypoint is not valid JSON") from error
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"answers", "format"}
+        or payload.get("format") != STATIC_ADAPTER_FORMAT
+        or not isinstance(payload.get("answers"), dict)
+    ):
+        raise ProtocolError(f"{role} static entrypoint schema is invalid")
+    expected_cases = {case.case_id for case in suite.cases}
+    if set(payload["answers"]) != expected_cases:
+        raise ProtocolError(f"{role} static entrypoint does not answer the exact suite")
+    binding = (
+        inspected.commitment, inspected.entrypoint_digest,
+        inspected.entrypoint, inspected.adapter,
+    )
+    if any(
+        (item.content_hash, item.entrypoint_digest, item.entrypoint_path, item.adapter) != binding
+        or item.run.answers != payload["answers"]
+        for item in items
+    ):
+        raise ProtocolError(f"{role} execution receipt does not match its committed entrypoint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,7 +419,7 @@ class EvaluationBundle:
             claimed_hash = str(data["bundle_hash"])
         except KeyError as error:
             raise ProtocolError(f"evaluation bundle lacks {error.args[0]}") from error
-        if claimed_report != bundle.report.as_dict():
+        if claimed_report != bundle._report_payload():
             raise ProtocolError("evaluation report does not match execution transcripts")
         _require_digest(claimed_hash, "bundle hash")
         if claimed_hash != bundle.bundle_hash:
@@ -373,12 +435,31 @@ class EvaluationBundle:
             "commitment": self.commitment.as_dict(),
             "environment": self.environment.as_dict(),
             "format": FORMAT,
-            "report": self.report.as_dict(),
+            "report": self._report_payload(),
             "suite": {
                 "cases": [case.public_dict() for case in self.suite.cases],
                 "name": self.suite.name,
             },
             "suite_salt": self.suite_salt,
+        }
+
+    def _report_payload(self) -> dict[str, Any]:
+        def binding(items: tuple[ExecutionTranscript, ...]) -> dict[str, str]:
+            first = items[0]
+            return {
+                "adapter": first.adapter,
+                "content_hash": first.content_hash,
+                "entrypoint_digest": first.entrypoint_digest,
+                "entrypoint_path": first.entrypoint_path,
+                "environment_hash": first.environment_hash,
+            }
+
+        return {
+            **self.report.as_dict(),
+            "execution_bindings": {
+                "baseline": binding(self.baseline),
+                "candidate": binding(self.candidate),
+            },
         }
 
     @property
@@ -399,19 +480,30 @@ def _create_bundle(
     suite_salt: str,
     baseline: Iterable[ExecutionTranscript],
     candidate: Iterable[ExecutionTranscript],
+    baseline_content_path: str | Path | None = None,
     candidate_content_path: str | Path | None = None,
 ) -> EvaluationBundle:
     commitment.validate()
-    if candidate_content_path is not None and (
-        canonical_model_content_commitment(candidate_content_path) != commitment.content_hash
-    ):
-        raise ProtocolError("candidate canonical content does not match admission")
+    baseline_content = None
+    candidate_content = None
+    if baseline_content_path is not None:
+        baseline_content = inspect_model_content(baseline_content_path, expected_role="baseline")
+        if baseline_content.commitment != commitment.baseline_content_hash:
+            raise ProtocolError("baseline canonical content does not match known reference")
+    if candidate_content_path is not None:
+        candidate_content = inspect_model_content(candidate_content_path, expected_role="candidate")
+        if candidate_content.commitment != commitment.content_hash:
+            raise ProtocolError("candidate canonical content does not match admission")
     _require_digest(challenge_seed, "challenge seed")
     if challenge_epoch <= commitment.committed_epoch:
         raise ProtocolError("challenge must be created after artifact commitment")
     suite.verify_commitment(suite_salt, commitment.suite_commitment)
     baseline_items = tuple(baseline)
     candidate_items = tuple(candidate)
+    if baseline_content is not None:
+        _verify_local_execution_binding(baseline_content, baseline_items, suite, "baseline")
+    if candidate_content is not None:
+        _verify_local_execution_binding(candidate_content, candidate_items, suite, "candidate")
     all_items = baseline_items + candidate_items
     for item in all_items:
         item.validate()
@@ -429,6 +521,16 @@ def _create_bundle(
         raise ProtocolError("baseline execution does not match committed artifact")
     if any(item.run.artifact_hash != commitment.artifact_hash for item in candidate_items):
         raise ProtocolError("candidate execution does not match committed artifact")
+    for role, items, expected_content in (
+        ("baseline", baseline_items, commitment.baseline_content_hash),
+        ("candidate", candidate_items, commitment.content_hash),
+    ):
+        bindings = {
+            (item.content_hash, item.entrypoint_digest, item.entrypoint_path, item.adapter)
+            for item in items
+        }
+        if len(bindings) != 1 or next(iter(bindings))[0] != expected_content:
+            raise ProtocolError(f"{role} execution receipts do not match canonical content")
     report, baseline_hash, candidate_hash = evaluate_progress(
         suite,
         [item.run for item in baseline_items],
@@ -452,6 +554,7 @@ def _create_bundle(
 def create_bundle(
     *,
     commitment: CandidateCommitment,
+    baseline_content_path: str | Path,
     candidate_content_path: str | Path,
     challenge_seed: str,
     challenge_epoch: int,
@@ -464,6 +567,7 @@ def create_bundle(
     """Create a proof bundle only after recomputing the admitted canonical content."""
     return _create_bundle(
         commitment=commitment,
+        baseline_content_path=baseline_content_path,
         candidate_content_path=candidate_content_path,
         challenge_seed=challenge_seed,
         challenge_epoch=challenge_epoch,
@@ -481,6 +585,7 @@ def verify_bundle(
     expected_hash: str | None = None,
     baseline_path: str | Path | None = None,
     candidate_path: str | Path | None = None,
+    baseline_content_path: str | Path | None = None,
     candidate_content_path: str | Path | None = None,
 ) -> None:
     """Recompute every public binding and optionally rehash local artifacts."""
@@ -493,6 +598,7 @@ def verify_bundle(
         suite_salt=bundle.suite_salt,
         baseline=bundle.baseline,
         candidate=bundle.candidate,
+        baseline_content_path=baseline_content_path,
         candidate_content_path=candidate_content_path,
     )
     if rebuilt.report.as_dict() != bundle.report.as_dict():

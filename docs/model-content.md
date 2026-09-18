@@ -14,13 +14,24 @@ directory. The content root contains exactly one `nir-model-content.json`:
 
 ```json
 {
+  "entrypoint": {
+    "adapter": "nir-static-eval-adapter-v1",
+    "path": "model/answers.json"
+  },
   "files": [
-    { "executable": false, "path": "model/weights.bin" },
-    { "executable": true, "path": "runtime/launch" }
+    { "executable": false, "path": "model/answers.json" },
+    { "executable": false, "path": "model/weights.bin" }
   ],
-  "format": "nir-model-content-v1"
+  "format": "nir-model-content-v1",
+  "role": "candidate"
 }
 ```
+
+The four top-level fields are exact; `role` is exactly `baseline` or
+`candidate`. The only v1 adapter is `nir-static-eval-adapter-v1`. Its entrypoint
+must be an allowlisted, non-executable regular file of at most 16 MiB containing
+an exact JSON answer map. It is data, not a command: no shell, subprocess,
+dynamic import, arbitrary executable or network operation is accepted.
 
 The manifest and each file entry reject unknown or duplicate fields. Paths are relative,
 ASCII, slash-separated canonical paths with at most 16 components and 240
@@ -38,7 +49,8 @@ most 64 KiB, and the outer tar is at most 1 GiB plus 2 MiB.
 ## Commitment
 
 The canonicalizer initializes SHA-256 with `NIR_MODEL_CONTENT_V1` followed by a
-zero byte. For every allowlisted file in bytewise path order, it hashes:
+zero byte. It length-prefixes and hashes the role, adapter name and entrypoint
+path, then for every allowlisted file in bytewise path order hashes:
 
 1. the four-byte big-endian path length and ASCII path;
 2. one byte for the executable bit;
@@ -48,7 +60,9 @@ zero byte. For every allowlisted file in bytewise path order, it hashes:
 The result is encoded as `sha256:<64 lowercase hex>`. The manifest serialization,
 archive entry order, optional outer directory name, tar owner/group names,
 timestamps, and compression do not enter this digest. A content byte, canonical
-path or executable-bit change does.
+path, executable-bit, role, adapter, or entrypoint change does. It also returns
+the descriptor-bound `sha256:` digest of the entrypoint bytes used by the
+data-only adapter.
 
 Directory traversal is descriptor-relative. The root and every intermediate
 directory are opened with no-follow semantics, file identity and metadata are
@@ -61,13 +75,28 @@ rejected; the canonicalizer does not silently weaken this boundary.
 
 ## Consensus binding and limits
 
-The submitter places this digest in the finalized progress admission. It is
+The submitter places the candidate digest in `contentHash` and the known
+reference digest in the separate `baselineContentHash` of the finalized
+progress admission. `baselineHash` remains the baseline artifact/lineage
+identity; these domains are not interchangeable. Capability memory commits an
+artifact-to-content map in its root and snapshots, and admission requires
+`baselineContentHash` to equal the content already recorded for
+`baselineHash`; a submitter cannot nominate weaker bytes for a known baseline.
+Both content commitments are
 covered by `candidateId`, the later evaluator receipt, progress fingerprint,
-runner bundle, capability-memory root, and complete chain state root. The
-reference runner recomputes it from local model content before creating a new
-evaluation bundle. Reusing the same digest under another artifact package,
+runner bundle and complete chain state root; accepted candidate content also
+enters capability memory. The reference adapter recomputes both local bundles,
+enforces their manifest roles, and reads answers only from each committed
+entrypoint. A separate artifact path cannot supply execution answers. Reusing the same digest under another artifact package,
 metadata wrapper, challenge transcript, recipient, or key cannot create a
 second admission or reward.
+
+The bundle report records each side's canonical content commitment, entrypoint
+digest/path, adapter and environment digest. Serialized bundles can verify
+these commitments, but a plain `verifier_id` is not a cryptographic attestation.
+The static adapter is a deterministic local conformance fixture, not a sandbox
+or proof that a general model executed. Production receipts still require
+independent signatures and attested isolation.
 
 Validators see the digest, not private model bytes. They cannot tell whether a
 submitter and captured evaluator quorum falsely labeled different bytes, nor

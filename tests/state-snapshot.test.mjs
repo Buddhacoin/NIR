@@ -9,6 +9,7 @@ import {
   createCreditDelegation,
   createCreditStake,
   createCreditUnstakeRequest,
+  createProgressCommitment,
   createTransfer,
   finalizeBlock,
 } from "../blockchain/chain.mjs";
@@ -45,6 +46,7 @@ function fixture() {
     beaconAuthorities: members(Array.from({ length: 4 }, generateWallet), "beacon"),
     capabilityReferences: [{
       artifactHash: `sha256:${digest("snapshot-baseline")}`,
+      contentHash: `sha256:${digest("baseline-canonical-content")}`,
       behaviorCommitment: digest("snapshot-behavior"),
       capabilitiesBps: { "reasoning-v1": 7_000 },
     }],
@@ -183,7 +185,47 @@ test("state snapshots fail closed on mutation, minority approval, and duplicate 
       "STATE_SNAPSHOT_APPROVAL"),
     validator: wallet.address,
   }));
-  assert.throws(() => verify(changedContent, validatorMembers), /capability memory is invalid/);
+  assert.throws(() => verify(changedContent, validatorMembers), /artifact\/content map is inconsistent/);
+});
+
+test("pending progress snapshot commits the separate baseline content hash", () => {
+  const { chain, genesisConfig, validatorMembers, validators } = fixture();
+  const submitter = generateWallet();
+  const admission = createProgressCommitment({
+    wallet: submitter,
+    networkId: chain.networkId,
+    recipient: submitter.address,
+    artifactHash: `sha256:${digest("candidate-artifact")}`,
+    baselineHash: `sha256:${digest("snapshot-baseline")}`,
+    baselineContentHash: `sha256:${digest("baseline-canonical-content")}`,
+    contentHash: `sha256:${digest("candidate-canonical-content")}`,
+    suiteCommitment: digest("snapshot-suite"),
+    nonce: 0,
+  });
+  const block = chain.buildBlock({ transactions: [admission], timestamp: 1 });
+  chain.appendBlock(finalizeBlock(block, validators.slice(0, 3)));
+  const snapshot = createStateSnapshot(chain, validators.slice(0, 3));
+  const restored = restoreStateSnapshot(genesisConfig, snapshot, {
+    expectedNetworkId: chain.networkId, trustedValidators: validatorMembers,
+  });
+  assert.equal(restored.stateRoot, chain.stateRoot);
+
+  const tampered = structuredClone(snapshot);
+  tampered.state.progressCommitments[0][1].baselineContentHash =
+    `sha256:${digest("substituted-baseline-content")}`;
+  const { attestations: _attestations, snapshotHash: _snapshotHash, ...payload } = tampered;
+  tampered.snapshotHash = hashObject(payload, "STATE_SNAPSHOT");
+  tampered.attestations = validators.slice(0, 3).map((wallet) => ({
+    signature: signObject({ snapshotHash: tampered.snapshotHash }, wallet,
+      "STATE_SNAPSHOT_APPROVAL"),
+    validator: wallet.address,
+  }));
+  assert.throws(
+    () => restoreStateSnapshot(genesisConfig, tampered, {
+      expectedNetworkId: chain.networkId, trustedValidators: validatorMembers,
+    }),
+    /state snapshot root is invalid/,
+  );
 });
 
 test("a self-signed attacker validator set cannot become its own trust anchor", () => {

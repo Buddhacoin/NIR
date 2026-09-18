@@ -1,4 +1,5 @@
 import io
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -19,10 +20,12 @@ def digest(character: str) -> str:
     return f"sha256:{character * 64}"
 
 
-def manifest(files, **extra):
+def manifest(files, *, role="candidate", entrypoint="weights.bin", **extra):
     return json.dumps({
+        "entrypoint": {"adapter": "nir-static-eval-adapter-v1", "path": entrypoint},
         "files": files,
         "format": "nir-model-content-v1",
+        "role": role,
         **extra,
     }, separators=(",", ":")).encode()
 
@@ -49,11 +52,7 @@ class ModelContentTests(unittest.TestCase):
         root = self.root / name
         root.mkdir()
         (root / "weights.bin").write_bytes(content)
-        script = root / "runner.sh"
-        script.write_bytes(b"#!/bin/sh\nexit 0\n")
-        script.chmod(0o755)
         (root / "nir-model-content.json").write_bytes(manifest([
-            {"executable": True, "path": "runner.sh"},
             {"executable": False, "path": "weights.bin"},
         ]))
         return root
@@ -63,10 +62,8 @@ class ModelContentTests(unittest.TestCase):
         mode = "w:gz" if compressed else "w"
         entries = [
             ("weights.bin", b"weights-v1", False),
-            ("runner.sh", b"#!/bin/sh\nexit 0\n", True),
             ("nir-model-content.json", manifest([
                 {"path": "weights.bin", "executable": False},
-                {"path": "runner.sh", "executable": True},
             ]), False),
         ]
         if reverse:
@@ -86,7 +83,7 @@ class ModelContentTests(unittest.TestCase):
         expected = canonical_model_content_commitment(directory)
         self.assertEqual(
             expected,
-            "sha256:f4fb511d9a34c273c54f6df9ba9089ccdee69449c97ad55f137cf74675c7f075",
+            "sha256:723283d8b1bbedb679c15004bee26eb5b65721618c205be22d4bfc4f70f28c7d",
         )
         self.assertEqual(canonical_model_content_commitment(first), expected)
         self.assertEqual(canonical_model_content_commitment(second), expected)
@@ -119,12 +116,29 @@ class ModelContentTests(unittest.TestCase):
         executable = self.directory("executable")
         (executable / "weights.bin").chmod(0o755)
         (executable / "nir-model-content.json").write_bytes(manifest([
-            {"executable": True, "path": "runner.sh"},
             {"executable": True, "path": "weights.bin"},
         ]))
         original_hash = canonical_model_content_commitment(original)
         self.assertNotEqual(canonical_model_content_commitment(changed), original_hash)
-        self.assertNotEqual(canonical_model_content_commitment(executable), original_hash)
+        with self.assertRaisesRegex(ProtocolError, "non-executable"):
+            canonical_model_content_commitment(executable)
+
+    def test_role_and_entrypoint_are_committed_and_role_is_enforced(self):
+        candidate = self.directory("candidate-role")
+        baseline = self.directory("baseline-role")
+        (baseline / "nir-model-content.json").write_bytes(manifest([
+            {"executable": False, "path": "weights.bin"},
+        ], role="baseline"))
+        self.assertNotEqual(
+            canonical_model_content_commitment(candidate),
+            canonical_model_content_commitment(baseline),
+        )
+        with self.assertRaisesRegex(ProtocolError, "execution role"):
+            model_content.inspect_model_content(candidate, expected_role="baseline")
+        inspected = model_content.inspect_model_content(candidate, expected_role="candidate")
+        self.assertEqual(inspected.entrypoint, "weights.bin")
+        self.assertEqual(inspected.entrypoint_bytes, b"weights-v1")
+        self.assertEqual(inspected.entrypoint_digest, f"sha256:{sha256(b'weights-v1').hexdigest()}")
 
     def test_paths_and_manifest_are_strict_and_bounded(self):
         for label, files, extra, pattern in [
@@ -233,7 +247,7 @@ class ModelContentTests(unittest.TestCase):
         (nested / "payload" / "weights.bin").write_bytes(b"weights")
         (nested / "nir-model-content.json").write_bytes(manifest([
             {"executable": False, "path": "payload/weights.bin"},
-        ]))
+        ], entrypoint="payload/weights.bin"))
         replacement = self.root / "replacement"
         replacement.mkdir()
         (replacement / "weights.bin").write_bytes(b"attacker")

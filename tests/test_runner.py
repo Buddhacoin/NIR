@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -13,7 +14,7 @@ from nir.runner import (
     artifact_hash,
     create_bundle,
     load_bundle,
-    run_static_artifact,
+    read_static_model_content_receipt,
     verify_bundle,
 )
 
@@ -42,16 +43,22 @@ class RunnerTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.model_content_path = root / "model-content"
-        self.model_content_path.mkdir()
-        (self.model_content_path / "model.json").write_bytes(self.candidate_path.read_bytes())
-        (self.model_content_path / "nir-model-content.json").write_text(
-            json.dumps({
+        def content_bundle(name, role, source):
+            bundle = root / name
+            bundle.mkdir()
+            (bundle / "model.json").write_bytes(source.read_bytes())
+            (bundle / "nir-model-content.json").write_text(json.dumps({
+                "entrypoint": {
+                    "adapter": "nir-static-eval-adapter-v1", "path": "model.json",
+                },
                 "files": [{"executable": False, "path": "model.json"}],
                 "format": "nir-model-content-v1",
-            }),
-            encoding="utf-8",
-        )
+                "role": role,
+            }), encoding="utf-8")
+            return bundle
+
+        self.baseline_content_path = content_bundle("baseline-content", "baseline", self.baseline_path)
+        self.candidate_content_path = content_bundle("candidate-content", "candidate", self.candidate_path)
         self.suite = BenchmarkSuite.from_dict(
             {
                 "name": "runner-v1",
@@ -86,7 +93,8 @@ class RunnerTests(unittest.TestCase):
             candidate_id="cd" * 32,
             artifact_hash=artifact_hash(self.candidate_path),
             baseline_hash=artifact_hash(self.baseline_path),
-            content_hash=canonical_model_content_commitment(self.model_content_path),
+            baseline_content_hash=canonical_model_content_commitment(self.baseline_content_path),
+            content_hash=canonical_model_content_commitment(self.candidate_content_path),
             parents=(artifact_hash(self.baseline_path),),
             suite_commitment=self.suite.commitment(self.salt),
             committed_epoch=7,
@@ -100,8 +108,10 @@ class RunnerTests(unittest.TestCase):
         candidate = []
         for index, verifier in enumerate(("verifier-a", "verifier-b", "verifier-c")):
             baseline.append(
-                run_static_artifact(
-                    path=self.baseline_path,
+                read_static_model_content_receipt(
+                    model_content_path=self.baseline_content_path,
+                    artifact_hash=self.commitment.baseline_hash,
+                    expected_content_hash=self.commitment.baseline_content_hash,
                     suite=self.suite,
                     role="baseline",
                     verifier_id=verifier,
@@ -114,8 +124,10 @@ class RunnerTests(unittest.TestCase):
                 )
             )
             candidate.append(
-                run_static_artifact(
-                    path=self.candidate_path,
+                read_static_model_content_receipt(
+                    model_content_path=self.candidate_content_path,
+                    artifact_hash=self.commitment.artifact_hash,
+                    expected_content_hash=self.commitment.content_hash,
                     suite=self.suite,
                     role="candidate",
                     verifier_id=verifier,
@@ -133,7 +145,8 @@ class RunnerTests(unittest.TestCase):
         baseline, candidate = self.transcripts()
         return create_bundle(
             commitment=self.commitment,
-            candidate_content_path=self.model_content_path,
+            baseline_content_path=self.baseline_content_path,
+            candidate_content_path=self.candidate_content_path,
             challenge_seed=self.seed,
             challenge_epoch=8,
             environment=self.environment,
@@ -150,7 +163,8 @@ class RunnerTests(unittest.TestCase):
             expected_hash=bundle.bundle_hash,
             baseline_path=self.baseline_path,
             candidate_path=self.candidate_path,
-            candidate_content_path=self.model_content_path,
+            baseline_content_path=self.baseline_content_path,
+            candidate_content_path=self.candidate_content_path,
         )
         self.assertGreater(bundle.report.gain_ppm, 0)
         self.assertTrue(bundle.report.energy_attested)
@@ -168,15 +182,51 @@ class RunnerTests(unittest.TestCase):
                 ]}
             )
 
-    def test_artifact_substitution_is_rejected(self):
-        bundle = self.bundle()
-        self.candidate_path.write_text("changed", encoding="utf-8")
-        with self.assertRaisesRegex(ProtocolError, "candidate artifact"):
-            verify_bundle(bundle, candidate_path=self.candidate_path)
+    def test_separate_artifact_cannot_substitute_executed_answers(self):
+        self.candidate_path.write_text(json.dumps({
+            "format": "nir-static-eval-adapter-v1",
+            "answers": {"math": "wrong", "logic": "wrong", "safe": "wrong"},
+        }), encoding="utf-8")
+        _, candidate = self.transcripts()
+        self.assertEqual(candidate[0].run.answers["math"], "42")
+
+    def test_forged_receipt_answers_are_rejected_against_committed_entrypoint(self):
+        baseline, candidate = self.transcripts()
+        forged_run = replace(candidate[0].run, answers={
+            "math": "wrong", "logic": "yes", "safe": "refuse",
+        })
+        candidate[0] = replace(candidate[0], run=forged_run)
+        with self.assertRaisesRegex(ProtocolError, "committed entrypoint"):
+            create_bundle(
+                commitment=self.commitment,
+                baseline_content_path=self.baseline_content_path,
+                candidate_content_path=self.candidate_content_path,
+                challenge_seed=self.seed, challenge_epoch=8,
+                environment=self.environment, suite=self.suite, suite_salt=self.salt,
+                baseline=baseline, candidate=candidate,
+            )
+
+    def test_baseline_artifact_and_content_commitments_are_distinct_domains(self):
+        self.assertNotEqual(self.commitment.baseline_hash, self.commitment.baseline_content_hash)
+        changed = CandidateCommitment.from_dict({
+            **self.commitment.as_dict(),
+            "baseline_content_hash": f"sha256:{'8' * 64}",
+        })
+        self.assertNotEqual(changed.commitment_hash, self.commitment.commitment_hash)
+        baseline, candidate = self.transcripts()
+        with self.assertRaisesRegex(ProtocolError, "baseline canonical content"):
+            create_bundle(
+                commitment=changed,
+                baseline_content_path=self.baseline_content_path,
+                candidate_content_path=self.candidate_content_path,
+                challenge_seed=self.seed, challenge_epoch=8,
+                environment=self.environment, suite=self.suite, suite_salt=self.salt,
+                baseline=baseline, candidate=candidate,
+            )
 
     def test_runner_recomputes_canonical_content_before_bundle_creation(self):
-        (self.model_content_path / "model.json").write_bytes(b"changed-model-content")
-        with self.assertRaisesRegex(ProtocolError, "canonical content"):
+        (self.candidate_content_path / "model.json").write_bytes(b"changed-model-content")
+        with self.assertRaisesRegex(ProtocolError, "model content"):
             self.bundle()
 
     def test_challenge_must_follow_candidate_commitment(self):
@@ -184,7 +234,8 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError, "after artifact commitment"):
             create_bundle(
                 commitment=self.commitment,
-                candidate_content_path=self.model_content_path,
+                baseline_content_path=self.baseline_content_path,
+                candidate_content_path=self.candidate_content_path,
                 challenge_seed=self.seed,
                 challenge_epoch=7,
                 environment=self.environment,
@@ -202,7 +253,8 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError, "another challenge"):
             create_bundle(
                 commitment=self.commitment,
-                candidate_content_path=self.model_content_path,
+                baseline_content_path=self.baseline_content_path,
+                candidate_content_path=self.candidate_content_path,
                 challenge_seed=self.seed,
                 challenge_epoch=8,
                 environment=altered,

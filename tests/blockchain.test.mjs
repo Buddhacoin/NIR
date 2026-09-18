@@ -15,6 +15,7 @@ import {
   createDelegatedCreditTransfer,
   createCandidateBond,
   createProgressCommitment,
+  progressCandidateId,
   createValidatorBond,
   createProgressClaim,
   createSponsoredTransfer,
@@ -82,6 +83,7 @@ function fixture() {
     capabilityReferences: [
       {
         artifactHash: `sha256:${fingerprint("baseline")}`,
+        contentHash: `sha256:${fingerprint("baseline-content")}`,
         behaviorCommitment: fingerprint("baseline-behavior"),
         capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
       },
@@ -193,6 +195,7 @@ function progressClaim(
   const artifactHash = `sha256:${fingerprint(`artifact-${label}`)}`;
   const contentHash = `sha256:${fingerprint(canonicalContentLabel)}`;
   const baselineHash = `sha256:${fingerprint("baseline")}`;
+  const baselineContentHash = `sha256:${fingerprint("baseline-content")}`;
   const suiteCommitment = fingerprint("hidden-suite-v1");
   const timestamp = chain.blocks().at(-1).timestamp;
   const admission = createProgressCommitment({
@@ -201,6 +204,7 @@ function progressClaim(
     recipient,
     artifactHash,
     baselineHash,
+    baselineContentHash,
     contentHash,
     suiteCommitment,
     nonce: chain.nextNonce(submitterWallet.address),
@@ -233,6 +237,7 @@ function progressClaim(
   const evaluation = chain.prepareProgressEvaluation({
     artifactHash,
     baselineHash,
+    baselineContentHash,
     contentHash,
     candidateId: admission.candidateId,
     executionBundleHash: fingerprint(`execution-bundle-${label}`),
@@ -321,6 +326,7 @@ test("evaluation and consensus operators must be independent", () => {
       capabilityReferences: [
         {
           artifactHash: `sha256:${fingerprint("baseline")}`,
+          contentHash: `sha256:${fingerprint("baseline-content")}`,
           behaviorCommitment: fingerprint("baseline-behavior"),
           capabilitiesBps: { "code-v1": 7_000, "reasoning-v1": 8_000 },
         },
@@ -352,7 +358,7 @@ test("Python and JavaScript capability memory use the same state root", () => {
   ]);
   assert.equal(
     memory.stateRoot,
-    "7ad5766b6ab784d902613b65e6908eed56206063ab8a5604285e27f2631323b5",
+    "4eb7e97065945992e4f1b1b3e62937ccf55c91fdaa3509d3383445c55dd5b868",
   );
 });
 
@@ -384,6 +390,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     recipient: miner.address,
     artifactHash: `sha256:${fingerprint("challenge-order-candidate")}`,
     baselineHash: `sha256:${fingerprint("baseline")}`,
+    baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
     suiteCommitment: fingerprint("challenge-order-suite"),
     nonce: 0,
   });
@@ -1366,6 +1373,7 @@ test("a new key and artifact wrapper cannot reward the same canonical content af
       recipient: attacker.address,
       artifactHash: `sha256:${fingerprint(`wrapper-${mode}`)}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
       contentHash: `sha256:${fingerprint(canonicalContentLabel)}`,
       suiteCommitment: fingerprint(`new-metadata-${mode}`),
       nonce: target.nextNonce(attacker.address),
@@ -1395,6 +1403,7 @@ test("chain scoring matches the evaluator output", () => {
     computeProgressScore({
       artifactHash: `sha256:${fingerprint("candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
       contentHash: `sha256:${fingerprint("candidate-content")}`,
       candidateId: fingerprint("candidate-admission"),
       executionBundleHash: fingerprint("candidate-bundle"),
@@ -1440,6 +1449,7 @@ test("critical safety failure cannot produce an intelligence score", () => {
     () => computeProgressScore({
       artifactHash: `sha256:${fingerprint("unsafe-candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
       contentHash: `sha256:${fingerprint("unsafe-candidate-content")}`,
       candidateId: fingerprint("unsafe-candidate-admission"),
       executionBundleHash: fingerprint("unsafe-candidate-bundle"),
@@ -1516,6 +1526,56 @@ test("a committed candidate cannot substitute its artifact after challenge", () 
       ...valid.evaluation,
       artifactHash: `sha256:${fingerprint("substituted-after-challenge")}`,
     },
+    evaluatorWallets: assigned,
+  });
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [forged], timestamp: 1 }),
+    /does not match its finalized admission/,
+  );
+});
+
+test("baseline artifact identity and canonical baseline content are independently bound", () => {
+  const { chain, evaluators, validators } = fixture();
+  const attacker = generateWallet();
+  const mismatchedAdmission = createProgressCommitment({
+    wallet: attacker,
+    networkId: chain.networkId,
+    recipient: attacker.address,
+    artifactHash: `sha256:${fingerprint("weak-candidate")}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    baselineContentHash: `sha256:${fingerprint("attacker-selected-weak-baseline")}`,
+    contentHash: `sha256:${fingerprint("weak-candidate-content")}`,
+    suiteCommitment: fingerprint("weak-suite"),
+    nonce: 0,
+  });
+  const proposal = chain.buildBlock({ transactions: [mismatchedAdmission], timestamp: 0 });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
+    /does not match the known baseline artifact/,
+  );
+
+  const miner = generateWallet();
+  const valid = progressClaim(chain, evaluators, validators, miner);
+  const changedContent = {
+    ...valid.evaluation,
+    baselineContentHash: `sha256:${fingerprint("substituted-baseline-content")}`,
+  };
+  assert.notEqual(
+    progressCandidateId({
+      ...changedContent,
+      networkId: chain.networkId,
+      sender: miner.address,
+      recipient: miner.address,
+    }),
+    valid.evaluation.candidateId,
+  );
+  const assigned = valid.attestations.map(({ evaluator }) =>
+    evaluators.find((wallet) => wallet.address === evaluator));
+  const forged = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: valid.epoch,
+    recipient: miner.address,
+    evaluation: changedContent,
     evaluatorWallets: assigned,
   });
   assert.throws(

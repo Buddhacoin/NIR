@@ -278,7 +278,7 @@ const TRANSACTION_SCHEMAS = Object.freeze({
     "signature", "type",
   ]],
   "progress-commitment": [[
-    "algorithm", "artifactHash", "baselineHash", "candidateId", "contentHash", "networkId",
+    "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId", "contentHash", "networkId",
     "nonce", "parents", "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
   ]],
   "validator-bond": [[
@@ -493,25 +493,26 @@ export function createDelegatedCreditTransfer({
 }
 
 export function progressCandidateId({
-  networkId, sender, recipient, artifactHash, baselineHash, contentHash, parents, suiteCommitment,
+  networkId, sender, recipient, artifactHash, baselineHash, baselineContentHash, contentHash, parents, suiteCommitment,
 }) {
   return hashObject({
-    artifactHash, baselineHash, contentHash, networkId, parents, recipient, sender, suiteCommitment,
+    artifactHash, baselineContentHash, baselineHash, contentHash, networkId, parents, recipient, sender, suiteCommitment,
   }, "PROGRESS_CANDIDATE_ID");
 }
 
 export function createProgressCommitment({
-  wallet, networkId, recipient, artifactHash, baselineHash, contentHash = artifactHash,
+  wallet, networkId, recipient, artifactHash, baselineHash, baselineContentHash, contentHash = artifactHash,
   parents = [baselineHash], suiteCommitment, nonce,
 }) {
   const canonicalParents = [...parents].sort();
   const candidateId = progressCandidateId({
-    networkId, sender: wallet.address, recipient, artifactHash, baselineHash, contentHash,
+    networkId, sender: wallet.address, recipient, artifactHash, baselineHash, baselineContentHash, contentHash,
     parents: canonicalParents, suiteCommitment,
   });
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     artifactHash,
+    baselineContentHash,
     baselineHash,
     candidateId,
     contentHash,
@@ -682,6 +683,7 @@ export function progressFingerprint(evaluation) {
   return hashObject(
     {
       artifactHash: evaluation.artifactHash,
+      baselineContentHash: evaluation.baselineContentHash,
       baselineHash: evaluation.baselineHash,
       candidateId: evaluation.candidateId,
       contentHash: evaluation.contentHash,
@@ -698,6 +700,7 @@ export function computeProgressScore(evaluation) {
     typeof evaluation !== "object" ||
     evaluation === null ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.artifactHash ?? "") ||
+    !/^sha256:[0-9a-f]{64}$/.test(evaluation.baselineContentHash ?? "") ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.baselineHash ?? "") ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.contentHash ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.candidateId ?? "") ||
@@ -1388,6 +1391,7 @@ export class NirChain {
         commitment.committedHeight < 1 ||
         !Number.isSafeInteger(commitment.randomnessRound) || commitment.randomnessRound < 1 ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.artifactHash ?? "") ||
+        !/^sha256:[0-9a-f]{64}$/.test(commitment.baselineContentHash ?? "") ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.baselineHash ?? "") ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.contentHash ?? "") ||
         commitment.artifactHash === commitment.baselineHash ||
@@ -1834,6 +1838,7 @@ export class NirChain {
       admission.committedHeight >= epoch ||
       epoch > admission.committedHeight + MAX_PROGRESS_COMMITMENT_AGE ||
       admission.artifactHash !== claim.evaluation.artifactHash ||
+      admission.baselineContentHash !== claim.evaluation.baselineContentHash ||
       admission.baselineHash !== claim.evaluation.baselineHash ||
       admission.contentHash !== claim.evaluation.contentHash ||
       JSON.stringify(admission.parents) !== JSON.stringify(claim.evaluation.parents) ||
@@ -2483,6 +2488,7 @@ export class NirChain {
       transaction.algorithm !== SIGNATURE_ALGORITHM ||
       transaction.networkId !== this.#networkId ||
       !/^sha256:[0-9a-f]{64}$/.test(transaction.artifactHash ?? "") ||
+      !/^sha256:[0-9a-f]{64}$/.test(transaction.baselineContentHash ?? "") ||
       !/^sha256:[0-9a-f]{64}$/.test(transaction.baselineHash ?? "") ||
       !/^sha256:[0-9a-f]{64}$/.test(transaction.contentHash ?? "") ||
       transaction.artifactHash === transaction.baselineHash ||
@@ -2497,6 +2503,10 @@ export class NirChain {
     }
     assertAddress(transaction.sender, "progress submitter");
     assertAddress(transaction.recipient, "progress recipient");
+    if (capabilityMemory.contentForArtifact(transaction.baselineHash) !==
+        transaction.baselineContentHash) {
+      throw new Error("baseline canonical content does not match the known baseline artifact");
+    }
     const expectedId = progressCandidateId(transaction);
     if (
       transaction.candidateId !== expectedId ||
@@ -2532,6 +2542,7 @@ export class NirChain {
     nonces.set(transaction.sender, expectedNonce + 1);
     progressCommitments.set(expectedId, {
       artifactHash: transaction.artifactHash,
+      baselineContentHash: transaction.baselineContentHash,
       baselineHash: transaction.baselineHash,
       contentHash: transaction.contentHash,
       beaconCommittee: null,

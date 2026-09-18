@@ -71,13 +71,20 @@ must not change it. The reference runner implements only the bounded
 [`nir-model-content-v1`](model-content.md) directory/tar profile; it is not a
 general model canonicalizer.
 
-The executable runner format makes that boundary explicit. A candidate is
-content-addressed before the challenge epoch. Each baseline/candidate transcript
-then commits to the same fresh seed and exact environment manifest, and the
+The bounded runner format makes that boundary explicit. A candidate and known
+reference each have a role-bound canonical bundle. `baselineHash` remains the
+reference artifact/lineage identity; the separate `baselineContentHash` binds
+the reference bytes. The world-memory root and snapshot include the exact
+artifact-to-content mapping, and admission rejects any baseline pair that does
+not match it. A candidate is content-addressed before the challenge
+epoch. Each baseline/candidate transcript then commits to its canonical
+content, static entrypoint digest/path, adapter, the same fresh seed and exact environment manifest, and the
 final bundle commits to all outputs and the report. A consumed
-candidate/challenge pair cannot be submitted twice. Local artifact files can be
-rehashed during verification, so replacing a model after evaluation invalidates
-the bundle. `executionBundleHash` is mandatory in the chain evaluation and is
+candidate/challenge pair cannot be submitted twice. Local artifact and
+canonical-bundle files can be rehashed during verification, so replacing either
+after evaluation invalidates the bundle. The reference adapter reads an
+allowlisted JSON entrypoint and never executes model code; it cannot establish
+general isolated execution. `executionBundleHash` is mandatory in the chain evaluation and is
 therefore covered by every evaluator signature and progress fingerprint. This
 format supplies reproducibility and replay protection, not proof of physical
 execution by itself; production acceptance additionally requires signatures
@@ -85,7 +92,8 @@ from independently operated isolated runners and genuine hardware attestation.
 
 The chain resolves the bundle against a signed admission in finalized state.
 It independently checks commit-before-challenge ordering and exact equality of
-the artifact, canonical content, parent lineage, baseline, suite and recipient.
+the candidate artifact/content, baseline artifact/content, parent lineage,
+suite and recipient.
 A later quorum of the independent
 beacon-authority registry supplies domain-separated entropy. Each admission
 records the currently unfinished epoch-randomness round. Only completion of

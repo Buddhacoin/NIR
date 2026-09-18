@@ -212,7 +212,8 @@ recomputes the admitted digest from an exact regular-file allowlist while
 ignoring tar ordering, timestamps, compression and one outer wrapper directory.
 It rejects exact content reuse; it does not recognize semantically equivalent
 models with different commitments.
-A signed `progress-commitment` transaction first fixes the baseline, candidate,
+A signed `progress-commitment` transaction first fixes the baseline artifact
+identity, its separate canonical content commitment, the candidate artifact and
 canonical content, parent lineage, benchmark and recipient in finalized chain
 state and records the currently unfinished randomness round. It cannot receive
 a beacon committee until that exact round completes through on-chain
@@ -223,12 +224,12 @@ must sign, so an aggregator cannot choose a favorable signer subset after seeing
 the aggregate, derives the challenge seed and deterministically assigns the
 evaluator committee. Beacon shares use a progress-only signature domain, so a
 safety-fallback signature cannot be replayed as an intelligence challenge. The
-bundle binds those committed files to the challenge, the revealed benchmark,
+bundle binds role-specific allowlisted entrypoints and their digests to the challenge, the revealed benchmark,
 an exact runtime manifest, every independent output, measured resources, and
 the derived report. Artifact substitution, environment substitution, a task
 revealed before commitment, and reuse of the same finalized challenge all fail
-closed. The included data-only adapter is safe for local demonstrations; it
-does not execute untrusted model code. A public network still requires isolated
+closed. The included data-only adapter parses only committed JSON answers; it
+has no shell, arbitrary command or network path and does not execute model code. A public network still requires isolated
 remote runners and hardware-backed execution and energy attestations.
 The commitment is balance-free so the first NIR can be mined, but it consumes
 the submitter nonce, is limited to one pending request per address, expires
