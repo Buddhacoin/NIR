@@ -13,6 +13,10 @@ import { createValidatorHttpServer } from "./validator-service.mjs";
 import { certificateSha256 } from "./http-client.mjs";
 import { discoverPeersFromSeeds } from "./peer-discovery.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
+import {
+  CERTIFICATE_MODE_DEV_GENESIS,
+  CERTIFICATE_MODE_LIFECYCLE,
+} from "./certificate-runtime.mjs";
 
 const [command, directory, parameter = "", portText = ""] = process.argv.slice(2);
 
@@ -34,6 +38,14 @@ function tlsFromEnvironment() {
   return { cert, key, fingerprint: certificateSha256(new X509Certificate(cert).raw) };
 }
 
+function certificateModeFromEnvironment() {
+  const mode = process.env.NIR_CERTIFICATE_MODE ?? CERTIFICATE_MODE_DEV_GENESIS;
+  if (mode !== CERTIFICATE_MODE_DEV_GENESIS && mode !== CERTIFICATE_MODE_LIFECYCLE) {
+    throw new Error("NIR_CERTIFICATE_MODE must be dev-genesis or lifecycle");
+  }
+  return mode;
+}
+
 try {
   if (command === "init-dev" && directory) {
     const tls = tlsFromEnvironment();
@@ -42,14 +54,16 @@ try {
     }), null, 2));
   } else if (command === "serve-validator" && directory) {
     const port = validPort(parameter, 8791);
-    const validator = new ValidatorReplica(directory);
+    const validator = new ValidatorReplica(directory, {
+      certificateMode: certificateModeFromEnvironment(),
+    });
     const tls = tlsFromEnvironment();
     const ownIndex = validator.peerUrls.findIndex((_, index) =>
       validator.peerAddress(index) === validator.address);
-    const expectedPin = validator.peerTlsCertificateSha256(ownIndex);
-    if ((expectedPin === null) !== (tls === null) ||
-        (tls !== null && tls.fingerprint !== expectedPin)) {
-      throw new Error("TLS certificate does not match the validator's active peer registry");
+    const expectedPins = validator.peerTlsCertificateSha256Pins(ownIndex);
+    if ((expectedPins === null) !== (tls === null) ||
+        (tls !== null && !expectedPins.includes(tls.fingerprint))) {
+      throw new Error("TLS certificate does not match the validator's active certificate mode");
     }
     createValidatorHttpServer(validator, { tls }).listen(port, "127.0.0.1", () => {
       const protocol = tls ? "https" : "http";
@@ -58,7 +72,9 @@ try {
   } else if (command === "serve-coordinator" && directory && parameter) {
     const peers = parameter.split(",").filter(Boolean);
     const port = validPort(portText, 8787);
-    const node = new DistributedCoordinator(directory, peers);
+    const node = new DistributedCoordinator(directory, peers, {
+      certificateMode: certificateModeFromEnvironment(),
+    });
     createNodeHttpServer(node).listen(port, "127.0.0.1", () => {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);
     });

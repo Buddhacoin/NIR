@@ -38,8 +38,10 @@ silently redirecting its peers.
 Public endpoints must use HTTPS; plaintext HTTP is accepted only for loopback
 development addresses. The validator can terminate TLS 1.3 directly. P2P and
 coordinator clients compare the live DER-certificate SHA-256 fingerprint and
-validity period with the value committed by consensus. Automated certificate
-renewal and a distributed registry-signing ceremony remain production work.
+validity period with either the explicit local-development genesis pin or the
+active quorum-authorized certificate lifecycle described below. Independent
+certificate issuance infrastructure and a distributed signing ceremony remain
+production work.
 
 ## Discover peers without trusting a website
 
@@ -108,6 +110,20 @@ npm run network:validator -- .nir-network/validators/validator-2 8793
 npm run network:validator -- .nir-network/validators/validator-3 8794
 ```
 
+These commands default to `NIR_CERTIFICATE_MODE=dev-genesis`, which preserves
+the static-pin behavior of an initialized localhost devnet. A production-like
+testnet must first install the verified lifecycle history under each validator's
+`certificates/` directory and then start with the mode stated explicitly:
+
+```bash
+export NIR_CERTIFICATE_MODE=lifecycle
+npm run network:validator -- .nir-network/validators/validator-0 8791
+```
+
+In lifecycle mode a missing, revoked, expired-overlap, corrupt, or
+topology-detached record fails closed. The process does not retry with the stale
+pin from genesis.
+
 ## Start the coordinator
 
 ```bash
@@ -116,6 +132,10 @@ npm run network:coordinator -- \
   http://127.0.0.1:8791,http://127.0.0.1:8792,http://127.0.0.1:8793,http://127.0.0.1:8794 \
   8787
 ```
+
+The coordinator uses the same `NIR_CERTIFICATE_MODE`. Its verified lifecycle
+store belongs at `.nir-network/coordinator/certificates`; every request selects
+pins at the coordinator's current finalized height, including after restart.
 
 Signed transactions submitted to `POST /v1/transactions` are executed on an
 isolated chain copy before entering the bounded in-memory mempool; a malformed

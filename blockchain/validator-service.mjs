@@ -78,7 +78,8 @@ async function gossipPeerRequest(
     method: "POST",
     maxResponseBytes,
     timeoutMs: path === "/v1/p2p/blocks" ? 10_000 : 3_000,
-    tlsCertificateSha256: peer.tlsCertificateSha256,
+    tlsCertificateSha256Pins: peer.tlsCertificateSha256Pins ??
+      (peer.tlsCertificateSha256 === null ? null : [peer.tlsCertificateSha256]),
   });
   if (!response.ok) throw new Error(response.body.error ?? `gossip peer returned ${response.status}`);
   return validator.verifyValidatorResponseFrom(
@@ -407,13 +408,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         consumeIngress(identity);
         peerReputation.assertAllowed(identity);
         return await verificationScheduler.run(identity, () => send(response, 200, {
-            address: validator.address,
-            height: validator.height,
-            networkId: validator.networkId,
-            status: "ready",
-            tipHash: validator.tipHash,
-            mempoolSize: validator.mempoolSize,
-          }));
+          address: validator.address,
+          certificateMode: validator.certificateMode,
+          height: validator.height,
+          networkId: validator.networkId,
+          status: "ready",
+          tipHash: validator.tipHash,
+          mempoolSize: validator.mempoolSize,
+        }));
       }
       if (request.method === "GET" && url.pathname === "/v1/discovery") {
         identity = "public:discovery";
@@ -499,6 +501,7 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = {
           address: validator.address,
+          certificateMode: validator.certificateMode,
           height: validator.height,
           networkId: validator.networkId,
           tipHash: validator.tipHash,
@@ -512,6 +515,7 @@ export function createValidatorHttpServer(validator, options = {}) {
         const nonce = authorizeCoordinator(auth, request.method, url.pathname, payload);
         const result = {
           address: validator.address,
+          certificateMode: validator.certificateMode,
           height: validator.height,
           networkId: validator.networkId,
           tipHash: validator.tipHash,

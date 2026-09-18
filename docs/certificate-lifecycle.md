@@ -79,7 +79,7 @@ lowercase hexadecimal SHA-256 values.
 Create an unsigned deterministic plan:
 
 ```sh
-npm run certificate:lifecycle -- plan context.json ./node-state request.json > plan.json
+npm run certificate:lifecycle -- plan context.json ./node-state/certificates request.json > plan.json
 ```
 
 Validators inspect the certificate possession and endpoint checks, then sign the exact
@@ -90,7 +90,7 @@ key is passed to this command.
 Apply the quorum-approved record:
 
 ```sh
-npm run certificate:lifecycle -- apply context.json ./node-state signed-plan.json
+npm run certificate:lifecycle -- apply context.json ./node-state/certificates signed-plan.json
 ```
 
 The command re-verifies the complete lineage, quorum, current topology binding and
@@ -101,15 +101,15 @@ copy is repaired from the other; conflicting authenticated histories stop startu
 Inspect active fingerprints at the current or a specified height:
 
 ```sh
-npm run certificate:lifecycle -- status context.json ./node-state
-npm run certificate:lifecycle -- status context.json ./node-state 12030
+npm run certificate:lifecycle -- status context.json ./node-state/certificates
+npm run certificate:lifecycle -- status context.json ./node-state/certificates 12030
 ```
 
 Create a revocation plan, then collect approvals and apply it in the same way:
 
 ```sh
-npm run certificate:lifecycle -- revoke context.json ./node-state revoke-request.json > revoke-plan.json
-npm run certificate:lifecycle -- apply context.json ./node-state signed-revoke-plan.json
+npm run certificate:lifecycle -- revoke context.json ./node-state/certificates revoke-request.json > revoke-plan.json
+npm run certificate:lifecycle -- apply context.json ./node-state/certificates signed-revoke-plan.json
 ```
 
 The revocation request needs only `validatorAddress` and `activationHeight`. Revocation
@@ -123,6 +123,32 @@ lookup that returns an empty set means “do not connect”; the client rejects 
 malformed, duplicated, or oversized pin sets. During renewal it accepts either of the
 two authenticated fingerprints, and after overlap it fails closed on the predecessor.
 TLS certificate validity dates are checked in addition to fingerprint matching.
+
+## Runtime modes
+
+Validator and coordinator processes have two explicit transport-certificate modes:
+
+- `dev-genesis` is the default compatibility mode for local development. It uses
+  the static pin in the finalized peer registry exactly as older devnets did.
+- `lifecycle` is required for a public testnet or production-like rehearsal. Set
+  `NIR_CERTIFICATE_MODE=lifecycle` before starting every validator and the
+  coordinator. Each node loads its own verified redundant store from
+  `<node-directory>/certificates` and derives validator sets from the verified
+  handoff/topology history rooted in genesis.
+
+Lifecycle mode resolves pins again on every outbound coordinator or validator
+request at the node's current finalized height. A renewal therefore accepts the
+old and new pins only through the signed overlap height and drops the predecessor
+immediately afterward. A revocation, missing store, corrupt/conflicting copies,
+unknown topology commitment, or validator with no active record stops the
+request. Lifecycle mode never falls back to a genesis pin.
+
+At validator startup the configured server certificate must be one of that
+validator's lifecycle pins at the current height. Restart re-verifies the store,
+repairs one damaged redundant copy, and retains the same height-based decision.
+An operator must install the authorized record in every participating node's
+local certificate store before its activation height; copying an unsigned JSON
+file or setting a different environment variable cannot authorize a pin.
 
 Before a public test network, operators still need isolated key generation, documented
 certificate issuance procedures, independent deployment on real hosts, monitoring,

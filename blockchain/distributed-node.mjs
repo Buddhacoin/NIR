@@ -84,6 +84,10 @@ import {
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
+import {
+  CERTIFICATE_MODE_DEV_GENESIS,
+  RuntimeCertificatePins,
+} from "./certificate-runtime.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -303,10 +307,15 @@ export class ValidatorReplica {
   #peerTransports;
   #peerTlsPins;
   #peerRegistry;
+  #certificatePins;
   #transportView;
   #transportWallet;
 
-  constructor(directory, { clock = () => Date.now(), nonceCacheOptions = {} } = {}) {
+  constructor(directory, {
+    certificateMode = CERTIFICATE_MODE_DEV_GENESIS,
+    clock = () => Date.now(),
+    nonceCacheOptions = {},
+  } = {}) {
     if (typeof clock !== "function" || !nonceCacheOptions ||
         typeof nonceCacheOptions !== "object" || Array.isArray(nonceCacheOptions)) {
       throw new Error("validator security clock or nonce configuration is invalid");
@@ -321,6 +330,9 @@ export class ValidatorReplica {
     this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
     const genesis = readJson(join(this.#directory, "genesis.json"));
     this.#genesis = genesis;
+    this.#certificatePins = new RuntimeCertificatePins(this.#directory, genesis, {
+      mode: certificateMode,
+    });
     this.#validators = this.#chain.validatorMembers;
     const registry = this.#chain.peerRegistry;
     if (!registry) throw new Error("peer registry has no active version");
@@ -346,6 +358,7 @@ export class ValidatorReplica {
   }
 
   get address() { return this.#wallet.address; }
+  get certificateMode() { return this.#certificatePins.mode; }
   get height() { return this.#chain.height; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
@@ -530,7 +543,13 @@ export class ValidatorReplica {
   peerDescriptor(index, url = this.#peerUrls[index]) {
     const entry = this.#transportView[index];
     if (!entry || typeof url !== "string") throw new Error("validator peer index is invalid");
-    return structuredClone({ ...entry, url });
+    return structuredClone({
+      ...entry,
+      tlsCertificateSha256Pins: this.#certificatePins.pinsFor(
+        entry.validatorAddress, this.height, entry.tlsCertificateSha256,
+      ),
+      url,
+    });
   }
 
   validatorAddressForPeerSigner(signer) {
@@ -540,6 +559,13 @@ export class ValidatorReplica {
 
   peerAddress(index) { return this.#transportView[index]?.validatorAddress; }
   peerTlsCertificateSha256(index) { return this.#peerTlsPins[index] ?? null; }
+  peerTlsCertificateSha256Pins(index) {
+    const entry = this.#transportView[index];
+    if (!entry) throw new Error("validator peer index is invalid");
+    return this.#certificatePins.pinsFor(
+      entry.validatorAddress, this.height, entry.tlsCertificateSha256,
+    );
+  }
 
   pendingTransactions() { return this.#mempool.values(); }
 
@@ -1082,14 +1108,14 @@ export class ValidatorReplica {
 }
 
 async function peerRequest(url, path, value, {
-  maxResponseBytes, networkId, peer, tlsCertificateSha256 = null, wallet,
+  maxResponseBytes, networkId, peer, tlsCertificateSha256Pins = null, wallet,
 }) {
   const auth = createPeerRequest({ body: value, networkId, path, wallet });
   const response = await requestJson(`${url}${path}`, {
     body: { auth, payload: value },
     method: "POST",
     maxResponseBytes,
-    tlsCertificateSha256,
+    tlsCertificateSha256Pins,
   });
   if (!response.ok) throw new Error(response.body.error ?? `validator returned ${response.status}`);
   return verifyPeerResponse({
@@ -1109,8 +1135,11 @@ export class DistributedCoordinator {
   #wallet;
   #validators;
   #genesis;
+  #certificatePins;
 
-  constructor(directory, validatorUrls) {
+  constructor(directory, validatorUrls, {
+    certificateMode = CERTIFICATE_MODE_DEV_GENESIS,
+  } = {}) {
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
     this.#historyIndex = new AccountHistoryIndex(this.#directory, this.#chain);
@@ -1122,6 +1151,9 @@ export class DistributedCoordinator {
     this.#peers = [...validatorUrls];
     const genesis = readJson(join(this.#directory, "genesis.json"));
     this.#genesis = genesis;
+    this.#certificatePins = new RuntimeCertificatePins(this.#directory, genesis, {
+      mode: certificateMode,
+    });
     this.#validators = genesis.validators;
     const registryByValidator = new Map((genesis.peerRegistry?.peers ?? []).map((peer) =>
       [peer.validatorAddress, peer]));
@@ -1130,6 +1162,7 @@ export class DistributedCoordinator {
   }
 
   get consensusMode() { return "remote-validator-quorum"; }
+  get certificateMode() { return this.#certificatePins.mode; }
   get height() { return this.#chain.height; }
   get mempoolSize() { return this.#mempool.size; }
   get networkId() { return this.#chain.networkId; }
@@ -1256,7 +1289,9 @@ export class DistributedCoordinator {
         ? MAX_SNAPSHOT_BYTES + 64 * 1024
         : path === "/v1/handoffs/history" ? 16 * 1024 * 1024 + 64 * 1024 : undefined,
       peer: this.#validators[index],
-      tlsCertificateSha256: this.#peerTlsPins[index],
+      tlsCertificateSha256Pins: this.#certificatePins.pinsFor(
+        this.#validators[index].address, this.height, this.#peerTlsPins[index],
+      ),
       wallet: this.#wallet,
     });
   }

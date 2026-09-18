@@ -61,6 +61,7 @@ export function createNodeHttpServer(node) {
           height: node.height, networkId: node.networkId, status: "ready",
           tipHash: node.tipHash, valueMode: "valueless-devnet",
           ...(node.consensusMode ? { consensusMode: node.consensusMode } : {}),
+          ...(node.certificateMode ? { certificateMode: node.certificateMode } : {}),
           ...(Number.isSafeInteger(node.mempoolSize) ? { mempoolSize: node.mempoolSize } : {}),
         }, origin);
       }
