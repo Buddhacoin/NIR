@@ -132,3 +132,18 @@ export function verifyCeremonyRegistryAnchor(anchor, records, { trustedAddress }
     verified: true,
   };
 }
+
+export function verifyCeremonyRegistryAnchorForLatestPlan(
+  anchor, planValue, latestGenesisHash, options = {},
+) {
+  exactObject(anchor, ENVELOPE_FIELDS, "ceremony registry anchor");
+  if (anchor.format !== FORMAT) throw new Error("ceremony registry anchor format is invalid");
+  const payload = anchorPayload(anchor.payload);
+  const plan = verifyGenesisPlan(planValue, options);
+  assertPayloadPlan(payload, plan);
+  if (payload.latestGenesisHash !== latestGenesisHash) {
+    throw new Error("ceremony registry anchor genesis hash does not match compiled genesis");
+  }
+  const result = verifiedApprovals(payload, plan, anchor.approvals);
+  return { ...payload, ...result, verified: true };
+}
