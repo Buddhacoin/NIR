@@ -478,12 +478,13 @@ must not already exist. Passwords are read without echo and are never accepted
 as command-line arguments or environment variables.
 
 ```bash
-npm run vault:create -- /absolute/path/to/new-founder-vault
-npm run vault:verify -- /absolute/path/to/new-founder-vault
+npm run vault:create -- /absolute/path/to/new-founder-vault nir-testnet 1
+npm run vault:verify -- /absolute/path/to/new-founder-vault nir-testnet 1
 ```
 
 Creation produces three separately encrypted guardian files and one public-data
-recovery manifest for a two-of-three NIR address. Store the three files and
+recovery manifest for a two-of-three NIR address. The network and monotonically
+increasing recovery generation are committed into the set. Store the three files and
 their distinct passwords in separate physical locations. Do not commit them to
 Git, cloud-sync the complete set, or use this unaudited prototype for assets of
 real value.

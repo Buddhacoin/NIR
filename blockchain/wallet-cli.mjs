@@ -2,8 +2,9 @@
 import process from "node:process";
 
 import {
-  copyVerifiedWalletFile,
+  createVerifiedWalletBackup,
   createWalletFile,
+  restoreVerifiedWalletBackup,
   signWalletTransfer,
   verifyWalletFile,
   walletPublicInfo,
@@ -26,7 +27,10 @@ function readSecret(prompt) {
         if (character === "\u0003") return finish(new Error("cancelled"));
         if (character === "\r" || character === "\n") return finish();
         if (character === "\u007f" || character === "\b") value = value.slice(0, -1);
-        else if (character >= " ") value += character;
+        else if (character >= " ") {
+          value += character;
+          if (Buffer.byteLength(value) > 1_024) return finish(new Error("secret input is too long"));
+        }
       }
     };
     process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on("data", onData);
@@ -45,12 +49,20 @@ try {
   } else if (command === "verify" && args.length === 1) {
     const password = await readSecret("Wallet password: ");
     console.log(JSON.stringify(verifyWalletFile({ path: args[0], password }), null, 2));
-  } else if (["backup", "restore"].includes(command) && args.length === 2) {
+  } else if (command === "backup" && args.length === 4) {
     const password = await readSecret("Wallet password: ");
-    const result = copyVerifiedWalletFile({
+    const result = createVerifiedWalletBackup({
       sourcePath: args[0], targetPath: args[1], password,
+      networkId: args[2], generation: Number(args[3]),
     });
-    console.log(JSON.stringify({ ...result, operation: command }, null, 2));
+    console.log(JSON.stringify({ ...result, operation: "backup" }, null, 2));
+  } else if (command === "restore" && args.length === 5) {
+    const password = await readSecret("Wallet password: ");
+    const result = restoreVerifiedWalletBackup({
+      sourcePath: args[0], targetPath: args[1], password, networkId: args[2],
+      expectedAddress: args[3], minimumGeneration: Number(args[4]),
+    });
+    console.log(JSON.stringify({ ...result, operation: "restore" }, null, 2));
   } else if (command === "sign" && (args.length === 5 || args.length === 6)) {
     const [path, networkId, recipient, amount, nonce, fee] = args;
     console.error(`Recipient: ${recipient}\nAmount (atomic units): ${amount}\nNetwork: ${networkId}`);
@@ -61,7 +73,7 @@ try {
       path, password, networkId, recipient, amount, nonce: Number(nonce), fee,
     }), null, 2));
   } else {
-    throw new Error("usage: wallet:create <file> | wallet:address <file> | wallet:verify <file> | wallet:backup <vault> <new-backup-file> | wallet:restore <backup-file> <new-vault-file> | wallet:sign <file> <network> <recipient> <atomic-amount> <nonce> [atomic-fee]");
+    throw new Error("usage: wallet:create <file> | wallet:address <file> | wallet:verify <file> | wallet:backup <vault> <new-backup-file> <network-id> <generation> | wallet:restore <backup-file> <new-vault-file> <network-id> <expected-address> <minimum-generation> | wallet:sign <file> <network> <recipient> <atomic-amount> <nonce> [atomic-fee]");
   }
 } catch (error) {
   console.error(`Wallet operation failed: ${error.message}`);

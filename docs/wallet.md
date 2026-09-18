@@ -162,8 +162,15 @@ origin. This bridge is locally tested but has not received an external security
 audit and must not yet protect real-value funds.
 
 Use a randomly generated passphrase of at least six unrelated words and keep
-the recovery copies offline in separate places. The software rejects very short
-or excessively large passwords and malformed encrypted fields, but a memorable
+the recovery copies offline in separate places. New passwords must contain at
+least 16 Unicode scalar values, use canonical NFKC representation, avoid display
+controls and contain non-trivial character variety. The serialized vault accepts
+only the fixed scrypt and AES-256-GCM parameters and exact bounded schema. Wrong
+passwords and malformed contents share one public error and both pay the fixed
+KDF cost; this reduces simple local oracles but does not promise constant-time
+behaviour from JavaScript, OpenSSL or the operating system. Derived keys and
+temporary plaintext buffers are overwritten best-effort, while immutable
+JavaScript strings and process memory cannot be guaranteed zeroized. A memorable
 weak password can still be guessed; the current vault is not a substitute for
 a reviewed hardware key.
 

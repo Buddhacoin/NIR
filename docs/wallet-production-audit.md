@@ -46,7 +46,8 @@ Create a verified backup on another mounted device or private directory:
 ```bash
 npm run wallet:backup -- \
   /absolute/private/path/personal.nirvault.json \
-  /another/private/location/personal-backup.nirvault.json
+  /another/private/location/personal-backup.nirvault.json \
+  nir-testnet 9
 ```
 
 Restore a backup into a new path:
@@ -54,12 +55,27 @@ Restore a backup into a new path:
 ```bash
 npm run wallet:restore -- \
   /another/private/location/personal-backup.nirvault.json \
-  /absolute/new/path/personal.nirvault.json
+  /absolute/new/path/personal.nirvault.json \
+  nir-testnet nir1EXPECTED_ADDRESS 9
 ```
 
 All four commands read passwords interactively. Passwords are never accepted in
 arguments or environment variables. Backup files contain an encrypted private
-key and must still be treated as sensitive.
+key and must still be treated as sensitive. Record the address, network and
+latest generation separately from the backup. Restore requires those anchors;
+without an independently retained minimum generation, software cannot
+distinguish an authentic old backup from the newest one.
+
+Vault and backup reads pin a no-follow file descriptor, reject symbolic links,
+hard links, permissive modes, oversized input and files that mutate while being
+read. New files are fully written and fsynced in randomly named private
+generation files/directories, then exposed through one relative symlink created
+with no-replace semantics. Recovery sets verify all three guardians and write a
+completion marker before activation. Verification pins the generation with
+`O_NOFOLLOW|O_DIRECTORY`, checks inode, owner and mode, and descriptor-binds
+each file read. A crash before activation can leave an unreferenced hidden
+generation for manual secure removal, but creation never replaces or follows a
+target—even a directory or symlink created during the activation race.
 
 After installing a signed wallet package, verify the installed directory at any
 time:
@@ -80,6 +96,9 @@ npm run release:verify-wallet-install -- \
 - wrong vault password or modified ciphertext;
 - overwrite of an existing vault or backup;
 - permissive vault file mode or symbolic-link source;
+- hard-link/source-swap, partial-write and concurrent restore races;
+- KDF downgrade/parameter bombs and oversized or unknown encrypted fields;
+- cross-network/address backup mix-up and locally anchored generation rollback;
 - browser session remaining authorized after explicit disconnect;
 - remote script execution through wallet page policy;
 - unusable motion, contrast-mode and narrow-screen states.
