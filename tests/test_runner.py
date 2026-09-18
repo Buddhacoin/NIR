@@ -75,6 +75,8 @@ class RunnerTests(unittest.TestCase):
             candidate_id="cd" * 32,
             artifact_hash=artifact_hash(self.candidate_path),
             baseline_hash=artifact_hash(self.baseline_path),
+            content_hash=artifact_hash(self.candidate_path),
+            parents=(artifact_hash(self.baseline_path),),
             suite_commitment=self.suite.commitment(self.salt),
             committed_epoch=7,
         )
@@ -140,6 +142,18 @@ class RunnerTests(unittest.TestCase):
         self.assertGreater(bundle.report.gain_ppm, 0)
         self.assertTrue(bundle.report.energy_attested)
         self.assertEqual(len(bundle.bundle_hash), 64)
+
+    def test_candidate_commitment_binds_canonical_content_and_lineage(self):
+        changed_content = CandidateCommitment.from_dict(
+            {**self.commitment.as_dict(), "content_hash": f"sha256:{'9' * 64}"}
+        )
+        self.assertNotEqual(changed_content.commitment_hash, self.commitment.commitment_hash)
+        with self.assertRaisesRegex(ProtocolError, "lineage"):
+            CandidateCommitment.from_dict(
+                {**self.commitment.as_dict(), "parents": [
+                    f"sha256:{'f' * 64}", f"sha256:{'0' * 64}",
+                ]}
+            )
 
     def test_artifact_substitution_is_rejected(self):
         bundle = self.bundle()

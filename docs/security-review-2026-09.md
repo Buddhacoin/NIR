@@ -43,7 +43,10 @@ arithmetic; it cannot observe physical execution.
 
 **Current protections:** candidate/baseline hashes, suite commitments, delayed
 challenge randomness, complete assigned committees, quorum receipts, duplicate
-fingerprint rejection, policy vetoes, bonds, and reward-rate limits.
+fingerprint and canonical-content rejection, pre-challenge lineage binding,
+policy vetoes, bonds, and reward-rate limits. Canonical-content checking is an
+evaluator-attested commitment; validators do not see private model bytes and
+cannot independently recognize semantic copies.
 
 **Why critical:** a key proves who signed a statement, not that a separate
 machine executed it. Energy evidence is self-reported. False independence could

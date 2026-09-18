@@ -172,6 +172,18 @@ test("state snapshots fail closed on mutation, minority approval, and duplicate 
     validator: wallet.address,
   }));
   assert.throws(() => verify(changedMemory, validatorMembers), /capability memory is invalid/);
+
+  const changedContent = createStateSnapshot(chain, validators.slice(0, 3));
+  changedContent.capabilityMemory.contents[0] = `sha256:${digest("forged-canonical-content")}`;
+  const { attestations: _contentAttestations, snapshotHash: _contentHash, ...contentPayload } =
+    changedContent;
+  changedContent.snapshotHash = hashObject(contentPayload, "STATE_SNAPSHOT");
+  changedContent.attestations = validators.slice(0, 3).map((wallet) => ({
+    signature: signObject({ snapshotHash: changedContent.snapshotHash }, wallet,
+      "STATE_SNAPSHOT_APPROVAL"),
+    validator: wallet.address,
+  }));
+  assert.throws(() => verify(changedContent, validatorMembers), /capability memory is invalid/);
 });
 
 test("a self-signed attacker validator set cannot become its own trust anchor", () => {

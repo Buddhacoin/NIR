@@ -78,7 +78,7 @@ function fixture() {
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
-  const chain = new NirChain({
+  const genesisConfig = {
     capabilityReferences: [
       {
         artifactHash: `sha256:${fingerprint("baseline")}`,
@@ -93,9 +93,10 @@ function fixture() {
     validators: operatorMembers(validators, "validator"),
     evaluators: operatorMembers(evaluators, "evaluator"),
     treasuryAddress: treasury.address,
-  });
+  };
+  const chain = new NirChain(genesisConfig);
   TEST_BEACON_WALLETS.set(chain, beaconAuthorities);
-  return { beaconAuthorities, chain, evaluators, treasury, validators };
+  return { beaconAuthorities, chain, evaluators, genesisConfig, treasury, validators };
 }
 
 const TEST_BEACON_WALLETS = new WeakMap();
@@ -187,8 +188,10 @@ function progressClaim(
   submitterWallet,
   label = "proof-a",
   recipient = submitterWallet.address,
+  canonicalContentLabel = `artifact-${label}`,
 ) {
   const artifactHash = `sha256:${fingerprint(`artifact-${label}`)}`;
+  const contentHash = `sha256:${fingerprint(canonicalContentLabel)}`;
   const baselineHash = `sha256:${fingerprint("baseline")}`;
   const suiteCommitment = fingerprint("hidden-suite-v1");
   const timestamp = chain.blocks().at(-1).timestamp;
@@ -198,6 +201,7 @@ function progressClaim(
     recipient,
     artifactHash,
     baselineHash,
+    contentHash,
     suiteCommitment,
     nonce: chain.nextNonce(submitterWallet.address),
   });
@@ -229,6 +233,7 @@ function progressClaim(
   const evaluation = chain.prepareProgressEvaluation({
     artifactHash,
     baselineHash,
+    contentHash,
     candidateId: admission.candidateId,
     executionBundleHash: fingerprint(`execution-bundle-${label}`),
     suiteCommitment,
@@ -347,7 +352,7 @@ test("Python and JavaScript capability memory use the same state root", () => {
   ]);
   assert.equal(
     memory.stateRoot,
-    "899e7e77b9632818d2caae6da02b01eb964b3003b43ee4cc37f9b96caa2cce01",
+    "7ad5766b6ab784d902613b65e6908eed56206063ab8a5604285e27f2631323b5",
   );
 });
 
@@ -1322,8 +1327,56 @@ test("one progress proof cannot mint twice", () => {
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
   assert.throws(
     () => progressClaim(chain, evaluators, validators, miner),
-    /already known/,
+    /duplicated|already known/,
   );
+});
+
+test("a new key and artifact wrapper cannot reward the same canonical content after fork or restart", () => {
+  const { chain, evaluators, genesisConfig, validators } = fixture();
+  const firstMiner = generateWallet();
+  const canonicalContentLabel = "shared-canonical-model-weights";
+  const claim = progressClaim(
+    chain, evaluators, validators, firstMiner, "original-package", firstMiner.address,
+    canonicalContentLabel,
+  );
+  const reward = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
+  chain.appendBlock(finalizeBlock(reward, quorumFor(reward, validators)));
+
+  const exported = chain.consensusSnapshot();
+  const checkpoint = chain.blocks().at(-1);
+  const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: exported.capabilityMemory,
+    checkpoint,
+    height: chain.height,
+    networkId: chain.networkId,
+    state: exported.state,
+    stateRoot: chain.stateRoot,
+    tipHash: chain.tipHash,
+  });
+  const replayed = new NirChain(genesisConfig);
+  for (const block of chain.blocks().slice(1)) replayed.appendBlock(block);
+
+  for (const [mode, target] of [
+    ["fork", chain.fork()], ["snapshot restart", restored], ["journal replay", replayed],
+  ]) {
+    const attacker = generateWallet();
+    const repackaged = createProgressCommitment({
+      wallet: attacker,
+      networkId: target.networkId,
+      recipient: attacker.address,
+      artifactHash: `sha256:${fingerprint(`wrapper-${mode}`)}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      contentHash: `sha256:${fingerprint(canonicalContentLabel)}`,
+      suiteCommitment: fingerprint(`new-metadata-${mode}`),
+      nonce: target.nextNonce(attacker.address),
+    });
+    const proposal = target.buildBlock({ transactions: [repackaged], timestamp: 2 });
+    assert.throws(
+      () => target.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
+      /progress commitment is duplicated/,
+      mode,
+    );
+  }
 });
 
 test("an arbitrary intelligence score cannot mint NIR", () => {
@@ -1342,6 +1395,7 @@ test("chain scoring matches the evaluator output", () => {
     computeProgressScore({
       artifactHash: `sha256:${fingerprint("candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      contentHash: `sha256:${fingerprint("candidate-content")}`,
       candidateId: fingerprint("candidate-admission"),
       executionBundleHash: fingerprint("candidate-bundle"),
       suiteCommitment: fingerprint("suite"),
@@ -1386,6 +1440,7 @@ test("critical safety failure cannot produce an intelligence score", () => {
     () => computeProgressScore({
       artifactHash: `sha256:${fingerprint("unsafe-candidate")}`,
       baselineHash: `sha256:${fingerprint("baseline")}`,
+      contentHash: `sha256:${fingerprint("unsafe-candidate-content")}`,
       candidateId: fingerprint("unsafe-candidate-admission"),
       executionBundleHash: fingerprint("unsafe-candidate-bundle"),
       suiteCommitment: fingerprint("suite"),
@@ -1465,6 +1520,17 @@ test("a committed candidate cannot substitute its artifact after challenge", () 
   });
   assert.throws(
     () => chain.buildBlock({ rewardClaims: [forged], timestamp: 1 }),
+    /does not match its finalized admission/,
+  );
+});
+
+test("a candidate cannot choose a different lineage after its challenge", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const claim = progressClaim(chain, evaluators, validators, miner);
+  claim.evaluation.parents = [`sha256:${fingerprint("post-challenge-parent")}`];
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [claim], timestamp: 1 }),
     /does not match its finalized admission/,
   );
 });

@@ -18,6 +18,7 @@ def snapshot(
 ) -> CapabilitySnapshot:
     return CapabilitySnapshot(
         artifact_hash=digest(artifact, prefixed=True),
+        content_hash=digest(artifact, prefixed=True),
         parents=(digest(parent, prefixed=True),),
         committed_epoch=10,
         challenge_epoch=11,
@@ -66,6 +67,28 @@ class CapabilityMemoryTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             registry.accept(candidate)
 
+    def test_repackaged_artifact_cannot_reuse_canonical_content(self):
+        registry = memory()
+        first = snapshot(
+            "first-wrapper",
+            "known-model-a",
+            "first-transcript",
+            {"code-v1": 8_400, "reasoning-v1": 8_200},
+        )
+        registry.accept(first)
+        repackaged = CapabilitySnapshot(
+            artifact_hash=digest("second-wrapper", prefixed=True),
+            content_hash=first.content_hash,
+            parents=(digest("known-model-a", prefixed=True),),
+            committed_epoch=12,
+            challenge_epoch=13,
+            challenge_seed=digest("later-challenge"),
+            behavior_commitment=digest("second-transcript"),
+            scores_bps={"code-v1": 8_600, "reasoning-v1": 8_400},
+        )
+        with self.assertRaisesRegex(ProtocolError, "canonical content"):
+            registry.accept(repackaged)
+
     def test_new_frontier_delta_is_recorded_once(self):
         registry = memory()
         before = registry.state_root
@@ -96,6 +119,7 @@ class CapabilityMemoryTests(unittest.TestCase):
         )
         stale = CapabilitySnapshot(
             artifact_hash=candidate.artifact_hash,
+            content_hash=candidate.content_hash,
             parents=candidate.parents,
             committed_epoch=11,
             challenge_epoch=11,

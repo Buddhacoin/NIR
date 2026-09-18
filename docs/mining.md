@@ -9,9 +9,10 @@ does not create valuable NIR; the public mining network does not exist yet.
 ### 1. Capability author
 
 Submit a model, algorithm, dataset method, or efficiency improvement. Commit
-the complete artifact first. Later, randomly assigned operators run the frozen
-baseline and candidate on hidden tasks. A reward is possible only for a new
-world-frontier delta that clears every critical safety gate.
+the complete artifact, its metadata-independent canonical content digest, and
+its bounded parent lineage first. Later, randomly assigned operators run the
+frozen baseline and candidate on hidden tasks. A reward is possible only for a
+new world-frontier delta that clears every critical safety gate.
 
 ### 2. Reproduction operator
 
@@ -93,6 +94,12 @@ npm run mine:demo
 It constructs signed local blocks and evaluation receipts. It does not connect
 to peers, perform real model training, earn exchangeable currency, or register
 the computer as a production operator.
+
+The local consensus rejects reuse of an already accepted canonical content
+commitment even when the submitter key, package hash, metadata and evaluation
+transcript change. This is not a claim that NIR can identify semantically copied
+ideas or inspect private weights: isolated evaluators must recompute and attest
+the canonical digest, and distinct commitments can still conceal related work.
 
 ## Connecting today
 

@@ -60,9 +60,15 @@ receipt. Validators recompute the score; submitters cannot choose it.
 
 One verifier key contributes at most one result for each artifact. Energy-based
 scoring is eligible only when both baseline and candidate measurements are
-attested. The artifact commitment must ultimately cover the model, inference
-configuration, runtime, dependencies, and evaluator harness—not merely model
-weights.
+attested. The artifact commitment covers the complete runnable package. A
+separate `contentHash` is a `sha256:` commitment to a canonical,
+metadata-independent representation of the contributed model or method without
+publishing its bytes. The admission also commits to 1–32 sorted, unique parent
+artifact hashes. For a production evaluation family, assigned evaluators must
+recompute that canonical commitment inside the isolated runner; changing a
+container label, archive ordering, submitter key, recipient, or wrapper metadata
+must not change it. The current reference runner only binds the supplied digest
+into its proof bundle and does not define a general model canonicalizer.
 
 The executable runner format makes that boundary explicit. A candidate is
 content-addressed before the challenge epoch. Each baseline/candidate transcript
@@ -78,7 +84,8 @@ from independently operated isolated runners and genuine hardware attestation.
 
 The chain resolves the bundle against a signed admission in finalized state.
 It independently checks commit-before-challenge ordering and exact equality of
-the artifact, baseline, suite and recipient. A later quorum of the independent
+the artifact, canonical content, parent lineage, baseline, suite and recipient.
+A later quorum of the independent
 beacon-authority registry supplies domain-separated entropy. Each admission
 records the currently unfinished epoch-randomness round. Only completion of
 that round in later finalized blocks can fix one exact beacon committee, and
@@ -306,7 +313,9 @@ grading is not reliable.
 - **Role capture:** evaluation and block-finality keys belong to disjoint
   operator registries; production admission must prove that those operators are
   independently controlled.
-- **Duplicate work:** artifact and lineage fingerprints prevent repeated claims.
+- **Duplicate work:** the canonical content commitment is permanently recorded
+  in the capability-memory root, and lineage is fixed before challenge. Exact
+  commitment replay under a new key, wrapper or transcript is rejected.
 - **Benchmark gaming:** rotating task families and out-of-distribution tests.
 - **Energy fraud:** signed hardware telemetry plus statistical and spot audits.
 - **Safety regression:** a safety floor can reject a proof regardless of gain.
@@ -330,7 +339,8 @@ commitment is final. Consequently this component must not authorize issuance
 until an on-chain commit/future-randomness/evaluate state machine is connected.
 
 The chain enforces this ordering as an admission state machine: an artifact,
-baseline, suite, recipient, and epoch are committed first; only a later
+canonical content digest, bounded parent lineage, baseline, suite, recipient,
+and epoch are committed first; only a later
 post-quantum beacon quorum can assign the complete evaluator committee; the
 assignment cannot be replaced, shortened, duplicated, or synthesized from the
 safety-fallback signature domain. Admissions and assignments are consensus
@@ -376,8 +386,8 @@ Validator exits and bond-withdrawal delays remain unfinished.
 NIR does not reward possession of knowledge already demonstrated by existing
 models. Before issuance starts, reference models form a sealed, unrewarded
 world-capability snapshot. For each evaluation family the ledger remembers the
-best verified score, model lineage, artifact commitment, and behavioral-output
-commitment.
+best verified score, model lineage, artifact commitment, canonical content
+commitment, and behavioral-output commitment.
 
 A renamed model, a bot repeatedly calling an existing API, or a known model
 compared with a deliberately weak baseline earns nothing because it does not
@@ -387,6 +397,15 @@ artifact is committed, so stored answers cannot be prepared for the exact test.
 Every accepted change produces a new deterministic memory root.
 That root is committed by genesis and every block, so all validators must apply
 the same history before they can finalize another intelligence reward.
+
+This is exact commitment replay protection, not semantic plagiarism detection.
+Consensus cannot tell whether two genuinely different byte commitments embody
+the same idea, share unreported training data, or differ only through an
+adversarial transformation. It also cannot prove that a claimed `contentHash`
+was honestly derived from private weights; independent isolated runners must
+recompute it and the assigned evaluator quorum must attest it. A captured
+evaluator quorum can still lie, as described in SR-01 of the security review.
+No model weights or private artifact bytes are placed on chain.
 
 This defines two different things:
 

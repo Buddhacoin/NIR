@@ -51,8 +51,10 @@ identically.
 - a world-capability memory root committed by genesis and every block;
 - a complete deterministic state root committed by genesis and every protocol-v7
   block, covering monetary, mining, safety, randomness, validator, and peer state;
-- consensus validation of lineage, behavior novelty, and marginal frontier gain;
-- permanent rejection of already rewarded proof fingerprints;
+- pre-challenge binding of a bounded parent lineage plus consensus validation
+  of behavior novelty and marginal frontier gain;
+- permanent rejection of already rewarded proof fingerprints and canonical
+  content commitments, including replay under a new key or package wrapper;
 - ten-year linear treasury vesting by bounded block timestamps;
 - signed candidate-bond transactions and consensus-recomputed critical-safety
   settlements with reporter/evaluator payouts and permanent supply burns;
@@ -88,13 +90,24 @@ receipts.
 
 `executionBundleHash` is consensus-required and covered by evaluator
 signatures. A reward must also reference a signed candidate admission from an
-earlier finalized block. The chain matches its artifact, baseline, suite,
-recipient and height. After finalization, more than two thirds of a separate
+earlier finalized block. The chain matches its artifact, canonical content
+commitment, parent lineage, baseline, suite, recipient and height. After
+finalization, more than two thirds of a separate
 post-quantum beacon registry must sign domain-separated fresh shares. A
 strictly later finalized epoch first assigns their exact committee from a
 post-quantum commit/reveal seed that was unknown at admission time. Their
 canonical aggregate derives the challenge and deterministic evaluator
 committee. Successful and expired admissions are removed from state.
+
+Canonical content uniqueness is deliberately narrower than semantic novelty.
+The commitment is intended to hide artifact bytes and ignore packaging metadata
+under an evaluation family's published canonicalization profile, but validators
+cannot detect a false commitment or recognize transformed copies by themselves.
+The current reference runner binds the supplied commitment into its bundle; it
+does not yet define a general canonicalizer for every model format. Production
+families need that deterministic canonicalizer and assigned independent runners
+must recompute it. Exact commitment history already survives state snapshots,
+forks and replay through the capability-memory root.
 
 Admission does not charge NIR, because requiring an existing coin would make
 the first intelligence reward impossible. Spam is bounded by block limits, one

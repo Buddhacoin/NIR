@@ -53,6 +53,7 @@ def _validated_scores(scores: Mapping[str, int]) -> dict[str, int]:
 @dataclass(frozen=True, slots=True)
 class CapabilitySnapshot:
     artifact_hash: str
+    content_hash: str
     parents: tuple[str, ...]
     committed_epoch: int
     challenge_epoch: int
@@ -62,6 +63,7 @@ class CapabilitySnapshot:
 
     def validate(self) -> dict[str, int]:
         _require_digest(self.artifact_hash, "artifact hash", prefixed=True)
+        _require_digest(self.content_hash, "canonical content", prefixed=True)
         _require_digest(self.challenge_seed, "challenge seed")
         _require_digest(self.behavior_commitment, "behavior commitment")
         if (
@@ -73,8 +75,12 @@ class CapabilitySnapshot:
             or self.challenge_epoch <= self.committed_epoch
         ):
             raise ProtocolError("challenge must be created after artifact commitment")
-        if not self.parents or len(self.parents) != len(set(self.parents)):
-            raise ProtocolError("at least one unique parent artifact is required")
+        if (
+            not self.parents
+            or len(self.parents) > 32
+            or tuple(sorted(set(self.parents))) != self.parents
+        ):
+            raise ProtocolError("1 to 32 sorted unique parent artifacts are required")
         for parent in self.parents:
             _require_digest(parent, "parent artifact hash", prefixed=True)
         return _validated_scores(self.scores_bps)
@@ -95,6 +101,7 @@ class CapabilityMemory:
     def __init__(self) -> None:
         self._records: dict[str, dict[str, int]] = {}
         self._behaviors: set[str] = set()
+        self._contents: set[str] = set()
         self._sealed = False
 
     @property
@@ -107,37 +114,47 @@ class CapabilityMemory:
 
     @property
     def state_root(self) -> str:
-        return self._root(self._records, self._behaviors)
+        return self._root(self._records, self._behaviors, self._contents)
 
     @staticmethod
-    def _root(records: Mapping[str, Mapping[str, int]], behaviors: set[str]) -> str:
+    def _root(
+        records: Mapping[str, Mapping[str, int]],
+        behaviors: set[str],
+        contents: set[str],
+    ) -> str:
         records = {
             artifact: dict(sorted(scores.items()))
             for artifact, scores in sorted(records.items())
         }
         return consensus_hash(
             "CAPABILITY_MEMORY",
-            {"behaviors": sorted(behaviors), "records": records},
+            {"behaviors": sorted(behaviors), "contents": sorted(contents), "records": records},
         )
 
     def seed_reference(
         self,
         *,
         artifact_hash: str,
+        content_hash: str | None = None,
         behavior_commitment: str,
         scores_bps: Mapping[str, int],
     ) -> None:
         if self._sealed:
             raise ProtocolError("world capability snapshot is already sealed")
         _require_digest(artifact_hash, "artifact hash", prefixed=True)
+        content_hash = content_hash or artifact_hash
+        _require_digest(content_hash, "canonical content", prefixed=True)
         _require_digest(behavior_commitment, "behavior commitment")
         if artifact_hash in self._records:
             raise ProtocolError("reference artifact is duplicated")
         if behavior_commitment in self._behaviors:
             raise ProtocolError("reference behavior is duplicated")
+        if content_hash in self._contents:
+            raise ProtocolError("reference canonical content is duplicated")
         scores = _validated_scores(scores_bps)
         self._records[artifact_hash] = scores
         self._behaviors.add(behavior_commitment)
+        self._contents.add(content_hash)
 
     def seal_world_snapshot(self) -> str:
         if not self._records:
@@ -151,6 +168,8 @@ class CapabilityMemory:
         scores = snapshot.validate()
         if snapshot.artifact_hash in self._records:
             raise ProtocolError("artifact is already known")
+        if snapshot.content_hash in self._contents:
+            raise ProtocolError("canonical content is already known")
         if snapshot.behavior_commitment in self._behaviors:
             raise ProtocolError("behavior is already known")
         unknown_parents = set(snapshot.parents) - self._records.keys()
@@ -189,6 +208,7 @@ class CapabilityMemory:
         after = self._root(
             projected_records,
             self._behaviors | {snapshot.behavior_commitment},
+            self._contents | {snapshot.content_hash},
         )
         return NoveltyReport(
             frontier_root_before=self.state_root,
@@ -202,4 +222,5 @@ class CapabilityMemory:
         report = self.assess(snapshot)
         self._records[snapshot.artifact_hash] = _validated_scores(snapshot.scores_bps)
         self._behaviors.add(snapshot.behavior_commitment)
+        self._contents.add(snapshot.content_hash)
         return report

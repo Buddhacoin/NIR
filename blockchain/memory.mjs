@@ -43,7 +43,7 @@ function validatedScores(scores) {
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function memoryRoot(records, behaviors) {
+function memoryRoot(records, behaviors, contents) {
   const orderedRecords = Object.fromEntries(
     [...records.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -51,6 +51,7 @@ function memoryRoot(records, behaviors) {
   );
   const payload = {
     behaviors: [...behaviors].sort(),
+    contents: [...contents].sort(),
     records: orderedRecords,
   };
   return hashObject(payload, "CAPABILITY_MEMORY");
@@ -58,8 +59,11 @@ function memoryRoot(records, behaviors) {
 
 export function capabilityMemorySnapshotRoot(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.records) || !Array.isArray(snapshot.behaviors) ||
+      !Array.isArray(snapshot.contents) ||
       snapshot.records.length === 0 || snapshot.records.length > 100_000 ||
       snapshot.behaviors.length !== snapshot.records.length ||
+      snapshot.contents.length !== snapshot.records.length ||
+      new Set(snapshot.contents).size !== snapshot.contents.length ||
       new Set(snapshot.behaviors).size !== snapshot.behaviors.length) {
     throw new Error("capability memory snapshot is invalid");
   }
@@ -76,15 +80,22 @@ export function capabilityMemorySnapshotRoot(snapshot) {
     requireDigest(behavior, "snapshot behavior");
     behaviors.add(behavior);
   }
-  return memoryRoot(records, behaviors);
+  const contents = new Set();
+  for (const content of snapshot.contents) {
+    requireDigest(content, "snapshot canonical content", true);
+    contents.add(content);
+  }
+  return memoryRoot(records, behaviors, contents);
 }
 
 export class CapabilityMemory {
   #behaviors;
+  #contents;
   #records;
 
   constructor(references = [], internal = null) {
     this.#behaviors = new Set();
+    this.#contents = new Set();
     this.#records = new Map();
     if (internal?.token === INTERNAL_CLONE) {
       this.#records = new Map(
@@ -94,6 +105,7 @@ export class CapabilityMemory {
         ]),
       );
       this.#behaviors = new Set(internal.behaviors);
+      this.#contents = new Set(internal.contents);
       return;
     }
     if (!Array.isArray(references) || references.length === 0) {
@@ -101,9 +113,12 @@ export class CapabilityMemory {
     }
     for (const reference of references) {
       requireDigest(reference.artifactHash, "reference artifact", true);
+      const contentHash = reference.contentHash ?? reference.artifactHash;
+      requireDigest(contentHash, "reference canonical content", true);
       requireDigest(reference.behaviorCommitment, "reference behavior");
       if (
         this.#records.has(reference.artifactHash) ||
+        this.#contents.has(contentHash) ||
         this.#behaviors.has(reference.behaviorCommitment)
       ) {
         throw new Error("world capability reference is duplicated");
@@ -113,6 +128,7 @@ export class CapabilityMemory {
         validatedScores(reference.capabilitiesBps),
       );
       this.#behaviors.add(reference.behaviorCommitment);
+      this.#contents.add(contentHash);
     }
   }
 
@@ -122,6 +138,7 @@ export class CapabilityMemory {
       token: INTERNAL_CLONE,
       records: snapshot.records,
       behaviors: snapshot.behaviors,
+      contents: snapshot.contents,
     });
   }
 
@@ -130,16 +147,18 @@ export class CapabilityMemory {
       token: INTERNAL_CLONE,
       records: [...this.#records.entries()],
       behaviors: [...this.#behaviors],
+      contents: [...this.#contents],
     });
   }
 
   get stateRoot() {
-    return memoryRoot(this.#records, this.#behaviors);
+    return memoryRoot(this.#records, this.#behaviors, this.#contents);
   }
 
   snapshot() {
     return {
       behaviors: [...this.#behaviors].sort(),
+      contents: [...this.#contents].sort(),
       records: [...this.#records.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([artifact, scores]) => [artifact, structuredClone(scores)]),
@@ -156,8 +175,14 @@ export class CapabilityMemory {
     return validatedScores(frontier);
   }
 
+  hasContent(contentHash) {
+    requireDigest(contentHash, "canonical content", true);
+    return this.#contents.has(contentHash);
+  }
+
   assess(evaluation) {
     requireDigest(evaluation.artifactHash, "artifact hash", true);
+    requireDigest(evaluation.contentHash, "canonical content", true);
     requireDigest(evaluation.behaviorCommitment, "behavior commitment");
     requireDigest(evaluation.challengeSeed, "challenge seed");
     if (
@@ -171,13 +196,18 @@ export class CapabilityMemory {
     if (
       !Array.isArray(evaluation.parents) ||
       evaluation.parents.length === 0 ||
-      new Set(evaluation.parents).size !== evaluation.parents.length
+      evaluation.parents.length > 32 ||
+      new Set(evaluation.parents).size !== evaluation.parents.length ||
+      evaluation.parents.some((parent, index) => index > 0 && parent <= evaluation.parents[index - 1])
     ) {
-      throw new Error("at least one unique parent artifact is required");
+      throw new Error("1 to 32 sorted unique parent artifacts are required");
     }
     const scores = validatedScores(evaluation.capabilitiesBps);
     if (this.#records.has(evaluation.artifactHash)) {
       throw new Error("artifact is already known");
+    }
+    if (this.#contents.has(evaluation.contentHash)) {
+      throw new Error("canonical content is already known");
     }
     if (this.#behaviors.has(evaluation.behaviorCommitment)) {
       throw new Error("behavior is already known");
@@ -229,9 +259,11 @@ export class CapabilityMemory {
     projectedRecords.set(evaluation.artifactHash, scores);
     const projectedBehaviors = new Set(this.#behaviors);
     projectedBehaviors.add(evaluation.behaviorCommitment);
+    const projectedContents = new Set(this.#contents);
+    projectedContents.add(evaluation.contentHash);
     return {
       frontierRootBefore: this.stateRoot,
-      frontierRootAfter: memoryRoot(projectedRecords, projectedBehaviors),
+      frontierRootAfter: memoryRoot(projectedRecords, projectedBehaviors, projectedContents),
       marginalGainsBps: gains,
       noveltyBps,
     };
@@ -244,6 +276,7 @@ export class CapabilityMemory {
       validatedScores(evaluation.capabilitiesBps),
     );
     this.#behaviors.add(evaluation.behaviorCommitment);
+    this.#contents.add(evaluation.contentHash);
     return report;
   }
 }

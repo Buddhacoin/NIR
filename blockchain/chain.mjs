@@ -278,8 +278,8 @@ const TRANSACTION_SCHEMAS = Object.freeze({
     "signature", "type",
   ]],
   "progress-commitment": [[
-    "algorithm", "artifactHash", "baselineHash", "candidateId", "networkId", "nonce",
-    "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
+    "algorithm", "artifactHash", "baselineHash", "candidateId", "contentHash", "networkId",
+    "nonce", "parents", "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
   ]],
   "validator-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -493,26 +493,31 @@ export function createDelegatedCreditTransfer({
 }
 
 export function progressCandidateId({
-  networkId, sender, recipient, artifactHash, baselineHash, suiteCommitment,
+  networkId, sender, recipient, artifactHash, baselineHash, contentHash, parents, suiteCommitment,
 }) {
   return hashObject({
-    artifactHash, baselineHash, networkId, recipient, sender, suiteCommitment,
+    artifactHash, baselineHash, contentHash, networkId, parents, recipient, sender, suiteCommitment,
   }, "PROGRESS_CANDIDATE_ID");
 }
 
 export function createProgressCommitment({
-  wallet, networkId, recipient, artifactHash, baselineHash, suiteCommitment, nonce,
+  wallet, networkId, recipient, artifactHash, baselineHash, contentHash = artifactHash,
+  parents = [baselineHash], suiteCommitment, nonce,
 }) {
+  const canonicalParents = [...parents].sort();
   const candidateId = progressCandidateId({
-    networkId, sender: wallet.address, recipient, artifactHash, baselineHash, suiteCommitment,
+    networkId, sender: wallet.address, recipient, artifactHash, baselineHash, contentHash,
+    parents: canonicalParents, suiteCommitment,
   });
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     artifactHash,
     baselineHash,
     candidateId,
+    contentHash,
     networkId,
     nonce,
+    parents: canonicalParents,
     publicKey: wallet.publicKey,
     recipient,
     sender: wallet.address,
@@ -679,7 +684,9 @@ export function progressFingerprint(evaluation) {
       artifactHash: evaluation.artifactHash,
       baselineHash: evaluation.baselineHash,
       candidateId: evaluation.candidateId,
+      contentHash: evaluation.contentHash,
       executionBundleHash: evaluation.executionBundleHash,
+      parents: evaluation.parents,
       suiteCommitment: evaluation.suiteCommitment,
     },
     "PROGRESS_FINGERPRINT",
@@ -692,6 +699,7 @@ export function computeProgressScore(evaluation) {
     evaluation === null ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.artifactHash ?? "") ||
     !/^sha256:[0-9a-f]{64}$/.test(evaluation.baselineHash ?? "") ||
+    !/^sha256:[0-9a-f]{64}$/.test(evaluation.contentHash ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.candidateId ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.executionBundleHash ?? "") ||
     !/^[0-9a-f]{64}$/.test(evaluation.suiteCommitment ?? "")
@@ -1381,7 +1389,13 @@ export class NirChain {
         !Number.isSafeInteger(commitment.randomnessRound) || commitment.randomnessRound < 1 ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.artifactHash ?? "") ||
         !/^sha256:[0-9a-f]{64}$/.test(commitment.baselineHash ?? "") ||
+        !/^sha256:[0-9a-f]{64}$/.test(commitment.contentHash ?? "") ||
         commitment.artifactHash === commitment.baselineHash ||
+        !Array.isArray(commitment.parents) || commitment.parents.length === 0 ||
+        commitment.parents.length > 32 ||
+        commitment.parents.some((parent) => !/^sha256:[0-9a-f]{64}$/.test(parent)) ||
+        new Set(commitment.parents).size !== commitment.parents.length ||
+        commitment.parents.some((parent, index) => index > 0 && parent <= commitment.parents[index - 1]) ||
         !/^[0-9a-f]{64}$/.test(commitment.suiteCommitment ?? "") ||
         !/^nir1[0-9a-f]{64}$/.test(commitment.sender ?? "") ||
         !/^nir1[0-9a-f]{64}$/.test(commitment.recipient ?? "") ||
@@ -1776,9 +1790,13 @@ export class NirChain {
   }
 
   prepareProgressEvaluation(evaluation) {
-    const report = this.#capabilityMemory.assess(evaluation);
-    return {
+    const normalized = {
       ...structuredClone(evaluation),
+      contentHash: evaluation.contentHash ?? evaluation.artifactHash,
+    };
+    const report = this.#capabilityMemory.assess(normalized);
+    return {
+      ...normalized,
       frontierRootBefore: report.frontierRootBefore,
       frontierRootAfter: report.frontierRootAfter,
       noveltyBps: report.noveltyBps,
@@ -1817,6 +1835,8 @@ export class NirChain {
       epoch > admission.committedHeight + MAX_PROGRESS_COMMITMENT_AGE ||
       admission.artifactHash !== claim.evaluation.artifactHash ||
       admission.baselineHash !== claim.evaluation.baselineHash ||
+      admission.contentHash !== claim.evaluation.contentHash ||
+      JSON.stringify(admission.parents) !== JSON.stringify(claim.evaluation.parents) ||
       admission.suiteCommitment !== claim.evaluation.suiteCommitment ||
       admission.recipient !== claim.recipient ||
       claim.evaluation.committedEpoch !== admission.committedHeight ||
@@ -2455,14 +2475,22 @@ export class NirChain {
     });
   }
 
-  #applyProgressCommitment(transaction, nonces, progressCommitments, height, randomnessRound) {
+  #applyProgressCommitment(
+    transaction, nonces, progressCommitments, capabilityMemory, height, randomnessRound,
+  ) {
     if (
       transaction.type !== "progress-commitment" ||
       transaction.algorithm !== SIGNATURE_ALGORITHM ||
       transaction.networkId !== this.#networkId ||
       !/^sha256:[0-9a-f]{64}$/.test(transaction.artifactHash ?? "") ||
       !/^sha256:[0-9a-f]{64}$/.test(transaction.baselineHash ?? "") ||
+      !/^sha256:[0-9a-f]{64}$/.test(transaction.contentHash ?? "") ||
       transaction.artifactHash === transaction.baselineHash ||
+      !Array.isArray(transaction.parents) || transaction.parents.length === 0 ||
+      transaction.parents.length > 32 ||
+      transaction.parents.some((parent) => !/^sha256:[0-9a-f]{64}$/.test(parent)) ||
+      new Set(transaction.parents).size !== transaction.parents.length ||
+      transaction.parents.some((parent, index) => index > 0 && parent <= transaction.parents[index - 1]) ||
       !/^[0-9a-f]{64}$/.test(transaction.suiteCommitment ?? "")
     ) {
       throw new Error("progress commitment transaction is invalid");
@@ -2473,6 +2501,9 @@ export class NirChain {
     if (
       transaction.candidateId !== expectedId ||
       progressCommitments.has(expectedId) ||
+      capabilityMemory.hasContent(transaction.contentHash) ||
+      [...progressCommitments.values()].some(({ contentHash }) =>
+        contentHash === transaction.contentHash) ||
       progressCommitments.size >= MAX_PENDING_PROGRESS_COMMITMENTS ||
       [...progressCommitments.values()].some(({ sender }) => sender === transaction.sender)
     ) {
@@ -2502,6 +2533,7 @@ export class NirChain {
     progressCommitments.set(expectedId, {
       artifactHash: transaction.artifactHash,
       baselineHash: transaction.baselineHash,
+      contentHash: transaction.contentHash,
       beaconCommittee: null,
       beaconCommitteeHeight: null,
       beaconCommitteeSource: null,
@@ -2512,6 +2544,7 @@ export class NirChain {
       committee: null,
       committedHeight: height,
       randomnessRound,
+      parents: structuredClone(transaction.parents),
       recipient: transaction.recipient,
       sender: transaction.sender,
       suiteCommitment: transaction.suiteCommitment,
@@ -3224,6 +3257,7 @@ export class NirChain {
           transaction,
           nonces,
           progressCommitments,
+          capabilityMemory,
           block.height,
           epochRandomness.round,
         );

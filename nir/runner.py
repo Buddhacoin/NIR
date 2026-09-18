@@ -139,6 +139,8 @@ class CandidateCommitment:
     candidate_id: str
     artifact_hash: str
     baseline_hash: str
+    content_hash: str
+    parents: tuple[str, ...]
     suite_commitment: str
     committed_epoch: int
 
@@ -151,6 +153,8 @@ class CandidateCommitment:
                 candidate_id=str(data["candidate_id"]),
                 artifact_hash=str(data["artifact_hash"]),
                 baseline_hash=str(data["baseline_hash"]),
+                content_hash=str(data["content_hash"]),
+                parents=tuple(str(parent) for parent in data["parents"]),
                 suite_commitment=str(data["suite_commitment"]),
                 committed_epoch=int(data["committed_epoch"]),
             )
@@ -167,6 +171,15 @@ class CandidateCommitment:
         _require_digest(self.candidate_id, "candidate id")
         _require_digest(self.artifact_hash, "candidate artifact hash", artifact=True)
         _require_digest(self.baseline_hash, "baseline artifact hash", artifact=True)
+        _require_digest(self.content_hash, "canonical content hash", artifact=True)
+        if (
+            not self.parents
+            or len(self.parents) > 32
+            or tuple(sorted(set(self.parents))) != self.parents
+        ):
+            raise ProtocolError("candidate lineage must contain 1 to 32 sorted unique parents")
+        for parent in self.parents:
+            _require_digest(parent, "parent artifact hash", artifact=True)
         _require_digest(self.suite_commitment, "suite commitment")
         if self.artifact_hash == self.baseline_hash:
             raise ProtocolError("candidate artifact must differ from baseline")
@@ -184,7 +197,9 @@ class CandidateCommitment:
             "baseline_hash": self.baseline_hash,
             "candidate_id": self.candidate_id,
             "committed_epoch": self.committed_epoch,
+            "content_hash": self.content_hash,
             "network_id": self.network_id,
+            "parents": list(self.parents),
             "recipient": self.recipient,
             "suite_commitment": self.suite_commitment,
         }

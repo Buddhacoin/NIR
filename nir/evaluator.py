@@ -185,8 +185,9 @@ class EvaluationReport:
         artifact_hash: str,
         baseline_hash: str,
     ) -> ProgressProof:
-        # Semantic novelty needs a future lineage verifier. Exact duplicate
-        # prevention is already enforced by the emission ledger.
+        # Semantic novelty still needs external review. Consensus rejects an
+        # exact canonical-content commitment twice, but cannot identify related
+        # work hidden behind genuinely different commitments.
         novelty_bps = BPS
         return ProgressProof(
             contributor=contributor,
