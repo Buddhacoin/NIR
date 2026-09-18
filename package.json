@@ -57,6 +57,7 @@
     "certificate:lifecycle": "node blockchain/certificate-lifecycle-cli.mjs",
     "certificate:bootstrap": "node blockchain/certificate-bootstrap-cli.mjs",
     "testnet:reset": "node blockchain/testnet-reset-cli.mjs",
+    "genesis:ceremony": "node blockchain/genesis-ceremony-cli.mjs",
     "release:create": "node blockchain/release-cli.mjs create",
     "release:sign": "node blockchain/release-cli.mjs sign",
     "release:verify": "node blockchain/release-cli.mjs verify",
