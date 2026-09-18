@@ -47,9 +47,10 @@ Required before inviting unknown operators:
   scrubbing and crash-resumable verified repair. These local mechanisms do not
   prove that remote operators or their infrastructure are independent;
 - platform-signed native installers, incident response and a documented
-  testnet reset policy remain. Deterministic post-quantum signed source
-  manifests, byte-reproducible `.nirpkg` wallet/node containers, backup health
-  and integrity-health output are implemented locally;
+  production incident process remain. A non-destructive testnet-reset planning
+  drill, deterministic post-quantum signed source manifests, byte-reproducible
+  `.nirpkg` wallet/node containers, backup health and integrity-health output
+  are implemented locally;
 - versioned protocol upgrades governed by a delayed on-chain activation rule
   are implemented locally; multi-operator upgrade and rollback drills remain;
 - at least four validator and fallback-beacon operators controlled by genuinely
@@ -65,7 +66,9 @@ remaining checks and adds a reproducible failure test:
 
 1. certificate lifecycle and revocation survive replay, restart and rotation;
 2. a documented reset and incident drill preserves the published genesis and
-   makes any destructive testnet action explicit;
+   makes any destructive testnet action explicit; signed quorum reset planning
+   and an isolated non-destructive drill are implemented locally, while a real
+   multi-operator incident exercise remains;
 3. packaged node and wallet builds are installed and reverified on supported
    platforms without trusting the download location; portable `.nirpkg`
    installation is implemented locally, while platform-signed native packaging
