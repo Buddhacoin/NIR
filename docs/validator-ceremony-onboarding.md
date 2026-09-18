@@ -16,7 +16,7 @@ an HTTPS endpoint, transport identity, and TLS certificate SHA-256 pin for the
 operator's validator.
 
 Locally, create two separately encrypted vaults: one for the validator
-consensus identity and one for its authenticated transport identity. Keep the
+finality/consensus identity and one for its authenticated transport identity. Keep the
 vault passwords outside the command line. Supply the public TLS certificate
 whose DER fingerprint is committed by the ceremony. The tool decrypts each
 vault only in memory, signs and verifies domain-separated possession challenges,
@@ -42,7 +42,7 @@ relative symlink. Symlink creation has no replace semantics, so a concurrently
 created target is preserved. On failure, cleanup is limited to the random
 generation whose filesystem identity the process created.
 
-Reverify before using the evidence in a later node-configuration workflow:
+Reverify before startup:
 
 ```sh
 npm run validator:ceremony -- reverify \
@@ -54,6 +54,54 @@ anchor, topology, TLS pin, encrypted-vault integrity, and local key-possession
 checks. It also enforces the exact generation name, exact file set, `0700/0600`
 modes, bounded regular files, and no-follow reads.
 
+## Start the validator without plaintext wallet files
+
+`serve-validator` recognizes the ceremony activation link, requires the trusted
+release signer address again, reverifies the complete evidence, decrypts the
+validator and transport wallets into process memory, and passes them directly
+to `ValidatorReplica`. Ceremony mode rejects `VALIDATOR-KEY.json` and
+`TRANSPORT-KEY.json`; it never falls back to the development plaintext layout.
+The finality and transport private keys remain in memory only for the lifetime
+of the validator process.
+
+For an attended start, run the command in a real terminal. Both prompts disable
+terminal echo and the passwords are not accepted through arguments,
+environment variables, or configuration files:
+
+```sh
+NIR_TLS_KEY_PATH=/secure/runtime/validator-tls-key.pem \
+  npm run network:validator -- \
+  /srv/nir/validator-0 9443 nir1_TRUSTED_RELEASE_SIGNER
+```
+
+For a supervisor, inherit two already-opened private pipes or owner-only regular
+file descriptors. Descriptor 3 carries the validator-vault password and
+descriptor 4 carries the transport-vault password; each contains one password
+with an optional final newline. Regular-file descriptors must be owned by the
+current uid with no group/world permissions. The implementation reads each
+descriptor once, bounds it to 1024 bytes, and best-effort zeros the password
+buffers after vault loading. Example shell descriptor wiring (the referenced
+files must already be `0600` and should preferably be replaced by a supervisor's
+anonymous credential pipes):
+
+```sh
+NIR_TLS_KEY_PATH=/secure/runtime/validator-tls-key.pem \
+  npm run network:validator -- \
+  /srv/nir/validator-0 9443 nir1_TRUSTED_RELEASE_SIGNER \
+  3</run/credentials/nir-validator-password \
+  4</run/credentials/nir-transport-password
+```
+
+The public TLS certificate is loaded from the verified ceremony generation by
+default. `NIR_TLS_KEY_PATH` names the separately provisioned TLS private key;
+the existing TLS loader verifies that it matches the certificate. The trusted
+release signer and filesystem paths are public configuration, not passwords.
+
+Ceremony genesis has no centralized coordinator identity. Therefore this mode
+serves public health/discovery and validator-authenticated P2P routes, while all
+coordinator-authenticated routes fail closed. It is suitable for the validator
+transport path without recreating the centralized development coordinator.
+
 ## Security boundary
 
 - Publish and retain the ceremony anchor outside the validator machine. The
@@ -61,8 +109,9 @@ modes, bounded regular files, and no-follow reads.
 - Provision the TLS private key through a separate hardened mechanism. This
   workflow verifies the committed public certificate but does not copy or
   export its private key.
-- The output is not a runnable validator directory and the command never starts
-  network services. Runtime configuration, transport TLS key custody, lifecycle
-  certificates, monitoring, and host separation remain explicit later steps.
+- `init-from-ceremony` itself never starts network services. `serve-validator`
+  explicitly starts the initialized validator after fresh verification. Runtime
+  TLS key custody, lifecycle certificates, monitoring, and host separation
+  remain explicit operator responsibilities.
 - Never replace the activation link or generation by hand. Create a new target
   through a separately reviewed migration procedure if evidence changes.

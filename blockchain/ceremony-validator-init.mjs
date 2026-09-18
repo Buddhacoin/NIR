@@ -7,6 +7,8 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalJson, signObject, verifyObject } from "./crypto.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { NirChain } from "./chain.mjs";
+import { initializeBlockStore } from "./block-store.mjs";
 import { compileGenesis, verifyGenesisCeremony } from "./genesis-ceremony.mjs";
 import { verifyCeremonyRegistryAnchorForLatestPlan } from "./genesis-ceremony-anchor.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
@@ -17,6 +19,13 @@ const FILES = Object.freeze([
   "CEREMONY-ANCHOR.json", "CEREMONY-APPROVALS.json", "CEREMONY-PLAN.json",
   "SIGNED-RELEASE.json", "TLS-CERTIFICATE.pem", "TRANSPORT-VAULT.json",
   "VALIDATOR-ONBOARDING.json", "VALIDATOR-VAULT.json", "genesis.json",
+]);
+const RUNTIME_DIRECTORIES = Object.freeze([
+  "block-backups", "blocks", "commits", "mempool", "prepares", "timeouts",
+]);
+const RUNTIME_FILES = Object.freeze(["STORE-CHECKPOINT.backup.json", "STORE-CHECKPOINT.json"]);
+const OPTIONAL_RUNTIME_DIRECTORIES = new Set([
+  "certificates", "handoffs", "snapshots", "topologies",
 ]);
 const HASH = /^[0-9a-f]{64}$/;
 
@@ -92,7 +101,7 @@ function verifyPossession(wallet, payload, domain) {
 function validateInputs({
   anchor, envelope, genesis, plan, signedRelease, tlsCertificatePem, transportPassword,
   transportVault, trustedAddress, validatorPassword, validatorVault,
-}) {
+}, { retainWallets = false } = {}) {
   const releaseOptions = { signedRelease, trustedAddress };
   verifyGenesisCeremony(plan, envelope, releaseOptions);
   const compiled = compileGenesis(plan, envelope, releaseOptions);
@@ -102,9 +111,12 @@ function validateInputs({
   verifyCeremonyRegistryAnchorForLatestPlan(
     anchor, plan, compiled.genesisHash, releaseOptions,
   );
-  const validatorWallet = decryptWallet(validatorVault, validatorPassword);
-  const transportWallet = decryptWallet(transportVault, transportPassword);
+  let validatorWallet;
+  let transportWallet;
+  let retained = false;
   try {
+    validatorWallet = decryptWallet(validatorVault, validatorPassword);
+    transportWallet = decryptWallet(transportVault, transportPassword);
     const participant = plan.validators.find(({ address }) => address === validatorWallet.address);
     if (!participant) throw new Error("local validator vault is not a ceremony validator");
     if (participant.transport.address !== transportWallet.address ||
@@ -133,7 +145,7 @@ function validateInputs({
     };
     verifyPossession(validatorWallet, possession, "VALIDATOR_CEREMONY_POSSESSION_V1");
     verifyPossession(transportWallet, possession, "TRANSPORT_CEREMONY_POSSESSION_V1");
-    return {
+    const result = {
       compiled,
       provenance: {
         anchorHead: anchor.payload.registryHead,
@@ -148,9 +160,17 @@ function validateInputs({
         validatorAddress: validatorWallet.address,
       },
     };
+    if (retainWallets) {
+      result.validatorWallet = validatorWallet;
+      result.transportWallet = transportWallet;
+      retained = true;
+    }
+    return result;
   } finally {
-    validatorWallet.privateKey = "";
-    transportWallet.privateKey = "";
+    if (!retained) {
+      if (validatorWallet) validatorWallet.privateKey = "";
+      if (transportWallet) transportWallet.privateKey = "";
+    }
   }
 }
 
@@ -186,6 +206,11 @@ export function initializeValidatorFromCeremony(targetPath, inputs) {
       ["genesis.json", serializedJson(inputs.genesis)],
     ]);
     for (const name of FILES) writePrivate(join(generation, name), files.get(name));
+    for (const name of ["commits", "mempool", "prepares", "timeouts"]) {
+      mkdirSync(join(generation, name), { mode: 0o700 });
+      chmodSync(join(generation, name), 0o700);
+    }
+    initializeBlockStore(generation, new NirChain(inputs.genesis));
     const generationOpened = openDirectory(generation, "validator ceremony generation");
     try {
       fsyncSync(generationOpened.descriptor);
@@ -225,7 +250,8 @@ function readInstalled(target, opened, name, maximum = 16 * 1024 * 1024) {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const metadata = fstatSync(descriptor);
     if (!metadata.isFile() || metadata.size > maximum ||
-        (metadata.mode & 0o777) !== 0o600) {
+        (metadata.mode & 0o777) !== 0o600 ||
+        (typeof process.getuid === "function" && metadata.uid !== process.getuid())) {
       throw new Error("validator ceremony file is unsafe");
     }
     const contents = readFileSync(descriptor);
@@ -251,10 +277,26 @@ export function reverifyValidatorFromCeremony(targetPath, {
   const generation = join(dirname(target), link);
   const opened = openDirectory(generation, "validator ceremony generation");
   try {
+    const entries = readdirSync(generation).sort();
+    const required = [...FILES, ...RUNTIME_DIRECTORIES, ...RUNTIME_FILES].sort();
+    const foreign = entries.filter((name) =>
+      !required.includes(name) && !OPTIONAL_RUNTIME_DIRECTORIES.has(name));
     if ((opened.metadata.mode & 0o777) !== 0o700 ||
-        readdirSync(generation).sort().join("\0") !== [...FILES].sort().join("\0")) {
+        (typeof process.getuid === "function" && opened.metadata.uid !== process.getuid()) ||
+        foreign.length > 0 ||
+        required.some((name) => !entries.includes(name))) {
       throw new Error("validator ceremony installed file set is invalid");
     }
+    for (const name of [...RUNTIME_DIRECTORIES, ...OPTIONAL_RUNTIME_DIRECTORIES]
+      .filter((entry) => entries.includes(entry))) {
+      const metadata = lstatSync(join(generation, name));
+      if (!metadata.isDirectory() || metadata.isSymbolicLink() ||
+          (metadata.mode & 0o777) !== 0o700 ||
+          (typeof process.getuid === "function" && metadata.uid !== process.getuid())) {
+        throw new Error("validator ceremony runtime directory is unsafe");
+      }
+    }
+    for (const name of RUNTIME_FILES) readInstalled(generation, opened, name);
     const parse = (name) => parseConsensusJson(
       readInstalled(generation, opened, name).toString("utf8"),
     );
@@ -279,4 +321,63 @@ export function reverifyValidatorFromCeremony(targetPath, {
     assertDirectory(generation, opened, "validator ceremony generation");
     return { ...verified.provenance, verified: true };
   } finally { closeSync(opened.descriptor); }
+}
+
+function passwordString(buffer, label) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12 || buffer.length > 1_024 ||
+      buffer.includes(0) || buffer.includes(10) || buffer.includes(13)) {
+    throw new Error(`${label} password buffer is invalid`);
+  }
+  return buffer.toString("utf8");
+}
+
+export function loadValidatorRuntimeFromCeremony(targetPath, {
+  transportPasswordBuffer, trustedAddress, validatorPasswordBuffer,
+}) {
+  let validatorPassword;
+  let transportPassword;
+  try {
+    validatorPassword = passwordString(validatorPasswordBuffer, "validator vault");
+    transportPassword = passwordString(transportPasswordBuffer, "transport vault");
+    const target = resolve(targetPath);
+    const link = readlinkSync(target);
+    if (!new RegExp(`^\\.${basename(target).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.nir-validator-generation-[0-9a-f]{32}$`)
+      .test(link)) throw new Error("validator ceremony activation link is invalid");
+    const generation = join(dirname(target), link);
+    // Reverification also rejects plaintext key files as foreign root entries.
+    reverifyValidatorFromCeremony(target, {
+      transportPassword, trustedAddress, validatorPassword,
+    });
+    const opened = openDirectory(generation, "validator ceremony generation");
+    try {
+      const parse = (name) => parseConsensusJson(
+        readInstalled(generation, opened, name).toString("utf8"),
+      );
+      const result = validateInputs({
+        anchor: parse("CEREMONY-ANCHOR.json"),
+        envelope: parse("CEREMONY-APPROVALS.json"),
+        genesis: parse("genesis.json"),
+        plan: parse("CEREMONY-PLAN.json"),
+        signedRelease: parse("SIGNED-RELEASE.json"),
+        tlsCertificatePem: readInstalled(generation, opened, "TLS-CERTIFICATE.pem"),
+        transportPassword,
+        transportVault: parse("TRANSPORT-VAULT.json"),
+        trustedAddress,
+        validatorPassword,
+        validatorVault: parse("VALIDATOR-VAULT.json"),
+      }, { retainWallets: true });
+      return {
+        directory: generation,
+        directoryIdentity: { dev: opened.metadata.dev, ino: opened.metadata.ino },
+        provenance: result.provenance,
+        transportWallet: result.transportWallet,
+        validatorWallet: result.validatorWallet,
+      };
+    } finally { closeSync(opened.descriptor); }
+  } finally {
+    validatorPasswordBuffer?.fill(0);
+    transportPasswordBuffer?.fill(0);
+    validatorPassword = "";
+    transportPassword = "";
+  }
 }

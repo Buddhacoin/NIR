@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
 
 import {
@@ -16,6 +17,8 @@ import {
   CERTIFICATE_MODE_DEV_GENESIS,
   CERTIFICATE_MODE_LIFECYCLE,
 } from "./certificate-runtime.mjs";
+import { loadValidatorRuntimeFromCeremony } from "./ceremony-validator-init.mjs";
+import { readCeremonyPasswordBuffers } from "./operator-secret-input.mjs";
 
 const [command, directory, parameter = "", portText = ""] = process.argv.slice(2);
 
@@ -25,12 +28,12 @@ function validPort(text, fallback) {
   return port;
 }
 
-function tlsFromEnvironment() {
+function tlsFromEnvironment(defaultCertificatePath = null) {
   const keyPath = process.env.NIR_TLS_KEY_PATH;
-  const certPath = process.env.NIR_TLS_CERT_PATH;
+  const certPath = process.env.NIR_TLS_CERT_PATH ?? defaultCertificatePath;
   if (!keyPath && !certPath) return null;
   if (!keyPath || !certPath) {
-    throw new Error("NIR_TLS_KEY_PATH and NIR_TLS_CERT_PATH must be set together");
+    throw new Error("TLS startup requires a private-key path and certificate path");
   }
   return { ...loadTlsKeyPair({ certPath, keyPath }), certPath, keyPath };
 }
@@ -51,10 +54,23 @@ try {
     }), null, 2));
   } else if (command === "serve-validator" && directory) {
     const port = validPort(parameter, 8791);
-    const validator = new ValidatorReplica(directory, {
+    const ceremonyMode = lstatSync(directory).isSymbolicLink();
+    let ceremonyCredentials = null;
+    if (ceremonyMode) {
+      if (!/^nir1[0-9a-f]{64}$/.test(portText)) {
+        throw new Error("ceremony validator startup requires the trusted release signer address");
+      }
+      ceremonyCredentials = loadValidatorRuntimeFromCeremony(directory, {
+        ...(await readCeremonyPasswordBuffers()), trustedAddress: portText,
+      });
+    }
+    const runtimeDirectory = ceremonyCredentials?.directory ?? directory;
+    const validator = new ValidatorReplica(runtimeDirectory, {
       certificateMode: certificateModeFromEnvironment(),
+      ceremonyCredentials,
     });
-    const tls = tlsFromEnvironment();
+    const tls = tlsFromEnvironment(ceremonyMode
+      ? join(runtimeDirectory, "TLS-CERTIFICATE.pem") : null);
     const ownIndex = validator.peerUrls.findIndex((_, index) =>
       validator.peerAddress(index) === validator.address);
     const expectedPins = validator.peerTlsCertificateSha256Pins(ownIndex);
@@ -107,7 +123,7 @@ try {
     });
     console.log(JSON.stringify(announcement, null, 2));
   } else {
-    throw new Error("usage: init-dev <new-dir> | serve-validator <dir> [port] | serve-coordinator <dir> <peer-urls> [port] | discover <genesis.json> <seed-urls-comma-separated>");
+    throw new Error("usage: init-dev <new-dir> | serve-validator <dir> [port] [trusted-release-address-for-ceremony] | serve-coordinator <dir> <peer-urls> [port] | discover <genesis.json> <seed-urls-comma-separated>");
   }
 } catch (error) {
   console.error(`Network operation failed: ${error.message}`);

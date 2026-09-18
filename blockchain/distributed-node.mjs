@@ -1,5 +1,7 @@
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -319,9 +321,11 @@ export class ValidatorReplica {
   #certificatePins;
   #transportView;
   #transportWallet;
+  #ceremonyMode;
 
   constructor(directory, {
     certificateMode = CERTIFICATE_MODE_DEV_GENESIS,
+    ceremonyCredentials = null,
     clock = () => Date.now(),
     nonceCacheOptions = {},
   } = {}) {
@@ -334,9 +338,32 @@ export class ValidatorReplica {
     this.#nonceOptions = { ...nonceCacheOptions, clock };
     this.#seenNonces = new ReplayNonceCache(this.#nonceOptions);
     this.#directory = resolve(directory);
+    const expectedDirectoryIdentity = ceremonyCredentials?.directoryIdentity ?? null;
+    if (expectedDirectoryIdentity !== null) {
+      const metadata = lstatSync(this.#directory);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink() ||
+          metadata.dev !== expectedDirectoryIdentity.dev ||
+          metadata.ino !== expectedDirectoryIdentity.ino) {
+        throw new Error("ceremony validator generation changed before runtime load");
+      }
+    }
     ({ chain: this.#chain } = loadChain(this.#directory));
-    this.#wallet = readJson(join(this.#directory, "VALIDATOR-KEY.json"));
-    this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
+    this.#ceremonyMode = ceremonyCredentials !== null;
+    if (this.#ceremonyMode) {
+      if (!ceremonyCredentials?.validatorWallet || !ceremonyCredentials?.transportWallet) {
+        throw new Error("ceremony validator credentials are incomplete");
+      }
+      if (existsSync(join(this.#directory, "VALIDATOR-KEY.json")) ||
+          existsSync(join(this.#directory, "TRANSPORT-KEY.json"))) {
+        throw new Error("ceremony validator refuses plaintext key files");
+      }
+      this.#wallet = ceremonyCredentials.validatorWallet;
+      this.#transportWallet = ceremonyCredentials.transportWallet;
+      this.#coordinator = null;
+    } else {
+      this.#wallet = readJson(join(this.#directory, "VALIDATOR-KEY.json"));
+      this.#coordinator = readJson(join(this.#directory, "AUTHORIZED-COORDINATOR.json"));
+    }
     const genesis = readJson(join(this.#directory, "genesis.json"));
     this.#genesis = genesis;
     this.#certificatePins = new RuntimeCertificatePins(this.#directory, genesis, {
@@ -346,7 +373,9 @@ export class ValidatorReplica {
     const registry = this.#chain.peerRegistry;
     if (!registry) throw new Error("peer registry has no active version");
     this.#peerRegistry = registry;
-    this.#transportWallet = readJson(join(this.#directory, "TRANSPORT-KEY.json"));
+    if (!this.#ceremonyMode) {
+      this.#transportWallet = readJson(join(this.#directory, "TRANSPORT-KEY.json"));
+    }
     this.#refreshTransportView();
     const pendingMembers = this.#chain.pendingValidatorRotation?.validators ?? [];
     const member = [...this.#validators, ...pendingMembers]
@@ -360,6 +389,14 @@ export class ValidatorReplica {
     if (ownTransport.address !== this.#transportWallet.address ||
         ownTransport.publicKey !== this.#transportWallet.publicKey) {
       throw new Error("validator transport key does not belong to the authenticated transport view");
+    }
+    if (expectedDirectoryIdentity !== null) {
+      const metadata = lstatSync(this.#directory);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink() ||
+          metadata.dev !== expectedDirectoryIdentity.dev ||
+          metadata.ino !== expectedDirectoryIdentity.ino) {
+        throw new Error("ceremony validator generation changed during runtime load");
+      }
     }
     for (const name of readdirSync(join(this.#directory, "mempool")).sort()) {
       if (/^[0-9a-f]{64}\.json$/.test(name)) this.#mempool.add(readJson(join(this.#directory, "mempool", name)));
@@ -495,6 +532,9 @@ export class ValidatorReplica {
   }
 
   authorize(auth, method, path, body) {
+    if (this.#coordinator === null) {
+      throw new Error("ceremony validator has no authenticated coordinator binding");
+    }
     return verifyPeerRequest({
       auth, body, method, networkId: this.networkId, path,
       seenNonces: this.#seenNonces, trustedPeer: this.#coordinator,
