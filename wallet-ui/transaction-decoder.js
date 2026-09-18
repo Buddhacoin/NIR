@@ -3,6 +3,7 @@ const DELTA = /^-?(0|[1-9][0-9]*)$/;
 
 export const SUPPORTED_TRANSACTION_TYPES = new Set([
   "transfer", "credit-stake", "credit-delegation", "credit-unstake-request", "credit-unstake-claim", "payment-request",
+  "asset-create", "asset-mint", "asset-transfer", "asset-burn", "asset-revoke-authority",
 ]);
 
 function fail(message) { throw new Error(`Симуляция отклонена: ${message}`); }
@@ -48,6 +49,18 @@ function safeResource(value) {
   }
   return { role, details: JSON.stringify(copy) };
 }
+function safeAsset(value) {
+  const item = object(value, "изменение актива");
+  const allowed = new Set(["assetId", "holder", "balanceBefore", "balanceAfter", "supplyBefore",
+    "supplyAfter", "mintedAfter", "authorityBefore", "authorityAfter"]);
+  const copy = {};
+  for (const [key, field] of Object.entries(item)) {
+    if (!allowed.has(key) || (field !== null && typeof field !== "string")) fail("актив содержит неизвестное поле");
+    copy[key] = field;
+  }
+  string(copy.assetId, "asset id", 64);
+  return { role: "asset", details: JSON.stringify(copy), ...copy };
+}
 
 /** Fail closed: no verified proof, intent mismatch, or new operation type reaches signing. */
 export function decodeVerifiedSimulation(result, intent) {
@@ -78,7 +91,10 @@ export function decodeVerifiedSimulation(result, intent) {
     return { address: string(item.address, "адрес nonce", 128), before: item.before, after: item.after, role: string(item.role, "роль nonce", 128) };
   });
   const risks = Array.isArray(simulation.risks) ? simulation.risks.map((risk) => string(risk, "риск", 400)) : fail("нет списка рисков");
+  const assetChanges = deltas.asset === undefined ? [] :
+    Array.isArray(deltas.asset) ? deltas.asset.map(safeAsset) : fail("изменения актива имеют неверный формат");
+  if (type.startsWith("asset-") && assetChanges.length === 0) fail("нет изменений актива");
   return { type, networkId: simulation.networkId, stateHeight: simulation.stateHeight, intent: simulation.intent,
     proof: simulation.proof, authority: authority(simulation.authority), fee: { amount: feeAmount, payer: fee.payer },
-    balance, resources: deltas.resources.map(safeResource), nonces, risks, simulationId: string(simulation.simulationId, "идентификатор симуляции", 128) };
+    balance, assets: assetChanges, resources: deltas.resources.map(safeResource), nonces, risks, simulationId: string(simulation.simulationId, "идентификатор симуляции", 128) };
 }

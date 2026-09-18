@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { ATOMIC_UNITS, MIN_TRANSFER_FEE } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
+import { NirChain } from "../blockchain/chain.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
@@ -46,6 +47,7 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
   const recipient = generateWallet();
   initializeDevnet(nodeDirectory);
   const genesis = JSON.parse(readFileSync(join(nodeDirectory, "genesis.json"), "utf8"));
+  const genesisBlock = new NirChain(genesis).blocks()[0];
   const node = new PersistentDevNode(nodeDirectory);
   const nodeServer = createNodeHttpServer(node);
   const token = "7".repeat(64);
@@ -57,6 +59,9 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     sessionToken: token,
     trustAnchor: {
       expectedNetworkId: genesis.networkId,
+      genesisCheckpoint: { accountStateRoot: genesisBlock.accountStateRoot, height: 0,
+        stateRoot: genesisBlock.stateRoot, tipHash: genesisBlock.hash,
+        validatorSetId: new NirChain(genesis).validatorSetId },
       trustedValidators: genesis.validators,
     },
     vaultPath,
@@ -91,6 +96,12 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     });
     assert.equal(funded.response.status, 202);
 
+    const finality = await jsonRequest(`${nodeUrl}/v1/finality-proofs?fromHeight=0&limit=8`);
+    const finalityCheck = await jsonRequest(`${bridgeUrl}/v1/verify-finality-chain`, {
+      body: { proofs: finality.value.proofs }, headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(finalityCheck.response.status, 200, JSON.stringify(finalityCheck.value));
+
     const account = await jsonRequest(`${nodeUrl}/v1/accounts/${payer.address}`);
     assert.equal(account.value.atomicBalance, (10n * ATOMIC_UNITS).toString());
     assert.equal(account.value.nextNonce, 0);
@@ -104,6 +115,44 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     assert.equal(proofCheck.response.status, 200, JSON.stringify(proofCheck.value));
     assert.equal(proofCheck.value.verified, true);
     assert.equal(proofCheck.value.statement.account.atomicBalance, account.value.atomicBalance);
+
+    const derived = await jsonRequest(`${bridgeUrl}/v1/derive-asset-id`, {
+      body: { networkId: health.value.networkId, nonce: account.value.nextNonce },
+      headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(derived.response.status, 200, JSON.stringify(derived.value));
+    const assetProof = await jsonRequest(
+      `${nodeUrl}/v1/assets/${derived.value.assetId}/proof?holder=${payer.address}`,
+    );
+    assert.equal(assetProof.response.status, 200);
+    const assetProofCheck = await jsonRequest(`${bridgeUrl}/v1/verify-asset-proof`, {
+      body: { assetId: derived.value.assetId, holder: payer.address, minimumHeight: 1,
+        proof: assetProof.value }, headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(assetProofCheck.response.status, 200, JSON.stringify(assetProofCheck.value));
+    assert.equal(assetProofCheck.value.statement.asset, null);
+    const assetIntent = { type: "asset-create", assetId: derived.value.assetId,
+      fee: MIN_TRANSFER_FEE.toString(), fixedSupply: false, initialSupply: "10", maxSupply: "100",
+      metadataHash: "a".repeat(64), networkId: health.value.networkId, nonce: account.value.nextNonce };
+    const assetSimulation = await jsonRequest(`${bridgeUrl}/v1/simulate-transaction`, {
+      body: { intent: assetIntent, network: { height: 1, networkId: health.value.networkId,
+        valueMode: health.value.valueMode }, verifiedAccount: { address: payer.address,
+        height: 1, proofVerified: true } }, headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(assetSimulation.response.status, 200, JSON.stringify(assetSimulation.value));
+    const offlineAsset = await jsonRequest(`${bridgeUrl}/v1/create-offline-signing-package`, {
+      body: { simulationId: assetSimulation.value.simulation.simulationId },
+      headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(offlineAsset.response.status, 200, JSON.stringify(offlineAsset.value));
+    assert.equal(offlineAsset.value.signingPackage.intent.type, "asset-create");
+    const forbiddenBrowserSign = await jsonRequest(`${bridgeUrl}/v1/sign-resource`, {
+      body: { ...assetIntent, requestId: "7".repeat(64),
+        simulationId: assetSimulation.value.simulation.simulationId },
+      headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(forbiddenBrowserSign.response.status, 400);
+    assert.equal(approvals, 0);
 
     const amount = (2n * ATOMIC_UNITS).toString();
     const quote = await jsonRequest(`${nodeUrl}/v1/fees?amount=${amount}`);
@@ -152,6 +201,11 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
     assert.equal(payerAfter.value.nextNonce, 1);
     assert.equal(recipientAfter.value.atomicBalance, amount);
 
+    const laterFinality = await jsonRequest(`${nodeUrl}/v1/finality-proofs?fromHeight=1&limit=8`);
+    const laterFinalityCheck = await jsonRequest(`${bridgeUrl}/v1/verify-finality-chain`, {
+      body: { proofs: laterFinality.value.proofs }, headers: bridgeHeaders, method: "POST",
+    });
+    assert.equal(laterFinalityCheck.response.status, 200, JSON.stringify(laterFinalityCheck.value));
     const resourceProof = await jsonRequest(`${nodeUrl}/v1/accounts/${payer.address}/proof`);
     assert.equal(resourceProof.response.status, 200);
     const resourceProofCheck = await jsonRequest(`${bridgeUrl}/v1/verify-account-proof`, {

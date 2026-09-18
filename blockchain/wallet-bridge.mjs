@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { nativeAssetId } from "./chain.mjs";
 
 import {
   signWalletPaymentRequest,
@@ -430,6 +431,21 @@ export function createWalletBridgeServer({
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("asset id derivation requires application/json");
+        }
+        const body = await readBody(request, 1_024);
+        if (!body || Object.keys(body).length !== 2 ||
+            !Object.hasOwn(body, "networkId") || !Object.hasOwn(body, "nonce") ||
+            body.networkId !== accountTrust?.expectedNetworkId ||
+            !Number.isSafeInteger(body.nonce) || body.nonce < 0) {
+          throw new Error("asset id derivation request is invalid");
+        }
+        return send(response, 200, { assetId: nativeAssetId({ creator: walletAddress,
+          networkId: body.networkId, nonce: body.nonce }), creator: walletAddress,
+          networkId: body.networkId, nonce: body.nonce, verified: true }, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/trust-info") {
         return send(response, 200, {

@@ -57,3 +57,22 @@ re-runs the proof-bound simulation before signing, and import verification
 checks that the signed transaction did not change a reviewed field. Neither
 simulation nor package creation broadcasts, and no browser-side signing or
 private-key exposure is introduced.
+
+### Wallet UI
+
+The existing wallet exposes native assets from **Resources → User assets**
+without adding another navigation destination or a new visual theme. Discovery
+uses asset identifiers from the wallet's already verified transaction history
+and the current session; every displayed definition and holder balance must
+then pass `/v1/verify-asset-proof`. The panel always displays the verified
+height and state-root prefix. Loading, proof failure/staleness, and the absence
+of discovered proven assets are distinct states; an empty discovery result is
+not presented as a proof that no other asset has ever existed.
+
+Create, mint, transfer, burn, and irreversible authority-revoke forms produce
+only a proof-backed preview. Create obtains its deterministic identifier from
+the authenticated exact-origin loopback bridge and then proves non-existence at
+that identifier. Before export, the wallet reloads the account proof, reloads
+every required holder proof, repeats simulation, and requires identical
+consequences. Asset intents have no browser signing or broadcast action: their
+only continuation is export of the versioned offline signing package.

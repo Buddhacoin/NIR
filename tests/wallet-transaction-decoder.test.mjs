@@ -40,3 +40,19 @@ test("decoder fails closed for unknown type, proof, intent, nonce and malformed 
     response({ deltas: { ...response().simulation.deltas, balance: [{ address: `nir1${"b".repeat(64)}`, atomicDelta: "not-a-number", role: "sender" }] } }),
   ]) assert.throws(() => decodeVerifiedSimulation(candidate, intent), /Симуляция отклонена/);
 });
+
+test("decoder preserves bounded asset deltas and rejects unknown asset fields", () => {
+  const assetIntent = { type: "asset-burn", assetId: "1".repeat(64), amount: "5", fee: "100",
+    networkId: intent.networkId, nonce: 7 };
+  const assetResponse = response({ type: assetIntent.type,
+    intent: { ...assetIntent, sender: `nir1${"b".repeat(64)}` }, deltas: {
+      ...response().simulation.deltas,
+      asset: [{ assetId: assetIntent.assetId, holder: `nir1${"b".repeat(64)}`,
+        balanceBefore: "9", balanceAfter: "4", supplyBefore: "20", supplyAfter: "15" }],
+    } });
+  const decoded = decodeVerifiedSimulation(assetResponse, assetIntent);
+  assert.equal(decoded.assets[0].balanceAfter, "4");
+  const unknown = structuredClone(assetResponse);
+  unknown.simulation.deltas.asset[0].browserAuthority = true;
+  assert.throws(() => decodeVerifiedSimulation(unknown, assetIntent), /Симуляция отклонена/);
+});

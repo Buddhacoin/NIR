@@ -23,6 +23,7 @@ const bridgePanel = document.querySelector("#bridge-panel");
 const receivePanel = document.querySelector("#receive-panel");
 const sendPanel = document.querySelector("#send-panel");
 const resourcesPanel = document.querySelector("#resources-panel");
+const assetsPanel = document.querySelector("#assets-panel");
 const settingsPanel = document.querySelector("#settings-panel");
 const setupPanel = document.querySelector("#setup-panel");
 const contactsPanel = document.querySelector("#contacts-panel");
@@ -32,6 +33,7 @@ const bridgeStatus = document.querySelector("#bridge-status");
 const receiveStatus = document.querySelector("#receive-status");
 const sendStatus = document.querySelector("#send-status");
 const resourcesStatus = document.querySelector("#resources-status");
+const assetsStatus = document.querySelector("#assets-status");
 let bridgeSession = null;
 let walletInfo = null;
 let networkInfo = null;
@@ -41,6 +43,10 @@ let pendingIntent = null;
 let pendingSimulation = null;
 let pendingResourceIntent = null;
 let pendingPaymentRequest = null;
+let pendingAssetIntent = null;
+let pendingAssetSimulation = null;
+let verifiedAssetStatements = new Map();
+const knownAssetIds = new Set();
 let signedTransaction = null;
 let signedResourceTransaction = null;
 let addressBook = readAddressBook();
@@ -70,6 +76,10 @@ function clearWalletSession(message = "Vault отключён · ключи и s
   pendingSimulation = null;
   pendingResourceIntent = null;
   pendingPaymentRequest = null;
+  pendingAssetIntent = null;
+  pendingAssetSimulation = null;
+  verifiedAssetStatements = new Map();
+  knownAssetIds.clear();
   offlineSigningPackage = null;
   offlinePackageQrFrames = [];
   document.querySelector("#balance-value").textContent = "0.00000000";
@@ -108,6 +118,7 @@ function renderSimulation(target, simulation) {
     add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`);
   }
   for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено");
+  for (const asset of simulation.assets ?? []) add("Актив", asset.details || `${asset.assetId}: изменение подтверждено`);
   for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`);
   for (const risk of simulation.risks) {
     const item = document.createElement("li"); item.className = "risk-info";
@@ -337,6 +348,8 @@ async function readAccount() {
       ...account,
       ...verified.statement.account,
       proofHeight: verified.statement.height,
+      proofStateRoot: verified.statement.stateRoot,
+      proofTipHash: verified.statement.tipHash,
       proofVerified: true,
       unavailableTransactions,
       verifiedTransactions,
@@ -532,8 +545,8 @@ async function exportOfflineSigningPackage(intent, simulation) {
   const status = document.querySelector("#offline-signing-status");
   status.textContent = "Подготовка проверенного офлайн-пакета…";
   try {
-    const result = await publicBridgeRequest("/v1/create-offline-signing-package", {
-      method: "POST", body: JSON.stringify({ intent, simulationId: simulation.simulationId }),
+    const result = await bridgeRequest("/v1/create-offline-signing-package", {
+      method: "POST", body: JSON.stringify({ simulationId: simulation.simulationId }),
     });
     offlineSigningPackage = validateOfflineSigningPackage(result.signingPackage ?? result.package);
     offlinePackageQrFrames = []; offlinePackageQrIndex = 0;
@@ -556,6 +569,187 @@ async function openResources() {
   await refreshAccount();
   resourcesStatus.textContent = "";
 }
+
+const ASSET_ID = /^[0-9a-f]{64}$/;
+const ASSET_UNITS = /^(0|[1-9][0-9]{0,31})$/;
+
+function assetIdsFromVerifiedHistory(account) {
+  const ids = new Set();
+  for (const entry of account.verifiedTransactions ?? []) {
+    const id = entry.transaction?.assetId;
+    if (ASSET_ID.test(id ?? "") && id !== "0".repeat(64)) ids.add(id);
+  }
+  return ids;
+}
+
+function checkedAssetStatement(value, assetId, holder) {
+  const statement = value?.statement;
+  if (value?.verified !== true || !statement || statement.assetId !== assetId ||
+      statement.holder !== holder || statement.networkId !== networkInfo?.networkId ||
+      !Number.isSafeInteger(statement.height) || statement.height !== networkInfo.height ||
+      !/^[0-9a-f]{64}$/.test(statement.stateRoot ?? "") ||
+      !/^[0-9a-f]{64}$/.test(statement.tipHash ?? "") ||
+      !ASSET_UNITS.test(statement.balance ?? "")) {
+    throw new Error("Asset proof не совпадает с текущим проверенным checkpoint.");
+  }
+  if (statement.asset !== null && (statement.asset.assetId !== assetId ||
+      !/^[0-9a-f]{64}$/.test(statement.asset.metadataHash ?? "") ||
+      !ASSET_UNITS.test(statement.asset.supply ?? "") ||
+      !ASSET_UNITS.test(statement.asset.maxSupply ?? ""))) {
+    throw new Error("Bridge вернул некорректное доказанное состояние актива.");
+  }
+  return statement;
+}
+
+async function verifyAssetState(assetId, holder) {
+  if (!ASSET_ID.test(assetId ?? "") || assetId === "0".repeat(64) || !NIR_ADDRESS.test(holder ?? "")) {
+    throw new Error("Asset ID или адрес holder неверен.");
+  }
+  const response = await fetch(nodeUrl(`/v1/assets/${encodeURIComponent(assetId)}/proof?holder=${encodeURIComponent(holder)}`),
+    { cache: "no-store" });
+  if (!response.ok) throw new Error("Узел не предоставил кворумное доказательство актива.");
+  const verified = await bridgeRequest("/v1/verify-asset-proof", { method: "POST", body: JSON.stringify({
+    assetId, holder, minimumHeight: networkInfo.height, proof: await response.json(),
+  }) });
+  const statement = checkedAssetStatement(verified, assetId, holder);
+  verifiedAssetStatements.set(`${assetId}:${holder}`, statement);
+  if (holder === walletInfo.address && statement.asset !== null) knownAssetIds.add(assetId);
+  return statement;
+}
+
+function renderVerifiedAssets(statements) {
+  const list = document.querySelector("#asset-list");
+  list.replaceChildren();
+  const visible = statements.filter(({ asset }) => asset !== null);
+  if (visible.length === 0) {
+    const empty = document.createElement("p"); empty.className = "contact-empty";
+    empty.textContent = "Нет обнаруженных доказанных активов. Asset ID берутся только из проверенной истории этой сессии.";
+    list.append(empty); return;
+  }
+  for (const statement of visible) {
+    const row = document.createElement("article"); row.className = "asset-row";
+    const title = document.createElement("b"); title.textContent = `${statement.balance} units`;
+    const id = document.createElement("span"); id.textContent = `ID ${statement.assetId}`;
+    const metadata = document.createElement("span"); metadata.textContent = `metadata ${statement.asset.metadataHash}`;
+    const supply = document.createElement("span"); supply.textContent =
+      `supply ${statement.asset.supply} / max ${statement.asset.maxSupply} · authority ${statement.asset.authority ?? "отозвана"}`;
+    row.append(title, id, metadata, supply); list.append(row);
+  }
+}
+
+async function refreshAssets() {
+  const list = document.querySelector("#asset-list");
+  const checkpoint = document.querySelector("#asset-checkpoint");
+  const loading = document.createElement("p"); loading.className = "contact-empty";
+  loading.textContent = "Загрузка кворумных доказательств…"; list.replaceChildren(loading);
+  checkpoint.textContent = "Проверка checkpoint…"; checkpoint.dataset.state = "loading";
+  assetsStatus.textContent = "";
+  try {
+    const account = await readAccount();
+    if (!account.proofVerified) throw new Error("Список недоступен: account state не подтверждён кворумом.");
+    for (const id of assetIdsFromVerifiedHistory(account)) knownAssetIds.add(id);
+    const statements = [];
+    for (const assetId of [...knownAssetIds].sort()) statements.push(await verifyAssetState(assetId, walletInfo.address));
+    renderVerifiedAssets(statements);
+    const state = statements[0];
+    checkpoint.textContent = state
+      ? `Проверено · блок ${state.height} · root ${state.stateRoot.slice(0, 16)}… · ${state.networkId}`
+      : `Проверено · блок ${account.proofHeight} · root ${account.proofStateRoot.slice(0, 16)}… · ${networkInfo.networkId} · доказанных asset ID не обнаружено`;
+    checkpoint.dataset.state = "verified"; checkpoint.dataset.height = String(state?.height ?? account.proofHeight);
+  } catch (error) {
+    const unavailable = document.createElement("p"); unavailable.className = "contact-empty";
+    unavailable.textContent = "Доказанный список временно недоступен."; list.replaceChildren(unavailable);
+    checkpoint.textContent = networkInfo ? `Устарело или ошибка доказательства · текущий блок ${networkInfo.height}` : "Checkpoint недоступен";
+    checkpoint.dataset.state = "stale"; delete checkpoint.dataset.height; assetsStatus.textContent = error.message;
+  }
+}
+
+async function openAssets() {
+  if (!walletInfo) return openBridgePanel();
+  resourcesPanel.close();
+  assetsPanel.showModal();
+  await refreshAssets();
+}
+
+function assetFormValues(form, type) {
+  const values = Object.fromEntries(new FormData(form).entries());
+  if (type === "asset-create") {
+    if (!/^[0-9a-f]{64}$/.test(values.metadataHash ?? "") || !ASSET_UNITS.test(values.initialSupply ?? "") ||
+        !ASSET_UNITS.test(values.maxSupply ?? "") || BigInt(values.maxSupply) === 0n) {
+      throw new Error("Metadata hash и параметры выпуска заполнены неверно.");
+    }
+    return { fixedSupply: form.elements.fixedSupply.checked, initialSupply: values.initialSupply,
+      maxSupply: values.maxSupply, metadataHash: values.metadataHash };
+  }
+  if (!ASSET_ID.test(values.assetId ?? "") || values.assetId === "0".repeat(64)) throw new Error("Asset ID неверен.");
+  if (["asset-mint", "asset-transfer", "asset-burn"].includes(type) &&
+      (!ASSET_UNITS.test(values.amount ?? "") || BigInt(values.amount) === 0n)) throw new Error("Количество units неверно.");
+  if (type === "asset-transfer" && (!NIR_ADDRESS.test(values.recipient ?? "") || values.recipient === walletInfo.address)) {
+    throw new Error("Адрес получателя неверен или совпадает с адресом кошелька.");
+  }
+  return { assetId: values.assetId, ...(values.amount ? { amount: values.amount } : {}),
+    ...(values.recipient ? { recipient: values.recipient } : {}) };
+}
+
+async function proveAssetIntent(intent) {
+  await verifyAssetState(intent.assetId, walletInfo.address);
+  if (intent.type === "asset-transfer") await verifyAssetState(intent.assetId, intent.recipient);
+}
+
+async function prepareAssetSimulation(type, fields) {
+  if (!networkInfo || networkInfo.valueMode !== "valueless-devnet") throw new Error("Нужна подключённая локальная testnet.");
+  const account = await readAccount();
+  if (!account.proofVerified) throw new Error("Account state не подтверждён кворумом.");
+  const fee = await resourceFee();
+  let intent = { type, ...fields, fee, networkId: networkInfo.networkId, nonce: account.nextNonce };
+  if (type === "asset-create") {
+    const derived = await bridgeRequest("/v1/derive-asset-id", { method: "POST",
+      body: JSON.stringify({ networkId: networkInfo.networkId, nonce: account.nextNonce }) });
+    if (derived.verified !== true || derived.creator !== walletInfo.address || derived.nonce !== account.nextNonce ||
+        !ASSET_ID.test(derived.assetId ?? "")) throw new Error("Bridge не подтвердил deterministic asset ID.");
+    intent = { ...intent, assetId: derived.assetId };
+  }
+  await proveAssetIntent(intent);
+  assetsStatus.textContent = "Симуляция с кворумными account и asset proofs…";
+  const simulation = await simulateIntent(intent, account);
+  pendingAssetIntent = intent; pendingAssetSimulation = simulation;
+  renderSimulation("#asset-simulation", simulation);
+  assetsStatus.textContent = "Проверьте fee, asset deltas, authority и риски. Браузер не может подписать операцию.";
+}
+
+async function recheckAssetSimulation() {
+  const account = await readAccount();
+  if (!account.proofVerified || account.nextNonce !== pendingAssetIntent.nonce) throw new Error("Checkpoint или nonce изменились; экспорт отменён.");
+  await proveAssetIntent(pendingAssetIntent);
+  const refreshed = await simulateIntent(pendingAssetIntent, account);
+  if (!sameSimulation(refreshed, pendingAssetSimulation)) throw new Error("Последствия изменились; проверьте новую симуляцию.");
+  return refreshed;
+}
+
+document.querySelector("#open-assets").onclick = openAssets;
+document.querySelector("#refresh-assets").onclick = async (event) => {
+  event.currentTarget.disabled = true; try { await refreshAssets(); } finally { event.currentTarget.disabled = false; }
+};
+document.querySelectorAll("[data-asset-form]").forEach((form) => form.addEventListener("submit", async (event) => {
+  event.preventDefault(); const button = form.querySelector("button[type=submit]"); button.disabled = true;
+  try { await prepareAssetSimulation(form.dataset.assetForm, assetFormValues(form, form.dataset.assetForm)); }
+  catch (error) { assetsStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+}));
+document.querySelector("#edit-asset-simulation").onclick = () => {
+  pendingAssetIntent = null; pendingAssetSimulation = null; clearSimulation("#asset-simulation");
+  assetsStatus.textContent = "Симуляция отменена. Ничего не подписано и не отправлено.";
+};
+document.querySelector("#export-asset-offline").onclick = async (event) => {
+  if (!pendingAssetIntent || !pendingAssetSimulation) return;
+  event.currentTarget.disabled = true; assetsStatus.textContent = "Повторная проверка proofs перед экспортом…";
+  try {
+    const refreshed = await recheckAssetSimulation();
+    await exportOfflineSigningPackage(pendingAssetIntent, refreshed);
+    assetsStatus.textContent = "Проверенный пакет экспортирован. Подпись возможна только на офлайн-устройстве.";
+  } catch (error) { assetsStatus.textContent = error.message; }
+  finally { event.currentTarget.disabled = false; }
+};
 
 async function resourceFee() {
   const response = await fetch(nodeUrl("/v1/fees?amount=1"));
@@ -1191,6 +1385,13 @@ async function selectActiveNode() {
 async function refreshNodeStatus() {
   try {
     await selectActiveNode();
+    const assetCheckpoint = document.querySelector("#asset-checkpoint");
+    if (assetCheckpoint.dataset.state === "verified" &&
+        Number(assetCheckpoint.dataset.height) !== networkInfo.height) {
+      assetCheckpoint.dataset.state = "stale";
+      assetCheckpoint.textContent = `Доказательства устарели · проверено на блоке ${assetCheckpoint.dataset.height}, текущий блок ${networkInfo.height}`;
+      assetsStatus.textContent = "Обновите asset proofs перед просмотром или новой операцией.";
+    }
     networkButton.textContent = `● ${networkInfo.agreeingNodes}/${networkInfo.availableNodes} · h${networkInfo.height}`;
     networkButton.classList.add("connected");
     networkButton.classList.remove("offline");

@@ -119,6 +119,16 @@ test("wallet checkpoint advances only through a verified finality header chain",
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    const derivedAsset = await request(`${base}/v1/derive-asset-id`, origin, token, {
+      body: JSON.stringify({ networkId, nonce: 0 }), method: "POST",
+    });
+    assert.equal(derivedAsset.status, 200);
+    assert.equal((await derivedAsset.json()).assetId,
+      nativeAssetId({ creator: wallet.address, networkId, nonce: 0 }));
+    const malformedDerivation = await request(`${base}/v1/derive-asset-id`, origin, token, {
+      body: JSON.stringify({ networkId, nonce: 0, unknown: true }), method: "POST",
+    });
+    assert.equal(malformedDerivation.status, 400);
     const unverifiedBootstrap = await request(
       `${base}/v1/verify-account-proof`, origin, token, {
         body: JSON.stringify({ address: wallet.address, minimumHeight: 1, proof: account(1) }),

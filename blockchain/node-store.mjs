@@ -23,6 +23,7 @@ import { generateWallet, publicWallet } from "./crypto.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
 import { createAccountProof } from "./account-proof.mjs";
+import { createAssetProof } from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
 
@@ -162,6 +163,18 @@ export class PersistentDevNode {
       validators,
       validatorWallets,
     });
+  }
+
+  assetProof(assetId, holder) {
+    const validators = this.#chain.validatorMembers;
+    const active = new Set(validators.map((member) => member.address));
+    const validatorWallets = this.#keys.validators.filter((wallet) => active.has(wallet.address));
+    return createAssetProof({ asset: this.#chain.nativeAsset(assetId), assetId,
+      balance: this.#chain.nativeAssetBalance(assetId, holder).toString(),
+      height: this.#chain.height, holder, networkId: this.#chain.networkId,
+      pendingProtocolUpgrade: this.#chain.pendingProtocolUpgrade,
+      protocolVersion: this.#chain.protocolVersion, stateRoot: this.#chain.stateRoot,
+      tipHash: this.#chain.tipHash, validators, validatorWallets });
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {

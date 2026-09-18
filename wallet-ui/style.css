@@ -106,10 +106,19 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 .resource-stats span { display: block; color: var(--muted); font-size: 11px; }
 .resource-stats b { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 12px; line-height: 1.35; }
 #resources-panel { max-height: calc(100vh - 28px); overflow-y: auto; }
-#resources-panel details { margin-top: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 15px; }
-#resources-panel summary { cursor: pointer; font-size: 14px; font-weight: 700; }
-#resources-panel form { margin-top: 13px; }
+#resources-panel details, #assets-panel details { margin-top: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 15px; }
+#resources-panel summary, #assets-panel summary { cursor: pointer; font-size: 14px; font-weight: 700; }
+#resources-panel form, #assets-panel form { margin-top: 13px; }
 #resources-panel small { color: var(--muted); line-height: 1.4; }
+.asset-checkpoint { margin: 14px 0 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-soft); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.asset-list { display: grid; gap: 8px; margin: 14px 0; }
+.asset-row { padding: 12px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface-soft); }
+.asset-row b, .asset-row span { display: block; }
+.asset-row b { font-size: 13px; }
+.asset-row span { margin-top: 5px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.check-label { grid-template-columns: auto 1fr; align-items: center; }
+.check-label input { width: 20px; min-height: 20px; }
+#assets-panel { max-height: calc(100vh - 28px); overflow-y: auto; }
 .address-box { padding: 12px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
 #payment-request-result { margin-top: 18px; }
 .network-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
@@ -168,6 +177,7 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
   .compact { width: 100%; }
   .contact-row { grid-template-columns: 1fr; }
   .contact-controls { justify-content: flex-start; }
+  .asset-row { padding: 10px; }
   nav span { font-size: 10px; }
 }
 

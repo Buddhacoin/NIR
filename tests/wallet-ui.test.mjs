@@ -52,13 +52,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=30/);
-  assert.match(serviceWorker, /style\.css\?v=30/);
+  assert.match(html, /style\.css\?v=31/);
+  assert.match(serviceWorker, /style\.css\?v=31/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=30/);
-  assert.match(serviceWorker, /app\.js\?v=30/);
-  assert.match(serviceWorker, /nir-wallet-shell-v32/);
+  assert.match(html, /app\.js\?v=31/);
+  assert.match(serviceWorker, /app\.js\?v=31/);
+  assert.match(serviceWorker, /nir-wallet-shell-v33/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
   assert.match(serviceWorker, /node-selection\.js/);
@@ -201,8 +201,29 @@ test("wallet exports a versioned offline signing package and imports no broadcas
   assert.match(script, /validateOfflineSignedEnvelope/);
   assert.match(script, /decodeOfflineQrFrames/);
   assert.match(script, /publicBridgeRequest\("\/v1\/verify-offline-signed-package"/);
-  assert.match(script, /publicBridgeRequest\("\/v1\/create-offline-signing-package"/);
+  assert.match(script, /bridgeRequest\("\/v1\/create-offline-signing-package"/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
   assert.doesNotMatch(script, /signedTransaction = checked\.transaction/);
   assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(offline|package|signature)/i);
+});
+
+test("wallet exposes proof-backed native assets without browser signing or broadcast", () => {
+  for (const id of ["assets-panel", "asset-checkpoint", "asset-list", "asset-create-form",
+    "asset-mint-form", "asset-transfer-form", "asset-burn-form", "asset-revoke-form",
+    "asset-simulation", "export-asset-offline"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  for (const type of ["asset-create", "asset-mint", "asset-transfer", "asset-burn",
+    "asset-revoke-authority"]) assert.match(html + script, new RegExp(type));
+  assert.match(script, /\/v1\/assets\/\$\{encodeURIComponent\(assetId\)\}\/proof/);
+  assert.match(script, /bridgeRequest\("\/v1\/verify-asset-proof"/);
+  assert.match(script, /bridgeRequest\("\/v1\/derive-asset-id"/);
+  assert.match(script, /recheckAssetSimulation/);
+  assert.match(script, /exportOfflineSigningPackage\(pendingAssetIntent, refreshed\)/);
+  assert.doesNotMatch(script, /sign-resource[^\n]+pendingAssetIntent/);
+  assert.doesNotMatch(script, /signedAssetTransaction/);
+  assert.match(html, /Браузер не подписывает и не отправляет asset-операции/);
+  assert.match(html, /Загрузка доказанных активов/);
+  assert.match(script, /Устарело или ошибка доказательства/);
+  assert.match(styles, /#assets-panel \{ max-height: calc\(100vh - 28px\); overflow-y: auto/);
 });

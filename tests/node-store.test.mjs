@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { createCreditStake, createTransfer } from "../blockchain/chain.mjs";
+import { createCreditStake, createTransfer, nativeAssetId } from "../blockchain/chain.mjs";
 import { verifyAccountProof } from "../blockchain/account-proof.mjs";
 import { ATOMIC_UNITS, MIN_TRANSFER_FEE } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
@@ -379,6 +379,13 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
       .then((response) => response.json());
     assert.equal(accountProof.accountStateRoot, finality.proofs[0].header.accountStateRoot);
     assert.equal(accountProof.inclusionProof.siblings.length, 256);
+    const assetId = nativeAssetId({ creator: wallet.address, networkId: health.networkId, nonce: 0 });
+    const assetProof = await fetch(`${base}/v1/assets/${assetId}/proof?holder=${wallet.address}`)
+      .then((response) => response.json());
+    assert.equal(assetProof.asset, null);
+    assert.equal(assetProof.balance, "0");
+    assert.equal(assetProof.stateRoot, finality.proofs[0].header.stateRoot);
+    assert.equal(assetProof.attestations.length, 4);
 
     const rejected = await fetch(`${base}/health`, { headers: { origin: "https://example.com" } });
     assert.equal(rejected.status, 403);

@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="nir-coin-icon.png?v=24">
-  <link rel="stylesheet" href="style.css?v=30"><title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css?v=31"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
@@ -126,7 +126,23 @@
       <button class="primary" id="confirm-resource-simulation" type="button">Подписать проверенную операцию</button><button class="secondary" id="edit-resource-simulation" type="button">Изменить</button>
     </section>
     <section id="resource-signed" hidden><b>Операция подписана локально</b><p>Сверьте JSON. Подпись ещё ничего не отправила.</p><textarea id="resource-signed-json" readonly aria-label="Подписанная ресурсная операция"></textarea><button class="primary" id="submit-resource" type="button">Отправить в local testnet</button><button class="secondary" id="discard-resource" type="button">Удалить подпись</button></section>
+    <button class="secondary" id="open-assets" type="button">Пользовательские активы</button>
     <p class="form-status" id="resources-status" role="status"></p>
+  </dialog>
+  <dialog id="assets-panel" aria-labelledby="assets-title">
+    <button class="close" data-close="assets-panel" aria-label="Закрыть">×</button>
+    <h2 id="assets-title">Пользовательские активы</h2>
+    <p>Показаны только balances и metadata, подтверждённые кворумом на одном checkpoint. Браузер не подписывает и не отправляет asset-операции.</p>
+    <div class="asset-checkpoint" id="asset-checkpoint" role="status">Checkpoint ещё не проверен</div>
+    <button class="secondary" id="refresh-assets" type="button">Обновить доказательства</button>
+    <div class="asset-list" id="asset-list" aria-live="polite"><p class="contact-empty">Загрузка доказанных активов…</p></div>
+    <details open><summary>Создать актив</summary><form id="asset-create-form" data-asset-form="asset-create"><label>Metadata hash, 64 hex<input name="metadataHash" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" required></label><label>Начальный выпуск, целые units<input name="initialSupply" inputmode="numeric" required></label><label>Максимальный выпуск, целые units<input name="maxSupply" inputmode="numeric" required></label><label class="check-label"><input name="fixedSupply" type="checkbox"> Фиксированный выпуск без mint authority</label><button class="primary" type="submit">Проверить создание</button></form></details>
+    <details><summary>Выпустить units</summary><form id="asset-mint-form" data-asset-form="asset-mint"><label>Asset ID<input name="assetId" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" required></label><label>Количество units<input name="amount" inputmode="numeric" required></label><button class="primary" type="submit">Проверить выпуск</button></form></details>
+    <details><summary>Передать units</summary><form id="asset-transfer-form" data-asset-form="asset-transfer"><label>Asset ID<input name="assetId" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" required></label><label>Адрес получателя<input name="recipient" minlength="68" maxlength="68" autocomplete="off" spellcheck="false" required></label><label>Количество units<input name="amount" inputmode="numeric" required></label><button class="primary" type="submit">Проверить перевод</button></form></details>
+    <details><summary>Сжечь units</summary><form id="asset-burn-form" data-asset-form="asset-burn"><label>Asset ID<input name="assetId" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" required></label><label>Количество units<input name="amount" inputmode="numeric" required></label><button class="primary" type="submit">Проверить burn</button></form></details>
+    <details><summary>Навсегда отозвать mint authority</summary><form id="asset-revoke-form" data-asset-form="asset-revoke-authority"><label>Asset ID<input name="assetId" minlength="64" maxlength="64" autocomplete="off" spellcheck="false" required></label><label class="check-label"><input name="confirmed" type="checkbox" required> Понимаю: authority нельзя восстановить</label><button class="danger" type="submit">Проверить отзыв authority</button></form></details>
+    <section class="simulation-review" id="asset-simulation" hidden aria-labelledby="asset-simulation-title"><h3 id="asset-simulation-title">Проверка asset-операции</h3><p>Перед экспортом доказательства и последствия будут получены повторно. Доступна только офлайн-подпись.</p><dl class="simulation-fields"></dl><ul class="simulation-risks" aria-label="Риски операции"></ul><button class="primary" id="export-asset-offline" type="button">Повторно проверить и экспортировать</button><button class="secondary" id="edit-asset-simulation" type="button">Изменить</button></section>
+    <p class="form-status" id="assets-status" role="status" aria-live="polite"></p>
   </dialog>
   <dialog id="settings-panel" aria-labelledby="settings-title">
     <button class="close" data-close="settings-panel" aria-label="Закрыть">×</button>
@@ -150,5 +166,5 @@
     <p class="warning">Не храните пароль рядом с vault. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=30"></script>
+  <script type="module" src="app.js?v=31"></script>
 </body></html>
