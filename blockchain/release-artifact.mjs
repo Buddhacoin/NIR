@@ -169,30 +169,58 @@ export function serializeReleaseArtifact(artifact) {
   return `${canonicalJson(verifyReleaseArtifact(artifact))}\n`;
 }
 
-export function installWalletArtifact(artifact, targetPath, { signedRelease, trustedAddress } = {}) {
+function installationSpec(kind) {
+  if (kind === "wallet") {
+    return {
+      format: "nir-wallet-install-v1",
+      relativePath(path) {
+        if (!path.startsWith("wallet-ui/")) {
+          throw new Error("wallet package contains a non-wallet path");
+        }
+        const relative = path.slice("wallet-ui/".length);
+        if (!relative) throw new Error("wallet package path is invalid");
+        return relative;
+      },
+    };
+  }
+  if (kind === "node") {
+    return {
+      format: "nir-node-install-v1",
+      relativePath(path) {
+        if (path !== "package.json" && !path.startsWith("blockchain/")) {
+          throw new Error("node package contains a non-node path");
+        }
+        return path;
+      },
+    };
+  }
+  throw new Error("installation kind is invalid");
+}
+
+function installArtifact(artifact, targetPath, { kind, signedRelease, trustedAddress } = {}) {
   const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
   const verified = verifyReleaseArtifact(artifact, { sourceManifest: manifest });
-  if (verified.kind !== "wallet") throw new Error("wallet installation metadata is invalid");
+  if (verified.kind !== kind) throw new Error(`${kind} installation metadata is invalid`);
+  const spec = installationSpec(kind);
+  const entries = verified.entries.map((entry) => ({
+    entry,
+    relative: spec.relativePath(entry.path),
+  }));
   const target = resolve(targetPath);
   const parent = dirname(target);
   const parentMetadata = lstatSync(parent);
   if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink() || existsSync(target)) {
-    throw new Error("wallet installation requires a new directory in a regular parent");
+    throw new Error(`${kind} installation requires a new directory in a regular parent`);
   }
   mkdirSync(target, { mode: 0o700 });
   try {
-    for (const entry of verified.entries) {
-      if (!entry.path.startsWith("wallet-ui/")) {
-        throw new Error("wallet package contains a non-wallet path");
-      }
-      const relative = entry.path.slice("wallet-ui/".length);
-      if (!relative) throw new Error("wallet package path is invalid");
+    for (const { entry, relative } of entries) {
       const destination = join(target, ...relative.split("/"));
       const directory = dirname(destination);
       mkdirSync(directory, { recursive: true, mode: 0o755 });
       const directoryMetadata = lstatSync(directory);
       if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
-        throw new Error("wallet installation directory is unsafe");
+        throw new Error(`${kind} installation directory is unsafe`);
       }
       writeFileSync(destination, Buffer.from(entry.content, "base64"), {
         flag: "wx", mode: entry.executable ? 0o755 : 0o644,
@@ -201,7 +229,7 @@ export function installWalletArtifact(artifact, targetPath, { signedRelease, tru
     }
     const provenance = {
       artifactHash: verified.artifactHash,
-      format: "nir-wallet-install-v1",
+      format: spec.format,
       releaseVersion: verified.releaseVersion,
       signerAddress: signer.address,
       sourceManifestHash: verified.sourceManifestHash,
@@ -217,50 +245,59 @@ export function installWalletArtifact(artifact, targetPath, { signedRelease, tru
   }
 }
 
-function installedFiles(directory, prefix = "", result = []) {
+export function installWalletArtifact(artifact, targetPath, options = {}) {
+  return installArtifact(artifact, targetPath, { ...options, kind: "wallet" });
+}
+
+export function installNodeArtifact(artifact, targetPath, options = {}) {
+  return installArtifact(artifact, targetPath, { ...options, kind: "node" });
+}
+
+function installedFiles(directory, kind, prefix = "", result = []) {
   if (prefix.split("/").filter(Boolean).length > 32) {
-    throw new Error("wallet installation directory depth is excessive");
+    throw new Error(`${kind} installation directory depth is excessive`);
   }
   const names = readdirSync(directory).sort();
   result.seen = (result.seen ?? 0) + names.length;
   if (names.length > MAX_ENTRIES || result.seen > MAX_ENTRIES) {
-    throw new Error("wallet installation contains too many entries");
+    throw new Error(`${kind} installation contains too many entries`);
   }
   for (const name of names) {
     const relative = prefix ? `${prefix}/${name}` : name;
     const path = join(directory, name);
     const metadata = lstatSync(path);
-    if (metadata.isSymbolicLink()) throw new Error("wallet installation contains a symbolic link");
+    if (metadata.isSymbolicLink()) throw new Error(`${kind} installation contains a symbolic link`);
     if ((metadata.mode & 0o022) !== 0) {
-      throw new Error("wallet installation contains a group- or world-writable entry");
+      throw new Error(`${kind} installation contains a group- or world-writable entry`);
     }
-    if (metadata.isDirectory()) installedFiles(path, relative, result);
+    if (metadata.isDirectory()) installedFiles(path, kind, relative, result);
     else if (metadata.isFile()) result.push(relative);
-    else throw new Error("wallet installation contains an unsupported entry");
+    else throw new Error(`${kind} installation contains an unsupported entry`);
   }
   return result;
 }
 
-export function verifyWalletInstallation(targetPath, { signedRelease, trustedAddress } = {}) {
+function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } = {}) {
   const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
+  const spec = installationSpec(kind);
   const target = resolve(targetPath);
   const targetMetadata = lstatSync(target);
   if (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink() ||
       (targetMetadata.mode & 0o022) !== 0) {
-    throw new Error("wallet installation must be a regular directory");
+    throw new Error(`${kind} installation must be a regular directory`);
   }
   const sourceEntries = new Map(manifest.files.map((entry) => [entry.path, entry]));
-  const sourcePaths = artifactPaths("wallet", manifest.files.map(({ path }) => path));
-  const expectedRelative = sourcePaths.map((path) => path.slice("wallet-ui/".length));
-  const actualRelative = installedFiles(target);
+  const sourcePaths = artifactPaths(kind, manifest.files.map(({ path }) => path));
+  const expectedRelative = sourcePaths.map((path) => spec.relativePath(path));
+  const actualRelative = installedFiles(target, kind);
   const expectedFiles = [...expectedRelative, "NIR-INSTALL.json"].sort();
   if (actualRelative.length !== expectedFiles.length ||
       actualRelative.some((path, index) => path !== expectedFiles[index])) {
-    throw new Error("wallet installation file set does not match the signed release");
+    throw new Error(`${kind} installation file set does not match the signed release`);
   }
   const entries = sourcePaths.map((path, index) => {
     const relative = expectedRelative[index];
-    if (!relative) throw new Error("wallet installation path is invalid");
+    if (!relative) throw new Error(`${kind} installation path is invalid`);
     const destination = join(target, ...relative.split("/"));
     const metadata = lstatSync(destination);
     const contents = readFileSync(destination);
@@ -271,7 +308,7 @@ export function verifyWalletInstallation(targetPath, { signedRelease, trustedAdd
     if (!metadata.isFile() || metadata.isSymbolicLink() || !source ||
         contents.length !== source.size || executable !== source.executable ||
         sourceDigest !== source.sha3_256) {
-      throw new Error("wallet installation contents differ from the signed release");
+      throw new Error(`${kind} installation contents differ from the signed release`);
     }
     return {
       content: contents.toString("base64"), executable, path,
@@ -281,7 +318,7 @@ export function verifyWalletInstallation(targetPath, { signedRelease, trustedAdd
   const payload = payloadFrom({
     entries,
     format: "nir-reproducible-package-v1",
-    kind: "wallet",
+    kind,
     releaseVersion: manifest.releaseVersion,
     sourceManifestHash: manifest.manifestHash,
     sourceRevision: manifest.sourceRevision,
@@ -291,19 +328,27 @@ export function verifyWalletInstallation(targetPath, { signedRelease, trustedAdd
   const provenanceMetadata = lstatSync(provenancePath);
   if (!provenanceMetadata.isFile() || provenanceMetadata.isSymbolicLink() ||
       provenanceMetadata.size > 16 * 1024) {
-    throw new Error("wallet installation provenance is invalid");
+    throw new Error(`${kind} installation provenance is invalid`);
   }
   const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
   const expectedProvenance = {
     artifactHash,
-    format: "nir-wallet-install-v1",
+    format: spec.format,
     releaseVersion: manifest.releaseVersion,
     signerAddress: signer.address,
     sourceManifestHash: manifest.manifestHash,
     sourceRevision: manifest.sourceRevision,
   };
   if (canonicalJson(provenance) !== canonicalJson(expectedProvenance)) {
-    throw new Error("wallet installation provenance does not match its contents");
+    throw new Error(`${kind} installation provenance does not match its contents`);
   }
   return { ...expectedProvenance, files: entries.length, verified: true };
+}
+
+export function verifyWalletInstallation(targetPath, options = {}) {
+  return verifyInstallation(targetPath, { ...options, kind: "wallet" });
+}
+
+export function verifyNodeInstallation(targetPath, options = {}) {
+  return verifyInstallation(targetPath, { ...options, kind: "node" });
 }

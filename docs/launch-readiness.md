@@ -25,8 +25,9 @@ Implemented and continuously tested:
 - an end-to-end HTTP test that creates a vault, funds it with valueless faucet
   units, obtains a fee quote, signs through the bridge, submits separately,
   finalizes a block, checks both balances, and rejects transaction replay;
-- a verified wallet-package installer that refuses existing destinations and
-  writes source, artifact, signer, and release provenance after safe extraction.
+- verified wallet- and node-package installers that refuse existing
+  destinations, write source, artifact, signer, and release provenance after
+  safe extraction, and reverify the complete installed file set.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR
 has market value.
@@ -66,7 +67,9 @@ remaining checks and adds a reproducible failure test:
 2. a documented reset and incident drill preserves the published genesis and
    makes any destructive testnet action explicit;
 3. packaged node and wallet builds are installed and reverified on supported
-   platforms without trusting the download location;
+   platforms without trusting the download location; portable `.nirpkg`
+   installation is implemented locally, while platform-signed native packaging
+   and cross-platform release rehearsal remain;
 4. four independently administered operators complete discovery, rotation,
    backup and recovery drills on separate hosts;
 5. the internal critical findings have either executable closure evidence or a

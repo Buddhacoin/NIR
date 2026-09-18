@@ -62,6 +62,8 @@
     "release:verify-artifact": "node blockchain/release-cli.mjs verify-artifact",
     "release:install-wallet": "node blockchain/release-cli.mjs install-wallet",
     "release:verify-wallet-install": "node blockchain/release-cli.mjs verify-wallet-install",
+    "release:install-node": "node blockchain/release-cli.mjs install-node",
+    "release:verify-node-install": "node blockchain/release-cli.mjs verify-node-install",
     "release:build-extension": "node blockchain/release-cli.mjs build-extension",
     "release:verify-extension": "node blockchain/release-cli.mjs verify-extension",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",

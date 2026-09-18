@@ -19,9 +19,11 @@ import { createDeterministicZip, zipSha3 } from "../blockchain/deterministic-zip
 import {
   artifactPaths,
   createReleaseArtifact,
+  installNodeArtifact,
   installWalletArtifact,
   serializeReleaseArtifact,
   verifyReleaseArtifact,
+  verifyNodeInstallation,
   verifyWalletInstallation,
 } from "../blockchain/release-artifact.mjs";
 import {
@@ -222,6 +224,133 @@ test("verified wallet packages install only into a new directory with provenance
     assert.throws(() => verifyWalletInstallation(target, {
       signedRelease, trustedAddress: wallet.address,
     }), /contents differ/);
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
+  }
+});
+
+test("verified node packages install and reverify an exact safe file set", () => {
+  const values = fixture();
+  const target = join(values.root, "installed-node");
+  try {
+    const wallet = generateWallet();
+    const signedRelease = signReleaseManifest(values.manifest, wallet);
+    const artifact = createReleaseArtifact(
+      values.root, artifactPaths("node", values.paths), {
+        kind: "node", sourceManifest: values.manifest,
+      },
+    );
+    const provenance = installNodeArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    });
+    assert.equal(readFileSync(join(target, "package.json"), "utf8"),
+      '{"version":"0.2.0"}\n');
+    assert.equal(readFileSync(join(target, "blockchain", "node.mjs"), "utf8"),
+      "export const node = true;\n");
+    assert.deepEqual(JSON.parse(readFileSync(join(target, "NIR-INSTALL.json"), "utf8")),
+      provenance);
+    assert.equal(provenance.format, "nir-node-install-v1");
+    assert.deepEqual(verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), { ...provenance, files: 2, verified: true });
+
+    const wrongKindTarget = join(values.root, "wrong-kind-node");
+    const walletArtifact = createReleaseArtifact(
+      values.root, artifactPaths("wallet", values.paths), {
+        kind: "wallet", sourceManifest: values.manifest,
+      },
+    );
+    assert.throws(() => installNodeArtifact(walletArtifact, wrongKindTarget, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /node installation metadata/);
+    assert.equal(existsSync(wrongKindTarget), false);
+    assert.throws(() => installWalletArtifact(artifact, wrongKindTarget, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /wallet installation metadata/);
+
+    const untrustedTarget = join(values.root, "untrusted-node");
+    assert.throws(() => installNodeArtifact(artifact, untrustedTarget, {
+      signedRelease, trustedAddress: generateWallet().address,
+    }), /not trusted/);
+    assert.equal(existsSync(untrustedTarget), false);
+    assert.throws(() => installNodeArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /new directory/);
+
+    const tampered = structuredClone(artifact);
+    tampered.entries[0].content = Buffer.from("tampered").toString("base64");
+    const rejectedTarget = join(values.root, "rejected-node");
+    assert.throws(() => installNodeArtifact(tampered, rejectedTarget, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /digest|hash/);
+    assert.equal(existsSync(rejectedTarget), false);
+
+    writeFileSync(join(target, "unexpected.mjs"), "unexpected\n");
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /file set/);
+    rmSync(join(target, "unexpected.mjs"));
+    chmodSync(join(target, "blockchain", "node.mjs"), 0o666);
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /world-writable/);
+    chmodSync(join(target, "blockchain", "node.mjs"), 0o644);
+    chmodSync(join(target, "blockchain", "node.mjs"), 0o755);
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /contents differ/);
+    chmodSync(join(target, "blockchain", "node.mjs"), 0o644);
+    writeFileSync(join(target, "blockchain", "node.mjs"), "modified\n");
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /contents differ/);
+
+    rmSync(target, { recursive: true, force: true });
+    installNodeArtifact(artifact, target, {
+      signedRelease, trustedAddress: wallet.address,
+    });
+    rmSync(join(target, "blockchain", "node.mjs"));
+    symlinkSync("../package.json", join(target, "blockchain", "node.mjs"));
+    assert.throws(() => verifyNodeInstallation(target, {
+      signedRelease, trustedAddress: wallet.address,
+    }), /symbolic link/);
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
+  }
+});
+
+test("release CLI installs and reverifies node packages", () => {
+  const values = fixture();
+  const cli = new URL("../blockchain/release-cli.mjs", import.meta.url).pathname;
+  const artifactPath = join(values.root, "node.nirpkg");
+  const envelopePath = join(values.root, "signed-release.json");
+  const target = join(values.root, "cli-node");
+  try {
+    const wallet = generateWallet();
+    const signedRelease = signReleaseManifest(values.manifest, wallet);
+    const artifact = createReleaseArtifact(
+      values.root, artifactPaths("node", values.paths), {
+        kind: "node", sourceManifest: values.manifest,
+      },
+    );
+    writeFileSync(artifactPath, serializeReleaseArtifact(artifact));
+    writeFileSync(envelopePath, `${JSON.stringify(signedRelease)}\n`);
+    const installed = spawnSync(process.execPath, [
+      cli, "install-node", artifactPath, envelopePath, wallet.address, target,
+    ], { encoding: "utf8" });
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.match(installed.stdout, /Node .* installed/);
+    const verified = spawnSync(process.execPath, [
+      cli, "verify-node-install", target, envelopePath, wallet.address,
+    ], { encoding: "utf8" });
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /Node .* verified/);
+    writeFileSync(join(target, "package.json"), '{"version":"changed"}\n');
+    const tampered = spawnSync(process.execPath, [
+      cli, "verify-node-install", target, envelopePath, wallet.address,
+    ], { encoding: "utf8" });
+    assert.equal(tampered.status, 1);
+    assert.match(tampered.stderr, /contents differ/);
   } finally {
     rmSync(values.root, { recursive: true, force: true });
   }

@@ -82,22 +82,37 @@ The wallet recipe includes `wallet-ui/`; the node recipe includes `blockchain/`
 and `package.json`. The canonical JSON container has no timestamps, host paths,
 file-order ambiguity, compression metadata, or network-fetched dependencies.
 Its `artifactHash` must match across independent builders. `.nirpkg` is an
-auditable release container. A verified wallet package can be installed into a
-new directory without trusting its distributor:
+auditable release container. Verified wallet and node packages can be installed
+into new directories without trusting their distributor:
 
 ```bash
 npm run release:install-wallet -- \
   wallet.nirpkg signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
   /absolute/path/to/new-nir-wallet
+
+npm run release:verify-wallet-install -- \
+  /absolute/path/to/new-nir-wallet \
+  signed-release.json nir1TRUSTED_RELEASE_ADDRESS
+
+npm run release:install-node -- \
+  node.nirpkg signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /absolute/path/to/new-nir-node
+
+npm run release:verify-node-install -- \
+  /absolute/path/to/new-nir-node \
+  signed-release.json nir1TRUSTED_RELEASE_ADDRESS
 ```
 
-The command verifies the post-quantum release signature, trusted signer address,
-source-manifest binding, artifact hash, complete deterministic file set, every
-file digest, and all paths before creating the destination. It refuses an
-existing directory, never follows package symlinks, removes a partial new
-installation after failure, and writes `NIR-INSTALL.json` with the verified
-artifact, source, release, and signer identities. The result is an auditable
-web/extension directory, not yet a click-to-install notarized desktop app.
+The install commands verify the post-quantum release signature, trusted signer
+address, source-manifest binding, artifact hash, complete deterministic file
+set, every file digest, and all paths before creating the destination. They
+refuse an existing directory, never follow package symlinks, remove a partial
+new installation after failure, and write kind-specific `NIR-INSTALL.json`
+provenance with the verified artifact, source, release, and signer identities.
+Reverification rejects missing, additional, modified, symbolic-link, special,
+or group/world-writable entries. The wallet result is an auditable web/extension
+directory and the node result is an auditable Node.js source installation; they
+are not yet click-to-install, platform-signed native applications.
 
 ## Build the browser extension ZIP
 
