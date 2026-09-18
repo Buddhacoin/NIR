@@ -180,7 +180,7 @@ export async function runProtocolUpgradeRehearsal({ directory, firstValidatorPor
         mode: "new-quorum-scheduled-forward-upgrade", pendingActivationHeight: recoveryActivationHeight,
         pendingVersion: PROTOCOL_VERSION + 2,
         semanticRollbackExecuted: false,
-        note: "Version 26 execution rules are not shipped; current binaries must stop before its activation." },
+        note: `Version ${PROTOCOL_VERSION + 2} execution rules are not shipped; current binaries must stop before its activation.` },
       status: "passed",
     };
     writeFileSync(join(root, "rehearsal-report.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
