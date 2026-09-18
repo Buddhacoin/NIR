@@ -46,4 +46,10 @@ test("payment requests fail closed across networks, expiry, and unknown fields",
   assert.throws(() => verifyPaymentRequest({ ...request, redirect: "https://evil.invalid" }, {
     networkId: "nir-testnet", now,
   }), /shape/);
+  for (const memo of ["invoice\u202eexe", "invoice\u2066spoof", "invoice\u061c", "line\u2028break"]) {
+    assert.throws(() => createPaymentRequest({
+      wallet, networkId: "nir-testnet", amount: "1", memo,
+      expiresAt: now + 60_000, requestId: "c".repeat(64),
+    }), /memo is invalid/);
+  }
 });

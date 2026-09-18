@@ -8,7 +8,8 @@ function fail(message) { throw new Error(message); }
 function cleanLabel(value) {
   if (typeof value !== "string") fail("Название контакта должно быть текстом.");
   const label = value.trim().replace(/\s+/g, " ");
-  if (!label || label.length > CONTACT_LABEL_MAX || /[\u0000-\u001f\u007f]/u.test(label)) {
+  if (!label || label.length > CONTACT_LABEL_MAX ||
+      /[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(label)) {
     fail("Название контакта должно содержать от 1 до 64 печатных символов.");
   }
   return label;
@@ -65,6 +66,7 @@ export function addressChangeFor(contacts, candidate) {
 export function saveAddressBookContact({ storage = globalThis.localStorage, contacts, candidate, confirmAddressChange = false, now = Date.now() }) {
   const normalized = normalizeContact(candidate, now);
   const safeContacts = Array.isArray(contacts) ? contacts.map((contact) => normalizeContact(contact, now)) : [];
+  if (safeContacts.length > 500) fail("Адресная книга превышает локальный лимит.");
   const change = addressChangeFor(safeContacts, normalized);
   if (change && !confirmAddressChange) {
     const error = new Error("Адрес известного контакта изменился и требует явного подтверждения.");
@@ -81,6 +83,7 @@ export function saveAddressBookContact({ storage = globalThis.localStorage, cont
   };
   const next = safeContacts.filter((item) => item.id !== contact.id);
   next.push(contact);
+  if (next.length > 500) fail("Адресная книга превышает локальный лимит.");
   next.sort((a, b) => a.label.localeCompare(b.label, "ru"));
   storage.setItem(ADDRESS_BOOK_STORAGE_KEY, JSON.stringify({ version: 1, contacts: next }));
   return { contact, contacts: next };

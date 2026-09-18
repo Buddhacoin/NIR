@@ -45,6 +45,26 @@ request is printed in the terminal; the user must type `SIGN` and then enter the
 vault password. The password is never accepted through HTTP, command arguments,
 or environment variables, and the response contains only the signed transaction.
 
+The browser is treated as hostile. Pairing accepts one exact 128-byte-bounded
+JSON shape, serializes concurrent attempts, and activates exactly one in-memory
+session; a second tab cannot win the same code race. A restart creates a new
+code and token. Disconnect increments a protected session generation, so even
+a terminal confirmation that was already waiting cannot produce a signature
+after revocation. API paths reject query variants, request bodies are bounded,
+responses are non-cacheable and carry restrictive content, framing, referrer
+and cross-origin policies.
+
+The UI stores only the selected theme and validated public contacts in
+`localStorage`; vault passwords, seeds, private keys, pairing codes, session
+tokens, simulations and signed packages are not persisted there. Password input
+remains a hidden terminal read and is never an HTTP field, DOM input, command
+argument, environment variable or log value. Contact labels, proven history,
+asset commitments and memos are rendered with text nodes rather than HTML.
+Bidirectional display controls are rejected in labels and signed memos. CSP
+blocks inline script and object execution, while a runtime frame refusal
+complements the required production `frame-ancestors` and `X-Frame-Options`
+headers against clickjacking.
+
 The bridge deliberately has no broadcast endpoint. The wallet UI can pair with
 it, read the public address, show balance and Transfer Credits, calculate a fee,
 review transfers and resource operations, and request a terminal-confirmed
@@ -120,8 +140,21 @@ a URL or persistent browser storage. Close the terminal process when finished.
 The automated integration suite repeats the complete valueless path across real
 loopback HTTP boundaries: public wallet discovery, faucet funding, account and
 fee lookup, bridge signing, separate node submission, final balance checks, and
-replay rejection. It uses temporary keys and does not replace a browser security
-review or external audit.
+replay rejection. A real headless Chromium regression additionally checks CSP,
+inert hostile contact rendering, absence of persisted secrets and refusal to run
+inside a frame. HTTP tests exercise concurrent pairing, origin/host confusion,
+oversized bodies, session revocation during confirmation, restart and stale
+tokens. These tests use temporary keys and do not replace an external audit.
+
+A same-origin script compromise remains able to read the active public UI state,
+session token and signed results displayed during that session, initiate review
+requests and deny service. It still cannot obtain the vault password or private
+key from the bridge, bypass exact simulation binding, silently sign without the
+separate terminal confirmation, or auto-submit. Users must verify the terminal
+summary and close the bridge when finished. Clipboard and QR contents are
+untrusted transport: imported payment requests are accepted only after their
+post-quantum signature and exact network, recipient, amount, expiry and memo are
+verified again.
 
 For an unpacked extension, pass its exact stable
 `chrome-extension://<32-character-id>` origin instead. Do not allow a wildcard

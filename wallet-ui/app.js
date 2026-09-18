@@ -4,6 +4,12 @@ import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
 
+if (globalThis.top !== globalThis.self) {
+  document.documentElement.replaceChildren();
+  document.documentElement.textContent = "NIR Wallet cannot run inside a frame.";
+  throw new Error("NIR Wallet framing is forbidden");
+}
+
 const messages = {
   receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
   send: ["Отправить NIR", "Подключите локальный vault. Перед подписью кошелёк покажет адрес, сумму, комиссию и процент комиссии."],
@@ -205,7 +211,7 @@ async function bridgeRequest(path, options = {}) {
   }
 }
 
-/** Public verification is intentionally unauthenticated: it never sees a vault password or key. */
+/** Artifact verification uses the paired session but never decrypts or signs with the vault. */
 async function publicBridgeRequest(path, options = {}) {
   if (!bridgeSession?.url) throw new Error("Сначала подключите локальный bridge для публичной проверки подписи.");
   const controller = new AbortController();
@@ -213,7 +219,10 @@ async function publicBridgeRequest(path, options = {}) {
   try {
     const response = await fetch(`${bridgeSession.url}${path}`, {
       ...options, signal: controller.signal,
-      headers: options.body ? { "content-type": "application/json" } : {},
+      headers: {
+        "x-nir-bridge-token": bridgeSession.token,
+        ...(options.body ? { "content-type": "application/json" } : {}),
+      },
     });
     let result;
     try { result = await response.json(); } catch { throw new Error("Публичная проверка вернула не JSON."); }

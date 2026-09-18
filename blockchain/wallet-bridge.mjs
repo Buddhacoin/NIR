@@ -63,8 +63,11 @@ function send(response, status, value, origin) {
     "content-length": Buffer.byteLength(body),
     "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
     "content-type": "application/json; charset=utf-8",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "no-referrer",
     "vary": "Origin",
     "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
   });
   response.end(body);
 }
@@ -149,7 +152,8 @@ function validPaymentRequestIntent(value) {
       typeof value.networkId !== "string" || value.networkId.length < 3 ||
       value.networkId.length > 128 || typeof value.amount !== "string" ||
       !/^[1-9][0-9]{0,30}$/.test(value.amount) || typeof value.memo !== "string" ||
-      Buffer.byteLength(value.memo, "utf8") > 160 || /[\u0000-\u001f\u007f]/u.test(value.memo) ||
+      Buffer.byteLength(value.memo, "utf8") > 160 ||
+      /[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value.memo) ||
       !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now ||
       value.expiresAt > now + 30 * 24 * 60 * 60 * 1_000) {
     throw new Error("bridge payment request intent is invalid");
@@ -375,7 +379,9 @@ export function createWalletBridgeServer({
   let pending = false;
   let pairingAttempts = 0;
   let pairingAvailable = pairingCode !== undefined;
-  let sessionActive = true;
+  let pairingPending = false;
+  let sessionActive = pairingCode === undefined;
+  let sessionGeneration = 0;
   const pairingDeadline = Date.now() + pairingLifetimeMs;
   const server = createServer(async (request, response) => {
     const requestOrigin = request.headers.origin;
@@ -396,24 +402,33 @@ export function createWalletBridgeServer({
       response.end(); return;
     }
     const url = new URL(request.url, "http://bridge.local");
+    if (url.search) {
+      return send(response, 404, { error: "bridge endpoint query is not allowed" }, origin);
+    }
     if (request.method === "POST" && url.pathname === "/v1/pair") {
       try {
-        if (!pairingAvailable || Date.now() > pairingDeadline || pairingAttempts >= 5) {
+        if (pairingPending) throw new Error("another pairing request is already in progress");
+        if (!pairingAvailable || sessionActive || Date.now() > pairingDeadline || pairingAttempts >= 5) {
           pairingAvailable = false;
           throw new Error("pairing is unavailable; restart the bridge");
         }
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("pairing requests require application/json");
         }
+        pairingPending = true;
         pairingAttempts += 1;
-        const body = await readBody(request);
-        if (typeof body.code !== "string" || !sameSecret(body.code, pairingCode)) {
+        const body = await readBody(request, 128);
+        if (!body || Object.keys(body).length !== 1 || typeof body.code !== "string" ||
+            !sameSecret(body.code, pairingCode)) {
           throw new Error("pairing code is invalid");
         }
         pairingAvailable = false;
+        sessionActive = true;
         return send(response, 200, { sessionToken }, origin);
       } catch (error) {
         return send(response, 400, { error: error.message }, origin);
+      } finally {
+        pairingPending = false;
       }
     }
     if (!sessionActive || !authorized(request, sessionToken)) {
@@ -422,6 +437,7 @@ export function createWalletBridgeServer({
     try {
       if (request.method === "DELETE" && url.pathname === "/v1/session") {
         sessionActive = false;
+        sessionGeneration += 1;
         pairingAvailable = false;
         verifiedAccountState = null;
         verifiedAccountStates.clear();
@@ -781,22 +797,26 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("bridge signing requests require application/json");
         }
-        const body = await readBody(request);
+        const body = await readBody(request, 16 * 1024);
         const { simulationId: _simulationId, ...unsignedBody } = body ?? {};
         const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(unsignedBody)
           : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(unsignedBody)
             : validIntent(unsignedBody);
+        if (pending) throw new Error("another signing request is awaiting confirmation");
+        if (seen.has(intent.requestId)) throw new Error("signing request was already used");
         const reviewedSimulationId = simulationForSigning({
           body, intent, pathname: url.pathname, simulations, verifiedAccountStates, walletAddress,
         });
-        if (pending) throw new Error("another signing request is awaiting confirmation");
-        if (seen.has(intent.requestId)) throw new Error("signing request was already used");
         seen.add(intent.requestId);
         if (seen.size > 1_000) seen.delete(seen.values().next().value);
         pending = true;
+        const signingGeneration = sessionGeneration;
         try {
           const password = await authorize(structuredClone(intent));
           if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration) {
+            throw new Error("bridge session ended before signing authorization completed");
+          }
           const { requestId, ...payload } = intent;
           const transaction = url.pathname === "/v1/sign-resource"
             ? signWalletResourceOperation({ path: vaultPath, password, operation: payload })

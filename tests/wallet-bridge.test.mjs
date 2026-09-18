@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
 import test from "node:test";
 
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
@@ -42,6 +43,21 @@ function request(url, origin, token, options = {}) {
       "x-nir-bridge-token": token,
       ...options.headers,
     },
+  });
+}
+
+function rawStatus(url, headers) {
+  const parsed = new URL(url);
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest({
+      headers, hostname: parsed.hostname, method: "GET", path: parsed.pathname,
+      port: parsed.port,
+    }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode));
+    });
+    outgoing.once("error", reject);
+    outgoing.end();
   });
 }
 
@@ -99,8 +115,17 @@ test("wallet checkpoint advances only through a verified finality header chain",
   const firstBlock = append(1);
   const origin = "http://127.0.0.1:8765";
   const token = "6".repeat(64);
+  let pauseAuthorization = false;
+  let authorizationStarted;
+  let releaseAuthorization;
   const server = createWalletBridgeServer({
-    authorize: async () => "wallet-light-client-password",
+    authorize: async () => {
+      if (!pauseAuthorization) return "wallet-light-client-password";
+      authorizationStarted();
+      return new Promise((resolve) => {
+        releaseAuthorization = () => resolve("wallet-light-client-password");
+      });
+    },
     origin, sessionToken: token,
     trustAnchor: {
       expectedNetworkId: networkId,
@@ -355,6 +380,33 @@ test("wallet checkpoint advances only through a verified finality header chain",
       },
     );
     assert.equal(missingPage.status, 400);
+
+    const revokePreview = await request(`${base}/v1/simulate-transaction`, origin, token, {
+      body: JSON.stringify({
+        intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+          recipient: treasury.address, type: "transfer" },
+        network: { height: 2, networkId },
+        verifiedAccount: { address: wallet.address, height: 2, proofVerified: true },
+      }), method: "POST",
+    });
+    assert.equal(revokePreview.status, 200);
+    const revokeSimulation = await revokePreview.json();
+    pauseAuthorization = true;
+    const started = new Promise((resolve) => { authorizationStarted = resolve; });
+    const signing = request(`${base}/v1/sign`, origin, token, {
+      body: JSON.stringify({
+        amount: "1", fee: MIN_TRANSFER_FEE.toString(), networkId, nonce: 0,
+        recipient: treasury.address, requestId: "a".repeat(64),
+        simulationId: revokeSimulation.simulation.simulationId,
+      }), method: "POST",
+    });
+    await started;
+    const disconnected = await request(`${base}/v1/session`, origin, token, { method: "DELETE" });
+    assert.equal(disconnected.status, 200);
+    releaseAuthorization();
+    const revokedSigning = await signing;
+    assert.equal(revokedSigning.status, 400);
+    assert.match((await revokedSigning.json()).error, /session ended/);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
@@ -699,7 +751,20 @@ test("wallet bridge exchanges a short-lived one-time code for one in-memory sess
       body: JSON.stringify({ code: "12345678" }), method: "POST",
     });
     assert.equal(paired.status, 200);
+    assert.equal(paired.headers.get("cache-control"), "no-store");
+    assert.equal(paired.headers.get("cross-origin-resource-policy"), "same-origin");
+    assert.equal(paired.headers.get("x-frame-options"), "DENY");
     assert.deepEqual(await paired.json(), { sessionToken: token });
+    const unauthenticatedVerification = await request(
+      `${base}/v1/verify-offline-signed-package`, origin, "", {
+        body: JSON.stringify({ networkId: "nir-testnet", signedPackage: {} }), method: "POST",
+      });
+    assert.equal(unauthenticatedVerification.status, 401);
+    const authenticatedVerification = await request(
+      `${base}/v1/verify-offline-signed-package`, origin, token, {
+        body: JSON.stringify({ networkId: "nir-testnet", signedPackage: {} }), method: "POST",
+      });
+    assert.equal(authenticatedVerification.status, 400);
     const reused = await request(`${base}/v1/pair`, origin, "", {
       body: JSON.stringify({ code: "12345678" }), method: "POST",
     });
@@ -712,6 +777,52 @@ test("wallet bridge exchanges a short-lived one-time code for one in-memory sess
     assert.equal(disconnected.status, 200);
     assert.deepEqual(await disconnected.json(), { disconnected: true });
     assert.equal((await request(`${base}/v1/wallet`, origin, token)).status, 401);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wallet bridge pairing is atomic under concurrent tabs and strict about its body", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-pair-race-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-bridge-password-long" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "5".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    origin,
+    pairingCode: "11223344",
+    sessionToken: token,
+    vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const extraField = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "11223344", session: "fix-me" }), method: "POST",
+    });
+    assert.equal(extraField.status, 400);
+    assert.match((await extraField.json()).error, /invalid/);
+    const oversized = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "0".repeat(256) }), method: "POST",
+    });
+    assert.equal(oversized.status, 400);
+    assert.match((await oversized.json()).error, /too large/);
+
+    const attempts = await Promise.all(Array.from({ length: 8 }, () =>
+      request(`${base}/v1/pair`, origin, "", {
+        body: JSON.stringify({ code: "11223344" }), method: "POST",
+      })));
+    const statuses = attempts.map(({ status }) => status);
+    assert.equal(statuses.filter((status) => status === 200).length, 1);
+    assert.equal(statuses.filter((status) => status === 400).length, 7);
+    const successful = attempts.find(({ status }) => status === 200);
+    assert.deepEqual(await successful.json(), { sessionToken: token });
+    assert.equal((await request(`${base}/v1/wallet?confused=1`, origin, token)).status, 404);
+    assert.equal(await rawStatus(`${base}/v1/wallet`, {
+      host: "evil.invalid", origin, "x-nir-bridge-token": token,
+    }), 403);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
@@ -746,6 +857,46 @@ test("wallet bridge disables pairing after five incorrect attempts", async () =>
     assert.match((await locked.json()).error, /unavailable/);
   } finally {
     await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge restart invalidates the previous pairing code and session token", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-restart-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-bridge-password-long" });
+  const origin = "http://127.0.0.1:8765";
+  const firstToken = "1".repeat(64);
+  const first = createWalletBridgeServer({ authorize: async () => null, origin,
+    pairingCode: "10101010", sessionToken: firstToken, vaultPath });
+  let second;
+  try {
+    await new Promise((resolve) => first.listen(0, "127.0.0.1", resolve));
+    const firstBase = `http://127.0.0.1:${first.address().port}`;
+    const paired = await request(`${firstBase}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "10101010" }), method: "POST",
+    });
+    assert.equal(paired.status, 200);
+    assert.equal((await request(`${firstBase}/v1/wallet`, origin, firstToken)).status, 200);
+    await close(first);
+
+    second = createWalletBridgeServer({ authorize: async () => null, origin,
+      pairingCode: "20202020", sessionToken: "2".repeat(64), vaultPath });
+    await new Promise((resolve) => second.listen(0, "127.0.0.1", resolve));
+    const secondBase = `http://127.0.0.1:${second.address().port}`;
+    assert.equal((await request(`${secondBase}/v1/wallet`, origin, firstToken)).status, 401);
+    const staleCode = await request(`${secondBase}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "10101010" }), method: "POST",
+    });
+    assert.equal(staleCode.status, 400);
+    const fresh = await request(`${secondBase}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "20202020" }), method: "POST",
+    });
+    assert.equal(fresh.status, 200);
+    assert.deepEqual(await fresh.json(), { sessionToken: "2".repeat(64) });
+  } finally {
+    await close(first);
+    if (second) await close(second);
     rmSync(directory, { recursive: true, force: true });
   }
 });

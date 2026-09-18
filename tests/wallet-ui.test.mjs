@@ -7,6 +7,8 @@ const html = readFileSync(new URL("../wallet-ui/index.html", import.meta.url), "
 const script = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../wallet-ui/style.css", import.meta.url), "utf8");
 const serviceWorker = readFileSync(new URL("../wallet-ui/sw.js", import.meta.url), "utf8");
+const bridgeCli = readFileSync(new URL("../blockchain/wallet-bridge-cli.mjs", import.meta.url), "utf8");
+const bridgeSource = readFileSync(new URL("../blockchain/wallet-bridge.mjs", import.meta.url), "utf8");
 const extensionManifest = JSON.parse(readFileSync(
   new URL("../wallet-ui/manifest.json", import.meta.url), "utf8",
 ));
@@ -87,6 +89,9 @@ test("wallet limits browser privileges and supports accessible system settings",
   assert.deepEqual(extensionManifest.host_permissions,
     ["http://127.0.0.1/*", "http://localhost/*"]);
   assert.match(extensionManifest.content_security_policy.extension_pages, /object-src 'none'/);
+  assert.match(script, /globalThis\.top !== globalThis\.self/);
+  assert.match(script, /NIR Wallet framing is forbidden/);
+  assert.doesNotMatch(script, /\.innerHTML\s*=|insertAdjacentHTML|document\.write/);
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(styles, /forced-colors: active/);
   assert.match(styles, /@media \(max-width: 370px\)/);
@@ -128,6 +133,11 @@ test("wallet pairs with a local bridge without exposing or persisting secrets", 
   assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(token|bridge)/i);
   assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(password|private|seed)/i);
   assert.doesNotMatch(html + script, /privateKey/);
+  assert.doesNotMatch(html, /<input[^>]+type="password"/);
+  assert.match(bridgeCli, /readSecret\("Wallet password: "\)/);
+  assert.doesNotMatch(bridgeCli, /console\.(?:log|error)\([^\n]*sessionToken/);
+  assert.doesNotMatch(bridgeSource, /localStorage|sessionStorage|document\.|window\./);
+  assert.doesNotMatch(bridgeSource, /password\s*:\s*(?:request|body)/);
 });
 
 test("wallet requires a proof-backed simulation before a separate testnet-only broadcast", () => {
@@ -201,6 +211,7 @@ test("wallet exports a versioned offline signing package and imports no broadcas
   assert.match(script, /validateOfflineSignedEnvelope/);
   assert.match(script, /decodeOfflineQrFrames/);
   assert.match(script, /publicBridgeRequest\("\/v1\/verify-offline-signed-package"/);
+  assert.match(script, /Artifact verification uses the paired session/);
   assert.match(script, /bridgeRequest\("\/v1\/create-offline-signing-package"/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
   assert.doesNotMatch(script, /signedTransaction = checked\.transaction/);
