@@ -92,11 +92,16 @@ This is not yet a real-value production wallet. The following remain mandatory:
 - signed native installers with platform signing/notarization and reproducible
   verification where the platform permits it;
 - hardware-backed key support and a reviewed consumer recovery design;
-- transaction simulation and human-readable decoding for every operation type;
-- phishing-resistant address book and large-address comparison flow;
 - public multi-node operation, incident drills and update-key rotation drills;
 - end-to-end accessibility testing with screen readers and keyboard-only users;
 - store review of the deliberately narrow loopback host permission.
+
+Implemented after this dated audit: proof-backed deterministic transaction
+simulation and human-readable consequences for every currently supported
+wallet operation; exact-intent offline signing packages; a local address book
+with explicit address-change confirmation; and signed payment requests carried
+as bounded QR fragments. These additions have automated adversarial tests, but
+still require the independent UI and bridge review listed above.
 
 No test or local audit can establish that the wallet is impossible to exploit.
 The correct production gate remains independent review plus operation on a

@@ -35,28 +35,46 @@ has market value.
 
 Required before inviting unknown operators:
 
-- automated certificate issuance, renewal, revocation, and production
-  denial-of-service controls remain; multi-seed signed discovery with outage
-  tolerance and same-height conflict detection, bounded application ingress,
-  pinned TLS 1.3, and quorum-signed endpoint and transport-identity rotation
-  with on-chain rollback protection are implemented;
-- a production database and operational recovery drills around the implemented
-  quorum snapshots, tail replay, two-stage pruning, and portable backups;
-  authenticated snapshot catch-up from multiple peers is implemented, while
-  remote backup coordination remains; fsync-backed block
-  writes, checksummed journal checkpoints, local redundancy, verified repair,
-  key-free portable chain backups, and a full consensus-state root in every
-  protocol-v7 block are implemented;
-- reproducible native installers, monitoring, incident response, and a
-  documented testnet reset policy remain; deterministic post-quantum signed
-  source manifests and byte-reproducible `.nirpkg` wallet/node containers are
-  implemented locally;
-- versioned protocol upgrades governed by an on-chain activation rule;
+- automated certificate issuance, renewal and revocation plus production edge
+  denial-of-service controls remain; multi-seed signed discovery, bounded
+  application ingress, pinned TLS 1.3, and quorum-signed endpoint and
+  transport-identity rotation with rollback protection are implemented locally;
+- production-equivalent deployment and drills remain. The repository now has
+  fsync-backed redundant journals, quorum snapshots, authenticated catch-up,
+  tail replay, two-stage pruning, signed multi-operator backup receipts,
+  isolated restore drills, automated health records, bounded online integrity
+  scrubbing and crash-resumable verified repair. These local mechanisms do not
+  prove that remote operators or their infrastructure are independent;
+- platform-signed native installers, incident response and a documented
+  testnet reset policy remain. Deterministic post-quantum signed source
+  manifests, byte-reproducible `.nirpkg` wallet/node containers, backup health
+  and integrity-health output are implemented locally;
+- versioned protocol upgrades governed by a delayed on-chain activation rule
+  are implemented locally; multi-operator upgrade and rollback drills remain;
 - at least four validator and fallback-beacon operators controlled by genuinely
   independent organizations;
 - an internal security review with every critical finding closed.
 
 The developer testnet must remain explicitly valueless and resettable.
+
+### Next measurable exit work
+
+Code work is accepted against this gate only when it closes one of these
+remaining checks and adds a reproducible failure test:
+
+1. certificate lifecycle and revocation survive replay, restart and rotation;
+2. a documented reset and incident drill preserves the published genesis and
+   makes any destructive testnet action explicit;
+3. packaged node and wallet builds are installed and reverified on supported
+   platforms without trusting the download location;
+4. four independently administered operators complete discovery, rotation,
+   backup and recovery drills on separate hosts;
+5. the internal critical findings have either executable closure evidence or a
+   clearly external dependency that code alone cannot satisfy.
+
+Items 1–3 can advance in this repository. Item 4 requires real independent
+operators and infrastructure. External review is required before item 5 can be
+declared closed; adding more local tests alone is not sufficient.
 
 ## Gate 2: incentivized evaluation testnet
 
