@@ -38,6 +38,39 @@ The drill then performs these checks through the network services:
 The same drill also confirms that initialization fails closed when supplied a
 genesis or signed source release different from the ceremony commitment.
 
+## Byzantine and partition extension
+
+The drill's consensus-message scheduler operates against the same four live TLS
+processes and authenticated P2P endpoints. It can withhold cross-partition
+deliveries even though the local test machine still has TCP reachability. No
+validator initiates consensus on its own; consequently the scheduler is the
+complete consensus network for these phases.
+
+The extended phases prove:
+
+- a 2–2 split can collect only two prepares on either side, so both commit
+  attempts fail quorum and every process remains at the prior finalized height;
+- delayed and reordered proposal delivery plus a fresh-auth duplicate returns
+  the same durable prepare vote rather than creating a second decision;
+- after healing, three matching prepares and commits finalize only the already
+  locked value;
+- at the next height, a Byzantine proposer sends conflicting valid proposals to
+  the 3-node and 1-node partitions and signs conflicting prepare votes; the
+  minority's two prepares cannot form a certificate, while the majority creates
+  exactly one finalized tip;
+- the isolated validator retains its conflicting prepare lock across restart,
+  but authenticated catch-up accepts the unique quorum-finalized block and ends
+  on the majority tip. No conflicting finalized tip is produced.
+
+`proveValidatorPrepareEquivocation` emits deterministic forensic evidence for
+two conflicting same-height/same-round prepare signatures. Both proposals must
+pass exact protocol-schema and state validation against the same verified
+`NirChain` context; signed proposals with extra or malformed fields are rejected.
+The evidence explicitly records `nativePenaltyAvailable: false`: the current
+chain does not connect validator finality equivocation to an on-chain validator
+bond/slashing transition. The evidence must not trigger an automatic penalty
+until active-set and bonded-stake context are part of that native transition.
+
 This is a portable protocol and process-isolation drill. It does not claim that
 four ephemeral local processes represent independent machines, operators, fault
 domains, or production deployment readiness.

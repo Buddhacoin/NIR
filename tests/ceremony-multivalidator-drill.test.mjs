@@ -14,7 +14,7 @@ import {
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import {
-  blockHash, createMultisigTransfer, multisigAddress, NirChain,
+  blockHash, createMultisigTransfer, multisigAddress, NirChain, voteForBlock,
 } from "../blockchain/chain.mjs";
 import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { initializeValidatorFromCeremony } from "../blockchain/ceremony-validator-init.mjs";
@@ -29,6 +29,10 @@ import { requestJson } from "../blockchain/http-client.mjs";
 import { createPeerRequest, verifyPeerResponse } from "../blockchain/peer-auth.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import { encryptWallet } from "../blockchain/vault.mjs";
+import {
+  proveValidatorPrepareEquivocation,
+  verifyValidatorPrepareEquivocationEvidence,
+} from "../blockchain/validator-equivocation.mjs";
 
 function digest(value) { return createHash("sha256").update(value).digest("hex"); }
 
@@ -221,6 +225,16 @@ async function health(values, index) {
   });
 }
 
+function finalizedBlock(proposal, prepares, commits) {
+  return {
+    ...proposal,
+    certificate: [...commits].sort((a, b) => a.validator.localeCompare(b.validator)),
+    hash: blockHash(proposal),
+    prepareCertificate: [...prepares]
+      .sort((a, b) => a.validator.localeCompare(b.validator)),
+  };
+}
+
 function scanDirectory(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -394,6 +408,205 @@ test("four ceremony validators finalize, restart, and catch up without a coordin
     const restarted = await health(values, offlineIndex);
     assert.equal(restarted.body.height, 2);
     assert.equal(restarted.body.tipHash, finalHealth.body.tipHash);
+
+    const secondRange = await authenticatedRequest(values, 0, 1, "/v1/p2p/blocks/range", {
+      fromHeight: 2, limit: 1,
+    });
+    assert.equal(secondRange.status, 200);
+    const secondBlock = secondRange.body.result.blocks[0];
+    chain.appendBlock(secondBlock);
+
+    // Partition consensus delivery into two groups after the proposal is known.
+    // Delayed, duplicated, and reordered authenticated deliveries cannot create a quorum
+    // inside either 2-node side.
+    const partitionTransfer = createMultisigTransfer({
+      amount: ATOMIC_UNITS.toString(), fee: MIN_TRANSFER_FEE.toString(),
+      memberPublicKeys: values.guardians.map(({ publicKey }) => publicKey),
+      networkId: values.plan.networkId, nonce: 2, recipient: generateWallet().address,
+      signerWallets: values.guardians.slice(0, 2), threshold: 2,
+    });
+    const partitionProposal = chain.buildBlock({
+      timestamp: Date.now(), transactions: [partitionTransfer],
+    });
+    const partitionProposer = values.validators.findIndex(
+      ({ address }) => address === partitionProposal.proposer,
+    );
+    const deliveryOrder = [2, 0, 3, 1];
+    const partitionVotes = new Map();
+    for (const target of deliveryOrder) {
+      await new Promise((resolve) => setTimeout(resolve, target % 2 === 0 ? 15 : 5));
+      const response = await authenticatedRequest(
+        values, partitionProposer, target, "/v1/p2p/proposals", partitionProposal,
+      );
+      assert.equal(response.status, 200, response.body.error);
+      partitionVotes.set(target, response.body.result.vote);
+    }
+    const duplicate = await authenticatedRequest(
+      values, partitionProposer, 0, "/v1/p2p/proposals", partitionProposal,
+    );
+    assert.equal(duplicate.status, 200, duplicate.body.error);
+    assert.deepEqual(duplicate.body.result.vote, partitionVotes.get(0));
+
+    for (const group of [[0, 1], [2, 3]]) {
+      const insufficient = await authenticatedRequest(
+        values, partitionProposer, group[0], "/v1/p2p/commits", {
+          prepareCertificate: group.map((index) => partitionVotes.get(index)),
+          proposal: partitionProposal,
+        },
+      );
+      assert.equal(insufficient.status, 400);
+      assert.match(insufficient.body.error, /quorum/);
+    }
+    for (let index = 0; index < 4; index += 1) {
+      assert.equal((await health(values, index)).body.height, 2);
+    }
+
+    // Healing permits exactly the already-locked value to collect quorum and finalize.
+    const healedPrepares = [0, 1, 2].map((index) => partitionVotes.get(index));
+    const healedCommits = [];
+    for (let target = 0; target < 4; target += 1) {
+      const response = await authenticatedRequest(
+        values, partitionProposer, target, "/v1/p2p/commits", {
+          prepareCertificate: healedPrepares, proposal: partitionProposal,
+        },
+      );
+      assert.equal(response.status, 200, response.body.error);
+      healedCommits.push(response.body.result.vote);
+    }
+    const partitionFinalized = finalizedBlock(
+      partitionProposal, healedPrepares, healedCommits.slice(0, 3),
+    );
+    for (let target = 0; target < 4; target += 1) {
+      const response = await authenticatedRequest(
+        values, partitionProposer, target, "/v1/p2p/blocks", partitionFinalized,
+      );
+      assert.equal(response.status, 200, response.body.error);
+    }
+    chain.appendBlock(partitionFinalized);
+
+    // At the next height a Byzantine proposer sends one valid value to a 3-node
+    // partition and a conflicting valid value to the isolated validator.
+    const recipientA = generateWallet();
+    const recipientB = generateWallet();
+    const transferA = createMultisigTransfer({
+      amount: ATOMIC_UNITS.toString(), fee: MIN_TRANSFER_FEE.toString(),
+      memberPublicKeys: values.guardians.map(({ publicKey }) => publicKey),
+      networkId: values.plan.networkId, nonce: 3, recipient: recipientA.address,
+      signerWallets: values.guardians.slice(0, 2), threshold: 2,
+    });
+    const transferB = createMultisigTransfer({
+      amount: (ATOMIC_UNITS + 1n).toString(), fee: MIN_TRANSFER_FEE.toString(),
+      memberPublicKeys: values.guardians.map(({ publicKey }) => publicKey),
+      networkId: values.plan.networkId, nonce: 3, recipient: recipientB.address,
+      signerWallets: values.guardians.slice(0, 2), threshold: 2,
+    });
+    const proposalA = chain.buildBlock({ timestamp: Date.now(), transactions: [transferA] });
+    const proposalB = chain.buildBlock({ timestamp: Date.now() + 1, transactions: [transferB] });
+    assert.notEqual(blockHash(proposalA), blockHash(proposalB));
+    const byzantine = values.validators.findIndex(({ address }) =>
+      address === proposalA.proposer);
+    assert.equal(proposalB.proposer, proposalA.proposer);
+    const isolated = (byzantine + 1) % 4;
+    const majority = [0, 1, 2, 3].filter((index) => index !== isolated);
+    const majorityVotes = new Map();
+    for (const target of [majority[2], majority[0], majority[1]]) {
+      const response = await authenticatedRequest(
+        values, byzantine, target, "/v1/p2p/proposals", proposalA,
+      );
+      assert.equal(response.status, 200, response.body.error);
+      majorityVotes.set(target, response.body.result.vote);
+    }
+    const isolatedResponse = await authenticatedRequest(
+      values, byzantine, isolated, "/v1/p2p/proposals", proposalB,
+    );
+    assert.equal(isolatedResponse.status, 200, isolatedResponse.body.error);
+    const byzantineVoteA = majorityVotes.get(byzantine);
+    const byzantineVoteB = voteForBlock(proposalB, values.validators[byzantine]);
+    const evidence = proveValidatorPrepareEquivocation({
+      chain,
+      first: { proposal: proposalA, vote: byzantineVoteA },
+      second: { proposal: proposalB, vote: byzantineVoteB },
+    });
+    assert.equal(evidence.validator, values.validators[byzantine].address);
+    assert.equal(evidence.nativePenaltyAvailable, false);
+    assert.deepEqual(
+      verifyValidatorPrepareEquivocationEvidence(evidence, { chain }), evidence,
+    );
+    assert.throws(() => proveValidatorPrepareEquivocation({
+      chain,
+      first: { proposal: proposalA, vote: byzantineVoteA },
+      second: { proposal: proposalB, vote: { ...byzantineVoteB, signature: "forged" } },
+    }), /signatures/);
+    const malformed = { ...proposalB, unexpected: true };
+    assert.throws(() => proveValidatorPrepareEquivocation({
+      chain,
+      first: { proposal: proposalA, vote: byzantineVoteA },
+      second: {
+        proposal: malformed,
+        vote: voteForBlock(malformed, values.validators[byzantine]),
+      },
+    }), /malformed or invalid/);
+
+    const minorityCommit = await authenticatedRequest(
+      values, byzantine, isolated, "/v1/p2p/commits", {
+        prepareCertificate: [isolatedResponse.body.result.vote, byzantineVoteB],
+        proposal: proposalB,
+      },
+    );
+    assert.equal(minorityCommit.status, 400);
+    assert.match(minorityCommit.body.error, /quorum/);
+
+    const majorityPrepares = majority.map((index) => majorityVotes.get(index));
+    const majorityCommits = [];
+    for (const target of majority) {
+      const response = await authenticatedRequest(
+        values, byzantine, target, "/v1/p2p/commits", {
+          prepareCertificate: majorityPrepares, proposal: proposalA,
+        },
+      );
+      assert.equal(response.status, 200, response.body.error);
+      majorityCommits.push(response.body.result.vote);
+    }
+    const majorityFinalized = finalizedBlock(proposalA, majorityPrepares, majorityCommits);
+    for (const target of majority) {
+      const response = await authenticatedRequest(
+        values, byzantine, target, "/v1/p2p/blocks", majorityFinalized,
+      );
+      assert.equal(response.status, 200, response.body.error);
+    }
+    const majorityTip = (await health(values, majority[0])).body.tipHash;
+    for (const target of majority) {
+      const status = await health(values, target);
+      assert.equal(status.body.height, 4);
+      assert.equal(status.body.tipHash, majorityTip);
+    }
+    assert.equal((await health(values, isolated)).body.height, 3);
+
+    // Healing plus restart uses authenticated block-range catch-up. The durable
+    // conflicting prepare cannot produce or preserve a conflicting finalized tip.
+    await running.get(isolated).stop();
+    running.delete(isolated);
+    running.set(isolated, await launch(isolated));
+    const restoredMinorityVote = await authenticatedRequest(
+      values, byzantine, isolated, "/v1/p2p/proposals", proposalB,
+    );
+    assert.equal(restoredMinorityVote.status, 200, restoredMinorityVote.body.error);
+    assert.deepEqual(
+      restoredMinorityVote.body.result.vote, isolatedResponse.body.result.vote,
+    );
+    const conflictingAfterRestart = await authenticatedRequest(
+      values, byzantine, isolated, "/v1/p2p/proposals", proposalA,
+    );
+    assert.equal(conflictingAfterRestart.status, 400);
+    assert.match(conflictingAfterRestart.body.error, /refuses to equivocate/);
+    const healed = await requestJson(
+      `https://127.0.0.1:${values.ports[isolated]}/v1/sync`, {
+        method: "POST", tlsCertificateSha256: values.certificates[isolated].fingerprint,
+      },
+    );
+    assert.equal(healed.status, 200, healed.body.error);
+    assert.equal(healed.body.height, 4);
+    assert.equal((await health(values, isolated)).body.tipHash, majorityTip);
 
     for (let index = 0; index < 4; index += 1) {
       const generation = join(dirname(values.targets[index]), readlinkSync(values.targets[index]));
