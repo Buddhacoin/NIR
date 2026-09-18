@@ -89,3 +89,16 @@ it is idempotent and does not require or append another release entry.
   implementation uses no-follow opens, unique regular files, exclusive creation,
   descriptor/inode checks, fsync, and post-write revalidation to fail closed on
   detected filesystem races.
+
+## Model-based regression barrier
+
+`tests/offline-release-governance-model.test.mjs` runs 200 deterministic seeded
+schedules against a separate minimal state machine. Each schedule mixes release
+entries, rotation or revocation, signer loss, duplicate/insufficient/stale and
+reordered approvals, delayed joint activation, checkpoint crash recovery,
+restart, rollback, fork, and split-log corruption. State is compared after every
+accepted transition. A separate two-branch scenario demonstrates the precise
+boundary: independently valid local views remain possible without gossip, but
+exchanging either persisted checkpoint makes the conflicting view fail closed.
+The model is a regression oracle for these bounded transitions, not a formal
+proof or a claim of global transparency.
