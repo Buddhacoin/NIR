@@ -119,6 +119,13 @@ Automated tests cover:
 - compact light-client verification before and through activation;
 - unchanged issued supply and treasury balance across the transition.
 
+The reproducible local operator procedure is documented in
+[protocol-upgrade-rehearsal.md](protocol-upgrade-rehearsal.md). It exercises
+four isolated validator processes, restart/catch-up across activation,
+premature and unsupported proposals, downgrade rejection, and a forward-only
+recovery schedule. Its report deliberately does not claim that version-26
+recovery semantics or independent-host operation have been tested.
+
 ## Remaining operational requirements
 
 Before scheduling a version that changes execution semantics, operators still
@@ -126,4 +133,6 @@ need reproducible signed releases, independent source review, public test-networ
 rehearsal, compatibility measurements, an announced activation height, and a
 documented recovery plan for operators that miss the deadline. The on-chain
 mechanism enforces authorization, ordering and delay; it cannot prove that new
-application logic is free of defects.
+application logic is free of defects. The repository's local multi-process
+rehearsal is a prerequisite check, not a substitute for an independently
+administered multi-host rehearsal with the actual upgrade and recovery binaries.

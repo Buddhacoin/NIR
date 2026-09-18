@@ -370,6 +370,8 @@ export class ValidatorReplica {
   get certificateMode() { return this.#certificatePins.mode; }
   get height() { return this.#chain.height; }
   get networkId() { return this.#chain.networkId; }
+  get pendingProtocolUpgrade() { return this.#chain.pendingProtocolUpgrade; }
+  get protocolVersion() { return this.#chain.protocolVersion; }
   get tipHash() { return this.#chain.tipHash; }
 
   get mempoolSize() { return this.#mempool.size; }
@@ -976,11 +978,11 @@ export class ValidatorReplica {
         block.proposer !== this.#chain.expectedProposer(block.height, block.round)) {
       throw new Error("proposal does not extend the validator state");
     }
+    this.#chain.validateProposal(block);
     const rebuilt = this.#chain.buildBlock(proposalFields(block));
     if (canonicalJson(rebuilt) !== canonicalJson(block)) {
       throw new Error("proposal is not the deterministic block for this state");
     }
-    this.#chain.validateProposal(block);
     if (!this.#validatorSets(block.height).accepted.has(this.address)) {
       throw new Error("local validator cannot vote at this height");
     }
@@ -1223,6 +1225,8 @@ export class DistributedCoordinator {
   }
 
   get consensusMode() { return "remote-validator-quorum"; }
+  get pendingProtocolUpgrade() { return this.#chain.pendingProtocolUpgrade; }
+  get protocolVersion() { return this.#chain.protocolVersion; }
   get certificateMode() { return this.#certificatePins.mode; }
   get height() { return this.#chain.height; }
   get mempoolSize() { return this.#mempool.size; }
@@ -1426,7 +1430,9 @@ export class DistributedCoordinator {
     return added;
   }
 
-  async produceBlock() {
+  async produceBlock({ protocolUpgrade = null } = {}) {
+    if (protocolUpgrade !== null && (!protocolUpgrade || typeof protocolUpgrade !== "object" ||
+        Array.isArray(protocolUpgrade))) throw new Error("protocol upgrade proposal is invalid");
     await this.#recoverPeerTransactions();
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("mempool is empty");
@@ -1441,6 +1447,7 @@ export class DistributedCoordinator {
     while (round <= MAX_CONSENSUS_ROUND) {
       proposal = this.#chain.buildBlock({
         transactions, timestamp: proposal?.timestamp ?? Date.now(), round, roundCertificate,
+        protocolUpgrade,
       });
       const results = await boundedAllSettled(available, (index) =>
         this.#request(index, "/v1/proposals", proposal));

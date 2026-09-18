@@ -62,6 +62,9 @@ export function createNodeHttpServer(node) {
           tipHash: node.tipHash, valueMode: "valueless-devnet",
           ...(node.consensusMode ? { consensusMode: node.consensusMode } : {}),
           ...(node.certificateMode ? { certificateMode: node.certificateMode } : {}),
+          ...(Number.isSafeInteger(node.protocolVersion) ? { protocolVersion: node.protocolVersion } : {}),
+          ...(node.pendingProtocolUpgrade !== undefined
+            ? { pendingProtocolUpgrade: node.pendingProtocolUpgrade } : {}),
           ...(Number.isSafeInteger(node.mempoolSize) ? { mempoolSize: node.mempoolSize } : {}),
         }, origin);
       }

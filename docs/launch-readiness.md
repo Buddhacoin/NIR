@@ -59,7 +59,9 @@ Required before inviting unknown operators:
   `.nirpkg` wallet/node containers, backup health and integrity-health output
   are implemented locally;
 - versioned protocol upgrades governed by a delayed on-chain activation rule
-  are implemented locally; multi-operator upgrade and rollback drills remain;
+  and a four-process local upgrade/restart/forward-recovery scheduling rehearsal
+  are implemented; independent-host/operator drills and an executable recovery
+  version with semantic rollback rehearsal remain;
 - at least four validator and fallback-beacon operators controlled by genuinely
   independent organizations;
 - an internal security review with every critical finding closed.

@@ -440,6 +440,8 @@ export function createValidatorHttpServer(validator, options = {}) {
           certificateMode: validator.certificateMode,
           height: validator.height,
           networkId: validator.networkId,
+          pendingProtocolUpgrade: validator.pendingProtocolUpgrade,
+          protocolVersion: validator.protocolVersion,
           status: "ready",
           tipHash: validator.tipHash,
           mempoolSize: validator.mempoolSize,
