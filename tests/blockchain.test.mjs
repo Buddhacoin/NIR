@@ -137,6 +137,17 @@ function currentTimestamp(chain, offset = 0) {
   return chain.blocks().at(-1).timestamp + offset;
 }
 
+function assertProgressBondConservation(chain) {
+  const state = chain.consensusSnapshot().state;
+  const liquid = state.balances.reduce((total, [, amount]) => total + BigInt(amount), 0n);
+  const locked = state.candidateBonds.reduce(
+    (total, [, bond]) => total + BigInt(bond.bond), 0n,
+  );
+  assert.equal(liquid + locked + chain.burned, chain.issued);
+  assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
+  assert.ok(chain.issued <= MAX_SUPPLY);
+}
+
 function assignedEvaluatorWallets(chain, candidateId, evaluators) {
   return chain.assignedSafetyEvaluators(candidateId).map((address) => {
     const wallet = evaluators.find((candidate) => candidate.address === address);
@@ -452,6 +463,154 @@ test("progress bond cannot bypass treasury vesting", () => {
   assert.equal(chain.nextNonce(treasury.address), nonceBefore);
 });
 
+test("deterministic state model covers parallel progress bond lifecycle", () => {
+  const { chain, evaluators, genesisConfig, treasury, validators } = fixture();
+  const fundedSponsor = generateWallet();
+  const fundingClaim = progressClaim(
+    chain, evaluators, validators, fundedSponsor, "model-sponsor-funding",
+  );
+  const fundingReward = chain.buildBlock({
+    rewardClaims: [fundingClaim], timestamp: currentTimestamp(chain),
+  });
+  chain.appendBlock(finalizeBlock(fundingReward, quorumFor(fundingReward, validators)));
+  assertProgressBondConservation(chain);
+  const sponsorBalancesBefore = new Map([
+    [treasury.address, chain.balance(treasury.address)],
+    [fundedSponsor.address, chain.balance(fundedSponsor.address)],
+  ]);
+
+  let randomState = 0x6d2b79f5;
+  const nextRandom = () => {
+    randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+    return randomState;
+  };
+  const plans = Array.from({ length: 12 }, (_, index) => {
+    const owner = generateWallet();
+    const admission = createProgressCommitment({
+      wallet: owner, networkId: chain.networkId, recipient: owner.address,
+      artifactHash: `sha256:${fingerprint(`model-artifact-${index}`)}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+      contentHash: `sha256:${fingerprint(`model-content-${index}`)}`,
+      suiteCommitment: fingerprint(`model-suite-${index}`), nonce: 0,
+    });
+    return { admission, owner, sponsor: nextRandom() & 1 ? treasury : fundedSponsor };
+  });
+  const bondTransactions = [];
+  assert.equal(new Set(plans.map(({ admission }) => admission.candidateId)).size, plans.length);
+  for (const plan of plans) {
+    const bond = createCandidateBond({
+      wallet: plan.sponsor, networkId: chain.networkId,
+      candidateId: plan.admission.candidateId, candidateOwner: plan.owner.address,
+      purpose: "progress", amount: MIN_PROGRESS_CANDIDATE_BOND.toString(), fee: "0",
+      nonce: chain.nextNonce(plan.sponsor.address),
+    });
+    bondTransactions.push(bond);
+    const block = chain.buildBlock({ transactions: [bond], timestamp: currentTimestamp(chain) });
+    chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+    assertProgressBondConservation(chain);
+    assert.throws(() => chain.assignedSafetyEvaluators(plan.admission.candidateId), /not assigned/);
+  }
+
+  const order = [...plans.keys()];
+  for (let index = order.length - 1; index > 0; index -= 1) {
+    const other = nextRandom() % (index + 1);
+    [order[index], order[other]] = [order[other], order[index]];
+  }
+  const boundIndexes = new Set(order.slice(0, 6));
+  for (const index of order.slice(0, 6)) {
+    const block = chain.buildBlock({
+      transactions: [plans[index].admission], timestamp: currentTimestamp(chain),
+    });
+    chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+    assertProgressBondConservation(chain);
+  }
+
+  const rootBeforeReplay = chain.stateRoot;
+  const sponsorNonceBeforeReplay = chain.nextNonce(plans[0].sponsor.address);
+  const replay = chain.buildBlock({
+    transactions: [bondTransactions[0]], timestamp: currentTimestamp(chain),
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(replay, quorumFor(replay, validators))),
+    /duplicated/,
+  );
+  assert.equal(chain.stateRoot, rootBeforeReplay);
+  assert.equal(chain.nextNonce(plans[0].sponsor.address), sponsorNonceBeforeReplay);
+
+  const targetReuseNonce = chain.nextNonce(fundedSponsor.address);
+  const safetyTargetReuse = createCandidateBond({
+    wallet: fundedSponsor, networkId: chain.networkId,
+    candidateId: plans[1].admission.candidateId,
+    amount: MIN_PROGRESS_CANDIDATE_BOND.toString(), nonce: targetReuseNonce,
+  });
+  const rootBeforeTargetReuse = chain.stateRoot;
+  const targetReuseBlock = chain.buildBlock({
+    transactions: [safetyTargetReuse], timestamp: currentTimestamp(chain),
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(targetReuseBlock, quorumFor(targetReuseBlock, validators))),
+    /duplicated/,
+  );
+  assert.equal(chain.stateRoot, rootBeforeTargetReuse);
+  assert.equal(chain.nextNonce(fundedSponsor.address), targetReuseNonce);
+
+  const noBondOwner = generateWallet();
+  const noBondAdmission = createProgressCommitment({
+    wallet: noBondOwner, networkId: chain.networkId, recipient: noBondOwner.address,
+    artifactHash: `sha256:${fingerprint("model-no-bond-artifact")}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+    contentHash: `sha256:${fingerprint("model-no-bond-content")}`,
+    suiteCommitment: fingerprint("model-no-bond-suite"), nonce: 0,
+  });
+  const noBondRoot = chain.stateRoot;
+  const invalid = chain.buildBlock({
+    transactions: [noBondAdmission], timestamp: currentTimestamp(chain),
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(invalid, quorumFor(invalid, validators))),
+    /prior unbound candidate bond/,
+  );
+  assert.equal(chain.stateRoot, noBondRoot);
+  assert.equal(chain.nextNonce(noBondOwner.address), 0);
+
+  const exported = chain.consensusSnapshot();
+  const checkpoint = chain.blocks().at(-1);
+  const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
+    networkId: chain.networkId, state: exported.state, stateRoot: chain.stateRoot,
+    tipHash: chain.tipHash,
+  });
+  const fork = chain.fork();
+  const replayed = new NirChain(genesisConfig);
+  for (const block of chain.blocks().slice(1)) replayed.appendBlock(block);
+  assert.equal(fork.stateRoot, chain.stateRoot);
+  assert.equal(restored.stateRoot, chain.stateRoot);
+  assert.equal(replayed.stateRoot, chain.stateRoot);
+
+  for (let index = 0; index <= PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS; index += 1) {
+    const empty = fork.buildBlock({ timestamp: currentTimestamp(fork) });
+    fork.appendBlock(finalizeBlock(empty, quorumFor(empty, validators)));
+    assertProgressBondConservation(fork);
+  }
+  const remaining = new Map(fork.consensusSnapshot().state.candidateBonds);
+  assert.equal(remaining.size, boundIndexes.size);
+  for (const index of boundIndexes) {
+    assert.equal(remaining.get(plans[index].admission.candidateId).admissionBound, true);
+  }
+  for (const sponsor of [treasury, fundedSponsor]) {
+    const boundForSponsor = [...boundIndexes]
+      .filter((index) => plans[index].sponsor.address === sponsor.address).length;
+    assert.equal(
+      fork.balance(sponsor.address),
+      sponsorBalancesBefore.get(sponsor.address) -
+        (BigInt(boundForSponsor) * MIN_PROGRESS_CANDIDATE_BOND),
+    );
+  }
+  assert.equal(fork.burned, 0n);
+});
+
 test("unused pre-admission bond is reclaimed only after a committee-free delay", () => {
   const { chain, treasury, validators } = fixture();
   const owner = generateWallet();
@@ -463,6 +622,11 @@ test("unused pre-admission bond is reclaimed only after a committee-free delay",
   for (let index = 0; index <= PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS; index += 1) {
     const empty = chain.buildBlock({ timestamp: currentTimestamp(chain) });
     chain.appendBlock(finalizeBlock(empty, quorumFor(empty, validators)));
+    if (index === 62 || index === 63) {
+      assert.equal(chain.consensusSnapshot().state.candidateBonds.length, 1);
+      assert.equal(chain.balance(treasury.address), balanceBefore - MIN_PROGRESS_CANDIDATE_BOND);
+    }
+    assertProgressBondConservation(chain);
   }
   assert.equal(chain.balance(treasury.address), balanceBefore);
   assert.equal(chain.burned, 0n);
@@ -516,6 +680,12 @@ test("unbound progress bond gets no committee and abandoned admission burns afte
     const finalized = finalizeBlock(empty, quorumFor(empty, validators));
     restored.appendBlock(finalized);
     replayed.appendBlock(finalized);
+    if (index === 1022 || index === 1023) {
+      assert.equal(restored.consensusSnapshot().state.candidateBonds.length, 1);
+      assert.equal(restored.burned, burnedBefore);
+    }
+    assertProgressBondConservation(restored);
+    assertProgressBondConservation(replayed);
   }
   assert.equal(replayed.stateRoot, restored.stateRoot);
   assert.equal(replayed.burned, restored.burned);
