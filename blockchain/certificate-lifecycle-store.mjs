@@ -131,6 +131,26 @@ export function installCertificateRecord(directory, record, context) {
   return { history, recoveredCopies: 0, status: "installed" };
 }
 
+export function installCertificateHistory(directory, history, context) {
+  const root = resolve(directory);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const current = loadCertificateHistory(root, context);
+  const verified = verifyCertificateHistory(history, context);
+  if (verified.length < current.history.length) {
+    throw new Error("certificate lifecycle history would roll back the local verified head");
+  }
+  if (current.history.some(
+    ({ recordHash }, index) => verified[index]?.recordHash !== recordHash,
+  )) {
+    throw new Error("certificate lifecycle history conflicts with the local verified head");
+  }
+  if (verified.length === current.history.length) return { ...current, status: "known" };
+  const contents = serialized(verified);
+  atomicWrite(join(root, BACKUP), contents);
+  atomicWrite(join(root, PRIMARY), contents);
+  return { history: verified, recoveredCopies: 0, status: "installed" };
+}
+
 export function certificateStorePaths(directory) {
   const root = resolve(directory);
   return { backup: join(root, BACKUP), primary: join(root, PRIMARY) };

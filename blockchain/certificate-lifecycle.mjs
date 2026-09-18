@@ -91,6 +91,13 @@ export function certificateRecordHash(record) {
   return hashObject(payload(record), "NETWORK_CERTIFICATE_RECORD");
 }
 
+export function certificateHistoryHead(history, context) {
+  const verified = verifyCertificateHistory(history, context);
+  return hashObject({
+    recordHashes: verified.map(({ recordHash }) => recordHash),
+  }, "NETWORK_CERTIFICATE_HISTORY_HEAD");
+}
+
 export function topologyHistoryCommitment({ handoffs = [], onboardings = [] } = {}) {
   if (!Array.isArray(handoffs) || !Array.isArray(onboardings) ||
       handoffs.length !== onboardings.length || handoffs.length > 128 ||
@@ -229,6 +236,80 @@ export function verifyCertificateHistory(history, {
     previousByValidator.set(unsigned.validatorAddress, verified);
   }
   return structuredClone(normalized);
+}
+
+function isHistoryPrefix(prefix, history) {
+  return prefix.length <= history.length && prefix.every(
+    ({ recordHash }, index) => history[index]?.recordHash === recordHash,
+  );
+}
+
+export function selectCertificateHistoryCandidates(candidates, {
+  context,
+  localHistory = [],
+  trustedSources = context?.validators,
+} = {}) {
+  if (!Array.isArray(candidates) || candidates.length > 512 ||
+      !Array.isArray(trustedSources) || trustedSources.length < 4 ||
+      trustedSources.length > 512) {
+    throw new Error("certificate history candidates are invalid");
+  }
+  const trusted = new Set(trustedSources.map(({ address }) => address));
+  if (trusted.size !== trustedSources.length) {
+    throw new Error("certificate history trusted sources are invalid");
+  }
+  const local = verifyCertificateHistory(localHistory, context);
+  const localHead = certificateHistoryHead(local, context);
+  const seenSources = new Set();
+  const groups = new Map();
+  let hasUnresolvedAdvance = false;
+  for (const candidate of candidates) {
+    exactKeys(candidate, ["history", "source"], "certificate history candidate");
+    if (!trusted.has(candidate.source) || seenSources.has(candidate.source)) {
+      throw new Error("certificate history source is untrusted or duplicated");
+    }
+    seenSources.add(candidate.source);
+    let history;
+    try {
+      history = verifyCertificateHistory(candidate.history, context);
+    } catch {
+      continue;
+    }
+    if (history.length < local.length && isHistoryPrefix(history, local)) continue;
+    const headHash = certificateHistoryHead(history, context);
+    if (headHash === localHead) continue;
+    hasUnresolvedAdvance = true;
+    const key = `${history.length}:${headHash}`;
+    const group = groups.get(key) ?? { headHash, history, sources: [] };
+    group.sources.push(candidate.source);
+    groups.set(key, group);
+  }
+  if (!hasUnresolvedAdvance) {
+    return { headHash: localHead, history: local, matchingSources: [], status: "known" };
+  }
+  const quorum = Math.floor((trustedSources.length * 2) / 3) + 1;
+  const quorumGroups = [...groups.values()].filter(({ sources }) => sources.length >= quorum);
+  if (quorumGroups.length === 0) {
+    const error = new Error("certificate history head quorum not reached");
+    error.code = "ERR_NO_CERTIFICATE_HISTORY_QUORUM";
+    throw error;
+  }
+  quorumGroups.sort((left, right) => right.history.length - left.history.length);
+  const selected = quorumGroups[0];
+  if (!isHistoryPrefix(local, selected.history)) {
+    throw new Error("certificate history quorum conflicts with the local verified head");
+  }
+  for (const group of quorumGroups.slice(1)) {
+    if (!isHistoryPrefix(group.history, selected.history)) {
+      throw new Error("conflicting certificate history quorum heads");
+    }
+  }
+  return {
+    headHash: selected.headHash,
+    history: structuredClone(selected.history),
+    matchingSources: [...selected.sources].sort(),
+    status: selected.history.length === local.length ? "known" : "selected",
+  };
 }
 
 export function verifyCertificateRecord(record, {

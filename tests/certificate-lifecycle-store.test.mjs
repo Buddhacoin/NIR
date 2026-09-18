@@ -13,6 +13,7 @@ import {
 } from "../blockchain/certificate-lifecycle.mjs";
 import {
   certificateStorePaths,
+  installCertificateHistory,
   installCertificateRecord,
   loadCertificateHistory,
 } from "../blockchain/certificate-lifecycle-store.mjs";
@@ -49,6 +50,8 @@ test("certificate history survives restart and repairs one torn copy", () => {
     assert.equal(recovered.history.length, 1);
     assert.equal(recovered.recoveredCopies, 1);
     assert.equal(readFileSync(paths.primary, "utf8"), readFileSync(paths.backup, "utf8"));
+
+    assert.throws(() => installCertificateHistory(directory, [], context), /roll back/);
 
     rmSync(paths.primary);
     symlinkSync(paths.backup, paths.primary);

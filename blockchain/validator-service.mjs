@@ -9,6 +9,8 @@ import { IngressLimiter } from "./ingress-limiter.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { MAX_TOPOLOGY_STORE_BYTES } from "./validator-topology-history.mjs";
+import { MAX_CERTIFICATE_STORE_BYTES } from "./certificate-lifecycle-store.mjs";
+import { CERTIFICATE_MODE_LIFECYCLE } from "./certificate-runtime.mjs";
 import {
   boundedAllSettled,
   PeerReputation,
@@ -18,10 +20,12 @@ import {
 const SNAPSHOT_CATCHUP_THRESHOLD = 16;
 const MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES =
   MAX_HANDOFF_STORE_BYTES + MAX_TOPOLOGY_STORE_BYTES + 64 * 1024;
+const MAX_CERTIFICATE_HISTORY_RESPONSE_BYTES = MAX_CERTIFICATE_STORE_BYTES + 64 * 1024;
 const SIGNER = /^nir1[0-9a-f]{64}$/;
 const VALIDATOR_AUTH_PATHS = new Set([
   "/v1/gossip/transactions", "/v1/p2p/blocks", "/v1/p2p/blocks/range",
   "/v1/p2p/commits", "/v1/p2p/handoffs", "/v1/p2p/handoffs/history",
+  "/v1/p2p/certificates/history",
   "/v1/p2p/health", "/v1/p2p/locks", "/v1/p2p/produce",
   "/v1/p2p/proposals", "/v1/p2p/snapshots/candidate", "/v1/p2p/timeouts",
   "/v1/p2p/topologies/history",
@@ -131,9 +135,30 @@ async function discoverRecoveryPeers(validator, peers) {
   return { installedHandoffs: 0, peers };
 }
 
+async function synchronizeCertificateLifecycle(validator, urls) {
+  if (validator.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
+    return { records: 0, status: "disabled" };
+  }
+  const localHistory = validator.certificateLifecycleHistory();
+  const peers = urls.map((url, index) => validator.peerDescriptor(index, url));
+  const responses = await boundedAllSettled(peers, (peer) => gossipPeerRequest(
+    validator, peer, "/v1/p2p/certificates/history", {},
+    MAX_CERTIFICATE_HISTORY_RESPONSE_BYTES,
+  ));
+  const candidates = [{ history: localHistory, source: validator.address }];
+  for (let index = 0; index < responses.length; index += 1) {
+    const response = responses[index];
+    if (response.status === "fulfilled" && Array.isArray(response.value?.history)) {
+      candidates.push({ history: response.value.history, source: peers[index].validatorAddress });
+    }
+  }
+  return validator.installCertificateLifecycleHistoryCandidates(candidates);
+}
+
 async function synchronizeValidator(validator, urls) {
   const configuredPeers = urls.map((url, index) => validator.peerDescriptor(index, url));
   const recovery = await discoverRecoveryPeers(validator, configuredPeers);
+  const certificateSync = await synchronizeCertificateLifecycle(validator, urls);
   const syncPeers = recovery.peers;
   const statuses = await boundedAllSettled(syncPeers, (peer) =>
     peerHealthDescriptor(validator, peer));
@@ -203,6 +228,8 @@ async function synchronizeValidator(validator, urls) {
     snapshotHeight,
     syncedBlocks,
     synchronizedHandoffs,
+    synchronizedCertificateRecords: certificateSync.records,
+    certificateHistoryStatus: certificateSync.status,
     tipHash: validator.tipHash,
   };
 }
@@ -561,6 +588,14 @@ export function createValidatorHttpServer(validator, options = {}) {
         const { auth, payload } = parsedBody;
         const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
         const result = { handoffs: validator.validatorHandoffHistory() };
+        return send(response, 200, {
+          result, auth: validator.authenticateValidatorResponse(nonce, result),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/p2p/certificates/history") {
+        const { auth, payload } = parsedBody;
+        const nonce = authorizeValidator(auth, request.method, url.pathname, payload);
+        const result = { history: validator.certificateLifecycleHistory() };
         return send(response, 200, {
           result, auth: validator.authenticateValidatorResponse(nonce, result),
         });

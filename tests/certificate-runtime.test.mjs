@@ -63,7 +63,8 @@ function lifecycleFixture(root, operation = "renew") {
     topologyHistoryHash: topologyHash,
     validators: genesis.validators,
   };
-  const records = [];
+  const issuedRecords = [];
+  const followupRecords = [];
   for (let index = 0; index < wallets.length; index += 1) {
     const issued = createCertificateRecord({
       activationHeight: 0,
@@ -77,9 +78,9 @@ function lifecycleFixture(root, operation = "renew") {
       topologyHistoryHash: topologyHash,
       validatorAddress: wallets[index].address,
     }, wallets.slice(0, 3));
-    records.push(issued);
+    issuedRecords.push(issued);
     if (operation === "renew") {
-      records.push(createCertificateRecord({
+      followupRecords.push(createCertificateRecord({
         activationHeight: 1,
         certificate: {
           serial: (0x20 + index).toString(16),
@@ -95,7 +96,7 @@ function lifecycleFixture(root, operation = "renew") {
         validatorAddress: wallets[index].address,
       }, wallets.slice(0, 3)));
     } else if (operation === "revoke") {
-      records.push(createCertificateRecord({
+      followupRecords.push(createCertificateRecord({
         activationHeight: 1,
         certificate: null,
         networkId: genesis.networkId,
@@ -109,12 +110,15 @@ function lifecycleFixture(root, operation = "renew") {
       }, wallets.slice(0, 3)));
     }
   }
-  const install = (directory) => {
-    for (const record of records) {
+  const records = [...issuedRecords, ...followupRecords];
+  const install = (directory, history = records) => {
+    for (const record of history) {
       installCertificateRecord(join(directory, "certificates"), record, context);
     }
   };
-  return { genesis, install, layout, newCertificates, oldCertificates };
+  return {
+    context, genesis, install, issuedRecords, layout, newCertificates, oldCertificates, records,
+  };
 }
 
 async function startValidators(layout, certificateSet, optionsFor = () => ({})) {
@@ -257,6 +261,45 @@ test("validator P2P synchronization uses lifecycle pins on the live request path
       certificateMode: CERTIFICATE_MODE_LIFECYCLE,
     });
     assert.deepEqual(restarted.peerTlsCertificateSha256Pins(1), [
+      values.oldCertificates[1].fingerprint,
+    ]);
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("validator P2P propagates a quorum renewal history atomically and survives restart", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-certificate-propagation-"));
+  const servers = [];
+  try {
+    const values = lifecycleFixture(root, "renew");
+    values.install(values.layout.validatorDirectories[0], values.issuedRecords);
+    for (const directory of values.layout.validatorDirectories.slice(1)) {
+      values.install(directory);
+    }
+    const running = await startValidators(values.layout, values.oldCertificates, () => ({
+      certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+    }));
+    servers.push(...running.servers);
+    const response = await requestJson(`${running.urls[0]}/v1/sync`, {
+      method: "POST",
+      tlsCertificateSha256: values.oldCertificates[0].fingerprint,
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.certificateHistoryStatus, "installed");
+    assert.equal(response.body.synchronizedCertificateRecords, values.records.length);
+
+    const restarted = new ValidatorReplica(values.layout.validatorDirectories[0], {
+      certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+    });
+    assert.equal(restarted.certificateLifecycleHistory().length, values.records.length);
+    const pins = new RuntimeCertificatePins(
+      values.layout.validatorDirectories[0], values.genesis,
+      { mode: CERTIFICATE_MODE_LIFECYCLE },
+    ).pinsFor(values.genesis.validators[1].address, 1);
+    assert.deepEqual(pins, [
+      values.newCertificates[1].fingerprint,
       values.oldCertificates[1].fingerprint,
     ]);
   } finally {

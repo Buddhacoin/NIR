@@ -6,6 +6,7 @@ import {
   certificatePinsAtHeight,
   createCertificateRecord,
   EMPTY_CERTIFICATE_RECORD_HASH,
+  selectCertificateHistoryCandidates,
   verifyCertificateHistory,
   verifyCertificateRecord,
 } from "../blockchain/certificate-lifecycle.mjs";
@@ -170,4 +171,52 @@ test("unknown fields and unauthenticated certificate history fail closed", async
   const reversed = { ...issued, approvals: [...issued.approvals].reverse() };
   const normalized = verifyCertificateHistory([reversed], { networkId: NETWORK, validators });
   assert.deepEqual(normalized[0].approvals, issued.approvals);
+});
+
+test("certificate propagation selects one quorum head and ignores stale or forged histories", () => {
+  const issued = record({
+    activationHeight: 10, certificate: firstCertificate, operation: "issue",
+  });
+  const renewed = record({
+    activationHeight: 20, certificate: secondCertificate, history: [issued], operation: "renew",
+  });
+  const alternate = record({
+    activationHeight: 20,
+    certificate: { serial: "3c", sha256: "3".repeat(64) },
+    history: [issued],
+    operation: "renew",
+  });
+  const context = { networkId: NETWORK, validators };
+  const forged = structuredClone([issued, renewed]);
+  forged[1].recordHash = "f".repeat(64);
+  const selected = selectCertificateHistoryCandidates([
+    { history: [issued, renewed], source: validators[0].address },
+    { history: [issued, renewed], source: validators[1].address },
+    { history: [issued, renewed], source: validators[2].address },
+    { history: forged, source: validators[3].address },
+  ], { context, localHistory: [issued], trustedSources: validators });
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.history.length, 2);
+  assert.equal(selected.matchingSources.length, 3);
+
+  const stale = selectCertificateHistoryCandidates(validators.map(({ address }) => ({
+    history: [issued], source: address,
+  })), { context, localHistory: [issued, renewed], trustedSources: validators });
+  assert.equal(stale.status, "known");
+  assert.equal(stale.history.length, 2);
+
+  assert.throws(() => selectCertificateHistoryCandidates([
+    { history: [issued, renewed], source: validators[0].address },
+    { history: [issued, renewed], source: validators[1].address },
+    { history: [issued, alternate], source: validators[2].address },
+    { history: [issued, alternate], source: validators[3].address },
+  ], { context, localHistory: [issued], trustedSources: validators }), /quorum not reached/);
+
+  assert.throws(() => selectCertificateHistoryCandidates([
+    { history: [issued, renewed], source: validators[0].address },
+    { history: [issued, renewed], source: validators[1].address },
+    { history: [issued, renewed], source: validators[2].address },
+    { history: [issued, alternate], source: validators[3].address },
+  ], { context, localHistory: [issued, alternate], trustedSources: validators }),
+  /conflicts with the local verified head/);
 });

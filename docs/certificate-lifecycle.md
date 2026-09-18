@@ -146,9 +146,24 @@ request. Lifecycle mode never falls back to a genesis pin.
 At validator startup the configured server certificate must be one of that
 validator's lifecycle pins at the current height. Restart re-verifies the store,
 repairs one damaged redundant copy, and retains the same height-based decision.
-An operator must install the authorized record in every participating node's
-local certificate store before its activation height; copying an unsigned JSON
-file or setting a different environment variable cannot authorize a pin.
+
+Lifecycle validators also expose the bounded `/v1/p2p/certificates/history` endpoint
+only through the validator-authenticated transport. During synchronization a node
+verifies every returned record from the genesis-rooted validator/topology history,
+associates each response with its authenticated validator identity, and accepts only
+the unique longest head reported by at least two thirds plus one of the active
+validators. A forged response is not counted. A split without quorum, a quorum head
+that conflicts with the local verified prefix, a duplicated source, or two conflicting
+quorum histories fails closed.
+
+The selected history is installed with crash-safe primary and backup writes. A shorter
+history is treated as a stale prefix and can never roll back the local store. This
+propagation is deliberately bounded and transports only public certificate records;
+it does not issue certificates, copy TLS private keys, switch the server key, or replace
+an external CA/operator procedure. A node must already have active pins with which to
+authenticate the quorum, so an empty lifecycle store is not bootstrapped from the
+network and never falls back to genesis pins. Operators must distribute the initial
+authorized history out of band and propagate renewals before the old pin expires.
 
 Before a public test network, operators still need isolated key generation, documented
 certificate issuance procedures, independent deployment on real hosts, monitoring,

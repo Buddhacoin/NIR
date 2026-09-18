@@ -86,8 +86,12 @@ import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
 import {
   CERTIFICATE_MODE_DEV_GENESIS,
+  CERTIFICATE_MODE_LIFECYCLE,
+  loadRuntimeCertificateHistory,
   RuntimeCertificatePins,
 } from "./certificate-runtime.mjs";
+import { selectCertificateHistoryCandidates } from "./certificate-lifecycle.mjs";
+import { installCertificateHistory } from "./certificate-lifecycle-store.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -680,6 +684,34 @@ export class ValidatorReplica {
     return {
       handoffs: handoffs.slice(0, history.onboardings.length),
       onboardings: history.onboardings.map((onboarding) => structuredClone(onboarding)),
+    };
+  }
+
+  certificateLifecycleHistory() {
+    if (this.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
+      throw new Error("certificate history propagation requires lifecycle mode");
+    }
+    return loadRuntimeCertificateHistory(this.#directory, this.#genesis).history;
+  }
+
+  installCertificateLifecycleHistoryCandidates(candidates) {
+    if (this.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
+      throw new Error("certificate history propagation requires lifecycle mode");
+    }
+    const loaded = loadRuntimeCertificateHistory(this.#directory, this.#genesis);
+    const selected = selectCertificateHistoryCandidates(candidates, {
+      context: loaded.context,
+      localHistory: loaded.history,
+      trustedSources: loaded.context.validators,
+    });
+    const installed = installCertificateHistory(
+      join(this.#directory, "certificates"), selected.history, loaded.context,
+    );
+    return {
+      headHash: selected.headHash,
+      matchingSources: selected.matchingSources,
+      records: installed.history.length,
+      status: installed.status,
     };
   }
 

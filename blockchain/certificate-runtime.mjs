@@ -11,7 +11,7 @@ import {
 export const CERTIFICATE_MODE_DEV_GENESIS = "dev-genesis";
 export const CERTIFICATE_MODE_LIFECYCLE = "lifecycle";
 
-function lifecycleContext(directory, genesis) {
+export function runtimeCertificateContext(directory, genesis) {
   const handoffContext = {
     expectedNetworkId: genesis.networkId,
     trustedValidators: genesis.validators,
@@ -49,6 +49,17 @@ function lifecycleContext(directory, genesis) {
   };
 }
 
+
+export function loadRuntimeCertificateHistory(directory, genesis) {
+  const context = runtimeCertificateContext(directory, genesis);
+  const loaded = loadCertificateHistory(join(directory, "certificates"), context);
+  if (loaded.history.some((record) =>
+    !Object.hasOwn(context.validatorSetsByTopologyHash, record.topologyHistoryHash))) {
+    throw new Error("certificate lifecycle record has no verified validator topology");
+  }
+  return { ...loaded, context };
+}
+
 export class RuntimeCertificatePins {
   #directory;
   #genesis;
@@ -69,13 +80,7 @@ export class RuntimeCertificatePins {
     if (this.#mode === CERTIFICATE_MODE_DEV_GENESIS) {
       return genesisPin === null ? null : [genesisPin];
     }
-    const context = lifecycleContext(this.#directory, this.#genesis);
-    const loaded = loadCertificateHistory(join(this.#directory, "certificates"), context);
-    const knownTopologies = context.validatorSetsByTopologyHash;
-    if (loaded.history.some((record) =>
-      !Object.hasOwn(knownTopologies, record.topologyHistoryHash))) {
-      throw new Error("certificate lifecycle record has no verified validator topology");
-    }
+    const loaded = loadRuntimeCertificateHistory(this.#directory, this.#genesis);
     const pins = certificatePinsAtHeight(loaded.history, validatorAddress, height);
     if (pins.length === 0) {
       throw new Error("validator has no active lifecycle TLS certificate");
