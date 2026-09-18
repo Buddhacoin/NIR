@@ -231,9 +231,15 @@ revealed before commitment, and reuse of the same finalized challenge all fail
 closed. The included data-only adapter parses only committed JSON answers; it
 has no shell, arbitrary command or network path and does not execute model code. A public network still requires isolated
 remote runners and hardware-backed execution and energy attestations.
-The commitment is balance-free so the first NIR can be mined, but it consumes
-the submitter nonce, is limited to one pending request per address, expires
-after 1,024 blocks, and shares the block transaction limit.
+Before admission, the candidate id needs a separately finalized progress bond
+of at least 1 NIR. The author may fund it or use a consenting third-party
+sponsor; the signed bond names the author and candidate exactly. It receives no
+committee before admission and, if unused, returns to its payer only after a
+64-block binding window. A successful reward returns the bound bond only to its
+payer, while an admission abandoned for more than 1,024 blocks burns it fully.
+This makes multi-key committee sampling economically bounded, but is not a
+claim of complete Sybil resistance. Honest timeouts pay the same burn, and the
+first progress admission must wait for vested or otherwise circulating NIR.
 
 Evaluation, randomness and block finality use three separate ML-DSA-65 key
 registries. Their operator identities must be unique and pairwise disjoint in

@@ -104,6 +104,17 @@ different evaluator quorum can substitute itself. If the beacon quorum is
 offline, issuance waits: the protocol does not weaken randomness to preserve
 liveness.
 
+An admission is valid only after a separate finalized progress-purpose bond
+locks at least 1 NIR against its exact `candidateId` and author. A third party
+may sponsor a small participant, but the sponsor signs the lock and is the only
+refund address. Merely locking an unbound bond reveals no committee; an unused
+lock returns after 64 blocks. Successful evaluation refunds a bound bond; an
+unrewarded admission burns the full bond after 1,024
+blocks. There is no free cancellation after committee assignment, so honest
+timeouts also lose the bond. This removes the free multi-key/wrapper sampling
+path but does not make the protocol Sybil-proof: capital can still buy multiple
+samples, and initial mining waits for vested or circulating NIR.
+
 This removes the block hash and its proposer from committee selection. A
 malicious assigned epoch member can stop progress by withholding its reveal,
 but cannot make consensus accept another subset or alternate seed. Protocol

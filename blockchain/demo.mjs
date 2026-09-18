@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   NirChain,
+  createCandidateBond,
   createProgressCommitment,
   createProgressClaim,
   createTransfer,
@@ -9,7 +10,9 @@ import {
   formatNir,
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
-import { SAFETY_POLICY_V1_COMMITMENT } from "./constants.mjs";
+import {
+  MIN_PROGRESS_CANDIDATE_BOND, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
+} from "./constants.mjs";
 import {
   createEpochRandomnessCommit,
   createEpochRandomnessReveal,
@@ -23,7 +26,7 @@ const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
 const founder = generateWallet();
 const alice = generateWallet();
 const bob = generateWallet();
-const genesisTimestamp = Date.now();
+const genesisTimestamp = Date.now() - TREASURY_VESTING_MS;
 const baselineArtifact = `sha256:${createHash("sha256")
   .update("baseline")
   .digest("hex")}`;
@@ -77,9 +80,22 @@ const admission = createProgressCommitment({
   suiteCommitment,
   nonce: chain.nextNonce(alice.address),
 });
+const admissionTimestamp = Date.now();
+const progressBond = createCandidateBond({
+  wallet: founder,
+  networkId: chain.networkId,
+  candidateId: admission.candidateId,
+  candidateOwner: alice.address,
+  purpose: "progress",
+  amount: MIN_PROGRESS_CANDIDATE_BOND.toString(),
+  fee: "0",
+  nonce: chain.nextNonce(founder.address),
+});
+const bondBlock = chain.buildBlock({ transactions: [progressBond], timestamp: admissionTimestamp });
+chain.appendBlock(finalizeBlock(bondBlock, quorumFor(bondBlock)));
 const admissionBlock = chain.buildBlock({
   transactions: [admission],
-  timestamp: genesisTimestamp,
+  timestamp: admissionTimestamp,
 });
 chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock)));
 const epoch = chain.epochRandomnessStatus();
@@ -91,14 +107,14 @@ const epochCommitBlock = chain.buildBlock({
   epochRandomnessCommits: epochMembers.map((wallet, index) => createEpochRandomnessCommit({
     wallet, networkId: chain.networkId, round: epoch.round, secret: epochSecrets[index],
   })),
-  timestamp: genesisTimestamp,
+  timestamp: admissionTimestamp,
 });
 chain.appendBlock(finalizeBlock(epochCommitBlock, quorumFor(epochCommitBlock)));
 const epochRevealBlock = chain.buildBlock({
   epochRandomnessReveals: epochMembers.map((wallet, index) => createEpochRandomnessReveal({
     wallet, networkId: chain.networkId, round: epoch.round, secret: epochSecrets[index],
   })),
-  timestamp: genesisTimestamp,
+  timestamp: admissionTimestamp,
 });
 chain.appendBlock(finalizeBlock(epochRevealBlock, quorumFor(epochRevealBlock)));
 const challengeRound = chain.height + 1;
@@ -119,7 +135,7 @@ const challengeBlock = chain.buildBlock({
     candidateId: admission.candidateId,
     round: challengeRound,
   })],
-  timestamp: genesisTimestamp,
+  timestamp: admissionTimestamp,
 });
 chain.appendBlock(finalizeBlock(challengeBlock, quorumFor(challengeBlock)));
 const challenge = chain.progressChallenge(admission.candidateId);
@@ -158,7 +174,7 @@ const progressClaim = createProgressClaim({
 });
 const rewardBlock = chain.buildBlock({
   rewardClaims: [progressClaim],
-  timestamp: genesisTimestamp + 1,
+  timestamp: admissionTimestamp + 1,
 });
 chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock)));
 
@@ -172,7 +188,7 @@ const payment = createTransfer({
 });
 const paymentBlock = chain.buildBlock({
   transactions: [payment],
-  timestamp: genesisTimestamp + 2,
+  timestamp: admissionTimestamp + 2,
 });
 chain.appendBlock(finalizeBlock(paymentBlock, quorumFor(paymentBlock)));
 

@@ -21,6 +21,7 @@ import {
   MAX_VALIDATORS,
   MIN_BEACON_BOND,
   MINING_POOL,
+  MIN_PROGRESS_CANDIDATE_BOND,
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
   SIGNATURE_ALGORITHM,
@@ -115,7 +116,8 @@ export function nativeAssetId({ networkId, creator, nonce }) {
 function assetBalanceKey(assetId, address) { return `${assetId}:${address}`; }
 
 const MAX_PENDING_PROGRESS_COMMITMENTS = 4_096;
-const MAX_PROGRESS_COMMITMENT_AGE = 1_024;
+export const MAX_PROGRESS_COMMITMENT_AGE = 1_024;
+export const PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS = 64;
 
 function operatorRegistry(entries, role) {
   if (
@@ -261,6 +263,9 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "candidate-bond": [[
     "algorithm", "amount", "candidateId", "fee", "networkId", "nonce", "publicKey",
     "sender", "signature", "type",
+  ], [
+    "algorithm", "amount", "candidateId", "candidateOwner", "fee", "networkId", "nonce",
+    "publicKey", "purpose", "sender", "signature", "type",
   ]],
   "credit-delegation": [[
     "algorithm", "delegate", "fee", "limit", "networkId", "nonce", "publicKey",
@@ -535,6 +540,8 @@ export function createCandidateBond({
   amount,
   nonce,
   fee = MIN_TRANSFER_FEE.toString(),
+  candidateOwner,
+  purpose,
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
@@ -547,6 +554,10 @@ export function createCandidateBond({
     sender: wallet.address,
     type: "candidate-bond",
   };
+  if (purpose !== undefined || candidateOwner !== undefined) {
+    transaction.candidateOwner = candidateOwner;
+    transaction.purpose = purpose;
+  }
   return {
     ...transaction,
     signature: signObject(transaction, wallet, "CANDIDATE_BOND"),
@@ -1332,7 +1343,18 @@ export class NirChain {
     const candidateBonds = snapshotEntries(state.candidateBonds, "candidate bonds");
     for (const [candidateId, candidate] of candidateBonds) {
       if (!/^[0-9a-f]{64}$/.test(candidateId) || !candidate ||
-          !Number.isSafeInteger(candidate.committedHeight) || candidate.committedHeight < 0) {
+          !Number.isSafeInteger(candidate.committedHeight) || candidate.committedHeight < 0 ||
+          !["progress", "safety"].includes(candidate.purpose) ||
+          typeof candidate.admissionBound !== "boolean" ||
+          !/^nir1[0-9a-f]{64}$/.test(candidate.submitter ?? "") ||
+          !/^nir1[0-9a-f]{64}$/.test(candidate.candidateOwner ?? "") ||
+          (candidate.purpose === "progress" && (
+            candidate.bond === undefined || candidate.randomnessCommits.length !== 0 ||
+            candidate.randomnessReveals.length !== 0 || candidate.committee !== null
+          )) ||
+          (candidate.purpose === "safety" && (
+            candidate.candidateOwner !== candidate.submitter || candidate.admissionBound
+          ))) {
         throw new Error("candidate bond snapshot is invalid");
       }
       candidateBonds.set(candidateId, {
@@ -1697,7 +1719,9 @@ export class NirChain {
 
   assignedSafetyEvaluators(candidateId) {
     const candidate = this.#candidateBonds.get(candidateId);
-    if (!candidate?.committee) throw new Error("candidate safety committee is not assigned");
+    if (candidate?.purpose !== "safety" || !candidate.committee) {
+      throw new Error("candidate safety committee is not assigned");
+    }
     return [...candidate.committee];
   }
 
@@ -1929,6 +1953,7 @@ export class NirChain {
     if (safetyEvidence.has(payload.evidenceHash)) throw new Error("safety evidence was already settled");
     const candidate = candidateBonds.get(payload.candidateId);
     if (!candidate) throw new Error("safety claim has no locked candidate bond");
+    if (candidate.purpose !== "safety") throw new Error("progress bond cannot fund a safety claim");
     if (!Array.isArray(candidate.committee)) {
       throw new Error("candidate safety committee is not assigned yet");
     }
@@ -2459,8 +2484,18 @@ export class NirChain {
     if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
     const bond = parseAtomic(transaction.amount, "candidate bond");
     const fee = parseAtomic(transaction.fee, "fee");
-    if (bond === 0n) throw new Error("candidate bond must be positive");
-    if (fee < MIN_TRANSFER_FEE) throw new Error("transfer fee is below the protocol minimum");
+    const progressPurpose = transaction.purpose === "progress";
+    if (progressPurpose) {
+      assertAddress(transaction.candidateOwner, "progress candidate owner");
+      if (bond < MIN_PROGRESS_CANDIDATE_BOND || fee !== 0n) {
+        throw new Error("progress candidate bond amount or fee is invalid");
+      }
+    } else if (transaction.purpose !== undefined || transaction.candidateOwner !== undefined) {
+      throw new Error("candidate bond purpose is invalid");
+    } else {
+      if (bond === 0n) throw new Error("candidate bond must be positive");
+      if (fee < MIN_TRANSFER_FEE) throw new Error("transfer fee is below the protocol minimum");
+    }
     const senderBalance = balances.get(transaction.sender) ?? 0n;
     if (senderBalance < bond + fee) throw new Error("insufficient balance");
     if (transaction.sender === this.#treasuryAddress) {
@@ -2468,7 +2503,7 @@ export class NirChain {
       if (senderBalance - bond - fee < locked) throw new Error("treasury funds are still vesting");
     }
     balances.set(transaction.sender, senderBalance - bond - fee);
-    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    if (fee > 0n) balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
     candidateBonds.set(transaction.candidateId, {
       bond,
@@ -2477,11 +2512,15 @@ export class NirChain {
       randomnessCommits: new Map(),
       randomnessReveals: new Map(),
       submitter: transaction.sender,
+      candidateOwner: progressPurpose ? transaction.candidateOwner : transaction.sender,
+      purpose: progressPurpose ? "progress" : "safety",
+      admissionBound: false,
     });
   }
 
   #applyProgressCommitment(
-    transaction, nonces, progressCommitments, capabilityMemory, height, randomnessRound,
+    transaction, nonces, progressCommitments, capabilityMemory, candidateBonds,
+    height, randomnessRound,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -2503,6 +2542,15 @@ export class NirChain {
     }
     assertAddress(transaction.sender, "progress submitter");
     assertAddress(transaction.recipient, "progress recipient");
+    const candidateBond = candidateBonds.get(transaction.candidateId);
+    if (
+      !candidateBond || candidateBond.purpose !== "progress" ||
+      candidateBond.candidateOwner !== transaction.sender ||
+      candidateBond.bond < MIN_PROGRESS_CANDIDATE_BOND ||
+      candidateBond.admissionBound || candidateBond.committedHeight >= height
+    ) {
+      throw new Error("progress commitment requires a prior unbound candidate bond");
+    }
     if (capabilityMemory.contentForArtifact(transaction.baselineHash) !==
         transaction.baselineContentHash) {
       throw new Error("baseline canonical content does not match the known baseline artifact");
@@ -2540,6 +2588,7 @@ export class NirChain {
     const expectedNonce = nonces.get(transaction.sender) ?? 0;
     if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
     nonces.set(transaction.sender, expectedNonce + 1);
+    candidateBonds.set(expectedId, { ...candidateBond, admissionBound: true });
     progressCommitments.set(expectedId, {
       artifactHash: transaction.artifactHash,
       baselineContentHash: transaction.baselineContentHash,
@@ -3242,6 +3291,12 @@ export class NirChain {
       const amount = parseAtomic(reward.amount, "reward amount");
       newlyMined += amount;
       balances.set(reward.recipient, (balances.get(reward.recipient) ?? 0n) + amount);
+      const bond = candidateBonds.get(reward.evaluation.candidateId);
+      if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
+        throw new Error("progress reward has no locked candidate bond");
+      }
+      balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
+      candidateBonds.delete(reward.evaluation.candidateId);
       progressCommitments.delete(reward.evaluation.candidateId);
     }
     if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
@@ -3269,6 +3324,7 @@ export class NirChain {
           nonces,
           progressCommitments,
           capabilityMemory,
+          candidateBonds,
           block.height,
           epochRandomness.round,
         );
@@ -3322,7 +3378,23 @@ export class NirChain {
 
     for (const [candidateId, commitment] of progressCommitments) {
       if (block.height > commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE) {
+        const bond = candidateBonds.get(candidateId);
+        if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
+          throw new Error("expired progress commitment has no locked candidate bond");
+        }
+        newlyBurned += bond.bond;
+        candidateBonds.delete(candidateId);
         progressCommitments.delete(candidateId);
+      }
+    }
+
+    for (const [candidateId, bond] of candidateBonds) {
+      if (
+        bond.purpose === "progress" && !bond.admissionBound &&
+        block.height > bond.committedHeight + PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS
+      ) {
+        balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
+        candidateBonds.delete(candidateId);
       }
     }
 
@@ -3392,7 +3464,7 @@ export class NirChain {
         candidateId: contribution.candidateId, commitment: contribution.commitment,
         contributor: contribution.contributor, networkId: contribution.networkId,
       };
-      if (!candidate || candidate.committee !== null || block.height !== candidate.committedHeight + 1 ||
+      if (!candidate || candidate.purpose !== "safety" || candidate.committee !== null || block.height !== candidate.committedHeight + 1 ||
           contribution.networkId !== this.#networkId || !/^[0-9a-f]{64}$/.test(contribution.commitment ?? "") ||
           !validator || (validatorBonds.get(contribution.contributor) ?? 0n) < MIN_VALIDATOR_BOND ||
           candidate.randomnessCommits.has(contribution.contributor) ||
@@ -3409,7 +3481,7 @@ export class NirChain {
         candidateId: contribution.candidateId, contributor: contribution.contributor,
         networkId: contribution.networkId, secret: contribution.secret,
       };
-      if (!candidate || candidate.committee !== null || block.height !== candidate.committedHeight + 2 ||
+      if (!candidate || candidate.purpose !== "safety" || candidate.committee !== null || block.height !== candidate.committedHeight + 2 ||
           contribution.networkId !== this.#networkId || !validator ||
           candidate.randomnessReveals.has(contribution.contributor) ||
           candidate.randomnessCommits.get(contribution.contributor) !== randomnessCommitment({
@@ -3423,12 +3495,13 @@ export class NirChain {
     const fallbackBeacons = new Map();
     for (const claim of block.fallbackBeacons) {
       const candidate = candidateBonds.get(claim.candidateId);
-      if (!candidate || fallbackBeacons.has(claim.candidateId) ||
+      if (!candidate || candidate.purpose !== "safety" || fallbackBeacons.has(claim.candidateId) ||
           block.height !== candidate.committedHeight + 3) throw new Error("fallback beacon target is invalid");
       fallbackBeacons.set(claim.candidateId, this.#verifyFallbackBeacon(claim, claim.candidateId, block.height));
     }
 
     for (const [candidateId, candidate] of candidateBonds) {
+      if (candidate.purpose !== "safety") continue;
       if (candidate.committee === null && candidate.randomnessReveals.size >= blockQuorum) {
         const randomness = combineRandomnessReveals({
           networkId: this.#networkId, candidateId,

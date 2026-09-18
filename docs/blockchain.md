@@ -112,13 +112,21 @@ the same check in independently administered environments. Exact commitment
 history survives state snapshots, forks and replay through the
 capability-memory root.
 
-Admission does not charge NIR, because requiring an existing coin would make
-the first intelligence reward impossible. Spam is bounded by block limits, one
-pending admission per address, a 4,096-entry state cap, and expiry after 1,024
-blocks. Sybil creation is still cheap before NIR circulates. Production must
-add a non-circular anti-spam rule and deploy the beacon authorities under
-genuinely independent control. If their quorum is unavailable, new challenges
-pause safely instead of falling back to proposer-controlled randomness.
+Admission requires a prior candidate-id-specific progress bond of at least 1
+NIR. It may be paid by the author or a consenting sponsor, but binds one exact
+author and cannot be reused. An unbound bond is never assigned a safety,
+beacon, or evaluator committee and is reclaimed after 64 blocks if unused.
+Successful evaluation refunds only the payer;
+expiry after 1,024 blocks burns the entire bond rather than returning the cost
+of an abandoned committee sample. The same burn applies to an honest timeout,
+which is an explicit availability/economic tradeoff. Treasury sponsorship still
+obeys vesting. This bounds rather than eliminates Sybil grinding: a wealthy
+attacker can buy several independent attempts, and NIR must first vest or
+circulate before the first bonded admission. Block limits, one pending
+admission per author, and the 4,096-entry state cap remain additional bounds.
+Production must deploy beacon authorities under genuinely independent control.
+If their quorum is unavailable, new challenges pause safely instead of falling
+back to proposer-controlled randomness.
 
 Validator and evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. This is not yet

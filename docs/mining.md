@@ -14,6 +14,14 @@ its bounded parent lineage first. Later, randomly assigned operators run the
 frozen baseline and candidate on hidden tasks. A reward is possible only for a
 new world-frontier delta that clears every critical safety gate.
 
+The exact candidate id must first carry a finalized 1 NIR progress bond. The
+author or a consenting sponsor can pay it. It is refunded only after a valid
+reward and otherwise burns when the admission expires after 1,024 blocks; an
+honest timeout is not exempt. An unbound bond receives no committee and is
+reclaimed only after 64 blocks, preventing free pre-admission committee probing.
+This raises the cost of multi-key grinding
+but does not prevent a well-funded participant from purchasing multiple tries.
+
 ### 2. Reproduction operator
 
 Provide compatible compute, lock an operator bond, receive randomly assigned

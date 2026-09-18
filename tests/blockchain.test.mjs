@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
   NirChain,
+  MAX_PROGRESS_COMMITMENT_AGE,
+  PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS,
   allocateProgressRewards,
   computeProgressScore,
   createBeaconBond,
@@ -36,6 +38,7 @@ import {
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
+  MIN_PROGRESS_CANDIDATE_BOND,
   MIN_BEACON_BOND,
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
@@ -98,10 +101,12 @@ function fixture() {
   };
   const chain = new NirChain(genesisConfig);
   TEST_BEACON_WALLETS.set(chain, beaconAuthorities);
+  TEST_TREASURY_WALLETS.set(chain, treasury);
   return { beaconAuthorities, chain, evaluators, genesisConfig, treasury, validators };
 }
 
 const TEST_BEACON_WALLETS = new WeakMap();
+const TEST_TREASURY_WALLETS = new WeakMap();
 
 function fingerprint(label) {
   return createHash("sha256").update(label).digest("hex");
@@ -113,6 +118,23 @@ function quorumFor(block, validators) {
     proposer,
     ...validators.filter((wallet) => wallet !== proposer).slice(0, 2),
   ];
+}
+
+function lockProgressBond(chain, validators, candidateOwner, candidateId, timestamp) {
+  const sponsor = TEST_TREASURY_WALLETS.get(chain);
+  const bond = createCandidateBond({
+    wallet: sponsor, networkId: chain.networkId, candidateId,
+    candidateOwner, purpose: "progress",
+    amount: MIN_PROGRESS_CANDIDATE_BOND.toString(), fee: "0",
+    nonce: chain.nextNonce(sponsor.address),
+  });
+  const block = chain.buildBlock({ transactions: [bond], timestamp });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  return timestamp;
+}
+
+function currentTimestamp(chain, offset = 0) {
+  return chain.blocks().at(-1).timestamp + offset;
 }
 
 function assignedEvaluatorWallets(chain, candidateId, evaluators) {
@@ -197,7 +219,7 @@ function progressClaim(
   const baselineHash = `sha256:${fingerprint("baseline")}`;
   const baselineContentHash = `sha256:${fingerprint("baseline-content")}`;
   const suiteCommitment = fingerprint("hidden-suite-v1");
-  const timestamp = chain.blocks().at(-1).timestamp;
+  let timestamp = chain.blocks().at(-1).timestamp;
   const admission = createProgressCommitment({
     wallet: submitterWallet,
     networkId: chain.networkId,
@@ -209,6 +231,10 @@ function progressClaim(
     suiteCommitment,
     nonce: chain.nextNonce(submitterWallet.address),
   });
+  timestamp = lockProgressBond(
+    chain, validators, submitterWallet.address, admission.candidateId,
+    Math.max(timestamp, TREASURY_VESTING_MS),
+  );
   const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
   chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
   const beaconAuthorities = TEST_BEACON_WALLETS.get(chain);
@@ -363,22 +389,142 @@ test("Python and JavaScript capability memory use the same state root", () => {
 });
 
 test("a finalized progress block mints its fixed epoch budget", () => {
-  const { chain, evaluators, validators } = fixture();
+  const { chain, evaluators, treasury, validators } = fixture();
   const miner = generateWallet();
   const memoryRootBefore = chain.capabilityMemoryRoot;
+  const sponsorBalanceBefore = chain.balance(treasury.address);
   const block = chain.buildBlock({
     rewardClaims: [
       progressClaim(chain, evaluators, validators, miner),
     ],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
   assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
+  assert.equal(chain.balance(treasury.address), sponsorBalanceBefore);
   assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
   assert.equal(
     chain.capabilityMemoryRoot,
     block.progressRewards[0].evaluation.frontierRootAfter,
   );
+});
+
+test("free multi-key progress committee grinding is rejected before state transition", () => {
+  const { chain, validators } = fixture();
+  const attackers = Array.from({ length: 8 }, generateWallet);
+  const commitments = attackers.map((wallet, index) => createProgressCommitment({
+    wallet, networkId: chain.networkId, recipient: wallet.address,
+    artifactHash: `sha256:${fingerprint(`grind-artifact-${index}`)}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+    contentHash: `sha256:${fingerprint(`grind-wrapper-${index}`)}`,
+    suiteCommitment: fingerprint("grind-suite"), nonce: 0,
+  }));
+  const rootBefore = chain.stateRoot;
+  const proposal = chain.buildBlock({ transactions: commitments, timestamp: 0 });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
+    /prior unbound candidate bond/,
+  );
+  assert.equal(chain.height, 0);
+  assert.equal(chain.stateRoot, rootBefore);
+});
+
+test("progress bond cannot bypass treasury vesting", () => {
+  const { chain, treasury, validators } = fixture();
+  const owner = generateWallet();
+  const bond = createCandidateBond({
+    wallet: treasury, networkId: chain.networkId,
+    candidateId: fingerprint("premature-treasury-progress-bond"),
+    candidateOwner: owner.address, purpose: "progress",
+    amount: MIN_PROGRESS_CANDIDATE_BOND.toString(), fee: "0", nonce: 0,
+  });
+  const rootBefore = chain.stateRoot;
+  const balanceBefore = chain.balance(treasury.address);
+  const nonceBefore = chain.nextNonce(treasury.address);
+  const proposal = chain.buildBlock({ transactions: [bond], timestamp: 0 });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
+    /treasury funds are still vesting/,
+  );
+  assert.equal(chain.stateRoot, rootBefore);
+  assert.equal(chain.balance(treasury.address), balanceBefore);
+  assert.equal(chain.nextNonce(treasury.address), nonceBefore);
+});
+
+test("unused pre-admission bond is reclaimed only after a committee-free delay", () => {
+  const { chain, treasury, validators } = fixture();
+  const owner = generateWallet();
+  const candidateId = fingerprint("unused-progress-bond");
+  const balanceBefore = chain.balance(treasury.address);
+  lockProgressBond(chain, validators, owner.address, candidateId, TREASURY_VESTING_MS);
+  assert.equal(chain.balance(treasury.address), balanceBefore - MIN_PROGRESS_CANDIDATE_BOND);
+  assert.throws(() => chain.assignedSafetyEvaluators(candidateId), /not assigned/);
+  for (let index = 0; index <= PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS; index += 1) {
+    const empty = chain.buildBlock({ timestamp: currentTimestamp(chain) });
+    chain.appendBlock(finalizeBlock(empty, quorumFor(empty, validators)));
+  }
+  assert.equal(chain.balance(treasury.address), balanceBefore);
+  assert.equal(chain.burned, 0n);
+  assert.deepEqual(chain.consensusSnapshot().state.candidateBonds, []);
+});
+
+test("unbound progress bond gets no committee and abandoned admission burns after restart", () => {
+  const { chain, genesisConfig, treasury, validators } = fixture();
+  const author = generateWallet();
+  const admission = createProgressCommitment({
+    wallet: author, networkId: chain.networkId, recipient: author.address,
+    artifactHash: `sha256:${fingerprint("abandoned-artifact")}`,
+    baselineHash: `sha256:${fingerprint("baseline")}`,
+    baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+    contentHash: `sha256:${fingerprint("abandoned-content")}`,
+    suiteCommitment: fingerprint("abandoned-suite"), nonce: 0,
+  });
+  const sponsorBefore = chain.balance(treasury.address);
+  lockProgressBond(
+    chain, validators, author.address, admission.candidateId, TREASURY_VESTING_MS,
+  );
+  assert.throws(() => chain.assignedSafetyEvaluators(admission.candidateId), /not assigned/);
+  assert.throws(() => chain.progressChallenge(admission.candidateId), /unknown or expired/);
+  for (let index = 0; index < 4; index += 1) {
+    const empty = chain.buildBlock({ timestamp: currentTimestamp(chain) });
+    chain.appendBlock(finalizeBlock(empty, quorumFor(empty, validators)));
+  }
+  const unbound = chain.consensusSnapshot().state.candidateBonds[0][1];
+  assert.equal(unbound.purpose, "progress");
+  assert.equal(unbound.admissionBound, false);
+  assert.equal(unbound.committee, null);
+
+  const admissionBlock = chain.buildBlock({
+    transactions: [admission], timestamp: currentTimestamp(chain),
+  });
+  chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
+  const exported = chain.consensusSnapshot();
+  const checkpoint = chain.blocks().at(-1);
+  const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
+    networkId: chain.networkId, state: exported.state, stateRoot: chain.stateRoot,
+    tipHash: chain.tipHash,
+  });
+  const replayed = new NirChain(genesisConfig);
+  for (const block of chain.blocks().slice(1)) replayed.appendBlock(block);
+  assert.equal(replayed.stateRoot, restored.stateRoot);
+
+  const burnedBefore = restored.burned;
+  for (let index = 0; index <= MAX_PROGRESS_COMMITMENT_AGE; index += 1) {
+    const empty = restored.buildBlock({ timestamp: currentTimestamp(restored) });
+    const finalized = finalizeBlock(empty, quorumFor(empty, validators));
+    restored.appendBlock(finalized);
+    replayed.appendBlock(finalized);
+  }
+  assert.equal(replayed.stateRoot, restored.stateRoot);
+  assert.equal(replayed.burned, restored.burned);
+  assert.equal(restored.burned, burnedBefore + MIN_PROGRESS_CANDIDATE_BOND);
+  assert.equal(restored.circulatingSupply, restored.issued - restored.burned);
+  assert.ok(restored.issued <= MAX_SUPPLY);
+  assert.equal(restored.balance(treasury.address), sponsorBefore - MIN_PROGRESS_CANDIDATE_BOND);
+  assert.throws(() => restored.progressChallenge(admission.candidateId), /unknown or expired/);
+  assert.deepEqual(restored.consensusSnapshot().state.candidateBonds, []);
 });
 
 test("a progress challenge requires an independent beacon quorum after commitment", () => {
@@ -394,12 +540,15 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     suiteCommitment: fingerprint("challenge-order-suite"),
     nonce: 0,
   });
+  const bondedAt = lockProgressBond(
+    chain, validators, miner.address, admission.candidateId, TREASURY_VESTING_MS,
+  );
   assert.throws(
     () => chain.progressChallenge(admission.candidateId),
     /unknown or expired/,
   );
   const rootBefore = chain.stateRoot;
-  const commitBlock = chain.buildBlock({ transactions: [admission], timestamp: 0 });
+  const commitBlock = chain.buildBlock({ transactions: [admission], timestamp: bondedAt });
   chain.appendBlock(finalizeBlock(commitBlock, quorumFor(commitBlock, validators)));
   assert.notEqual(chain.stateRoot, rootBefore);
   assert.throws(
@@ -410,7 +559,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     () => chain.progressBeaconCommittee(admission.candidateId),
     /not assigned yet/,
   );
-  advanceEpochRandomness(chain, beaconAuthorities, validators, 0);
+  advanceEpochRandomness(chain, beaconAuthorities, validators, bondedAt);
   assert.throws(
     () => chain.progressChallenge(admission.candidateId),
     /not available yet/,
@@ -427,7 +576,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
       shares: shares.slice(0, 2), networkId: chain.networkId,
       candidateId: admission.candidateId, round,
     })],
-    timestamp: 0,
+    timestamp: currentTimestamp(chain),
   });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(insufficient, quorumFor(insufficient, validators))),
@@ -445,7 +594,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
   });
   const wrongDomainBlock = chain.buildBlock({
     progressBeacons: [wrongDomain],
-    timestamp: 0,
+    timestamp: currentTimestamp(chain),
   });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(wrongDomainBlock, quorumFor(wrongDomainBlock, validators))),
@@ -465,7 +614,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
       shares: substitutedShares, networkId: chain.networkId,
       candidateId: admission.candidateId, round,
     })],
-    timestamp: 0,
+    timestamp: currentTimestamp(chain),
   });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(substituted, quorumFor(substituted, validators))),
@@ -477,7 +626,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
   });
   const forgedAggregate = chain.buildBlock({
     progressBeacons: [{ ...validBeacon, value: fingerprint("forged-progress-aggregate") }],
-    timestamp: 0,
+    timestamp: currentTimestamp(chain),
   });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(forgedAggregate, quorumFor(forgedAggregate, validators))),
@@ -485,7 +634,7 @@ test("a progress challenge requires an independent beacon quorum after commitmen
   );
   const source = chain.buildBlock({
     progressBeacons: [validBeacon],
-    timestamp: 0,
+    timestamp: currentTimestamp(chain),
   });
   const finalizedSource = finalizeBlock(source, quorumFor(source, validators));
   chain.appendBlock(finalizedSource);
@@ -679,7 +828,7 @@ test("empty blocks do not consume intelligence issuance epochs", () => {
   const miner = generateWallet();
   const rewarded = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, miner)],
-    timestamp: 2,
+    timestamp: currentTimestamp(chain),
   });
   assert.equal(rewarded.issuanceEpoch, 0);
   chain.appendBlock(finalizeBlock(rewarded, quorumFor(rewarded, validators)));
@@ -692,7 +841,7 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
   const firstMiner = generateWallet();
   const first = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, firstMiner)],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
 
@@ -707,7 +856,7 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
   assert.throws(
     () => chain.buildBlock({
       rewardClaims: [secondClaim],
-      timestamp: 1 + MIN_REWARD_INTERVAL_MS - 1,
+      timestamp: chain.blocks().at(-1).timestamp + MIN_REWARD_INTERVAL_MS - 1,
     }),
     /too quickly/,
   );
@@ -745,7 +894,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
     rewardClaims: [
       progressClaim(chain, evaluators, validators, alice),
     ],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
   const earlierAliceTransactions = chain.blocks().flatMap(({ transactions }) => transactions)
@@ -761,7 +910,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
     fee: "1000",
   });
   const beforeTransferRoot = chain.stateRoot;
-  const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
+  const block = chain.buildBlock({ transactions: [transaction], timestamp: currentTimestamp(chain) });
   assert.notEqual(block.stateRoot, beforeTransferRoot);
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
   assert.equal(chain.stateRoot, block.stateRoot);
@@ -779,7 +928,7 @@ test("a transfer below the consensus fee floor is rejected", () => {
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, alice)],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
   const transaction = createTransfer({
@@ -790,7 +939,7 @@ test("a transfer below the consensus fee floor is rejected", () => {
     nonce: chain.nextNonce(alice.address),
     fee: (MIN_TRANSFER_FEE - 1n).toString(),
   });
-  const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
+  const block = chain.buildBlock({ transactions: [transaction], timestamp: currentTimestamp(chain) });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(block, quorumFor(block, validators))),
     /below the protocol minimum/,
@@ -815,7 +964,7 @@ test("a two-of-three post-quantum vault can spend only with its threshold", () =
     rewardClaims: [
       progressClaim(chain, evaluators, validators, members[0], "proof-a", vaultAddress),
     ],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
 
@@ -823,7 +972,7 @@ test("a two-of-three post-quantum vault can spend only with its threshold", () =
     signerWallets: members.slice(0, 1), memberPublicKeys, threshold: 2,
     networkId: chain.networkId, recipient: recipient.address, amount: "100000000", nonce: 0,
   });
-  const rejected = chain.buildBlock({ transactions: [insufficient], timestamp: 2 });
+  const rejected = chain.buildBlock({ transactions: [insufficient], timestamp: currentTimestamp(chain) });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(rejected, quorumFor(rejected, validators))),
     /threshold not reached/,
@@ -833,7 +982,7 @@ test("a two-of-three post-quantum vault can spend only with its threshold", () =
     signerWallets: [members[0], members[2]], memberPublicKeys, threshold: 2,
     networkId: chain.networkId, recipient: recipient.address, amount: "100000000", nonce: 0,
   });
-  const accepted = chain.buildBlock({ transactions: [authorized], timestamp: 2 });
+  const accepted = chain.buildBlock({ transactions: [authorized], timestamp: currentTimestamp(chain) });
   chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, validators)));
   assert.equal(chain.balance(recipient.address), 100000000n);
 });
@@ -858,10 +1007,12 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
   const candidateId = fingerprint("bonded-unsafe-candidate");
   const rewardBlock = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, submitter, "fund-bond")],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
-  const bondTimestamp = activateRandomnessValidators(chain, validators, submitter, 2);
+  const bondTimestamp = activateRandomnessValidators(
+    chain, validators, submitter, currentTimestamp(chain),
+  );
 
   const bond = createCandidateBond({
     wallet: submitter,
@@ -934,10 +1085,12 @@ test("validators cannot approve a forged safety payout amount", () => {
   const candidateId = fingerprint("forged-payout-candidate");
   const rewardBlock = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, submitter, "fund-forgery")],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
-  const bondTimestamp = activateRandomnessValidators(chain, validators, submitter, 2);
+  const bondTimestamp = activateRandomnessValidators(
+    chain, validators, submitter, currentTimestamp(chain),
+  );
   const bond = createCandidateBond({
     wallet: submitter, networkId: chain.networkId, candidateId,
     amount: "1000000000", nonce: chain.nextNonce(submitter.address),
@@ -978,10 +1131,12 @@ test("a fallback beacon assigns the committee and slashes a missing revealer", (
   const candidateId = fingerprint("withheld-randomness-candidate");
   const rewardBlock = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, submitter, "fund-withholding")],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
-  const bondTimestamp = activateRandomnessValidators(chain, validators, submitter, 2);
+  const bondTimestamp = activateRandomnessValidators(
+    chain, validators, submitter, currentTimestamp(chain),
+  );
   const funded = chain.balance(submitter.address);
   const bond = createCandidateBond({
     wallet: submitter, networkId: chain.networkId, candidateId,
@@ -1065,7 +1220,7 @@ test("a modified transfer signature is rejected atomically", () => {
     rewardClaims: [
       progressClaim(chain, evaluators, validators, alice),
     ],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
   const transaction = createTransfer({
@@ -1077,7 +1232,7 @@ test("a modified transfer signature is rejected atomically", () => {
   });
   transaction.amount = "2";
   const heightBefore = chain.height;
-  const block = chain.buildBlock({ transactions: [transaction], timestamp: 2 });
+  const block = chain.buildBlock({ transactions: [transaction], timestamp: currentTimestamp(chain) });
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   assert.throws(() => chain.appendBlock(finalized), /signature/);
   assert.equal(chain.height, heightBefore);
@@ -1108,14 +1263,14 @@ test("a fee sponsor can pay for an exact transfer without controlling its funds"
   const bob = generateWallet();
   const rewardBlock = chain.buildBlock({
     rewardClaims: [progressClaim(chain, evaluators, validators, sponsor, "sponsor-funds")],
-    timestamp: 1,
+    timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
   const funding = createTransfer({
     wallet: sponsor, networkId: chain.networkId, recipient: alice.address,
     amount: "100", nonce: chain.nextNonce(sponsor.address),
   });
-  const fundingBlock = chain.buildBlock({ transactions: [funding], timestamp: 2 });
+  const fundingBlock = chain.buildBlock({ transactions: [funding], timestamp: currentTimestamp(chain) });
   chain.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
   const sponsorBefore = chain.balance(sponsor.address);
   const sponsorNonce = chain.nextNonce(sponsor.address);
@@ -1130,20 +1285,20 @@ test("a fee sponsor can pay for an exact transfer without controlling its funds"
   });
   const forged = chain.buildBlock({
     transactions: [{ ...transfer, feePayerSignature: transfer.signature }],
-    timestamp: 3,
+    timestamp: currentTimestamp(chain),
   });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(forged, quorumFor(forged, validators))),
     /fee payer signature/,
   );
-  const block = chain.buildBlock({ transactions: [transfer], timestamp: 3 });
+  const block = chain.buildBlock({ transactions: [transfer], timestamp: currentTimestamp(chain) });
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
   assert.equal(chain.balance(alice.address), 0n);
   assert.equal(chain.balance(bob.address), 100n);
   assert.equal(chain.balance(sponsor.address), sponsorBefore - MIN_TRANSFER_FEE);
   assert.equal(chain.nextNonce(alice.address), 1);
   assert.equal(chain.nextNonce(sponsor.address), sponsorNonce + 1);
-  const replay = chain.buildBlock({ transactions: [transfer], timestamp: 4 });
+  const replay = chain.buildBlock({ transactions: [transfer], timestamp: currentTimestamp(chain) });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(replay, quorumFor(replay, validators))),
     /nonce/,
@@ -1330,7 +1485,7 @@ test("one progress proof cannot mint twice", () => {
   const claim = {
     ...progressClaim(chain, evaluators, validators, miner),
   };
-  const first = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
+  const first = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
   assert.throws(
     () => progressClaim(chain, evaluators, validators, miner),
@@ -1339,14 +1494,14 @@ test("one progress proof cannot mint twice", () => {
 });
 
 test("a new key and artifact wrapper cannot reward the same canonical content after fork or restart", () => {
-  const { chain, evaluators, genesisConfig, validators } = fixture();
+  const { chain, evaluators, genesisConfig, treasury, validators } = fixture();
   const firstMiner = generateWallet();
   const canonicalContentLabel = "shared-canonical-model-weights";
   const claim = progressClaim(
     chain, evaluators, validators, firstMiner, "original-package", firstMiner.address,
     canonicalContentLabel,
   );
-  const reward = chain.buildBlock({ rewardClaims: [claim], timestamp: 1 });
+  const reward = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
   chain.appendBlock(finalizeBlock(reward, quorumFor(reward, validators)));
 
   const exported = chain.consensusSnapshot();
@@ -1366,6 +1521,7 @@ test("a new key and artifact wrapper cannot reward the same canonical content af
   for (const [mode, target] of [
     ["fork", chain.fork()], ["snapshot restart", restored], ["journal replay", replayed],
   ]) {
+    TEST_TREASURY_WALLETS.set(target, treasury);
     const attacker = generateWallet();
     const repackaged = createProgressCommitment({
       wallet: attacker,
@@ -1378,7 +1534,9 @@ test("a new key and artifact wrapper cannot reward the same canonical content af
       suiteCommitment: fingerprint(`new-metadata-${mode}`),
       nonce: target.nextNonce(attacker.address),
     });
-    const proposal = target.buildBlock({ transactions: [repackaged], timestamp: 2 });
+    const timestamp = target.blocks().at(-1).timestamp;
+    lockProgressBond(target, validators, attacker.address, repackaged.candidateId, timestamp);
+    const proposal = target.buildBlock({ transactions: [repackaged], timestamp });
     assert.throws(
       () => target.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
       /progress commitment is duplicated/,
@@ -1548,7 +1706,12 @@ test("baseline artifact identity and canonical baseline content are independentl
     suiteCommitment: fingerprint("weak-suite"),
     nonce: 0,
   });
-  const proposal = chain.buildBlock({ transactions: [mismatchedAdmission], timestamp: 0 });
+  lockProgressBond(
+    chain, validators, attacker.address, mismatchedAdmission.candidateId, TREASURY_VESTING_MS,
+  );
+  const proposal = chain.buildBlock({
+    transactions: [mismatchedAdmission], timestamp: TREASURY_VESTING_MS,
+  });
   assert.throws(
     () => chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
     /does not match the known baseline artifact/,

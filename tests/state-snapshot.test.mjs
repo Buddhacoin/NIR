@@ -9,12 +9,14 @@ import {
   createCreditDelegation,
   createCreditStake,
   createCreditUnstakeRequest,
+  createCandidateBond,
   createProgressCommitment,
   createTransfer,
   finalizeBlock,
 } from "../blockchain/chain.mjs";
 import {
   MIN_TRANSFER_FEE,
+  MIN_PROGRESS_CANDIDATE_BOND,
   SAFETY_POLICY_V1_COMMITMENT,
   TRANSFER_CREDIT_STAKE_UNIT,
   TREASURY_VESTING_MS,
@@ -96,7 +98,7 @@ test("independent single-validator candidates merge only after reaching quorum",
 });
 
 test("a verified snapshot restores typed state and accepts the next finalized block", () => {
-  const { chain, genesisConfig, validatorMembers, validators } = fixture();
+  const { chain, genesisConfig, treasury, validatorMembers, validators } = fixture();
   const snapshot = createStateSnapshot(chain, validators.slice(0, 3));
   const restored = restoreStateSnapshot(genesisConfig, snapshot, {
     expectedNetworkId: chain.networkId, trustedValidators: validatorMembers,
@@ -189,7 +191,7 @@ test("state snapshots fail closed on mutation, minority approval, and duplicate 
 });
 
 test("pending progress snapshot commits the separate baseline content hash", () => {
-  const { chain, genesisConfig, validatorMembers, validators } = fixture();
+  const { chain, genesisConfig, treasury, validatorMembers, validators } = fixture();
   const submitter = generateWallet();
   const admission = createProgressCommitment({
     wallet: submitter,
@@ -202,7 +204,15 @@ test("pending progress snapshot commits the separate baseline content hash", () 
     suiteCommitment: digest("snapshot-suite"),
     nonce: 0,
   });
-  const block = chain.buildBlock({ transactions: [admission], timestamp: 1 });
+  const bond = createCandidateBond({
+    wallet: treasury, networkId: chain.networkId,
+    candidateId: admission.candidateId, candidateOwner: submitter.address,
+    purpose: "progress", amount: MIN_PROGRESS_CANDIDATE_BOND.toString(),
+    fee: "0", nonce: chain.nextNonce(treasury.address),
+  });
+  const bondBlock = chain.buildBlock({ transactions: [bond], timestamp: TREASURY_VESTING_MS });
+  chain.appendBlock(finalizeBlock(bondBlock, validators.slice(0, 3)));
+  const block = chain.buildBlock({ transactions: [admission], timestamp: TREASURY_VESTING_MS });
   chain.appendBlock(finalizeBlock(block, validators.slice(0, 3)));
   const snapshot = createStateSnapshot(chain, validators.slice(0, 3));
   const restored = restoreStateSnapshot(genesisConfig, snapshot, {
