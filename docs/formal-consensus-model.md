@@ -1,74 +1,79 @@
 # Executable bounded consensus model
 
-NIR includes an executable state-space model for the safety-critical parts of
-two-phase finality, round changes, durable validator decisions, and validator-set
-activation. Run it with:
+NIR includes an executable, bounded state-space model for selected consensus
+safety rules. Run it with:
 
 ```sh
 npm run --silent formal:consensus
 ```
 
-The command writes one JSON report to standard output. It exits with code `0`
-when all modeled invariants hold, `1` when it finds a counterexample, and `2`
-when the checker itself cannot run. A counterexample contains the invariant,
-final model state, and a deterministic action trace that can be replayed with
-`executeModelTrace`.
+The command writes one deterministic JSON report. Exit code `0` means no
+counterexample was found inside the printed bounds, `1` means an invariant was
+violated, and `2` means the checker could not complete. This is not an
+unbounded proof of consensus safety or liveness.
 
-## What is modeled
+## Finality state model
 
-The finality model uses four validators, a three-validator quorum, at most one
-Byzantine validator, two competing values, and two rounds by default. Its actions
-cover prepare votes, prepare-certificate delivery, commit votes, quorum commit
-delivery, round changes, duplicate delivery, omission, arbitrary delivery order,
-and one honest-process restart. Omitted enabled actions represent dropped
-messages; different action orderings represent delays and reordering; repeating
-an action represents replay.
+The default model has four validators, a quorum of three, one Byzantine
+validator, two values, two rounds, and the search depth printed in `bounds`.
+Each validator has its own local round. Honest prepare decisions are durable but
+only prevent equivocation in that same round, matching the per-height/per-round
+prepare journal. A height-wide value lock is created only by an honest commit,
+matching the height-scoped commit journal.
 
-The model checks these invariants:
+Moving to a later local round requires a quorum timeout certificate for that
+exact value. Timeout votes and certificates are indexed by destination round
+and value. An honest committed validator does not sign or follow a timeout for
+a conflicting value. Prepare certificates are delivered to every validator by
+separate actions; the model does not assume that honest validators remain
+symmetric after different deliveries. A quorum-commit action is also retained
+as an explicit batching abstraction for one complete quorum response.
 
-- conflicting values cannot both become final at one height;
-- an honest validator cannot abandon its durable value lock without a valid
-  higher-round justification;
-- restart clears only volatile certificate observations, never durable votes or
-  locks;
-- a joint validator-set activation requires quorums from both the old and new
-  sets;
-- after activation, an old-set-only certificate cannot finalize a value.
+The search checks:
 
-The transition checker enumerates all 972 vote assignments for overlapping
-four-member old and new sets. The shared Byzantine member may equivocate; honest
-members may vote for one value or abstain. The liveness scenarios separately
-show progress in a normal round and after replacement of a faulty proposer.
-They make an explicit conditional claim only: messages eventually arrive, at
-least three of four validators are online, at most one is Byzantine, and an
-honest proposer appears within the bounded rounds. Permanent quorum loss is
-correctly reported as a stall, not a safety failure.
+- two values do not both finalize at the modeled height;
+- an honest height-wide commit lock never changes value;
+- honest validators do not prepare or time out two values in one round;
+- a later-round prepare is authorized by a value-bound timeout certificate;
+- restart clears volatile certificate observations while preserving durable
+  prepares, commits, locks, rounds, and timeout decisions.
 
-## Correspondence with the implementation
+An enabled action that is not selected before `maxDepth` represents omission
+inside that bounded trace. The checker reports the number of explored states
+and transitions, individual certificate deliveries, states with different
+validator rounds, timeout-certificate states, and finalized states. It does not
+claim to cover executions longer than `maxDepth` or every ordering outside the
+reported state graph.
 
-The durable prepare lock corresponds to the prepare decision written before a
-validator returns its signed vote. The one-value commit rule corresponds to the
-height-scoped durable commit decision. The highest-certificate rule corresponds
-to certified-lock recovery during proposer replacement. Joint old/new quorum
-checks correspond to the validator handoff window and active-set certificate
-validation.
+## Validator-set transition model
 
-The model intentionally permits more network disorder than the normal service
-path. This makes it useful for finding missing persistence or validation rules,
-while the targeted implementation tests remain responsible for serialization,
-signatures, storage I/O, and HTTP behavior.
+The transition checker uses overlapping old `[0,1,2,3]` and new `[2,3,4,5]`
+sets with quorum three and one shared Byzantine validator. It enumerates all
+972 two-value vote assignments to check that two conflicting joint certificates
+cannot both exist when honest validators do not equivocate.
 
-## Boundary of the result
+It also executes an explicit history through `old`, `joint`, and `active-new`
+phases at the modeled activation height. Certificates carry height, epoch, and
+phase. After activation, certificates from the previous epoch, wrong height, or
+old phase are rejected rather than being reinterpreted under the new set.
 
-This is bounded model checking, not a mathematical proof of every possible NIR
-execution. The default result covers the exact validator count, fault threshold,
-values, rounds, restart count, and search depth printed in its JSON `bounds`.
-It does not prove cryptographic primitives, operating-system durability,
-unbounded liveness, arbitrary validator-set sizes, or correctness outside the
-modeled transition rules. Increasing bounds expands coverage but can grow the
-state space exponentially.
+## Scenario smoke checks
 
-The regression suite also runs an intentionally unsafe unlock mutant. The model
-must produce a machine-readable `locked-value-preservation` counterexample for
-that mutant; this guards against a checker that passes because it stopped
-exploring meaningful unsafe behavior.
+The normal-round and replacement-round traces are deliberately labelled
+`scenario-smoke-check-only` in JSON. They confirm that one expected normal path
+and one value-bound timeout/replacement path remain executable. They are not a
+liveness model and make no fairness, scheduling, eventual-synchrony, or
+unbounded-progress claim.
+
+## Mutation check and boundaries
+
+The regression suite disables the honest commit-lock rule and replays a concrete
+trace that finalizes `A`, obtains a conflicting timeout certificate, advances
+validators, and finalizes `B`. The required result is an actual
+`no-conflicting-finality` counterexample with final state `CONFLICT`, not a
+synthetic rejection marker.
+
+The model does not verify serialization, signatures, cryptographic primitives,
+filesystem durability, HTTP behavior, arbitrary validator counts, multiple
+heights, or executions beyond its printed bounds. Those remain the responsibility
+of implementation tests, review, and broader verification.

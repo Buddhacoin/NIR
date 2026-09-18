@@ -2,84 +2,104 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  checkBoundedLivenessAssumptions,
   executeModelTrace,
+  findConflictingFinalityMutant,
   runBoundedFinalityModel,
   runBoundedValidatorTransitionModel,
-  runFormalConsensusSuite,
+  runConsensusScenarioSmokeChecks,
 } from "../formal/consensus-model.mjs";
 
-test("bounded consensus suite exhausts the declared state space without a safety counterexample", () => {
-  const report = runFormalConsensusSuite();
+test("bounded finality model explores local rounds and independent deliveries", () => {
+  const report = runBoundedFinalityModel();
 
   assert.equal(report.ok, true);
   assert.equal(report.counterexample, null);
-  assert.ok(report.finality.exploredStates > 100_000);
-  assert.ok(report.finality.transitions > 900_000);
-  assert.ok(report.finality.coverage.partialPrepareStates > 0);
-  assert.ok(report.finality.coverage.partialCommitStates > 0);
-  assert.ok(report.finality.coverage.duplicateDeliveries > 0);
-  assert.deepEqual(report.finality.invariants, {
-    lockedValuePreservation: true,
+  assert.ok(report.exploredStates > 100_000);
+  assert.ok(report.coverage.finalizedStates > 0);
+  assert.ok(report.coverage.individualCertificateDeliveries > 0);
+  assert.ok(report.coverage.perValidatorRoundStates > 0);
+  assert.ok(report.coverage.timeoutCertificateStates > 0);
+  assert.deepEqual(report.invariants, {
+    durableCommitLockPreservation: true,
     noConflictingFinalityAtHeight: true,
   });
 });
 
-test("durable prepare lock survives restart and rejects a conflicting later-round vote", () => {
+test("prepare decisions are round-local and may change after a value-bound timeout quorum", () => {
   const result = executeModelTrace([
     { type: "prepare", validator: 0, value: "A" },
-    { reporters: 0b0111, type: "advance-round" },
-    { type: "restart", validator: 0 },
+    { type: "timeout", validator: 0, value: "B" },
+    { type: "timeout", validator: 1, value: "B" },
+    { type: "timeout", validator: 2, value: "B" },
+    { type: "advance", validator: 0, value: "B" },
     { type: "prepare", validator: 0, value: "B" },
   ]);
 
-  assert.equal(result.accepted, false);
-  assert.equal(result.appliedTrace.length, 3);
-  assert.equal(result.state.round, 1);
-  assert.equal(result.state.locks[0], 0);
+  assert.equal(result.accepted, true);
+  assert.equal(result.state.rounds[0], 1);
+  assert.equal(result.state.prepares[0] & 1, 1);
+  assert.equal(result.state.prepares[3] & 1, 1);
+  assert.equal(result.state.locks[0], -1);
 });
 
-test("highest observed certificate preserves its value after a round change", () => {
+test("validators advance independently and cannot use a timeout certificate for another value", () => {
+  const independent = executeModelTrace([
+    { type: "timeout", validator: 0, value: "A" },
+    { type: "timeout", validator: 1, value: "A" },
+    { type: "timeout", validator: 2, value: "A" },
+    { type: "advance", validator: 1, value: "A" },
+  ]);
+  assert.equal(independent.accepted, true);
+  assert.deepEqual(independent.state.rounds, [0, 1, 0, 0]);
+
+  const wrongValue = executeModelTrace([
+    { type: "timeout", validator: 0, value: "A" },
+    { type: "timeout", validator: 1, value: "A" },
+    { type: "timeout", validator: 2, value: "A" },
+    { type: "advance", validator: 1, value: "B" },
+  ]);
+  assert.equal(wrongValue.accepted, false);
+});
+
+test("restart drops only volatile observations and preserves commit lock and local round", () => {
   const result = executeModelTrace([
     { type: "prepare", validator: 0, value: "A" },
     { type: "prepare", validator: 1, value: "A" },
     { type: "prepare", validator: 2, value: "A" },
     { certificate: { round: 0, value: "A" }, type: "observe", validator: 0 },
-    { reporters: 0b0111, type: "advance-round" },
-    { type: "prepare", validator: 0, value: "B" },
+    { certificate: { round: 0, value: "A" }, type: "commit", validator: 0 },
+    { type: "restart", validator: 0 },
   ]);
-
-  assert.equal(result.accepted, false);
-  assert.equal(result.state.round, 1);
-  assert.equal(result.state.justification, 0);
+  assert.equal(result.accepted, true);
+  assert.equal(result.state.seen[0], 0);
+  assert.equal(result.state.locks[0], 0);
+  assert.equal(result.state.commits[0] & 1, 1);
 });
 
-test("unsafe unlock mutant yields a machine-readable counterexample trace", () => {
-  const report = runBoundedFinalityModel({ maxDepth: 4, unsafeUnlock: true });
+test("commit-lock mutant produces actual conflicting finality", () => {
+  const counterexample = findConflictingFinalityMutant();
 
-  assert.equal(report.ok, false);
-  assert.equal(report.counterexample.invariant, "locked-value-preservation");
-  assert.ok(Array.isArray(report.counterexample.trace));
-  assert.ok(report.counterexample.trace.length > 0);
-  assert.doesNotThrow(() => JSON.stringify(report.counterexample));
+  assert.equal(counterexample.invariant, "no-conflicting-finality");
+  assert.equal(counterexample.state.finalized, "CONFLICT");
+  assert.ok(counterexample.trace.some(({ type, value }) => type === "timeout" && value === "B"));
 });
 
-test("validator transition requires both sets and rejects old-only finality after activation", () => {
+test("validator transition records phases and rejects stale certificates", () => {
   const report = runBoundedValidatorTransitionModel();
 
   assert.equal(report.ok, true);
   assert.equal(report.assignments, 972);
-  assert.equal(report.invariants.jointActivationRequiresOldAndNewQuorums, true);
-  assert.equal(report.invariants.noConflictingJointActivation, true);
-  assert.equal(report.invariants.noOldSetFinalityAfterActivation, true);
+  assert.equal(report.history.length, 2);
+  assert.deepEqual(report.terminalState, { epoch: 1, height: 11, phase: "active-new" });
+  assert.equal(report.rejectedStaleCertificates, 3);
+  assert.equal(report.invariants.staleCertificatesRejectedAfterActivation, true);
 });
 
-test("liveness claim is conditional and permanent quorum loss is an expected stall", () => {
-  const report = checkBoundedLivenessAssumptions();
+test("normal and replacement paths are explicitly scenario smoke checks, not liveness proof", () => {
+  const report = runConsensusScenarioSmokeChecks();
 
   assert.equal(report.ok, true);
+  assert.equal(report.claim, "scenario-smoke-check-only");
   assert.equal(report.normalRoundFinalized, true);
   assert.equal(report.replacementRoundFinalized, true);
-  assert.equal(report.lossyNetworkWithoutQuorum.expectedToStall, true);
-  assert.ok(report.assumptions.includes("eventual synchrony after the modeled timeout"));
 });

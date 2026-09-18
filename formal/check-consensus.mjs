@@ -10,7 +10,7 @@ try {
 } catch (error) {
   console.error(JSON.stringify({
     error: error.message,
-    format: "nir-bounded-consensus-model-error-v1",
+    format: "nir-bounded-consensus-model-error-v2",
     ok: false,
   }));
   process.exitCode = 2;
