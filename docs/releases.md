@@ -106,15 +106,23 @@ npm run release:verify-node-install -- \
 The install commands verify the post-quantum release signature, trusted signer
 address, source-manifest binding, artifact hash, complete deterministic file
 set, every file digest, and all paths before creating the destination. They
-refuse an existing directory and construct the result in a randomly named,
-exclusively created sibling staging directory under a descriptor-verified parent.
+refuse any existing target and construct the result in a randomly named,
+exclusively created sibling generation under a descriptor-verified parent.
 Every file is created with no-follow/exclusive flags, mode-set and read back through
-the same descriptor, then files and directories are synced before the completed
-tree is atomically renamed to the still-new target. A failure removes only that
-installer-owned staging generation and preserves any existing target.
+the same descriptor, then files and directories are synced. Node does not expose a
+portable atomic no-replace directory rename, so the exact target is instead an
+atomically created relative directory symlink to that completed generation. Symlink
+creation fails with `EEXIST` for every pre-existing target type, including an empty
+directory created after the initial absence check; it never replaces that target.
+A failed activation removes only the installer-owned generation and preserves the
+competing target. Operators must treat the target symlink and its same-parent hidden
+`.TARGET.nir-generation-*` directory as one installation and must not move either
+independently.
 
 The kind-specific `NIR-INSTALL.json` records the verified artifact, source,
-release, and signer identities. Reverification opens files with `O_NOFOLLOW`,
+release, and signer identities. Reverification accepts only the exact relative
+same-parent generation-link form, pins that activation link's inode and destination,
+and opens generation files with `O_NOFOLLOW`,
 checks pre/post-read `fstat` identity, size, timestamps and mode, and rejects
 directory replacement, missing, additional, modified, symbolic-link, special,
 mode-tampered, or group/world-writable entries. The wallet result is an auditable

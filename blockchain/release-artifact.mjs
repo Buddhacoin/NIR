@@ -10,9 +10,11 @@ import {
   openSync,
   readSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
-  renameSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -31,6 +33,14 @@ const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 
 function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function generationPattern(target) {
+  return new RegExp(`^\\.${escapeRegex(basename(target))}\\.nir-generation-[0-9a-f]{32}$`);
 }
 
 function entryExists(path) {
@@ -326,7 +336,9 @@ function installationSpec(kind) {
   throw new Error("installation kind is invalid");
 }
 
-function installArtifact(artifact, targetPath, { kind, signedRelease, trustedAddress } = {}) {
+function installArtifact(artifact, targetPath, {
+  kind, signedRelease, trustedAddress, _beforeActivation,
+} = {}) {
   const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
   const verified = verifyReleaseArtifact(artifact, { sourceManifest: manifest });
   if (verified.kind !== kind) throw new Error(`${kind} installation metadata is invalid`);
@@ -344,10 +356,12 @@ function installArtifact(artifact, targetPath, { kind, signedRelease, trustedAdd
   }
   let staging = null;
   let stagingIdentity = null;
+  let activatedIdentity = null;
+  let activatedLink = null;
   try {
     for (let attempt = 0; attempt < 16 && staging === null; attempt += 1) {
       const candidate = join(parent,
-        `.${basename(target)}.nir-staging-${randomBytes(16).toString("hex")}`);
+        `.${basename(target)}.nir-generation-${randomBytes(16).toString("hex")}`);
       try {
         mkdirSync(candidate, { mode: 0o700 });
         staging = candidate;
@@ -398,24 +412,58 @@ function installArtifact(artifact, targetPath, { kind, signedRelease, trustedAdd
       .sort((left, right) => right.split(sep).length - left.split(sep).length)) {
       syncDirectory(directory, `${kind} installation directory`);
     }
-    verifyInstallation(staging, { kind, signedRelease, trustedAddress });
+    verifyInstallationRoot(staging, { kind, manifest, signer });
     assertDirectoryIdentity(parent, parentOpened, `${kind} installation parent`);
     const stagingOpened = openDirectory(staging, `${kind} installation staging directory`);
     try {
-      if (!sameIdentity(stagingOpened.metadata, stagingIdentity) || entryExists(target)) {
+      if (!sameIdentity(stagingOpened.metadata, stagingIdentity)) {
         throw new Error(`${kind} installation target changed before activation`);
       }
-      renameSync(staging, target);
-      staging = null;
-      fsyncSync(parentOpened.descriptor);
-      const installed = lstatSync(target);
-      if (!installed.isDirectory() || installed.isSymbolicLink() ||
-          !sameIdentity(installed, stagingIdentity)) {
+      if (_beforeActivation !== undefined) {
+        if (typeof _beforeActivation !== "function") {
+          throw new Error(`${kind} installation activation hook is invalid`);
+        }
+        _beforeActivation({ generation: staging, target });
+      }
+      assertDirectoryIdentity(parent, parentOpened, `${kind} installation parent`);
+      assertDirectoryIdentity(staging, stagingOpened,
+        `${kind} installation staging directory`, true);
+      activatedLink = basename(staging);
+      if (!generationPattern(target).test(activatedLink)) {
+        throw new Error(`${kind} installation generation name is invalid`);
+      }
+      // Creating a directory symlink is the portable no-replace activation primitive:
+      // unlike rename(2), it fails with EEXIST for every pre-existing target type.
+      symlinkSync(activatedLink, target, "dir");
+      activatedIdentity = lstatSync(target);
+      if (!activatedIdentity.isSymbolicLink() || readlinkSync(target) !== activatedLink) {
         throw new Error(`${kind} installation activation is inconsistent`);
       }
+      fsyncSync(parentOpened.descriptor);
+      const installed = lstatSync(target);
+      if (!installed.isSymbolicLink() || !sameIdentity(installed, activatedIdentity) ||
+          readlinkSync(target) !== activatedLink) {
+        throw new Error(`${kind} installation activation is inconsistent`);
+      }
+      staging = null;
     } finally { closeSync(stagingOpened.descriptor); }
     return provenance;
   } catch (error) {
+    // If activation itself succeeded but a durability/integrity check failed, unlink
+    // only the exact symlink inode created by this attempt. Never remove a raced-in
+    // target or follow a link during cleanup.
+    if (activatedIdentity !== null) {
+      try {
+        const current = lstatSync(target);
+        if (current.isSymbolicLink() && sameIdentity(current, activatedIdentity) &&
+            readlinkSync(target) === activatedLink) {
+          unlinkSync(target);
+          fsyncSync(parentOpened.descriptor);
+        }
+      } catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") error.activationCleanupError = cleanupError.message;
+      }
+    }
     if (staging !== null && stagingIdentity !== null) {
       try {
         const current = lstatSync(staging);
@@ -474,10 +522,8 @@ function installedFiles(directory, kind, prefix = "", result = []) {
   return result;
 }
 
-function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } = {}) {
-  const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
+function verifyInstallationRoot(target, { kind, manifest, signer } = {}) {
   const spec = installationSpec(kind);
-  const target = resolve(targetPath);
   const targetOpened = openDirectory(target, `${kind} installation`);
   if ((targetOpened.metadata.mode & 0o777) !== 0o700) {
     closeSync(targetOpened.descriptor);
@@ -546,6 +592,27 @@ function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } 
     assertDirectoryIdentity(target, targetOpened, `${kind} installation`, true);
     return { ...expectedProvenance, files: entries.length, verified: true };
   } finally { closeSync(targetOpened.descriptor); }
+}
+
+function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } = {}) {
+  const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
+  const target = resolve(targetPath);
+  const linkMetadata = lstatSync(target);
+  if (!linkMetadata.isSymbolicLink()) {
+    throw new Error(`${kind} installation activation is not a symbolic link`);
+  }
+  const link = readlinkSync(target);
+  if (!generationPattern(target).test(link)) {
+    throw new Error(`${kind} installation activation target is invalid`);
+  }
+  const generation = join(dirname(target), link);
+  const result = verifyInstallationRoot(generation, { kind, manifest, signer });
+  const current = lstatSync(target);
+  if (!current.isSymbolicLink() || !sameIdentity(current, linkMetadata) ||
+      readlinkSync(target) !== link) {
+    throw new Error(`${kind} installation activation changed during verification`);
+  }
+  return result;
 }
 
 export function verifyWalletInstallation(targetPath, options = {}) {

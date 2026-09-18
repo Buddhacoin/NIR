@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -330,7 +331,9 @@ test("verified node packages install and reverify an exact safe file set", () =>
       signedRelease, trustedAddress: wallet.address,
     }), /new directory/);
     assert.equal(readFileSync(join(preservedTarget, "sentinel"), "utf8"), "keep\n");
-    assert.equal(readdirSync(values.root).some((name) => name.includes("nir-staging")), false);
+    assert.equal(readdirSync(values.root).some(
+      (name) => name.includes(".preserved-node.nir-generation-"),
+    ), false);
 
     const tampered = structuredClone(artifact);
     tampered.entries[0].content = Buffer.from("tampered").toString("base64");
@@ -409,7 +412,42 @@ test("failed staged installation removes only its exclusive staging directory", 
   }
 });
 
-test("reverification fails closed when an installed directory is swapped for a symlink", () => {
+test("a target created at activation wins without replacement and only our generation is cleaned", () => {
+  const values = fixture();
+  const target = join(values.root, "raced-node");
+  try {
+    const wallet = generateWallet();
+    const signedRelease = signReleaseManifest(values.manifest, wallet);
+    const artifact = createReleaseArtifact(
+      values.root, artifactPaths("node", values.paths), {
+        kind: "node", sourceManifest: values.manifest,
+      },
+    );
+    let racedIdentity;
+    assert.throws(() => installNodeArtifact(artifact, target, {
+      signedRelease,
+      trustedAddress: wallet.address,
+      _beforeActivation({ generation, target: activationTarget }) {
+        assert.equal(activationTarget, target);
+        assert.match(generation, /\.raced-node\.nir-generation-[0-9a-f]{32}$/);
+        mkdirSync(target);
+        racedIdentity = lstatSync(target);
+      },
+    }), /EEXIST/);
+    const preserved = lstatSync(target);
+    assert.equal(preserved.isDirectory(), true);
+    assert.equal(preserved.dev, racedIdentity.dev);
+    assert.equal(preserved.ino, racedIdentity.ino);
+    assert.deepEqual(readdirSync(target), []);
+    assert.deepEqual(readdirSync(values.root).filter(
+      (name) => name.includes(".raced-node.nir-generation-"),
+    ), []);
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
+  }
+});
+
+test("reverification fails closed when an installation activation link is swapped", () => {
   const values = fixture();
   const target = join(values.root, "swap-node");
   const moved = join(values.root, "swap-node-original");
@@ -428,7 +466,7 @@ test("reverification fails closed when an installed directory is swapped for a s
     symlinkSync(moved, target);
     assert.throws(() => verifyNodeInstallation(target, {
       signedRelease, trustedAddress: wallet.address,
-    }), /regular directory|symbolic|no-follow|ELOOP/i);
+    }), /activation target is invalid/i);
     assert.equal(readFileSync(join(moved, "package.json"), "utf8"),
       '{"version":"0.2.0"}\n');
   } finally {
