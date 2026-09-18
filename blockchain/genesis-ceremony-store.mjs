@@ -15,8 +15,11 @@ const LOCK = ".GENESIS-CEREMONY.writer.lock";
 const FORMAT = "nir-genesis-ceremony-registry-record-v1";
 const ZERO_HASH = "0".repeat(64);
 const RECORD_FIELDS = [
-  "envelope", "format", "genesisHash", "plan", "previousRecordHash", "recordHash", "sequence",
+  "envelope", "format", "genesisHash", "plan", "previousRecordHash", "recordHash",
+  "releaseProvenance", "sequence", "signedRelease",
 ];
+const RELEASE_FIELDS = ["manifestHash", "releaseVersion", "signerAddress", "sourceRevision"];
+const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_RECORDS = 1_024;
 const MAX_BYTES = 64 * 1024 * 1024;
 
@@ -34,7 +37,9 @@ function recordPayload(record) {
     genesisHash: record.genesisHash,
     plan: record.plan,
     previousRecordHash: record.previousRecordHash,
+    releaseProvenance: record.releaseProvenance,
     sequence: record.sequence,
+    signedRelease: record.signedRelease,
   };
 }
 
@@ -46,12 +51,34 @@ function serialized(records) {
   return contents;
 }
 
-function verifyHistory(records) {
+function versionParts(value) {
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(
+    value ?? "",
+  );
+  if (!match) throw new Error("genesis ceremony release version must be semantic");
+  const parts = match.slice(1, 4).map(Number);
+  if (parts.some((part) => !Number.isSafeInteger(part))) {
+    throw new Error("genesis ceremony release version is too large");
+  }
+  return parts;
+}
+
+function compareVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
+
+function verifyHistory(records, trustedAddress) {
   if (!Array.isArray(records) || records.length > MAX_RECORDS) {
     throw new Error("genesis ceremony registry is invalid");
   }
   const plans = [];
   let previousRecordHash = ZERO_HASH;
+  let previousReleaseVersion = null;
   const verified = records.map((record, index) => {
     exactObject(record, RECORD_FIELDS, "genesis ceremony registry record");
     if (record.format !== FORMAT || record.sequence !== index ||
@@ -59,13 +86,29 @@ function verifyHistory(records) {
         record.recordHash !== hashObject(recordPayload(record), "GENESIS_CEREMONY_REGISTRY_V1")) {
       throw new Error("genesis ceremony registry hash chain is invalid");
     }
-    verifyGenesisCeremony(record.plan, record.envelope, { priorPlans: plans });
-    const compiled = compileGenesis(record.plan, record.envelope, { priorPlans: plans });
+    exactObject(record.releaseProvenance, RELEASE_FIELDS,
+      "genesis ceremony registry release provenance");
+    if (record.releaseProvenance.signerAddress !== trustedAddress ||
+        canonicalJson(record.releaseProvenance) !== canonicalJson(record.plan?.sourceRelease)) {
+      throw new Error("genesis ceremony registry release provenance is not trusted");
+    }
+    if (previousReleaseVersion !== null &&
+        compareVersions(record.releaseProvenance.releaseVersion, previousReleaseVersion) < 0) {
+      throw new Error("genesis ceremony registry release version rolled back");
+    }
+    const releaseOptions = {
+      priorPlans: plans,
+      signedRelease: record.signedRelease,
+      trustedAddress,
+    };
+    verifyGenesisCeremony(record.plan, record.envelope, releaseOptions);
+    const compiled = compileGenesis(record.plan, record.envelope, releaseOptions);
     if (compiled.genesisHash !== record.genesisHash) {
       throw new Error("genesis ceremony registry genesis hash is invalid");
     }
     plans.push(record.plan);
     previousRecordHash = record.recordHash;
+    previousReleaseVersion = record.releaseProvenance.releaseVersion;
     return structuredClone(record);
   });
   return verified;
@@ -138,7 +181,7 @@ function writeAtomic(handle, name, contents) {
   }
 }
 
-function readCopy(path) {
+function readCopy(path, trustedAddress) {
   let descriptor;
   try {
     const before = lstatSync(path);
@@ -157,7 +200,7 @@ function readCopy(path) {
     const after = fstatSync(descriptor);
     if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs ||
         after.ctimeMs !== opened.ctimeMs) return null;
-    const records = verifyHistory(parseConsensusJson(contents.toString("utf8")));
+    const records = verifyHistory(parseConsensusJson(contents.toString("utf8")), trustedAddress);
     return { contents: serialized(records), records };
   } catch { return null; }
   finally { if (descriptor !== undefined) closeSync(descriptor); }
@@ -170,10 +213,14 @@ function existing(path) {
   }
 }
 
-function copies(handle) {
+function copies(handle, trustedAddress) {
   assertRootIdentity(handle);
   const paths = [join(handle.root, PRIMARY), join(handle.root, BACKUP)];
-  const result = { candidates: paths.map(readCopy), paths, present: paths.map(existing) };
+  const result = {
+    candidates: paths.map((path) => readCopy(path, trustedAddress)),
+    paths,
+    present: paths.map(existing),
+  };
   assertRootIdentity(handle);
   return result;
 }
@@ -204,8 +251,11 @@ function acquireLock(handle) {
   };
 }
 
-function verifiedRegistry(handle) {
-  const { candidates, present } = copies(handle);
+function verifiedRegistry(handle, trustedAddress) {
+  if (!ADDRESS.test(trustedAddress ?? "")) {
+    throw new Error("genesis ceremony registry requires a trusted release signer address");
+  }
+  const { candidates, present } = copies(handle, trustedAddress);
   if (!present[0] && !present[1]) return { count: 0, head: ZERO_HASH, records: [] };
   if (!present[0] || !present[1] || !candidates[0] || !candidates[1]) {
     throw new Error("genesis ceremony registry copy is missing or invalid; explicit repair required");
@@ -221,36 +271,47 @@ function verifiedRegistry(handle) {
   };
 }
 
-export function verifyCeremonyRegistry(directory, { _afterRootOpen } = {}) {
+export function verifyCeremonyRegistry(directory, { trustedAddress, _afterRootOpen } = {}) {
+  if (!ADDRESS.test(trustedAddress ?? "")) {
+    throw new Error("genesis ceremony registry requires a trusted release signer address");
+  }
   const handle = openRoot(directory, { allowMissing: true });
   if (handle === null) return { count: 0, head: ZERO_HASH, records: [] };
   try {
     if (_afterRootOpen !== undefined) _afterRootOpen({ root: handle.root });
-    return verifiedRegistry(handle);
+    return verifiedRegistry(handle, trustedAddress);
   } finally { closeSync(handle.descriptor); }
 }
 
-export function appendCeremonyRegistry(directory, plan, envelope, { _afterRootOpen } = {}) {
+export function appendCeremonyRegistry(directory, plan, envelope, {
+  signedRelease, trustedAddress, _afterRootOpen,
+} = {}) {
+  if (!ADDRESS.test(trustedAddress ?? "")) {
+    throw new Error("genesis ceremony registry requires a trusted release signer address");
+  }
   const handle = openRoot(directory, { create: true });
   let release = null;
   try {
     if (_afterRootOpen !== undefined) _afterRootOpen({ root: handle.root });
     release = acquireLock(handle);
-    const current = verifiedRegistry(handle);
+    const current = verifiedRegistry(handle, trustedAddress);
     const priorPlans = current.records.map((record) => record.plan);
-    const compiled = compileGenesis(plan, envelope, { priorPlans });
+    const releaseOptions = { priorPlans, signedRelease, trustedAddress };
+    const compiled = compileGenesis(plan, envelope, releaseOptions);
     const payload = {
       envelope: structuredClone(envelope),
       format: FORMAT,
       genesisHash: compiled.genesisHash,
       plan: structuredClone(plan),
       previousRecordHash: current.head,
+      releaseProvenance: structuredClone(plan.sourceRelease),
       sequence: current.count,
+      signedRelease: structuredClone(signedRelease),
     };
     const record = {
       ...payload, recordHash: hashObject(payload, "GENESIS_CEREMONY_REGISTRY_V1"),
     };
-    const records = verifyHistory([...current.records, record]);
+    const records = verifyHistory([...current.records, record], trustedAddress);
     const contents = serialized(records);
     writeAtomic(handle, BACKUP, contents);
     writeAtomic(handle, PRIMARY, contents);
@@ -266,13 +327,16 @@ function isPrefix(shorter, longer) {
   );
 }
 
-export function repairCeremonyRegistryOneCopy(directory, { _afterRootOpen } = {}) {
+export function repairCeremonyRegistryOneCopy(directory, { trustedAddress, _afterRootOpen } = {}) {
+  if (!ADDRESS.test(trustedAddress ?? "")) {
+    throw new Error("genesis ceremony registry requires a trusted release signer address");
+  }
   const handle = openRoot(directory, { create: true });
   let release = null;
   try {
     if (_afterRootOpen !== undefined) _afterRootOpen({ root: handle.root });
     release = acquireLock(handle);
-    const { candidates } = copies(handle);
+    const { candidates } = copies(handle, trustedAddress);
     let source;
     let targetIndex;
     if (candidates[0] && candidates[1]) {
@@ -293,7 +357,7 @@ export function repairCeremonyRegistryOneCopy(directory, { _afterRootOpen } = {}
       throw new Error("genesis ceremony registry has no verified copy to repair from");
     }
     writeAtomic(handle, targetIndex === 0 ? PRIMARY : BACKUP, source.contents);
-    const verified = verifiedRegistry(handle);
+    const verified = verifiedRegistry(handle, trustedAddress);
     return { count: verified.count, head: verified.head, repaired: true };
   } finally {
     try { if (release !== null) release(); } finally { closeSync(handle.descriptor); }

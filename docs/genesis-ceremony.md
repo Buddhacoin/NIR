@@ -28,14 +28,24 @@ operators and must not be reused.
 Create the canonical plan and its domain-separated commitment:
 
 ```bash
-npm run genesis:ceremony -- plan public-input.json genesis-plan.json
+npm run genesis:ceremony -- plan \
+  public-input.json signed-release.json nir1TRUSTED_RELEASE_SIGNER genesis-plan.json
 ```
+
+The signed release and independently configured trusted signer address are mandatory
+at every plan, assemble, verify, and compile boundary. The post-quantum release
+signature and manifest hash are reverified each time. The plan commits exact public
+provenance—manifest hash, signer address, source revision, and strict
+`major.minor.patch` release version—so another otherwise-valid release cannot be
+substituted.
 
 Each listed ceremony operator reviews the same canonical plan and signs it offline
 using an existing encrypted NIR vault:
 
 ```bash
-npm run genesis:ceremony -- sign genesis-plan.json operator-vault.json approval.json
+npm run genesis:ceremony -- sign \
+  genesis-plan.json signed-release.json nir1TRUSTED_RELEASE_SIGNER \
+  operator-vault.json approval.json
 ```
 
 Genesis validators separately sign the exact epoch-zero peer-registry payload in its
@@ -43,7 +53,8 @@ existing consensus domain:
 
 ```bash
 npm run genesis:ceremony -- sign-peer-registry \
-  genesis-plan.json validator-vault.json peer-registry-approval.json
+  genesis-plan.json signed-release.json nir1TRUSTED_RELEASE_SIGNER \
+  validator-vault.json peer-registry-approval.json
 ```
 
 This second quorum is necessary because `NirChain` already requires peer-registry
@@ -54,8 +65,12 @@ Collect approvals into an object with `approvals` and `peerRegistryApprovals` ar
 assemble an envelope, and verify both greater-than-two-thirds quorums:
 
 ```bash
-npm run genesis:ceremony -- assemble genesis-plan.json approvals.json envelope.json
-npm run genesis:ceremony -- verify genesis-plan.json envelope.json prior-plans.json
+npm run genesis:ceremony -- assemble \
+  genesis-plan.json signed-release.json nir1TRUSTED_RELEASE_SIGNER \
+  approvals.json envelope.json
+npm run genesis:ceremony -- verify \
+  genesis-plan.json envelope.json signed-release.json \
+  nir1TRUSTED_RELEASE_SIGNER prior-plans.json
 ```
 
 `prior-plans.json` remains a portable optional JSON array. For durable local reuse
@@ -63,8 +78,10 @@ protection, append each accepted ceremony to the fsync-backed registry:
 
 ```bash
 npm run genesis:ceremony -- registry-append \
-  ceremony-registry genesis-plan.json envelope.json
-npm run genesis:ceremony -- registry-verify ceremony-registry
+  ceremony-registry genesis-plan.json envelope.json signed-release.json \
+  nir1TRUSTED_RELEASE_SIGNER
+npm run genesis:ceremony -- registry-verify \
+  ceremony-registry nir1TRUSTED_RELEASE_SIGNER
 ```
 
 The registry is an append-only hash chain stored in primary and backup copies. A
@@ -76,18 +93,24 @@ After investigating an interrupted write, repair exactly one invalid or strict-p
 copy under the exclusive writer lock:
 
 ```bash
-npm run genesis:ceremony -- registry-repair-one-copy ceremony-registry
+npm run genesis:ceremony -- registry-repair-one-copy \
+  ceremony-registry nir1TRUSTED_RELEASE_SIGNER
 ```
 
 Conflicting valid histories are ambiguous and cannot be repaired by this command.
 Registry append automatically rejects reused network IDs, plan commitments, and
 operator contributions against every archived record.
+Each record embeds the immutable signed release and exact public provenance. Registry
+verification revalidates every release signature against the externally supplied
+trusted signer, respects the combined store bound, and rejects a decreasing release
+version as an older-release replay.
 
 Compile only after verification:
 
 ```bash
 npm run genesis:ceremony -- compile \
-  genesis-plan.json envelope.json genesis.json prior-plans.json
+  genesis-plan.json envelope.json signed-release.json \
+  nir1TRUSTED_RELEASE_SIGNER genesis.json prior-plans.json
 ```
 
 Compilation emits the existing `NirChain` genesis configuration, including the

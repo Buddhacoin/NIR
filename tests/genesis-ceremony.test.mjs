@@ -15,9 +15,10 @@ import {
   TREASURY_BPS,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
+import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import {
   compileGenesis,
   createGenesisApprovalEnvelope,
@@ -56,7 +57,9 @@ function validatorRole(wallets, transports, port) {
   }));
 }
 
-function fixture(label = "primary") {
+function fixture(label = "primary", {
+  releaseSigner = generateWallet(), releaseVersion = "0.2.0",
+} = {}) {
   const validators = Array.from({ length: 4 }, generateWallet);
   const validatorTransports = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -64,6 +67,22 @@ function fixture(label = "primary") {
   const operators = Array.from({ length: 4 }, generateWallet);
   const guardians = Array.from({ length: 3 }, generateWallet);
   const memberPublicKeys = guardians.map(({ publicKey }) => publicKey);
+  const releasePayload = {
+    files: [{
+      executable: false,
+      path: "package.json",
+      sha3_256: digest(`${label}-package-json`),
+      size: 32,
+    }],
+    format: "nir-source-release-v1",
+    releaseVersion,
+    sourceRevision: digest(`${label}-revision`),
+  };
+  const releaseManifest = {
+    ...releasePayload,
+    manifestHash: hashObject(releasePayload, "RELEASE_MANIFEST_HASH"),
+  };
+  const signedRelease = signReleaseManifest(releaseManifest, releaseSigner);
   const input = {
     beaconAuthorities: role(beacons, "beacon", 9300),
     ceremonyOperators: operators.map((wallet, index) => ({
@@ -76,7 +95,7 @@ function fixture(label = "primary") {
     genesisTimestamp: 0,
     networkId: `nir-${label}-valueless-devnet`,
     protocolVersion: PROTOCOL_VERSION,
-    sourceReleaseManifestHash: digest(`${label}-release`),
+    sourceReleaseManifestHash: releaseManifest.manifestHash,
     treasury: {
       address: multisigAddress(memberPublicKeys, 2),
       algorithm: "ml-dsa-65-multisig",
@@ -90,17 +109,27 @@ function fixture(label = "primary") {
     },
     validators: validatorRole(validators, validatorTransports, 9100),
   };
-  return { input, operators, validatorTransports, validators };
+  return {
+    input,
+    operators,
+    releaseOptions: { signedRelease, trustedAddress: releaseSigner.address },
+    releaseSigner,
+    validatorTransports,
+    validators,
+  };
 }
 
 function approved(values, count = 3) {
-  const plan = createGenesisPlan(values.input);
-  const approvals = values.operators.slice(0, count).map((wallet) => signGenesisPlan(plan, wallet));
+  const plan = createGenesisPlan(values.input, values.releaseOptions);
+  const approvals = values.operators.slice(0, count)
+    .map((wallet) => signGenesisPlan(plan, wallet, values.releaseOptions));
   const registryApprovals = values.validators.slice(0, count)
-    .map((wallet) => signGenesisPeerRegistry(plan, wallet));
+    .map((wallet) => signGenesisPeerRegistry(plan, wallet, values.releaseOptions));
   return {
     approvals,
-    envelope: createGenesisApprovalEnvelope(plan, approvals, registryApprovals),
+    envelope: createGenesisApprovalEnvelope(
+      plan, approvals, registryApprovals, values.releaseOptions,
+    ),
     plan,
     registryApprovals,
   };
@@ -108,34 +137,40 @@ function approved(values, count = 3) {
 
 test("public genesis plans are canonical, exact, public-only commitments", () => {
   const values = fixture();
-  const plan = createGenesisPlan(values.input);
+  const plan = createGenesisPlan(values.input, values.releaseOptions);
   const reordered = structuredClone(values.input);
   reordered.validators.reverse();
   reordered.evaluators.reverse();
   reordered.beaconAuthorities.reverse();
   reordered.ceremonyOperators.reverse();
   reordered.treasury.memberPublicKeys.reverse();
-  assert.deepEqual(createGenesisPlan(reordered), plan);
-  assert.deepEqual(verifyGenesisPlan(plan), plan);
+  assert.deepEqual(createGenesisPlan(reordered, values.releaseOptions), plan);
+  assert.deepEqual(verifyGenesisPlan(plan, values.releaseOptions), plan);
   assert.equal(JSON.stringify(plan).includes("privateKey"), false);
 
-  assert.throws(() => createGenesisPlan({ ...values.input, privateKey: "forbidden" }),
+  assert.throws(() => createGenesisPlan(
+    { ...values.input, privateKey: "forbidden" }, values.releaseOptions,
+  ),
     /secret or private/);
-  assert.throws(() => createGenesisPlan({ ...values.input, unknown: true }), /unknown fields/);
-  assert.throws(() => createGenesisPlan({ ...values.input, protocolVersion: PROTOCOL_VERSION + 1 }),
+  assert.throws(() => createGenesisPlan(
+    { ...values.input, unknown: true }, values.releaseOptions,
+  ), /unknown fields/);
+  assert.throws(() => createGenesisPlan(
+    { ...values.input, protocolVersion: PROTOCOL_VERSION + 1 }, values.releaseOptions,
+  ),
     /unsupported/);
   const duplicate = structuredClone(values.input);
   duplicate.ceremonyOperators[1].contribution = duplicate.ceremonyOperators[0].contribution;
-  assert.throws(() => createGenesisPlan(duplicate), /duplicated/);
+  assert.throws(() => createGenesisPlan(duplicate, values.releaseOptions), /duplicated/);
   const badTreasury = structuredClone(values.input);
   badTreasury.treasury.threshold = 3;
-  assert.throws(() => createGenesisPlan(badTreasury), /2-of-3/);
+  assert.throws(() => createGenesisPlan(badTreasury, values.releaseOptions), /2-of-3/);
 });
 
 test("ceremony verification requires unique known operator quorum on unchanged commitment", () => {
   const values = fixture();
   const { approvals, envelope, plan, registryApprovals } = approved(values);
-  assert.deepEqual(verifyGenesisCeremony(plan, envelope), {
+  assert.deepEqual(verifyGenesisCeremony(plan, envelope, values.releaseOptions), {
     commitment: plan.commitment,
     peerRegistrySigners: registryApprovals.map(({ validator }) => validator).sort(),
     quorum: 3,
@@ -144,21 +179,63 @@ test("ceremony verification requires unique known operator quorum on unchanged c
     verified: true,
   });
   const insufficient = createGenesisApprovalEnvelope(
-    plan, approvals.slice(0, 2), registryApprovals,
+    plan, approvals.slice(0, 2), registryApprovals, values.releaseOptions,
   );
-  assert.throws(() => verifyGenesisCeremony(plan, insufficient), /quorum/);
+  assert.throws(() => verifyGenesisCeremony(plan, insufficient, values.releaseOptions), /quorum/);
   const duplicated = createGenesisApprovalEnvelope(
-    plan, [approvals[0], approvals[0], approvals[1]], registryApprovals,
+    plan, [approvals[0], approvals[0], approvals[1]], registryApprovals, values.releaseOptions,
   );
-  assert.throws(() => verifyGenesisCeremony(plan, duplicated), /duplicated/);
+  assert.throws(() => verifyGenesisCeremony(plan, duplicated, values.releaseOptions), /duplicated/);
   const unknown = createGenesisApprovalEnvelope(plan, [
     ...approvals.slice(0, 2), { ...approvals[2], operatorId: "unknown-operator" },
-  ], registryApprovals);
-  assert.throws(() => verifyGenesisCeremony(plan, unknown), /unknown/);
+  ], registryApprovals, values.releaseOptions);
+  assert.throws(() => verifyGenesisCeremony(plan, unknown, values.releaseOptions), /unknown/);
   const mutated = structuredClone(plan);
   mutated.validators[0].endpoint = "http://127.0.0.1:9999";
-  assert.throws(() => verifyGenesisCeremony(mutated, envelope), /commitment/);
-  assert.throws(() => signGenesisPlan(plan, generateWallet()), /not a ceremony operator/);
+  assert.throws(() => verifyGenesisCeremony(mutated, envelope, values.releaseOptions), /commitment/);
+  assert.throws(() => signGenesisPlan(
+    plan, generateWallet(), values.releaseOptions,
+  ), /not a ceremony operator/);
+});
+
+test("every ceremony stage is bound to one trusted signed source release", () => {
+  const values = fixture("release-binding");
+  const { approvals, envelope, plan, registryApprovals } = approved(values);
+  assert.deepEqual(plan.sourceRelease, {
+    manifestHash: values.releaseOptions.signedRelease.manifest.manifestHash,
+    releaseVersion: values.releaseOptions.signedRelease.manifest.releaseVersion,
+    signerAddress: values.releaseOptions.trustedAddress,
+    sourceRevision: values.releaseOptions.signedRelease.manifest.sourceRevision,
+  });
+  assert.throws(() => verifyGenesisCeremony(plan, envelope), /requires a signed release/);
+  assert.throws(() => createGenesisApprovalEnvelope(
+    plan, approvals, registryApprovals,
+  ), /requires a signed release/);
+  assert.throws(() => compileGenesis(plan, envelope), /requires a signed release/);
+  assert.throws(() => verifyGenesisCeremony(plan, envelope, {
+    ...values.releaseOptions, trustedAddress: generateWallet().address,
+  }), /not trusted/);
+
+  const other = fixture("valid-other-release", { releaseSigner: values.releaseSigner });
+  assert.throws(() => verifyGenesisCeremony(plan, envelope, other.releaseOptions),
+    /does not match/);
+  const mutatedRelease = structuredClone(values.releaseOptions.signedRelease);
+  mutatedRelease.manifest.releaseVersion = "0.2.1";
+  assert.throws(() => verifyGenesisCeremony(plan, envelope, {
+    signedRelease: mutatedRelease, trustedAddress: values.releaseOptions.trustedAddress,
+  }), /manifest hash|not trusted/);
+  const leakedRelease = structuredClone(values.releaseOptions.signedRelease);
+  leakedRelease.signer.privateKey = "forbidden";
+  assert.throws(() => verifyGenesisCeremony(plan, envelope, {
+    signedRelease: leakedRelease, trustedAddress: values.releaseOptions.trustedAddress,
+  }), /secret or private/);
+  const mutatedPlan = structuredClone(plan);
+  mutatedPlan.sourceRelease.sourceRevision = "f".repeat(64);
+  assert.throws(() => verifyGenesisCeremony(mutatedPlan, envelope, values.releaseOptions),
+    /does not match/);
+  const prerelease = fixture("prerelease", { releaseVersion: "0.2.0-alpha.10" });
+  assert.throws(() => createGenesisPlan(prerelease.input, prerelease.releaseOptions),
+    /major\.minor\.patch/);
 });
 
 test("prior public plans reject reused network ids and operator contributions", () => {
@@ -169,7 +246,9 @@ test("prior public plans reject reused network ids and operator contributions", 
   sameNetworkValues.input.networkId = first.plan.networkId;
   const sameNetwork = approved(sameNetworkValues);
   assert.throws(() => verifyGenesisCeremony(
-    sameNetwork.plan, sameNetwork.envelope, { priorPlans: [first.plan] },
+    sameNetwork.plan, sameNetwork.envelope, {
+      ...sameNetworkValues.releaseOptions, priorPlans: [first.plan],
+    },
   ), /network id/);
 
   const reusedContributionValues = fixture("third");
@@ -177,19 +256,21 @@ test("prior public plans reject reused network ids and operator contributions", 
     first.plan.ceremonyOperators[0].contribution;
   const reusedContribution = approved(reusedContributionValues);
   assert.throws(() => verifyGenesisCeremony(
-    reusedContribution.plan, reusedContribution.envelope, { priorPlans: [first.plan] },
+    reusedContribution.plan, reusedContribution.envelope, {
+      ...reusedContributionValues.releaseOptions, priorPlans: [first.plan],
+    },
   ), /contribution/);
 });
 
 test("compile emits the existing deterministic genesis config and round-trips its chain hash", () => {
   const values = fixture();
   const { envelope, plan } = approved(values);
-  const first = compileGenesis(plan, envelope);
-  const second = compileGenesis(plan, envelope);
+  const first = compileGenesis(plan, envelope, values.releaseOptions);
+  const second = compileGenesis(plan, envelope, values.releaseOptions);
   assert.deepEqual(first, second);
   const reorderedEnvelope = structuredClone(envelope);
   reorderedEnvelope.peerRegistryApprovals.reverse();
-  assert.deepEqual(compileGenesis(plan, reorderedEnvelope), first);
+  assert.deepEqual(compileGenesis(plan, reorderedEnvelope, values.releaseOptions), first);
   assert.equal(first.genesis.peerRegistry.signatures.length, 3);
   assert.equal(first.genesis.peerRegistry.peers.length, 4);
   assert.equal("protocolVersion" in first.genesis, false);
@@ -218,34 +299,47 @@ test("two-copy ceremony registry detects rollback, repairs one copy, and rejects
   const root = mkdtempSync(join(tmpdir(), "nir-genesis-registry-"));
   try {
     const registry = join(root, "registry");
-    const first = approved(fixture("registry-first"));
-    const second = approved(fixture("registry-second"));
-    appendCeremonyRegistry(registry, first.plan, first.envelope);
-    const oneRecord = verifyCeremonyRegistry(registry).records;
-    appendCeremonyRegistry(registry, second.plan, second.envelope);
-    assert.equal(verifyCeremonyRegistry(registry).count, 2);
-    assert.throws(() => appendCeremonyRegistry(registry, first.plan, first.envelope),
+    const releaseSigner = generateWallet();
+    const firstValues = fixture("registry-first", { releaseSigner, releaseVersion: "0.2.0" });
+    const secondValues = fixture("registry-second", { releaseSigner, releaseVersion: "0.3.0" });
+    const first = approved(firstValues);
+    const second = approved(secondValues);
+    appendCeremonyRegistry(registry, first.plan, first.envelope, firstValues.releaseOptions);
+    const trust = { trustedAddress: releaseSigner.address };
+    const oneRecord = verifyCeremonyRegistry(registry, trust).records;
+    appendCeremonyRegistry(registry, second.plan, second.envelope, secondValues.releaseOptions);
+    assert.equal(verifyCeremonyRegistry(registry, trust).count, 2);
+    assert.throws(() => appendCeremonyRegistry(
+      registry, first.plan, first.envelope, firstValues.releaseOptions,
+    ),
       /already used/);
+    const olderValues = fixture("registry-older", {
+      releaseSigner, releaseVersion: "0.1.0",
+    });
+    const older = approved(olderValues);
+    assert.throws(() => appendCeremonyRegistry(
+      registry, older.plan, older.envelope, olderValues.releaseOptions,
+    ), /version rolled back/);
 
     const paths = ceremonyRegistryPaths(registry);
     writeFileSync(paths.primary, `${JSON.stringify(oneRecord)}\n`);
-    assert.throws(() => verifyCeremonyRegistry(registry), /rolled back/);
-    assert.equal(repairCeremonyRegistryOneCopy(registry).repaired, true);
-    assert.equal(verifyCeremonyRegistry(registry).count, 2);
+    assert.throws(() => verifyCeremonyRegistry(registry, trust), /rolled back/);
+    assert.equal(repairCeremonyRegistryOneCopy(registry, trust).repaired, true);
+    assert.equal(verifyCeremonyRegistry(registry, trust).count, 2);
 
     rmSync(paths.primary);
     symlinkSync(paths.backup, paths.primary);
-    assert.throws(() => verifyCeremonyRegistry(registry), /invalid/);
-    assert.equal(repairCeremonyRegistryOneCopy(registry).repaired, true);
-    assert.equal(verifyCeremonyRegistry(registry).count, 2);
+    assert.throws(() => verifyCeremonyRegistry(registry, trust), /invalid/);
+    assert.equal(repairCeremonyRegistryOneCopy(registry, trust).repaired, true);
+    assert.equal(verifyCeremonyRegistry(registry, trust).count, 2);
 
     mkdirSync(join(registry, ".GENESIS-CEREMONY.writer.lock"));
-    assert.throws(() => repairCeremonyRegistryOneCopy(registry), /EEXIST/);
+    assert.throws(() => repairCeremonyRegistryOneCopy(registry, trust), /EEXIST/);
     rmSync(join(registry, ".GENESIS-CEREMONY.writer.lock"), { recursive: true });
 
     const registryLink = join(root, "registry-link");
     symlinkSync(registry, registryLink);
-    assert.throws(() => verifyCeremonyRegistry(registryLink), /unsafe/);
+    assert.throws(() => verifyCeremonyRegistry(registryLink, trust), /unsafe/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -256,18 +350,23 @@ test("ceremony registry refuses ambiguous valid divergence", () => {
   try {
     const left = join(root, "left");
     const right = join(root, "right");
-    const first = approved(fixture("divergence-first"));
-    const second = approved(fixture("divergence-second"));
-    const third = approved(fixture("divergence-third"));
-    appendCeremonyRegistry(left, first.plan, first.envelope);
-    appendCeremonyRegistry(right, first.plan, first.envelope);
-    appendCeremonyRegistry(left, second.plan, second.envelope);
-    appendCeremonyRegistry(right, third.plan, third.envelope);
+    const releaseSigner = generateWallet();
+    const firstValues = fixture("divergence-first", { releaseSigner, releaseVersion: "0.2.0" });
+    const secondValues = fixture("divergence-second", { releaseSigner, releaseVersion: "0.3.0" });
+    const thirdValues = fixture("divergence-third", { releaseSigner, releaseVersion: "0.3.0" });
+    const first = approved(firstValues);
+    const second = approved(secondValues);
+    const third = approved(thirdValues);
+    const trust = { trustedAddress: releaseSigner.address };
+    appendCeremonyRegistry(left, first.plan, first.envelope, firstValues.releaseOptions);
+    appendCeremonyRegistry(right, first.plan, first.envelope, firstValues.releaseOptions);
+    appendCeremonyRegistry(left, second.plan, second.envelope, secondValues.releaseOptions);
+    appendCeremonyRegistry(right, third.plan, third.envelope, thirdValues.releaseOptions);
     const leftPaths = ceremonyRegistryPaths(left);
     const rightPaths = ceremonyRegistryPaths(right);
     writeFileSync(leftPaths.primary, readFileSync(rightPaths.primary));
-    assert.throws(() => verifyCeremonyRegistry(left), /diverged/);
-    assert.throws(() => repairCeremonyRegistryOneCopy(left), /ambiguous/);
+    assert.throws(() => verifyCeremonyRegistry(left, trust), /diverged/);
+    assert.throws(() => repairCeremonyRegistryOneCopy(left, trust), /ambiguous/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -279,12 +378,16 @@ test("ceremony registry pins its root descriptor against a post-open symlink swa
     const registry = join(root, "registry");
     const moved = join(root, "registry-original");
     const decoy = join(root, "decoy");
-    const first = approved(fixture("root-swap-first"));
-    const second = approved(fixture("root-swap-second"));
-    appendCeremonyRegistry(registry, first.plan, first.envelope);
+    const releaseSigner = generateWallet();
+    const firstValues = fixture("root-swap-first", { releaseSigner });
+    const secondValues = fixture("root-swap-second", { releaseSigner, releaseVersion: "0.3.0" });
+    const first = approved(firstValues);
+    const second = approved(secondValues);
+    appendCeremonyRegistry(registry, first.plan, first.envelope, firstValues.releaseOptions);
     mkdirSync(decoy);
     assert.throws(() => appendCeremonyRegistry(
       registry, second.plan, second.envelope, {
+        ...secondValues.releaseOptions,
         _afterRootOpen({ root: openedRoot }) {
           assert.equal(openedRoot, registry);
           renameSync(registry, moved);
@@ -293,10 +396,11 @@ test("ceremony registry pins its root descriptor against a post-open symlink swa
       },
     ), /root changed/);
     assert.deepEqual(readdirSync(decoy), []);
-    assert.equal(verifyCeremonyRegistry(moved).count, 1);
+    const trust = { trustedAddress: releaseSigner.address };
+    assert.equal(verifyCeremonyRegistry(moved, trust).count, 1);
     rmSync(registry);
     renameSync(moved, registry);
-    assert.equal(verifyCeremonyRegistry(registry).count, 1);
+    assert.equal(verifyCeremonyRegistry(registry, trust).count, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -308,54 +412,64 @@ test("genesis ceremony CLI plans, assembles, verifies, and compiles public artif
   try {
     const values = fixture("cli");
     const inputPath = join(root, "input.json");
+    const releasePath = join(root, "signed-release.json");
     const planPath = join(root, "plan.json");
     const approvalsPath = join(root, "approvals.json");
     const envelopePath = join(root, "envelope.json");
     const genesisPath = join(root, "genesis.json");
     const registryPath = join(root, "registry");
     writeFileSync(inputPath, JSON.stringify(values.input));
-    const planned = spawnSync(process.execPath, [cli, "plan", inputPath, planPath], {
+    writeFileSync(releasePath, JSON.stringify(values.releaseOptions.signedRelease));
+    const planned = spawnSync(process.execPath, [
+      cli, "plan", inputPath, releasePath, values.releaseOptions.trustedAddress, planPath,
+    ], {
       encoding: "utf8",
     });
     assert.equal(planned.status, 0, planned.stderr);
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
-    const approvals = values.operators.slice(0, 3).map((wallet) => signGenesisPlan(plan, wallet));
+    const approvals = values.operators.slice(0, 3)
+      .map((wallet) => signGenesisPlan(plan, wallet, values.releaseOptions));
     const peerRegistryApprovals = values.validators.slice(0, 3)
-      .map((wallet) => signGenesisPeerRegistry(plan, wallet));
+      .map((wallet) => signGenesisPeerRegistry(plan, wallet, values.releaseOptions));
     writeFileSync(approvalsPath, JSON.stringify({ approvals, peerRegistryApprovals }));
     const assembled = spawnSync(process.execPath, [
-      cli, "assemble", planPath, approvalsPath, envelopePath,
+      cli, "assemble", planPath, releasePath, values.releaseOptions.trustedAddress,
+      approvalsPath, envelopePath,
     ], { encoding: "utf8" });
     assert.equal(assembled.status, 0, assembled.stderr);
-    const verified = spawnSync(process.execPath, [cli, "verify", planPath, envelopePath], {
+    const verified = spawnSync(process.execPath, [
+      cli, "verify", planPath, envelopePath, releasePath, values.releaseOptions.trustedAddress,
+    ], {
       encoding: "utf8",
     });
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /valueless developer testnet ceremony verified/i);
     const compiled = spawnSync(process.execPath, [
-      cli, "compile", planPath, envelopePath, genesisPath,
+      cli, "compile", planPath, envelopePath, releasePath,
+      values.releaseOptions.trustedAddress, genesisPath,
     ], { encoding: "utf8" });
     assert.equal(compiled.status, 0, compiled.stderr);
     assert.match(compiled.stdout, /valueless developer testnet only/i);
     const genesis = JSON.parse(readFileSync(genesisPath, "utf8"));
     assert.match(new NirChain(genesis).blocks()[0].hash, /^[0-9a-f]{64}$/);
     const appended = spawnSync(process.execPath, [
-      cli, "registry-append", registryPath, planPath, envelopePath,
+      cli, "registry-append", registryPath, planPath, envelopePath, releasePath,
+      values.releaseOptions.trustedAddress,
     ], { encoding: "utf8" });
     assert.equal(appended.status, 0, appended.stderr);
     const registryPaths = ceremonyRegistryPaths(registryPath);
     rmSync(registryPaths.primary);
     symlinkSync(registryPaths.backup, registryPaths.primary);
     const failedVerify = spawnSync(process.execPath, [
-      cli, "registry-verify", registryPath,
+      cli, "registry-verify", registryPath, values.releaseOptions.trustedAddress,
     ], { encoding: "utf8" });
     assert.equal(failedVerify.status, 1);
     const repaired = spawnSync(process.execPath, [
-      cli, "registry-repair-one-copy", registryPath,
+      cli, "registry-repair-one-copy", registryPath, values.releaseOptions.trustedAddress,
     ], { encoding: "utf8" });
     assert.equal(repaired.status, 0, repaired.stderr);
     const registryVerified = spawnSync(process.execPath, [
-      cli, "registry-verify", registryPath,
+      cli, "registry-verify", registryPath, values.releaseOptions.trustedAddress,
     ], { encoding: "utf8" });
     assert.equal(registryVerified.status, 0, registryVerified.stderr);
   } finally {

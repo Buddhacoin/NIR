@@ -66,70 +66,90 @@ function readSecret(prompt) {
 
 const [command, ...args] = process.argv.slice(2);
 try {
-  if (command === "plan" && args.length === 2) {
-    const [inputPath, outputPath] = args;
-    const plan = createGenesisPlan(readJson(inputPath, "genesis ceremony input"));
+  if (command === "plan" && args.length === 4) {
+    const [inputPath, releasePath, trustedAddress, outputPath] = args;
+    const plan = createGenesisPlan(readJson(inputPath, "genesis ceremony input"), {
+      signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+    });
     writeExclusive(outputPath, plan);
     console.log(`Valueless developer testnet plan ${plan.commitment} created.`);
-  } else if (command === "sign" && args.length === 3) {
-    const [planPath, vaultPath, outputPath] = args;
+  } else if (command === "sign" && args.length === 5) {
+    const [planPath, releasePath, trustedAddress, vaultPath, outputPath] = args;
     const password = await readSecret("Ceremony operator vault password: ");
     const wallet = decryptWallet(readJson(vaultPath, "operator vault"), password);
     try {
-      writeExclusive(outputPath, signGenesisPlan(readJson(planPath, "genesis plan"), wallet));
+      writeExclusive(outputPath, signGenesisPlan(readJson(planPath, "genesis plan"), wallet, {
+        signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+      }));
       console.log(`Genesis commitment signed offline by ${wallet.address}.`);
     } finally { wallet.privateKey = ""; }
-  } else if (command === "sign-peer-registry" && args.length === 3) {
-    const [planPath, vaultPath, outputPath] = args;
+  } else if (command === "sign-peer-registry" && args.length === 5) {
+    const [planPath, releasePath, trustedAddress, vaultPath, outputPath] = args;
     const password = await readSecret("Genesis validator vault password: ");
     const wallet = decryptWallet(readJson(vaultPath, "validator vault"), password);
     try {
       writeExclusive(
-        outputPath, signGenesisPeerRegistry(readJson(planPath, "genesis plan"), wallet),
+        outputPath, signGenesisPeerRegistry(readJson(planPath, "genesis plan"), wallet, {
+          signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+        }),
       );
       console.log(`Genesis peer registry signed offline by ${wallet.address}.`);
     } finally { wallet.privateKey = ""; }
-  } else if (command === "assemble" && args.length === 3) {
-    const [planPath, approvalsPath, outputPath] = args;
+  } else if (command === "assemble" && args.length === 5) {
+    const [planPath, releasePath, trustedAddress, approvalsPath, outputPath] = args;
     const approvals = readJson(approvalsPath, "genesis approvals");
     if (!approvals || !Array.isArray(approvals.approvals) ||
         !Array.isArray(approvals.peerRegistryApprovals)) {
       throw new Error("genesis approvals file must contain both approval arrays");
     }
     const envelope = createGenesisApprovalEnvelope(
-      readJson(planPath, "genesis plan"), approvals.approvals, approvals.peerRegistryApprovals,
+      readJson(planPath, "genesis plan"), approvals.approvals, approvals.peerRegistryApprovals, {
+        signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+      },
     );
     writeExclusive(outputPath, envelope);
     console.log(`Approval envelope for ${envelope.commitment} assembled.`);
-  } else if (command === "verify" && (args.length === 2 || args.length === 3)) {
-    const [planPath, envelopePath, priorPath] = args;
+  } else if (command === "verify" && (args.length === 4 || args.length === 5)) {
+    const [planPath, envelopePath, releasePath, trustedAddress, priorPath] = args;
     const result = verifyGenesisCeremony(
       readJson(planPath, "genesis plan"), readJson(envelopePath, "approval envelope"),
-      { priorPlans: priorPlans(priorPath) },
+      {
+        priorPlans: priorPlans(priorPath),
+        signedRelease: readJson(releasePath, "signed source release"),
+        trustedAddress,
+      },
     );
     console.log(`${JSON.stringify(result)}\nValueless developer testnet ceremony verified.`);
-  } else if (command === "compile" && (args.length === 3 || args.length === 4)) {
-    const [planPath, envelopePath, outputPath, priorPath] = args;
+  } else if (command === "compile" && (args.length === 5 || args.length === 6)) {
+    const [planPath, envelopePath, releasePath, trustedAddress, outputPath, priorPath] = args;
     const result = compileGenesis(
       readJson(planPath, "genesis plan"), readJson(envelopePath, "approval envelope"),
-      { priorPlans: priorPlans(priorPath) },
+      {
+        priorPlans: priorPlans(priorPath),
+        signedRelease: readJson(releasePath, "signed source release"),
+        trustedAddress,
+      },
     );
     writeExclusive(outputPath, result.genesis);
     console.log(`Genesis ${result.genesisHash} compiled for valueless developer testnet only.`);
-  } else if (command === "registry-append" && args.length === 3) {
-    const [directory, planPath, envelopePath] = args;
+  } else if (command === "registry-append" && args.length === 5) {
+    const [directory, planPath, envelopePath, releasePath, trustedAddress] = args;
     const result = appendCeremonyRegistry(
       directory, readJson(planPath, "genesis plan"),
-      readJson(envelopePath, "approval envelope"),
+      readJson(envelopePath, "approval envelope"), {
+        signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
+      },
     );
     console.log(JSON.stringify(result));
-  } else if (command === "registry-verify" && args.length === 1) {
-    const result = verifyCeremonyRegistry(args[0]);
+  } else if (command === "registry-verify" && args.length === 2) {
+    const result = verifyCeremonyRegistry(args[0], { trustedAddress: args[1] });
     console.log(JSON.stringify({ count: result.count, head: result.head, verified: true }));
-  } else if (command === "registry-repair-one-copy" && args.length === 1) {
-    console.log(JSON.stringify(repairCeremonyRegistryOneCopy(args[0])));
+  } else if (command === "registry-repair-one-copy" && args.length === 2) {
+    console.log(JSON.stringify(repairCeremonyRegistryOneCopy(
+      args[0], { trustedAddress: args[1] },
+    )));
   } else {
-    throw new Error("usage: genesis:ceremony <plan input.json plan.json | sign plan.json encrypted-vault.json approval.json | sign-peer-registry plan.json validator-vault.json approval.json | assemble plan.json approvals.json envelope.json | verify plan.json envelope.json [prior-plans.json] | compile plan.json envelope.json genesis.json [prior-plans.json] | registry-append registry-dir plan.json envelope.json | registry-verify registry-dir | registry-repair-one-copy registry-dir>");
+    throw new Error("usage: genesis:ceremony <plan input.json signed-release.json trusted-address plan.json | sign plan.json signed-release.json trusted-address encrypted-vault.json approval.json | sign-peer-registry plan.json signed-release.json trusted-address validator-vault.json approval.json | assemble plan.json signed-release.json trusted-address approvals.json envelope.json | verify plan.json envelope.json signed-release.json trusted-address [prior-plans.json] | compile plan.json envelope.json signed-release.json trusted-address genesis.json [prior-plans.json] | registry-append registry-dir plan.json envelope.json signed-release.json trusted-address | registry-verify registry-dir trusted-address | registry-repair-one-copy registry-dir trusted-address>");
   }
 } catch (error) {
   console.error(`Genesis ceremony failed: ${error.message}`);
