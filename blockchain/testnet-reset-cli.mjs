@@ -22,6 +22,7 @@ import {
   createResetManifest,
   genesisIdentity,
   incidentReportHash,
+  resetValidatorTopology,
   signResetManifest,
   verifyResetManifest,
 } from "./testnet-reset.mjs";
@@ -59,7 +60,8 @@ function readJson(path, name) {
 
 function exactRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).sort().join("\0") !== ["notBefore", "reason"].join("\0")) {
+      Object.keys(value).sort().join("\0") !==
+        ["notBefore", "oldFinalizedHeight", "reason"].join("\0")) {
     throw new Error("reset request shape is invalid");
   }
   return value;
@@ -112,28 +114,36 @@ function writeExclusive(path, value) {
 
 const [command, ...args] = process.argv.slice(2);
 try {
-  if (command === "plan" && args.length === 4) {
-    const [oldGenesisPath, newGenesisPath, incidentPath, requestPath] = args;
+  if (command === "plan" && args.length === 5) {
+    const [oldGenesisPath, handoffsPath, newGenesisPath, incidentPath, requestPath] = args;
     const { newGenesis, oldGenesis, reportHash } = inputs(
       oldGenesisPath, newGenesisPath, incidentPath,
     );
     const request = exactRequest(readJson(requestPath, "reset request"));
     const oldIdentity = genesisIdentity(oldGenesis);
     const newIdentity = genesisIdentity(newGenesis);
+    const handoffs = readJson(handoffsPath, "validator handoff history");
+    const topology = resetValidatorTopology(
+      oldGenesis, handoffs, request.oldFinalizedHeight,
+    );
     console.log(JSON.stringify(createResetManifest({
+      activeValidatorSetId: topology.activeValidatorSetId,
       incidentReportHash: reportHash,
       newGenesisHash: newIdentity.genesisHash,
       newNetworkId: newIdentity.networkId,
       notBefore: request.notBefore,
+      oldFinalizedHeight: request.oldFinalizedHeight,
       oldGenesisHash: oldIdentity.genesisHash,
       oldNetworkId: oldIdentity.networkId,
       reason: request.reason,
+      validatorTopologyHash: topology.validatorTopologyHash,
     }), null, 2));
-  } else if (command === "sign" && args.length === 3) {
-    const [oldGenesisPath, manifestPath, vaultPath] = args;
+  } else if (command === "sign" && args.length === 4) {
+    const [oldGenesisPath, handoffsPath, manifestPath, vaultPath] = args;
     const oldGenesis = readJson(oldGenesisPath, "old genesis");
     const oldIdentity = genesisIdentity(oldGenesis);
     const manifest = readJson(manifestPath, "reset manifest");
+    const handoffs = readJson(handoffsPath, "validator handoff history");
     if (manifest.oldGenesisHash !== oldIdentity.genesisHash ||
         manifest.oldNetworkId !== oldIdentity.networkId) {
       throw new Error("reset manifest does not match the trusted old genesis");
@@ -142,14 +152,16 @@ try {
     const wallet = decryptWallet(readJson(vaultPath, "validator vault"), password);
     try {
       console.log(JSON.stringify(signResetManifest(manifest, wallet, {
-        validators: oldIdentity.validators,
+        handoffs,
+        oldGenesis,
       }), null, 2));
     } finally {
       wallet.privateKey = "";
     }
   } else if ((command === "verify" || command === "drill") &&
-      args.length === (command === "verify" ? 4 : 5)) {
-    const [oldGenesisPath, newGenesisPath, incidentPath, manifestPath, targetPath] = args;
+      args.length === (command === "verify" ? 5 : 6)) {
+    const [oldGenesisPath, handoffsPath, newGenesisPath, incidentPath, manifestPath,
+      targetPath] = args;
     const oldGenesisBytes = readBounded(oldGenesisPath, "old genesis", MAX_JSON_BYTES);
     const oldGenesisFileHash = rawFileHash(oldGenesisBytes);
     const oldGenesis = parseConsensusJson(oldGenesisBytes.toString("utf8"));
@@ -158,8 +170,10 @@ try {
       incidentPath, "incident report", MAX_REPORT_BYTES,
     ));
     const manifest = readJson(manifestPath, "reset manifest");
+    const handoffs = readJson(handoffsPath, "validator handoff history");
     const options = {
       expectedIncidentReportHash: reportHash,
+      handoffs,
       newGenesis,
       oldGenesis,
     };
@@ -181,6 +195,7 @@ try {
       }
       mkdirSync(target, { mode: 0o700 });
       writeExclusive(join(target, "OLD-GENESIS.json"), oldGenesis);
+      writeExclusive(join(target, "VALIDATOR-HANDOFFS.json"), handoffs);
       writeExclusive(join(target, "NEW-GENESIS.json"), newGenesis);
       writeExclusive(join(target, "RESET-MANIFEST.json"), manifest);
       const after = readBounded(oldGenesisPath, "old genesis", MAX_JSON_BYTES);
@@ -198,7 +213,7 @@ try {
       console.log(JSON.stringify({ directory: target, ...evidence }, null, 2));
     }
   } else {
-    throw new Error("usage: testnet-reset plan <old-genesis.json> <new-genesis.json> <incident-report> <request.json> | testnet-reset sign <old-genesis.json> <manifest.json> <validator-vault> | testnet-reset verify <old-genesis.json> <new-genesis.json> <incident-report> <signed-manifest.json> | testnet-reset drill <old-genesis.json> <new-genesis.json> <incident-report> <signed-manifest.json> <new-directory>");
+    throw new Error("usage: testnet-reset plan <old-genesis.json> <validator-handoffs.json> <new-genesis.json> <incident-report> <request.json> | testnet-reset sign <old-genesis.json> <validator-handoffs.json> <manifest.json> <validator-vault> | testnet-reset verify <old-genesis.json> <validator-handoffs.json> <new-genesis.json> <incident-report> <signed-manifest.json> | testnet-reset drill <old-genesis.json> <validator-handoffs.json> <new-genesis.json> <incident-report> <signed-manifest.json> <new-directory>");
   }
 } catch (error) {
   console.error(`Testnet reset operation failed: ${error.message}`);

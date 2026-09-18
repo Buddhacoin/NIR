@@ -9,14 +9,17 @@ import {
   signObject,
   verifyObject,
 } from "./crypto.mjs";
+import { advanceValidatorTrust } from "./validator-handoff.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
 
 export const TESTNET_RESET_FORMAT = "nir-testnet-reset-v1";
 export const TESTNET_RESET_APPROVAL_DOMAIN = "TESTNET_RESET_APPROVAL";
 
 const HASH = /^[0-9a-f]{64}$/;
 const PAYLOAD_KEYS = [
-  "format", "incidentReportHash", "newGenesisHash", "newNetworkId", "notBefore",
-  "oldGenesisHash", "oldNetworkId", "reason",
+  "activeValidatorSetId", "format", "incidentReportHash", "newGenesisHash",
+  "newNetworkId", "notBefore", "oldFinalizedHeight", "oldGenesisHash",
+  "oldNetworkId", "reason", "validatorTopologyHash",
 ];
 const ENVELOPE_KEYS = [...PAYLOAD_KEYS, "approvals", "manifestHash"];
 
@@ -42,7 +45,10 @@ function payload(value) {
   if (value.format !== TESTNET_RESET_FORMAT ||
       !HASH.test(value.oldGenesisHash ?? "") || !HASH.test(value.newGenesisHash ?? "") ||
       !HASH.test(value.incidentReportHash ?? "") ||
+      !HASH.test(value.activeValidatorSetId ?? "") ||
+      !HASH.test(value.validatorTopologyHash ?? "") ||
       !Number.isSafeInteger(value.notBefore) || value.notBefore < 0 ||
+      !Number.isSafeInteger(value.oldFinalizedHeight) || value.oldFinalizedHeight < 0 ||
       typeof value.reason !== "string" || value.reason !== value.reason.trim() ||
       value.reason.length < 8 || value.reason.length > 1_024 ||
       /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value.reason)) {
@@ -55,14 +61,17 @@ function payload(value) {
     throw new Error("reset must use a new genesis hash");
   }
   return {
+    activeValidatorSetId: value.activeValidatorSetId,
     format: TESTNET_RESET_FORMAT,
     incidentReportHash: value.incidentReportHash,
     newGenesisHash: value.newGenesisHash,
     newNetworkId,
     notBefore: value.notBefore,
+    oldFinalizedHeight: value.oldFinalizedHeight,
     oldGenesisHash: value.oldGenesisHash,
     oldNetworkId,
     reason: value.reason,
+    validatorTopologyHash: value.validatorTopologyHash,
   };
 }
 
@@ -91,24 +100,61 @@ export function resetManifestHash(manifest) {
   return hashObject(payload(manifest), "TESTNET_RESET_MANIFEST");
 }
 
+export function resetValidatorTopology(oldGenesis, handoffs, oldFinalizedHeight) {
+  if (!Number.isSafeInteger(oldFinalizedHeight) || oldFinalizedHeight < 0 ||
+      !Array.isArray(handoffs) || handoffs.length > 512) {
+    throw new Error("reset validator topology input is invalid");
+  }
+  if (handoffs.some(({ activationHeight }) =>
+    !Number.isSafeInteger(activationHeight) || activationHeight > oldFinalizedHeight)) {
+    throw new Error("validator handoff is later than the reviewed finalized height");
+  }
+  const identity = genesisIdentity(oldGenesis);
+  const advanced = advanceValidatorTrust({
+    expectedNetworkId: identity.networkId,
+    handoffs,
+    trustedValidators: identity.validators,
+  });
+  const activeValidators = advanced.trustedValidators;
+  const activeValidatorSetId = validatorSetId(activeValidators);
+  const validatorTopologyHash = hashObject({
+    activeValidatorSetId,
+    handoffHashes: handoffs.map(({ handoffHash }) => handoffHash),
+    oldFinalizedHeight,
+  }, "TESTNET_RESET_VALIDATOR_TOPOLOGY");
+  return {
+    activeValidatorSetId,
+    activeValidators,
+    handoffs: structuredClone(handoffs),
+    oldFinalizedHeight,
+    validatorTopologyHash,
+  };
+}
+
 export function createResetManifest({
+  activeValidatorSetId,
   incidentReportHash: reportHash,
   newGenesisHash,
   newNetworkId,
   notBefore,
+  oldFinalizedHeight,
   oldGenesisHash,
   oldNetworkId,
   reason,
+  validatorTopologyHash,
 }) {
   const unsigned = payload({
+    activeValidatorSetId,
     format: TESTNET_RESET_FORMAT,
     incidentReportHash: reportHash,
     newGenesisHash,
     newNetworkId,
     notBefore,
+    oldFinalizedHeight,
     oldGenesisHash,
     oldNetworkId,
     reason,
+    validatorTopologyHash,
   });
   return {
     ...unsigned,
@@ -170,9 +216,16 @@ function verifyEnvelope(manifest, validators, requireQuorum) {
   return { ...unsigned, approvals, manifestHash, quorum };
 }
 
-export function signResetManifest(manifest, wallet, { validators } = {}) {
-  const verified = verifyEnvelope(manifest, validators, false);
-  const trusted = validatorMap(validators);
+export function signResetManifest(manifest, wallet, { handoffs = [], oldGenesis } = {}) {
+  const topology = resetValidatorTopology(
+    oldGenesis, handoffs, manifest?.oldFinalizedHeight,
+  );
+  if (manifest?.activeValidatorSetId !== topology.activeValidatorSetId ||
+      manifest?.validatorTopologyHash !== topology.validatorTopologyHash) {
+    throw new Error("reset manifest validator topology is stale or mismatched");
+  }
+  const verified = verifyEnvelope(manifest, topology.activeValidators, false);
+  const trusted = validatorMap(topology.activeValidators);
   const validator = trusted.get(wallet?.address);
   if (!validator || validator.publicKey !== wallet.publicKey ||
       verified.approvals.some(({ validator: address }) => address === wallet.address)) {
@@ -193,6 +246,7 @@ export function signResetManifest(manifest, wallet, { validators } = {}) {
 export function verifyResetManifest(manifest, {
   currentTimestamp = Date.now(),
   expectedIncidentReportHash,
+  handoffs = [],
   newGenesis,
   oldGenesis,
 } = {}) {
@@ -201,12 +255,17 @@ export function verifyResetManifest(manifest, {
   }
   const oldIdentity = genesisIdentity(oldGenesis);
   const newIdentity = genesisIdentity(newGenesis);
-  const verified = verifyEnvelope(manifest, oldIdentity.validators, true);
+  const topology = resetValidatorTopology(
+    oldGenesis, handoffs, manifest?.oldFinalizedHeight,
+  );
+  const verified = verifyEnvelope(manifest, topology.activeValidators, true);
   if (verified.oldGenesisHash !== oldIdentity.genesisHash ||
       verified.oldNetworkId !== oldIdentity.networkId ||
       verified.newGenesisHash !== newIdentity.genesisHash ||
       verified.newNetworkId !== newIdentity.networkId ||
-      verified.incidentReportHash !== expectedIncidentReportHash) {
+      verified.incidentReportHash !== expectedIncidentReportHash ||
+      verified.activeValidatorSetId !== topology.activeValidatorSetId ||
+      verified.validatorTopologyHash !== topology.validatorTopologyHash) {
     throw new Error("reset manifest does not match its reviewed inputs");
   }
   if (currentTimestamp < verified.notBefore) throw new Error("reset is not yet eligible");
@@ -236,6 +295,7 @@ export function createResetDrill(manifest, options = {}) {
     throw new Error("transaction domain isolation drill failed");
   }
   return {
+    activeValidatorSetId: verified.activeValidatorSetId,
     destructiveExecutionAvailable: false,
     destructiveExecutionPolicy: "A separate documented manual process is required outside this tool.",
     format: "nir-testnet-reset-drill-v1",
@@ -245,10 +305,12 @@ export function createResetDrill(manifest, options = {}) {
     newGenesisHash: verified.newGenesisHash,
     newNetworkId: verified.newNetworkId,
     oldDomainAcceptsSignature,
+    oldFinalizedHeight: verified.oldFinalizedHeight,
     oldGenesisHash: verified.oldGenesisHash,
     oldNetworkId: verified.oldNetworkId,
     newDomainRejectsOldSignature,
     quorum: verified.quorum,
     signatures: verified.approvals.length,
+    validatorTopologyHash: verified.validatorTopologyHash,
   };
 }
