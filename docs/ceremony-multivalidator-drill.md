@@ -66,10 +66,15 @@ The extended phases prove:
 two conflicting same-height/same-round prepare signatures. Both proposals must
 pass exact protocol-schema and state validation against the same verified
 `NirChain` context; signed proposals with extra or malformed fields are rejected.
-The evidence explicitly records `nativePenaltyAvailable: false`: the current
-chain does not connect validator finality equivocation to an on-chain validator
-bond/slashing transition. The evidence must not trigger an automatic penalty
-until active-set and bonded-stake context are part of that native transition.
+The evidence explicitly records `nativePenaltyAvailable: true`, but the native
+transition is deliberately narrow: one proposal must be the exact current
+finalized head, the other must be an exact-schema conflicting prepare for the
+same parent/height/round, and the signer must still be active with a native bond.
+The transaction is accepted only in the immediately following block. Genesis
+ceremony validators have no implicit bond, so their evidence remains forensic
+until they have registered a native validator bond.
+The compact on-chain format and recovery/handoff boundary are specified in
+`docs/validator-equivocation.md`.
 
 This is a portable protocol and process-isolation drill. It does not claim that
 four ephemeral local processes represent independent machines, operators, fault

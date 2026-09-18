@@ -76,6 +76,10 @@ import {
 } from "./account-tree.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
 import {
+  verifyFinalizedValidatorEquivocationEvidence,
+  verifyValidatorEquivocationTransactionEnvelope,
+} from "./validator-equivocation.mjs";
+import {
   appendAccountHistory,
   emptyAccountHistory,
   emptyAccountHistoryAccumulator,
@@ -300,6 +304,10 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "progress-commitment": [[
     "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId", "contentHash", "networkId",
     "nonce", "parents", "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
+  ]],
+  "validator-equivocation": [[
+    "algorithm", "evidence", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
   ]],
   "validator-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -923,7 +931,12 @@ export function blockHash(block) {
 export function prepareVoteForBlock(block, validatorWallet) {
   const hash = blockHash(block);
   return {
-    signature: signObject({ blockHash: hash }, validatorWallet, "BLOCK_PREPARE"),
+    round: block.round,
+    signature: signObject(
+      { blockHash: hash, height: block.height, round: block.round },
+      validatorWallet,
+      "BLOCK_PREPARE",
+    ),
     validator: validatorWallet.address,
   };
 }
@@ -1056,6 +1069,7 @@ export class NirChain {
   #creditStakes;
   #creditUnstakes;
   #creditUsage;
+  #disabledValidators;
   #evaluationQuorum;
   #epochRandomness;
   #beaconAuthorities;
@@ -1072,6 +1086,7 @@ export class NirChain {
   #randomnessFaults;
   #validatorFaults;
   #validatorBonds;
+  #validatorEquivocationEvidence;
   #registeredValidators;
   #pendingValidatorRotation;
   #pendingProtocolUpgrade;
@@ -1179,11 +1194,13 @@ export class NirChain {
     this.#creditStakes = new Map();
     this.#creditUnstakes = new Map();
     this.#creditUsage = new Map();
+    this.#disabledValidators = new Set();
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
     this.#randomnessFaults = new Map();
     this.#validatorFaults = new Map();
     this.#validatorBonds = new Map();
+    this.#validatorEquivocationEvidence = new Set();
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorRotation = null;
     this.#pendingProtocolUpgrade = null;
@@ -1355,6 +1372,16 @@ export class NirChain {
       assertAddress(address, "snapshot validator fault address");
       validatorFaults.set(address, snapshotInteger(value, "validator fault"));
     }
+    if (!Array.isArray(state.disabledValidators) ||
+        state.disabledValidators.some((address) => !/^nir1[0-9a-f]{64}$/.test(address)) ||
+        new Set(state.disabledValidators).size !== state.disabledValidators.length ||
+        !Array.isArray(state.validatorEquivocationEvidence) ||
+        state.validatorEquivocationEvidence.some((hash) => !/^[0-9a-f]{64}$/.test(hash)) ||
+        new Set(state.validatorEquivocationEvidence).size !== state.validatorEquivocationEvidence.length) {
+      throw new Error("validator equivocation snapshot state is invalid");
+    }
+    const disabledValidators = new Set(state.disabledValidators);
+    const validatorEquivocationEvidence = new Set(state.validatorEquivocationEvidence);
     const candidateBonds = snapshotEntries(state.candidateBonds, "candidate bonds");
     for (const [candidateId, candidate] of candidateBonds) {
       if (!/^[0-9a-f]{64}$/.test(candidateId) || !candidate ||
@@ -1491,6 +1518,10 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    if ([...disabledValidators].some((address) => !registeredMembers.has(address) ||
+        (validatorBonds.get(address) ?? 0n) !== 0n)) {
+      throw new Error("disabled validator snapshot state is inconsistent");
+    }
     const memory = CapabilityMemory.fromSnapshot(snapshot.capabilityMemory);
     if (memory.stateRoot !== state.capabilityMemoryRoot) {
       throw new Error("capability memory snapshot root is invalid");
@@ -1509,6 +1540,7 @@ export class NirChain {
     chain.#creditStakes = creditStakes;
     chain.#creditUnstakes = creditUnstakes;
     chain.#creditUsage = creditUsage;
+    chain.#disabledValidators = disabledValidators;
     chain.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: chain.#networkId,
       registry: chain.#beaconAuthorities,
@@ -1541,6 +1573,7 @@ export class NirChain {
     chain.#rewardedProofs = new Set(state.rewardedProofs);
     chain.#safetyEvidence = new Set(state.safetyEvidence);
     chain.#validatorBonds = validatorBonds;
+    chain.#validatorEquivocationEvidence = validatorEquivocationEvidence;
     chain.#validatorFaults = validatorFaults;
     chain.#validators = validatorMembers;
     chain.#validatorOrder = [...validatorMembers.keys()].sort();
@@ -1663,6 +1696,7 @@ export class NirChain {
       creditStakes: overrides.creditStakes ?? this.#creditStakes,
       creditUnstakes: overrides.creditUnstakes ?? this.#creditUnstakes,
       creditUsage: overrides.creditUsage ?? this.#creditUsage,
+      disabledValidators: overrides.disabledValidators ?? this.#disabledValidators,
       epochRandomness: overrides.epochRandomness ?? this.#epochRandomness.snapshot(),
       lastRewardTimestamp: overrides.lastRewardTimestamp ?? this.#lastRewardTimestamp,
       mined: overrides.mined ?? this.#mined,
@@ -1682,6 +1716,8 @@ export class NirChain {
       rewardedProofs: overrides.rewardedProofs ?? this.#rewardedProofs,
       safetyEvidence: overrides.safetyEvidence ?? this.#safetyEvidence,
       validatorBonds: overrides.validatorBonds ?? this.#validatorBonds,
+      validatorEquivocationEvidence:
+        overrides.validatorEquivocationEvidence ?? this.#validatorEquivocationEvidence,
       validatorFaults: overrides.validatorFaults ?? this.#validatorFaults,
       validators: overrides.validators ?? this.#validators,
     });
@@ -1707,6 +1743,7 @@ export class NirChain {
         creditStakes: this.#creditStakes,
         creditUnstakes: this.#creditUnstakes,
         creditUsage: this.#creditUsage,
+        disabledValidators: this.#disabledValidators,
         epochRandomness: this.#epochRandomness.snapshot(),
         lastRewardTimestamp: this.#lastRewardTimestamp,
         mined: this.#mined,
@@ -1722,6 +1759,7 @@ export class NirChain {
         rewardedProofs: this.#rewardedProofs,
         safetyEvidence: this.#safetyEvidence,
         validatorBonds: this.#validatorBonds,
+        validatorEquivocationEvidence: this.#validatorEquivocationEvidence,
         validatorFaults: this.#validatorFaults,
         validators: this.#validators,
       }),
@@ -1769,6 +1807,10 @@ export class NirChain {
   }
 
   validatorBond(address) { return this.#validatorBonds.get(address) ?? 0n; }
+  validatorDisabled(address) { return this.#disabledValidators.has(address); }
+  validatorEquivocationEvidenceUsed(evidenceHash) {
+    return this.#validatorEquivocationEvidence.has(evidenceHash);
+  }
   beaconBond(address) { return this.#beaconBonds.get(address) ?? 0n; }
   beaconFaultCount(address) { return this.#beaconFaults.get(address) ?? 0; }
   get beaconBondingActive() { return this.#beaconBondingActive; }
@@ -1793,7 +1835,8 @@ export class NirChain {
     return allowance > spent ? allowance - spent : 0n;
   }
 
-  get validatorSetId() { return validatorSetId([...this.#validators.values()].sort((a, b) => a.address.localeCompare(b.address))); }
+  get validatorSetId() { return validatorSetId([...this.#validators.values()]
+    .sort((left, right) => left.address.localeCompare(right.address))); }
 
   get validatorMembers() {
     return [...this.#validators.values()].sort((left, right) =>
@@ -2011,6 +2054,10 @@ export class NirChain {
     protocolUpgrade = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
+    if (validatorRotation !== null &&
+        transactions.some(({ type }) => type === "validator-equivocation")) {
+      throw new Error("validator equivocation and rotation require separate blocks");
+    }
     const height = this.height + 1;
     const nextProtocolVersion = protocolVersionAtNextHeight({
       currentHeight: this.height,
@@ -2065,10 +2112,14 @@ export class NirChain {
       const proposed = (validatorRotation.validators ?? []).map(({ address }) => {
         const member = this.#registeredValidators.get(address);
         if (!member) throw new Error("proposed validator is not registered");
+        if (this.#disabledValidators.has(address)) {
+          throw new Error("disabled validator cannot be proposed for rotation");
+        }
         return member;
       });
       scheduledRotation = scheduleValidatorRotation({
         current: [...this.#validators.values()], proposed, bonds: this.#validatorBonds,
+        disabled: this.#disabledValidators,
         currentHeight: this.height, activationHeight: validatorRotation.activationHeight,
       });
       if (this.#peerRegistry) {
@@ -2165,13 +2216,22 @@ export class NirChain {
       throw new Error("invalid finality certificate size");
     }
     const prepareVoters = new Set();
+    let prepareRound = null;
     for (const vote of block.prepareCertificate) {
       const validator = acceptedValidators.get(vote.validator);
       if (!validator || prepareVoters.has(vote.validator) ||
+          !Number.isSafeInteger(vote.round) || vote.round < 0 || vote.round > block.round ||
+          (prepareRound !== null && vote.round !== prepareRound) ||
           typeof vote.signature !== "string" || vote.signature.length > 7_000 ||
-          !verifyObject({ blockHash: block.hash }, vote.signature, validator.publicKey, "BLOCK_PREPARE")) {
+          !verifyObject(
+            { blockHash: block.hash, height: block.height, round: vote.round },
+            vote.signature,
+            validator.publicKey,
+            "BLOCK_PREPARE",
+          )) {
         throw new Error("invalid or duplicate prepare vote");
       }
+      prepareRound = vote.round;
       prepareVoters.add(vote.validator);
     }
     const quorum = Math.floor((validators.size * 2) / 3) + 1;
@@ -2623,13 +2683,19 @@ export class NirChain {
     });
   }
 
-  #applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, proposer) {
+  #applyValidatorBond(
+    transaction, balances, nonces, validatorBonds, registeredValidators,
+    disabledValidators, proposer,
+  ) {
     let validator = registeredValidators.get(transaction.sender);
     if (transaction.type !== "validator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
         transaction.networkId !== this.#networkId ||
         addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
         !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, "VALIDATOR_BOND")) {
       throw new Error("validator bond transaction is invalid");
+    }
+    if (disabledValidators.has(transaction.sender)) {
+      throw new Error("disabled validator identity cannot bond again");
     }
     if (!validator) {
       if (typeof transaction.operatorId !== "string" ||
@@ -2660,6 +2726,36 @@ export class NirChain {
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
     validatorBonds.set(transaction.sender, (validatorBonds.get(transaction.sender) ?? 0n) + amount);
+  }
+
+  #applyValidatorEquivocation(
+    transaction, balances, nonces, validatorBonds, validatorFaults,
+    disabledValidators, equivocationEvidence, proposer, finalizedBlock,
+  ) {
+    verifyValidatorEquivocationTransactionEnvelope(transaction, this.#networkId);
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    if (equivocationEvidence.has(transaction.evidence.evidenceHash)) {
+      throw new Error("validator equivocation evidence was already used");
+    }
+    const fee = parseAtomic(transaction.fee, "fee");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (balance < fee) throw new Error("insufficient balance");
+    const penalty = verifyFinalizedValidatorEquivocationEvidence(transaction.evidence, {
+      finalizedHeader: blockHeader(finalizedBlock),
+      finalizedRound: finalizedBlock.prepareCertificate[0]?.round,
+      headerHash: blockHeaderHash,
+      validatorBonds,
+      validators: [...this.#validators.values()],
+    });
+    balances.set(transaction.sender, balance - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    validatorBonds.delete(penalty.validator);
+    validatorFaults.set(penalty.validator, (validatorFaults.get(penalty.validator) ?? 0) + 1);
+    disabledValidators.add(penalty.validator);
+    equivocationEvidence.add(penalty.evidenceHash);
+    return penalty.bond;
   }
 
   #applyBeaconBond(transaction, balances, nonces, beaconBonds, proposer, epochRandomness) {
@@ -3000,6 +3096,7 @@ export class NirChain {
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#creditUsage = new Map([...this.#creditUsage]
       .map(([address, usage]) => [address, { ...usage }]));
+    fork.#disabledValidators = new Set(this.#disabledValidators);
     fork.#capabilityMemory = this.#capabilityMemory.clone();
     fork.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: this.#networkId,
@@ -3021,6 +3118,7 @@ export class NirChain {
     fork.#rewardedProofs = new Set(this.#rewardedProofs);
     fork.#safetyEvidence = new Set(this.#safetyEvidence);
     fork.#validatorBonds = new Map(this.#validatorBonds);
+    fork.#validatorEquivocationEvidence = new Set(this.#validatorEquivocationEvidence);
     fork.#validatorFaults = new Map(this.#validatorFaults);
     fork.#validators = new Map(this.#validators);
     fork.#validatorOrder = [...this.#validatorOrder];
@@ -3040,6 +3138,13 @@ export class NirChain {
     fork.#applyBlock(candidate, false);
     return candidate.hash;
   }
+
+  finalityHeaderForProposal(block) {
+    this.validateProposal(block);
+    return blockHeader(block);
+  }
+
+  finalityHeaderHash(header) { return blockHeaderHash(header); }
 
   #applyBlock(block, verifyCertificate, verifyStateRoot = true) {
     const previous = this.#blocks.at(-1);
@@ -3083,6 +3188,10 @@ export class NirChain {
     }
     if (block.transactions.length > MAX_TRANSACTIONS_PER_BLOCK) {
       throw new Error("too many transactions in one block");
+    }
+    if (block.validatorRotation !== null &&
+        block.transactions.some(({ type }) => type === "validator-equivocation")) {
+      throw new Error("validator equivocation and rotation require separate blocks");
     }
     if (block.transactionCount !== block.transactions.length ||
         block.transactionsRoot !== transactionRoot(block.transactions)) {
@@ -3216,6 +3325,7 @@ export class NirChain {
       .map(([address, pending]) => [address, { ...pending }]));
     const creditUsage = new Map([...this.#creditUsage]
       .map(([address, usage]) => [address, { ...usage }]));
+    const disabledValidators = new Set(this.#disabledValidators);
     const nonces = new Map(this.#nonces);
     const rewardedProofs = new Set(this.#rewardedProofs);
     const candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
@@ -3227,6 +3337,7 @@ export class NirChain {
     const randomnessFaults = new Map(this.#randomnessFaults);
     const validatorFaults = new Map(this.#validatorFaults);
     const validatorBonds = new Map(this.#validatorBonds);
+    const validatorEquivocationEvidence = new Set(this.#validatorEquivocationEvidence);
     const registeredValidators = new Map(this.#registeredValidators);
     const progressCommitments = new Map(this.#progressCommitments);
     let scheduledRotation = null;
@@ -3238,10 +3349,14 @@ export class NirChain {
       const proposed = block.validatorRotation.validators.map(({ address }) => {
         const member = registeredValidators.get(address);
         if (!member) throw new Error("proposed validator is not registered");
+        if (this.#disabledValidators.has(address)) {
+          throw new Error("disabled validator cannot be proposed for rotation");
+        }
         return member;
       });
       scheduledRotation = scheduleValidatorRotation({
         current: [...this.#validators.values()], proposed, bonds: validatorBonds,
+        disabled: this.#disabledValidators,
         currentHeight: previous.height,
         activationHeight: block.validatorRotation.activationHeight,
       });
@@ -3345,7 +3460,15 @@ export class NirChain {
           epochRandomness.round,
         );
       } else if (transaction.type === "validator-bond") {
-        this.#applyValidatorBond(transaction, balances, nonces, validatorBonds, registeredValidators, block.feeRecipient);
+        this.#applyValidatorBond(
+          transaction, balances, nonces, validatorBonds, registeredValidators,
+          disabledValidators, block.feeRecipient,
+        );
+      } else if (transaction.type === "validator-equivocation") {
+        newlyBurned += this.#applyValidatorEquivocation(
+          transaction, balances, nonces, validatorBonds, validatorFaults,
+          disabledValidators, validatorEquivocationEvidence, block.feeRecipient, previous,
+        );
       } else if (transaction.type === "beacon-bond") {
         this.#applyBeaconBond(
           transaction, balances, nonces, beaconBonds, block.feeRecipient, epochRandomness,
@@ -3593,6 +3716,11 @@ export class NirChain {
       pendingValidatorRotationAfter = null;
     }
     if (scheduledRotation) pendingValidatorRotationAfter = scheduledRotation;
+    if (pendingValidatorRotationAfter?.validators.some(({ address }) =>
+      disabledValidators.has(address))) {
+      pendingValidatorRotationAfter = null;
+    }
+    validatorOrderAfter = [...validatorsAfter.keys()].sort();
     const rewardEpochAfter = this.#rewardEpoch + (block.progressRewards.length > 0 ? 1 : 0);
     const lastRewardTimestampAfter = block.progressRewards.length > 0
       ? block.timestamp : this.#lastRewardTimestamp;
@@ -3611,6 +3739,7 @@ export class NirChain {
       creditStakes,
       creditUnstakes,
       creditUsage,
+      disabledValidators,
       epochRandomness: epochRandomness.snapshot(),
       lastRewardTimestamp: lastRewardTimestampAfter,
       mined: this.#mined + newlyMined,
@@ -3626,6 +3755,7 @@ export class NirChain {
       rewardedProofs,
       safetyEvidence,
       validatorBonds,
+      validatorEquivocationEvidence,
       validatorFaults,
       validators: validatorsAfter,
     });
@@ -3660,12 +3790,14 @@ export class NirChain {
     this.#creditStakes = creditStakes;
     this.#creditUnstakes = creditUnstakes;
     this.#creditUsage = creditUsage;
+    this.#disabledValidators = disabledValidators;
     this.#nonces = nonces;
     this.#pendingProtocolUpgrade = protocolState.pendingUpgrade;
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;
     this.#validatorFaults = validatorFaults;
     this.#validatorBonds = validatorBonds;
+    this.#validatorEquivocationEvidence = validatorEquivocationEvidence;
     this.#registeredValidators = registeredValidators;
     this.#peerRegistry = nextPeerRegistry;
     this.#progressCommitments = progressCommitments;

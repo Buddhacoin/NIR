@@ -906,6 +906,9 @@ export class ValidatorReplica {
   }
 
   buildProposal() {
+    if (this.#chain.validatorDisabled(this.address)) {
+      throw new Error("disabled local validator cannot propose");
+    }
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("validator mempool is empty");
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
@@ -939,17 +942,29 @@ export class ValidatorReplica {
     this.#requireSetQuorum(uniqueVotes.keys(), sets.required, "validator prepare");
     if (sets.previous) this.#requireSetQuorum(uniqueVotes.keys(), sets.previous, "old-set prepare");
     const hash = blockHash(proposal);
+    let prepareRound = null;
     for (const vote of uniqueVotes.values()) {
       const member = sets.accepted.get(vote.validator);
-      if (!member || !verifyObject({ blockHash: hash }, vote.signature, member.publicKey, "BLOCK_PREPARE")) {
+      if (!member || !Number.isSafeInteger(vote.round) || vote.round < 0 ||
+          vote.round > proposal.round || (prepareRound !== null && vote.round !== prepareRound) ||
+          !verifyObject(
+        { blockHash: hash, height: proposal.height, round: vote.round },
+        vote.signature,
+        member.publicKey,
+        "BLOCK_PREPARE",
+      )) {
         throw new Error("validator prepare signature is invalid");
       }
+      prepareRound = vote.round;
     }
     return [...uniqueVotes.values()].sort((left, right) =>
       left.validator.localeCompare(right.validator));
   }
 
   commitVote(proposal, prepareCertificate) {
+    if (this.#chain.validatorDisabled(this.address)) {
+      throw new Error("disabled local validator cannot vote");
+    }
     const verified = this.prepareCertificate(proposal, prepareCertificate);
     if (!this.#validatorSets(proposal.height).accepted.has(this.address)) {
       throw new Error("local validator cannot vote at this height");
@@ -1013,6 +1028,9 @@ export class ValidatorReplica {
   }
 
   vote(block) {
+    if (this.#chain.validatorDisabled(this.address)) {
+      throw new Error("disabled local validator cannot vote");
+    }
     if (block.networkId !== this.networkId || block.height !== this.height + 1 ||
         block.previousHash !== this.tipHash ||
         block.proposer !== this.#chain.expectedProposer(block.height, block.round)) {
@@ -1102,6 +1120,9 @@ export class ValidatorReplica {
   }
 
   timeout({ proposal, nextRound }) {
+    if (this.#chain.validatorDisabled(this.address)) {
+      throw new Error("disabled local validator cannot vote");
+    }
     if (!proposal || proposal.height !== this.height + 1 || proposal.previousHash !== this.tipHash ||
         !Number.isSafeInteger(nextRound) || nextRound !== proposal.round + 1) {
       throw new Error("timeout request does not extend the validator state");

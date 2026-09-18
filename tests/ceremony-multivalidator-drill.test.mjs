@@ -528,7 +528,7 @@ test("four ceremony validators finalize, restart, and catch up without a coordin
       second: { proposal: proposalB, vote: byzantineVoteB },
     });
     assert.equal(evidence.validator, values.validators[byzantine].address);
-    assert.equal(evidence.nativePenaltyAvailable, false);
+    assert.equal(evidence.nativePenaltyAvailable, true);
     assert.deepEqual(
       verifyValidatorPrepareEquivocationEvidence(evidence, { chain }), evidence,
     );

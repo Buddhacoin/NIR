@@ -14,7 +14,7 @@ import { verifyValidatorHandoff } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
-const FORMAT = "nir-finality-proof-v1";
+const FORMAT = "nir-finality-proof-v2";
 const HEADER_FORMAT = "nir-finality-header-v1";
 export const MAX_FINALITY_PROOFS = 512;
 export const MAX_FINALITY_CHAIN_BYTES = 32 * 1024 * 1024;
@@ -26,6 +26,7 @@ export function createFinalityProof(block) {
     hash: block.hash,
     header: blockHeader(block),
     prepareCertificate: structuredClone(block.prepareCertificate ?? []),
+    round: block.prepareCertificate?.[0]?.round ?? block.round,
   };
 }
 
@@ -44,7 +45,7 @@ function verifyVotes(proof, validators, previousValidators = null) {
   const current = normalizeValidators(validators);
   const previous = previousValidators ? normalizeValidators(previousValidators) : null;
   const accepted = new Map([...(previous ?? []), ...current].map((member) => [member.address, member]));
-  const verifyCertificate = (votes, domain, payload, label) => {
+  const verifyCertificate = (votes, domain, payload, label, validateVote = () => true) => {
     if (!Array.isArray(votes) || votes.length > accepted.size) {
       throw new Error(`light client ${label} certificate is invalid`);
     }
@@ -52,8 +53,13 @@ function verifyVotes(proof, validators, previousValidators = null) {
     for (const vote of votes) {
       const member = accepted.get(vote?.validator);
       if (!member || seen.has(member.address) || typeof vote.signature !== "string" ||
-          vote.signature.length > 7_000 ||
-          !verifyObject(payload, vote.signature, member.publicKey, domain)) {
+          vote.signature.length > 7_000 || !validateVote(vote) ||
+          !verifyObject(
+            typeof payload === "function" ? payload(vote) : payload,
+            vote.signature,
+            member.publicKey,
+            domain,
+          )) {
         throw new Error(`light client ${label} vote is invalid`);
       }
       seen.add(member.address);
@@ -68,9 +74,15 @@ function verifyVotes(proof, validators, previousValidators = null) {
     requireQuorum(current, label);
     if (previous) requireQuorum(previous, `old-set ${label}`);
   };
-  verifyCertificate(
-    proof.prepareCertificate, "BLOCK_PREPARE", { blockHash: proof.hash }, "prepare",
-  );
+  let prepareRound = null;
+  verifyCertificate(proof.prepareCertificate, "BLOCK_PREPARE", (vote) => ({
+    blockHash: proof.hash, height: proof.header.height, round: vote.round,
+  }), "prepare", (vote) => {
+    if (!Number.isSafeInteger(vote.round) || vote.round !== proof.round ||
+        (prepareRound !== null && vote.round !== prepareRound)) return false;
+    prepareRound = vote.round;
+    return true;
+  });
   verifyCertificate(proof.certificate, "BLOCK_COMMIT", {
     blockHash: proof.hash,
     prepareCertificateHash: prepareCertificateHash(proof.prepareCertificate),
@@ -114,7 +126,8 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
 function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
   if (!proof || proof.format !== FORMAT ||
       Object.keys(proof).sort().join(",") !==
-        "certificate,format,hash,header,prepareCertificate") {
+        "certificate,format,hash,header,prepareCertificate,round" ||
+      !Number.isSafeInteger(proof.round) || proof.round < 0) {
     throw new Error("light client finality proof is invalid");
   }
   return validateFinalityHeader(proof.header, proof.hash, expectedNetworkId, {
