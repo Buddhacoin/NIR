@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -23,8 +24,10 @@ import { createDeterministicZip, zipSha3 } from "../blockchain/deterministic-zip
 import {
   artifactPaths,
   createReleaseArtifact,
+  inventoryNodeInstallations,
   installNodeArtifact,
   installWalletArtifact,
+  pruneNodeInstallationGeneration,
   serializeReleaseArtifact,
   verifyReleaseArtifact,
   verifyNodeInstallation,
@@ -474,6 +477,114 @@ test("reverification fails closed when an installation activation link is swappe
   }
 });
 
+test("generation inventory classifies safely and explicit prune fails closed on races", () => {
+  const values = fixture();
+  const target = join(values.root, "managed-node");
+  const otherTarget = join(values.root, "other-node");
+  try {
+    const wallet = generateWallet();
+    const signedRelease = signReleaseManifest(values.manifest, wallet);
+    const artifact = createReleaseArtifact(
+      values.root, artifactPaths("node", values.paths), {
+        kind: "node", sourceManifest: values.manifest,
+      },
+    );
+    const options = { signedRelease, trustedAddress: wallet.address };
+    installNodeArtifact(artifact, target, options);
+    const orphan = readlinkSync(target);
+    rmSync(target);
+    installNodeArtifact(artifact, target, options);
+    const active = readlinkSync(target);
+    installNodeArtifact(artifact, otherTarget, options);
+    const invalid = `.managed-node.nir-generation-${"f".repeat(32)}`;
+    symlinkSync(active, join(values.root, invalid));
+
+    const inventory = inventoryNodeInstallations(target, options);
+    assert.deepEqual(inventory.activation, { generation: active, status: "valid" });
+    assert.equal(inventory.generations.find(({ name }) => name === active)?.classification,
+      "active");
+    assert.equal(inventory.generations.find(({ name }) => name === orphan)?.classification,
+      "verified-orphan");
+    assert.equal(inventory.generations.find(({ name }) => name === invalid)?.classification,
+      "invalid");
+    assert.equal(inventory.generations.some(({ classification }) => classification === "foreign"),
+      true);
+
+    assert.throws(() => pruneNodeInstallationGeneration(
+      target, active, artifact.artifactHash, { ...options, dryRun: false },
+    ), /active generation/);
+    assert.throws(() => pruneNodeInstallationGeneration(
+      target, "../escape", artifact.artifactHash, options,
+    ), /exact generation name/);
+    assert.throws(() => pruneNodeInstallationGeneration(
+      target, invalid, artifact.artifactHash, options,
+    ), /verified orphan generation/);
+    assert.throws(() => pruneNodeInstallationGeneration(
+      target, orphan, "0".repeat(64), options,
+    ), /hash does not match/);
+    assert.throws(() => pruneNodeInstallationGeneration(target, orphan, artifact.artifactHash, {
+      signedRelease, trustedAddress: generateWallet().address,
+    }), /not trusted/);
+
+    assert.deepEqual(pruneNodeInstallationGeneration(
+      target, orphan, artifact.artifactHash, options,
+    ), {
+      artifactHash: artifact.artifactHash,
+      dryRun: true,
+      generation: orphan,
+      kind: "node",
+      pruned: false,
+    });
+    assert.equal(lstatSync(join(values.root, orphan)).isDirectory(), true);
+
+    const saved = join(values.root, `${orphan}.saved`);
+    assert.throws(() => pruneNodeInstallationGeneration(target, orphan, artifact.artifactHash, {
+      ...options,
+      dryRun: false,
+      _beforePrune({ candidate }) {
+        renameSync(candidate, saved);
+        symlinkSync(saved, candidate);
+      },
+    }), /changed during operation|regular directory/);
+    assert.equal(lstatSync(join(values.root, orphan)).isSymbolicLink(), true);
+    assert.equal(lstatSync(saved).isDirectory(), true);
+    rmSync(join(values.root, orphan));
+    renameSync(saved, join(values.root, orphan));
+
+    assert.throws(() => pruneNodeInstallationGeneration(target, orphan, artifact.artifactHash, {
+      ...options,
+      dryRun: false,
+      _beforePrune({ candidate }) {
+        renameSync(candidate, saved);
+        mkdirSync(candidate);
+      },
+    }), /changed during operation/);
+    assert.equal(lstatSync(join(values.root, orphan)).isDirectory(), true);
+    assert.equal(lstatSync(saved).isDirectory(), true);
+    rmSync(join(values.root, orphan), { recursive: true });
+    renameSync(saved, join(values.root, orphan));
+
+    const result = pruneNodeInstallationGeneration(
+      target, orphan, artifact.artifactHash, { ...options, dryRun: false },
+    );
+    assert.equal(result.pruned, true);
+    assert.equal(existsSync(join(values.root, orphan)), false);
+    assert.equal(readlinkSync(target), active);
+    assert.deepEqual(verifyNodeInstallation(target, options), {
+      artifactHash: artifact.artifactHash,
+      files: 2,
+      format: "nir-node-install-v1",
+      releaseVersion: values.manifest.releaseVersion,
+      signerAddress: wallet.address,
+      sourceManifestHash: values.manifest.manifestHash,
+      sourceRevision: values.manifest.sourceRevision,
+      verified: true,
+    });
+  } finally {
+    rmSync(values.root, { recursive: true, force: true });
+  }
+});
+
 test("release CLI installs and reverifies node packages", () => {
   const values = fixture();
   const cli = new URL("../blockchain/release-cli.mjs", import.meta.url).pathname;
@@ -500,6 +611,33 @@ test("release CLI installs and reverifies node packages", () => {
     ], { encoding: "utf8" });
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /Node .* verified/);
+    const oldGeneration = readlinkSync(target);
+    rmSync(target);
+    const reinstalled = spawnSync(process.execPath, [
+      cli, "install-node", artifactPath, envelopePath, wallet.address, target,
+    ], { encoding: "utf8" });
+    assert.equal(reinstalled.status, 0, reinstalled.stderr);
+    const inventory = spawnSync(process.execPath, [
+      cli, "inventory-node", target, envelopePath, wallet.address,
+    ], { encoding: "utf8" });
+    assert.equal(inventory.status, 0, inventory.stderr);
+    assert.equal(JSON.parse(inventory.stdout).generations.find(
+      ({ name }) => name === oldGeneration,
+    )?.classification, "verified-orphan");
+    const dryRun = spawnSync(process.execPath, [
+      cli, "prune-node-generation", target, oldGeneration, artifact.artifactHash,
+      envelopePath, wallet.address,
+    ], { encoding: "utf8" });
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    assert.equal(JSON.parse(dryRun.stdout).pruned, false);
+    assert.equal(existsSync(join(values.root, oldGeneration)), true);
+    const pruned = spawnSync(process.execPath, [
+      cli, "prune-node-generation", target, oldGeneration, artifact.artifactHash,
+      envelopePath, wallet.address, "--execute",
+    ], { encoding: "utf8" });
+    assert.equal(pruned.status, 0, pruned.stderr);
+    assert.equal(JSON.parse(pruned.stdout).pruned, true);
+    assert.equal(existsSync(join(values.root, oldGeneration)), false);
     writeFileSync(join(target, "package.json"), '{"version":"changed"}\n');
     const tampered = spawnSync(process.execPath, [
       cli, "verify-node-install", target, envelopePath, wallet.address,

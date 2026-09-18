@@ -22,8 +22,12 @@ import {
 import {
   artifactPaths,
   createReleaseArtifact,
+  inventoryNodeInstallations,
+  inventoryWalletInstallations,
   installNodeArtifact,
   installWalletArtifact,
+  pruneNodeInstallationGeneration,
+  pruneWalletInstallationGeneration,
   serializeReleaseArtifact,
   verifyReleaseArtifact,
   verifyNodeInstallation,
@@ -211,6 +215,29 @@ try {
       signedRelease: readBoundedJson(envelopePath), trustedAddress,
     });
     console.log(`Node ${result.artifactHash} verified at ${resolve(target)}.`);
+  } else if ((command === "inventory-wallet" || command === "inventory-node") &&
+      args.length === 3) {
+    const [target, envelopePath, trustedAddress] = args;
+    const options = { signedRelease: readBoundedJson(envelopePath), trustedAddress };
+    const result = command === "inventory-wallet"
+      ? inventoryWalletInstallations(target, options)
+      : inventoryNodeInstallations(target, options);
+    console.log(JSON.stringify(result, null, 2));
+  } else if ((command === "prune-wallet-generation" || command === "prune-node-generation") &&
+      (args.length === 5 || args.length === 6)) {
+    const [target, generation, artifactHash, envelopePath, trustedAddress, execute] = args;
+    if (execute !== undefined && execute !== "--execute") {
+      throw new Error("generation prune accepts only the optional --execute flag");
+    }
+    const options = {
+      dryRun: execute !== "--execute",
+      signedRelease: readBoundedJson(envelopePath),
+      trustedAddress,
+    };
+    const result = command === "prune-wallet-generation"
+      ? pruneWalletInstallationGeneration(target, generation, artifactHash, options)
+      : pruneNodeInstallationGeneration(target, generation, artifactHash, options);
+    console.log(JSON.stringify(result, null, 2));
   } else if (command === "build-extension" && args.length === 4) {
     const [rootValue, envelopePath, trustedAddress, output] = args;
     const root = resolve(rootValue);
@@ -243,7 +270,7 @@ try {
     }
     console.log(`Browser extension ${zipSha3(expected)} verified.`);
   } else {
-    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:install-wallet <wallet.nirpkg> <signed.json> <trusted-address> <new-directory> | release:verify-wallet-install <installed-directory> <signed.json> <trusted-address> | release:install-node <node.nirpkg> <signed.json> <trusted-address> <new-directory> | release:verify-node-install <installed-directory> <signed.json> <trusted-address> | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
+    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:install-wallet <wallet.nirpkg> <signed.json> <trusted-address> <new-directory> | release:verify-wallet-install <installed-directory> <signed.json> <trusted-address> | release:install-node <node.nirpkg> <signed.json> <trusted-address> <new-directory> | release:verify-node-install <installed-directory> <signed.json> <trusted-address> | release:inventory-<wallet|node> <installed-target> <signed.json> <trusted-address> | release:prune-<wallet|node>-generation <installed-target> <exact-generation> <artifact-hash> <signed.json> <trusted-address> [--execute] | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
   }
 } catch (error) {
   console.error(`Release operation failed: ${error.message}`);

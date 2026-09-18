@@ -119,6 +119,40 @@ competing target. Operators must treat the target symlink and its same-parent hi
 `.TARGET.nir-generation-*` directory as one installation and must not move either
 independently.
 
+Inspect generations without changing them:
+
+```bash
+npm run release:inventory-node -- \
+  /absolute/path/to/new-nir-node signed-release.json nir1TRUSTED_RELEASE_ADDRESS
+```
+
+The wallet equivalent is `release:inventory-wallet`. Inventory resolves only the
+strict relative active link, verifies provenance and every file against the signed
+release, and lists only strict sibling generation names. Entries are classified as
+`active`, `verified-orphan`, `invalid`, or `foreign`; arbitrary sibling names are
+ignored.
+
+Pruning requires the exact generation basename and its expected artifact hash. It
+is a dry run unless `--execute` is explicitly present:
+
+```bash
+npm run release:prune-node-generation -- \
+  /absolute/path/to/new-nir-node \
+  .new-nir-node.nir-generation-0123456789abcdef0123456789abcdef \
+  EXPECTED_ARTIFACT_HASH signed-release.json nir1TRUSTED_RELEASE_ADDRESS
+
+npm run release:prune-node-generation -- \
+  /absolute/path/to/new-nir-node \
+  .new-nir-node.nir-generation-0123456789abcdef0123456789abcdef \
+  EXPECTED_ARTIFACT_HASH signed-release.json nir1TRUSTED_RELEASE_ADDRESS --execute
+```
+
+The wallet command is `release:prune-wallet-generation`. Prune refuses active,
+foreign, symbolic-link, invalid, signer-mismatched, hash-mismatched, or concurrently
+replaced generations. The installation parent must remain operator-controlled for
+the duration of the explicit operation; the tool rechecks descriptor identities
+immediately before deletion and fails closed when it observes replacement.
+
 The kind-specific `NIR-INSTALL.json` records the verified artifact, source,
 release, and signer identities. Reverification accepts only the exact relative
 same-parent generation-link form, pins that activation link's inode and destination,

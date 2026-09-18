@@ -43,6 +43,8 @@ function generationPattern(target) {
   return new RegExp(`^\\.${escapeRegex(basename(target))}\\.nir-generation-[0-9a-f]{32}$`);
 }
 
+const ANY_GENERATION_PATTERN = /^\.[^\x00-\x1f\x7f/]{1,200}\.nir-generation-[0-9a-f]{32}$/;
+
 function entryExists(path) {
   try { lstatSync(path); return true; }
   catch (error) {
@@ -615,10 +617,177 @@ function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } 
   return result;
 }
 
+function installationInventory(targetPath, { kind, signedRelease, trustedAddress } = {}) {
+  const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
+  const target = resolve(targetPath);
+  const parent = dirname(target);
+  const parentOpened = openDirectory(parent, `${kind} installation parent`);
+  try {
+    let activation = { status: "missing" };
+    let activeName = null;
+    let activeMetadata = null;
+    try {
+      activeMetadata = lstatSync(target);
+      if (activeMetadata.isSymbolicLink()) {
+        const link = readlinkSync(target);
+        if (generationPattern(target).test(link)) {
+          activeName = link;
+          activation = { generation: link, status: "valid" };
+        } else {
+          activation = { status: "invalid" };
+        }
+      } else {
+        activation = { status: "invalid" };
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+
+    const generations = [];
+    for (const name of readdirSync(parent).filter(
+      (entry) => ANY_GENERATION_PATTERN.test(entry),
+    ).sort()) {
+      if (!generationPattern(target).test(name)) {
+        generations.push({ classification: "foreign", name });
+        continue;
+      }
+      try {
+        const result = verifyInstallationRoot(join(parent, name), { kind, manifest, signer });
+        generations.push({
+          artifactHash: result.artifactHash,
+          classification: name === activeName ? "active" : "verified-orphan",
+          name,
+        });
+      } catch (error) {
+        generations.push({
+          active: name === activeName,
+          classification: "invalid",
+          error: error.message,
+          name,
+        });
+      }
+    }
+    if (activeName !== null && !generations.some(({ name }) => name === activeName)) {
+      generations.push({
+        active: true, classification: "invalid",
+        error: `${kind} active generation is missing`, name: activeName,
+      });
+    }
+    if (activeMetadata !== null) {
+      const current = lstatSync(target);
+      if (!sameIdentity(current, activeMetadata) ||
+          (activeName !== null && readlinkSync(target) !== activeName)) {
+        throw new Error(`${kind} installation activation changed during inventory`);
+      }
+    } else if (entryExists(target)) {
+      throw new Error(`${kind} installation activation changed during inventory`);
+    }
+    assertDirectoryIdentity(parent, parentOpened, `${kind} installation parent`);
+    return { activation, generations, kind, target };
+  } finally { closeSync(parentOpened.descriptor); }
+}
+
+function pruneInstallationGeneration(targetPath, generationName, expectedArtifactHash, {
+  kind, signedRelease, trustedAddress, dryRun = true, _beforePrune,
+} = {}) {
+  const target = resolve(targetPath);
+  if (typeof generationName !== "string" || !generationPattern(target).test(generationName)) {
+    throw new Error(`${kind} prune requires an exact generation name for this target`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(expectedArtifactHash ?? "")) {
+    throw new Error(`${kind} prune expected artifact hash is invalid`);
+  }
+  if (typeof dryRun !== "boolean") throw new Error(`${kind} prune dry-run flag is invalid`);
+
+  const inventory = installationInventory(target, { kind, signedRelease, trustedAddress });
+  if (inventory.activation.status === "invalid") {
+    throw new Error(`${kind} prune requires a missing or valid activation link`);
+  }
+  const candidateResult = inventory.generations.find(({ name }) => name === generationName);
+  if (candidateResult?.classification === "active" ||
+      inventory.activation.generation === generationName) {
+    throw new Error(`${kind} prune refuses the active generation`);
+  }
+  if (candidateResult?.classification !== "verified-orphan") {
+    throw new Error(`${kind} prune requires a verified orphan generation`);
+  }
+  if (candidateResult.artifactHash !== expectedArtifactHash) {
+    throw new Error(`${kind} prune artifact hash does not match`);
+  }
+
+  const parent = dirname(target);
+  const candidate = join(parent, generationName);
+  const candidateOpened = openDirectory(candidate, `${kind} prune generation`);
+  const parentOpened = openDirectory(parent, `${kind} installation parent`);
+  try {
+    if ((parentOpened.metadata.mode & 0o022) !== 0 ||
+        (typeof process.getuid === "function" && parentOpened.metadata.uid !== process.getuid())) {
+      throw new Error(`${kind} prune requires an operator-owned non-writable parent`);
+    }
+    if (_beforePrune !== undefined) {
+      if (typeof _beforePrune !== "function") throw new Error(`${kind} prune hook is invalid`);
+      _beforePrune({ candidate, target });
+    }
+    assertDirectoryIdentity(parent, parentOpened, `${kind} installation parent`);
+    assertDirectoryIdentity(candidate, candidateOpened, `${kind} prune generation`, true);
+    if (inventory.activation.status === "valid") {
+      const currentActivation = lstatSync(target);
+      if (!currentActivation.isSymbolicLink() ||
+          readlinkSync(target) !== inventory.activation.generation) {
+        throw new Error(`${kind} installation activation changed before prune`);
+      }
+    } else if (entryExists(target)) {
+      throw new Error(`${kind} installation activation changed before prune`);
+    }
+    if (!dryRun) {
+      closeSync(candidateOpened.descriptor);
+      candidateOpened.descriptor = -1;
+      // The identity checks immediately above make replacement fail closed. The
+      // installation parent must remain operator-controlled during this explicit step.
+      rmSync(candidate, { recursive: true, force: false });
+      fsyncSync(parentOpened.descriptor);
+    }
+    return {
+      artifactHash: expectedArtifactHash,
+      dryRun,
+      generation: generationName,
+      kind,
+      pruned: !dryRun,
+    };
+  } finally {
+    if (candidateOpened.descriptor !== -1) closeSync(candidateOpened.descriptor);
+    closeSync(parentOpened.descriptor);
+  }
+}
+
 export function verifyWalletInstallation(targetPath, options = {}) {
   return verifyInstallation(targetPath, { ...options, kind: "wallet" });
 }
 
 export function verifyNodeInstallation(targetPath, options = {}) {
   return verifyInstallation(targetPath, { ...options, kind: "node" });
+}
+
+export function inventoryWalletInstallations(targetPath, options = {}) {
+  return installationInventory(targetPath, { ...options, kind: "wallet" });
+}
+
+export function inventoryNodeInstallations(targetPath, options = {}) {
+  return installationInventory(targetPath, { ...options, kind: "node" });
+}
+
+export function pruneWalletInstallationGeneration(
+  targetPath, generationName, expectedArtifactHash, options = {},
+) {
+  return pruneInstallationGeneration(targetPath, generationName, expectedArtifactHash, {
+    ...options, kind: "wallet",
+  });
+}
+
+export function pruneNodeInstallationGeneration(
+  targetPath, generationName, expectedArtifactHash, options = {},
+) {
+  return pruneInstallationGeneration(targetPath, generationName, expectedArtifactHash, {
+    ...options, kind: "node",
+  });
 }
