@@ -77,6 +77,7 @@
     "release:bundle-create": "node blockchain/offline-release-cli.mjs create",
     "release:bundle-sign": "node blockchain/offline-release-cli.mjs sign",
     "release:bundle-verify": "node blockchain/offline-release-cli.mjs verify",
+    "release:governance": "node blockchain/offline-release-governance-cli.mjs",
     "wallet:preview": "python3 -m http.server 8765 --directory wallet-ui",
     "benchmark:history": "node benchmarks/account-history-storage.mjs",
     "benchmark:storage-lifecycle": "node benchmarks/storage-lifecycle.mjs",

@@ -114,5 +114,7 @@ Never pipe bundle contents into a shell or run package lifecycle scripts.
   allowlist and source revision.
 - JSON/base64 is intentionally simple and offline-verifiable but larger than a
   compressed archive. Limits are 20,000 files, 32 MiB per file and 128 MiB total.
-- Revocation, multi-party release approval, transparency logs, hardware-backed
-  release keys and independent binary reproducibility remain future work.
+- Threshold approval, delayed authority changes, and a local append-only log are
+  available as the separate primitive in `offline-release-governance.md`.
+  Hardware-backed keys, global log gossip, and independent binary
+  reproducibility remain future work.
