@@ -14,6 +14,8 @@ Implemented and continuously tested:
 - proposer replacement, durable timeouts and locks, authenticated catch-up;
 - deterministic partition tests, 512 adversarial message schedules, and
   multi-height stateful fuzzing with restarts and validator rotations;
+- a bounded executable consensus model aligned with the implementation, plus
+  differential tests for round changes, locks, finality and validator rotation;
 - a six-process live `4 → 4` validator-rotation rehearsal with pre-activation
   synchronization, simultaneous old/new outages, dual quorums, authenticated
   handoff plus endpoint-topology recovery, restart, and retirement;
@@ -28,6 +30,10 @@ Implemented and continuously tested:
 - verified wallet- and node-package installers that refuse existing
   destinations, write source, artifact, signer, and release provenance after
   safe extraction, and reverify the complete installed file set.
+- a protocol-gated bounded native-asset state machine with immutable lifetime
+  caps, quorum-signed state or non-existence proofs, proof-bound simulation and
+  offline signing; this remains a local developer feature, not an audited asset
+  platform.
 
 This gate does not authorize custody, sale, exchange listing, or claims that NIR
 has market value.
@@ -36,10 +42,11 @@ has market value.
 
 Required before inviting unknown operators:
 
-- automated certificate issuance, renewal and revocation plus production edge
-  denial-of-service controls remain; multi-seed signed discovery, bounded
-  application ingress, pinned TLS 1.3, and quorum-signed endpoint and
-  transport-identity rotation with rollback protection are implemented locally;
+- production certificate issuance and external edge denial-of-service controls
+  remain. Locally implemented are multi-seed signed discovery, bounded ingress,
+  pinned TLS 1.3, quorum-signed certificate history, one-time genesis-pinned
+  bootstrap, renewal overlap, revocation, rollback protection and controlled
+  live TLS-context reload that retains the previous context on failure;
 - production-equivalent deployment and drills remain. The repository now has
   fsync-backed redundant journals, quorum snapshots, authenticated catch-up,
   tail replay, two-stage pruning, signed multi-operator backup receipts,
@@ -64,7 +71,9 @@ The developer testnet must remain explicitly valueless and resettable.
 Code work is accepted against this gate only when it closes one of these
 remaining checks and adds a reproducible failure test:
 
-1. certificate lifecycle and revocation survive replay, restart and rotation;
+1. independent operators deploy the implemented certificate lifecycle and
+   demonstrate issuance, renewal, revocation, replay rejection, restart and
+   rotation on separate hosts;
 2. a documented reset and incident drill preserves the published genesis and
    makes any destructive testnet action explicit; signed quorum reset planning
    and an isolated non-destructive drill are implemented locally, while a real

@@ -124,15 +124,18 @@ and was reproduced without publishing private model weights. That evidence can
 support licensing, procurement, reputation, and access to customers that require
 independent verification.
 
-## Planned platform capabilities
+## Platform capabilities and ordered development
 
 NIR is designed to grow without turning its monetary core into an unrestricted
 application runtime at genesis:
 
-- **native user-created assets:** a constrained Pay-lane standard for creating,
-  minting within a declared cap, transferring, and burning custom assets;
-  child assets remain separate from NIR, pay fees in NIR, and receive no mining
-  or governance rights;
+- **native user-created assets (implemented locally, protocol 25):** a bounded
+  Pay-lane state machine for creating, minting within an immutable lifetime cap,
+  transferring, burning, and permanently revoking mint authority. Asset state
+  and authenticated absence are proven by a validator quorum at a wallet-verified
+  finality checkpoint; reviewed operations can be exported for offline signing.
+  Child assets remain separate from NIR, pay fees in NIR, and receive no mining
+  or governance rights. See [`docs/native-assets.md`](docs/native-assets.md);
 - **sponsored payments:** a service may pay the network fee so a new user can
   receive and spend funds before acquiring NIR for fees;
 - **Transfer Credits:** locked NIR produces a bounded, renewable Pay-lane
@@ -157,9 +160,10 @@ application runtime at genesis:
 - **selective privacy:** auditable viewing permissions are a research target,
   contingent on post-quantum security and legal review.
 
-These capabilities are introduced only in the dependency order defined by the
-[`NIR roadmap`](docs/roadmap.md). They are not claims about the current local
-prototype.
+Each item states whether it is implemented locally or remains planned. Local
+implementation and passing tests do not make a feature production-safe. The
+dependency order and measurable exit conditions are defined by the
+[`NIR roadmap`](docs/roadmap.md).
 
 ## Start using the local prototype
 
