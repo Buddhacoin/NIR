@@ -1,8 +1,8 @@
 import {
-  chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
-  readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync,
+  closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync,
+  readFileSync, readlinkSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalJson, hashObject, signObject } from "./crypto.mjs";
 import {
@@ -17,13 +17,26 @@ function emptyStore() {
     recoveryLocks: {} };
 }
 
-function readStore(path) {
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function readStore(path, assertRoot) {
+  assertRoot("before store read");
+  let descriptor;
   try {
-    const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_STORE_BYTES) {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    const linked = lstatSync(path);
+    if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size > MAX_STORE_BYTES ||
+        linked.isSymbolicLink() || !sameIdentity(metadata, linked)) {
       throw new Error("validator recovery lock store is unsafe or oversized");
     }
-    const value = JSON.parse(readFileSync(path, "utf8"));
+    const value = JSON.parse(readFileSync(descriptor, "utf8"));
+    assertRoot("after store read");
+    if (!sameIdentity(metadata, lstatSync(path))) {
+      throw new Error("validator recovery lock store identity changed during read");
+    }
     const validLocks = (locks) => locks && Object.getPrototypeOf(locks) === Object.prototype &&
       Object.keys(locks).length <= MAX_LOCKS && Object.entries(locks).every(([generation, digest]) =>
         /^[1-9][0-9]*$/.test(generation) && Number.isSafeInteger(Number(generation)) &&
@@ -35,25 +48,28 @@ function readStore(path) {
     }
     return value;
   } catch (error) {
-    if (error?.code === "ENOENT") return emptyStore();
+    if (error?.code === "ENOENT") {
+      assertRoot("after missing store read");
+      return emptyStore();
+    }
     throw error;
-  }
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
-function persist(path, value) {
-  const directory = dirname(path);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
+function persist(path, value, directoryDescriptor, assertRoot) {
+  assertRoot("before store persist");
   const temporary = `${path}.tmp-${process.pid}`;
   const descriptor = openSync(temporary, "wx", 0o600);
   try {
     writeFileSync(descriptor, `${canonicalJson(value)}\n`);
     fsyncSync(descriptor);
+    fchmodSync(descriptor, 0o600);
   } finally { closeSync(descriptor); }
-  chmodSync(temporary, 0o600);
+  assertRoot("before store activation");
   renameSync(temporary, path);
-  const directoryDescriptor = openSync(directory, "r");
-  try { fsyncSync(directoryDescriptor); }
-  finally { closeSync(directoryDescriptor); }
+  assertRoot("after store activation");
+  fsyncSync(directoryDescriptor);
+  assertRoot("after store directory sync");
 }
 
 function processIsAlive(pid) {
@@ -65,36 +81,83 @@ function processIsAlive(pid) {
   }
 }
 
-function acquireSignerLock(path) {
+function acquireSignerLock(path, assertRoot) {
   const owner = String(process.pid);
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    try { symlinkSync(owner, path); return owner; }
+    assertRoot("before signer lock acquire");
+    try {
+      symlinkSync(owner, path);
+      assertRoot("after signer lock acquire");
+      return owner;
+    }
     catch (error) {
       if (error?.code !== "EEXIST") throw error;
+      assertRoot("before signer lock inspection");
       const existing = readlinkSync(path);
       if (!/^[1-9][0-9]*$/.test(existing) || processIsAlive(Number(existing))) {
         throw new Error("validator recovery signer is already locked");
       }
+      assertRoot("before stale signer lock removal");
       unlinkSync(path);
+      assertRoot("after stale signer lock removal");
     }
   }
   throw new Error("validator recovery signer lock could not be acquired");
 }
 
-function releaseSignerLock(path, owner) {
+function releaseSignerLock(path, owner, assertRoot) {
+  assertRoot("before signer lock release");
   if (readlinkSync(path) !== owner) throw new Error("validator recovery signer lock owner changed");
   unlinkSync(path);
+  assertRoot("after signer lock release");
 }
 
 export class ValidatorRecoveryLockStore {
+  #directory;
+  #directoryDescriptor;
+  #directoryIdentity;
   #path;
+  #poisoned = false;
   #store;
   #wallet;
 
   constructor(path, wallet) {
-    this.#path = resolve(path);
+    const requested = resolve(path);
+    const requestedDirectory = dirname(requested);
+    mkdirSync(requestedDirectory, { recursive: true, mode: 0o700 });
+    this.#directory = realpathSync(requestedDirectory);
+    this.#path = join(this.#directory, basename(requested));
+    if (!constants.O_NOFOLLOW || !constants.O_DIRECTORY) {
+      throw new Error("validator recovery lock store requires secure directory opens");
+    }
+    this.#directoryDescriptor = openSync(this.#directory,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    this.#directoryIdentity = fstatSync(this.#directoryDescriptor);
+    if (!this.#directoryIdentity.isDirectory() ||
+        !sameIdentity(this.#directoryIdentity, lstatSync(this.#directory))) {
+      closeSync(this.#directoryDescriptor);
+      throw new Error("validator recovery lock store root is unsafe");
+    }
     this.#wallet = wallet;
-    this.#store = readStore(this.#path);
+    this.#store = readStore(this.#path, (stage) => this.#assertRoot(stage));
+  }
+
+  #assertRoot(stage) {
+    if (this.#poisoned) throw new Error("validator recovery lock store root was replaced");
+    try {
+      const descriptor = fstatSync(this.#directoryDescriptor);
+      const linked = lstatSync(this.#directory);
+      if (!descriptor.isDirectory() || linked.isSymbolicLink() || !linked.isDirectory() ||
+          !sameIdentity(descriptor, this.#directoryIdentity) ||
+          !sameIdentity(linked, this.#directoryIdentity) ||
+          realpathSync(this.#directory) !== this.#directory) {
+        throw new Error(`validator recovery lock store root changed ${stage}`);
+      }
+    } catch (error) {
+      this.#poisoned = true;
+      if (error?.message?.startsWith("validator recovery lock store root changed")) throw error;
+      throw new Error(`validator recovery lock store root changed ${stage}`, { cause: error });
+    }
   }
 
   #lock(kind, context) {
@@ -102,10 +165,10 @@ export class ValidatorRecoveryLockStore {
       throw new Error("validator recovery lock generation is invalid");
     }
     const lockPath = `${this.#path}.signer-lock`;
-    mkdirSync(dirname(this.#path), { recursive: true, mode: 0o700 });
-    const owner = acquireSignerLock(lockPath);
+    this.#assertRoot("before signing");
+    const owner = acquireSignerLock(lockPath, (stage) => this.#assertRoot(stage));
     try {
-      const current = readStore(this.#path);
+      const current = readStore(this.#path, (stage) => this.#assertRoot(stage));
       const locks = kind === "checkpoint" ? current.checkpointLocks : current.recoveryLocks;
       const key = String(context.generation);
       const digest = hashObject(context, kind === "checkpoint" ?
@@ -116,10 +179,16 @@ export class ValidatorRecoveryLockStore {
       if (!locks[key]) {
         if (Object.keys(locks).length >= MAX_LOCKS) throw new Error("validator recovery lock store is full");
         locks[key] = digest;
-        persist(this.#path, current);
+        persist(this.#path, current, this.#directoryDescriptor,
+          (stage) => this.#assertRoot(stage));
       }
+      this.#assertRoot("before vote authorization");
       this.#store = current;
-    } finally { releaseSignerLock(lockPath, owner); }
+    } finally {
+      if (!this.#poisoned) {
+        releaseSignerLock(lockPath, owner, (stage) => this.#assertRoot(stage));
+      }
+    }
   }
 
   checkpointVote(context, phase) {

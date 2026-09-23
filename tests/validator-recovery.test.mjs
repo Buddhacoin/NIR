@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -366,6 +369,113 @@ test("durable reserve signer re-reads under an exclusive interprocess lock", () 
     symlinkSync("99999999", `${freshPath}.signer-lock`);
     assert.doesNotThrow(() => new ValidatorRecoveryLockStore(freshPath, wallet)
       .checkpointVote({ ...context, generation: 2 }, "prepare"));
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("durable reserve signer is poisoned by parent replacement without touching displaced journal", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-root-swap-"));
+  const live = join(directory, "live");
+  const displaced = join(directory, "displaced");
+  mkdirSync(live, { mode: 0o700 });
+  const path = join(live, "locks.json");
+  const wallet = generateWallet();
+  const context = { blockHash: "1".repeat(64), generation: 1, height: 10,
+    networkId: "n", planHash: "2".repeat(64), previousHash: "3".repeat(64),
+    reserveSetId: "4".repeat(64), stateRoot: "5".repeat(64) };
+  try {
+    const first = new ValidatorRecoveryLockStore(path, wallet);
+    const preopened = new ValidatorRecoveryLockStore(path, wallet);
+    first.checkpointVote(context, "prepare");
+    const original = readFileSync(path, "utf8");
+    renameSync(live, displaced);
+    mkdirSync(live, { mode: 0o700 });
+    assert.throws(() => first.checkpointVote({ ...context,
+      blockHash: "6".repeat(64) }, "commit"), /root (?:changed|was replaced)/);
+    assert.throws(() => preopened.checkpointVote({ ...context,
+      blockHash: "6".repeat(64) }, "prepare"), /root (?:changed|was replaced)/);
+    assert.equal(readFileSync(join(displaced, "locks.json"), "utf8"), original);
+    assert.equal(existsSync(join(live, "locks.json")), false);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("child reserve signer fails closed when its opened parent is swapped", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-child-swap-"));
+  const live = join(directory, "live");
+  const displaced = join(directory, "displaced");
+  const ready = join(directory, "ready");
+  const proceed = join(directory, "proceed");
+  const walletPath = join(directory, "wallet.json");
+  mkdirSync(live, { mode: 0o700 });
+  const path = join(live, "locks.json");
+  const wallet = generateWallet();
+  const context = { blockHash: "1".repeat(64), generation: 1, height: 10,
+    networkId: "n", planHash: "2".repeat(64), previousHash: "3".repeat(64),
+    reserveSetId: "4".repeat(64), stateRoot: "5".repeat(64) };
+  const program = `
+    import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    import { ValidatorRecoveryLockStore } from "./blockchain/validator-recovery-store.mjs";
+    const [path, walletPath, ready, proceed, encoded] = process.argv.slice(1);
+    const store = new ValidatorRecoveryLockStore(path, JSON.parse(readFileSync(walletPath, "utf8")));
+    writeFileSync(ready, "ready");
+    while (!existsSync(proceed)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    store.checkpointVote(JSON.parse(encoded), "prepare");`;
+  try {
+    writeFileSync(walletPath, JSON.stringify(wallet), { mode: 0o600 });
+    const child = spawn(process.execPath, ["--input-type=module", "-e", program,
+      path, walletPath, ready, proceed, JSON.stringify(context)], {
+      cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    for (let attempt = 0; attempt < 200 && !existsSync(ready); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(existsSync(ready), true);
+    renameSync(live, displaced);
+    mkdirSync(live, { mode: 0o700 });
+    writeFileSync(proceed, "go");
+    const status = await new Promise((resolve) => child.once("exit", resolve));
+    assert.notEqual(status, 0);
+    assert.match(stderr, /root changed/);
+    assert.equal(existsSync(join(displaced, "locks.json")), false);
+    assert.equal(existsSync(join(live, "locks.json")), false);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("twenty concurrent reserve processes persist only one generation value", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-twenty-process-"));
+  const path = join(directory, "locks.json");
+  const walletPath = join(directory, "wallet.json");
+  const wallet = generateWallet();
+  const base = { blockHash: "1".repeat(64), generation: 1, height: 10,
+    networkId: "n", planHash: "2".repeat(64), previousHash: "3".repeat(64),
+    reserveSetId: "4".repeat(64), stateRoot: "5".repeat(64) };
+  const program = `
+    import { readFileSync } from "node:fs";
+    import { ValidatorRecoveryLockStore } from "./blockchain/validator-recovery-store.mjs";
+    const [path, walletPath, marker, encoded] = process.argv.slice(1);
+    new ValidatorRecoveryLockStore(path, JSON.parse(readFileSync(walletPath, "utf8")))
+      .checkpointVote(JSON.parse(encoded), "prepare");
+    process.stdout.write(marker);`;
+  try {
+    writeFileSync(walletPath, JSON.stringify(wallet), { mode: 0o600 });
+    const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      new Promise((resolve) => {
+        const marker = index % 2 === 0 ? "A" : "B";
+        const context = marker === "A" ? base : { ...base, blockHash: "6".repeat(64) };
+        const child = spawn(process.execPath, ["--input-type=module", "-e", program,
+          path, walletPath, marker, JSON.stringify(context)], {
+          cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        child.stdout.on("data", (chunk) => { stdout += chunk; });
+        child.once("exit", (status) => resolve({ marker, status, stdout }));
+      })));
+    const successful = results.filter(({ status }) => status === 0);
+    assert.ok(successful.length >= 1);
+    assert.equal(new Set(successful.map(({ stdout }) => stdout)).size, 1);
+    const persisted = JSON.parse(readFileSync(path, "utf8"));
+    assert.equal(Object.keys(persisted.checkpointLocks).length, 1);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
