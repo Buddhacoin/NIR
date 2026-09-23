@@ -37,6 +37,17 @@ verification rejects both future and expired checkpoints. The local store alone 
 rollback of both copies; retain checkpoint hashes outside the machine and compare gossip checkpoints
 over independent operator-selected channels.
 
+Authority rotation is an offline ceremony. `transition-create` binds the last old-set checkpoint,
+network/genesis, the exact next monotonically numbered set, activation sequence, grace end, and a
+unique nonce. `transition-sign` is run separately by old and new operators; `transition-assemble`
+requires both thresholds, so the new signatures are also proof of possession. `transition-schedule`
+commits the approved transition into both store snapshots. The old set remains active until the
+delayed activation sequence, is permanently tombstoned at activation, and cannot be reintroduced.
+During the bounded grace window an old release may be checked against the first new-set checkpoint
+only when the dual-signed transition and a consistency proof from the last old root are supplied.
+Skipped generations, self-authorized takeover, replayed nonce/set IDs, mixed network/genesis,
+rollback, and signing outside the activation/grace rules fail closed.
+
 The portable archive authenticates NIR wallet/tool bytes and release provenance. It does not attest
 to the browser executable, operating system, system Node.js runtime, physical operator independence,
 or machine integrity. Nor does it prove global log availability or physical channel/operator

@@ -43,8 +43,13 @@ import {
   createWalletReleaseCheckpoint, createWalletReleaseConsistencyProof,
   createWalletReleaseInclusionProof, exportWalletReleaseGossipCheckpoint,
   loadWalletReleaseTransparencyStore, signWalletReleaseCheckpoint,
+  scheduleWalletReleaseAuthorityTransition,
   verifyWalletReleaseConsistencyProof, verifyWalletReleaseTransparencyEvidence,
 } from "../blockchain/production-wallet-transparency.mjs";
+import {
+  assembleWalletReleaseAuthorityTransition, createWalletReleaseAuthorityTransition,
+  signWalletReleaseAuthorityTransition,
+} from "../blockchain/production-wallet-authority-rotation.mjs";
 import {
   advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
   repairProductionHeadCopies, verifyProductionStartupFromHead,
@@ -860,7 +865,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     });
     let latestTransparencyStore = appendedRelease.store;
     let previousPortableBundleHash = exportBundleA.bundleHash;
-    for (let patch = 1; patch <= 3; patch += 1) {
+    const portableVersion = (patch, set = authoritySet, signers = releaseAuthorities) => {
       const nextManifest = createReleaseManifest(values.root, paths, {
         releaseVersion: `2.0.${patch}`, sourceRevision: values.manifest.sourceRevision,
       });
@@ -881,13 +886,18 @@ test("production wallet bridge and UI verify anchored generations before bind on
       const nextBundle = createProductionWalletExportBundle({ previousBundleHash: previousPortableBundleHash,
         signedRelease: nextSigned, toolPackage: nextToolPackage,
         trustedAddress: values.signer.address, walletPackage: nextWalletPackage });
-      const nextApprovals = releaseAuthorities.slice(0, 3)
+      const nextApprovals = signers.slice(0, set.threshold)
         .map((wallet) => signOfflineReleaseBundle(nextBundle, wallet));
-      const nextExport = assembleProductionWalletExport(nextBundle, authoritySet, nextApprovals);
-      latestTransparencyStore = appendWalletReleaseTransparency(transparencyRoot, nextExport, {
+      const nextExport = assembleProductionWalletExport(nextBundle, set, nextApprovals);
+      return { bundle: nextBundle, export: nextExport, signedRelease: nextSigned,
+        toolPackage: nextToolPackage, walletPackage: nextWalletPackage };
+    };
+    for (let patch = 1; patch <= 3; patch += 1) {
+      const next = portableVersion(patch);
+      latestTransparencyStore = appendWalletReleaseTransparency(transparencyRoot, next.export, {
         expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
       }).store;
-      previousPortableBundleHash = nextBundle.bundleHash;
+      previousPortableBundleHash = next.bundle.bundleHash;
     }
     const checkpointPayload = createWalletReleaseCheckpoint(latestTransparencyStore, {
       expiresAt: NOW + 10_000, issuedAt: NOW,
@@ -961,6 +971,85 @@ test("production wallet bridge and UI verify anchored generations before bind on
     assert.throws(() => verifyWalletReleaseTransparencyEvidence(verifiedExport, {
       checkpoint: signedCheckpoint, inclusionProof,
     }, { expectedCheckpointHash: signedCheckpoint.checkpointHash, now: NOW + 10_001 }), /stale/);
+    const nextAuthorityWallets = Array.from({ length: 4 }, generateWallet);
+    const nextAuthoritySet = createReleaseAuthoritySet({
+      authorities: nextAuthorityWallets.map((wallet, index) => ({
+        ...publicWallet(wallet), operatorId: `wallet-export-next-${index}`,
+      })), generation: 2, rotationDelayEntries: 2, threshold: 3,
+    });
+    const skippedAuthoritySet = createReleaseAuthoritySet({
+      authorities: nextAuthoritySet.authorities, generation: 3,
+      rotationDelayEntries: 2, threshold: 3,
+    });
+    assert.throws(() => createWalletReleaseAuthorityTransition({ activationDelay: 2,
+      createdAt: NOW, genesisHash: evidence.productionTarget.genesisHash, graceRecords: 3,
+      networkId: NETWORK, newSet: skippedAuthoritySet, oldCheckpoint: signedCheckpoint,
+      oldSet: authoritySet, transitionNonce: "8".repeat(64) }), /generation/);
+    const transition = createWalletReleaseAuthorityTransition({ activationDelay: 2, createdAt: NOW,
+      genesisHash: evidence.productionTarget.genesisHash, graceRecords: 3, networkId: NETWORK,
+      newSet: nextAuthoritySet, oldCheckpoint: signedCheckpoint, oldSet: authoritySet,
+      transitionNonce: "9".repeat(64) });
+    const oldTransitionSignatures = releaseAuthorities.slice(0, 3).map((wallet, index) =>
+      signWalletReleaseAuthorityTransition(transition, authoritySet, {
+        operatorId: `wallet-export-${index}`, role: "old", wallet,
+      }));
+    const newTransitionSignatures = nextAuthorityWallets.slice(0, 3).map((wallet, index) =>
+      signWalletReleaseAuthorityTransition(transition, authoritySet, {
+        operatorId: `wallet-export-next-${index}`, role: "new", wallet,
+      }));
+    const transitionEnvelope = assembleWalletReleaseAuthorityTransition(transition, authoritySet,
+      oldTransitionSignatures, newTransitionSignatures);
+    assert.throws(() => assembleWalletReleaseAuthorityTransition(transition, authoritySet,
+      oldTransitionSignatures, newTransitionSignatures.slice(0, 2)), /quorum/);
+    const forgedTransition = structuredClone(transition); forgedTransition.networkId = "other-network";
+    assert.throws(() => signWalletReleaseAuthorityTransition(forgedTransition, authoritySet, {
+      operatorId: "wallet-export-0", role: "old", wallet: releaseAuthorities[0],
+    }), /hash/);
+    latestTransparencyStore = scheduleWalletReleaseAuthorityTransition(transparencyRoot,
+      transitionEnvelope, { expectedOldCheckpointHash: signedCheckpoint.checkpointHash }).store;
+    assert.throws(() => scheduleWalletReleaseAuthorityTransition(transparencyRoot,
+      transitionEnvelope, { expectedOldCheckpointHash: signedCheckpoint.checkpointHash }), /stale|replayed/);
+    const overlapRelease = portableVersion(4);
+    latestTransparencyStore = appendWalletReleaseTransparency(transparencyRoot, overlapRelease.export, {
+      expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+    }).store;
+    previousPortableBundleHash = overlapRelease.bundle.bundleHash;
+    const activatedRelease = portableVersion(5, nextAuthoritySet, nextAuthorityWallets);
+    latestTransparencyStore = appendWalletReleaseTransparency(transparencyRoot, activatedRelease.export, {
+      expectedAuthoritySetId: nextAuthoritySet.setId, trustedReleaseAddress: values.signer.address,
+    }).store;
+    assert.throws(() => appendWalletReleaseTransparency(transparencyRoot, overlapRelease.export, {
+      expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+    }), /not active/);
+    assert.deepEqual(loadWalletReleaseTransparencyStore(transparencyRoot).store.tombstones,
+      [authoritySet.setId]);
+    const activatedCheckpointPayload = createWalletReleaseCheckpoint(latestTransparencyStore, {
+      expiresAt: NOW + 20_000, issuedAt: NOW + 1,
+    });
+    const activatedCheckpoint = assembleWalletReleaseCheckpoint(activatedCheckpointPayload,
+      nextAuthoritySet, nextAuthorityWallets.slice(0, 3).map((wallet, index) =>
+        signWalletReleaseCheckpoint(activatedCheckpointPayload, nextAuthoritySet, {
+          operatorId: `wallet-export-next-${index}`, wallet,
+        })));
+    const rotationProof = createWalletReleaseConsistencyProof(latestTransparencyStore,
+      signedCheckpoint.checkpoint.count);
+    const rotatedInclusion = createWalletReleaseInclusionProof(latestTransparencyStore, 1);
+    assert.equal(verifyWalletReleaseTransparencyEvidence(verifiedExport, {
+      checkpoint: activatedCheckpoint, consistencyProof: rotationProof,
+      inclusionProof: rotatedInclusion, transition: transitionEnvelope,
+    }, { expectedCheckpointHash: activatedCheckpoint.checkpointHash, now: NOW + 1 }).verified, true);
+    const activatedVerified = verifyProductionWalletExport(activatedRelease.export, {
+      expectedAuthoritySetId: nextAuthoritySet.setId, trustedReleaseAddress: values.signer.address,
+    });
+    assert.throws(() => verifyWalletReleaseTransparencyEvidence(activatedVerified, {
+      checkpoint: activatedCheckpoint,
+      inclusionProof: createWalletReleaseInclusionProof(latestTransparencyStore, 6),
+    }, { expectedCheckpointHash: activatedCheckpoint.checkpointHash, now: NOW + 1 }), /transition proof/);
+    assert.equal(verifyWalletReleaseTransparencyEvidence(activatedVerified, {
+      checkpoint: activatedCheckpoint, consistencyProof: rotationProof,
+      inclusionProof: createWalletReleaseInclusionProof(latestTransparencyStore, 6),
+      transition: transitionEnvelope,
+    }, { expectedCheckpointHash: activatedCheckpoint.checkpointHash, now: NOW + 1 }).verified, true);
     const exportCli = new URL("../blockchain/production-wallet-export-cli.mjs", import.meta.url).pathname;
     const exportRoots = [join(values.root, "export-root-a"), join(values.root, "export-root-b")];
     for (const root of exportRoots) mkdirSync(root);

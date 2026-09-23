@@ -5,12 +5,15 @@ import process from "node:process";
 
 import { canonicalJson } from "./crypto.mjs";
 import { readBoundedPublicJson } from "./production-release-gate.mjs";
+import { assembleWalletReleaseAuthorityTransition, createWalletReleaseAuthorityTransition,
+  signWalletReleaseAuthorityTransition } from "./production-wallet-authority-rotation.mjs";
 import {
   appendWalletReleaseTransparency, assembleWalletReleaseCheckpoint,
   compareWalletReleaseGossipCheckpoints,
   createWalletReleaseCheckpoint, createWalletReleaseConsistencyProof,
   createWalletReleaseInclusionProof, exportWalletReleaseGossipCheckpoint,
-  loadWalletReleaseTransparencyStore, signWalletReleaseCheckpoint,
+  loadWalletReleaseTransparencyStore, scheduleWalletReleaseAuthorityTransition,
+  signWalletReleaseCheckpoint,
   verifyWalletReleaseCheckpoint, verifyWalletReleaseConsistencyProof,
 } from "./production-wallet-transparency.mjs";
 import { decryptWallet } from "./vault.mjs";
@@ -81,6 +84,29 @@ try {
     result = assembleWalletReleaseCheckpoint(json(checkpointPath, 1024 * 1024),
       json(setPath, 1024 * 1024), signatures.map((path) => json(path, 64 * 1024)));
     writeExclusive(output, result);
+  } else if (command === "transition-create" && args.length === 10) {
+    const [oldSet, newSet, oldCheckpoint, delay, grace, createdAt, nonce, networkId,
+      genesisHash, output] = args;
+    result = createWalletReleaseAuthorityTransition({ activationDelay: Number(delay),
+      createdAt: Number(createdAt), genesisHash, graceRecords: Number(grace), networkId,
+      newSet: json(newSet, 1024 * 1024), oldCheckpoint: json(oldCheckpoint, 1024 * 1024),
+      oldSet: json(oldSet, 1024 * 1024), transitionNonce: nonce }); writeExclusive(output, result);
+  } else if (command === "transition-sign" && args.length === 6) {
+    const [transitionPath, oldSetPath, role, operatorId, vaultPath, output] = args;
+    const password = await secret("Authority transition vault password: ");
+    const wallet = decryptWallet(privateJson(vaultPath, 128 * 1024), password);
+    try { result = signWalletReleaseAuthorityTransition(json(transitionPath, 1024 * 1024),
+      json(oldSetPath, 1024 * 1024), { operatorId, role, wallet }); writeExclusive(output, result); }
+    finally { wallet.privateKey = ""; }
+  } else if (command === "transition-assemble" && args.length === 5) {
+    const [transitionPath, oldSetPath, oldSignaturesPath, newSignaturesPath, output] = args;
+    result = assembleWalletReleaseAuthorityTransition(json(transitionPath, 1024 * 1024),
+      json(oldSetPath, 1024 * 1024), json(oldSignaturesPath, 1024 * 1024),
+      json(newSignaturesPath, 1024 * 1024)); writeExclusive(output, result);
+  } else if (command === "transition-schedule" && args.length === 4) {
+    const [store, envelopePath, expectedOldCheckpointHash, output] = args;
+    result = scheduleWalletReleaseAuthorityTransition(store, json(envelopePath, 2 * 1024 * 1024),
+      { expectedOldCheckpointHash }); writeExclusive(output, result.transition);
   } else if (command === "proof" && args.length === 3) {
     const [store, sequence, output] = args; result = createWalletReleaseInclusionProof(
       loadWalletReleaseTransparencyStore(store).store, Number(sequence)); writeExclusive(output, result);
@@ -96,7 +122,7 @@ try {
   } else if (command === "compare-gossip" && args.length === 3) {
     const [left, right, proof] = args; result = compareWalletReleaseGossipCheckpoints(
       json(left, 64 * 1024), json(right, 64 * 1024), proof === "none" ? null : json(proof, 64 * 1024));
-  } else throw new Error("usage: wallet-transparency append STORE EXPORT RELEASE_ADDRESS AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH | checkpoint STORE ISSUED_AT EXPIRES_AT OUTPUT | sign CHECKPOINT SET OPERATOR_ID VAULT OUTPUT | assemble CHECKPOINT SET OUTPUT SIGNATURE... | proof STORE SEQUENCE OUTPUT | consistency STORE OLD_COUNT OUTPUT | gossip SIGNED_CHECKPOINT SET EXPECTED_HASH NOW OUTPUT | compare-gossip LEFT RIGHT CONSISTENCY_PROOF|none");
+  } else throw new Error("usage: wallet-transparency append STORE EXPORT RELEASE_ADDRESS AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH | checkpoint STORE ISSUED_AT EXPIRES_AT OUTPUT | sign CHECKPOINT SET OPERATOR_ID VAULT OUTPUT | assemble CHECKPOINT SET OUTPUT SIGNATURE... | transition-create OLD_SET NEW_SET OLD_CHECKPOINT DELAY GRACE CREATED_AT NONCE NETWORK GENESIS OUTPUT | transition-sign TRANSITION OLD_SET <old|new> OPERATOR VAULT OUTPUT | transition-assemble TRANSITION OLD_SET OLD_SIGNATURES_JSON NEW_SIGNATURES_JSON OUTPUT | transition-schedule STORE ENVELOPE OLD_CHECKPOINT_HASH OUTPUT | proof STORE SEQUENCE OUTPUT | consistency STORE OLD_COUNT OUTPUT | gossip SIGNED_CHECKPOINT SET EXPECTED_HASH NOW OUTPUT | compare-gossip LEFT RIGHT CONSISTENCY_PROOF|none");
   process.stdout.write(`${canonicalJson(result)}\n`);
 } catch (error) {
   process.stderr.write(`Wallet release transparency failed safely: ${error.message}\n`); process.exitCode = 1;

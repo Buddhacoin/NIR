@@ -9,6 +9,7 @@ import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mj
 import { SIGNATURE_ALGORITHM } from "./constants.mjs";
 import { validateReleaseAuthoritySet } from "./offline-release-governance.mjs";
 import { verifyProductionWalletExport } from "./production-wallet-export.mjs";
+import { verifyWalletReleaseAuthorityTransitionEnvelope } from "./production-wallet-authority-rotation.mjs";
 
 const STORE_FORMAT = "nir-wallet-release-transparency-store-v1";
 const RECORD_FORMAT = "nir-wallet-release-transparency-record-v1";
@@ -120,7 +121,8 @@ function recordPayload(value) {
   return structuredClone(value);
 }
 function validateStore(value) {
-  exact(value, ["checksum", "count", "format", "headHash", "merkleRoot", "records", "version"],
+  exact(value, ["authorityTransitions", "checksum", "count", "format", "headHash", "merkleRoot",
+    "records", "tombstones", "version"],
     "wallet release transparency store");
   if (value.format !== STORE_FORMAT || value.version !== 1 || !Array.isArray(value.records) ||
       value.records.length > MAX_RECORDS || value.count !== value.records.length ||
@@ -132,20 +134,45 @@ function validateStore(value) {
     if (recordHash !== envelope.recordHash || record.sequence !== index + 1 ||
         record.previousRecordHash !== previous || packages.has(record.walletPackageHash) ||
         bundles.has(record.bundleHash)) throw new Error("wallet release log is reordered, duplicate, or forked");
-    if (context && (record.networkId !== context.networkId || record.genesisHash !== context.genesisHash ||
-        record.authoritySetId !== context.authoritySetId)) throw new Error("wallet release log context changed");
+    if (context && (record.networkId !== context.networkId || record.genesisHash !== context.genesisHash)) {
+      throw new Error("wallet release log context changed");
+    }
     context ??= record; packages.add(record.walletPackageHash); bundles.add(record.bundleHash); previous = recordHash;
     return { record, recordHash };
   });
   const leaves = records.map(({ recordHash }) => leaf(recordHash));
-  const payload = { count: records.length, format: STORE_FORMAT, headHash: previous,
-    merkleRoot: merkleRoot(leaves), records, version: 1 };
+  if (!Array.isArray(value.authorityTransitions) || value.authorityTransitions.length > 64 ||
+      !Array.isArray(value.tombstones) || value.tombstones.length !== value.authorityTransitions.length) {
+    throw new Error("wallet release authority history is invalid");
+  }
+  const tombstones = []; let activeSetId = context?.authoritySetId ?? null; let generation = null;
+  const authorityTransitions = value.authorityTransitions.map((entry) => {
+    const verified = verifyWalletReleaseAuthorityTransitionEnvelope(entry);
+    if (activeSetId !== null && verified.transition.oldSetId !== activeSetId ||
+        generation !== null && verified.transition.newSet.generation !== generation + 1 ||
+        verified.transition.oldCount > records.length || tombstones.includes(verified.transition.newSet.setId)) {
+      throw new Error("wallet release authority history is forked or non-monotonic");
+    }
+    generation = verified.transition.newSet.generation; tombstones.push(verified.transition.oldSetId);
+    activeSetId = verified.transition.newSet.setId; return verified;
+  });
+  for (const { record } of records) {
+    let expectedSetId = records[0].record.authoritySetId;
+    for (const entry of authorityTransitions) {
+      if (record.sequence >= entry.transition.activationSequence) expectedSetId = entry.transition.newSet.setId;
+    }
+    if (record.authoritySetId !== expectedSetId) throw new Error("wallet release record used an inactive authority set");
+  }
+  if (canonicalJson(tombstones) !== canonicalJson(value.tombstones)) throw new Error("wallet release authority tombstones are invalid");
+  const payload = { authorityTransitions, count: records.length, format: STORE_FORMAT, headHash: previous,
+    merkleRoot: merkleRoot(leaves), records, tombstones, version: 1 };
   if (value.headHash !== payload.headHash || value.merkleRoot !== payload.merkleRoot ||
       value.checksum !== hashObject(payload, "WALLET_RELEASE_STORE_V1")) throw new Error("wallet release store commitment is invalid");
   return { ...payload, checksum: value.checksum };
 }
 function emptyStore() {
-  const payload = { count: 0, format: STORE_FORMAT, headHash: ZERO, merkleRoot: ZERO, records: [], version: 1 };
+  const payload = { authorityTransitions: [], count: 0, format: STORE_FORMAT, headHash: ZERO,
+    merkleRoot: ZERO, records: [], tombstones: [], version: 1 };
   return { ...payload, checksum: hashObject(payload, "WALLET_RELEASE_STORE_V1") };
 }
 function requireFs() {
@@ -237,6 +264,13 @@ export function appendWalletReleaseTransparency(pathValue, exportValue, options 
     const current = loadCopies(root).store;
     if (current.count >= MAX_RECORDS) throw new Error("wallet release log capacity is exhausted");
     const binding = verified.binding;
+    const transition = current.authorityTransitions.at(-1)?.transition ?? null;
+    const expectedSetId = transition === null || current.count + 1 < transition.activationSequence
+      ? (current.records.at(-1)?.record.authoritySetId ?? verified.authoritySet.setId)
+      : transition.newSet.setId;
+    if (verified.authoritySet.setId !== expectedSetId) {
+      throw new Error("wallet release authority set is not active at this sequence");
+    }
     const record = recordPayload({ authoritySetId: verified.authoritySet.setId,
       bundleHash: verified.bundle.bundleHash, format: RECORD_FORMAT, genesisHash: binding.genesisHash,
       networkId: binding.networkId, previousRecordHash: current.headHash,
@@ -246,12 +280,45 @@ export function appendWalletReleaseTransparency(pathValue, exportValue, options 
       walletPackageHash: binding.wallet.packageHash });
     const recordHash = hashObject(record, "WALLET_RELEASE_RECORD_V1");
     const records = [...current.records, { record, recordHash }];
-    const payload = { count: records.length, format: STORE_FORMAT, headHash: recordHash,
-      merkleRoot: merkleRoot(records.map((entry) => leaf(entry.recordHash))), records, version: 1 };
+    const payload = { authorityTransitions: current.authorityTransitions, count: records.length,
+      format: STORE_FORMAT, headHash: recordHash,
+      merkleRoot: merkleRoot(records.map((entry) => leaf(entry.recordHash))), records,
+      tombstones: current.tombstones, version: 1 };
     const store = { ...payload, checksum: hashObject(payload, "WALLET_RELEASE_STORE_V1") };
     writeCopy(root, PRIMARY, store, options._beforePrimaryRename);
     writeCopy(root, BACKUP, store, options._beforeBackupRename);
     return { record, recordHash, store };
+  } finally { try { unlock(root, held); } finally { closeSync(root.descriptor); } }
+}
+
+export function scheduleWalletReleaseAuthorityTransition(pathValue, envelopeValue, options = {}) {
+  const transition = verifyWalletReleaseAuthorityTransitionEnvelope(envelopeValue);
+  const root = openRoot(pathValue); const held = lock(root);
+  try {
+    const current = loadCopies(root).store; const prior = current.authorityTransitions.at(-1)?.transition;
+    const activeSetId = prior?.newSet.setId ?? current.records.at(-1)?.record.authoritySetId;
+    const activeGeneration = prior?.newSet.generation ?? transition.oldSet.generation;
+    if (!activeSetId || transition.transition.oldSetId !== activeSetId ||
+        transition.oldSet.generation !== activeGeneration ||
+        transition.transition.oldCount !== current.count ||
+        transition.transition.oldMerkleRoot !== current.merkleRoot ||
+        transition.transition.oldCheckpointHash !== options.expectedOldCheckpointHash ||
+        transition.transition.networkId !== current.records[0]?.record.networkId ||
+        transition.transition.genesisHash !== current.records[0]?.record.genesisHash ||
+        current.authorityTransitions.some((item) => item.transition.transitionNonce ===
+          transition.transition.transitionNonce || item.transition.newSet.setId === transition.transition.newSet.setId) ||
+        current.tombstones.includes(transition.transition.newSet.setId)) {
+      throw new Error("wallet release authority transition is stale, replayed, or mixed");
+    }
+    const authorityTransitions = [...current.authorityTransitions, transition];
+    const tombstones = [...current.tombstones, transition.transition.oldSetId];
+    const payload = { authorityTransitions, count: current.count, format: STORE_FORMAT,
+      headHash: current.headHash, merkleRoot: current.merkleRoot, records: current.records,
+      tombstones, version: 1 };
+    const store = { ...payload, checksum: hashObject(payload, "WALLET_RELEASE_STORE_V1") };
+    writeCopy(root, PRIMARY, store, options._beforePrimaryRename);
+    writeCopy(root, BACKUP, store, options._beforeBackupRename);
+    return { store, transition };
   } finally { try { unlock(root, held); } finally { closeSync(root.descriptor); } }
 }
 
@@ -384,12 +451,42 @@ export function compareWalletReleaseGossipCheckpoints(leftValue, rightValue, con
 export function verifyWalletReleaseTransparencyEvidence(verifiedExport, evidence, {
   expectedCheckpointHash, now,
 }) {
-  exact(evidence, ["checkpoint", "inclusionProof"], "wallet release transparency evidence");
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) ||
+      !new Set(["checkpoint\0inclusionProof", "checkpoint\0consistencyProof\0inclusionProof\0transition"])
+        .has(Object.keys(evidence).sort().join("\0"))) {
+    throw new Error("wallet release transparency evidence schema is invalid");
+  }
   if (!verifiedExport?.authoritySet || !verifiedExport?.binding || !verifiedExport?.bundle) {
     throw new Error("verified wallet export context is required");
   }
-  const checkpoint = verifyWalletReleaseCheckpoint(evidence.checkpoint,
-    verifiedExport.authoritySet, { expectedCheckpointHash, now });
+  let checkpoint; const checkpointSetId = evidence.checkpoint?.checkpoint?.authoritySetId;
+  const requiresTransition = checkpointSetId !== verifiedExport.authoritySet.setId ||
+    verifiedExport.authoritySet.generation > 1;
+  if (!requiresTransition) {
+    checkpoint = verifyWalletReleaseCheckpoint(evidence.checkpoint,
+      verifiedExport.authoritySet, { expectedCheckpointHash, now });
+  } else {
+    if (!("transition" in evidence) || !("consistencyProof" in evidence)) {
+      throw new Error("wallet release authority transition proof is required");
+    }
+    const transition = verifyWalletReleaseAuthorityTransitionEnvelope(evidence.transition);
+    const isOldRelease = transition.transition.oldSetId === verifiedExport.authoritySet.setId;
+    const isNewRelease = transition.transition.newSet.setId === verifiedExport.authoritySet.setId;
+    if ((!isOldRelease && !isNewRelease) || transition.transition.newSet.setId !== checkpointSetId ||
+        evidence.checkpoint.checkpoint.count < transition.transition.activationSequence ||
+        (isOldRelease && evidence.checkpoint.checkpoint.count > transition.transition.graceEndSequence)) {
+      throw new Error("wallet release authority transition is outside its proof grace window");
+    }
+    checkpoint = verifyWalletReleaseCheckpoint(evidence.checkpoint,
+      transition.transition.newSet, { expectedCheckpointHash, now });
+    const consistency = verifyWalletReleaseConsistencyProof(evidence.consistencyProof);
+    if (consistency.oldCount !== transition.transition.oldCount ||
+        consistency.oldRoot !== transition.transition.oldMerkleRoot ||
+        consistency.newCount !== checkpoint.checkpoint.count ||
+        consistency.newRoot !== checkpoint.checkpoint.merkleRoot) {
+      throw new Error("wallet release rotation consistency proof is invalid");
+    }
+  }
   const included = verifyWalletReleaseInclusionProof(evidence.inclusionProof, checkpoint);
   const binding = verifiedExport.binding; const record = included.record;
   if (record.bundleHash !== verifiedExport.bundle.bundleHash ||
