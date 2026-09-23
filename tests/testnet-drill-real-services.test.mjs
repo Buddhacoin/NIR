@@ -88,7 +88,8 @@ test("real beacon quorum and independent archive recovery bind release and valid
   assert.equal(successful.report.beacon.recoveryShares.length, 3);
   assert.equal(successful.report.beacon.firstShares.length, 4);
   assert.deepEqual(successful.report.beacon.authorities,
-    successful.report.validator.report.genesis.beaconAuthorities);
+    [...successful.report.validator.report.genesis.beaconAuthorities]
+      .sort((left, right) => left.address < right.address ? -1 : left.address > right.address ? 1 : 0));
   assert.equal(successful.report.archive.recovery.matchingSources, 2);
   assert.equal(successful.cleanup.status, "PASS");
   assert.equal(successful.validatorCleanup.status, "PASS");
@@ -120,7 +121,15 @@ test("beacon and archive outage claims cannot bypass their real quorum evidence"
 test("on-chain authority registry, validator tip, and run binding fail closed", () => {
   const registry = structuredClone(successful.report);
   registry.beacon.authorities[0].operatorId = "substituted-beacon";
-  assert.throws(() => validateRealBeaconArchiveReport(rehash(registry)), /on-chain genesis registry/);
+  assert.throws(() => validateRealBeaconArchiveReport(rehash(registry)), /active on-chain registry/);
+  const generation = structuredClone(successful.report);
+  generation.beacon.generation += 1;
+  assert.throws(() => validateRealBeaconArchiveReport(rehash(generation)),
+    /active on-chain registry/);
+  const setId = structuredClone(successful.report);
+  setId.beacon.setId = "0".repeat(64);
+  assert.throws(() => validateRealBeaconArchiveReport(rehash(setId)),
+    /active on-chain registry/);
   const tip = structuredClone(successful.report);
   tip.beacon.validatorTip = "f".repeat(64);
   assert.throws(() => validateRealBeaconArchiveReport(rehash(tip)), /validator|release checkpoint/);

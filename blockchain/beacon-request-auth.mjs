@@ -57,10 +57,11 @@ export function validateBeaconRequesterPolicy(value, { beaconAddress, networkId 
 
 function payload(value) {
   exact(value, ["beaconAddress", "candidateId", "expiresAt", "issuedAt", "networkId", "nonce",
-    "purpose", "requester", "round"], "beacon share request payload");
+    "purpose", "requester", "round", "generation"], "beacon share request payload");
   if (!ADDRESS.test(value.beaconAddress ?? "") || !ADDRESS.test(value.requester ?? "") ||
       !HASH.test(value.candidateId ?? "") || !HASH.test(value.nonce ?? "") ||
       !["fallback", "progress"].includes(value.purpose) ||
+      !Number.isSafeInteger(value.generation) || value.generation < 0 ||
       !Number.isSafeInteger(value.round) || value.round < 1 ||
       !Number.isSafeInteger(value.issuedAt) || value.issuedAt < 0 ||
       !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= value.issuedAt ||
@@ -74,7 +75,7 @@ export function createBeaconShareRequest(fields, wallet, {
   clock = () => Date.now(), lifetimeMs = 30_000, nonce = randomBytes(32).toString("hex"),
 } = {}) {
   const issuedAt = clock();
-  const unsigned = payload({ ...fields, expiresAt: issuedAt + lifetimeMs, issuedAt, nonce,
+  const unsigned = payload({ generation: 0, ...fields, expiresAt: issuedAt + lifetimeMs, issuedAt, nonce,
     requester: wallet.address });
   return { format: FORMAT, payload: unsigned, signature: signObject(unsigned, wallet, DOMAIN) };
 }

@@ -28,44 +28,45 @@ export function createRandomnessReveal({ wallet, networkId, candidateId, secret 
   return { ...payload, signature: signObject(payload, wallet, "RANDOMNESS_REVEAL") };
 }
 
-export function createFallbackBeaconShare({ wallet, networkId, candidateId, round, value }) {
+export function createFallbackBeaconShare({ wallet, networkId, candidateId, round, value, generation = 0 }) {
   if (!wallet || !HASH.test(candidateId ?? "") || !HASH.test(value ?? "") ||
       !Number.isSafeInteger(round) || round < 1) throw new Error("fallback beacon share input is invalid");
-  const payload = { authority: wallet.address, candidateId, networkId, round, value };
+  const payload = { authority: wallet.address, candidateId, generation, networkId, round, value };
   return { ...payload, signature: signObject(payload, wallet, "FALLBACK_RANDOMNESS_SHARE") };
 }
 
-export function createFallbackBeacon({ shares, networkId, candidateId, round }) {
+export function createFallbackBeacon({ shares, networkId, candidateId, round, generation = 0 }) {
   if (!Array.isArray(shares) || !HASH.test(candidateId ?? "") ||
       !Number.isSafeInteger(round) || round < 1) throw new Error("fallback beacon input is invalid");
   const attestations = shares.map((share) => ({
     authority: share.authority, signature: share.signature, value: share.value,
   })).sort((a, b) => a.authority.localeCompare(b.authority));
-  const value = hashObject({ candidateId, networkId, round, shares: attestations.map(({ authority, value }) => ({ authority, value })) },
+  const value = hashObject({ candidateId, generation, networkId, round,
+    shares: attestations.map(({ authority, value }) => ({ authority, value })) },
     "FALLBACK_RANDOMNESS_SHARES");
-  return { candidateId, networkId, round, value, attestations };
+  return { candidateId, generation, networkId, round, value, attestations };
 }
 
-export function createProgressBeaconShare({ wallet, networkId, candidateId, round, value }) {
+export function createProgressBeaconShare({ wallet, networkId, candidateId, round, value, generation = 0 }) {
   if (!wallet || !HASH.test(candidateId ?? "") || !HASH.test(value ?? "") ||
       !Number.isSafeInteger(round) || round < 1) throw new Error("progress beacon share input is invalid");
-  const payload = { authority: wallet.address, candidateId, networkId, round, value };
+  const payload = { authority: wallet.address, candidateId, generation, networkId, round, value };
   return { ...payload, signature: signObject(payload, wallet, "PROGRESS_RANDOMNESS_SHARE") };
 }
 
-export function createProgressBeacon({ shares, networkId, candidateId, round }) {
+export function createProgressBeacon({ shares, networkId, candidateId, round, generation = 0 }) {
   if (!Array.isArray(shares) || !HASH.test(candidateId ?? "") ||
       !Number.isSafeInteger(round) || round < 1) throw new Error("progress beacon input is invalid");
   const attestations = shares.map((share) => ({
     authority: share.authority, signature: share.signature, value: share.value,
   })).sort((a, b) => a.authority.localeCompare(b.authority));
   const value = hashObject({
-    candidateId, networkId, round,
+    candidateId, generation, networkId, round,
     shares: attestations.map(({ authority, value: shareValue }) => ({
       authority, value: shareValue,
     })),
   }, "PROGRESS_RANDOMNESS_SHARES");
-  return { candidateId, networkId, round, value, attestations };
+  return { candidateId, generation, networkId, round, value, attestations };
 }
 
 export function combineRandomnessReveals({ networkId, candidateId, commitments, reveals, quorum }) {
@@ -88,19 +89,20 @@ export function epochRandomnessCommitment({ networkId, round, secret }) {
   return hashObject({ networkId, round, secret }, "EPOCH_RANDOMNESS_COMMITMENT");
 }
 
-export function createEpochRandomnessCommit({ wallet, networkId, round, secret }) {
+export function createEpochRandomnessCommit({ wallet, networkId, round, secret, generation = 0 }) {
   const payload = {
     authority: wallet.address,
     commitment: epochRandomnessCommitment({ networkId, round, secret }),
+    generation,
     networkId,
     round,
   };
   return { ...payload, signature: signObject(payload, wallet, "EPOCH_RANDOMNESS_COMMIT") };
 }
 
-export function createEpochRandomnessReveal({ wallet, networkId, round, secret }) {
+export function createEpochRandomnessReveal({ wallet, networkId, round, secret, generation = 0 }) {
   epochRandomnessCommitment({ networkId, round, secret });
-  const payload = { authority: wallet.address, networkId, round, secret };
+  const payload = { authority: wallet.address, generation, networkId, round, secret };
   return { ...payload, signature: signObject(payload, wallet, "EPOCH_RANDOMNESS_REVEAL") };
 }
 
@@ -112,6 +114,7 @@ export class EpochRandomnessMachine {
   #committeeSize;
   #disabled = new Set();
   #excluded = new Set();
+  #generation;
   #lastFault = null;
   #networkId;
   #previousSeed;
@@ -119,11 +122,15 @@ export class EpochRandomnessMachine {
   #reveals = new Map();
   #round = 1;
 
-  constructor({ networkId, registry, committeeSize, genesisSeed }) {
+  constructor({ networkId, registry, committeeSize, genesisSeed, generation = 0 }) {
     if (!(registry instanceof Map) || !HASH.test(genesisSeed ?? "")) {
       throw new Error("epoch randomness configuration is invalid");
     }
     this.#networkId = networkId;
+    if (!Number.isSafeInteger(generation) || generation < 0) {
+      throw new Error("epoch randomness generation is invalid");
+    }
+    this.#generation = generation;
     this.#registry = registry;
     this.#committeeSize = committeeSize;
     this.#previousSeed = genesisSeed;
@@ -132,6 +139,7 @@ export class EpochRandomnessMachine {
 
   static fromSnapshot({ networkId, registry, committeeSize, snapshot }) {
     if (!snapshot || !Number.isSafeInteger(snapshot.round) || snapshot.round < 1 ||
+        !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 0 ||
         !HASH.test(snapshot.previousSeed ?? "") ||
         !Array.isArray(snapshot.committee) || !Array.isArray(snapshot.commitments) ||
         !Array.isArray(snapshot.reveals) || !Array.isArray(snapshot.excluded) ||
@@ -141,6 +149,7 @@ export class EpochRandomnessMachine {
     }
     const machine = new EpochRandomnessMachine({
       networkId, registry, committeeSize, genesisSeed: snapshot.previousSeed,
+      generation: snapshot.generation,
     });
     machine.#round = snapshot.round;
     machine.#previousSeed = snapshot.previousSeed;
@@ -213,6 +222,7 @@ export class EpochRandomnessMachine {
       committee: [...this.#committee],
       disabled: [...this.#disabled].sort(),
       excluded: [...this.#excluded].sort(),
+      generation: this.#generation,
       lastFault: structuredClone(this.#lastFault),
       previousSeed: this.#previousSeed,
       reveals: [...this.#reveals.entries()].sort(([left], [right]) => left.localeCompare(right)),
@@ -227,7 +237,8 @@ export class EpochRandomnessMachine {
 
   commit(message, height) {
     if (!Number.isSafeInteger(height) || height < 1 || message?.networkId !== this.#networkId ||
-        message?.round !== this.#round || !this.#committee.includes(message.authority) ||
+        message?.generation !== this.#generation || message?.round !== this.#round ||
+        !this.#committee.includes(message.authority) ||
         !HASH.test(message.commitment ?? "") || this.#commitments.has(message.authority)) {
       throw new Error("epoch randomness commit is invalid or duplicated");
     }
@@ -268,7 +279,8 @@ export class EpochRandomnessMachine {
 
   reveal(message, height) {
     if (this.#commitHeight === null || !Number.isSafeInteger(height) || height <= this.#commitHeight ||
-        message?.networkId !== this.#networkId || message?.round !== this.#round ||
+        message?.networkId !== this.#networkId || message?.generation !== this.#generation ||
+        message?.round !== this.#round ||
         !this.#committee.includes(message.authority) || this.#reveals.has(message.authority) ||
         !HASH.test(message.secret ?? "")) {
       throw new Error("epoch randomness reveal is premature, invalid, or duplicated");
@@ -301,6 +313,26 @@ export class EpochRandomnessMachine {
     this.#reveals = new Map();
     this.#committee = this.#selectCommittee();
     return { round: completedRound, value };
+  }
+
+  rotate({ registry, committeeSize, generation, previousSetId, nextSetId }) {
+    if (!(registry instanceof Map) || generation !== this.#generation + 1 ||
+        !HASH.test(previousSetId ?? "") || !HASH.test(nextSetId ?? "")) {
+      throw new Error("epoch randomness rotation is invalid");
+    }
+    const machine = new EpochRandomnessMachine({
+      committeeSize,
+      generation,
+      genesisSeed: hashObject({
+        generation, networkId: this.#networkId, nextSetId,
+        previousSeed: this.#previousSeed, previousSetId,
+      }, "EPOCH_RANDOMNESS_ROTATION"),
+      networkId: this.#networkId,
+      registry,
+    });
+    machine.#round = this.#round + 1;
+    machine.#committee = machine.#selectCommittee();
+    return machine;
   }
 }
 

@@ -273,14 +273,16 @@ function verifyBeaconShares(authorities, shares, context) {
     throw new Error("beacon authorities are duplicated or invalid");
   }
   const seen = new Set();
+  const generation = context.generation ?? 0;
   for (const share of shares) {
-    exact(share, ["authority", "candidateId", "networkId", "round", "signature", "value"],
+    exact(share, ["authority", "candidateId", "generation", "networkId", "round", "signature", "value"],
       "beacon share");
     const authority = trusted.get(share?.authority);
     const payload = { authority: share?.authority, candidateId: context.candidateId,
-      networkId: context.networkId, round: context.round, value: share?.value };
+      generation, networkId: context.networkId, round: context.round, value: share?.value };
     if (!authority || seen.has(share.authority) || share.candidateId !== context.candidateId ||
-        share.networkId !== context.networkId || share.round !== context.round ||
+        share.generation !== generation || share.networkId !== context.networkId ||
+        share.round !== context.round ||
         !verifyObject(payload, share.signature, authority.publicKey, "FALLBACK_RANDOMNESS_SHARE")) {
       throw new Error("beacon share signature or context is invalid");
     }
@@ -288,7 +290,7 @@ function verifyBeaconShares(authorities, shares, context) {
   }
   const quorum = Math.floor((authorities.length * 2) / 3) + 1;
   if (seen.size < quorum) throw new Error("real beacon quorum not reached");
-  return createFallbackBeacon({ shares, ...context });
+  return createFallbackBeacon({ shares, ...context, generation });
 }
 
 function chainFromValidatorReport(report) {
@@ -321,13 +323,14 @@ export function validateRealBeaconArchiveReport(value, { now = Date.now() } = {}
     throw new Error("service transcript is not bound to the validator or release checkpoint");
   }
   const chain = chainFromValidatorReport(value.validator.report);
-  exact(value.beacon, ["aggregate", "authorities", "candidateId", "firstShares",
+  exact(value.beacon, ["aggregate", "authorities", "candidateId", "firstShares", "generation",
     "outageCandidateId", "outageQuorumRejected", "recoveryShares", "releaseCheckpointHash",
     "releaseManifestHash", "replayRejected", "replayStatus", "restartReplayRejected", "restartStableShare",
-    "validatorTip"], "real beacon evidence");
-  if (canonicalJson(value.beacon.authorities) !==
-      canonicalJson(value.validator.report.genesis.beaconAuthorities)) {
-    throw new Error("beacon authorities are not the on-chain genesis registry");
+    "setId", "validatorTip"], "real beacon evidence");
+  const beaconStatus = chain.beaconAuthorityStatus();
+  if (canonicalJson(value.beacon.authorities) !== canonicalJson(beaconStatus.authorities) ||
+      value.beacon.generation !== beaconStatus.generation || value.beacon.setId !== beaconStatus.setId) {
+    throw new Error("beacon authorities are not the active on-chain registry");
   }
   const expectedCandidate = digest({ networkId: value.networkId, purpose: "initial",
     releaseCheckpointHash: release.checkpoint.checkpointHash,
@@ -344,10 +347,12 @@ export function validateRealBeaconArchiveReport(value, { now = Date.now() } = {}
     throw new Error("beacon restart or fail-closed evidence is invalid");
   }
   verifyBeaconShares(value.beacon.authorities, value.beacon.firstShares, {
-    candidateId: expectedCandidate, networkId: value.networkId, round: 1,
+    candidateId: expectedCandidate, generation: value.beacon.generation,
+    networkId: value.networkId, round: 1,
   });
   const aggregate = verifyBeaconShares(value.beacon.authorities, value.beacon.recoveryShares, {
-    candidateId: expectedOutage, networkId: value.networkId, round: 2,
+    candidateId: expectedOutage, generation: value.beacon.generation,
+    networkId: value.networkId, round: 2,
   });
   if (canonicalJson(aggregate) !== canonicalJson(value.beacon.aggregate)) {
     throw new Error("beacon recovery aggregate is invalid");
@@ -404,7 +409,7 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     reservations = await reservePorts(6);
     const startedAt = Date.now();
     const requester = generateWallet();
-    const authorities = structuredClone(validator.report.genesis.beaconAuthorities);
+    const authorities = chain.beaconAuthorityStatus().authorities;
     const beaconConfigs = beaconWallets.map((wallet, index) => {
       const password = `beacon-rehearsal-${index}-Strong-42`;
       const vaultPath = join(root, `beacon-${index}.nirvault.json`);
@@ -435,16 +440,18 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     const candidateId = digest({ networkId: chain.networkId, purpose: "initial",
       releaseCheckpointHash: verifiedRelease.checkpoint.checkpointHash,
       releaseManifestHash: verifiedRelease.manifest.manifestHash, validatorTip: chain.tipHash });
+    const beaconGeneration = chain.beaconAuthorityStatus().generation;
     const firstRequests = []; const firstShares = [];
     for (let index = 0; index < 4; index += 1) {
       const exchange = await beaconShare(`http://${LOOPBACK}:${beaconConfigs[index].port}`, {
         beaconAddress: beaconWallets[index].address, candidateId, networkId: chain.networkId,
-        purpose: "fallback", round: 1,
+        generation: beaconGeneration, purpose: "fallback", round: 1,
       }, requester);
       if (!exchange.response.ok) throw new Error("real beacon rejected a valid share request");
       firstRequests.push(exchange.envelope); firstShares.push(exchange.response.body);
     }
-    verifyBeaconShares(authorities, firstShares, { candidateId, networkId: chain.networkId, round: 1 });
+    verifyBeaconShares(authorities, firstShares, { candidateId, generation: beaconGeneration,
+      networkId: chain.networkId, round: 1 });
     const replay = await requestJson(`http://${LOOPBACK}:${beaconConfigs[0].port}/v1/share`, {
       body: firstRequests[0], method: "POST", timeoutMs: limits.requestTimeoutMs,
     });
@@ -459,14 +466,15 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     for (let index = 0; index < 2; index += 1) {
       const exchange = await beaconShare(`http://${LOOPBACK}:${beaconConfigs[index].port}`, {
         beaconAddress: beaconWallets[index].address, candidateId: outageCandidateId,
-        networkId: chain.networkId, purpose: "fallback", round: 2,
+        generation: beaconGeneration, networkId: chain.networkId, purpose: "fallback", round: 2,
       }, requester);
       if (!exchange.response.ok) throw new Error("live beacon rejected recovery context");
       recoveryShares.push(exchange.response.body);
     }
     let outageQuorumRejected = false;
     try { verifyBeaconShares(authorities, recoveryShares, {
-      candidateId: outageCandidateId, networkId: chain.networkId, round: 2,
+      candidateId: outageCandidateId, generation: beaconGeneration,
+      networkId: chain.networkId, round: 2,
     }); } catch (error) { if (/quorum/.test(error.message)) outageQuorumRejected = true; else throw error; }
     if (!outageQuorumRejected) throw new Error("beacon quorum did not fail closed during outage");
     const restartedBeacon = startBeacon(beaconConfigs[2], limits); records.push(restartedBeacon);
@@ -476,7 +484,8 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     });
     if (restartReplay.status !== 409) throw new Error("restarted beacon forgot durable replay state");
     const stableExchange = await beaconShare(`http://${LOOPBACK}:${beaconConfigs[2].port}`, {
-      beaconAddress: beaconWallets[2].address, candidateId, networkId: chain.networkId,
+      beaconAddress: beaconWallets[2].address, candidateId, generation: beaconGeneration,
+      networkId: chain.networkId,
       purpose: "fallback", round: 1,
     }, requester);
     if (!stableExchange.response.ok ||
@@ -485,12 +494,13 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     }
     const recoveredExchange = await beaconShare(`http://${LOOPBACK}:${beaconConfigs[2].port}`, {
       beaconAddress: beaconWallets[2].address, candidateId: outageCandidateId,
-      networkId: chain.networkId, purpose: "fallback", round: 2,
+      generation: beaconGeneration, networkId: chain.networkId, purpose: "fallback", round: 2,
     }, requester);
     if (!recoveredExchange.response.ok) throw new Error("restarted beacon failed recovery share");
     recoveryShares.push(recoveredExchange.response.body);
     const aggregate = verifyBeaconShares(authorities, recoveryShares, {
-      candidateId: outageCandidateId, networkId: chain.networkId, round: 2,
+      candidateId: outageCandidateId, generation: beaconGeneration,
+      networkId: chain.networkId, round: 2,
     });
 
     const historyDirectory = join(root, "history"); mkdirSync(historyDirectory, { mode: 0o700 });
@@ -536,12 +546,14 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     });
     const fields = servicePayload({ archive: { artifacts, operators: archiveOperators,
       outageQuorumRejected: archiveOutageRejected, recovery },
-    beacon: { aggregate, authorities, candidateId, firstShares, outageCandidateId,
+    beacon: { aggregate, authorities, candidateId, firstShares, generation: beaconGeneration,
+      outageCandidateId,
       outageQuorumRejected, recoveryShares,
       releaseCheckpointHash: verifiedRelease.checkpoint.checkpointHash,
       releaseManifestHash: verifiedRelease.manifest.manifestHash, replayRejected: true,
       replayStatus: replay.status, restartReplayRejected: true,
-      restartStableShare: stableExchange.response.body, validatorTip: chain.tipHash },
+      restartStableShare: stableExchange.response.body,
+      setId: chain.beaconAuthorityStatus().setId, validatorTip: chain.tipHash },
     completedAt: Date.now(), networkId: chain.networkId,
     releaseEvidence: structuredClone(releaseEvidence), startedAt,
     validator: { report: validator.report, validation: validator.validation } });

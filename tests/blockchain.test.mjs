@@ -1491,6 +1491,14 @@ test("a progress challenge requires an independent beacon quorum after commitmen
     () => chain.appendBlock(finalizeBlock(forgedAggregate, quorumFor(forgedAggregate, validators))),
     /aggregate is invalid/,
   );
+  const crossGeneration = chain.buildBlock({
+    progressBeacons: [{ ...validBeacon, generation: 1 }],
+    timestamp: currentTimestamp(chain),
+  });
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(crossGeneration, quorumFor(crossGeneration, validators))),
+    /progress beacon is invalid/,
+  );
   const source = chain.buildBlock({
     progressBeacons: [validBeacon],
     timestamp: currentTimestamp(chain),
@@ -2066,6 +2074,12 @@ test("a fallback beacon assigns the committee and slashes a missing revealer", (
   assert.throws(
     () => chain.appendBlock(finalizeBlock(forgedAggregate, quorumFor(forgedAggregate, validators))),
     /fallback beacon aggregate is invalid/,
+  );
+  const crossGeneration = structuredClone(timeoutBlock);
+  crossGeneration.fallbackBeacons[0].generation = 1;
+  assert.throws(
+    () => chain.appendBlock(finalizeBlock(crossGeneration, quorumFor(crossGeneration, validators))),
+    /fallback beacon is invalid/,
   );
   chain.appendBlock(finalizeBlock(timeoutBlock, quorumFor(timeoutBlock, validators)));
 

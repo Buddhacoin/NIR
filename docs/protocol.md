@@ -152,6 +152,14 @@ genesis authority reaches the minimum, avoiding a circular launch dependency.
 After activation, a timeout burns one percent of each non-revealer's bond and
 increments its consensus fault count. An authority that falls below the minimum
 is disabled from later epoch committees; the timeout still never creates a seed.
+Bonded beacon membership can subsequently rotate through a state-rooted delayed
+handoff. More than two thirds of the old generation authorize the exact next set,
+every next key proves possession, every member remains bonded, at least one third
+of addresses overlap, and activation waits 64 finalized blocks. Signed beacon
+shares carry the generation. The boundary accepts no beacon contribution, advances
+the epoch round with a set-bound seed, and refunds/removes unresolved progress
+admissions so no old committee becomes permanently unserviceable. Stale generation,
+parent-set rollback, abrupt takeover, and cross-generation replay are rejected.
 
 ### Epoch-randomness transition
 

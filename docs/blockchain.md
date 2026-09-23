@@ -127,6 +127,15 @@ admission per author, and the 4,096-entry state cap remain additional bounds.
 Production must deploy beacon authorities under genuinely independent control.
 If their quorum is unavailable, new challenges pause safely instead of falling
 back to proposer-controlled randomness.
+The active beacon registry is not permanently frozen at genesis. Once native
+bond enforcement is active, a same-size next generation may be scheduled at
+least 64 blocks ahead with an old-set supermajority, possession signatures from
+all next keys, full bonds, and at least one-third address overlap. Generation and
+both set hashes bind every handoff. Epoch, progress, and fallback signatures are
+generation-bound; the activation block accepts none of them, advances to a fresh
+set-bound epoch attempt, and refunds unresolved progress admissions. The active
+and registered registries, generation, pending handoff, and bonds are snapshot-
+and state-rooted. This is key continuity, not proof of corporate independence.
 
 Validator and initial evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. Genesis locks one fixed

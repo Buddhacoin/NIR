@@ -22,6 +22,7 @@ import { loadBlockStore } from "../blockchain/block-store.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { certificateSha256, requestJson } from "../blockchain/http-client.mjs";
+import { createFallbackBeaconShare } from "../blockchain/operators.mjs";
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -96,6 +97,7 @@ function beaconBody(fixture, fields = {}, options = {}) {
   return JSON.stringify(createBeaconShareRequest({
     beaconAddress: fixture.wallet.address,
     candidateId: fields.candidateId ?? "a".repeat(64),
+    generation: fields.generation ?? 0,
     networkId: fields.networkId ?? fixture.networkId,
     purpose: fields.purpose ?? "fallback",
     round: fields.round ?? 1,
@@ -240,6 +242,30 @@ test("beacon validates exact signed shape and rejects a replayed durable nonce",
       activeNonces: 1, generation: 0, highWater: 0, maxNonces: 100_000,
     });
     assert.equal(JSON.stringify(metrics).includes(fixture.wallet.address), false);
+  } finally {
+    await close(fixture.server);
+  }
+});
+
+test("a rotated beacon never reuses a generationless persisted share", async () => {
+  const fixture = beaconFixture();
+  const candidateId = "d".repeat(64);
+  fixture.issued.set(`fallback:${candidateId}:1`, createFallbackBeaconShare({
+    wallet: fixture.wallet, networkId: fixture.networkId, candidateId,
+    generation: 0, round: 1, value: "1".repeat(64),
+  }));
+  const url = await listen(fixture.server);
+  try {
+    const payload = beaconBody(fixture, { candidateId, generation: 1 });
+    const response = await request(url, {
+      body: payload,
+      headers: { "content-length": String(Buffer.byteLength(payload)) },
+      method: "POST",
+      path: "/v1/share",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.generation, 1);
+    assert.equal(fixture.issued.has(`fallback:1:${candidateId}:1`), true);
   } finally {
     await close(fixture.server);
   }

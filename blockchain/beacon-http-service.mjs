@@ -126,11 +126,12 @@ export function createBeaconHttpServer({
       const auth = await authentication.run("beacon-preauth", () => verifyBeaconShareRequest(envelope, {
         beaconAddress: wallet.address, clock, minimumTime: timeHighWater(), networkId, requesters,
       }));
-      const { candidateId, purpose, replayKey, round } = auth;
+      const { candidateId, generation, purpose, replayKey, round } = auth;
       if (nonces.has(replayKey) || failedNonces.has(replayKey)) {
         throw new HttpIngressError("replay", "beacon share request nonce was already used", 409);
       }
-      const key = `${purpose}:${candidateId}:${round}`;
+      const key = `${purpose}:${generation}:${candidateId}:${round}`;
+      const generationlessKey = `${purpose}:${candidateId}:${round}`;
       const legacyKey = `${candidateId}:${round}`;
       if (failedKeys.has(key)) {
         throw new HttpIngressError(
@@ -145,8 +146,10 @@ export function createBeaconHttpServer({
             totals.capacityRejected += 1;
             throw new HttpIngressError("capacity", "beacon nonce capacity is exhausted", 503);
           }
-          const known = issued.get(key) ??
-            (purpose === "fallback" ? issued.get(legacyKey) : undefined);
+          const known = issued.get(key) ?? (generation === 0
+            ? issued.get(generationlessKey) ??
+              (purpose === "fallback" ? issued.get(legacyKey) : undefined)
+            : undefined);
           if (known) {
             try { await persist({ auth, type: "nonce" }); }
             catch (error) { failedNonces.add(replayKey); throw error; }
@@ -165,7 +168,7 @@ export function createBeaconHttpServer({
             throw new Error("beacon randomness source failed");
           }
           const created = createShare({
-            wallet, networkId, candidateId, round, value: value.toString("hex"),
+            wallet, networkId, candidateId, generation, round, value: value.toString("hex"),
           });
           try { await persist({ auth, key, share: created, type: "share-and-nonce" }); }
           catch (error) { failedKeys.add(key); failedNonces.add(replayKey); throw error; }

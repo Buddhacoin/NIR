@@ -58,6 +58,10 @@ import {
 } from "./safety-bounty.mjs";
 import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
 import { peerRegistryHash, verifyPeerRegistry } from "./peer-registry.mjs";
+import {
+  beaconAuthoritySetId,
+  verifyBeaconRotation,
+} from "./beacon-rotation.mjs";
 import { verifyValidatorOnboarding } from "./validator-onboarding.mjs";
 import {
   normalizePendingProtocolUpgrade,
@@ -341,6 +345,9 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "beacon-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
     "signature", "type",
+  ], [
+    "algorithm", "amount", "fee", "networkId", "nonce", "operatorId", "publicKey",
+    "sender", "signature", "type",
   ]],
   "candidate-bond": [[
     "algorithm", "amount", "candidateId", "fee", "networkId", "nonce", "publicKey",
@@ -687,13 +694,14 @@ export function createEvaluatorBond({
 }
 
 export function createBeaconBond({
-  wallet, networkId, amount, nonce, fee = MIN_TRANSFER_FEE.toString(),
+  wallet, networkId, amount, nonce, operatorId, fee = MIN_TRANSFER_FEE.toString(),
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount), fee: String(fee), networkId, nonce,
     publicKey: wallet.publicKey, sender: wallet.address, type: "beacon-bond",
   };
+  if (operatorId !== undefined) transaction.operatorId = operatorId;
   return { ...transaction, signature: signObject(transaction, wallet, "BEACON_BOND") };
 }
 
@@ -940,6 +948,7 @@ function unsignedBlock(block) {
 
 const BLOCK_FIELDS = Object.freeze([
   "accountStateRoot",
+  "beaconRotation",
   "capabilityMemoryRoot",
   "certificate",
   "epochRandomnessCommits",
@@ -1182,7 +1191,10 @@ export class NirChain {
   #evaluationQuorum;
   #epochRandomness;
   #beaconAuthorities;
+  #beaconGeneration;
   #beaconQuorum;
+  #pendingBeaconRotation;
+  #registeredBeaconAuthorities;
   #evaluatorOrder;
   #evaluators;
   #evaluatorBonds;
@@ -1276,6 +1288,9 @@ export class NirChain {
     this.#genesisConfig.evaluatorBondAmount = genesisEvaluatorBond.toString();
     this.#genesisEvaluatorBondAllocation = genesisEvaluatorBonds;
     this.#beaconAuthorities = operatorRegistry(beaconAuthorities, "beacon authority");
+    this.#registeredBeaconAuthorities = new Map(this.#beaconAuthorities);
+    this.#beaconGeneration = 0;
+    this.#pendingBeaconRotation = null;
     const validatorOperators = new Set(
       [...this.#validators.values()].map(({ operatorId }) => operatorId),
     );
@@ -1308,6 +1323,7 @@ export class NirChain {
         authorities: [...this.#beaconAuthorities.keys()].sort(),
         networkId,
       }, "EPOCH_RANDOMNESS_GENESIS"),
+      generation: this.#beaconGeneration,
     });
     assertAddress(treasuryAddress, "treasury address");
     this.#accountHistories = new Map();
@@ -1485,15 +1501,45 @@ export class NirChain {
     if (typeof state.beaconBondingActive !== "boolean") {
       throw new Error("beacon bonding activation snapshot is invalid");
     }
+    const beaconAuthorities = operatorRegistry(
+      [...snapshotEntries(state.beaconAuthorities, "beacon authorities").values()],
+      "beacon authority snapshot",
+    );
+    const registeredBeaconAuthorities = operatorRegistry(
+      [...snapshotEntries(state.registeredBeaconAuthorities,
+        "registered beacon authorities").values()],
+      "registered beacon authority snapshot",
+    );
+    const beaconGeneration = snapshotInteger(state.beaconGeneration, "beacon generation");
+    if (beaconAuthorities.size < 4 || beaconAuthorities.size > 64 ||
+        registeredBeaconAuthorities.size > 64 || [...beaconAuthorities].some(([address, member]) =>
+          canonicalJson(registeredBeaconAuthorities.get(address)) !== canonicalJson(member))) {
+      throw new Error("beacon authority snapshot registry is invalid");
+    }
     const beaconBonds = snapshotEntries(state.beaconBonds, "beacon bonds");
     for (const [address, value] of beaconBonds) {
-      if (!chain.#beaconAuthorities.has(address)) throw new Error("beacon bond snapshot address is invalid");
+      if (!registeredBeaconAuthorities.has(address)) throw new Error("beacon bond snapshot address is invalid");
       beaconBonds.set(address, snapshotAtomic(value, "beacon bond"));
     }
     const beaconFaults = snapshotEntries(state.beaconFaults, "beacon faults");
     for (const [address, value] of beaconFaults) {
-      if (!chain.#beaconAuthorities.has(address)) throw new Error("beacon fault snapshot address is invalid");
+      if (!registeredBeaconAuthorities.has(address)) throw new Error("beacon fault snapshot address is invalid");
       beaconFaults.set(address, snapshotInteger(value, "beacon fault"));
+    }
+    let pendingBeaconRotation = null;
+    if (state.pendingBeaconRotation !== null) {
+      pendingBeaconRotation = verifyBeaconRotation(state.pendingBeaconRotation, {
+        bonds: beaconBonds,
+        currentAuthorities: [...beaconAuthorities.values()],
+        currentGeneration: beaconGeneration,
+        currentHeight: state.pendingBeaconRotation.activationHeight - 64,
+        networkId: chain.#networkId,
+      });
+      if (pendingBeaconRotation.activationHeight <= snapshot.height ||
+          pendingBeaconRotation.authorities.some((member) =>
+            canonicalJson(registeredBeaconAuthorities.get(member.address)) !== canonicalJson(member))) {
+        throw new Error("pending beacon rotation snapshot is invalid");
+      }
     }
     const nonces = snapshotEntries(state.nonces, "nonces");
     for (const [address, value] of nonces) {
@@ -1559,7 +1605,7 @@ export class NirChain {
       if (!pending || Object.keys(pending).sort().join("\0") !==
           ["activationHeight", "address", "algorithm", "operatorId", "publicKey"].sort().join("\0") ||
           pending.address !== address || evaluators.has(address) ||
-          chain.#validators.has(address) || chain.#beaconAuthorities.has(address) ||
+          chain.#validators.has(address) || registeredBeaconAuthorities.has(address) ||
           pending.algorithm !== SIGNATURE_ALGORITHM ||
           addressFromPublicKey(pending.publicKey) !== address ||
           !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(pending.operatorId ?? "") ||
@@ -1570,7 +1616,7 @@ export class NirChain {
       }
     }
     const allOperators = [
-      ...evaluators.values(), ...chain.#validators.values(), ...chain.#beaconAuthorities.values(),
+      ...evaluators.values(), ...chain.#validators.values(), ...registeredBeaconAuthorities.values(),
       ...pendingEvaluatorRegistrations.values(),
     ].map(({ operatorId }) => operatorId);
     if (new Set(allOperators).size !== allOperators.length) {
@@ -1689,17 +1735,19 @@ export class NirChain {
       }
       const beaconUnassigned = commitment.beaconCommittee === null &&
         commitment.beaconCommitteeHeight === null && commitment.beaconCommitteeSource === null &&
-        commitment.beaconRandomnessRound === null;
+        commitment.beaconRandomnessRound === null && commitment.beaconGeneration === null;
       const beaconAssigned =
         Array.isArray(commitment.beaconCommittee) &&
         commitment.beaconCommittee.length === chain.#beaconQuorum &&
         new Set(commitment.beaconCommittee).size === commitment.beaconCommittee.length &&
-        commitment.beaconCommittee.every((address) => chain.#beaconAuthorities.has(address)) &&
+        commitment.beaconCommittee.every((address) => registeredBeaconAuthorities.has(address)) &&
         Number.isSafeInteger(commitment.beaconCommitteeHeight) &&
         commitment.beaconCommitteeHeight > commitment.committedHeight &&
         commitment.beaconCommitteeHeight <= commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE &&
         Number.isSafeInteger(commitment.beaconRandomnessRound) &&
         commitment.beaconRandomnessRound >= commitment.randomnessRound &&
+        Number.isSafeInteger(commitment.beaconGeneration) && commitment.beaconGeneration >= 0 &&
+        commitment.beaconGeneration <= beaconGeneration &&
         /^[0-9a-f]{64}$/.test(commitment.beaconCommitteeSource ?? "");
       if (!beaconUnassigned && !beaconAssigned) {
         throw new Error("progress beacon committee snapshot is invalid");
@@ -1737,13 +1785,13 @@ export class NirChain {
       [...pendingEvaluatorRegistrations.values()].map(({ operatorId }) => operatorId),
     );
     if ([...evaluators.values()].some(({ address, operatorId }) =>
-      registeredMembers.has(address) || chain.#beaconAuthorities.has(address) ||
-      [...registeredMembers.values(), ...chain.#beaconAuthorities.values()]
+      registeredMembers.has(address) || registeredBeaconAuthorities.has(address) ||
+      [...registeredMembers.values(), ...registeredBeaconAuthorities.values()]
         .some((member) => member.operatorId === operatorId)) ||
         [...pendingEvaluatorRegistrations.values()].some(({ address, operatorId }) =>
-          registeredMembers.has(address) || chain.#beaconAuthorities.has(address) ||
+          registeredMembers.has(address) || registeredBeaconAuthorities.has(address) ||
           evaluatorOperators.has(operatorId) ||
-          [...registeredMembers.values(), ...chain.#beaconAuthorities.values()]
+          [...registeredMembers.values(), ...registeredBeaconAuthorities.values()]
             .some((member) => member.operatorId === operatorId)) ||
         pendingEvaluatorOperators.size !== pendingEvaluatorRegistrations.size) {
       throw new Error("snapshot evaluator roles or operators overlap another protocol role");
@@ -1792,7 +1840,7 @@ export class NirChain {
           !bond || bond.purpose !== "progress" || !bond.admissionBound ||
           bond.bond !== bondAmount || bond.submitter !== escrow.refundAddress ||
           [bond.candidateOwner, escrow.recipient, escrow.refundAddress].some((address) =>
-            chain.#evaluators.has(address) || chain.#beaconAuthorities.has(address) ||
+            chain.#evaluators.has(address) || registeredBeaconAuthorities.has(address) ||
             registeredMembers.has(address))) {
         throw new Error("progress reward escrow bond or role binding is invalid");
       }
@@ -1817,7 +1865,7 @@ export class NirChain {
       if (!bond || bond.purpose !== "progress" || !bond.admissionBound ||
           bond.candidateOwner !== commitment.sender ||
           [commitment.sender, commitment.recipient].some((address) =>
-            chain.#evaluators.has(address) || chain.#beaconAuthorities.has(address) ||
+            chain.#evaluators.has(address) || registeredBeaconAuthorities.has(address) ||
             registeredMembers.has(address))) {
         throw new Error("progress commitment snapshot role or bond binding is invalid");
       }
@@ -1846,7 +1894,12 @@ export class NirChain {
     chain.#balances = balances;
     chain.#beaconBondingActive = state.beaconBondingActive;
     chain.#beaconBonds = beaconBonds;
+    chain.#beaconAuthorities = beaconAuthorities;
     chain.#beaconFaults = beaconFaults;
+    chain.#beaconGeneration = beaconGeneration;
+    chain.#beaconQuorum = Math.floor((beaconAuthorities.size * 2) / 3) + 1;
+    chain.#pendingBeaconRotation = pendingBeaconRotation;
+    chain.#registeredBeaconAuthorities = registeredBeaconAuthorities;
     chain.#burned = snapshotAtomic(state.burned, "burned supply");
     chain.#candidateBonds = candidateBonds;
     chain.#capabilityMemory = memory;
@@ -1862,6 +1915,9 @@ export class NirChain {
       committeeSize: chain.#beaconQuorum,
       snapshot: state.epochRandomness,
     });
+    if (chain.#epochRandomness.snapshot().generation !== chain.#beaconGeneration) {
+      throw new Error("epoch randomness and beacon generations are inconsistent");
+    }
     chain.#lastRewardTimestamp = snapshotSignedInteger(state.lastRewardTimestamp, "last reward timestamp");
     chain.#evaluatorBonds = evaluatorBonds;
     chain.#evaluatorFaults = evaluatorFaults;
@@ -2003,6 +2059,20 @@ export class NirChain {
     return structuredClone(this.#epochRandomness.snapshot());
   }
 
+  beaconAuthorityStatus() {
+    const authorities = [...this.#beaconAuthorities.values()]
+      .map((member) => structuredClone(member))
+      .sort((left, right) => left.address < right.address ? -1 : left.address > right.address ? 1 : 0);
+    return {
+      authorities,
+      generation: this.#beaconGeneration,
+      pendingRotation: structuredClone(this.#pendingBeaconRotation),
+      setId: beaconAuthoritySetId({
+        generation: this.#beaconGeneration, members: authorities, networkId: this.#networkId,
+      }),
+    };
+  }
+
   #stateRoot(overrides = {}) {
     const protocolVersion = overrides.protocolVersion ?? this.#protocolVersion;
     return computeChainStateRoot({
@@ -2014,7 +2084,9 @@ export class NirChain {
       balances: overrides.balances ?? this.#balances,
       beaconBondingActive: overrides.beaconBondingActive ?? this.#beaconBondingActive,
       beaconBonds: overrides.beaconBonds ?? this.#beaconBonds,
+      beaconAuthorities: overrides.beaconAuthorities ?? this.#beaconAuthorities,
       beaconFaults: overrides.beaconFaults ?? this.#beaconFaults,
+      beaconGeneration: overrides.beaconGeneration ?? this.#beaconGeneration,
       burned: overrides.burned ?? this.#burned,
       candidateBonds: overrides.candidateBonds ?? this.#candidateBonds,
       capabilityMemoryRoot: overrides.capabilityMemoryRoot ?? this.#capabilityMemory.stateRoot,
@@ -2033,6 +2105,9 @@ export class NirChain {
       nonces: overrides.nonces ?? this.#nonces,
       pendingEvaluatorRegistrations:
         overrides.pendingEvaluatorRegistrations ?? this.#pendingEvaluatorRegistrations,
+      pendingBeaconRotation:
+        overrides.pendingBeaconRotation === undefined
+          ? this.#pendingBeaconRotation : overrides.pendingBeaconRotation,
       pendingValidatorRotation:
         overrides.pendingValidatorRotation === undefined
           ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
@@ -2045,6 +2120,8 @@ export class NirChain {
       progressFraudEvidence: overrides.progressFraudEvidence ?? this.#progressFraudEvidence,
       protocolVersion,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
+      registeredBeaconAuthorities:
+        overrides.registeredBeaconAuthorities ?? this.#registeredBeaconAuthorities,
       registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
       rewardEpoch: overrides.rewardEpoch ?? this.#rewardEpoch,
       rewardedProofs: overrides.rewardedProofs ?? this.#rewardedProofs,
@@ -2069,7 +2146,9 @@ export class NirChain {
         balances: this.#balances,
         beaconBondingActive: this.#beaconBondingActive,
         beaconBonds: this.#beaconBonds,
+        beaconAuthorities: this.#beaconAuthorities,
         beaconFaults: this.#beaconFaults,
+        beaconGeneration: this.#beaconGeneration,
         burned: this.#burned,
         candidateBonds: this.#candidateBonds,
         capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
@@ -2086,6 +2165,7 @@ export class NirChain {
         mined: this.#mined,
         nonces: this.#nonces,
         pendingEvaluatorRegistrations: this.#pendingEvaluatorRegistrations,
+        pendingBeaconRotation: this.#pendingBeaconRotation,
         pendingProtocolUpgrade: this.#pendingProtocolUpgrade,
         pendingValidatorRotation: this.#pendingValidatorRotation,
         peerRegistry: this.#peerRegistry,
@@ -2094,6 +2174,7 @@ export class NirChain {
         progressFraudEvidence: this.#progressFraudEvidence,
         protocolVersion: this.#protocolVersion,
         randomnessFaults: this.#randomnessFaults,
+        registeredBeaconAuthorities: this.#registeredBeaconAuthorities,
         registeredValidators: this.#registeredValidators,
         rewardEpoch: this.#rewardEpoch,
         rewardedProofs: this.#rewardedProofs,
@@ -2469,7 +2550,7 @@ export class NirChain {
     epochRandomnessCommits = [], epochRandomnessReveals = [],
     progressBeacons = [],
     progressFraudProofs = [],
-    validatorRotation = null, peerRegistryUpdate = null,
+    beaconRotation = null, validatorRotation = null, peerRegistryUpdate = null,
     protocolUpgrade = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
@@ -2532,6 +2613,25 @@ export class NirChain {
       settlement: this.#verifySafetyClaim(claim, height, stagedBonds, stagedEvidence),
     }));
     let scheduledRotation = null;
+    let scheduledBeaconRotation = null;
+    if (beaconRotation !== null) {
+      if (this.#pendingBeaconRotation || !this.#beaconBondingActive) {
+        throw new Error("beacon rotation is already pending or bonding is inactive");
+      }
+      for (const member of beaconRotation.authorities ?? []) {
+        const registered = this.#registeredBeaconAuthorities.get(member.address);
+        if (!registered || canonicalJson(registered) !== canonicalJson(member)) {
+          throw new Error("next beacon authority is not registered");
+        }
+      }
+      scheduledBeaconRotation = verifyBeaconRotation(beaconRotation, {
+        bonds: this.#beaconBonds,
+        currentAuthorities: [...this.#beaconAuthorities.values()],
+        currentGeneration: this.#beaconGeneration,
+        currentHeight: this.height,
+        networkId: this.#networkId,
+      });
+    }
     if (validatorRotation !== null) {
       if (this.#pendingValidatorRotation) throw new Error("a validator rotation is already pending");
       const proposed = (validatorRotation.validators ?? []).map(({ address }) => {
@@ -2560,6 +2660,9 @@ export class NirChain {
         throw new Error("validator onboarding requires an active peer registry");
       }
     }
+    if (beaconRotation !== null && (validatorRotation !== null || peerRegistryUpdate !== null)) {
+      throw new Error("beacon, validator, and peer rotations require separate blocks");
+    }
     if ((validatorRotation !== null || this.#pendingValidatorRotation) && peerRegistryUpdate !== null) {
       throw new Error("validator and peer registry rotations require separate blocks");
     }
@@ -2577,6 +2680,7 @@ export class NirChain {
     }
     const proposal = {
       accountStateRoot: "0".repeat(64),
+      beaconRotation: scheduledBeaconRotation,
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
       height,
       networkId: this.#networkId,
@@ -2733,7 +2837,8 @@ export class NirChain {
 
   #verifyFallbackBeacon(claim, candidateId, round) {
     if (claim?.candidateId !== candidateId || claim?.networkId !== this.#networkId ||
-        claim?.round !== round || !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
+        claim?.generation !== this.#beaconGeneration || claim?.round !== round ||
+        !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
         !Array.isArray(claim.attestations) || claim.attestations.length > this.#beaconAuthorities.size) {
       throw new Error("fallback beacon is invalid");
     }
@@ -2741,7 +2846,8 @@ export class NirChain {
     for (const attestation of claim.attestations) {
       const authority = this.#beaconAuthorities.get(attestation.authority);
       const payload = {
-        authority: attestation.authority, candidateId, networkId: this.#networkId,
+        authority: attestation.authority, candidateId, generation: claim.generation,
+        networkId: this.#networkId,
         round, value: attestation.value,
       };
       if (!authority || signers.has(attestation.authority) ||
@@ -2753,7 +2859,7 @@ export class NirChain {
     }
     if (signers.size < this.#beaconQuorum) throw new Error("fallback beacon quorum not reached");
     const expectedValue = hashObject({
-      candidateId, networkId: this.#networkId, round,
+      candidateId, generation: claim.generation, networkId: this.#networkId, round,
       shares: [...claim.attestations]
         .map(({ authority, value }) => ({ authority, value }))
         .sort((a, b) => a.authority.localeCompare(b.authority)),
@@ -2764,7 +2870,8 @@ export class NirChain {
 
   #verifyProgressBeacon(claim, candidateId, round, expectedCommittee) {
     if (claim?.candidateId !== candidateId || claim?.networkId !== this.#networkId ||
-        claim?.round !== round || !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
+        claim?.generation !== this.#beaconGeneration || claim?.round !== round ||
+        !/^[0-9a-f]{64}$/.test(claim?.value ?? "") ||
         !Array.isArray(claim.attestations) ||
         claim.attestations.length !== expectedCommittee.length) {
       throw new Error("progress beacon is invalid");
@@ -2774,7 +2881,8 @@ export class NirChain {
     for (const attestation of claim.attestations) {
       const authority = this.#beaconAuthorities.get(attestation.authority);
       const payload = {
-        authority: attestation.authority, candidateId, networkId: this.#networkId,
+        authority: attestation.authority, candidateId, generation: claim.generation,
+        networkId: this.#networkId,
         round, value: attestation.value,
       };
       if (!authority || !required.has(attestation.authority) || signers.has(attestation.authority) ||
@@ -2788,7 +2896,7 @@ export class NirChain {
       throw new Error("assigned progress beacon committee is incomplete");
     }
     const expectedValue = hashObject({
-      candidateId, networkId: this.#networkId, round,
+      candidateId, generation: claim.generation, networkId: this.#networkId, round,
       shares: [...claim.attestations]
         .map(({ authority, value }) => ({ authority, value }))
         .sort((a, b) => a.authority.localeCompare(b.authority)),
@@ -3014,7 +3122,8 @@ export class NirChain {
   #applyProgressCommitment(
     transaction, nonces, progressCommitments, capabilityMemory, candidateBonds,
     progressEscrows, registeredValidators, evaluatorBonds, disabledEvaluators,
-    evaluators, pendingEvaluatorRegistrations, height, randomnessRound,
+    evaluators, pendingEvaluatorRegistrations, registeredBeaconAuthorities,
+    height, randomnessRound,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -3042,7 +3151,7 @@ export class NirChain {
     }
     if ([transaction.sender, transaction.recipient].some((address) =>
       evaluators.has(address) || pendingEvaluatorRegistrations.has(address) ||
-      this.#beaconAuthorities.has(address) ||
+      registeredBeaconAuthorities.has(address) ||
       registeredValidators.has(address))) {
       throw new Error("progress submitter and recipient must use keys outside protocol operator roles");
     }
@@ -3108,6 +3217,7 @@ export class NirChain {
       beaconCommittee: null,
       beaconCommitteeHeight: null,
       beaconCommitteeSource: null,
+      beaconGeneration: null,
       beaconRandomnessRound: null,
       beaconValue: null,
       challengeHeight: null,
@@ -3125,7 +3235,7 @@ export class NirChain {
   #applyValidatorBond(
     transaction, balances, nonces, validatorBonds, registeredValidators,
     disabledValidators, progressCommitments, evaluators, pendingEvaluatorRegistrations,
-    proposer,
+    registeredBeaconAuthorities, proposer,
   ) {
     if ([...progressCommitments.values()].some(({ sender, recipient }) =>
       transaction.sender === sender || transaction.sender === recipient)) {
@@ -3146,9 +3256,9 @@ export class NirChain {
           !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId) ||
           registeredValidators.size >= MAX_VALIDATORS ||
           evaluators.has(transaction.sender) || pendingEvaluatorRegistrations.has(transaction.sender) ||
-          this.#beaconAuthorities.has(transaction.sender) ||
+          registeredBeaconAuthorities.has(transaction.sender) ||
           [...registeredValidators.values(), ...evaluators.values(),
-            ...pendingEvaluatorRegistrations.values(), ...this.#beaconAuthorities.values()]
+            ...pendingEvaluatorRegistrations.values(), ...registeredBeaconAuthorities.values()]
             .some(({ operatorId }) => operatorId === transaction.operatorId)) {
         throw new Error("new validator operator id is invalid or duplicated");
       }
@@ -3176,7 +3286,7 @@ export class NirChain {
 
   #applyEvaluatorBond(transaction, balances, nonces, evaluatorBonds,
     disabledEvaluators, evaluators, pendingEvaluatorRegistrations,
-    registeredValidators, activeValidators, proposer, height) {
+    registeredValidators, registeredBeaconAuthorities, activeValidators, proposer, height) {
     const evaluator = evaluators.get(transaction.sender);
     if (transaction.type !== "evaluator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
         transaction.networkId !== this.#networkId ||
@@ -3198,11 +3308,11 @@ export class NirChain {
       ).size;
       const occupiedOperators = [
         ...evaluators.values(), ...pendingEvaluatorRegistrations.values(),
-        ...registeredValidators.values(), ...this.#beaconAuthorities.values(),
+        ...registeredValidators.values(), ...registeredBeaconAuthorities.values(),
       ].some(({ operatorId }) => operatorId === transaction.operatorId);
       if (pendingEvaluatorRegistrations.has(transaction.sender) ||
           registeredValidators.has(transaction.sender) ||
-          this.#beaconAuthorities.has(transaction.sender) ||
+          registeredBeaconAuthorities.has(transaction.sender) ||
           typeof transaction.operatorId !== "string" ||
           !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId) ||
           occupiedOperators || evaluators.size + pendingEvaluatorRegistrations.size >= 256 ||
@@ -3308,15 +3418,33 @@ export class NirChain {
     return penalty.bond;
   }
 
-  #applyBeaconBond(transaction, balances, nonces, beaconBonds, proposer, epochRandomness) {
-    const authority = this.#beaconAuthorities.get(transaction.sender);
+  #applyBeaconBond(transaction, balances, nonces, beaconBonds, proposer, epochRandomness,
+    registeredBeaconAuthorities, registeredValidators, evaluators) {
+    const authority = registeredBeaconAuthorities.get(transaction.sender);
+    const activeAuthority = this.#beaconAuthorities.get(transaction.sender);
     if (transaction.type !== "beacon-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
-        transaction.networkId !== this.#networkId || !authority ||
-        epochRandomness.snapshot().disabled.includes(transaction.sender) ||
-        authority.publicKey !== transaction.publicKey ||
+        transaction.networkId !== this.#networkId ||
+        (activeAuthority && epochRandomness.snapshot().disabled.includes(transaction.sender)) ||
+        (authority && authority.publicKey !== transaction.publicKey) ||
         addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
         !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey, "BEACON_BOND")) {
       throw new Error("beacon bond transaction is invalid");
+    }
+    if (authority && transaction.operatorId !== undefined) {
+      throw new Error("beacon bond identity does not match its registration");
+    }
+    if (!authority) {
+      if (transaction.operatorId === undefined) {
+        throw new Error("beacon bond transaction is invalid");
+      }
+      const occupied = [
+        ...registeredBeaconAuthorities.values(), ...registeredValidators.values(), ...evaluators.values(),
+      ].some(({ operatorId }) => operatorId === transaction.operatorId);
+      if (!/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId ?? "") || occupied ||
+          registeredValidators.has(transaction.sender) || evaluators.has(transaction.sender) ||
+          registeredBeaconAuthorities.size >= 64) {
+        throw new Error("new beacon authority identity is invalid or duplicated");
+      }
     }
     const expectedNonce = nonces.get(transaction.sender) ?? 0;
     if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
@@ -3324,7 +3452,7 @@ export class NirChain {
     }
     const amount = parseAtomic(transaction.amount, "beacon bond");
     const fee = parseAtomic(transaction.fee, "fee");
-    if (amount === 0n || fee < MIN_TRANSFER_FEE) {
+    if (amount === 0n || (!authority && amount < MIN_BEACON_BOND) || fee < MIN_TRANSFER_FEE) {
       throw new Error("beacon bond or fee is below minimum");
     }
     const balance = balances.get(transaction.sender) ?? 0n;
@@ -3333,6 +3461,12 @@ export class NirChain {
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
     beaconBonds.set(transaction.sender, (beaconBonds.get(transaction.sender) ?? 0n) + amount);
+    if (!authority) registeredBeaconAuthorities.set(transaction.sender, {
+      address: transaction.sender,
+      algorithm: transaction.algorithm,
+      operatorId: transaction.operatorId,
+      publicKey: transaction.publicKey,
+    });
   }
 
   #applyCreditStake(transaction, balances, nonces, creditStakes, proposer, timestamp) {
@@ -3630,7 +3764,10 @@ export class NirChain {
     fork.#balances = new Map(this.#balances);
     fork.#beaconBondingActive = this.#beaconBondingActive;
     fork.#beaconBonds = new Map(this.#beaconBonds);
+    fork.#beaconAuthorities = new Map(this.#beaconAuthorities);
     fork.#beaconFaults = new Map(this.#beaconFaults);
+    fork.#beaconGeneration = this.#beaconGeneration;
+    fork.#beaconQuorum = this.#beaconQuorum;
     fork.#blocks = structuredClone(this.#blocks);
     fork.#burned = this.#burned;
     fork.#candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
@@ -3664,6 +3801,7 @@ export class NirChain {
       [...this.#pendingEvaluatorRegistrations]
         .map(([address, pending]) => [address, { ...pending }]),
     );
+    fork.#pendingBeaconRotation = structuredClone(this.#pendingBeaconRotation);
     fork.#pendingProtocolUpgrade = structuredClone(this.#pendingProtocolUpgrade);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
@@ -3674,6 +3812,7 @@ export class NirChain {
     fork.#protocolVersion = this.#protocolVersion;
     fork.#randomnessFaults = new Map(this.#randomnessFaults);
     fork.#registeredValidators = new Map(this.#registeredValidators);
+    fork.#registeredBeaconAuthorities = new Map(this.#registeredBeaconAuthorities);
     fork.#rewardEpoch = this.#rewardEpoch;
     fork.#rewardedProofs = new Set(this.#rewardedProofs);
     fork.#safetyEvidence = new Set(this.#safetyEvidence);
@@ -3758,6 +3897,42 @@ export class NirChain {
         block.transactionsRoot !== transactionRoot(block.transactions)) {
       throw new Error("block transaction commitment is invalid");
     }
+    const activatingBeaconRotation = this.#pendingBeaconRotation?.activationHeight === block.height
+      ? this.#pendingBeaconRotation : null;
+    if (this.#pendingBeaconRotation?.activationHeight < block.height) {
+      throw new Error("beacon rotation activation was skipped");
+    }
+    if (activatingBeaconRotation && (block.epochRandomnessCommits.length > 0 ||
+        block.epochRandomnessReveals.length > 0 || block.fallbackBeacons.length > 0 ||
+        block.progressBeacons.length > 0)) {
+      throw new Error("beacon contributions are forbidden at the rotation boundary");
+    }
+    let scheduledBeaconRotation = null;
+    if (block.beaconRotation !== null) {
+      if (this.#pendingBeaconRotation || !this.#beaconBondingActive) {
+        throw new Error("beacon rotation is already pending or bonding is inactive");
+      }
+      for (const member of block.beaconRotation.authorities ?? []) {
+        const registered = this.#registeredBeaconAuthorities.get(member.address);
+        if (!registered || canonicalJson(registered) !== canonicalJson(member)) {
+          throw new Error("next beacon authority is not registered");
+        }
+      }
+      scheduledBeaconRotation = verifyBeaconRotation(block.beaconRotation, {
+        bonds: this.#beaconBonds,
+        currentAuthorities: [...this.#beaconAuthorities.values()],
+        currentGeneration: this.#beaconGeneration,
+        currentHeight: this.height,
+        networkId: this.#networkId,
+      });
+      if (canonicalJson(scheduledBeaconRotation) !== canonicalJson(block.beaconRotation)) {
+        throw new Error("beacon rotation is not canonical");
+      }
+    }
+    if (block.beaconRotation !== null &&
+        (block.validatorRotation !== null || block.peerRegistryUpdate !== null)) {
+      throw new Error("beacon, validator, and peer rotations require separate blocks");
+    }
     if (block.transactions.filter(({ resource }) => resource === "transfer-credit").length >
         MAX_CREDIT_TRANSFERS_PER_BLOCK) {
       throw new Error("too many credit-paid transfers in one block");
@@ -3818,7 +3993,7 @@ export class NirChain {
     const progressNoveltyReports = new Map();
     const capabilityReservations = orderedProgressEscrows(this.#progressEscrows)
       .map(([, escrow]) => progressReservation(escrow.evaluation, escrow.marginalCapabilities));
-    const epochRandomness = EpochRandomnessMachine.fromSnapshot({
+    let epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: this.#networkId,
       registry: this.#beaconAuthorities,
       committeeSize: this.#beaconQuorum,
@@ -3887,6 +4062,7 @@ export class NirChain {
     let beaconBondingActive = this.#beaconBondingActive;
     const beaconBonds = new Map(this.#beaconBonds);
     const beaconFaults = new Map(this.#beaconFaults);
+    const registeredBeaconAuthorities = new Map(this.#registeredBeaconAuthorities);
     const creditDelegations = new Map([...this.#creditDelegations]
       .map(([key, delegation]) => [key, { ...delegation }]));
     const creditStakes = new Map(this.#creditStakes);
@@ -4155,6 +4331,7 @@ export class NirChain {
           disabledEvaluators,
           evaluatorsAfter,
           pendingEvaluatorRegistrations,
+          registeredBeaconAuthorities,
           block.height,
           epochRandomness.round,
         );
@@ -4162,13 +4339,14 @@ export class NirChain {
         this.#applyValidatorBond(
           transaction, balances, nonces, validatorBonds, registeredValidators,
           disabledValidators, progressCommitments, evaluatorsAfter,
-          pendingEvaluatorRegistrations, block.feeRecipient,
+          pendingEvaluatorRegistrations, registeredBeaconAuthorities, block.feeRecipient,
         );
       } else if (transaction.type === "evaluator-bond") {
         this.#applyEvaluatorBond(
           transaction, balances, nonces, evaluatorBonds,
           disabledEvaluators, evaluatorsAfter, pendingEvaluatorRegistrations,
-          registeredValidators, blockValidators, block.feeRecipient, block.height,
+          registeredValidators, registeredBeaconAuthorities, blockValidators,
+          block.feeRecipient, block.height,
         );
       } else if (transaction.type === "validator-equivocation") {
         newlyBurned += this.#applyValidatorEquivocation(
@@ -4178,6 +4356,7 @@ export class NirChain {
       } else if (transaction.type === "beacon-bond") {
         this.#applyBeaconBond(
           transaction, balances, nonces, beaconBonds, block.feeRecipient, epochRandomness,
+          registeredBeaconAuthorities, registeredValidators, evaluatorsAfter,
         );
       } else if (transaction.type === "credit-stake") {
         this.#applyCreditStake(
@@ -4221,6 +4400,41 @@ export class NirChain {
       (address) => (beaconBonds.get(address) ?? 0n) >= MIN_BEACON_BOND,
     )) beaconBondingActive = true;
 
+    let beaconAuthoritiesAfter = this.#beaconAuthorities;
+    let beaconGenerationAfter = this.#beaconGeneration;
+    let pendingBeaconRotationAfter = this.#pendingBeaconRotation;
+    let beaconRotationActivated = false;
+    if (activatingBeaconRotation?.authorities.some(({ address }) =>
+      (beaconBonds.get(address) ?? 0n) < MIN_BEACON_BOND)) {
+      pendingBeaconRotationAfter = null;
+    } else if (activatingBeaconRotation) {
+      beaconAuthoritiesAfter = new Map(activatingBeaconRotation.authorities
+        .map((member) => [member.address, member]));
+      beaconGenerationAfter = activatingBeaconRotation.generation;
+      epochRandomness = epochRandomness.rotate({
+        committeeSize: Math.floor((beaconAuthoritiesAfter.size * 2) / 3) + 1,
+        generation: beaconGenerationAfter,
+        nextSetId: activatingBeaconRotation.nextSetId,
+        previousSetId: activatingBeaconRotation.previousSetId,
+        registry: beaconAuthoritiesAfter,
+      });
+      pendingBeaconRotationAfter = null;
+      beaconRotationActivated = true;
+    }
+    if (scheduledBeaconRotation) pendingBeaconRotationAfter = scheduledBeaconRotation;
+    if (beaconRotationActivated) {
+      for (const [candidateId, commitment] of progressCommitments) {
+        const bond = candidateBonds.get(candidateId);
+        if (!bond || bond.purpose !== "progress" || !bond.admissionBound ||
+            bond.candidateOwner !== commitment.sender) {
+          throw new Error("rotated beacon commitment has no locked candidate bond");
+        }
+        balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
+        candidateBonds.delete(candidateId);
+        progressCommitments.delete(candidateId);
+      }
+    }
+
     for (const [candidateId, commitment] of progressCommitments) {
       if (block.height > commitment.committedHeight + MAX_PROGRESS_COMMITMENT_AGE) {
         const bond = candidateBonds.get(candidateId);
@@ -4251,13 +4465,14 @@ export class NirChain {
         progressCommitments.set(candidateId, {
           ...commitment,
           beaconCommittee: selectOperatorCommittee({
-            registry: this.#beaconAuthorities,
+            registry: beaconAuthoritiesAfter,
             randomness,
             context: { candidateId, randomnessRound },
-            size: this.#beaconQuorum,
+            size: Math.floor((beaconAuthoritiesAfter.size * 2) / 3) + 1,
           }).map(({ address }) => address),
           beaconCommitteeHeight: block.height,
           beaconCommitteeSource: randomness,
+          beaconGeneration: beaconGenerationAfter,
           beaconRandomnessRound: randomnessRound,
         });
       }
@@ -4443,7 +4658,9 @@ export class NirChain {
       balances,
       beaconBondingActive,
       beaconBonds,
+      beaconAuthorities: beaconAuthoritiesAfter,
       beaconFaults,
+      beaconGeneration: beaconGenerationAfter,
       burned: this.#burned + newlyBurned,
       candidateBonds,
       capabilityMemoryRoot: capabilityMemory.stateRoot,
@@ -4461,6 +4678,7 @@ export class NirChain {
       mined: this.#mined + newlyMined,
       nonces,
       pendingEvaluatorRegistrations,
+      pendingBeaconRotation: pendingBeaconRotationAfter,
       pendingProtocolUpgrade: protocolState.pendingUpgrade,
       pendingValidatorRotation: pendingValidatorRotationAfter,
       peerRegistry: nextPeerRegistry,
@@ -4469,6 +4687,7 @@ export class NirChain {
       progressFraudEvidence,
       protocolVersion: protocolState.protocolVersion,
       randomnessFaults,
+      registeredBeaconAuthorities,
       registeredValidators,
       rewardEpoch: rewardEpochAfter,
       rewardedProofs,
@@ -4503,7 +4722,10 @@ export class NirChain {
     this.#balances = balances;
     this.#beaconBondingActive = beaconBondingActive;
     this.#beaconBonds = beaconBonds;
+    this.#beaconAuthorities = beaconAuthoritiesAfter;
     this.#beaconFaults = beaconFaults;
+    this.#beaconGeneration = beaconGenerationAfter;
+    this.#beaconQuorum = Math.floor((this.#beaconAuthorities.size * 2) / 3) + 1;
     this.#burned += newlyBurned;
     this.#candidateBonds = candidateBonds;
     this.#creditDelegations = creditDelegations;
@@ -4517,6 +4739,7 @@ export class NirChain {
     this.#evaluators = evaluatorsAfter;
     this.#nonces = nonces;
     this.#pendingEvaluatorRegistrations = pendingEvaluatorRegistrations;
+    this.#pendingBeaconRotation = pendingBeaconRotationAfter;
     this.#pendingProtocolUpgrade = protocolState.pendingUpgrade;
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;
@@ -4524,6 +4747,7 @@ export class NirChain {
     this.#validatorBonds = validatorBonds;
     this.#validatorEquivocationEvidence = validatorEquivocationEvidence;
     this.#registeredValidators = registeredValidators;
+    this.#registeredBeaconAuthorities = registeredBeaconAuthorities;
     this.#peerRegistry = nextPeerRegistry;
     this.#progressCommitments = progressCommitments;
     this.#progressEscrows = progressEscrows;
