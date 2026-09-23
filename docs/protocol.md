@@ -160,6 +160,12 @@ shares carry the generation. The boundary accepts no beacon contribution, advanc
 the epoch round with a set-bound seed, and refunds/removes unresolved progress
 admissions so no old committee becomes permanently unserviceable. Stale generation,
 parent-set rollback, abrupt takeover, and cross-generation replay are rejected.
+An inactive authority that is not referenced by a pending rotation can start a
+64-block retirement. Its fee is paid from the bond; maturity returns only the
+non-slashed remainder, frees the bounded live-registry slot, and commits an
+irreversible identity tombstone. The old address, public key, and operator ID
+cannot re-enter any protocol role. Rotation, retirement, and registration are
+separate-block transitions, and snapshots preserve pending exits and tombstones.
 
 ### Epoch-randomness transition
 

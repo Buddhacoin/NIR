@@ -2,28 +2,33 @@ import { addressFromPublicKey, hashObject, signObject, verifyObject } from "./cr
 import { MIN_BEACON_BOND, SIGNATURE_ALGORITHM } from "./constants.mjs";
 
 export const BEACON_ROTATION_DELAY_BLOCKS = 64;
+export const BEACON_RETIREMENT_DELAY_BLOCKS = 64;
+export const MAX_REGISTERED_BEACON_AUTHORITIES = 128;
 const MAX_AUTHORITIES = 64;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const OPERATOR_ID = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 
+function normalizeMember(member, label) {
+  if (!member || Object.keys(member).sort().join("\0") !==
+      ["address", "algorithm", "operatorId", "publicKey"].sort().join("\0") ||
+      member.algorithm !== SIGNATURE_ALGORITHM || !ADDRESS.test(member.address ?? "") ||
+      !OPERATOR_ID.test(member.operatorId ?? "") || typeof member.publicKey !== "string") {
+    throw new Error(`${label} member is invalid`);
+  }
+  if (addressFromPublicKey(member.publicKey) !== member.address) {
+    throw new Error(`${label} public key is invalid`);
+  }
+  return structuredClone(member);
+}
+
 function normalizeMembers(values, label) {
   if (!Array.isArray(values) || values.length < 4 || values.length > MAX_AUTHORITIES) {
     throw new Error(`${label} size is invalid`);
   }
-  const members = values.map((member) => {
-    if (!member || Object.keys(member).sort().join("\0") !==
-        ["address", "algorithm", "operatorId", "publicKey"].sort().join("\0") ||
-        member.algorithm !== SIGNATURE_ALGORITHM || !ADDRESS.test(member.address ?? "") ||
-        !OPERATOR_ID.test(member.operatorId ?? "") || typeof member.publicKey !== "string") {
-      throw new Error(`${label} member is invalid`);
-    }
-    if (addressFromPublicKey(member.publicKey) !== member.address) {
-      throw new Error(`${label} public key is invalid`);
-    }
-    return structuredClone(member);
-  }).sort((left, right) => compareText(left.address, right.address));
+  const members = values.map((member) => normalizeMember(member, label))
+    .sort((left, right) => compareText(left.address, right.address));
   if (new Set(members.map(({ address }) => address)).size !== members.length ||
       new Set(members.map(({ operatorId }) => operatorId)).size !== members.length ||
       new Set(members.map(({ publicKey }) => publicKey)).size !== members.length) {
@@ -36,6 +41,16 @@ export function beaconAuthoritySetId({ generation, members, networkId }) {
   return hashObject({
     authorities: normalizeMembers(members, "beacon authority set"), generation, networkId,
   }, "BEACON_AUTHORITY_SET_V1");
+}
+
+export function retiredBeaconIdentity(member, retiredHeight, faults = 0) {
+  const identity = normalizeMember(member, "retired beacon identity");
+  if (!Number.isSafeInteger(retiredHeight) || retiredHeight < 1 ||
+      !Number.isSafeInteger(faults) || faults < 0) {
+    throw new Error("retired beacon identity context is invalid");
+  }
+  return { ...identity, faults, identityCommitment: hashObject(identity,
+    "BEACON_RETIRED_IDENTITY_V1"), retiredHeight };
 }
 
 function rotationPayload(value) {

@@ -85,7 +85,7 @@ bootstrap phase. After activation, failing to reveal burns one percent of the
 operator's current bond. If the remaining balance is below 1,000 NIR, the
 operator is disabled from subsequent epoch committees. The burn, remaining
 bond, fault counter, disabled set and activation flag are all state-rooted and
-recomputed by every node. Withdrawal remains deliberately absent.
+recomputed by every node.
 
 ## Authority rotation
 
@@ -119,9 +119,35 @@ therefore reproduce the same boundary. Local real-service rehearsals obtain the
 active registry from verified chain state rather than treating the genesis list
 as permanently current.
 
+An authority may request retirement only after it is absent from both the active
+set and a pending next set. The request fee is taken from its locked bond, so an
+operator is not trapped for lack of a separate liquid balance. After 64 further
+finalized blocks, consensus automatically returns the remaining bond, removes
+the live registration, and frees one of the 128 registry slots. Any earlier slash
+stays burned; only the remaining bond is returned. A disabled authority therefore
+must first be rotated out, but is not forced to abandon its unslashed remainder.
+Registration, retirement,
+and rotation cannot be combined in one block. A fixed-delay automatic maturity
+prevents a pending retirement from reserving a slot indefinitely.
+
+Retirement preserves a state-rooted historical record containing the exact
+address, public key, operator ID, fault count, retirement height, and a canonical
+identity commitment. A retired address, public key, or operator ID can never
+register again as a beacon, validator, or evaluator. Old snapshots retain their
+original registry, while later snapshots retain this tombstone, preventing an
+old signed identity from being presented as a fresh operator after restart or
+fork. Pending retirement and tombstone state are validated on snapshot restore.
+
 This mechanism proves key possession, old-set authorization, bond, and protocol
 continuity. It does not prove that nominally different authorities are controlled
 by different companies, nor guarantee that the next operators remain available.
-The v1 registered-key registry is capped at 64 identities and has no bond exit or
-identity recycling, so operators must budget replacements within that bound; a
-later protocol change is required for indefinite churn without unbounded state.
+The active set remains capped at 64 and the live registered-key registry at 128,
+leaving enough headroom for the least-overlap permitted 64-member handoff before
+old keys retire. Finalized retirements recycle those slots. Historical tombstones deliberately grow with
+cumulative churn because exact replay prevention and old-proof auditability are
+retained; this version does not claim constant-size historical state. Registration
+slots remain an economic resource rather than a Sybil-proof identity system: a
+well-funded coalition can keep inactive bonded registrations open and delay a
+maximal-set handoff once headroom is exhausted. It cannot do so for free, forge
+old-set authorization, or reuse retired identities, but operator independence
+and censorship resistance remain deployment assumptions.

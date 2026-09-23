@@ -136,6 +136,13 @@ generation-bound; the activation block accepts none of them, advances to a fresh
 set-bound epoch attempt, and refunds unresolved progress admissions. The active
 and registered registries, generation, pending handoff, and bonds are snapshot-
 and state-rooted. This is key continuity, not proof of corporate independence.
+An inactive, non-pending beacon can retire after another 64 finalized blocks.
+Consensus deducts the request fee from its locked bond, returns only the remaining
+non-slashed amount at maturity, recycles the live registry slot, and permanently
+commits its address/key/operator identity as historical state. Same-block
+registration/retirement/rotation and identity replay into another protocol role
+are rejected. Exact tombstones intentionally trade growing history for replay-safe
+snapshot and proof auditability.
 
 Validator and initial evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. Genesis locks one fixed
