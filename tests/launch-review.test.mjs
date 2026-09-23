@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { canonicalJson, generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { parseConsensusJson } from "../blockchain/consensus-json.mjs";
 import { createLaunchReview, signLaunchReview, verifyLaunchReview } from "../blockchain/launch-review.mjs";
 
 const NOW = 1_800_000_000_000;
@@ -45,4 +49,19 @@ test("launch review CLI fails closed without an exact command", () => {
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /launch review command failed/);
+});
+
+test("launch review CLI emits canonical JSON suitable for the next signed step", () => {
+  const values = fixture(); const root = mkdtempSync(join(tmpdir(), "nir-launch-review-"));
+  const inputPath = join(root, "input.json");
+  try {
+    const { approvals, reviewHash, ...input } = values.review;
+    writeFileSync(inputPath, `${canonicalJson(input)}\n`, { mode: 0o600 });
+    const result = spawnSync(process.execPath, ["blockchain/launch-review-cli.mjs", "create", inputPath], {
+      cwd: process.cwd(), encoding: "utf8", env: { ...process.env },
+    });
+    assert.equal(result.status, 0);
+    const created = parseConsensusJson(result.stdout);
+    assert.equal(created.reviewHash, values.review.reviewHash);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

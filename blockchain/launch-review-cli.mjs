@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } fr
 import process from "node:process";
 
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { canonicalJson } from "./crypto.mjs";
 import { createLaunchReview, signLaunchReview, verifyLaunchReview } from "./launch-review.mjs";
 import { readRestrictedPasswordFd } from "./operator-secret-input.mjs";
 import { decryptWallet } from "./vault.mjs";
@@ -61,7 +62,7 @@ try {
   } else {
     throw new Error("usage: launch-review <create INPUT|sign REVIEW VAULT REVIEWER_ID|verify REVIEW NETWORK_ID NOW_MS>");
   }
-  process.stdout.write(`${JSON.stringify(output)}\n`);
+  process.stdout.write(`${canonicalJson(output)}\n`);
 } catch {
   process.stderr.write("launch review command failed\n"); process.exitCode = 1;
 }
