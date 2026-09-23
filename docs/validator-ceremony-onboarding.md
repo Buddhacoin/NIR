@@ -7,6 +7,10 @@ their own validator and transport wallets locally, then installs evidence for
 only that validator. It does not start a node, distribute a secret, configure a
 host, or demonstrate that different validators run on independent hosts.
 
+This runbook implements gate 4 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md); the separate multi-host
+evidence gate is what records operator attestations from distinct endpoints.
+
 ## Required public evidence and local secrets
 
 The operator must obtain the exact compiled `genesis.json`, ceremony plan and

@@ -4,6 +4,10 @@ This is a read-only, machine-verifiable preflight for a **valueless developer
 testnet**. It does not deploy or start anything, reserve ports, generate keys,
 change files, claim host independence, or establish production readiness.
 
+This is gate 6 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). A PASS proves only the
+listed local inputs; it does not satisfy the later multi-host and manual gates.
+
 ## Artifact root
 
 Create a private-to-the-operator directory (not group/world writable) containing

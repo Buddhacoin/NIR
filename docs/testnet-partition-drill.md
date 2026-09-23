@@ -5,6 +5,11 @@ fault drill. It never starts a node, binds a port, changes firewall/routing stat
 injects a message, rotates a certificate, downloads an archive, or writes an
 artifact. A plan or PASS validation is not a production-readiness statement.
 
+This is gate 11 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). Cryptographic evidence
+authenticates observations; it cannot prove that a physical fault was injected
+as described without external operator review.
+
 ## Deterministic plan
 
 The planning directory contains exactly `preflight-report.json` and `topology.json`.

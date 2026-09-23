@@ -5,6 +5,10 @@ another machine can restore it. NIR remote backup receipts bind one portable
 public backup to its finalized checkpoint, complete file inventory, state
 snapshot and account-history archive without including spending keys.
 
+These artifacts satisfy the machine-verifiable part of gate 10 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). Independent storage,
+retention, alerting, and operator response remain manual criteria.
+
 ## Receipt contents
 
 `nir-remote-backup-receipt-v1` is signed with ML-DSA-65 under a dedicated

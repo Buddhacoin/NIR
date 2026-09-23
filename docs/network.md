@@ -396,8 +396,11 @@ Application-layer control messages now have pinned mutual signatures using
 separate rotatable transport identities and optional pinned TLS 1.3, and
 round-zero blocks can be assembled by the elected validator. Transport remains
 plaintext only when the loopback development mode is deliberately used.
-Automated certificate lifecycle and coordinator-key rotation are not governed
-on-chain. Validator-set and peer-registry rotation is atomic, with a restricted
+Certificate lifecycle histories are quorum-authorized against verified topology,
+propagated across authenticated peers, and enforced by runtime pin selection;
+they are not consensus-state records and do not issue certificates or protect
+private keys. Coordinator-key rotation remains outside consensus. Validator-set
+and peer-registry rotation is atomic, with a restricted
 pre-activation union transport and old/new finality quorums. A quorum-authenticated snapshot format, signed RPC,
 authenticated source collection, typed restore, and atomic redundant staging
 now exist. Dual-quorum rotation handoff verification, journal-tail replay,
@@ -413,9 +416,9 @@ Catch-up first verifies that genesis-rooted key/topology chain and may then use
 the latest authenticated endpoints for snapshots and block replay. Responses
 from reachable peers are compared before installation; a valid longer history
 may extend a stale prefix, while divergent valid histories stop recovery.
-Multi-host
-operator ceremonies, independent stable bootstrap services, and operator-run
-production recovery drills remain; there is no fork-choice protocol.
+Independent-host operator ceremonies, stable public bootstrap operation, and
+externally reviewed multi-host recovery drills remain; there is no automatic
+fork-choice protocol.
 
 The automated live-rotation rehearsal starts six authenticated HTTP validator
 processes: four current operators and two future-only operators joining a
@@ -449,12 +452,12 @@ prepare and commit phases. Commit signatures bind the exact prepare certificate;
 signed lock discovery transfers that certificate to a replacement proposer and
 applies a deterministic highest-certificate rule. Split prepare votes remain
 round-local and do not deadlock a later certified round. The durable exponential
-localhost pacemaker still lacks
-latency sampling, authenticated transport sessions, clock discipline, and
-production-calibrated timeout governance.
-There is no fork recovery or network snapshot synchronization,
-external process isolation for cryptographic workers, coverage-guided or
-unbounded randomized fault testing, or formal consensus proof yet. Bounded
+localhost pacemaker still lacks latency sampling, clock discipline, and
+production-calibrated timeout governance. Authenticated snapshot synchronization,
+journal-tail replay, and topology-handoff recovery are implemented. There is no
+automatic fork choice between conflicting valid finalized histories, external
+process isolation for cryptographic workers, coverage-guided or unbounded
+randomized fault testing, or formal consensus proof yet. Bounded
 operator-identity queues, replay lifecycle, objective quarantine, fanout
 backpressure and safe aggregate metrics are specified in
 [operator-dos-defense.md](operator-dos-defense.md). Test keys are plaintext and have no

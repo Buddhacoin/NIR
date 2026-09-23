@@ -5,6 +5,10 @@ not stop nodes, remove a data directory, overwrite a genesis file, replace a
 published network, or execute a reset. Any destructive operational action needs
 a separate, reviewed manual process outside this tool.
 
+This is gate 13 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). Planning, signing,
+verification, and drilling never authorize destructive execution.
+
 ## Reset manifest
 
 `nir-testnet-reset-v1` binds exactly these reviewed facts:

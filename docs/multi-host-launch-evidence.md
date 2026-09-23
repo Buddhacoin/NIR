@@ -5,6 +5,11 @@ developer testnet. It does not launch services, inject faults, prove that two
 operators are different people or organizations, or make a production-readiness
 claim.
 
+This package is gate 12 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). PASS preserves signed
+operator claims and authenticated service responses; it does not infer physical
+independence from distinct names or endpoints.
+
 ## Trust boundary
 
 The plan fixes one network, genesis hash, signed-release checkpoint, finalized

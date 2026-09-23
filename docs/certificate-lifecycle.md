@@ -5,6 +5,10 @@ validator quorum. This lifecycle is intended for a future public test network. I
 not depend on a public certificate authority, and it does not by itself prove that the
 operators or machines are independent.
 
+This is gate 5 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). The lifecycle verifier
+does not issue certificates or operate external key custody.
+
 Private keys and certificate files remain outside the repository and outside the
 lifecycle store. The protocol stores only a normalized certificate serial number, a
 SHA-256 fingerprint, activation heights, topology commitments and quorum approvals.

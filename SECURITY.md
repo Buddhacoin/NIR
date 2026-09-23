@@ -3,6 +3,10 @@
 NIR is under active protocol development. The current local chain must not be
 used to custody, sell, or represent assets of real monetary value.
 
+Operator launch gates, commands, artifacts, machine-verifiable evidence, and
+external manual criteria are indexed in
+[`docs/public-testnet-gates.md`](docs/public-testnet-gates.md).
+
 Security reports may be opened as private GitHub security advisories once the
 repository is public. Do not include private keys, seed material, personal data,
 or an exploit against a live third-party system in a public issue.
@@ -106,12 +110,18 @@ or an exploit against a live third-party system in a public issue.
    terminate TLS 1.3 itself, and clients verify the exact certificate fingerprint
    and validity period. The active registry hash is committed
    in genesis and every block; a node rejects a local registry rollback that no
-   longer matches finalized state. Automated certificate issuance and renewal,
-   revocation operations, and governed coordinator-key rotation remain.
-   A joining node can query a trusted seed for a signed peer registry and rejects
-   any response whose hash is not anchored in its local chain checkpoint. It
-   does not yet score or fail over across multiple seeds automatically. There is
-   no fork recovery or checkpoint/snapshot sync. Deterministic
+   longer matches finalized state. Quorum-authorized certificate issue records,
+   bounded renewal overlap, revocation, lifecycle-history propagation, one-time
+   bootstrap, and live certificate reload are implemented. Certificate issuance,
+   private-key custody, and deployment remain operator responsibilities.
+   A joining node can query multiple distinct authenticated seeds for a signed
+   peer registry, rejects any response whose hash is not anchored in its local
+   chain checkpoint, tolerates unavailable seeds, and fails closed on conflicting
+   valid histories. Quorum-authenticated snapshot selection, atomic snapshot
+   installation, journal-tail replay, and topology-handoff recovery are
+   implemented. There is no automatic fork choice between conflicting finalized
+   histories. Independent public bootstrap operation and hostile multi-host
+   recovery drills remain external launch gates. Deterministic
    `2+2` and `3+1` HTTP partition schedules now verify quorum safety and recovery,
    a split-prepare regression verifies later-round liveness, and 512 seeded
    schedules exercise delayed, dropped, reordered, and replayed messages from
@@ -135,10 +145,12 @@ or an exploit against a live third-party system in a public issue.
    and penalizes this, then combines independently signed fallback shares. A
    runnable authority service persists decisions to resist restart equivocation,
    but independent organizations have not deployed or audited it. Finality sets
-   rotate with delayed activation and a joint transition certificate, but bond
-   withdrawal delays and partition testing are still missing. A valueless local
-   node now persists finalized blocks and verifies them by replay after restart;
-   production database recovery and multi-node durability are still missing.
+   rotate with delayed activation and a joint transition certificate. Local
+   partition, restart, snapshot, and recovery paths are exercised, and redundant
+   journals, snapshots, signed backups, restore receipts, and recovery-state
+   commitments are implemented. Bond withdrawal delays, independent-host fault
+   drills, external monitoring, and deployment-specific storage qualification
+   remain open.
 5. **Safety coverage is incomplete.** Consensus enforces the selected policy and
    veto rule, but the first policy does not yet have production-grade hidden
    suites, calibrated danger thresholds, or containment attestations.
@@ -158,16 +170,16 @@ or an exploit against a live third-party system in a public issue.
    persisting redundant journals and checksummed checkpoints, then replace live
    memory. Startup automatically repairs one damaged copy after full consensus
    replay, advances stale checkpoints, and fails closed if both copies are lost.
-   Key-free portable chain exports support backups to a separate device. This
-   still lacks a production database, durable network snapshot installation, pruning, remote
-   backup coordination, multi-peer snapshot recovery, and restore monitoring.
+   Key-free portable chain exports support backups to a separate device.
    Protocol version 6 commits the complete deterministic state root. Canonical
    snapshot export, trust-anchored quorum verification, typed in-memory restore,
    root revalidation, and post-checkpoint block continuation are implemented.
-   Multi-source selection and atomic redundant disk staging are implemented.
-   Signed snapshot RPC and authenticated source collection are implemented.
-   Joining-node installation, validator-rotation proofs, journal-tail
-   integration, and pruning are not.
+   Multi-source selection, atomic redundant disk staging, signed snapshot RPC,
+   authenticated source collection, joining-node installation,
+   validator-rotation proofs, journal-tail replay, two-stage pruning, signed
+   backup receipts, and automated restore drills are implemented. A
+   production-equivalent database/storage qualification, independent remote
+   backup operators, capacity planning, monitoring, and external review remain.
 3. Payments are public. Confidential amounts, sender privacy, recipient privacy,
    viewing keys, payment disclosures, and network-layer privacy are not
    implemented. No post-quantum shielded-proof construction has been selected.
@@ -198,7 +210,8 @@ or post-quantum TLS key establishment is required before production.
 
 This does not make NIR "quantum-proof." A future algorithmic break, software
 bug, weak random-number generator, leaked endpoint key, compromised build, or
-validator takeover can bypass sound mathematics. Before a testnet, NIR needs:
+validator takeover can bypass sound mathematics. Before any real-value network,
+NIR needs:
 
 - versioned cryptographic suites and an on-chain migration mechanism;
 - consideration of hybrid ML-DSA plus SLH-DSA signatures for algorithm diversity;

@@ -4,6 +4,11 @@ This tooling creates reproducible genesis material for a **valueless developer
 testnet only**. It is not a mainnet ceremony, production-readiness claim, token
 launch, custody service, or key generator.
 
+This is gate 2 in the canonical
+[public-testnet gate matrix](public-testnet-gates.md). Publication of the plan,
+contributions, approvals, registry anchor, and compiled genesis is an external
+operator responsibility.
+
 The input is public JSON containing:
 
 - network ID, genesis timestamp, current protocol version, and signed source-release
