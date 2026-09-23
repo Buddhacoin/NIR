@@ -7,7 +7,11 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { validateDeveloperTestnetProductionPreflightReport } from "./developer-testnet-production-preflight.mjs";
-import { installNodeArtifact, installWalletArtifact, verifyReleaseArtifact } from "./release-artifact.mjs";
+import {
+  installNodeArtifact, installWalletArtifact, readNodeProductionProvenance,
+  readWalletProductionProvenance, verifyNodeProductionArtifactInstallation,
+  verifyReleaseArtifact, verifyWalletProductionArtifactInstallation,
+} from "./release-artifact.mjs";
 import { verifySignedRelease } from "./release-manifest.mjs";
 
 const TARGET_FORMAT = "nir-production-release-target-v1";
@@ -17,6 +21,7 @@ const REVISION = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const MAX_PREFLIGHT_AGE_MS = 86_400_000;
 const MAX_FUTURE_SKEW_MS = 300_000;
 const MAX_PUBLIC_JSON_BYTES = 600 * 1024 * 1024;
+const PROVENANCE_FORMAT = "nir-production-install-provenance-v1";
 
 function exact(value, fields, label) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -87,7 +92,7 @@ export function validateProductionReleaseTarget(value) {
       !/^[0-9a-f]{64}$/.test(value.releaseManifestHash ?? "") ||
       !REVISION.test(value.sourceRevision ?? "") ||
       typeof value.releaseVersion !== "string" ||
-      !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/.test(value.releaseVersion) ||
+      !/^(?:0|[1-9][0-9]{0,9})\.(?:0|[1-9][0-9]{0,9})\.(?:0|[1-9][0-9]{0,9})$/.test(value.releaseVersion) ||
       !Number.isSafeInteger(value.maxPreflightAgeMs) || value.maxPreflightAgeMs < 1 ||
       value.maxPreflightAgeMs > MAX_PREFLIGHT_AGE_MS ||
       !Number.isSafeInteger(value.maxFutureSkewMs) || value.maxFutureSkewMs < 0 ||
@@ -156,16 +161,105 @@ export function verifyProductionReleasePackage(value, options = {}) {
 }
 
 export function installProductionReleasePackage(value, targetPath, { kind, _beforeActivation,
-  ...options } = {}) {
+  previousInstallation = null, previousSignedRelease = null,
+  expectedPreviousPackageHash = null, ...options } = {}) {
   const packageValue = verifyProductionReleasePackage(value, options);
   if (!new Set(["node", "wallet"]).has(kind) || packageValue.artifact.kind !== kind) {
     throw new Error("production package kind is invalid");
   }
-  const installOptions = { ...options, _beforeActivation };
+  const updateInputs = [previousInstallation, previousSignedRelease, expectedPreviousPackageHash];
+  if (!updateInputs.every((entry) => entry === null) &&
+      !updateInputs.every((entry) => entry !== null)) {
+    throw new Error("production update requires current installation, signed release and expected hash");
+  }
+  if (previousInstallation !== null) {
+    const previous = verifyProductionInstallation(previousInstallation, {
+      expectedPackageHash: expectedPreviousPackageHash, kind,
+      signedRelease: previousSignedRelease, trustedAddress: options.trustedAddress,
+    });
+    if (previous.productionTarget.networkId !== packageValue.productionTarget.networkId ||
+        previous.productionTarget.genesisHash !== packageValue.productionTarget.genesisHash ||
+        compareStableVersions(packageValue.productionTarget.releaseVersion,
+          previous.productionTarget.releaseVersion) <= 0) {
+      throw new Error("production update is a rollback, downgrade, or mixed network");
+    }
+  }
+  const productionProvenance = productionProvenanceFrom(packageValue);
+  const installOptions = { ...options, _beforeActivation, productionProvenance };
   const provenance = kind === "wallet"
     ? installWalletArtifact(packageValue.artifact, targetPath, installOptions)
     : installNodeArtifact(packageValue.artifact, targetPath, installOptions);
-  return { packageHash: packageValue.packageHash, provenance };
+  return { packageHash: packageValue.packageHash, productionProvenance, provenance };
+}
+
+function compareStableVersions(left, right) {
+  const a = left.split(".").map(Number); const b = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+function productionProvenanceFrom(packageValue) {
+  return {
+    artifactHash: packageValue.artifact.artifactHash,
+    format: PROVENANCE_FORMAT,
+    kind: packageValue.artifact.kind,
+    packageHash: packageValue.packageHash,
+    productionReport: packageValue.productionReport,
+    productionTarget: packageValue.productionTarget,
+    version: 1,
+  };
+}
+
+function validateProductionProvenance(value, kind) {
+  exact(value, ["artifactHash", "format", "kind", "packageHash", "productionReport",
+    "productionTarget", "version"], "production installation provenance");
+  if (value.format !== PROVENANCE_FORMAT || value.version !== 1 || value.kind !== kind ||
+      !/^[0-9a-f]{64}$/.test(value.artifactHash ?? "") ||
+      !/^[0-9a-f]{64}$/.test(value.packageHash ?? "")) {
+    throw new Error("production installation provenance is invalid");
+  }
+  return structuredClone(value);
+}
+
+export function verifyProductionInstallation(targetPath, {
+  expectedPackageHash, kind, signedRelease, trustedAddress,
+} = {}) {
+  if (!new Set(["node", "wallet"]).has(kind) ||
+      !/^[0-9a-f]{64}$/.test(expectedPackageHash ?? "")) {
+    throw new Error("production startup requires an exact expected package hash and kind");
+  }
+  const raw = kind === "node"
+    ? readNodeProductionProvenance(targetPath) : readWalletProductionProvenance(targetPath);
+  const productionProvenance = validateProductionProvenance(raw, kind);
+  if (productionProvenance.packageHash !== expectedPackageHash) {
+    throw new Error("production installation package hash is not the trusted startup package");
+  }
+  const installed = kind === "node"
+    ? verifyNodeProductionArtifactInstallation(targetPath, {
+      productionProvenance, signedRelease, trustedAddress,
+    })
+    : verifyWalletProductionArtifactInstallation(targetPath, {
+      productionProvenance, signedRelease, trustedAddress,
+    });
+  const packageValue = verifyProductionReleasePackage({
+    artifact: installed.artifact,
+    format: PACKAGE_FORMAT,
+    packageHash: productionProvenance.packageHash,
+    productionReport: productionProvenance.productionReport,
+    productionTarget: productionProvenance.productionTarget,
+    version: 1,
+  }, {
+    now: productionProvenance.productionReport.observedAt, signedRelease, trustedAddress,
+  });
+  if (packageValue.artifact.artifactHash !== productionProvenance.artifactHash) {
+    throw new Error("production installation artifact does not match its provenance");
+  }
+  return { artifactHash: packageValue.artifact.artifactHash, files: installed.files,
+    kind, packageHash: packageValue.packageHash,
+    productionReportHash: packageValue.productionReport.reportHash,
+    productionTarget: packageValue.productionTarget, verified: true };
 }
 
 export function serializeProductionReleasePackage(value, options = {}) {

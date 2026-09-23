@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync,
+  readdirSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,9 +15,10 @@ import {
 import {
   createProductionReleasePackage, readBoundedPublicJson, verifyProductionReleasePackage,
   installProductionReleasePackage, serializeProductionReleasePackage,
-  writeProductionPackageExclusive,
+  verifyProductionInstallation, writeProductionPackageExclusive,
 } from "../blockchain/production-release-gate.mjs";
-import { artifactPaths, createReleaseArtifact } from "../blockchain/release-artifact.mjs";
+import { artifactPaths, createReleaseArtifact, installNodeArtifact,
+  verifyNodeInstallation } from "../blockchain/release-artifact.mjs";
 import { createReleaseManifest, readReleaseSourceFile,
   signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition-drill.mjs";
@@ -46,7 +47,7 @@ function developerReport() {
   return { ...payload, reportHash: hashObject(payload, "DEVELOPER_TESTNET_PREFLIGHT_REPORT_V1") };
 }
 
-function productionEvidence(root, manifest) {
+function productionEvidence(root, manifest, storeName = "attestation-store") {
   const report = developerReport();
   const validators = Array.from({ length: 4 }, generateWallet);
   const topology = { archives: Array.from({ length: 2 }, (_, index) => identity(generateWallet(), `archive-${index}`)),
@@ -66,7 +67,7 @@ function productionEvidence(root, manifest) {
     runNonce: "b".repeat(64), setId: operatorSet.setId, validatorTip: TIP, version: 1 };
   const attestations = attestors.slice(0, 3).map((wallet, index) =>
     signRehearsalStatement(statement, { operatorId: `reviewer-${index}`, wallet }, operatorSet));
-  const store = join(root, "attestation-store");
+  const store = join(root, storeName);
   const accepted = acceptRehearsalAttestationQuorum(store, attestations, { now: NOW, operatorSet });
   const context = { finalizedTip: TIP, genesisHash: GENESIS, releaseManifestHash: manifest.manifestHash };
   const productionReport = evaluateDeveloperTestnetProductionPreflight({
@@ -240,6 +241,10 @@ test("release CLI blocks missing/stale production evidence before artifact or in
     const validInstall = spawnSync(process.execPath, [cli, "install-production-node", output,
       envelope, values.signer.address, String(NOW), install], { encoding: "utf8" });
     assert.equal(validInstall.status, 0, validInstall.stderr); assert.equal(existsSync(install), true);
+    const startup = spawnSync(process.execPath, [cli, "verify-production-node-install", install,
+      envelope, values.signer.address, packageValue.packageHash], { encoding: "utf8" });
+    assert.equal(startup.status, 0, startup.stderr);
+    assert.match(startup.stdout, /production startup gate/);
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });
 
@@ -377,5 +382,95 @@ test("interrupted output activation leaves no package and source/package substit
       renameSync(path, movedSource); writeFileSync(path, "export const attacker = true;\n");
     } }), /changed/);
     assert.equal(readFileSync(source, "utf8"), "export const attacker = true;\n");
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production provenance survives restart and binds package, report, target and installed bytes", () => {
+  const values = fixture(); const target = join(values.root, "production-runtime");
+  try {
+    const options = { kind: "node", now: NOW, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address };
+    const packageValue = createProductionReleasePackage(values.artifact, { ...options,
+      productionReport: values.productionReport, productionTarget: values.productionTarget });
+    installProductionReleasePackage(packageValue, target, options);
+    for (let restart = 0; restart < 2; restart += 1) {
+      const verified = verifyProductionInstallation(target, { ...options,
+        expectedPackageHash: packageValue.packageHash });
+      assert.equal(verified.packageHash, packageValue.packageHash);
+      assert.equal(verified.productionTarget.finalizedTip, TIP);
+    }
+    assert.throws(() => verifyProductionInstallation(target, { ...options,
+      expectedPackageHash: "f".repeat(64) }), /trusted startup package/);
+    assert.throws(() => verifyNodeInstallation(target, options), /file set/,
+      "developer verifier must not silently accept a production generation");
+
+    const generation = join(values.root, readlinkSync(target));
+    const provenancePath = join(generation, "NIR-PRODUCTION.json");
+    const originalProvenance = readFileSync(provenancePath, "utf8");
+    const mutant = JSON.parse(originalProvenance); mutant.artifactHash = "e".repeat(64);
+    writeFileSync(provenancePath, `${canonicalJson(mutant)}\n`);
+    assert.throws(() => verifyProductionInstallation(target, { ...options,
+      expectedPackageHash: packageValue.packageHash }), /hash|provenance|package/);
+    writeFileSync(provenancePath, originalProvenance);
+    writeFileSync(join(generation, "blockchain/node.mjs"), "export const mixed = true;\n");
+    assert.throws(() => verifyProductionInstallation(target, { ...options,
+      expectedPackageHash: packageValue.packageHash }), /contents differ/);
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production startup rejects developer installs and update requires exact current head plus upgrade", () => {
+  const values = fixture();
+  try {
+    const devTarget = join(values.root, "developer-node");
+    installNodeArtifact(values.artifact, devTarget, { signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address });
+    assert.throws(() => verifyProductionInstallation(devTarget, { kind: "node",
+      expectedPackageHash: "a".repeat(64), signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address }), /ENOENT|production provenance/);
+
+    const oldPackage = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: values.productionReport, productionTarget: values.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const oldTarget = join(values.root, "old-production");
+    installProductionReleasePackage(oldPackage, oldTarget, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+
+    const paths = ["blockchain/node.mjs", "package.json"];
+    const newerManifest = createReleaseManifest(values.root, paths, {
+      releaseVersion: "1.2.4", sourceRevision: values.manifest.sourceRevision,
+    });
+    const newerSignedRelease = signReleaseManifest(newerManifest, values.signer);
+    const newerEvidence = productionEvidence(values.root, newerManifest, "new-attestation-store");
+    const newerArtifact = createReleaseArtifact(values.root, artifactPaths("node", paths), {
+      kind: "node", sourceManifest: newerManifest,
+    });
+    const newerPackage = createProductionReleasePackage(newerArtifact, { now: NOW,
+      productionReport: newerEvidence.productionReport,
+      productionTarget: newerEvidence.productionTarget,
+      signedRelease: newerSignedRelease, trustedAddress: values.signer.address });
+    const newTarget = join(values.root, "new-production");
+    installProductionReleasePackage(newerPackage, newTarget, { kind: "node", now: NOW,
+      previousInstallation: oldTarget, previousSignedRelease: values.signedRelease,
+      expectedPreviousPackageHash: oldPackage.packageHash,
+      signedRelease: newerSignedRelease, trustedAddress: values.signer.address });
+    assert.equal(verifyProductionInstallation(newTarget, { kind: "node",
+      expectedPackageHash: newerPackage.packageHash, signedRelease: newerSignedRelease,
+      trustedAddress: values.signer.address }).productionTarget.releaseVersion, "1.2.4");
+
+    const rollbackTarget = join(values.root, "rollback-production");
+    assert.throws(() => installProductionReleasePackage(oldPackage, rollbackTarget, {
+      kind: "node", now: NOW, previousInstallation: newTarget,
+      previousSignedRelease: newerSignedRelease,
+      expectedPreviousPackageHash: newerPackage.packageHash,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address,
+    }), /rollback|downgrade/);
+    assert.equal(existsSync(rollbackTarget), false);
+    const wrongHeadTarget = join(values.root, "wrong-head-production");
+    assert.throws(() => installProductionReleasePackage(newerPackage, wrongHeadTarget, {
+      kind: "node", now: NOW, previousInstallation: oldTarget,
+      previousSignedRelease: values.signedRelease, expectedPreviousPackageHash: "0".repeat(64),
+      signedRelease: newerSignedRelease, trustedAddress: values.signer.address,
+    }), /trusted startup package/);
+    assert.equal(existsSync(wrongHeadTarget), false);
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });

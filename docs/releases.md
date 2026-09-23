@@ -195,6 +195,10 @@ npm run release:verify-production-artifact -- \
 npm run release:install-production-node -- \
   node.nirprod signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
   CURRENT_UNIX_TIME_MS /absolute/path/to/new-nir-node
+
+npm run release:verify-production-node-install -- \
+  /absolute/path/to/new-nir-node signed-release.json \
+  nir1TRUSTED_RELEASE_ADDRESS EXPECTED_PRODUCTION_PACKAGE_HASH
 ```
 
 Wallet commands use the same flow with `wallet` and
@@ -213,6 +217,44 @@ an operator-controlled local security boundary.
 This gate authenticates reviewed release and external rehearsal evidence. It does
 not deploy hosts, embed secrets, prove physical operator independence by itself, or
 turn the current developer testnet tooling into a production-ready network.
+
+### Installed production provenance and updates
+
+A production install atomically places `NIR-PRODUCTION.json` inside the same hidden
+generation as the installed files. It commits to the exact production package hash,
+artifact hash, kind, canonical production report, and reviewed target. Reverification
+reconstructs the complete release artifact from descriptor-bound installed bytes,
+rechecks the signed release and all external evidence, and recomputes the package
+hash. Copying provenance from another generation, mixing files, changing modes,
+adding files, or changing any report/target field fails closed. The ordinary
+developer verifier deliberately rejects this extra production file rather than
+silently treating a production generation as a developer install.
+
+The production startup gate requires an exact package hash from independently
+managed operator policy. Run it on every start and restart before executing code
+from that generation. A developer `.nirpkg`, missing/tampered provenance, a different
+valid historical package, or a mixed generation is rejected. The expected package
+hash is the external monotonic anchor; a local directory alone cannot detect a
+coordinated rollback of both its generation and local configuration.
+
+Updates never replace the running activation. They verify the current installation
+against its exact expected package hash and its own signed release, require a strict
+stable SemVer increase on the same network and genesis, and atomically install the
+new package at a separate new target:
+
+```bash
+npm run release:install-production-update-node -- \
+  new-node.nirprod new-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  CURRENT_UNIX_TIME_MS /absolute/path/to/current-node \
+  current-signed-release.json EXPECTED_CURRENT_PACKAGE_HASH \
+  /absolute/path/to/new-node
+```
+
+Only after `release:verify-production-node-install` succeeds for the new exact hash
+should an external process supervisor switch its configured executable target.
+This tooling does not stop processes, switch live services, deploy hosts, or delete
+the previous generation. Wallet production install, verify, and update commands use
+the corresponding `wallet` names.
 
 ## Build the browser extension ZIP
 

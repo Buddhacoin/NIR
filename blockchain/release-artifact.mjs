@@ -30,6 +30,8 @@ const KINDS = new Set(["node", "wallet"]);
 const MAX_ENTRIES = 20_000;
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const MAX_PRODUCTION_PROVENANCE_BYTES = 64 * 1024 * 1024;
+const PRODUCTION_PROVENANCE_FILE = "NIR-PRODUCTION.json";
 
 function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
@@ -335,7 +337,7 @@ function installationSpec(kind) {
 }
 
 function installArtifact(artifact, targetPath, {
-  kind, signedRelease, trustedAddress, _beforeActivation,
+  kind, productionProvenance = null, signedRelease, trustedAddress, _beforeActivation,
 } = {}) {
   const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
   const verified = verifyReleaseArtifact(artifact, { sourceManifest: manifest });
@@ -406,11 +408,19 @@ function installArtifact(artifact, targetPath, {
       join(staging, "NIR-INSTALL.json"), Buffer.from(`${canonicalJson(provenance)}\n`),
       0o644, `${kind} installation provenance`,
     );
+    if (productionProvenance !== null) {
+      const productionContents = Buffer.from(`${canonicalJson(productionProvenance)}\n`);
+      if (productionContents.length > MAX_PRODUCTION_PROVENANCE_BYTES) {
+        throw new Error(`${kind} production provenance is too large`);
+      }
+      writeRegularFile(join(staging, PRODUCTION_PROVENANCE_FILE), productionContents, 0o644,
+        `${kind} production provenance`);
+    }
     for (const directory of [...directories]
       .sort((left, right) => right.split(sep).length - left.split(sep).length)) {
       syncDirectory(directory, `${kind} installation directory`);
     }
-    verifyInstallationRoot(staging, { kind, manifest, signer });
+    verifyInstallationRoot(staging, { kind, manifest, productionProvenance, signer });
     assertDirectoryIdentity(parent, parentOpened, `${kind} installation parent`);
     const stagingOpened = openDirectory(staging, `${kind} installation staging directory`);
     try {
@@ -520,7 +530,9 @@ function installedFiles(directory, kind, prefix = "", result = []) {
   return result;
 }
 
-function verifyInstallationRoot(target, { kind, manifest, signer } = {}) {
+function verifyInstallationRoot(target, {
+  includeArtifact = false, kind, manifest, productionProvenance = null, signer,
+} = {}) {
   const spec = installationSpec(kind);
   const targetOpened = openDirectory(target, `${kind} installation`);
   if ((targetOpened.metadata.mode & 0o777) !== 0o700) {
@@ -532,7 +544,8 @@ function verifyInstallationRoot(target, { kind, manifest, signer } = {}) {
     const sourcePaths = artifactPaths(kind, manifest.files.map(({ path }) => path));
     const expectedRelative = sourcePaths.map((path) => spec.relativePath(path));
     const actualRelative = installedFiles(target, kind);
-    const expectedFiles = [...expectedRelative, "NIR-INSTALL.json"].sort();
+    const expectedFiles = [...expectedRelative, "NIR-INSTALL.json",
+      ...(productionProvenance === null ? [] : [PRODUCTION_PROVENANCE_FILE])].sort();
     if (actualRelative.length !== expectedFiles.length ||
         actualRelative.some((path, index) => path !== expectedFiles[index])) {
       throw new Error(`${kind} installation file set does not match the signed release`);
@@ -587,12 +600,29 @@ function verifyInstallationRoot(target, { kind, manifest, signer } = {}) {
     if (canonicalJson(provenance) !== canonicalJson(expectedProvenance)) {
       throw new Error(`${kind} installation provenance does not match its contents`);
     }
+    if (productionProvenance !== null) {
+      const { contents: productionContents, metadata: productionMetadata } = readRegularFile(
+        join(target, PRODUCTION_PROVENANCE_FILE), {
+          label: `${kind} production provenance`, maximum: MAX_PRODUCTION_PROVENANCE_BYTES,
+        },
+      );
+      if ((productionMetadata.mode & 0o777) !== 0o644 ||
+          productionContents.toString("utf8") !== `${canonicalJson(productionProvenance)}\n`) {
+        throw new Error(`${kind} production provenance does not match expected evidence`);
+      }
+    }
     assertDirectoryIdentity(target, targetOpened, `${kind} installation`, true);
-    return { ...expectedProvenance, files: entries.length, verified: true };
+    const result = { ...expectedProvenance, files: entries.length, verified: true };
+    if (includeArtifact) {
+      result.artifact = { ...payload, artifactHash };
+    }
+    return result;
   } finally { closeSync(targetOpened.descriptor); }
 }
 
-function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } = {}) {
+function verifyInstallation(targetPath, {
+  includeArtifact = false, kind, productionProvenance = null, signedRelease, trustedAddress,
+} = {}) {
   const { manifest, signer } = verifySignedRelease(signedRelease, { trustedAddress });
   const target = resolve(targetPath);
   const linkMetadata = lstatSync(target);
@@ -604,13 +634,39 @@ function verifyInstallation(targetPath, { kind, signedRelease, trustedAddress } 
     throw new Error(`${kind} installation activation target is invalid`);
   }
   const generation = join(dirname(target), link);
-  const result = verifyInstallationRoot(generation, { kind, manifest, signer });
+  const result = verifyInstallationRoot(generation, {
+    includeArtifact, kind, manifest, productionProvenance, signer,
+  });
   const current = lstatSync(target);
   if (!current.isSymbolicLink() || !sameIdentity(current, linkMetadata) ||
       readlinkSync(target) !== link) {
     throw new Error(`${kind} installation activation changed during verification`);
   }
   return result;
+}
+
+function readProductionProvenance(targetPath, kind) {
+  const target = resolve(targetPath); const linkMetadata = lstatSync(target);
+  if (!linkMetadata.isSymbolicLink()) {
+    throw new Error(`${kind} production installation activation is not a symbolic link`);
+  }
+  const link = readlinkSync(target);
+  if (!generationPattern(target).test(link)) {
+    throw new Error(`${kind} production installation activation target is invalid`);
+  }
+  const generation = join(dirname(target), link);
+  const { contents, metadata } = readRegularFile(join(generation, PRODUCTION_PROVENANCE_FILE), {
+    label: `${kind} production provenance`, maximum: MAX_PRODUCTION_PROVENANCE_BYTES,
+  });
+  if ((metadata.mode & 0o777) !== 0o644) {
+    throw new Error(`${kind} production provenance mode is invalid`);
+  }
+  const current = lstatSync(target);
+  if (!current.isSymbolicLink() || !sameIdentity(current, linkMetadata) ||
+      readlinkSync(target) !== link) {
+    throw new Error(`${kind} production installation activation changed during read`);
+  }
+  return JSON.parse(contents.toString("utf8"));
 }
 
 function installationInventory(targetPath, { kind, signedRelease, trustedAddress } = {}) {
@@ -762,6 +818,26 @@ export function verifyWalletInstallation(targetPath, options = {}) {
 
 export function verifyNodeInstallation(targetPath, options = {}) {
   return verifyInstallation(targetPath, { ...options, kind: "node" });
+}
+
+export function readWalletProductionProvenance(targetPath) {
+  return readProductionProvenance(targetPath, "wallet");
+}
+
+export function readNodeProductionProvenance(targetPath) {
+  return readProductionProvenance(targetPath, "node");
+}
+
+export function verifyWalletProductionArtifactInstallation(targetPath, options = {}) {
+  return verifyInstallation(targetPath, {
+    ...options, includeArtifact: true, kind: "wallet",
+  });
+}
+
+export function verifyNodeProductionArtifactInstallation(targetPath, options = {}) {
+  return verifyInstallation(targetPath, {
+    ...options, includeArtifact: true, kind: "node",
+  });
 }
 
 export function inventoryWalletInstallations(targetPath, options = {}) {
