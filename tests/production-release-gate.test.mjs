@@ -38,6 +38,14 @@ import {
   importProductionWalletExport, serializeProductionWalletExport, verifyProductionWalletExport,
 } from "../blockchain/production-wallet-export.mjs";
 import {
+  appendWalletReleaseTransparency, assembleWalletReleaseCheckpoint,
+  compareWalletReleaseGossipCheckpoints,
+  createWalletReleaseCheckpoint, createWalletReleaseConsistencyProof,
+  createWalletReleaseInclusionProof, exportWalletReleaseGossipCheckpoint,
+  loadWalletReleaseTransparencyStore, signWalletReleaseCheckpoint,
+  verifyWalletReleaseConsistencyProof, verifyWalletReleaseTransparencyEvidence,
+} from "../blockchain/production-wallet-transparency.mjs";
+import {
   advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
   repairProductionHeadCopies, verifyProductionStartupFromHead,
 } from "../blockchain/production-head-store.mjs";
@@ -846,6 +854,113 @@ test("production wallet bridge and UI verify anchored generations before bind on
       expectedAuthoritySetId: authoritySet.setId,
       trustedReleaseAddress: values.signer.address,
     }), `${canonicalJson(portableExport)}\n`);
+    const transparencyRoot = join(values.root, "wallet-release-transparency");
+    const appendedRelease = appendWalletReleaseTransparency(transparencyRoot, portableExport, {
+      expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+    });
+    let latestTransparencyStore = appendedRelease.store;
+    let previousPortableBundleHash = exportBundleA.bundleHash;
+    for (let patch = 1; patch <= 3; patch += 1) {
+      const nextManifest = createReleaseManifest(values.root, paths, {
+        releaseVersion: `2.0.${patch}`, sourceRevision: values.manifest.sourceRevision,
+      });
+      const nextSigned = signReleaseManifest(nextManifest, values.signer);
+      const nextEvidence = productionEvidence(values.root, nextManifest,
+        `wallet-transparency-attestations-${patch}`);
+      const nextWalletArtifact = createReleaseArtifact(values.root, artifactPaths("wallet", paths), {
+        kind: "wallet", sourceManifest: nextManifest,
+      });
+      const nextToolArtifact = createReleaseArtifact(values.root, artifactPaths("node", paths), {
+        kind: "node", sourceManifest: nextManifest,
+      });
+      const packageOptions = { now: NOW, productionReport: nextEvidence.productionReport,
+        productionTarget: nextEvidence.productionTarget, signedRelease: nextSigned,
+        trustedAddress: values.signer.address };
+      const nextWalletPackage = createProductionReleasePackage(nextWalletArtifact, packageOptions);
+      const nextToolPackage = createProductionReleasePackage(nextToolArtifact, packageOptions);
+      const nextBundle = createProductionWalletExportBundle({ previousBundleHash: previousPortableBundleHash,
+        signedRelease: nextSigned, toolPackage: nextToolPackage,
+        trustedAddress: values.signer.address, walletPackage: nextWalletPackage });
+      const nextApprovals = releaseAuthorities.slice(0, 3)
+        .map((wallet) => signOfflineReleaseBundle(nextBundle, wallet));
+      const nextExport = assembleProductionWalletExport(nextBundle, authoritySet, nextApprovals);
+      latestTransparencyStore = appendWalletReleaseTransparency(transparencyRoot, nextExport, {
+        expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+      }).store;
+      previousPortableBundleHash = nextBundle.bundleHash;
+    }
+    const checkpointPayload = createWalletReleaseCheckpoint(latestTransparencyStore, {
+      expiresAt: NOW + 10_000, issuedAt: NOW,
+    });
+    const checkpointSignatures = releaseAuthorities.slice(0, 3).map((wallet, index) =>
+      signWalletReleaseCheckpoint(checkpointPayload, authoritySet, {
+        operatorId: `wallet-export-${index}`, wallet,
+      }));
+    const signedCheckpoint = assembleWalletReleaseCheckpoint(checkpointPayload, authoritySet,
+      checkpointSignatures);
+    assert.throws(() => assembleWalletReleaseCheckpoint(checkpointPayload, authoritySet,
+      [checkpointSignatures[0], checkpointSignatures[0], checkpointSignatures[1]]), /duplicate/);
+    const inclusionProof = createWalletReleaseInclusionProof(latestTransparencyStore, 1);
+    assert.equal(verifyWalletReleaseTransparencyEvidence(verifiedExport, {
+      checkpoint: signedCheckpoint, inclusionProof,
+    }, { expectedCheckpointHash: signedCheckpoint.checkpointHash, now: NOW }).verified, true);
+    const gossip = exportWalletReleaseGossipCheckpoint(signedCheckpoint);
+    assert.equal(gossip.merkleRoot, latestTransparencyStore.merkleRoot);
+    assert.equal(compareWalletReleaseGossipCheckpoints(gossip, structuredClone(gossip)).relation,
+      "equal");
+    const forkedGossip = structuredClone(gossip); forkedGossip.merkleRoot = "f".repeat(64);
+    assert.throws(() => compareWalletReleaseGossipCheckpoints(gossip, forkedGossip), /split-view/);
+    for (let oldCount = 1; oldCount <= latestTransparencyStore.count; oldCount += 1) {
+      verifyWalletReleaseConsistencyProof(
+        createWalletReleaseConsistencyProof(latestTransparencyStore, oldCount));
+    }
+    const extensionProof = createWalletReleaseConsistencyProof(latestTransparencyStore, 1);
+    const olderGossip = { ...gossip, checkpointHash: "1".repeat(64), count: 1,
+      headHash: latestTransparencyStore.records[0].recordHash,
+      latestReleaseManifestHash: latestTransparencyStore.records[0].record.releaseManifestHash,
+      merkleRoot: extensionProof.oldRoot };
+    assert.equal(compareWalletReleaseGossipCheckpoints(olderGossip, gossip,
+      extensionProof).relation, "consistent-extension");
+    const brokenConsistency = createWalletReleaseConsistencyProof(latestTransparencyStore, 1);
+    brokenConsistency.nodes.reverse();
+    assert.throws(() => verifyWalletReleaseConsistencyProof(brokenConsistency), /connect|extra/);
+    let mutantSeed = 0x51f15e;
+    const consistencyBase = createWalletReleaseConsistencyProof(latestTransparencyStore, 1);
+    for (let mutation = 0; mutation < 32; mutation += 1) {
+      mutantSeed = (Math.imul(mutantSeed, 1664525) + 1013904223) >>> 0;
+      const candidate = structuredClone(consistencyBase);
+      const index = mutantSeed % candidate.nodes.length;
+      const nibble = (Number.parseInt(candidate.nodes[index][0], 16) ^ 1).toString(16);
+      candidate.nodes[index] = `${nibble}${candidate.nodes[index].slice(1)}`;
+      assert.throws(() => verifyWalletReleaseConsistencyProof(candidate), /connect|extra/);
+    }
+    assert.throws(() => appendWalletReleaseTransparency(transparencyRoot, portableExport, {
+      expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+    }), /duplicate|replay|reordered/);
+    const crashRoot = join(values.root, "wallet-release-crash");
+    assert.throws(() => appendWalletReleaseTransparency(crashRoot, portableExport, {
+      _beforeBackupRename: () => { throw new Error("simulated checkpoint crash"); },
+      expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+    }), /simulated checkpoint crash/);
+    assert.equal(loadWalletReleaseTransparencyStore(crashRoot).store.count, 1);
+    const symlinkRoot = join(values.root, "wallet-release-symlink");
+    symlinkSync(crashRoot, symlinkRoot);
+    assert.throws(() => loadWalletReleaseTransparencyStore(symlinkRoot), /unsafe/);
+    const forkedProof = structuredClone(inclusionProof);
+    forkedProof.record.record.walletPackageHash = "e".repeat(64);
+    assert.throws(() => verifyWalletReleaseTransparencyEvidence(verifiedExport, {
+      checkpoint: signedCheckpoint, inclusionProof: forkedProof,
+    }, { expectedCheckpointHash: signedCheckpoint.checkpointHash, now: NOW }), /record|proof/);
+    const omittedProof = structuredClone(inclusionProof); omittedProof.nodes.pop();
+    assert.throws(() => verifyWalletReleaseTransparencyEvidence(verifiedExport, {
+      checkpoint: signedCheckpoint, inclusionProof: omittedProof,
+    }, { expectedCheckpointHash: signedCheckpoint.checkpointHash, now: NOW }), /truncated|proof/);
+    assert.throws(() => verifyWalletReleaseTransparencyEvidence(verifiedExport, {
+      checkpoint: signedCheckpoint, inclusionProof,
+    }, { expectedCheckpointHash: "f".repeat(64), now: NOW }), /untrusted/);
+    assert.throws(() => verifyWalletReleaseTransparencyEvidence(verifiedExport, {
+      checkpoint: signedCheckpoint, inclusionProof,
+    }, { expectedCheckpointHash: signedCheckpoint.checkpointHash, now: NOW + 10_001 }), /stale/);
     const exportCli = new URL("../blockchain/production-wallet-export-cli.mjs", import.meta.url).pathname;
     const exportRoots = [join(values.root, "export-root-a"), join(values.root, "export-root-b")];
     for (const root of exportRoots) mkdirSync(root);
@@ -878,16 +993,27 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const assembledCli = spawnSync(process.execPath, [exportCli, "assemble", cliBundleA,
       authoritySetPath, cliExport, ...approvalPaths], { encoding: "utf8" });
     assert.equal(assembledCli.status, 0, assembledCli.stderr);
+    const checkpointPath = join(values.root, "wallet-release-checkpoint.json");
+    const inclusionPath = join(values.root, "wallet-release-inclusion.json");
+    writeFileSync(checkpointPath, `${canonicalJson(signedCheckpoint)}\n`);
+    writeFileSync(inclusionPath, `${canonicalJson(inclusionProof)}\n`);
     const verifiedCli = spawnSync(process.execPath, [exportCli, "verify", cliExport,
       values.signer.address, authoritySet.setId, NETWORK, evidence.productionTarget.genesisHash,
-      packageValue.packageHash, toolPackage.packageHash], { encoding: "utf8" });
+      packageValue.packageHash, toolPackage.packageHash, checkpointPath, inclusionPath,
+      signedCheckpoint.checkpointHash, String(NOW)], { encoding: "utf8" });
     assert.equal(verifiedCli.status, 0, verifiedCli.stderr);
     const cliImportedWallet = join(values.root, "portable-cli-import");
     const importedCli = spawnSync(process.execPath, [exportCli, "import", cliExport,
       values.signer.address, authoritySet.setId, NETWORK, evidence.productionTarget.genesisHash,
-      packageValue.packageHash, toolPackage.packageHash, cliImportedWallet], { encoding: "utf8" });
+      packageValue.packageHash, toolPackage.packageHash, checkpointPath, inclusionPath,
+      signedCheckpoint.checkpointHash, String(NOW), cliImportedWallet], { encoding: "utf8" });
     assert.equal(importedCli.status, 0, importedCli.stderr);
     assert.equal(JSON.parse(importedCli.stdout).packageHash, packageValue.packageHash);
+    const missingTransparencyTarget = join(values.root, "portable-missing-transparency");
+    assert.throws(() => importProductionWalletExport(portableExport, missingTransparencyTarget, {
+      expectedAuthoritySetId: authoritySet.setId, trustedReleaseAddress: values.signer.address,
+    }), /transparency evidence/);
+    assert.equal(existsSync(missingTransparencyTarget), false);
     assert.throws(() => assembleProductionWalletExport(exportBundleA, authoritySet,
       [exportApprovals[0], exportApprovals[0], exportApprovals[1]]), /duplicate/);
     assert.throws(() => assembleProductionWalletExport(exportBundleA, authoritySet,
@@ -909,9 +1035,11 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const importedWallet = join(values.root, "portable-wallet-import");
     const imported = importProductionWalletExport(portableExport, importedWallet, {
       expectedAuthoritySetId: authoritySet.setId,
+      expectedCheckpointHash: signedCheckpoint.checkpointHash,
       expectedGenesisHash: evidence.productionTarget.genesisHash,
       expectedNetworkId: NETWORK, expectedToolPackageHash: toolPackage.packageHash,
       expectedWalletPackageHash: packageValue.packageHash,
+      now: NOW, transparencyEvidence: { checkpoint: signedCheckpoint, inclusionProof },
       trustedReleaseAddress: values.signer.address,
     });
     assert.equal(imported.packageHash, packageValue.packageHash);
@@ -919,14 +1047,18 @@ test("production wallet bridge and UI verify anchored generations before bind on
     mkdirSync(occupiedPortable); writeFileSync(join(occupiedPortable, "foreign"), "keep\n");
     assert.throws(() => importProductionWalletExport(portableExport, occupiedPortable, {
       expectedAuthoritySetId: authoritySet.setId,
+      expectedCheckpointHash: signedCheckpoint.checkpointHash, now: NOW,
+      transparencyEvidence: { checkpoint: signedCheckpoint, inclusionProof },
       trustedReleaseAddress: values.signer.address,
     }), /new directory|exist|target/i);
     assert.equal(readFileSync(join(occupiedPortable, "foreign"), "utf8"), "keep\n");
     assert.throws(() => importProductionWalletExport(portableExport,
       join(values.root, "portable-wallet-rollback"), {
         expectedAuthoritySetId: authoritySet.setId,
+        expectedCheckpointHash: signedCheckpoint.checkpointHash,
         expectedPreviousPackageHash: packageValue.packageHash,
         previousInstallation: importedWallet, previousSignedRelease: signedRelease,
+        now: NOW, transparencyEvidence: { checkpoint: signedCheckpoint, inclusionProof },
         trustedReleaseAddress: values.signer.address,
       }), /rollback|downgrade/);
     const installation = join(values.root, "wallet-app");

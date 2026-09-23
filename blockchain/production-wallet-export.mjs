@@ -10,6 +10,7 @@ import {
 import { verifySignedRelease } from "./release-manifest.mjs";
 import { validateProductionWalletExtensionArtifact } from "./production-wallet-extension.mjs";
 import { PRODUCTION_EXTENSION_FILES } from "./production-wallet-extension.mjs";
+import { verifyWalletReleaseTransparencyEvidence } from "./production-wallet-transparency.mjs";
 
 const FORMAT = "nir-production-wallet-export-v1";
 const BINDING_FORMAT = "nir-production-wallet-export-binding-v1";
@@ -190,6 +191,9 @@ export function verifyProductionWalletExport(value, { expectedAuthoritySetId, ex
 
 export function importProductionWalletExport(value, targetPath, options = {}) {
   const verified = verifyProductionWalletExport(value, options);
+  verifyWalletReleaseTransparencyEvidence(verified, options.transparencyEvidence, {
+    expectedCheckpointHash: options.expectedCheckpointHash, now: options.now,
+  });
   const install = installProductionReleasePackage(verified.walletPackage, targetPath, {
     expectedPreviousPackageHash: options.expectedPreviousPackageHash ?? null, kind: "wallet",
     now: verified.walletPackage.productionReport.observedAt,

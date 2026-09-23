@@ -17,8 +17,9 @@ Typical offline flow:
 1. Run `wallet:export-production build WALLET_PACKAGE TOOL_PACKAGE SIGNED_RELEASE TRUSTED_RELEASE_ADDRESS PREVIOUS_BUNDLE|none BUNDLE` on the verified build machine.
 2. Distribute `BUNDLE` to release authorities. Each authority uses `release:bundle-sign BUNDLE ENCRYPTED_VAULT APPROVAL` offline.
 3. Run `wallet:export-production assemble BUNDLE AUTHORITY_SET EXPORT APPROVAL...`.
-4. On the destination, run `wallet:export-production verify EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH`. The authority-set ID must come from an operator trust channel, not from the archive.
-5. Run the same command with `import` and append `TARGET`. For an update, also append the exact current installation, its signed release, and its expected package hash.
+4. Append the assembled export with `wallet:release-transparency append`. Create a checkpoint payload, obtain the configured authority quorum with the offline `sign` command, assemble it, and export the inclusion proof. Publish the compact gossip checkpoint through at least two operator-selected channels.
+5. On the destination, run `wallet:export-production verify EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH SIGNED_CHECKPOINT INCLUSION_PROOF TRUSTED_CHECKPOINT_HASH NOW_MS`. The authority-set ID and checkpoint hash must come from operator trust channels, not from the archive.
+6. Run the same command with `import` and append `TARGET`. For an update, also append the exact current installation, its signed release, and its expected package hash.
 
 Verification rejects noncanonical JSON, extra/missing/ambiguous paths, case collisions, traversal,
 changed file bytes, insufficient/duplicate/unknown approvals, a different release signer, mixed
@@ -26,6 +27,17 @@ wallet/tool lineage, unexpected package hashes, and rollback/downgrade updates. 
 existing exclusive generation installer and activates only after full verification; it neither copies
 a live tree nor replaces an existing target.
 
+The transparency store is a bounded append-only hash chain with a Merkle root and two crash-safe
+copies. Checkpoints bind the latest wallet/tool generations and require the release-authority quorum.
+Inclusion proofs bind an export to a fresh trusted checkpoint; logarithmic consistency proofs connect
+older and newer roots and reject omission, reordering, truncation, and forks. A same-size gossip
+checkpoint with a different root is direct split-view evidence. A larger checkpoint is accepted as a
+continuation only with a valid consistency proof. Checkpoint validity is bounded to seven days and
+verification rejects both future and expired checkpoints. The local store alone cannot detect a coordinated
+rollback of both copies; retain checkpoint hashes outside the machine and compare gossip checkpoints
+over independent operator-selected channels.
+
 The portable archive authenticates NIR wallet/tool bytes and release provenance. It does not attest
 to the browser executable, operating system, system Node.js runtime, physical operator independence,
-or machine integrity. Those remain deployment trust boundaries.
+or machine integrity. Nor does it prove global log availability or physical channel/operator
+independence. Those remain deployment trust boundaries.

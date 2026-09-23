@@ -25,6 +25,7 @@
     "wallet:serve-production": "node blockchain/wallet-ui-cli.mjs",
     "wallet:extension-production": "node blockchain/production-wallet-extension-cli.mjs",
     "wallet:export-production": "node blockchain/production-wallet-export-cli.mjs",
+    "wallet:release-transparency": "node blockchain/production-wallet-transparency-cli.mjs",
     "beacon:serve": "node blockchain/beacon-service.mjs",
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "progress-beacon:aggregate": "node blockchain/beacon-aggregate.mjs progress",

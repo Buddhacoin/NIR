@@ -13,6 +13,7 @@ import {
   serializeProductionWalletExport,
 } from "./production-wallet-export.mjs";
 import { readBoundedPublicJson } from "./production-release-gate.mjs";
+import { verifyWalletReleaseTransparencyEvidence } from "./production-wallet-transparency.mjs";
 
 function readJson(path, maximumBytes = 600 * 1024 * 1024, requireCanonical = false) {
   return readBoundedPublicJson(path, { maximumBytes, requireCanonical });
@@ -56,30 +57,47 @@ try {
       approvalPaths.map((path) => readJson(path, 64 * 1024, true)));
     writeExclusive(output, `${canonicalJson(assembled)}\n`);
     process.stdout.write(`${canonicalJson({ bundleHash: bundle.bundleHash, status: "ASSEMBLED" })}\n`);
-  } else if (command === "verify" && args.length === 7) {
+  } else if (command === "verify" && args.length === 11) {
     const [path, trustedReleaseAddress, expectedAuthoritySetId, expectedNetworkId, expectedGenesisHash,
-      expectedWalletPackageHash, expectedToolPackageHash] = args;
+      expectedWalletPackageHash, expectedToolPackageHash, checkpointPath, proofPath,
+      expectedCheckpointHash, nowText] = args;
     const text = `${canonicalJson(readJson(path, 192 * 1024 * 1024, true))}\n`;
     const verified = parseProductionWalletExport(text, { expectedAuthoritySetId,
       expectedGenesisHash, expectedNetworkId,
       expectedToolPackageHash, expectedWalletPackageHash, trustedReleaseAddress });
+    verifyWalletReleaseTransparencyEvidence(verified, { checkpoint: readJson(checkpointPath, 1024 * 1024, true),
+      inclusionProof: readJson(proofPath, 1024 * 1024, true) }, {
+      expectedCheckpointHash, now: Number(nowText),
+    });
     process.stdout.write(`${canonicalJson({ bundleHash: verified.bundle.bundleHash,
       packageHash: verified.walletPackage.packageHash, status: "VERIFIED" })}\n`);
-  } else if (command === "import" && (args.length === 8 || args.length === 11)) {
+  } else if (command === "import" && (args.length === 12 || args.length === 15)) {
     const [path, trustedReleaseAddress, expectedAuthoritySetId, expectedNetworkId, expectedGenesisHash,
-      expectedWalletPackageHash, expectedToolPackageHash, target,
+      expectedWalletPackageHash, expectedToolPackageHash, checkpointPath, proofPath,
+      expectedCheckpointHash, nowText, target,
       previousInstallation, previousSignedPath, expectedPreviousPackageHash] = args;
     const envelope = readJson(path, 192 * 1024 * 1024, true);
-    const result = importProductionWalletExport(envelope, target, { expectedAuthoritySetId,
+    const verificationOptions = { expectedAuthoritySetId,
       expectedGenesisHash,
-      expectedNetworkId, expectedPreviousPackageHash: expectedPreviousPackageHash ?? null,
-      expectedToolPackageHash, expectedWalletPackageHash,
+      expectedNetworkId, expectedToolPackageHash, expectedWalletPackageHash,
+      trustedReleaseAddress };
+    const verified = parseProductionWalletExport(`${canonicalJson(envelope)}\n`, verificationOptions);
+    verifyWalletReleaseTransparencyEvidence(verified, { checkpoint: readJson(checkpointPath, 1024 * 1024, true),
+      inclusionProof: readJson(proofPath, 1024 * 1024, true) }, {
+      expectedCheckpointHash, now: Number(nowText),
+    });
+    const result = importProductionWalletExport(envelope, target, { ...verificationOptions,
+      expectedCheckpointHash, now: Number(nowText), transparencyEvidence: {
+        checkpoint: readJson(checkpointPath, 1024 * 1024, true),
+        inclusionProof: readJson(proofPath, 1024 * 1024, true),
+      },
+      expectedPreviousPackageHash: expectedPreviousPackageHash ?? null,
       previousInstallation: previousInstallation ?? null,
       previousSignedRelease: previousSignedPath ? readJson(previousSignedPath, 16 * 1024 * 1024) : null,
-      trustedReleaseAddress });
+    });
     process.stdout.write(`${canonicalJson(result)}\n`);
   } else {
-    throw new Error("usage: wallet-export build WALLET_PACKAGE TOOL_PACKAGE SIGNED_RELEASE TRUSTED_RELEASE_ADDRESS PREVIOUS_BUNDLE|none OUTPUT | wallet-export assemble BUNDLE AUTHORITY_SET OUTPUT APPROVAL... | wallet-export verify EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH | wallet-export import EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH TARGET [PREVIOUS_INSTALLATION PREVIOUS_SIGNED_RELEASE PREVIOUS_PACKAGE_HASH]");
+    throw new Error("usage: wallet-export build WALLET_PACKAGE TOOL_PACKAGE SIGNED_RELEASE TRUSTED_RELEASE_ADDRESS PREVIOUS_BUNDLE|none OUTPUT | wallet-export assemble BUNDLE AUTHORITY_SET OUTPUT APPROVAL... | wallet-export verify EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH SIGNED_CHECKPOINT INCLUSION_PROOF TRUSTED_CHECKPOINT_HASH NOW_MS | wallet-export import EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH SIGNED_CHECKPOINT INCLUSION_PROOF TRUSTED_CHECKPOINT_HASH NOW_MS TARGET [PREVIOUS_INSTALLATION PREVIOUS_SIGNED_RELEASE PREVIOUS_PACKAGE_HASH]");
   }
 } catch (error) {
   process.stderr.write(`Production wallet export failed safely: ${error.message}\n`);
