@@ -13,7 +13,10 @@ import {
   finalizeBlock, finalizeValidatorRecoveryBlock, prepareCertificateHash, transactionId,
 } from "../blockchain/chain.mjs";
 import { createAdmissionInclusionReceipt } from "../blockchain/admission-inclusion.mjs";
-import { createFinalityProof, verifyValidatorRecoveryTransition } from "../blockchain/light-client.mjs";
+import {
+  createFinalityProof, verifyAndPersistValidatorRecoveryTransition,
+  verifyValidatorRecoveryTransition,
+} from "../blockchain/light-client.mjs";
 import {
   MIN_BEACON_BOND, MIN_TRANSFER_FEE, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
@@ -27,10 +30,15 @@ import {
   createValidatorRecoveryCheckpointCertificate,
   createValidatorRecoveryPlan,
   createValidatorRecoveryPlanTransaction,
+  validatorRecoveryStateCommitment,
   verifyValidatorRecoveryCheckpoint,
   verifyValidatorRecoveryPlan,
 } from "../blockchain/validator-recovery.mjs";
 import { ValidatorRecoveryLockStore } from "../blockchain/validator-recovery-store.mjs";
+import {
+  advanceValidatorRecoveryTrustStore, createValidatorRecoveryTrustStore,
+  loadValidatorRecoveryTrustStore,
+} from "../blockchain/validator-recovery-trust-store.mjs";
 import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 import {
   createValidatorRecoveryPeerRegistry, peerRegistryHash,
@@ -156,11 +164,50 @@ function snapshotRestore(chain, genesisConfig) {
   const snapshot = chain.consensusSnapshot();
   return NirChain.fromVerifiedSnapshot(genesisConfig, { capabilityMemory: snapshot.capabilityMemory,
     checkpoint: chain.blocks().at(-1), height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: snapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash });
 }
 
 test("precommitted reserve quorum recovers exactly H+1 and preserves slashing economics", (t) => {
   const values = prepareRecovery(t);
+  assert.equal(values.omission.recoveryStateCommitment, validatorRecoveryStateCommitment({
+    activePlanHash: values.plan.planHash, generation: 0, networkId: values.chain.networkId,
+  }));
+  const replacementHeight = values.chain.height + 1;
+  const replacementPlan = createValidatorRecoveryPlan({
+    activationHeight: replacementHeight + 64,
+    activeValidators: members(values.validators, "validator"), generation: 1,
+    networkId: values.chain.networkId,
+    reserveWallets: values.reserves.map((wallet, index) => ({
+      member: members(values.reserves, "reserve")[index], wallet,
+    })),
+    scheduledHeight: replacementHeight,
+  });
+  const replacementProposal = values.chain.buildBlock({
+    timestamp: TREASURY_VESTING_MS + 68,
+    transactions: [createValidatorRecoveryPlanTransaction({
+      networkId: values.chain.networkId, nonce: values.chain.nextNonce(values.treasury.address),
+      plan: replacementPlan, wallet: values.treasury,
+    })],
+  });
+  assert.throws(() => values.chain.appendBlock(finalizeBlock(replacementProposal,
+    quorumFor(replacementProposal, values.validators))), /conflicts with pending membership state/);
+  const rotationFork = values.chain.fork();
+  const rotationHeight = rotationFork.height + 1;
+  const rotatedMembers = members([
+    ...values.validators.slice(0, 3), values.reserves[0],
+  ], "rotation");
+  const rotationProposal = rotationFork.buildBlock({
+    timestamp: TREASURY_VESTING_MS + 68,
+    validatorRotation: { activationHeight: rotationHeight + 5, onboarding: null,
+      validators: rotatedMembers },
+  });
+  rotationFork.appendBlock(finalizeBlock(rotationProposal,
+    quorumFor(rotationProposal, values.validators)));
+  assert.equal(rotationFork.validatorRecoveryPlan, null);
+  assert.equal(rotationFork.recoveryStateCommitment, validatorRecoveryStateCommitment({
+    activePlanHash: null, generation: 0, networkId: values.chain.networkId,
+  }));
   const fork = values.chain.fork();
   const restoredBefore = snapshotRestore(values.chain, values.genesisConfig);
   const burnedBefore = values.chain.burned;
@@ -177,6 +224,9 @@ test("precommitted reserve quorum recovers exactly H+1 and preserves slashing ec
   for (const replica of [values.chain, fork, restoredBefore]) replica.appendBlock(recovered);
   assert.equal(values.chain.validatorRecoveryGeneration, 1);
   assert.equal(values.chain.validatorRecoveryPlan, null);
+  assert.equal(recovered.recoveryStateCommitment, validatorRecoveryStateCommitment({
+    activePlanHash: null, generation: 1, networkId: values.chain.networkId,
+  }));
   assert.deepEqual(values.chain.validatorMembers.map(({ address }) => address),
     members(values.reserves, "reserve").map(({ address }) => address).sort());
   assert.equal(values.chain.validatorDisabled(values.validators[1].address), true);
@@ -191,18 +241,43 @@ test("precommitted reserve quorum recovers exactly H+1 and preserves slashing ec
   assert.equal(restoredBefore.stateRoot, values.chain.stateRoot);
   const light = verifyValidatorRecoveryTransition({ expectedNetworkId: values.chain.networkId,
     plan: values.plan, previousProof: oldProof, recoveryBlock: recovered,
-    trustedPlanHash: values.plan.planHash,
     trustedValidators: members(values.validators, "validator") });
   assert.equal(light.validatorSetId, values.plan.reserveSetId);
-  assert.throws(() => verifyValidatorRecoveryTransition({
+  const trustDirectory = mkdtempSync(join(tmpdir(), "nir-recovery-light-trust-"));
+  t.after(() => rmSync(trustDirectory, { recursive: true, force: true }));
+  const trustPath = join(trustDirectory, "trust.json");
+  const trust = createValidatorRecoveryTrustStore(trustPath, {
+    checkpoint: { height: oldProof.header.height, recoveryGeneration: 0,
+      recoveryStateCommitment: oldProof.header.recoveryStateCommitment,
+      stateRoot: oldProof.header.stateRoot, tipHash: oldProof.hash },
+    networkId: values.chain.networkId,
+  });
+  const persistedLight = verifyAndPersistValidatorRecoveryTransition({
     expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
-    recoveryBlock: recovered, trustedValidators: members(values.validators, "validator"),
-  }), /plan hash is not pre-pinned/);
+    recoveryBlock: recovered, recoveryTrustStore: trust, recoveryTrustStorePath: trustPath,
+    trustedValidators: members(values.validators, "validator"),
+  });
+  assert.equal(persistedLight.recoveryTrustStore.checkpoint.recoveryGeneration, 1);
+  assert.deepEqual(loadValidatorRecoveryTrustStore(trustPath, {
+    networkId: values.chain.networkId,
+  }), persistedLight.recoveryTrustStore);
+  assert.throws(() => verifyAndPersistValidatorRecoveryTransition({
+    expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
+    recoveryBlock: recovered, recoveryTrustStore: persistedLight.recoveryTrustStore,
+    recoveryTrustStorePath: trustPath,
+    trustedValidators: members(values.validators, "validator"),
+  }), /does not authenticate the previous header/);
+  const unscheduledProposal = { ...structuredClone(values.omission), certificate: [], hash: null,
+    prepareCertificate: [], recoveryStateCommitment: validatorRecoveryStateCommitment({
+      activePlanHash: null, generation: 0, networkId: values.chain.networkId,
+    }) };
+  const forgedSchedule = createFinalityProof(finalizeBlock(unscheduledProposal,
+    values.validators.slice(1, 4)));
   assert.throws(() => verifyValidatorRecoveryTransition({
     expectedNetworkId: values.chain.networkId, plan: values.plan,
-    previousProof: oldProof, recoveryBlock: recovered, trustedPlanHash: "0".repeat(64),
+    previousProof: forgedSchedule, recoveryBlock: recovered,
     trustedValidators: members(values.validators, "validator"),
-  }), /plan context is invalid/);
+  }), /not authenticated by the finalized header/);
 
   const fakeEvidenceProposal = structuredClone(proposal);
   fakeEvidenceProposal.transactions[0].evidenceTransaction.evidence.evidenceHash = "a".repeat(64);
@@ -212,7 +287,7 @@ test("precommitted reserve quorum recovers exactly H+1 and preserves slashing ec
     { checkpointHash: values.checkpointHash, evidenceHash: "a".repeat(64) });
   assert.throws(() => verifyValidatorRecoveryTransition({
     expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
-    recoveryBlock: fakeEvidence, trustedPlanHash: values.plan.planHash,
+    recoveryBlock: fakeEvidence,
     trustedValidators: members(values.validators, "validator"),
   }), /omission|signature|evidence/);
 
@@ -222,7 +297,7 @@ test("precommitted reserve quorum recovers exactly H+1 and preserves slashing ec
     { checkpointHash: values.checkpointHash, evidenceHash: values.evidence.evidenceHash });
   assert.throws(() => verifyValidatorRecoveryTransition({
     expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
-    recoveryBlock: swappedPeer, trustedPlanHash: values.plan.planHash,
+    recoveryBlock: swappedPeer,
     trustedValidators: members(values.validators, "validator"),
   }), /peer registry commitment/);
   const restored = snapshotRestore(values.chain, values.genesisConfig);
@@ -476,6 +551,55 @@ test("twenty concurrent reserve processes persist only one generation value", as
     assert.equal(new Set(successful.map(({ stdout }) => stdout)).size, 1);
     const persisted = JSON.parse(readFileSync(path, "utf8"));
     assert.equal(Object.keys(persisted.checkpointLocks).length, 1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("recovery trust store rejects rollback, forks, mixed generations, and replay", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-trust-"));
+  const path = join(directory, "trust.json");
+  const networkId = "nir-recovery-trust-test";
+  const inactive0 = validatorRecoveryStateCommitment({ activePlanHash: null,
+    generation: 0, networkId });
+  const planHash = "1".repeat(64);
+  const active0 = validatorRecoveryStateCommitment({ activePlanHash: planHash,
+    generation: 0, networkId });
+  const inactive1 = validatorRecoveryStateCommitment({ activePlanHash: null,
+    generation: 1, networkId });
+  const genesis = { height: 0, recoveryGeneration: 0,
+    recoveryStateCommitment: inactive0, stateRoot: "2".repeat(64), tipHash: "3".repeat(64) };
+  try {
+    let store = createValidatorRecoveryTrustStore(path, { checkpoint: genesis, networkId });
+    const scheduled = { height: 8, recoveryGeneration: 0,
+      recoveryStateCommitment: active0, stateRoot: "4".repeat(64), tipHash: "5".repeat(64) };
+    store = advanceValidatorRecoveryTrustStore(path, store, { checkpoint: scheduled });
+    assert.throws(() => advanceValidatorRecoveryTrustStore(path, store, {
+      checkpoint: { ...scheduled, tipHash: "6".repeat(64) },
+    }), /fork/);
+    assert.throws(() => advanceValidatorRecoveryTrustStore(path, store, {
+      checkpoint: genesis,
+    }), /rollback/);
+    const transition = { recoveryGeneration: 1, usedEvidenceHash: "7".repeat(64),
+      usedPlanHash: planHash };
+    const staleWriter = structuredClone(store);
+    const recovered = { height: 9, recoveryGeneration: 1,
+      recoveryStateCommitment: inactive1, stateRoot: "8".repeat(64), tipHash: "9".repeat(64) };
+    store = advanceValidatorRecoveryTrustStore(path, store, { checkpoint: recovered, transition });
+    assert.deepEqual(loadValidatorRecoveryTrustStore(path, { networkId }), store);
+    assert.throws(() => advanceValidatorRecoveryTrustStore(path, staleWriter, {
+      checkpoint: { ...scheduled, height: 9, stateRoot: "c".repeat(64),
+        tipHash: "d".repeat(64) },
+    }), /compare-and-swap failed/);
+    assert.throws(() => advanceValidatorRecoveryTrustStore(path, store, {
+      checkpoint: { ...recovered, height: 10, tipHash: "a".repeat(64) }, transition,
+    }), /generation did not advance/);
+    assert.throws(() => advanceValidatorRecoveryTrustStore(path, store, {
+      checkpoint: { ...recovered, height: 10, recoveryGeneration: 2,
+        recoveryStateCommitment: validatorRecoveryStateCommitment({ activePlanHash: null,
+          generation: 2, networkId }), tipHash: "a".repeat(64) },
+      transition: { recoveryGeneration: 2, usedEvidenceHash: "7".repeat(64),
+        usedPlanHash: "b".repeat(64) },
+    }), /invalid or replayed/);
+    assert.throws(() => loadValidatorRecoveryTrustStore(path, { networkId: "other" }), /invalid/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

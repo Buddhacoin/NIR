@@ -62,6 +62,7 @@ test("compact finality proofs advance a checkpoint without full block bodies", (
     networkId: chain.networkId,
     pendingProtocolUpgrade: null,
     protocolVersion: PROTOCOL_VERSION,
+    recoveryStateCommitment: second.recoveryStateCommitment,
     stateRoot: second.stateRoot,
     tipHash: second.hash,
     transactionCount: second.transactionCount,
@@ -93,4 +94,10 @@ test("light client rejects a forged header, discontinuity, and minority certific
   minority.prepareCertificate = minority.prepareCertificate.slice(0, 2);
   minority.certificate = minority.certificate.slice(0, 2);
   assert.throws(() => verifyFinalityProofChain([minority], options), /quorum is not reached/);
+
+  const legacy = createFinalityProof(block);
+  delete legacy.header.recoveryStateCommitment;
+  legacy.header.format = "nir-finality-header-v1";
+  legacy.format = "nir-finality-proof-v2";
+  assert.throws(() => verifyFinalityProofChain([legacy], options), /proof is invalid/);
 });

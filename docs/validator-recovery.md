@@ -35,13 +35,22 @@ refunds unresolved safety-candidate bonds whose validator-generation randomness
 cannot complete. Local admission receipts are discarded after commit. Plan,
 generation, locks, peer-registry lineage, slashing state, and balances are
 covered by snapshots/state roots; the light verifier checks the old finality
-proof, exact checkpoint, reserve certificate, and `H+1` continuity.
-The light verifier requires an explicitly pre-pinned plan hash from its
-previously authenticated state checkpoint; an unproved plan supplied alongside
-the recovery block is not a trust anchor. It rechecks the complete plan and
+proof, exact checkpoint, reserve certificate, and `H+1` continuity. Every v2
+finality header also commits to `networkId`, completed recovery generation, and
+the active plan hash (or `null`) under `VALIDATOR_RECOVERY_STATE_V1`. Scheduling,
+normal validator rotation, and recovery therefore change an authenticated
+header value rather than relying on a post-event manual pin. Legacy v1 headers
+and v2 finality-proof envelopes fail closed.
+
+The light verifier recomputes this commitment from the supplied plan and the
+previously authenticated `H` header. An unproved plan supplied alongside the
+recovery block is not a trust anchor. It rechecks the complete plan and
 reserve acceptance certificate, the omission evidence against the authenticated
 old header/certificates/transaction root, and the deterministic peer-registry
-transition against the previous authenticated registry. A recovery block is
+transition against the previous authenticated registry. The bounded durable
+recovery trust store rejects lower heights or generations, conflicting views at
+one height, and reused plan/evidence hashes; it advances a generation only from
+the verified recovery result. A recovery block is
 rejected at a scheduled protocol-version
 activation boundary rather than combining two exceptional transitions.
 

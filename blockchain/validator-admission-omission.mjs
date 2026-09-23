@@ -18,7 +18,7 @@ const HASH = /^[0-9a-f]{64}$/;
 const HEADER_FIELDS = [
   "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height",
   "networkId", "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion",
-  "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
+  "recoveryStateCommitment", "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
 ];
 const EVIDENCE_FIELDS = [
   "blockHash", "commitVotes", "evidenceHash", "finalizedHeader", "format",
@@ -47,9 +47,10 @@ function assertEvidenceShape(evidence) {
   exact(evidence, EVIDENCE_FIELDS, "validator admission omission evidence");
   exact(evidence.finalizedHeader, HEADER_FIELDS, "validator admission omission header");
   if (evidence.format !== "nir-validator-admission-omission-v1" ||
-      evidence.finalizedHeader.format !== "nir-finality-header-v1" ||
+      evidence.finalizedHeader.format !== "nir-finality-header-v2" ||
       !HASH.test(evidence.blockHash ?? "") || !HASH.test(evidence.evidenceHash ?? "") ||
       !HASH.test(evidence.prepareCertificateHash ?? "") ||
+      !HASH.test(evidence.finalizedHeader.recoveryStateCommitment ?? "") ||
       !HASH.test(evidence.validatorSetId ?? "") ||
       !Number.isSafeInteger(evidence.round) || evidence.round < 0 ||
       !Array.isArray(evidence.receipts) || evidence.receipts.length > MAX_VALIDATORS ||

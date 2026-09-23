@@ -21,7 +21,7 @@ const EVIDENCE_STATEMENT_FIELDS = ["blockHash", "header", "signature"];
 const HEADER_FIELDS = [
   "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height",
   "networkId", "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion",
-  "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
+  "recoveryStateCommitment", "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
 ];
 const TRANSACTION_FIELDS = [
   "algorithm", "evidence", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -42,14 +42,14 @@ function unsignedTransaction(transaction) {
 
 function assertHeader(header) {
   exact(header, HEADER_FIELDS, "validator equivocation block header");
-  if (header.format !== "nir-finality-header-v1" ||
+  if (header.format !== "nir-finality-header-v2" ||
       typeof header.networkId !== "string" || header.networkId.length < 1 ||
       header.networkId.length > 128 || !Number.isSafeInteger(header.height) ||
       header.height < 1 || !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
       !Number.isSafeInteger(header.protocolVersion) || header.protocolVersion < 1 ||
       !Number.isSafeInteger(header.transactionCount) || header.transactionCount < 0 ||
       [header.accountStateRoot, header.bodyHash, header.capabilityMemoryRoot,
-        header.peerRegistryHash, header.previousHash, header.stateRoot,
+        header.peerRegistryHash, header.previousHash, header.recoveryStateCommitment, header.stateRoot,
         header.transactionsRoot].some((value) => !HASH.test(value ?? ""))) {
     throw new Error("validator equivocation block header is invalid");
   }

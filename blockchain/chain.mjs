@@ -29,6 +29,7 @@ import {
   PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
   TRANSFER_CREDIT_EPOCH_BLOCKS,
@@ -109,6 +110,7 @@ import {
   verifyValidatorRecoveryEnvelope,
   verifyValidatorRecoveryPlan,
   verifyValidatorRecoveryPlanTransaction,
+  validatorRecoveryStateCommitment,
   verifyValidatorRecoveryVotes,
 } from "./validator-recovery.mjs";
 import { ValidatorRecoveryLockStore } from "./validator-recovery-store.mjs";
@@ -1023,6 +1025,7 @@ const BLOCK_FIELDS = Object.freeze([
   "protocolVersion",
   "randomnessCommits",
   "randomnessReveals",
+  "recoveryStateCommitment",
   "round",
   "roundCertificate",
   "safetySettlements",
@@ -1042,7 +1045,14 @@ function requireExactBlockSchema(block) {
   }
 }
 
-const FINALITY_HEADER_FORMAT = "nir-finality-header-v1";
+const FINALITY_HEADER_FORMAT = "nir-finality-header-v2";
+
+export function finalityHeaderFormat(protocolVersion) {
+  if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
+    throw new Error("finality header protocol version is unsupported");
+  }
+  return FINALITY_HEADER_FORMAT;
+}
 
 export function blockHeader(block) {
   const unsigned = unsignedBlock(block);
@@ -1055,6 +1065,7 @@ export function blockHeader(block) {
     previousHash,
     protocolUpgrade,
     protocolVersion,
+    recoveryStateCommitment,
     stateRoot,
     timestamp,
     transactionCount,
@@ -1065,13 +1076,14 @@ export function blockHeader(block) {
     bodyHash: hashObject(body, "BLOCK_BODY"),
     accountStateRoot,
     capabilityMemoryRoot,
-    format: FINALITY_HEADER_FORMAT,
+    format: finalityHeaderFormat(protocolVersion),
     height,
     networkId,
     peerRegistryHash,
     previousHash,
     protocolUpgrade: protocolUpgrade ?? null,
     protocolVersion,
+    recoveryStateCommitment,
     stateRoot,
     timestamp,
     transactionCount,
@@ -1465,6 +1477,9 @@ export class NirChain {
     const stateRoot = this.#stateRoot();
     const accountStateRoot = computeAccountStateRoot(this.#accountStates({ height: 0 }));
     const transactionsRoot = transactionRoot([]);
+    const recoveryStateCommitment = validatorRecoveryStateCommitment({
+      activePlanHash: null, generation: 0, networkId,
+    });
     const genesis = {
       accountStateRoot,
       balances: { [treasuryAddress]: (TREASURY_ALLOCATION - genesisEvaluatorBonds).toString() },
@@ -1479,6 +1494,7 @@ export class NirChain {
       networkId,
       peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
       protocolVersion: PROTOCOL_VERSION,
+      recoveryStateCommitment,
       safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
       stateRoot,
       transactionCount: 0,
@@ -1502,6 +1518,7 @@ export class NirChain {
         safetySettlements: [],
         stateRoot,
         protocolVersion: PROTOCOL_VERSION,
+        recoveryStateCommitment,
         timestamp: genesisTimestamp,
         transactionCount: 0,
         transactions: [],
@@ -1515,6 +1532,13 @@ export class NirChain {
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
+        snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
+        snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
+        snapshot.recoveryStateCommitment !== validatorRecoveryStateCommitment({
+          activePlanHash: snapshot.state?.validatorRecoveryPlan?.planHash ?? null,
+          generation: snapshot.state?.validatorRecoveryGeneration,
+          networkId: snapshot.networkId,
+        }) ||
         computeChainStateRoot(snapshot.state) !== snapshot.stateRoot) {
       throw new Error("verified snapshot does not match the target chain");
     }
@@ -2326,6 +2350,10 @@ export class NirChain {
 
   #stateRoot(overrides = {}) {
     const protocolVersion = overrides.protocolVersion ?? this.#protocolVersion;
+    const recoveryGeneration = overrides.validatorRecoveryGeneration ??
+      this.#validatorRecoveryGeneration;
+    const recoveryPlan = overrides.validatorRecoveryPlan === undefined
+      ? this.#validatorRecoveryPlan : overrides.validatorRecoveryPlan;
     return computeChainStateRoot({
       accountHistories: overrides.accountHistories ?? this.#accountHistories,
       ...(protocolVersion >= 25 ? {
@@ -2375,6 +2403,11 @@ export class NirChain {
       progressFraudEvidence: overrides.progressFraudEvidence ?? this.#progressFraudEvidence,
       protocolVersion,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
+      recoveryStateCommitment: validatorRecoveryStateCommitment({
+        activePlanHash: recoveryPlan?.planHash ?? null,
+        generation: recoveryGeneration,
+        networkId: this.#networkId,
+      }),
       registeredBeaconAuthorities:
         overrides.registeredBeaconAuthorities ?? this.#registeredBeaconAuthorities,
       retiredBeaconAuthorities:
@@ -2388,10 +2421,8 @@ export class NirChain {
         overrides.validatorAdmissionOmissionEvidence ?? this.#validatorAdmissionOmissionEvidence,
       validatorEquivocationEvidence:
         overrides.validatorEquivocationEvidence ?? this.#validatorEquivocationEvidence,
-      validatorRecoveryGeneration:
-        overrides.validatorRecoveryGeneration ?? this.#validatorRecoveryGeneration,
-      validatorRecoveryPlan: overrides.validatorRecoveryPlan === undefined
-        ? this.#validatorRecoveryPlan : overrides.validatorRecoveryPlan,
+      validatorRecoveryGeneration: recoveryGeneration,
+      validatorRecoveryPlan: recoveryPlan,
       validatorFaults: overrides.validatorFaults ?? this.#validatorFaults,
       validators: overrides.validators ?? this.#validators,
     });
@@ -2439,6 +2470,7 @@ export class NirChain {
         progressFraudEvidence: this.#progressFraudEvidence,
         protocolVersion: this.#protocolVersion,
         randomnessFaults: this.#randomnessFaults,
+        recoveryStateCommitment: this.recoveryStateCommitment,
         registeredBeaconAuthorities: this.#registeredBeaconAuthorities,
         retiredBeaconAuthorities: this.#retiredBeaconAuthorities,
         registeredValidators: this.#registeredValidators,
@@ -2506,6 +2538,13 @@ export class NirChain {
     return this.#validatorEquivocationEvidence.has(evidenceHash);
   }
   get validatorRecoveryGeneration() { return this.#validatorRecoveryGeneration; }
+  get recoveryStateCommitment() {
+    return validatorRecoveryStateCommitment({
+      activePlanHash: this.#validatorRecoveryPlan?.planHash ?? null,
+      generation: this.#validatorRecoveryGeneration,
+      networkId: this.#networkId,
+    });
+  }
   get validatorRecoveryPlan() {
     return this.#validatorRecoveryPlan ? structuredClone(this.#validatorRecoveryPlan) : null;
   }
@@ -3005,6 +3044,7 @@ export class NirChain {
       proposer,
       protocolUpgrade: scheduledProtocolUpgrade,
       protocolVersion: nextProtocolVersion,
+      recoveryStateCommitment: "0".repeat(64),
       round,
       roundCertificate,
       timestamp,
@@ -3029,6 +3069,7 @@ export class NirChain {
         ...proposal,
         accountStateRoot: trial.accountStateRoot,
         capabilityMemoryRoot: trial.capabilityMemoryRoot,
+        recoveryStateCommitment: trial.recoveryStateCommitment,
         stateRoot: trial.stateRoot,
       };
     } catch {
@@ -5333,6 +5374,14 @@ export class NirChain {
       validatorFaults,
       validators: validatorsAfter,
     });
+    const expectedRecoveryStateCommitment = validatorRecoveryStateCommitment({
+      activePlanHash: validatorRecoveryPlan?.planHash ?? null,
+      generation: validatorRecoveryGeneration,
+      networkId: this.#networkId,
+    });
+    if (verifyStateRoot && block.recoveryStateCommitment !== expectedRecoveryStateCommitment) {
+      throw new Error("block recovery state commitment is invalid");
+    }
     if (verifyStateRoot && block.stateRoot !== expectedStateRoot) {
       throw new Error("block state root is invalid");
     }

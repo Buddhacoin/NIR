@@ -122,6 +122,7 @@ test("capacity-neutral full-balance transfer remains possible at the balance-ent
   const checkpoint = { ...base.blocks().at(-1), protocolVersion: 25, stateRoot };
   const chain = NirChain.fromVerifiedSnapshot(context.genesis, { capabilityMemory: exported.capabilityMemory,
     checkpoint, height: 0, networkId: base.networkId, state: exported.state,
+    recoveryStateCommitment: base.recoveryStateCommitment,
     stateRoot, tipHash: checkpoint.hash });
   const recipient = generateWallet();
   const transaction = createNativeAssetTransfer({ amount: "1", assetId,

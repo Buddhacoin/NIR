@@ -92,6 +92,7 @@ function restoreAtHead(chain, genesisConfig) {
     checkpoint: chain.blocks().at(-1),
     height: chain.height,
     networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: snapshot.state,
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,

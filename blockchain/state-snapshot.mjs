@@ -3,6 +3,7 @@ import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mj
 import { capabilityMemorySnapshotRoot } from "./memory.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
+import { validatorRecoveryStateCommitment } from "./validator-recovery.mjs";
 
 const FORMAT = "nir-state-snapshot-v1";
 export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -19,6 +20,7 @@ function snapshotPayload(chain) {
     format: FORMAT,
     height: chain.height,
     networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: exported.state,
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,
@@ -46,6 +48,7 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
       typeof snapshot.networkId !== "string" || snapshot.networkId.length === 0 ||
       !/^[0-9a-f]{64}$/.test(snapshot.tipHash ?? "") ||
       !/^[0-9a-f]{64}$/.test(snapshot.stateRoot ?? "") ||
+      !/^[0-9a-f]{64}$/.test(snapshot.recoveryStateCommitment ?? "") ||
       !/^[0-9a-f]{64}$/.test(snapshot.snapshotHash ?? "") ||
       Buffer.byteLength(canonicalJson(snapshot)) > MAX_SNAPSHOT_BYTES) {
     throw new Error("state snapshot header is invalid");
@@ -60,6 +63,14 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
   }
   if (computeChainStateRoot(snapshot.state) !== snapshot.stateRoot) {
     throw new Error("state snapshot root is invalid");
+  }
+  const recoveryGeneration = snapshot.state?.validatorRecoveryGeneration;
+  const activePlanHash = snapshot.state?.validatorRecoveryPlan?.planHash ?? null;
+  if (snapshot.recoveryStateCommitment !== validatorRecoveryStateCommitment({
+    activePlanHash, generation: recoveryGeneration, networkId: snapshot.networkId,
+  }) || snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
+      snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment) {
+    throw new Error("state snapshot recovery commitment is invalid");
   }
   if (!snapshot.checkpoint || snapshot.checkpoint.height !== snapshot.height ||
       snapshot.checkpoint.networkId !== snapshot.networkId ||

@@ -1,5 +1,7 @@
 import { canonicalJson, verifyObject } from "./crypto.mjs";
-import { blockHeader, blockHeaderHash, prepareCertificateHash } from "./chain.mjs";
+import {
+  blockHeader, blockHeaderHash, finalityHeaderFormat, prepareCertificateHash,
+} from "./chain.mjs";
 import {
   MAX_VALIDATORS,
   PROTOCOL_VERSION,
@@ -15,7 +17,7 @@ import { validatorSetId } from "./validator-rotation.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
 import {
   verifyValidatorRecoveryEnvelope, verifyValidatorRecoveryPlanAcceptance,
-  verifyValidatorRecoveryVotes,
+  validatorRecoveryStateCommitment, verifyValidatorRecoveryVotes,
 } from "./validator-recovery.mjs";
 import {
   verifyValidatorAdmissionOmissionEvidence,
@@ -24,10 +26,10 @@ import {
 import {
   createValidatorRecoveryPeerRegistry, peerRegistryHash,
 } from "./peer-registry.mjs";
+import { advanceValidatorRecoveryTrustStore } from "./validator-recovery-trust-store.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
-const FORMAT = "nir-finality-proof-v2";
-const HEADER_FORMAT = "nir-finality-header-v1";
+const FORMAT = "nir-finality-proof-v3";
 export const MAX_FINALITY_PROOFS = 512;
 export const MAX_FINALITY_CHAIN_BYTES = 32 * 1024 * 1024;
 
@@ -107,10 +109,10 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
   const supported = normalizeSupportedProtocolVersions(supportedProtocolVersions);
   const expectedKeys = [
     "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height", "networkId",
-    "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion", "stateRoot", "timestamp",
-    "transactionCount", "transactionsRoot",
+    "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion",
+    "recoveryStateCommitment", "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
   ];
-  if (header?.format !== HEADER_FORMAT ||
+  if (header?.format !== finalityHeaderFormat(header?.protocolVersion) ||
       Object.keys(header ?? {}).sort().join(",") !== expectedKeys.sort().join(",") ||
       hash !== blockHeaderHash(header) || !HASH.test(hash ?? "") ||
       header.networkId !== expectedNetworkId || !supported.includes(header.protocolVersion) ||
@@ -121,7 +123,8 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
       !HASH.test(header.accountStateRoot ?? "") ||
       !HASH.test(header.transactionsRoot ?? "") ||
       !HASH.test(header.bodyHash ?? "") || !HASH.test(header.capabilityMemoryRoot ?? "") ||
-      !HASH.test(header.peerRegistryHash ?? "")) {
+      !HASH.test(header.peerRegistryHash ?? "") ||
+      !HASH.test(header.recoveryStateCommitment ?? "")) {
     throw new Error("light client finality header is invalid");
   }
   if (header.protocolUpgrade !== null) {
@@ -228,6 +231,7 @@ export function verifyFinalityProofChain(proofs, {
     networkId: expectedNetworkId,
     pendingProtocolUpgrade,
     protocolVersion,
+    recoveryStateCommitment: last.header.recoveryStateCommitment,
     stateRoot: last.header.stateRoot,
     tipHash: last.hash,
     transactionCount: last.header.transactionCount,
@@ -238,15 +242,12 @@ export function verifyFinalityProofChain(proofs, {
 
 export function verifyValidatorRecoveryTransition({
   expectedNetworkId, plan, previousPeerRegistry = null, previousProof, recoveryBlock,
-  trustedPlanHash, trustedValidators,
+  trustedValidators,
 } = {}) {
   const previousHeader = validateProof(previousProof, expectedNetworkId,
     SUPPORTED_PROTOCOL_VERSIONS);
   const current = normalizeValidators(trustedValidators);
   verifyVotes(previousProof, current);
-  if (!/^[0-9a-f]{64}$/.test(trustedPlanHash ?? "")) {
-    throw new Error("light client recovery plan hash is not pre-pinned");
-  }
   const hasPeerRegistry = previousHeader.peerRegistryHash !== "0".repeat(64);
   if (hasPeerRegistry !== (previousPeerRegistry !== null) ||
       (previousPeerRegistry && peerRegistryHash(previousPeerRegistry) !==
@@ -257,8 +258,16 @@ export function verifyValidatorRecoveryTransition({
     activeValidators: current,
     networkId: expectedNetworkId,
     peerRegistryRequired: hasPeerRegistry,
-    trustedPlanHash,
+    trustedPlanHash: plan?.planHash,
   });
+  const expectedPriorRecoveryState = validatorRecoveryStateCommitment({
+    activePlanHash: verifiedPlan.planHash,
+    generation: verifiedPlan.generation - 1,
+    networkId: expectedNetworkId,
+  });
+  if (previousHeader.recoveryStateCommitment !== expectedPriorRecoveryState) {
+    throw new Error("light client recovery plan is not authenticated by the finalized header");
+  }
   if (verifiedPlan.scheduledHeight > previousHeader.height) {
     throw new Error("light client recovery plan was not precommitted before the trigger");
   }
@@ -333,7 +342,47 @@ export function verifyValidatorRecoveryTransition({
     planHash: transition.planHash,
     reserveSetId: verifiedPlan.reserveSetId,
   }, verifiedPlan);
+  const expectedRecoveryState = validatorRecoveryStateCommitment({
+    activePlanHash: null, generation: verifiedPlan.generation, networkId: expectedNetworkId,
+  });
+  if (recoveryBlock.recoveryStateCommitment !== expectedRecoveryState) {
+    throw new Error("light client recovered generation commitment is invalid");
+  }
   return { height: recoveryBlock.height, stateRoot: recoveryBlock.stateRoot,
     tipHash: recoveryBlock.hash, trustedValidators: structuredClone(verifiedPlan.reserves),
+    recoveryGeneration: verifiedPlan.generation,
+    recoveryStateCommitment: expectedRecoveryState,
+    usedEvidenceHash: context.evidenceHash, usedPlanHash: verifiedPlan.planHash,
     validatorSetId: verifiedPlan.reserveSetId };
+}
+
+export function verifyAndPersistValidatorRecoveryTransition({
+  recoveryTrustStore, recoveryTrustStorePath, ...options
+} = {}) {
+  const previous = options.previousProof;
+  const plan = options.plan;
+  const checkpoint = recoveryTrustStore?.checkpoint;
+  if (!checkpoint || checkpoint.height !== previous?.header?.height ||
+      checkpoint.tipHash !== previous?.hash || checkpoint.stateRoot !== previous?.header?.stateRoot ||
+      checkpoint.recoveryStateCommitment !== previous?.header?.recoveryStateCommitment ||
+      checkpoint.recoveryGeneration !== plan?.generation - 1) {
+    throw new Error("light client recovery trust store does not authenticate the previous header");
+  }
+  const verified = verifyValidatorRecoveryTransition(options);
+  const nextStore = advanceValidatorRecoveryTrustStore(recoveryTrustStorePath,
+    recoveryTrustStore, {
+      checkpoint: {
+        height: verified.height,
+        recoveryGeneration: verified.recoveryGeneration,
+        recoveryStateCommitment: verified.recoveryStateCommitment,
+        stateRoot: verified.stateRoot,
+        tipHash: verified.tipHash,
+      },
+      transition: {
+        recoveryGeneration: verified.recoveryGeneration,
+        usedEvidenceHash: verified.usedEvidenceHash,
+        usedPlanHash: verified.usedPlanHash,
+      },
+    });
+  return { ...verified, recoveryTrustStore: nextStore };
 }

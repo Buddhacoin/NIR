@@ -45,7 +45,7 @@ test("committed canonical inventory exactly matches schemas, domains, limits, bi
   const schemas = new Set(manifest.schemas.map(({ id }) => id));
   const domains = new Set(manifest.domainSeparators.map(({ id }) => id));
   const parameters = new Set(manifest.securityParameters.map(({ id }) => id));
-  for (const id of ["nir-finality-proof-v2", "nir-protocol-upgrade-v1",
+  for (const id of ["nir-finality-proof-v3", "nir-protocol-upgrade-v1",
     "nir-release-transparency-entry-v1", "nir-release-witness-receipt-v1",
     "nir-state-snapshot-v1"]) assert.ok(schemas.has(id), id);
   for (const id of ["BLOCK_PREPARE", "BLOCK_COMMIT", "CHAIN_STATE_V1", "NATIVE_ASSET_CREATE",

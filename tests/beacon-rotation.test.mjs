@@ -138,12 +138,14 @@ test("bonded old/new beacon rotation is delayed, generation-bound, and restart-s
   const restarted = NirChain.fromVerifiedSnapshot(genesis, {
     capabilityMemory: pendingSnapshot.capabilityMemory,
     checkpoint, height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: pendingSnapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
   });
   assert.deepEqual(restarted.beaconAuthorityStatus(), chain.beaconAuthorityStatus());
   const tampered = structuredClone({
     capabilityMemory: pendingSnapshot.capabilityMemory,
     checkpoint, height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: pendingSnapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
   });
   tampered.state.beaconGeneration += 1;
@@ -183,6 +185,7 @@ test("bonded old/new beacon rotation is delayed, generation-bound, and restart-s
     capabilityMemory: activatedSnapshot.capabilityMemory,
     checkpoint: restarted.blocks().at(-1), height: restarted.height,
     networkId: restarted.networkId, state: activatedState,
+    recoveryStateCommitment: restarted.recoveryStateCommitment,
     stateRoot: restarted.stateRoot, tipHash: restarted.tipHash,
   });
   mismatchedGeneration.state.epochRandomness.generation = 0;
@@ -314,6 +317,7 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
   const restarted = NirChain.fromVerifiedSnapshot(genesis, {
     capabilityMemory: pendingSnapshot.capabilityMemory,
     checkpoint, height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: pendingSnapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
   });
   const fork = restarted.fork();
@@ -336,6 +340,7 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
     capabilityMemory: restarted.consensusSnapshot().capabilityMemory,
     checkpoint: restarted.blocks().at(-1), height: restarted.height,
     networkId: restarted.networkId, state: retiredState,
+    recoveryStateCommitment: restarted.recoveryStateCommitment,
     stateRoot: restarted.stateRoot, tipHash: restarted.tipHash,
   });
   tamperedHistory.state.retiredBeaconAuthorities[0][1].operatorId = "rewritten-history";
@@ -508,6 +513,7 @@ test("admission priority is deterministic and an unselected candidate expires at
   const restarted = NirChain.fromVerifiedSnapshot(genesis, {
     capabilityMemory: snapshot.capabilityMemory,
     checkpoint, height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
     state: snapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
   });
   const fork = restarted.fork();

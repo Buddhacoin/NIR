@@ -12,6 +12,16 @@ export const MAX_RECOVERY_CERTIFICATE_BYTES = 2_000_000;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
 
+export function validatorRecoveryStateCommitment({ activePlanHash = null, generation, networkId }) {
+  if ((activePlanHash !== null && !HASH.test(activePlanHash ?? "")) ||
+      !Number.isSafeInteger(generation) || generation < 0 ||
+      typeof networkId !== "string" || networkId.length < 1 || networkId.length > 128) {
+    throw new Error("validator recovery state commitment context is invalid");
+  }
+  return hashObject({ activePlanHash, generation, networkId },
+    "VALIDATOR_RECOVERY_STATE_V1");
+}
+
 function exact(value, fields, label) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
       Object.keys(value).sort().join("\0") !== [...fields].sort().join("\0")) {
