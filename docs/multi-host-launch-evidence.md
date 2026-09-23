@@ -47,6 +47,18 @@ process. Several DNS names, IP addresses and keys can still be controlled by one
 process or organization; endpoint uniqueness cannot prove otherwise. Operators must retain service logs, consensus certificates, restore
 artifacts and external timestamps for independent review.
 
+## Operator endpoint
+
+`createLaunchEvidenceSidecar()` provides the narrow endpoint implementation for
+an operator. It accepts only `POST /v1/launch-evidence`, only an exact challenge
+for one configured plan and host receipt, and signs using the receipt's already
+configured evidence key. It has bounded ingress and does not expose a wallet,
+receipt mutation API, metrics with secrets, or a general signing API. Place it
+behind the operator's existing TLS reverse proxy at the exact public origin in
+the plan; keep its local listener private. The sidecar proves key control for
+the configured receipt, not physical co-location with the validator, beacon or
+archive process.
+
 ## PASS contract
 
 A package passes only when all of these hold:

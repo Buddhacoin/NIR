@@ -16,6 +16,7 @@ import {
   signMultiHostLaunchServiceResponse,
   verifyMultiHostLaunchEvidencePackage,
 } from "../blockchain/multi-host-launch-evidence.mjs";
+import { createLaunchEvidenceSidecar } from "../blockchain/launch-evidence-sidecar.mjs";
 
 const H = (value) => value.repeat(64);
 const NOW = 1_800_000_000_000;
@@ -111,6 +112,30 @@ test("collector fetches every authenticated service and emits offline-verifiable
     physical: verified.physicalIndependenceClaimed, status: verified.status, validators:
       verified.validatorResponders }, { archives: 2, beacons: 4, physical: false,
     status: "EVIDENCE-CONSISTENCY-PASS", validators: 4 });
+});
+
+test("operator sidecar signs only the configured receipt challenge", async (t) => {
+  const values = await fixture(t);
+  const sidecar = createLaunchEvidenceSidecar({ plan: values.plan, receipt: values.receipts[0],
+    wallet: values.wallets[0] }, { allowInsecureLocalhost: true, clock: () => NOW });
+  await new Promise((resolve) => sidecar.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => sidecar.close(resolve)));
+  const sidecarEndpoint = `http://127.0.0.1:${sidecar.address().port}`;
+  const request = { challengeNonce: "f".repeat(32), planHash: values.plan.planHash,
+    receiptHash: values.receipts[0].receiptHash, runNonce: values.plan.runNonce };
+  const accepted = await fetch(`${sidecarEndpoint}/v1/launch-evidence`, {
+    body: JSON.stringify(request), headers: { "content-type": "application/json" }, method: "POST",
+  });
+  assert.equal(accepted.status, 200);
+  const response = await accepted.json();
+  assert.equal(response.challengeNonce, request.challengeNonce);
+  const rejected = await fetch(`${sidecarEndpoint}/v1/launch-evidence`, {
+    body: JSON.stringify({ ...request, planHash: "0".repeat(64) }),
+    headers: { "content-type": "application/json" }, method: "POST",
+  });
+  assert.equal(rejected.status, 400);
+  const metrics = sidecar.launchEvidenceMetrics();
+  assert.equal(metrics.accepted, 2);
 });
 
 test("declared-only, duplicate, forged, mixed, stale, and replayed evidence fail closed", async (t) => {
