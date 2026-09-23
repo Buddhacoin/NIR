@@ -15,13 +15,16 @@ least two archive operators. Every operator ID, evidence key and HTTPS origin is
 unique. Plain HTTP is accepted only by an explicit verifier option for loopback
 tests.
 
-Each operator signs an exact host receipt. Validator receipts bind the common
+Each operator signs an exact version-2 host receipt. Validator receipts bind the common
 finalized state. The three surviving validators bind a finality observation made
 while the selected fourth validator was unavailable; the selected validator
 binds different old/new process instance nonces and catch-up from the outage
-height to the reviewed tip. Beacon receipts bind distinct shares for one
-candidate/generation/round and the validator tip. Archive receipts bind a real
-restore result, inventory root and restored tip/state.
+height to the reviewed tip. Beacon receipts embed the complete native beacon
+share; verification checks its `FALLBACK_RANDOMNESS_SHARE` signature against
+the configured beacon key, rather than trusting a declared share hash. Archive
+receipts embed the normal signed remote-backup receipt and a separate signed
+restore receipt binding that exact backup receipt, inventory, drill plan and
+restored tip/state.
 
 A receipt by itself cannot pass. During collection the tool generates a fresh
 challenge and sends it to every configured origin at
@@ -35,7 +38,8 @@ The endpoint proves that the configured origin currently controls the evidence
 key and endorses the exact receipt. Its claims remain operator attestations. It
 does not prove physical fault injection, organizational independence, hosting
 diversity, honest clocks, or that a sidecar shares a failure domain with the NIR
-process. Operators must retain service logs, consensus certificates, restore
+process. Several DNS names, IP addresses and keys can still be controlled by one
+process or organization; endpoint uniqueness cannot prove otherwise. Operators must retain service logs, consensus certificates, restore
 artifacts and external timestamps for independent review.
 
 ## PASS contract
@@ -48,16 +52,21 @@ A package passes only when all of these hold:
   network, genesis, release checkpoint, plan, run nonce and finalized state;
 - three of four validators attest the same outage-height finality and the
   restarted validator attests catch-up to the reviewed finalized tip;
-- more than two thirds of the configured beacon operators attest distinct
-  shares for one exact beacon context;
-- at least two archive operators attest distinct restore receipts for one exact
-  inventory and restored tip/state;
-- the caller supplies the expected run nonce and verifies before the plan
-  expiry.
+- more than two thirds of the configured beacon operators provide distinct,
+  cryptographically valid native shares for one exact beacon context;
+- at least two archive operators provide valid signed backup receipts and
+  distinct signed restore receipts for one exact inventory and restored tip/state;
+- the caller supplies the independently retained plan hash, one-use run nonce
+  and collector challenge; host observations and the final package are within
+  the strict 15-minute default freshness window.
 
-Missing live responses, declared-only JSON, duplicated identities, forged
-signatures, mixed contexts, stale packages and evidence replayed under another
-run nonce fail closed. `physicalIndependenceClaimed` is always `false`.
+Missing live responses, declared-only JSON, duplicated identities, noncanonical
+key/signature encodings, forged native shares or restore receipts, mixed
+contexts, stale packages and evidence replayed under another run or challenge
+fail closed. Compressed responses are forbidden and uncompressed bodies are
+streamed into a fixed bounded buffer. The result status is
+`EVIDENCE-CONSISTENCY-PASS`, never a production or physical-independence PASS;
+`physicalIndependenceClaimed` is always `false`.
 
 ## CLI
 
@@ -74,11 +83,17 @@ run nonce obtained through the independently reviewed launch plan:
 
 ```sh
 node blockchain/multi-host-launch-evidence-cli.mjs verify \
-  launch-evidence.json EXPECTED_PLAN_HASH EXPECTED_RUN_NONCE NOW_MS
+  launch-evidence.json EXPECTED_PLAN_HASH EXPECTED_RUN_NONCE \
+  EXPECTED_CHALLENGE_NONCE NOW_MS
 ```
 
-The expected plan hash and run nonce must arrive through an independently
-reviewed channel; a package cannot nominate its own trust root. The optional
+The expected plan hash, run nonce and challenge must arrive through an independently
+reviewed channel; a package cannot nominate its own trust root. After a PASS,
+the caller must atomically retain `runConsumptionHash` outside the collected
+package and never accept that run nonce again. Offline code cannot detect a
+rollback of every local copy of that consumed-run state; an external monotonic
+anchor remains necessary. `NOW_MS` is likewise a trusted observation: a rolled
+back operator clock can make stale evidence appear fresh. The optional
 `--allow-insecure-localhost` final argument exists only for local tests. Public
 multi-host evidence requires HTTPS origins. The CLI reads
 single-link bounded files with `O_NOFOLLOW`; collection never writes output

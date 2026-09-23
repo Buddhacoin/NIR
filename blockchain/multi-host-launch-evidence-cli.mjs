@@ -43,15 +43,17 @@ try {
     const now = nowText === undefined ? Date.now() : Number(nowText);
     const value = await collectMultiHostLaunchEvidence(readJson(planPath), readJson(receiptsPath), { now });
     writeExclusive(outputPath, value);
-    console.log(JSON.stringify({ packageHash: value.packageHash, status: "COLLECTED" }));
+    console.log(JSON.stringify({ challengeNonce: value.challengeNonce,
+      packageHash: value.packageHash, status: "EVIDENCE-COLLECTED" }));
   } else if (command === "verify") {
-    const [packagePath, planHash, runNonce, nowText, localFlag] = args;
-    if (!packagePath || !planHash || !runNonce || !nowText) {
-      throw new Error("usage: verify PACKAGE EXPECTED_PLAN_HASH EXPECTED_RUN_NONCE NOW_MS");
+    const [packagePath, planHash, runNonce, challengeNonce, nowText, localFlag] = args;
+    if (!packagePath || !planHash || !runNonce || !challengeNonce || !nowText) {
+      throw new Error("usage: verify PACKAGE EXPECTED_PLAN_HASH EXPECTED_RUN_NONCE EXPECTED_CHALLENGE_NONCE NOW_MS");
     }
     console.log(JSON.stringify(verifyMultiHostLaunchEvidencePackage(readJson(packagePath), {
       allowInsecureLocalhost: localFlag === "--allow-insecure-localhost",
-      expectedPlanHash: planHash, expectedRunNonce: runNonce, now: Number(nowText),
+      expectedChallengeNonce: challengeNonce, expectedPlanHash: planHash,
+      expectedRunNonce: runNonce, now: Number(nowText),
     })));
   } else throw new Error("usage: multi-host-launch-evidence <collect|verify> ...");
 } catch (error) {

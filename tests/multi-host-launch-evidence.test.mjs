@@ -6,11 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, hashObject, publicWallet, signObject } from "../blockchain/crypto.mjs";
 import {
   collectMultiHostLaunchEvidence,
   createMultiHostLaunchPlan,
   createMultiHostLaunchEvidencePackage,
+  signMultiHostArchiveRestoreReceipt,
   signMultiHostLaunchReceipt,
   signMultiHostLaunchServiceResponse,
   verifyMultiHostLaunchEvidencePackage,
@@ -50,12 +51,31 @@ async function fixture(t) {
       recovery: index === 0 ? { caughtUp: true, fromHeight: 99,
         newInstanceId: "7".repeat(32), oldInstanceId: "6".repeat(32), toHeight: 101 } : null,
     };
-    if (identity.role === "beacon") return { candidateId: H("8"), generation: 2,
-      round: 4, shareHash: String(index).padStart(64, "0"), status: "PASS",
+    if (identity.role === "beacon") {
+      const payload = { authority: identity.address, candidateId: H("8"), generation: 2,
+        networkId: context.networkId, round: 4, value: String(index).padStart(64, "0") };
+      return { share: { ...payload, signature: signObject(payload, wallets[index],
+        "FALLBACK_RANDOMNESS_SHARE") }, status: "PASS",
       validatorTipHash: context.finalizedTipHash };
-    return { inventoryRoot: H("9"), restoreReceiptHash: index === 8 ? H("a") : H("b"),
-      restoredHeight: context.finalizedHeight, stateRoot: context.stateRoot, status: "PASS",
-      tipHash: context.finalizedTipHash };
+    }
+    const backupPayload = { checkpointHash: H("6"), createdAt: NOW - 700,
+      format: "nir-remote-backup-receipt-v1", height: context.finalizedHeight,
+      historyContentRoot: H("7"), historyIndexHash: H("8"), inventoryRoot: H("9"),
+      networkId: context.networkId, operatorId: identity.operatorId, privateKeysIncluded: false,
+      snapshotHash: null, sourceId: identity.endpoint, stateRoot: context.stateRoot,
+      tipHash: context.finalizedTipHash, totalBytes: 1, totalFiles: 1 };
+    const receiptHash = hashObject(backupPayload, "REMOTE_BACKUP_RECEIPT");
+    const backupReceipt = { payload: { ...backupPayload, receiptHash },
+      signature: signObject({ receiptHash }, wallets[index], "REMOTE_BACKUP_RECEIPT"),
+      signer: publicWallet(wallets[index]) };
+    const restoreReceipt = signMultiHostArchiveRestoreReceipt(plan, {
+      backupReceiptHash: receiptHash, completedAt: NOW - 600,
+      drillPlanHash: context.drillPlanHash, height: context.finalizedHeight,
+      inventoryRoot: backupPayload.inventoryRoot, networkId: context.networkId,
+      operatorId: identity.operatorId, stateRoot: context.stateRoot,
+      tipHash: context.finalizedTipHash,
+    }, wallets[index], { allowInsecureLocalhost: true });
+    return { backupReceipt, restoreReceipt, status: "PASS" };
   });
   const receipts = observations.map((observation, index) =>
     signMultiHostLaunchReceipt(plan, { expiresAt: NOW + 30_000, observation,
@@ -83,13 +103,14 @@ test("collector fetches every authenticated service and emits offline-verifiable
   });
   assert.equal(values.requests, 10);
   const verified = verifyMultiHostLaunchEvidencePackage(evidence, {
-    allowInsecureLocalhost: true, expectedPlanHash: values.plan.planHash,
+    allowInsecureLocalhost: true, expectedChallengeNonce: "c".repeat(32),
+    expectedPlanHash: values.plan.planHash,
     expectedRunNonce: values.plan.runNonce, now: NOW,
   });
   assert.deepEqual({ archives: verified.archiveResponders, beacons: verified.beaconResponders,
     physical: verified.physicalIndependenceClaimed, status: verified.status, validators:
       verified.validatorResponders }, { archives: 2, beacons: 4, physical: false,
-    status: "PASS", validators: 4 });
+    status: "EVIDENCE-CONSISTENCY-PASS", validators: 4 });
 });
 
 test("declared-only, duplicate, forged, mixed, stale, and replayed evidence fail closed", async (t) => {
@@ -97,7 +118,8 @@ test("declared-only, duplicate, forged, mixed, stale, and replayed evidence fail
   const evidence = await collectMultiHostLaunchEvidence(values.plan, values.receipts, {
     allowInsecureLocalhost: true, challengeNonce: "d".repeat(32), now: NOW,
   });
-  const options = { allowInsecureLocalhost: true, expectedPlanHash: values.plan.planHash,
+  const options = { allowInsecureLocalhost: true, expectedChallengeNonce: "d".repeat(32),
+    expectedPlanHash: values.plan.planHash,
     expectedRunNonce: values.plan.runNonce, now: NOW };
   assert.throws(() => createMultiHostLaunchEvidencePackage({ challengeNonce: "d".repeat(32),
     collectedAt: NOW, hostReceipts: values.receipts, plan: values.plan, serviceResponses: [] },
@@ -117,7 +139,30 @@ test("declared-only, duplicate, forged, mixed, stale, and replayed evidence fail
   assert.throws(() => verifyMultiHostLaunchEvidencePackage(evidence, { ...options,
     expectedPlanHash: H("0") }), /replayed/);
   assert.throws(() => verifyMultiHostLaunchEvidencePackage(evidence, { ...options,
+    expectedChallengeNonce: "0".repeat(32) }), /replayed/);
+  assert.throws(() => verifyMultiHostLaunchEvidencePackage(evidence, { ...options,
+    maxEvidenceAgeMs: 100, now: NOW + 101 }), /stale/);
+  assert.throws(() => createMultiHostLaunchEvidencePackage({ challengeNonce: "d".repeat(32),
+    collectedAt: NOW, hostReceipts: values.receipts, plan: values.plan,
+    serviceResponses: evidence.serviceResponses }, { allowInsecureLocalhost: true,
+    maxObservationAgeMs: 100 }), /host receipt is stale/);
+  assert.throws(() => verifyMultiHostLaunchEvidencePackage(evidence, { ...options,
     now: values.plan.expiresAt + 1 }), /stale/);
+  await assert.rejects(() => collectMultiHostLaunchEvidence(values.plan, values.receipts, {
+    allowInsecureLocalhost: true, challengeNonce: values.plan.runNonce, now: NOW,
+  }), /collector policy/);
+  const alternateKey = structuredClone(values.plan);
+  alternateKey.topology[0].publicKey += "\n";
+  assert.throws(() => createMultiHostLaunchPlan({ context: alternateKey.context,
+    expiresAt: alternateKey.expiresAt, issuedAt: alternateKey.issuedAt,
+    outage: alternateKey.outage, runNonce: alternateKey.runNonce,
+    topology: alternateKey.topology }, { allowInsecureLocalhost: true }), /identity is invalid/);
+  const duplicateOrigin = structuredClone(values.plan);
+  duplicateOrigin.topology[1].endpoint = duplicateOrigin.topology[0].endpoint;
+  assert.throws(() => createMultiHostLaunchPlan({ context: duplicateOrigin.context,
+    expiresAt: duplicateOrigin.expiresAt, issuedAt: duplicateOrigin.issuedAt,
+    outage: duplicateOrigin.outage, runNonce: duplicateOrigin.runNonce,
+    topology: duplicateOrigin.topology }, { allowInsecureLocalhost: true }), /unique required operators/);
 });
 
 test("outage, catch-up, beacon quorum, and archive restore claims are mandatory", async (t) => {
@@ -134,13 +179,97 @@ test("outage, catch-up, beacon quorum, and archive restore claims are mandatory"
   };
   assert.throws(() => resign(0, (observation) => { observation.recovery.caughtUp = false; }),
     /restart and catch-up/);
+  assert.throws(() => resign(0, (observation) => { observation.recovery.fromHeight = -1; }),
+    /restart and catch-up/);
   assert.throws(() => resign(1, (observation) => { observation.outageFinality.tipHash = H("0"); }),
     /outage finality/);
   assert.throws(() => resign(4, (observation) => { observation.status = "FAIL"; }),
     /beacon observation/);
-  assert.throws(() => resign(8, (observation) => { observation.tipHash = H("0"); }),
-    /archive restore/);
+  assert.throws(() => resign(4, (observation) => { observation.share.signature += "A"; }),
+    /beacon observation/);
+  const forgedArchive = resign(8, (observation) => { observation.restoreReceipt.signature += "A"; });
+  const replace = (receipt, index) => {
+    const receipts = structuredClone(evidence.hostReceipts);
+    const responses = structuredClone(evidence.serviceResponses);
+    const receiptIndex = receipts.findIndex(({ operatorId }) => operatorId === receipt.operatorId);
+    const responseIndex = responses.findIndex(({ operatorId }) => operatorId === receipt.operatorId);
+    receipts[receiptIndex] = receipt;
+    responses[responseIndex] = signMultiHostLaunchServiceResponse(values.plan, receipt, {
+      challengeNonce: "e".repeat(32), respondedAt: NOW, wallet: values.wallets[index],
+    }, { allowInsecureLocalhost: true });
+    return { receipts, responses };
+  };
+  const forgedArchiveSet = replace(forgedArchive, 8);
+  assert.throws(() => createMultiHostLaunchEvidencePackage({ challengeNonce: "e".repeat(32),
+    collectedAt: NOW, hostReceipts: forgedArchiveSet.receipts, plan: values.plan,
+    serviceResponses: forgedArchiveSet.responses }, { allowInsecureLocalhost: true }),
+  /archive restore receipt signature/);
+  const forgedBackup = resign(8, (observation) => { observation.backupReceipt.signature += "A"; });
+  const forgedBackupSet = replace(forgedBackup, 8);
+  assert.throws(() => createMultiHostLaunchEvidencePackage({ challengeNonce: "e".repeat(32),
+    collectedAt: NOW, hostReceipts: forgedBackupSet.receipts, plan: values.plan,
+    serviceResponses: forgedBackupSet.responses }, { allowInsecureLocalhost: true }),
+  /archive backup receipt encoding/);
+
+  const beaconReceipt = structuredClone(values.receipts[5]);
+  beaconReceipt.observation.share.value = values.receipts[4].observation.share.value;
+  const sharePayload = { ...beaconReceipt.observation.share };
+  delete sharePayload.signature;
+  beaconReceipt.observation.share.signature = signObject(sharePayload, values.wallets[5],
+    "FALLBACK_RANDOMNESS_SHARE");
+  const duplicateShareReceipt = signMultiHostLaunchReceipt(values.plan, {
+    expiresAt: beaconReceipt.expiresAt, observation: beaconReceipt.observation,
+    observedAt: beaconReceipt.observedAt, operatorId: beaconReceipt.operatorId,
+    wallet: values.wallets[5],
+  }, { allowInsecureLocalhost: true });
+  const duplicateShareSet = replace(duplicateShareReceipt, 5);
+  assert.throws(() => createMultiHostLaunchEvidencePackage({ challengeNonce: "e".repeat(32),
+    collectedAt: NOW, hostReceipts: duplicateShareSet.receipts, plan: values.plan,
+    serviceResponses: duplicateShareSet.responses }, { allowInsecureLocalhost: true }),
+  /beacon quorum/);
   assert.equal(evidence.plan.context.recoveryStateCommitment, H("e"));
+});
+
+test("collector bounds tiny-chunk bodies and rejects compression and ambiguous JSON", async (t) => {
+  const values = await fixture(t);
+  const challengeNonce = "a".repeat(32);
+  const responseByOrigin = new Map(values.plan.topology.map((identity) => {
+    const index = values.receipts.findIndex(({ operatorId }) => operatorId === identity.operatorId);
+    const response = signMultiHostLaunchServiceResponse(values.plan, values.receipts[index], {
+      challengeNonce, respondedAt: NOW, wallet: values.wallets[index],
+    }, { allowInsecureLocalhost: true });
+    return [identity.endpoint, JSON.stringify(response)];
+  }));
+  const tinyFetch = async (url) => {
+    const text = responseByOrigin.get(new URL(url).origin);
+    const encoded = new TextEncoder().encode(text); let offset = 0;
+    const body = new ReadableStream({ pull(controller) {
+      if (offset === encoded.length) controller.close();
+      else controller.enqueue(encoded.subarray(offset, ++offset));
+    } });
+    return new Response(body, { status: 200 });
+  };
+  const evidence = await collectMultiHostLaunchEvidence(values.plan, values.receipts, {
+    allowInsecureLocalhost: true, challengeNonce, fetchImpl: tinyFetch, now: NOW,
+  });
+  assert.equal(evidence.serviceResponses.length, 10);
+  const compressed = async () => new Response("{}", { status: 200,
+    headers: { "content-encoding": "gzip" } });
+  await assert.rejects(() => collectMultiHostLaunchEvidence(values.plan, values.receipts, {
+    allowInsecureLocalhost: true, challengeNonce: "b".repeat(32), fetchImpl: compressed, now: NOW,
+  }), /compression is forbidden/);
+  const ambiguous = async () => new Response('{"format":1,"format":2}', { status: 200 });
+  await assert.rejects(() => collectMultiHostLaunchEvidence(values.plan, values.receipts, {
+    allowInsecureLocalhost: true, challengeNonce: "b".repeat(32), fetchImpl: ambiguous, now: NOW,
+  }), /invalid JSON/);
+  values.servers[0].removeAllListeners("request");
+  values.servers[0].on("request", (_request, response) => {
+    response.writeHead(302, { location: `${values.plan.topology[1].endpoint}/v1/launch-evidence` });
+    response.end();
+  });
+  await assert.rejects(() => collectMultiHostLaunchEvidence(values.plan, values.receipts, {
+    allowInsecureLocalhost: true, challengeNonce: "b".repeat(32), now: NOW,
+  }), /fetch|redirect/i);
 });
 
 test("offline CLI verifies a canonical package and rejects the wrong run nonce", async (t) => {
@@ -152,12 +281,13 @@ test("offline CLI verifies a canonical package and rejects the wrong run nonce",
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, "evidence.json"); writeFileSync(path, JSON.stringify(evidence));
   const ok = spawnSync(process.execPath, ["blockchain/multi-host-launch-evidence-cli.mjs",
-    "verify", path, values.plan.planHash, values.plan.runNonce, String(NOW),
+    "verify", path, values.plan.planHash, values.plan.runNonce, "f".repeat(32), String(NOW),
     "--allow-insecure-localhost"],
   { cwd: process.cwd(), encoding: "utf8" });
-  assert.equal(ok.status, 0, ok.stderr); assert.match(ok.stdout, /"status":"PASS"/);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /"status":"EVIDENCE-CONSISTENCY-PASS"/);
   const replay = spawnSync(process.execPath, ["blockchain/multi-host-launch-evidence-cli.mjs",
-    "verify", path, values.plan.planHash, "0".repeat(32), String(NOW),
+    "verify", path, values.plan.planHash, "0".repeat(32), "f".repeat(32), String(NOW),
     "--allow-insecure-localhost"],
   { cwd: process.cwd(), encoding: "utf8" });
   assert.notEqual(replay.status, 0); assert.match(replay.stderr, /replayed/);
