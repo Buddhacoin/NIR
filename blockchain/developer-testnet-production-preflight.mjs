@@ -38,12 +38,16 @@ export function evaluateDeveloperTestnetProductionPreflight({
 }) {
   if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(maxFutureSkewMs) ||
       maxFutureSkewMs < 0 || maxFutureSkewMs > 300_000) throw new Error("production preflight time is invalid");
-  exact(expectedContext, ["finalizedTip", "genesisHash", "releaseManifestHash"],
-    "production preflight expected context");
-  if (![expectedContext.finalizedTip, expectedContext.genesisHash,
-    expectedContext.releaseManifestHash].every((value) => HASH.test(value ?? ""))) {
-    throw new Error("production preflight expected context is invalid");
-  }
+  let trustedContext = null;
+  try {
+    exact(expectedContext, ["finalizedTip", "genesisHash", "releaseManifestHash"],
+      "production preflight expected context");
+    if (![expectedContext.finalizedTip, expectedContext.genesisHash,
+      expectedContext.releaseManifestHash].every((value) => HASH.test(value ?? ""))) {
+      throw new Error("production preflight expected context is invalid");
+    }
+    trustedContext = structuredClone(expectedContext);
+  } catch {}
   const checks = []; const check = (id, operation) => {
     try { checks.push({ details: operation(), id, status: "PASS" }); }
     catch { checks.push({ details: { reason: `${id}-verification-failed` }, id, status: "FAIL" }); }
@@ -83,15 +87,16 @@ export function evaluateDeveloperTestnetProductionPreflight({
     const statement = input?.package?.statement;
     if (!developerReport || !plan || !statement || !genesis || !release ||
         statement.networkId !== developerReport.networkId || statement.networkId !== plan.networkId ||
-        statement.genesisHash !== genesis.genesisHash || statement.genesisHash !== expectedContext.genesisHash ||
+        !trustedContext || statement.genesisHash !== genesis.genesisHash ||
+        statement.genesisHash !== trustedContext.genesisHash ||
         statement.releaseCheckpointHash !== release.checkpointHash ||
         statement.releaseCheckpointHash !== plan.releaseCheckpointHash ||
-        statement.releaseManifestHash !== expectedContext.releaseManifestHash ||
-        statement.validatorTip !== expectedContext.finalizedTip || statement.drillPlanHash !== plan.planHash) {
+        statement.releaseManifestHash !== trustedContext.releaseManifestHash ||
+        statement.validatorTip !== trustedContext.finalizedTip || statement.drillPlanHash !== plan.planHash) {
       throw new Error("production contexts do not match");
     }
     return { genesisHash: genesis.genesisHash, releaseCheckpointHash: release.checkpointHash,
-      tipHash: expectedContext.finalizedTip };
+      tipHash: trustedContext.finalizedTip };
   });
   checks.sort((left, right) => left.id.localeCompare(right.id));
   const failed = checks.filter(({ status }) => status === "FAIL").length;
@@ -99,7 +104,7 @@ export function evaluateDeveloperTestnetProductionPreflight({
     attestationStoreTranscript: transcriptValue === undefined ? null : structuredClone(transcriptValue),
     developerReport: developerValue === undefined ? null : structuredClone(developerValue),
     drillPlan: planValue === undefined ? null : structuredClone(planValue),
-    expectedContext: structuredClone(expectedContext), maxFutureSkewMs,
+    expectedContext: expectedContext === undefined ? null : structuredClone(expectedContext), maxFutureSkewMs,
     operatorSet: operatorSetValue === undefined ? null : structuredClone(operatorSetValue) };
   const payload = { checks, developerReportHash: developerReport?.reportHash ?? developerValue?.reportHash ?? null,
     evidence, format: FORMAT, networkId: developerReport?.networkId ?? developerValue?.networkId ?? "invalid",

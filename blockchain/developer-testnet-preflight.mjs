@@ -292,7 +292,7 @@ function parseBond(value) {
   return BigInt(value);
 }
 
-export function runDeveloperTestnetPreflight(rootPath, options = {}) {
+function executeDeveloperTestnetPreflight(rootPath, options = {}) {
   const root = openRoot(rootPath);
   try {
     const input = validateInput(readJson(root, "preflight.json", 256 * 1024, options));
@@ -309,6 +309,7 @@ export function runDeveloperTestnetPreflight(rootPath, options = {}) {
         id, status: "FAIL" }); }
     };
     let bundle; let anchor; let checkpoint; let witnessSet; let plan; let compiled;
+    let finalizedTip; let releaseManifestHash;
     check("release", () => {
       bundle = validateOfflineReleaseBundle(artifact("releaseBundle"));
       anchor = validateReleaseTransparencyAnchor(artifact("releaseAnchor"));
@@ -344,6 +345,7 @@ export function runDeveloperTestnetPreflight(rootPath, options = {}) {
       if (verifiedRelease.manifest.manifestHash !== input.release.sourceManifestHash) {
         throw new Error("genesis source release does not match expectation");
       }
+      releaseManifestHash = verifiedRelease.manifest.manifestHash;
       plan = artifact("genesisPlan");
       compiled = compileGenesis(plan, artifact("genesisEnvelope"), {
         signedRelease, trustedAddress: input.release.trustedSignerAddress,
@@ -416,6 +418,7 @@ export function runDeveloperTestnetPreflight(rootPath, options = {}) {
           !drill.sources.includes(drill.downloadedFrom) || typeof drill.workspace !== "string") {
         throw new Error("backup drill is stale or invalid");
       }
+      finalizedTip = drill.tipHash;
       return { ageMs: input.host.observedAt - drill.completedAt, sources: drill.sources.length };
     });
     check("host-readiness", () => {
@@ -430,8 +433,21 @@ export function runDeveloperTestnetPreflight(rootPath, options = {}) {
       summary: { failed, passed: checks.length - failed, status: failed === 0 ? "PASS" : "FAIL" },
       version: 1,
     };
-    return { ...payload, reportHash: hashObject(payload, "DEVELOPER_TESTNET_PREFLIGHT_REPORT_V1") };
+    const report = { ...payload,
+      reportHash: hashObject(payload, "DEVELOPER_TESTNET_PREFLIGHT_REPORT_V1") };
+    const context = compiled && releaseManifestHash && finalizedTip
+      ? { finalizedTip, genesisHash: compiled.genesisHash, releaseManifestHash }
+      : null;
+    return { context, report };
   } finally { closeSync(root.descriptor); }
+}
+
+export function runDeveloperTestnetPreflight(rootPath, options = {}) {
+  return executeDeveloperTestnetPreflight(rootPath, options).report;
+}
+
+export function runDeveloperTestnetPreflightWithContext(rootPath, options = {}) {
+  return executeDeveloperTestnetPreflight(rootPath, options);
 }
 
 export function serializeDeveloperTestnetPreflightReport(report) {

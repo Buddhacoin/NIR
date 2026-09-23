@@ -93,3 +93,33 @@ observation. The tool does not probe remote machines, bind sockets, contact peer
 launch services, or provide DDoS/TLS deployment assurance. A PASS is permission to
 perform a separate developer-testnet launch review—not a production or mainnet
 readiness statement.
+
+## Explicit external-evidence mode
+
+The legacy one-argument command and report remain unchanged and developer-only. Production-shaped
+review is an explicit separate mode:
+
+```text
+node blockchain/developer-testnet-preflight-cli.mjs production \
+  ARTIFACT_ROOT DRILL_PLAN.json ATTESTATION_INPUT.json TRUSTED_ATTESTOR_SET.json \
+  ATTESTATION_STORE NOW_MS [MAX_FUTURE_SKEW_MS]
+```
+
+The developer artifacts are evaluated once under the same pinned root descriptor. That pass derives
+the compiled genesis hash, trusted signed source-manifest hash and finalized backup/restore tip
+without changing the legacy report schema. Plan, attestation input and trusted set are separate
+canonical public files read with bounded `O_NOFOLLOW`, single-link and inode/metadata checks. The
+store loader verifies its private root, both durable heads and every append-only record before
+exporting the independently verifiable transcript embedded in the report.
+
+`EXTERNAL-EVIDENCE-PASS` additionally requires the plan to name the exact developer report, a fresh
+M-of-N operator package, the package to be the durable store head, and exact agreement on network,
+genesis, source release, witnessed checkpoint, finalized tip and plan hash. Missing, symlinked,
+changed, stale, replayed, rolled-back, equivocated or mixed external evidence produces fixed-name
+FAIL checks and exit `2`; unsafe base-root/invocation failures exit `1`. Production output and errors
+do not expose filesystem paths, internal exception text or private keys.
+
+The report embeds all public signatures, identities and hash-chain evidence so offline validation can
+recompute every check. `physicalIndependenceClaimed` remains false: cryptographic operator agreement
+does not itself prove separate hosts or organizations, and this remains a valueless developer-testnet
+review rather than a mainnet-readiness claim.

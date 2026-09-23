@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
@@ -8,12 +9,16 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { multisigAddress } from "../blockchain/chain.mjs";
-import { PROTOCOL_VERSION, TREASURY_BPS, TREASURY_VESTING_MS } from "../blockchain/constants.mjs";
-import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
+import {
+  MIN_EVALUATOR_BOND, PROTOCOL_VERSION, TREASURY_BPS, TREASURY_VESTING_MS,
+} from "../blockchain/constants.mjs";
+import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import {
   runDeveloperTestnetPreflight, serializeDeveloperTestnetPreflightReport,
   validateDeveloperTestnetPreflightReport,
 } from "../blockchain/developer-testnet-preflight.mjs";
+import { runDeveloperTestnetProductionPreflightFromFiles } from "../blockchain/developer-testnet-production-preflight-files.mjs";
+import { validateDeveloperTestnetProductionPreflightReport } from "../blockchain/developer-testnet-production-preflight.mjs";
 import {
   compileGenesis, createGenesisApprovalEnvelope, createGenesisPlan, signGenesisPlan,
   signGenesisPeerRegistry,
@@ -28,6 +33,10 @@ import {
   createReleaseWitnessReceipt, createReleaseWitnessSet,
 } from "../blockchain/offline-release-witness.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
+import {
+  acceptRehearsalAttestationQuorum, createRehearsalAttestorSet, signRehearsalStatement,
+} from "../blockchain/rehearsal-attestation.mjs";
+import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition-drill.mjs";
 
 const NOW = 2_000_000_000_000;
 function digest(value) { return createHash("sha256").update(value).digest("hex"); }
@@ -104,7 +113,8 @@ function fixture() {
       ...publicWallet(wallet), contribution: digest(`contribution-${index}`),
       nonce: digest(`nonce-${index}`), operatorId: `ceremony-${index}`,
     })),
-    evaluators: role(evaluators, "evaluator", 9200), genesisTimestamp: 0, networkId,
+    evaluators: role(evaluators, "evaluator", 9200),
+    evaluatorBondAmount: MIN_EVALUATOR_BOND.toString(), genesisTimestamp: 0, networkId,
     protocolVersion: PROTOCOL_VERSION, sourceReleaseManifestHash: sourceManifest.manifestHash,
     treasury: {
       address: multisigAddress(guardians.map(({ publicKey }) => publicKey), 2),
@@ -123,7 +133,7 @@ function fixture() {
     ceremony.slice(0, 3).map((wallet) => signGenesisPlan(genesisPlan, wallet, releaseOptions)),
     validators.slice(0, 3).map((wallet) => signGenesisPeerRegistry(
       genesisPlan, wallet, releaseOptions)), releaseOptions);
-  const { genesis } = compileGenesis(genesisPlan, genesisEnvelope, releaseOptions);
+  const { genesis, genesisHash } = compileGenesis(genesisPlan, genesisEnvelope, releaseOptions);
   const archives = Array.from({ length: 2 }, generateWallet);
   const backupDrill = {
     checkpointHash: "1".repeat(64), completedAt: NOW - 1_000,
@@ -186,7 +196,8 @@ function fixture() {
     version: 1,
   };
   writeJson(join(root, "preflight.json"), preflight);
-  return { artifacts, preflight, root, values, validators };
+  return { archives, artifacts, beacons, genesisHash, preflight, root, sourceManifest,
+    values, validators };
 }
 
 function rewrite(values, mutate) {
@@ -311,4 +322,117 @@ test("missing TLS pin and incomplete exact endpoint port coverage cannot PASS", 
     assert.equal(check(report, "host-readiness").status, "FAIL");
     assert.equal(report.summary.status, "FAIL");
   } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+function publicIdentity(wallet, operatorId) { return { ...publicWallet(wallet), operatorId }; }
+
+function productionFixture() {
+  const developer = fixture(); const externalRoot = mkdtempSync(join(tmpdir(), "nir-production-flow-"));
+  const developerReport = runDeveloperTestnetPreflight(developer.root);
+  const topology = {
+    archives: developer.archives.map((wallet, index) => publicIdentity(wallet, `archive-${index}`)),
+    beacons: developer.beacons.map((wallet, index) => publicIdentity(wallet, `beacon-${index}`)),
+    certificateRotation: { newPin: "8".repeat(64), oldPin: "9".repeat(64),
+      overlapEndHeight: 20, overlapStartHeight: 10,
+      validator: developer.validators[0].address },
+    format: "nir-testnet-drill-topology-v1", networkId: developer.preflight.networkId,
+    releaseCheckpointHash: developer.values.releaseCheckpoint.checkpointHash,
+    validators: developer.validators.map((wallet, index) => publicIdentity(wallet, `validator-${index}`)),
+    version: 1,
+  };
+  const plan = createTestnetPartitionDrillPlan(developerReport, topology);
+  const attestors = Array.from({ length: 4 }, generateWallet);
+  const operatorSet = createRehearsalAttestorSet({ threshold: 3,
+    operators: attestors.map((wallet, index) => publicIdentity(wallet, `reviewer-${index}`)) });
+  const statement = { drillPlanHash: plan.planHash, expiresAt: NOW + 60_000,
+    format: "nir-rehearsal-attestation-v1", genesisHash: developer.genesisHash,
+    networkId: developer.preflight.networkId, observedAt: NOW,
+    releaseCheckpointHash: developer.values.releaseCheckpoint.checkpointHash,
+    releaseManifestHash: developer.sourceManifest.manifestHash,
+    reportHash: `sha3-256:${"a".repeat(64)}`, runNonce: "b".repeat(64),
+    setId: operatorSet.setId, validatorTip: developer.values.backupDrill.tipHash, version: 1 };
+  const attestations = attestors.slice(0, 3).map((wallet, index) =>
+    signRehearsalStatement(statement, { operatorId: `reviewer-${index}`, wallet }, operatorSet));
+  const storePath = join(externalRoot, "store");
+  const accepted = acceptRehearsalAttestationQuorum(storePath, attestations,
+    { now: NOW, operatorSet });
+  const paths = { attestationInputPath: join(externalRoot, "attestation-input.json"),
+    drillPlanPath: join(externalRoot, "drill-plan.json"),
+    operatorSetPath: join(externalRoot, "operator-set.json"), storePath };
+  writeFileSync(paths.attestationInputPath, `${canonicalJson(accepted.preflightInput)}\n`, { mode: 0o600 });
+  writeFileSync(paths.drillPlanPath, `${canonicalJson(plan)}\n`, { mode: 0o600 });
+  writeFileSync(paths.operatorSetPath, `${canonicalJson(operatorSet)}\n`, { mode: 0o600 });
+  return { developer, externalRoot, paths };
+}
+
+function productionRun(values, changes = {}, options = {}) {
+  return runDeveloperTestnetProductionPreflightFromFiles({
+    attestationInputPath: values.paths.attestationInputPath,
+    attestationStorePath: values.paths.storePath, developerRoot: values.developer.root,
+    drillPlanPath: values.paths.drillPlanPath, maxFutureSkewMs: 1_000, now: NOW,
+    operatorSetPath: values.paths.operatorSetPath, ...changes,
+  }, options);
+}
+
+function cleanupProduction(values) {
+  rmSync(values.developer.root, { force: true, recursive: true });
+  rmSync(values.externalRoot, { force: true, recursive: true });
+}
+
+test("explicit production filesystem flow and CLI require exact external evidence", () => {
+  const values = productionFixture();
+  try {
+    const report = productionRun(values);
+    assert.equal(report.readiness, "EXTERNAL-EVIDENCE-PASS");
+    assert.deepEqual(validateDeveloperTestnetProductionPreflightReport(report), report);
+    const productionCli = spawnSync(process.execPath,
+      ["blockchain/developer-testnet-preflight-cli.mjs", "production", values.developer.root,
+        values.paths.drillPlanPath, values.paths.attestationInputPath, values.paths.operatorSetPath,
+        values.paths.storePath, String(NOW), "1000"], {
+        cwd: new URL("..", import.meta.url), encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
+      });
+    assert.equal(productionCli.status, 0);
+    assert.equal(JSON.parse(productionCli.stdout).readiness, "EXTERNAL-EVIDENCE-PASS");
+    assert.equal(productionCli.stderr, "");
+    const developerCli = spawnSync(process.execPath,
+      ["blockchain/developer-testnet-preflight-cli.mjs", values.developer.root], {
+        cwd: new URL("..", import.meta.url), encoding: "utf8",
+      });
+    assert.equal(developerCli.status, 0);
+    assert.equal(JSON.parse(developerCli.stdout).format, "nir-developer-testnet-preflight-report-v1");
+  } finally { cleanupProduction(values); }
+});
+
+test("missing, symlinked, stale, and TOCTOU-swapped production inputs are explicit pathless FAIL", () => {
+  const missing = productionFixture();
+  try {
+    const absent = join(missing.externalRoot, "missing.json");
+    const report = productionRun(missing, { attestationInputPath: absent });
+    assert.equal(report.summary.status, "FAIL");
+    assert.equal(check(report, "external-operator-attestation").status, "FAIL");
+    assert.equal(canonicalJson(report).includes(absent), false);
+    const cli = spawnSync(process.execPath,
+      ["blockchain/developer-testnet-preflight-cli.mjs", "production", missing.developer.root,
+        missing.paths.drillPlanPath, absent, missing.paths.operatorSetPath, missing.paths.storePath,
+        String(NOW)], { cwd: new URL("..", import.meta.url), encoding: "utf8",
+        maxBuffer: 8 * 1024 * 1024 });
+    assert.equal(cli.status, 2); assert.equal(cli.stderr, "");
+    const linked = join(missing.externalRoot, "linked-input.json");
+    symlinkSync(missing.paths.attestationInputPath, linked);
+    const linkedReport = productionRun(missing, { attestationInputPath: linked });
+    assert.equal(check(linkedReport, "external-operator-attestation").status, "FAIL");
+  } finally { cleanupProduction(missing); }
+
+  const raced = productionFixture(); const original = `${raced.paths.attestationInputPath}.original`;
+  try {
+    const stale = productionRun(raced, { now: NOW + 60_001 });
+    assert.equal(check(stale, "external-operator-attestation").status, "FAIL");
+    let swapped = false;
+    const report = productionRun(raced, {}, { _afterFileOpen: ({ kind, path }) => {
+      if (!swapped && kind === "attestation-input") {
+        swapped = true; renameSync(path, original); writeFileSync(path, "{}\n", { mode: 0o600 });
+      }
+    } });
+    assert.equal(check(report, "external-operator-attestation").status, "FAIL");
+  } finally { cleanupProduction(raced); }
 });
