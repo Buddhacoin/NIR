@@ -34,6 +34,12 @@ import {
   verifyWalletInstallation,
 } from "./release-artifact.mjs";
 import { decryptWallet } from "./vault.mjs";
+import {
+  createProductionReleasePackage,
+  readBoundedPublicJson,
+  verifyProductionReleasePackage,
+  writeProductionPackageExclusive,
+} from "./production-release-gate.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolveSecret, reject) => {
@@ -177,7 +183,35 @@ try {
       kind, sourceManifest: manifest,
     });
     writeAtomicContents(output, serializeReleaseArtifact(artifact));
-    console.log(`${kind} artifact ${artifact.artifactHash} created.`);
+    console.log(`${kind} developer/testnet artifact ${artifact.artifactHash} created (not production-gated).`);
+  } else if (command === "build-production" && args.length === 8) {
+    const [kind, rootValue, envelopePath, trustedAddress, targetPath, reportPath, nowText,
+      output] = args;
+    const now = Number(nowText);
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error("production release time is invalid");
+    const root = resolve(rootValue);
+    requireCleanTrackedTree(root);
+    const signedRelease = readBoundedPublicJson(envelopePath, { maximumBytes: 16 * 1024 * 1024 });
+    const { manifest } = verifySignedRelease(signedRelease, { trustedAddress });
+    if (manifest.sourceRevision !== revision(root)) {
+      throw new Error("checked-out revision does not match the signed release");
+    }
+    const paths = trackedFiles(root);
+    verifyReleaseFiles(root, manifest, paths);
+    const productionTarget = readBoundedPublicJson(targetPath, {
+      maximumBytes: 64 * 1024, requireCanonical: true,
+    });
+    const productionReport = readBoundedPublicJson(reportPath, {
+      maximumBytes: 64 * 1024 * 1024, requireCanonical: true,
+    });
+    const artifact = createReleaseArtifact(root, artifactPaths(kind, paths), {
+      kind, sourceManifest: manifest,
+    });
+    const packageValue = createProductionReleasePackage(artifact, {
+      now, productionReport, productionTarget, signedRelease, trustedAddress,
+    });
+    writeProductionPackageExclusive(output, packageValue, { now, signedRelease, trustedAddress });
+    console.log(`${kind} production package ${packageValue.packageHash} created.`);
   } else if (command === "verify-artifact" && args.length === 3) {
     const [artifactPath, envelopePath, trustedAddress] = args;
     const { manifest, signer } = verifySignedRelease(readBoundedJson(envelopePath), {
@@ -187,6 +221,15 @@ try {
       readBoundedJson(artifactPath, 520 * 1024 * 1024), { sourceManifest: manifest },
     );
     console.log(`${artifact.kind} artifact ${artifact.artifactHash} verified for ${signer.address}.`);
+  } else if (command === "verify-production-artifact" && args.length === 4) {
+    const [packagePath, envelopePath, trustedAddress, nowText] = args;
+    const now = Number(nowText);
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error("production release time is invalid");
+    const signedRelease = readBoundedPublicJson(envelopePath, { maximumBytes: 16 * 1024 * 1024 });
+    const packageValue = verifyProductionReleasePackage(readBoundedPublicJson(packagePath, {
+      maximumBytes: 600 * 1024 * 1024, requireCanonical: true,
+    }), { now, signedRelease, trustedAddress });
+    console.log(`${packageValue.artifact.kind} production package ${packageValue.packageHash} verified.`);
   } else if (command === "install-wallet" && args.length === 4) {
     const [artifactPath, envelopePath, trustedAddress, target] = args;
     const provenance = installWalletArtifact(
@@ -209,6 +252,21 @@ try {
       },
     );
     console.log(`Node ${provenance.artifactHash} installed at ${resolve(target)}.`);
+  } else if ((command === "install-production-wallet" || command === "install-production-node") &&
+      args.length === 5) {
+    const [packagePath, envelopePath, trustedAddress, nowText, target] = args;
+    const now = Number(nowText);
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error("production release time is invalid");
+    const signedRelease = readBoundedPublicJson(envelopePath, { maximumBytes: 16 * 1024 * 1024 });
+    const packageValue = verifyProductionReleasePackage(readBoundedPublicJson(packagePath, {
+      maximumBytes: 600 * 1024 * 1024, requireCanonical: true,
+    }), { now, signedRelease, trustedAddress });
+    const kind = command.endsWith("wallet") ? "wallet" : "node";
+    if (packageValue.artifact.kind !== kind) throw new Error("production package kind is invalid");
+    const provenance = kind === "wallet"
+      ? installWalletArtifact(packageValue.artifact, target, { signedRelease, trustedAddress })
+      : installNodeArtifact(packageValue.artifact, target, { signedRelease, trustedAddress });
+    console.log(`${kind} production package ${packageValue.packageHash} installed (${provenance.artifactHash}).`);
   } else if (command === "verify-node-install" && args.length === 3) {
     const [target, envelopePath, trustedAddress] = args;
     const result = verifyNodeInstallation(target, {
@@ -270,7 +328,7 @@ try {
     }
     console.log(`Browser extension ${zipSha3(expected)} verified.`);
   } else {
-    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:install-wallet <wallet.nirpkg> <signed.json> <trusted-address> <new-directory> | release:verify-wallet-install <installed-directory> <signed.json> <trusted-address> | release:install-node <node.nirpkg> <signed.json> <trusted-address> <new-directory> | release:verify-node-install <installed-directory> <signed.json> <trusted-address> | release:inventory-<wallet|node> <installed-target> <signed.json> <trusted-address> | release:prune-<wallet|node>-generation <installed-target> <exact-generation> <artifact-hash> <signed.json> <trusted-address> [--execute] | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
+    throw new Error("usage: release:create <repo> <manifest.json> | release:sign <manifest.json> <release-vault> <signed.json> | release:verify <repo> <signed.json> <trusted-address> | release:build <wallet|node> <repo> <signed.json> <trusted-address> <artifact.nirpkg> | release:build-production <wallet|node> <repo> <signed.json> <trusted-address> <target.json> <production-report.json> <now-ms> <package.nirprod> | release:verify-artifact <artifact.nirpkg> <signed.json> <trusted-address> | release:verify-production-artifact <package.nirprod> <signed.json> <trusted-address> <now-ms> | release:install-<wallet|node> <artifact.nirpkg> <signed.json> <trusted-address> <new-directory> | release:install-production-<wallet|node> <package.nirprod> <signed.json> <trusted-address> <now-ms> <new-directory> | release:verify-<wallet|node>-install <installed-directory> <signed.json> <trusted-address> | release:inventory-<wallet|node> <installed-target> <signed.json> <trusted-address> | release:prune-<wallet|node>-generation <installed-target> <exact-generation> <artifact-hash> <signed.json> <trusted-address> [--execute] | release:build-extension <repo> <signed.json> <trusted-address> <extension.zip> | release:verify-extension <repo> <signed.json> <trusted-address> <extension.zip>");
   }
 } catch (error) {
   console.error(`Release operation failed: ${error.message}`);

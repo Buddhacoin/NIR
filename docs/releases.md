@@ -82,7 +82,8 @@ The wallet recipe includes `wallet-ui/`; the node recipe includes `blockchain/`
 and `package.json`. The canonical JSON container has no timestamps, host paths,
 file-order ambiguity, compression metadata, or network-fetched dependencies.
 Its `artifactHash` must match across independent builders. `.nirpkg` is an
-auditable release container. Verified wallet and node packages can be installed
+auditable developer/testnet release container; it is deliberately not evidence
+of mainnet or production readiness. Verified wallet and node packages can be installed
 into new directories without trusting their distributor:
 
 ```bash
@@ -162,6 +163,52 @@ directory replacement, missing, additional, modified, symbolic-link, special,
 mode-tampered, or group/world-writable entries. The wallet result is an auditable
 web/extension directory and the node result is an auditable Node.js source
 installation; they are not yet click-to-install, platform-signed native applications.
+
+## Production release gate
+
+Production packaging uses a distinct `nir-production-release-package-v1` wrapper.
+It cannot be created by `release:build`. The wrapper commits to the ordinary
+reproducible artifact, the canonical external-evidence production preflight, and
+an exact reviewed target:
+
+```json
+{"finalizedTip":"HEX_OR_SHA3_HASH","format":"nir-production-release-target-v1","genesisHash":"HEX_OR_SHA3_HASH","maxFutureSkewMs":300000,"maxPreflightAgeMs":3600000,"networkId":"nir-mainnet-reviewed-id","releaseManifestHash":"64_HEX","releaseVersion":"1.2.3","sourceRevision":"GIT_COMMIT_HEX","version":1}
+```
+
+The target and production report files must be canonical JSON with one trailing
+newline. `sourceRevision`, `releaseVersion`, and `releaseManifestHash` must exactly
+match the trusted post-quantum signed release. Network ID, genesis, finalized tip,
+and manifest hash must also exactly match both the report and its independently
+signed rehearsal quorum statement. The report must reproduce from its embedded
+external evidence, have `EXTERNAL-EVIDENCE-PASS`, remain inside the target's bounded
+freshness window, and contain an unexpired attestation at the operator-supplied
+current time.
+
+```bash
+npm run release:build-production -- \
+  node . signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  production-target.json production-preflight.json CURRENT_UNIX_TIME_MS node.nirprod
+
+npm run release:verify-production-artifact -- \
+  node.nirprod signed-release.json nir1TRUSTED_RELEASE_ADDRESS CURRENT_UNIX_TIME_MS
+
+npm run release:install-production-node -- \
+  node.nirprod signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  CURRENT_UNIX_TIME_MS /absolute/path/to/new-nir-node
+```
+
+Wallet commands use the same flow with `wallet` and
+`release:install-production-wallet`. A missing, failed, stale, future, expired, or
+mixed-context preflight is rejected before an output package or installation target
+is created. Inputs are read through pinned no-follow descriptors and canonical
+reports reject alternate byte encodings. Output activation is exclusive and
+no-replace; parent, temporary, and target identities are checked around activation,
+and cleanup removes only inodes created by that attempt. The output parent remains
+an operator-controlled local security boundary.
+
+This gate authenticates reviewed release and external rehearsal evidence. It does
+not deploy hosts, embed secrets, prove physical operator independence by itself, or
+turn the current developer testnet tooling into a production-ready network.
 
 ## Build the browser extension ZIP
 
