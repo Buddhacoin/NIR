@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import test from "node:test";
 import { canonicalJson, generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { parseConsensusJson } from "../blockchain/consensus-json.mjs";
 import { createLaunchReview, signLaunchReview, verifyLaunchReview } from "../blockchain/launch-review.mjs";
+import { encryptWallet } from "../blockchain/vault.mjs";
 
 const NOW = 1_800_000_000_000;
 const H = (value) => value.repeat(64);
@@ -68,4 +69,30 @@ test("launch review CLI emits canonical JSON suitable for the next signed step",
     const created = parseConsensusJson(result.stdout);
     assert.equal(created.reviewHash, values.review.reviewHash);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("launch review CLI signs through an inherited restricted password descriptor", () => {
+  const values = fixture(); const root = mkdtempSync(join(tmpdir(), "nir-launch-review-sign-"));
+  const reviewPath = join(root, "review.json"); const vaultPath = join(root, "vault.json");
+  const passwordPath = join(root, "password"); const password = "launch-review-password-long";
+  let descriptor;
+  try {
+    writeFileSync(reviewPath, `${canonicalJson(values.review)}\n`, { mode: 0o600 });
+    writeFileSync(vaultPath, `${canonicalJson(encryptWallet(values.wallets[0], password))}\n`, { mode: 0o600 });
+    writeFileSync(passwordPath, `${password}\n`, { mode: 0o600 });
+    descriptor = openSync(passwordPath, "r");
+    const result = spawnSync(process.execPath, ["blockchain/launch-review-cli.mjs", "sign",
+      reviewPath, vaultPath, values.reviewers[0].reviewerId], {
+      cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NIR_LAUNCH_REVIEW_PASSWORD_FD: "3" },
+      stdio: ["ignore", "pipe", "pipe", descriptor],
+    });
+    closeSync(descriptor); descriptor = undefined;
+    assert.equal(result.status, 0);
+    const signed = parseConsensusJson(result.stdout);
+    assert.equal(signed.approvals.length, 1);
+    assert.equal(signed.approvals[0].reviewerId, values.reviewers[0].reviewerId);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
