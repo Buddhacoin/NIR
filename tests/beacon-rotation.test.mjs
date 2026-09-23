@@ -16,6 +16,9 @@ import {
 } from "../blockchain/chain.mjs";
 import {
   BEACON_ROTATION_DELAY_BLOCKS,
+  BEACON_ADMISSION_DELAY_BLOCKS,
+  BEACON_ADMISSION_EXPIRY_BLOCKS,
+  BEACON_ADMISSION_EXPIRY_PENALTY_BPS,
   BEACON_RETIREMENT_DELAY_BLOCKS,
   MAX_REGISTERED_BEACON_AUTHORITIES,
   createBeaconRotationApproval,
@@ -31,6 +34,7 @@ import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
   createEpochRandomnessCommit, createEpochRandomnessReveal,
 } from "../blockchain/operators.mjs";
+import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 
 function members(wallets, prefix) {
   return wallets.map((wallet, index) => ({ ...publicWallet(wallet), operatorId: `${prefix}-${index}` }));
@@ -94,6 +98,7 @@ test("bonded old/new beacon rotation is delayed, generation-bound, and restart-s
     ...beacons.map((wallet) => createBeaconBond({ wallet, networkId: chain.networkId,
       amount: MIN_BEACON_BOND.toString(), nonce: 0 })),
     ...replacements.map((wallet, index) => createBeaconBond({ wallet, networkId: chain.networkId,
+      activationHeight: chain.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
       amount: MIN_BEACON_BOND.toString(), nonce: 0, operatorId: `replacement-beacon-${index}` })),
   ] });
   assert.equal(chain.beaconBondingActive, true);
@@ -115,6 +120,8 @@ test("bonded old/new beacon rotation is delayed, generation-bound, and restart-s
   const current = members(beacons, "beacon");
   const nextWallets = [beacons[0], beacons[1], ...replacements];
   const next = [current[0], current[1], ...members(replacements, "replacement-beacon")];
+  while (chain.height < Math.max(...chain.beaconAuthorityStatus().pendingAdmissions
+    .map(({ activationHeight }) => activationHeight))) append(chain, validators);
   const proposal = createBeaconRotationProposal({
     activationHeight: chain.height + BEACON_ROTATION_DELAY_BLOCKS,
     authorities: next, generation: 1, networkId: chain.networkId,
@@ -255,11 +262,14 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
     ...beacons.map((wallet) => createBeaconBond({ wallet, networkId: chain.networkId,
       amount: MIN_BEACON_BOND.toString(), nonce: 0 })),
     ...replacements.map((wallet, index) => createBeaconBond({ wallet, networkId: chain.networkId,
+      activationHeight: chain.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
       amount: MIN_BEACON_BOND.toString(), nonce: 0, operatorId: `replacement-beacon-${index}` })),
   ] });
   const current = members(beacons, "beacon");
   const nextWallets = [beacons[0], beacons[1], ...replacements];
   const next = [current[0], current[1], ...members(replacements, "replacement-beacon")];
+  while (chain.height < Math.max(...chain.beaconAuthorityStatus().pendingAdmissions
+    .map(({ activationHeight }) => activationHeight))) append(chain, validators);
   const proposal = createBeaconRotationProposal({
     activationHeight: chain.height + BEACON_ROTATION_DELAY_BLOCKS,
     authorities: next, generation: 1, networkId: chain.networkId,
@@ -268,6 +278,13 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
   const rotation = { ...proposal,
     oldApprovals: approvals(proposal, beacons.slice(0, 3), "old"),
     possessionProofs: approvals(proposal, nextWallets, "possession") };
+  const mixedRotationAdmission = chain.buildBlock({ beaconRotation: rotation,
+    timestamp: TREASURY_VESTING_MS,
+    transactions: [createBeaconRetirement({ wallet: beacons[2], networkId: chain.networkId,
+      nonce: 1 })] });
+  assert.throws(() => chain.appendBlock(finalizeBlock(
+    mixedRotationAdmission, quorum(mixedRotationAdmission, validators),
+  )), /require separate blocks/);
   append(chain, validators, { beaconRotation: rotation });
   const scheduledRoot = chain.stateRoot;
   const prematureRetirement = chain.buildBlock({ timestamp: TREASURY_VESTING_MS,
@@ -287,32 +304,6 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
   while (chain.height < proposal.activationHeight) append(chain, validators);
 
   const retiring = beacons.slice(2);
-  const secondProposal = createBeaconRotationProposal({
-    activationHeight: chain.height + BEACON_ROTATION_DELAY_BLOCKS,
-    authorities: next, generation: 2, networkId: chain.networkId,
-    previousAuthorities: next,
-  });
-  const secondRotation = { ...secondProposal,
-    oldApprovals: approvals(secondProposal, nextWallets.slice(0, 3), "old"),
-    possessionProofs: approvals(secondProposal, nextWallets, "possession") };
-  const mixedRotation = chain.buildBlock({ beaconRotation: secondRotation,
-    timestamp: TREASURY_VESTING_MS,
-    transactions: [createBeaconRetirement({ wallet: retiring[0],
-      networkId: chain.networkId, nonce: 1 })] });
-  assert.throws(() => chain.appendBlock(finalizeBlock(
-    mixedRotation, quorum(mixedRotation, validators),
-  )), /require separate blocks/);
-  const mixedLifecycle = chain.buildBlock({ timestamp: TREASURY_VESTING_MS,
-    transactions: [
-      createBeaconRetirement({ wallet: retiring[0], networkId: chain.networkId, nonce: 1 }),
-      createBeaconBond({ wallet: retiring[0], networkId: chain.networkId,
-        amount: "1", nonce: 2 }),
-    ] });
-  assert.throws(() => chain.appendBlock(finalizeBlock(
-    mixedLifecycle, quorum(mixedLifecycle, validators),
-  )), /require separate blocks/);
-  append(chain, validators, { transactions: retiring.map((wallet) =>
-    createBeaconRetirement({ wallet, networkId: chain.networkId, nonce: 1 })) });
   const requested = chain.beaconAuthorityStatus().pendingRetirements;
   assert.equal(requested.length, 2);
   assert.equal(requested[0].unlockHeight - requested[0].requestedHeight,
@@ -334,7 +325,7 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
   assert.equal(restarted.beaconAuthorityStatus().retiredCount, 2);
   assert.equal(restarted.beaconAuthorityStatus().pendingRetirements.length, 0);
   for (const wallet of retiring) {
-    assert.equal(restarted.balance(wallet.address), MIN_BEACON_BOND - MIN_TRANSFER_FEE);
+    assert.equal(restarted.balance(wallet.address), MIN_BEACON_BOND);
     assert.equal(restarted.beaconBond(wallet.address), 0n);
   }
   const retiredState = restarted.consensusSnapshot().state;
@@ -361,26 +352,28 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
 
   const replayedKey = restarted.buildBlock({ timestamp: TREASURY_VESTING_MS,
     transactions: [createBeaconBond({ wallet: retiring[0], networkId: restarted.networkId,
-      amount: MIN_BEACON_BOND.toString(), nonce: 2, operatorId: "replayed-beacon" })] });
+      activationHeight: restarted.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
+      amount: MIN_BEACON_BOND.toString(), nonce: 1, operatorId: "replayed-beacon" })] });
   assert.throws(() => restarted.appendBlock(finalizeBlock(
     replayedKey, quorum(replayedKey, validators),
   )), /invalid or duplicated/);
   const reusedOperator = generateWallet();
   const replayedOperator = restarted.buildBlock({ timestamp: TREASURY_VESTING_MS,
     transactions: [createBeaconBond({ wallet: reusedOperator, networkId: restarted.networkId,
+      activationHeight: restarted.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
       amount: MIN_BEACON_BOND.toString(), nonce: 0, operatorId: "beacon-2" })] });
   assert.throws(() => restarted.appendBlock(finalizeBlock(
     replayedOperator, quorum(replayedOperator, validators),
   )), /invalid or duplicated/);
   const validatorReplay = restarted.buildBlock({ timestamp: TREASURY_VESTING_MS,
     transactions: [createValidatorBond({ wallet: retiring[0], networkId: restarted.networkId,
-      amount: "1", nonce: 2, operatorId: "replayed-validator" })] });
+      amount: "1", nonce: 1, operatorId: "replayed-validator" })] });
   assert.throws(() => restarted.appendBlock(finalizeBlock(
     validatorReplay, quorum(validatorReplay, validators),
   )), /invalid or duplicated/);
   const evaluatorReplay = restarted.buildBlock({ timestamp: TREASURY_VESTING_MS,
     transactions: [createEvaluatorBond({ wallet: retiring[0], networkId: restarted.networkId,
-      amount: "1", nonce: 2, operatorId: "replayed-evaluator", credentials: [],
+      amount: "1", nonce: 1, operatorId: "replayed-evaluator", credentials: [],
       activationHeight: restarted.height + 64 })] });
   assert.throws(() => restarted.appendBlock(finalizeBlock(
     evaluatorReplay, quorum(evaluatorReplay, validators),
@@ -388,14 +381,63 @@ test("retired beacon bonds recycle slots without recycling identities", () => {
   assert.equal(MAX_REGISTERED_BEACON_AUTHORITIES, 128);
 });
 
-test("bounded registry model supports more than 64 cumulative replacements", () => {
+test("same-block role races cannot reserve a beacon admission identity", () => {
+  const { chain, treasury, validators } = fixture();
+  const candidate = generateWallet();
+  append(chain, validators, { transactions: [createTransfer({
+    wallet: treasury, networkId: chain.networkId, recipient: candidate.address,
+    amount: (MIN_BEACON_BOND + MIN_VALIDATOR_BOND + 2n * MIN_TRANSFER_FEE).toString(), nonce: 0,
+  })] });
+  const root = chain.stateRoot;
+  const admission = createBeaconBond({
+    wallet: candidate, networkId: chain.networkId,
+    activationHeight: chain.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
+    amount: MIN_BEACON_BOND.toString(), nonce: 0, operatorId: "race-beacon",
+  });
+  const validator = createValidatorBond({
+    wallet: candidate, networkId: chain.networkId,
+    amount: MIN_VALIDATOR_BOND.toString(), nonce: 1, operatorId: "race-validator",
+  });
+  for (const transactions of [[admission, validator], [
+    createValidatorBond({ wallet: candidate, networkId: chain.networkId,
+      amount: MIN_VALIDATOR_BOND.toString(), nonce: 0, operatorId: "race-validator" }),
+    createBeaconBond({ wallet: candidate, networkId: chain.networkId,
+      activationHeight: chain.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
+      amount: MIN_BEACON_BOND.toString(), nonce: 1, operatorId: "race-beacon" }),
+  ]]) {
+    const block = chain.buildBlock({ timestamp: TREASURY_VESTING_MS, transactions });
+    assert.throws(() => chain.appendBlock(finalizeBlock(
+      block, quorum(block, validators),
+    )), /invalid or duplicated/);
+    assert.equal(chain.stateRoot, root);
+    assert.equal(chain.beaconAuthorityStatus().pendingAdmissions.length, 0);
+  }
+});
+
+test("bounded registry model recovers full headroom across more than 4k replacements", () => {
   let nextIdentity = 64;
   const active = new Set(Array.from({ length: 64 }, (_, index) => index));
-  const registered = new Set(active);
+  const registered = new Set([...active,
+    ...Array.from({ length: 64 }, (_, index) => nextIdentity + index)]);
+  nextIdentity += 64;
   const retired = new Set();
+  const pendingRetirements = new Map();
   let seed = 0x5eed1234;
   const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
-  for (let generation = 1; generation <= 96; generation += 1) {
+  for (const identity of registered) {
+    if (!active.has(identity)) pendingRetirements.set(identity, 64);
+  }
+  assert.equal(registered.size, MAX_REGISTERED_BEACON_AUTHORITIES);
+  for (let height = 1; height <= 64; height += 1) {
+    for (const [identity, unlockHeight] of pendingRetirements) {
+      if (height < unlockHeight) continue;
+      pendingRetirements.delete(identity);
+      registered.delete(identity);
+      retired.add(identity);
+    }
+  }
+  assert.equal(registered.size, 64);
+  for (let generation = 1; generation <= 98; generation += 1) {
     const candidates = [...active].sort((left, right) => left - right);
     const retirementStart = random() % candidates.length;
     const retiring = Array.from({ length: 42 }, (_, offset) =>
@@ -410,6 +452,71 @@ test("bounded registry model supports more than 64 cumulative replacements", () 
     assert.equal(registered.size, 64);
     assert.equal([...active].some((identity) => retired.has(identity)), false);
   }
-  assert.equal(retired.size, 96 * 42);
-  assert.equal(nextIdentity, 64 + 96 * 42);
+  assert.equal(retired.size, 64 + 98 * 42);
+  assert.equal(nextIdentity, 128 + 98 * 42);
+});
+
+test("admission priority is deterministic and an unselected candidate expires at cost", () => {
+  const { beacons, chain, genesis, treasury, validators } = fixture();
+  const candidates = Array.from({ length: 3 }, generateWallet);
+  const funded = [...beacons, ...candidates];
+  append(chain, validators, { transactions: funded.map((wallet, index) => createTransfer({
+    wallet: treasury, networkId: chain.networkId, recipient: wallet.address,
+    amount: (MIN_BEACON_BOND + MIN_TRANSFER_FEE).toString(), nonce: index,
+  })) });
+  append(chain, validators, { transactions: [
+    ...beacons.map((wallet) => createBeaconBond({ wallet, networkId: chain.networkId,
+      amount: MIN_BEACON_BOND.toString(), nonce: 0 })),
+    ...candidates.map((wallet, index) => createBeaconBond({ wallet, networkId: chain.networkId,
+      activationHeight: chain.height + 1 + BEACON_ADMISSION_DELAY_BLOCKS,
+      amount: MIN_BEACON_BOND.toString(), nonce: 0, operatorId: `queued-beacon-${index}` })),
+  ] });
+  const queued = chain.beaconAuthorityStatus().pendingAdmissions;
+  assert.equal(queued.length, 3);
+  assert.equal(queued.every(({ activationHeight, expiryHeight }) =>
+    expiryHeight - activationHeight === BEACON_ADMISSION_EXPIRY_BLOCKS), true);
+  while (chain.height < queued[0].activationHeight) append(chain, validators);
+  const old = members(beacons, "beacon");
+  const member = (admission) => ({ address: admission.address, algorithm: admission.algorithm,
+    operatorId: admission.operatorId, publicKey: admission.publicKey });
+  const proposalFor = (selected) => createBeaconRotationProposal({
+    activationHeight: chain.height + BEACON_ROTATION_DELAY_BLOCKS,
+    authorities: [old[0], old[1], ...selected.map(member)], generation: 1,
+    networkId: chain.networkId, previousAuthorities: old,
+  });
+  const signRotation = (proposal, selected) => ({ ...proposal,
+    oldApprovals: approvals(proposal, beacons.slice(0, 3), "old"),
+    possessionProofs: approvals(proposal, [beacons[0], beacons[1], ...selected.map(
+      ({ address }) => candidates.find((wallet) => wallet.address === address))], "possession") });
+  const unfairSelected = queued.slice(1);
+  const unfairProposal = proposalFor(unfairSelected);
+  assert.throws(() => chain.buildBlock({
+    beaconRotation: signRotation(unfairProposal, unfairSelected),
+    timestamp: TREASURY_VESTING_MS,
+  }), /deterministic admission priority/);
+
+  const selected = queued.slice(0, 2);
+  const proposal = proposalFor(selected);
+  append(chain, validators, { beaconRotation: signRotation(proposal, selected) });
+  while (chain.height < proposal.activationHeight) append(chain, validators);
+  const unselected = queued[2];
+  assert.deepEqual(chain.beaconAuthorityStatus().pendingAdmissions.map(({ address }) => address),
+    [unselected.address]);
+  while (chain.height + 1 < unselected.expiryHeight) append(chain, validators);
+  const snapshot = chain.consensusSnapshot();
+  const checkpoint = chain.blocks().at(-1);
+  const restarted = NirChain.fromVerifiedSnapshot(genesis, {
+    capabilityMemory: snapshot.capabilityMemory,
+    checkpoint, height: chain.height, networkId: chain.networkId,
+    state: snapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
+  });
+  const fork = restarted.fork();
+  append(restarted, validators);
+  append(fork, validators);
+  assert.equal(restarted.stateRoot, fork.stateRoot);
+  const penalty = (MIN_BEACON_BOND * BigInt(BEACON_ADMISSION_EXPIRY_PENALTY_BPS)) / 10_000n;
+  assert.equal(restarted.balance(unselected.address), MIN_BEACON_BOND - penalty);
+  assert.equal(restarted.beaconBond(unselected.address), 0n);
+  assert.equal(restarted.beaconAuthorityStatus().pendingAdmissions.length, 0);
+  assert.equal(restarted.beaconAuthorityStatus().retiredCount, 3);
 });

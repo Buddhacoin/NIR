@@ -89,9 +89,11 @@ recomputed by every node.
 
 ## Authority rotation
 
-After bond enforcement activates, a new key may register by locking the same
-minimum bond under a unique address and operator ID. Registration alone grants
-no committee role. A rotation is one canonical, state-rooted proposal containing
+After bond enforcement activates, a new key may enter a bounded 256-entry
+admission queue by locking exactly the fixed minimum bond under a unique address
+and operator ID. Paying more cannot improve priority. The candidate becomes
+eligible after 64 finalized blocks, but admission alone grants no committee or
+live-registry role. A rotation is one canonical, state-rooted proposal containing
 the network, monotonically increasing generation, current and next set hashes,
 the complete next registry, and an activation height at least 64 finalized blocks
 ahead. It requires signatures from more than two thirds of the current set plus
@@ -100,6 +102,17 @@ bounded size, at least one third of its addresses overlap the old registry, and
 every member must remain fully bonded. A proposal with a stale generation,
 foreign network, wrong parent set, insufficient overlap, duplicate identity,
 missing possession proof, or reused approval fails closed.
+
+When a handoff needs new members, consensus requires exactly the lowest canonical
+admission ranks among candidates that are eligible and remain unexpired through
+the proposed activation height. The rank commits the network, submitted height,
+address, public key, and operator ID; transaction order and bond size cannot
+change it. The old quorum still chooses how many old members remain, but cannot
+skip a higher-priority eligible newcomer for a preferred wrapper. An unselected
+candidate expires 256 blocks after eligibility: ten percent of its bond burns,
+the remainder returns automatically, and its identity becomes a permanent
+tombstone. A selected candidate stays locked through its already-scheduled
+activation. This bounds queue occupancy and makes repeated flooding costly.
 
 The activation height is a hard generation boundary. No epoch, progress, or
 fallback beacon contribution is accepted in that block. The epoch machine drops
@@ -119,15 +132,16 @@ therefore reproduce the same boundary. Local real-service rehearsals obtain the
 active registry from verified chain state rather than treating the genesis list
 as permanently current.
 
-An authority may request retirement only after it is absent from both the active
-set and a pending next set. The request fee is taken from its locked bond, so an
-operator is not trapped for lack of a separate liquid balance. After 64 further
-finalized blocks, consensus automatically returns the remaining bond, removes
-the live registration, and frees one of the 128 registry slots. Any earlier slash
+An authority removed at activation automatically enters retirement. Consensus
+also starts that transition for any inactive live registration not selected by a
+pending rotation; this prevents a legacy standby registration from holding
+headroom indefinitely. An inactive authority may request the same transition
+explicitly and pay its request fee from the locked bond. After 64 further
+finalized blocks, consensus returns the remaining bond, removes the live
+registration, and frees one of the 128 registry slots. Any earlier slash
 stays burned; only the remaining bond is returned. A disabled authority therefore
 must first be rotated out, but is not forced to abandon its unslashed remainder.
-Registration, retirement,
-and rotation cannot be combined in one block. A fixed-delay automatic maturity
+Registration, retirement, and rotation cannot be combined in one block. A fixed-delay automatic maturity
 prevents a pending retirement from reserving a slot indefinitely.
 
 Retirement preserves a state-rooted historical record containing the exact
@@ -143,11 +157,13 @@ continuity. It does not prove that nominally different authorities are controlle
 by different companies, nor guarantee that the next operators remain available.
 The active set remains capped at 64 and the live registered-key registry at 128,
 leaving enough headroom for the least-overlap permitted 64-member handoff before
-old keys retire. Finalized retirements recycle those slots. Historical tombstones deliberately grow with
+old keys retire. Queued candidates do not consume this live headroom; only the
+deterministically selected candidates enter it, while outgoing members are put
+on bounded retirement automatically. Finalized retirements recycle those slots. Historical tombstones deliberately grow with
 cumulative churn because exact replay prevention and old-proof auditability are
-retained; this version does not claim constant-size historical state. Registration
-slots remain an economic resource rather than a Sybil-proof identity system: a
-well-funded coalition can keep inactive bonded registrations open and delay a
-maximal-set handoff once headroom is exhausted. It cannot do so for free, forge
-old-set authorization, or reuse retired identities, but operator independence
-and censorship resistance remain deployment assumptions.
+retained; this version does not claim constant-size historical state. The queue
+is an economic anti-spam mechanism, not proof of independent control: a wealthy
+coalition can fund many self-asserted operator IDs and may dominate deterministic
+priority, while a proposer can censor submissions. Fixed bonds, delayed eligibility,
+bounded capacity, expiry loss, and identity tombstones make that attack finite
+and costly; they do not prove company independence or eliminate censorship.

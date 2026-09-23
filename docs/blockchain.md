@@ -135,9 +135,13 @@ both set hashes bind every handoff. Epoch, progress, and fallback signatures are
 generation-bound; the activation block accepts none of them, advances to a fresh
 set-bound epoch attempt, and refunds unresolved progress admissions. The active
 and registered registries, generation, pending handoff, and bonds are snapshot-
-and state-rooted. This is key continuity, not proof of corporate independence.
-An inactive, non-pending beacon can retire after another 64 finalized blocks.
-Consensus deducts the request fee from its locked bond, returns only the remaining
+and state-rooted. New keys first enter a fixed-bond, delayed, expiring 256-entry
+queue; canonical rank selects eligible newcomers without bond-size priority.
+Unselected expiry burns ten percent. This is key continuity and bounded economic
+anti-spam, not proof of corporate independence.
+A rotated-out beacon, or any other inactive registration not selected by a
+pending rotation, automatically retires after another 64 finalized blocks.
+Consensus returns only the remaining
 non-slashed amount at maturity, recycles the live registry slot, and permanently
 commits its address/key/operator identity as historical state. Same-block
 registration/retirement/rotation and identity replay into another protocol role

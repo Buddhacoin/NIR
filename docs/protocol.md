@@ -160,8 +160,11 @@ shares carry the generation. The boundary accepts no beacon contribution, advanc
 the epoch round with a set-bound seed, and refunds/removes unresolved progress
 admissions so no old committee becomes permanently unserviceable. Stale generation,
 parent-set rollback, abrupt takeover, and cross-generation replay are rejected.
-An inactive authority that is not referenced by a pending rotation can start a
-64-block retirement. Its fee is paid from the bond; maturity returns only the
+New identities first lock one exact fixed bond in a 256-entry queue. Eligibility
+is delayed 64 blocks; canonical rank, not bond size or transaction order, chooses
+newcomers, and unselected entries expire 256 blocks later with a ten-percent burn.
+Rotated-out authorities and inactive registrations outside the pending next set
+automatically start a 64-block retirement. Maturity returns only the
 non-slashed remainder, frees the bounded live-registry slot, and commits an
 irreversible identity tombstone. The old address, public key, and operator ID
 cannot re-enter any protocol role. Rotation, retirement, and registration are

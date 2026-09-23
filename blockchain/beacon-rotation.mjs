@@ -3,6 +3,10 @@ import { MIN_BEACON_BOND, SIGNATURE_ALGORITHM } from "./constants.mjs";
 
 export const BEACON_ROTATION_DELAY_BLOCKS = 64;
 export const BEACON_RETIREMENT_DELAY_BLOCKS = 64;
+export const BEACON_ADMISSION_DELAY_BLOCKS = 64;
+export const BEACON_ADMISSION_EXPIRY_BLOCKS = 256;
+export const BEACON_ADMISSION_EXPIRY_PENALTY_BPS = 1_000;
+export const MAX_PENDING_BEACON_ADMISSIONS = 256;
 export const MAX_REGISTERED_BEACON_AUTHORITIES = 128;
 const MAX_AUTHORITIES = 64;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
@@ -51,6 +55,15 @@ export function retiredBeaconIdentity(member, retiredHeight, faults = 0) {
   }
   return { ...identity, faults, identityCommitment: hashObject(identity,
     "BEACON_RETIRED_IDENTITY_V1"), retiredHeight };
+}
+
+export function beaconAdmissionRank({ member, networkId, submittedHeight }) {
+  const identity = normalizeMember(member, "beacon admission");
+  if (typeof networkId !== "string" || networkId.length < 1 || networkId.length > 64 ||
+      !Number.isSafeInteger(submittedHeight) || submittedHeight < 1) {
+    throw new Error("beacon admission context is invalid");
+  }
+  return hashObject({ member: identity, networkId, submittedHeight }, "BEACON_ADMISSION_RANK_V1");
 }
 
 function rotationPayload(value) {
