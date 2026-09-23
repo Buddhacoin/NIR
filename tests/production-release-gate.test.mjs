@@ -31,6 +31,12 @@ import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createProductionStartupGuard,
   createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
+import { signOfflineReleaseBundle } from "../blockchain/offline-release-bundle.mjs";
+import { createReleaseAuthoritySet } from "../blockchain/offline-release-governance.mjs";
+import {
+  assembleProductionWalletExport, createProductionWalletExportBundle,
+  importProductionWalletExport, serializeProductionWalletExport, verifyProductionWalletExport,
+} from "../blockchain/production-wallet-export.mjs";
 import {
   advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
   repairProductionHeadCopies, verifyProductionStartupFromHead,
@@ -808,6 +814,121 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const toolPackage = createProductionReleasePackage(toolArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
       signedRelease, trustedAddress: values.signer.address });
+    const releaseAuthorities = Array.from({ length: 4 }, generateWallet);
+    const authoritySet = createReleaseAuthoritySet({
+      authorities: releaseAuthorities.map((wallet, index) => ({
+        ...publicWallet(wallet), operatorId: `wallet-export-${index}`,
+      })), generation: 1, rotationDelayEntries: 2, threshold: 3,
+    });
+    const exportBundleA = createProductionWalletExportBundle({ signedRelease, toolPackage,
+      trustedAddress: values.signer.address, walletPackage: packageValue });
+    const exportBundleB = createProductionWalletExportBundle({ signedRelease: structuredClone(signedRelease),
+      toolPackage: structuredClone(toolPackage), trustedAddress: values.signer.address,
+      walletPackage: structuredClone(packageValue) });
+    assert.equal(canonicalJson(exportBundleA), canonicalJson(exportBundleB),
+      "independent verified build roots must produce identical bundle bytes");
+    const exportApprovals = releaseAuthorities.slice(0, 3)
+      .map((wallet) => signOfflineReleaseBundle(exportBundleA, wallet));
+    const portableExport = assembleProductionWalletExport(exportBundleA, authoritySet, exportApprovals);
+    const verifiedExport = verifyProductionWalletExport(portableExport, {
+      expectedAuthoritySetId: authoritySet.setId,
+      expectedGenesisHash: evidence.productionTarget.genesisHash,
+      expectedNetworkId: NETWORK, expectedToolPackageHash: toolPackage.packageHash,
+      expectedWalletPackageHash: packageValue.packageHash,
+      trustedReleaseAddress: values.signer.address,
+    });
+    assert.equal(verifiedExport.binding.wallet.packageHash, packageValue.packageHash);
+    assert.throws(() => verifyProductionWalletExport(portableExport, {
+      expectedAuthoritySetId: `sha3-256:${"f".repeat(64)}`,
+      trustedReleaseAddress: values.signer.address,
+    }), /authority set/);
+    assert.equal(serializeProductionWalletExport(portableExport, {
+      expectedAuthoritySetId: authoritySet.setId,
+      trustedReleaseAddress: values.signer.address,
+    }), `${canonicalJson(portableExport)}\n`);
+    const exportCli = new URL("../blockchain/production-wallet-export-cli.mjs", import.meta.url).pathname;
+    const exportRoots = [join(values.root, "export-root-a"), join(values.root, "export-root-b")];
+    for (const root of exportRoots) mkdirSync(root);
+    const packageInputs = exportRoots.map((root) => ({
+      signed: join(root, "signed-release.json"), tool: join(root, "tool-package.json"),
+      wallet: join(root, "wallet-package.json"),
+    }));
+    const authoritySetPath = join(values.root, "portable-authorities.json");
+    const cliBundleA = join(values.root, "portable-a.nirpkg");
+    const cliBundleB = join(values.root, "portable-b.nirpkg");
+    for (const input of packageInputs) {
+      writeFileSync(input.wallet, `${canonicalJson(packageValue)}\n`);
+      writeFileSync(input.tool, `${canonicalJson(toolPackage)}\n`);
+      writeFileSync(input.signed, `${canonicalJson(signedRelease)}\n`);
+    }
+    writeFileSync(authoritySetPath, `${canonicalJson(authoritySet)}\n`);
+    for (let index = 0; index < 2; index += 1) {
+      const input = packageInputs[index]; const output = [cliBundleA, cliBundleB][index];
+      const built = spawnSync(process.execPath, [exportCli, "build", input.wallet,
+        input.tool, input.signed, values.signer.address, "none", output],
+      { encoding: "utf8" });
+      assert.equal(built.status, 0, built.stderr);
+    }
+    assert.deepEqual(readFileSync(cliBundleA), readFileSync(cliBundleB));
+    const approvalPaths = exportApprovals.map((approval, index) => {
+      const path = join(values.root, `portable-approval-${index}.json`);
+      writeFileSync(path, `${canonicalJson(approval)}\n`); return path;
+    });
+    const cliExport = join(values.root, "portable-export.json");
+    const assembledCli = spawnSync(process.execPath, [exportCli, "assemble", cliBundleA,
+      authoritySetPath, cliExport, ...approvalPaths], { encoding: "utf8" });
+    assert.equal(assembledCli.status, 0, assembledCli.stderr);
+    const verifiedCli = spawnSync(process.execPath, [exportCli, "verify", cliExport,
+      values.signer.address, authoritySet.setId, NETWORK, evidence.productionTarget.genesisHash,
+      packageValue.packageHash, toolPackage.packageHash], { encoding: "utf8" });
+    assert.equal(verifiedCli.status, 0, verifiedCli.stderr);
+    const cliImportedWallet = join(values.root, "portable-cli-import");
+    const importedCli = spawnSync(process.execPath, [exportCli, "import", cliExport,
+      values.signer.address, authoritySet.setId, NETWORK, evidence.productionTarget.genesisHash,
+      packageValue.packageHash, toolPackage.packageHash, cliImportedWallet], { encoding: "utf8" });
+    assert.equal(importedCli.status, 0, importedCli.stderr);
+    assert.equal(JSON.parse(importedCli.stdout).packageHash, packageValue.packageHash);
+    assert.throws(() => assembleProductionWalletExport(exportBundleA, authoritySet,
+      [exportApprovals[0], exportApprovals[0], exportApprovals[1]]), /duplicate/);
+    assert.throws(() => assembleProductionWalletExport(exportBundleA, authoritySet,
+      exportApprovals.slice(0, 2)), /quorum/);
+    assert.throws(() => assembleProductionWalletExport(exportBundleA, authoritySet,
+      [...exportApprovals.slice(0, 2), signOfflineReleaseBundle(exportBundleA, generateWallet())]),
+    /unknown/);
+    const mutatedExport = structuredClone(portableExport);
+    mutatedExport.bundle.entries.find(({ path }) => path === "wallet/package.json").content =
+      Buffer.from("{}\n").toString("base64");
+    assert.throws(() => verifyProductionWalletExport(mutatedExport, {
+      expectedAuthoritySetId: authoritySet.setId,
+      trustedReleaseAddress: values.signer.address,
+    }), /manifest|entry/);
+    assert.throws(() => verifyProductionWalletExport(portableExport, {
+      expectedAuthoritySetId: authoritySet.setId, expectedToolPackageHash: "f".repeat(64),
+      trustedReleaseAddress: values.signer.address,
+    }), /lineage/);
+    const importedWallet = join(values.root, "portable-wallet-import");
+    const imported = importProductionWalletExport(portableExport, importedWallet, {
+      expectedAuthoritySetId: authoritySet.setId,
+      expectedGenesisHash: evidence.productionTarget.genesisHash,
+      expectedNetworkId: NETWORK, expectedToolPackageHash: toolPackage.packageHash,
+      expectedWalletPackageHash: packageValue.packageHash,
+      trustedReleaseAddress: values.signer.address,
+    });
+    assert.equal(imported.packageHash, packageValue.packageHash);
+    const occupiedPortable = join(values.root, "portable-wallet-occupied");
+    mkdirSync(occupiedPortable); writeFileSync(join(occupiedPortable, "foreign"), "keep\n");
+    assert.throws(() => importProductionWalletExport(portableExport, occupiedPortable, {
+      expectedAuthoritySetId: authoritySet.setId,
+      trustedReleaseAddress: values.signer.address,
+    }), /new directory|exist|target/i);
+    assert.equal(readFileSync(join(occupiedPortable, "foreign"), "utf8"), "keep\n");
+    assert.throws(() => importProductionWalletExport(portableExport,
+      join(values.root, "portable-wallet-rollback"), {
+        expectedAuthoritySetId: authoritySet.setId,
+        expectedPreviousPackageHash: packageValue.packageHash,
+        previousInstallation: importedWallet, previousSignedRelease: signedRelease,
+        trustedReleaseAddress: values.signer.address,
+      }), /rollback|downgrade/);
     const installation = join(values.root, "wallet-app");
     installProductionReleasePackage(packageValue, installation, { kind: "wallet", now: NOW,
       signedRelease, trustedAddress: values.signer.address });

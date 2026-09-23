@@ -321,11 +321,35 @@ export function createOfflineReleaseBundle(rootPath, paths, metadata = {}) {
       new Set(normalized.map((path) => path.toLocaleLowerCase("en-US"))).size !== normalized.length) {
     throw new Error("release path allowlist contains duplicate or ambiguous paths");
   }
+  const sources = [];
+  for (const path of normalized) {
+    const { contents, mode } = readSourceFile(root, path, metadata);
+    sources.push({ contents, mode, path });
+  }
+  return createOfflineReleaseBundleFromEntries(sources, metadata);
+}
+
+export function createOfflineReleaseBundleFromEntries(sourceEntries, metadata = {}) {
+  if (!Array.isArray(sourceEntries) || sourceEntries.length < 1 || sourceEntries.length > MAX_FILES) {
+    throw new Error("release entry allowlist is invalid");
+  }
+  const normalized = sourceEntries.map((entry) => ({
+    contents: Buffer.isBuffer(entry?.contents) ? Buffer.from(entry.contents) :
+      Buffer.from(entry?.contents ?? ""),
+    mode: entry?.mode ?? 0o644,
+    path: canonicalPath(entry?.path),
+  })).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  if (new Set(normalized.map(({ path }) => path)).size !== normalized.length ||
+      new Set(normalized.map(({ path }) => path.toLocaleLowerCase("en-US"))).size !== normalized.length) {
+    throw new Error("release entry allowlist contains duplicate or ambiguous paths");
+  }
   let totalBytes = 0;
   const entries = [];
   const files = [];
-  for (const path of normalized) {
-    const { contents, mode } = readSourceFile(root, path, metadata);
+  for (const { contents, mode, path } of normalized) {
+    if (!Buffer.isBuffer(contents) || contents.length > MAX_FILE_BYTES || ![0o644, 0o755].includes(mode)) {
+      throw new Error("release entry is not a bounded regular-file image");
+    }
     secretContentCheck(path, contents);
     totalBytes += contents.length;
     if (totalBytes > MAX_TOTAL_BYTES) throw new Error("release sources are too large");
