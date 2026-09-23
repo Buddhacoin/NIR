@@ -1,13 +1,26 @@
 import {
   addressFromPublicKey, canonicalJson, hashObject, signObject, verifyObject,
 } from "./crypto.mjs";
-import { blockHash, prepareCertificateHash } from "./chain.mjs";
 import { BEACON_ADMISSION_DELAY_BLOCKS } from "./beacon-rotation.mjs";
 import { MIN_BEACON_BOND, MIN_TRANSFER_FEE, SIGNATURE_ALGORITHM } from "./constants.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 
 export const MAX_ADMISSION_INCLUSION_DELAY_BLOCKS = 1;
 export const MAX_ADMISSION_RECEIPT_AGE_BLOCKS = 8;
+
+export function assertAdmissionReceiptGenerationWindow({
+  acceptedHeight, pendingValidatorRotation,
+} = {}) {
+  if (!Number.isSafeInteger(acceptedHeight) || acceptedHeight < 0) {
+    throw new Error("beacon admission receipt height is invalid");
+  }
+  const activationHeight = pendingValidatorRotation?.activationHeight;
+  if (activationHeight !== undefined && (!Number.isSafeInteger(activationHeight) ||
+      activationHeight <= acceptedHeight + MAX_ADMISSION_INCLUSION_DELAY_BLOCKS + 1)) {
+    throw new Error("beacon admission receipt cannot cross a validator rotation boundary");
+  }
+  return true;
+}
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -154,37 +167,4 @@ export function admissionReceiptEquivocation(first, second, { validators } = {})
     receipts: receipts.map((receipt) => structuredClone(receipt)),
     validator: first.validator,
   };
-}
-
-export function proveAdmissionInclusionViolation({
-  finalizedBlock, receipt, transaction, validators,
-} = {}) {
-  verifyAdmissionInclusionReceipt(receipt, {
-    acceptedHeight: receipt?.acceptedHeight,
-    networkId: finalizedBlock?.networkId,
-    transaction,
-    validators,
-  });
-  if (!finalizedBlock || finalizedBlock.height !== receipt.inclusionHeight ||
-      finalizedBlock.hash !== blockHash(finalizedBlock) ||
-      finalizedBlock.transactions.some((candidate) =>
-        hashObject(candidate, "TRANSACTION_ID") === receipt.transactionId)) {
-    throw new Error("finalized block does not prove an admission inclusion violation");
-  }
-  const member = validators.find(({ address }) => address === receipt.validator);
-  const vote = finalizedBlock.certificate?.find(({ validator }) => validator === receipt.validator);
-  if (!member || !vote || !verifyObject({
-    blockHash: blockHash(finalizedBlock),
-    prepareCertificateHash: prepareCertificateHash(finalizedBlock.prepareCertificate),
-  }, vote.signature, member.publicKey, "BLOCK_COMMIT")) {
-    throw new Error("receipt signer did not commit the omitting finalized block");
-  }
-  const statement = {
-    blockHash: finalizedBlock.hash,
-    receiptHash: receipt.receiptHash,
-    transactionId: receipt.transactionId,
-    validator: receipt.validator,
-  };
-  return { ...statement,
-    evidenceHash: hashObject(statement, "BEACON_ADMISSION_OMISSION_V1") };
 }

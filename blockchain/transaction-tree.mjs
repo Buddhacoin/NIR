@@ -17,14 +17,17 @@ function emptyHash(level) {
   return emptyHashes[level];
 }
 
-function leaf(transaction, index) {
-  return hashObject({ index, transactionId: committedTransactionId(transaction) },
-    "TRANSACTION_TREE_LEAF");
+function idLeaf(transactionId, index) {
+  if (!HASH.test(transactionId ?? "")) throw new Error("transaction id is invalid");
+  return hashObject({ index, transactionId }, "TRANSACTION_TREE_LEAF");
 }
 
-function levelsFor(transactions) {
-  if (!Array.isArray(transactions)) throw new Error("transaction tree input is invalid");
-  const levels = [transactions.map(leaf)];
+function leaf(transaction, index) {
+  return idLeaf(committedTransactionId(transaction), index);
+}
+
+function levelsForLeaves(leaves) {
+  const levels = [leaves];
   if (levels[0].length === 0) return levels;
   while (levels.at(-1).length > 1) {
     const current = levels.at(-1);
@@ -40,8 +43,19 @@ function levelsFor(transactions) {
   return levels;
 }
 
+function levelsFor(transactions) {
+  if (!Array.isArray(transactions)) throw new Error("transaction tree input is invalid");
+  return levelsForLeaves(transactions.map(leaf));
+}
+
 export function transactionRoot(transactions) {
   const levels = levelsFor(transactions);
+  return levels[0].length === 0 ? emptyHash(0) : levels.at(-1)[0];
+}
+
+export function transactionRootFromIds(transactionIds) {
+  if (!Array.isArray(transactionIds)) throw new Error("transaction id tree input is invalid");
+  const levels = levelsForLeaves(transactionIds.map(idLeaf));
   return levels[0].length === 0 ? emptyHash(0) : levels.at(-1)[0];
 }
 

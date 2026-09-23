@@ -177,7 +177,16 @@ and refuse an omitting proposal, so finality-quorum intersection enforces inclus
 without assuming identical mempools. Receipt expiry, validator-set commitment,
 sender/nonce binding, and conflicting-receipt evidence are exact. This cannot force
 the network to issue the initial quorum receipt and is not a global availability or
-operator-independence proof.
+operator-independence proof. A finalized omission is slashable only in the
+immediately following block, using the canonical previous header, complete ordered
+transaction-ID list, prepare commitment, commit votes, and receipt quorum. The
+bounded transaction list must reconstruct the committed root. Consensus slashes
+precisely the receipt/commit signer intersection, pays a fixed ten-percent reporter
+reward from those bonds, burns the rest, and records the evidence hash in bounded
+snapshot state. This objective post-finality rule avoids fork-choice ambiguity. A
+cartel can still withhold the receipt quorum before making a promise, and a slash
+large enough to expose a Byzantine finality quorum may halt the validator set
+rather than automatically heal it.
 
 ### Epoch-randomness transition
 

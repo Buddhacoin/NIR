@@ -39,12 +39,14 @@ import {
 } from "./constants.mjs";
 import { canonicalJson, generateWallet, publicWallet, verifyObject } from "./crypto.mjs";
 import {
+  assertAdmissionReceiptGenerationWindow,
   assertAdmissionInclusionObligations,
   createAdmissionInclusionReceipt,
   isProtectedBeaconAdmission,
   verifyAdmissionInclusionCertificate,
   verifyAdmissionInclusionReceipt,
 } from "./admission-inclusion.mjs";
+import { MAX_ADMISSION_OMISSION_EVIDENCE_BYTES } from "./validator-admission-omission.mjs";
 import {
   createPeerRequest,
   createPeerResponse,
@@ -276,7 +278,9 @@ export class TransactionMempool {
     if (!transaction || typeof transaction !== "object" || Array.isArray(transaction)) {
       throw new Error("transaction must be an object");
     }
-    if (Buffer.byteLength(canonicalJson(transaction)) > 64 * 1024) {
+    const maximumBytes = transaction.type === "validator-admission-omission"
+      ? MAX_ADMISSION_OMISSION_EVIDENCE_BYTES + 32 * 1024 : 64 * 1024;
+    if (Buffer.byteLength(canonicalJson(transaction)) > maximumBytes) {
       throw new Error("transaction exceeds the mempool size limit");
     }
     const id = transactionId(transaction);
@@ -1082,6 +1086,10 @@ export class ValidatorReplica {
         transactions: this.#mempool.take(), timestamp,
       }));
       if (isProtectedBeaconAdmission(transaction)) {
+        assertAdmissionReceiptGenerationWindow({
+          acceptedHeight: this.height,
+          pendingValidatorRotation: this.#chain.pendingValidatorRotation,
+        });
         this.#chain.validateProposal(this.#chain.buildBlock({ transactions: [transaction], timestamp }));
       }
       writeExclusive(join(this.#directory, "mempool", `${id}.json`), transaction, 0o600);

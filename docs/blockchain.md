@@ -145,6 +145,14 @@ promise. Those signers persist the exact transaction across restart and refuse a
 omitting next-height proposal; the quorum-intersection argument does not require a
 globally identical mempool. Initial delivery to a quorum can still be censored,
 and the off-chain receipt is not represented as globally known consensus state.
+If the promised block nevertheless finalizes without the admission, the next
+block may carry bounded evidence tied to its exact header, transaction root,
+validator generation, receipt quorum, and commit certificate. Only validators in
+the receipt/commit intersection lose their locked bonds; ten percent goes to the
+reporter and the remainder burns. This post-finality transition is replay- and
+snapshot-protected and never penalizes an offline or non-signing validator.
+Reports after the single-block window are rejected instead of relying on
+unbounded historical state.
 A rotated-out beacon, or any other inactive registration not selected by a
 pending rotation, automatically retires after another 64 finalized blocks.
 Consensus returns only the remaining

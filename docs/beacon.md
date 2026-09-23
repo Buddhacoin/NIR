@@ -135,19 +135,30 @@ therefore intersect in enough honest validators to prevent omission under the
 normal less-than-one-third Byzantine assumption. Validators need not have
 identical mempools; only signers of this exact receipt acquire the obligation. A
 receipt signer that nevertheless signs the omitting finalized block leaves
-objective forensic evidence from its receipt and commit signature. Snapshot
-fast-forward fails closed while an inclusion obligation is outstanding because
+objective evidence from its receipt and commit signature. The bounded evidence
+carries the receipt quorum, finalized header, ordered transaction IDs, and exact
+receipt/commit signer intersection. Consensus reconstructs the transaction root
+and compares it with the immediately previous finalized block; evidence is
+accepted only in the next block. It consumes only intersection signers' bonds,
+pays ten percent of those locked funds to the reporter, and burns the remainder.
+No NIR is issued, and offline, non-signing, receipt-only, and commit-only
+validators are not penalized. Replay, mixed generations, altered transaction
+lists, late reports, and duplicate evidence fail atomically. Snapshot fast-forward
+fails closed while an inclusion obligation is outstanding because
 the current snapshot format has no exact transaction-inclusion proof; the signer
 must replay the promised block, which clears the durable receipt atomically.
 
 The off-chain receipt is not global state and does not make an unseen transaction's
 absence globally provable. A submitter must first reach a validator quorum; a
 network or finality cartel able to prevent that can still censor the initial
-request. Receipt-side reservation makes a receipted bond unavoidable while the
+request or refuse a receipt quorum. Receipt-side reservation makes a receipted bond unavoidable while the
 honest quorum remains live, but it is not an on-chain lock until the promised block
-finalizes. Minority acknowledgements are not a promise, forensic evidence does not
-automatically slash funds in this version, and this is not full censorship or
-Sybil resistance.
+finalizes. Minority acknowledgements are not a promise. Evidence is deliberately
+limited to the previous finalized block, removing reorg/history ambiguity but
+requiring prompt reporting. Receipt issuance is refused across a validator-set
+activation boundary. Slashing a Byzantine intersection can leave finality without
+a quorum; it exposes and prices the violation but cannot restore liveness or prove
+operator independence. This is not full censorship or Sybil resistance.
 
 The activation height is a hard generation boundary. No epoch, progress, or
 fallback beacon contribution is accepted in that block. The epoch machine drops

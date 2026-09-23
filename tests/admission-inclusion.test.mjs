@@ -6,13 +6,14 @@ import test from "node:test";
 
 import {
   admissionReceiptEquivocation,
+  assertAdmissionReceiptGenerationWindow,
   assertAdmissionInclusionObligations,
   createAdmissionInclusionReceipt,
-  proveAdmissionInclusionViolation,
   verifyAdmissionInclusionCertificate,
 } from "../blockchain/admission-inclusion.mjs";
 import {
-  NirChain, createBeaconBond, createTransfer, finalizeBlock, transactionId,
+  NirChain, blockHeader, createBeaconBond, createTransfer, finalizeBlock,
+  prepareCertificateHash, transactionId,
 } from "../blockchain/chain.mjs";
 import {
   MIN_BEACON_BOND, MIN_TRANSFER_FEE, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
@@ -21,6 +22,10 @@ import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
   initializeDistributedDevnet, ValidatorReplica,
 } from "../blockchain/distributed-node.mjs";
+import {
+  createValidatorAdmissionOmissionEvidence,
+  verifyValidatorAdmissionOmissionEvidence,
+} from "../blockchain/validator-admission-omission.mjs";
 
 function members(wallets, prefix) {
   return wallets.map((wallet, index) => ({ ...publicWallet(wallet), operatorId: `${prefix}-${index}` }));
@@ -78,6 +83,16 @@ test("quorum receipts bind one exact admission and one-block inclusion window", 
   }), /duplicate/);
 });
 
+test("receipt and evidence windows cannot cross a validator generation boundary", () => {
+  assert.equal(assertAdmissionReceiptGenerationWindow({ acceptedHeight: 10,
+    pendingValidatorRotation: { activationHeight: 13 } }), true);
+  for (const activationHeight of [11, 12]) {
+    assert.throws(() => assertAdmissionReceiptGenerationWindow({
+      acceptedHeight: 10, pendingValidatorRotation: { activationHeight },
+    }), /cannot cross a validator rotation boundary/);
+  }
+});
+
 test("conflicting receipts are objective evidence and cannot be mixed silently", () => {
   const values = fixture();
   const conflicting = createBeaconBond({
@@ -99,7 +114,7 @@ test("conflicting receipts are objective evidence and cannot be mixed silently",
   assert.notEqual(evidence.receipts[0].transactionId, evidence.receipts[1].transactionId);
 });
 
-test("a receipt signer committing the exact omitting block yields forensic evidence", () => {
+test("a quorum receipt and finalized omitting block identify the exact signer intersection", () => {
   const values = fixture();
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
@@ -113,21 +128,37 @@ test("a receipt signer committing the exact omitting block yields forensic evide
     networkId: values.networkId, safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: treasury.address, validators: values.validatorMembers,
   });
-  const receipt = createAdmissionInclusionReceipt({
-    acceptedHeight: 0, networkId: values.networkId, transaction: values.transaction,
-    validatorWallet: values.validators[0], validators: values.validatorMembers,
-  });
+  const receipts = values.validators.slice(0, 3).map((validatorWallet) =>
+    createAdmissionInclusionReceipt({
+      acceptedHeight: 0, networkId: values.networkId, transaction: values.transaction,
+      validatorWallet, validators: values.validatorMembers,
+    }));
   const proposal = chain.buildBlock({ transactions: [], timestamp: 1 });
-  const finalized = finalizeBlock(proposal, values.validators.slice(0, 3));
-  const evidence = proveAdmissionInclusionViolation({
-    finalizedBlock: finalized, receipt, transaction: values.transaction,
+  const finalized = finalizeBlock(proposal, values.validators.slice(1, 4));
+  const evidence = createValidatorAdmissionOmissionEvidence({
+    certificate: finalized.certificate, finalizedHeader: blockHeader(finalized),
+    prepareCertificateHash: prepareCertificateHash(finalized.prepareCertificate),
+    receipts, round: finalized.round, transaction: values.transaction,
+    transactionIds: finalized.transactions.map(transactionId),
     validators: values.validatorMembers,
   });
-  assert.equal(evidence.validator, values.validators[0].address);
-  assert.throws(() => proveAdmissionInclusionViolation({
-    finalizedBlock: finalizeBlock(proposal, values.validators.slice(1)),
-    receipt, transaction: values.transaction, validators: values.validatorMembers,
-  }), /did not commit/);
+  const verified = verifyValidatorAdmissionOmissionEvidence(evidence, {
+    canonicalBlockHash: finalized.hash, canonicalCertificate: finalized.certificate,
+    canonicalHeader: blockHeader(finalized),
+    canonicalPrepareCertificateHash: prepareCertificateHash(finalized.prepareCertificate),
+    canonicalRound: finalized.round,
+    canonicalTransactionIds: finalized.transactions.map(transactionId), currentHeight: 2,
+    networkId: values.networkId, validators: values.validatorMembers,
+  });
+  assert.deepEqual(verified.offenders.sort(), values.validators.slice(1, 3)
+    .map(({ address }) => address).sort());
+  assert.throws(() => verifyValidatorAdmissionOmissionEvidence(evidence, {
+    canonicalBlockHash: finalized.hash, canonicalCertificate: finalized.certificate,
+    canonicalHeader: blockHeader(finalized),
+    canonicalPrepareCertificateHash: prepareCertificateHash(finalized.prepareCertificate),
+    canonicalRound: finalized.round, canonicalTransactionIds: [], currentHeight: 3,
+    networkId: values.networkId, validators: values.validatorMembers,
+  }), /stale or not canonical/);
 });
 
 test("seeded quorum-intersection model blocks omission without a global mempool", () => {
