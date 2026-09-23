@@ -36,6 +36,7 @@ import {
 import { decryptWallet } from "./vault.mjs";
 import {
   createProductionReleasePackage,
+  installProductionReleasePackage,
   readBoundedPublicJson,
   verifyProductionReleasePackage,
   writeProductionPackageExclusive,
@@ -258,15 +259,14 @@ try {
     const now = Number(nowText);
     if (!Number.isSafeInteger(now) || now < 0) throw new Error("production release time is invalid");
     const signedRelease = readBoundedPublicJson(envelopePath, { maximumBytes: 16 * 1024 * 1024 });
-    const packageValue = verifyProductionReleasePackage(readBoundedPublicJson(packagePath, {
+    const packageValue = readBoundedPublicJson(packagePath, {
       maximumBytes: 600 * 1024 * 1024, requireCanonical: true,
-    }), { now, signedRelease, trustedAddress });
+    });
     const kind = command.endsWith("wallet") ? "wallet" : "node";
-    if (packageValue.artifact.kind !== kind) throw new Error("production package kind is invalid");
-    const provenance = kind === "wallet"
-      ? installWalletArtifact(packageValue.artifact, target, { signedRelease, trustedAddress })
-      : installNodeArtifact(packageValue.artifact, target, { signedRelease, trustedAddress });
-    console.log(`${kind} production package ${packageValue.packageHash} installed (${provenance.artifactHash}).`);
+    const installed = installProductionReleasePackage(packageValue, target, {
+      kind, now, signedRelease, trustedAddress,
+    });
+    console.log(`${kind} production package ${installed.packageHash} installed (${installed.provenance.artifactHash}).`);
   } else if (command === "verify-node-install" && args.length === 3) {
     const [target, envelopePath, trustedAddress] = args;
     const result = verifyNodeInstallation(target, {

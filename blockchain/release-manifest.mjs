@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { resolve, sep } from "node:path";
 
 import {
@@ -36,6 +36,38 @@ function fileDigest(contents) {
     .update("NIR/RELEASE_FILE/v1\0")
     .update(contents)
     .digest("hex");
+}
+
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+export function readReleaseSourceFile(path, { maximumBytes = MAX_FILE_BYTES, _afterOpen } = {}) {
+  if (!Number.isInteger(constants.O_NOFOLLOW) || !Number.isInteger(constants.O_NONBLOCK)) {
+    throw new Error("release source reading requires no-follow nonblocking file support");
+  }
+  let descriptor;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.size < 0 || opened.size > maximumBytes) {
+      throw new Error("release source is not a bounded regular file");
+    }
+    if (_afterOpen !== undefined) _afterOpen(path);
+    const contents = Buffer.alloc(opened.size); let offset = 0;
+    while (offset < contents.length) {
+      const length = readSync(descriptor, contents, offset, contents.length - offset, offset);
+      if (length === 0) throw new Error("release source changed during read");
+      offset += length;
+    }
+    const after = fstatSync(descriptor); const linked = lstatSync(path);
+    if (!sameIdentity(opened, after) || !sameIdentity(opened, linked) || linked.isSymbolicLink() ||
+        opened.size !== after.size || opened.mtimeMs !== after.mtimeMs ||
+        opened.ctimeMs !== after.ctimeMs || opened.mode !== after.mode) {
+      throw new Error("release source changed during read");
+    }
+    return { contents, metadata: opened };
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
 function manifestPayload(manifest) {
@@ -85,13 +117,12 @@ export function createReleaseManifest(root, paths, { releaseVersion, sourceRevis
     if (absolute !== base && !absolute.startsWith(`${base}${sep}`)) {
       throw new Error("release file escapes the source root");
     }
-    const metadata = lstatSync(absolute);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_FILE_BYTES) {
-      throw new Error(`release source is not a bounded regular file: ${path}`);
-    }
+    let source;
+    try { source = readReleaseSourceFile(absolute); }
+    catch { throw new Error(`release source is not a stable bounded regular file: ${path}`); }
+    const { contents, metadata } = source;
     totalBytes += metadata.size;
     if (totalBytes > MAX_TOTAL_BYTES) throw new Error("release sources are too large");
-    const contents = readFileSync(absolute);
     return {
       executable: (metadata.mode & 0o111) !== 0,
       path,

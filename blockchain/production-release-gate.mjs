@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { validateDeveloperTestnetProductionPreflightReport } from "./developer-testnet-production-preflight.mjs";
-import { verifyReleaseArtifact } from "./release-artifact.mjs";
+import { installNodeArtifact, installWalletArtifact, verifyReleaseArtifact } from "./release-artifact.mjs";
 import { verifySignedRelease } from "./release-manifest.mjs";
 
 const TARGET_FORMAT = "nir-production-release-target-v1";
@@ -27,6 +27,53 @@ function exact(value, fields, label) {
 
 function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
+}
+
+function assertUnambiguousJson(text) {
+  let offset = 0; let nodes = 0;
+  const whitespace = () => { while (/\s/.test(text[offset] ?? "")) offset += 1; };
+  const string = () => {
+    const start = offset;
+    if (text[offset++] !== '"') throw new Error("JSON string is invalid");
+    while (offset < text.length) {
+      if (text[offset] === '"') { offset += 1; return JSON.parse(text.slice(start, offset)); }
+      if (text[offset] === "\\") offset += 2;
+      else offset += 1;
+    }
+    throw new Error("JSON string is unterminated");
+  };
+  const value = (depth = 0) => {
+    whitespace(); nodes += 1;
+    if (depth > 64 || nodes > 1_000_000) throw new Error("JSON structure exceeds production bounds");
+    if (text[offset] === "{") {
+      offset += 1; whitespace(); const keys = new Set();
+      if (text[offset] === "}") { offset += 1; return; }
+      while (true) {
+        whitespace(); const key = string();
+        if (keys.has(key)) throw new Error("JSON contains a duplicate object key");
+        keys.add(key); whitespace();
+        if (text[offset++] !== ":") throw new Error("JSON object is invalid");
+        value(depth + 1); whitespace();
+        if (text[offset] === "}") { offset += 1; return; }
+        if (text[offset++] !== ",") throw new Error("JSON object is invalid");
+      }
+    }
+    if (text[offset] === "[") {
+      offset += 1; whitespace();
+      if (text[offset] === "]") { offset += 1; return; }
+      while (true) {
+        value(depth + 1); whitespace();
+        if (text[offset] === "]") { offset += 1; return; }
+        if (text[offset++] !== ",") throw new Error("JSON array is invalid");
+      }
+    }
+    if (text[offset] === '"') { string(); return; }
+    const match = text.slice(offset).match(/^(?:-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)/);
+    if (!match) throw new Error("JSON value is invalid");
+    offset += match[0].length;
+  };
+  value(); whitespace();
+  if (offset !== text.length) throw new Error("JSON has trailing non-whitespace data");
 }
 
 export function validateProductionReleaseTarget(value) {
@@ -108,17 +155,32 @@ export function verifyProductionReleasePackage(value, options = {}) {
   return { ...payload, packageHash: value.packageHash };
 }
 
+export function installProductionReleasePackage(value, targetPath, { kind, _beforeActivation,
+  ...options } = {}) {
+  const packageValue = verifyProductionReleasePackage(value, options);
+  if (!new Set(["node", "wallet"]).has(kind) || packageValue.artifact.kind !== kind) {
+    throw new Error("production package kind is invalid");
+  }
+  const installOptions = { ...options, _beforeActivation };
+  const provenance = kind === "wallet"
+    ? installWalletArtifact(packageValue.artifact, targetPath, installOptions)
+    : installNodeArtifact(packageValue.artifact, targetPath, installOptions);
+  return { packageHash: packageValue.packageHash, provenance };
+}
+
 export function serializeProductionReleasePackage(value, options = {}) {
   return `${canonicalJson(verifyProductionReleasePackage(value, options))}\n`;
 }
 
 export function readBoundedPublicJson(pathValue, { maximumBytes = MAX_PUBLIC_JSON_BYTES,
   requireCanonical = false, _afterOpen } = {}) {
-  if (!Number.isInteger(constants.O_NOFOLLOW)) throw new Error("no-follow file support is required");
+  if (!Number.isInteger(constants.O_NOFOLLOW) || !Number.isInteger(constants.O_NONBLOCK)) {
+    throw new Error("no-follow nonblocking file support is required");
+  }
   const path = resolve(pathValue);
   let descriptor;
   try {
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || opened.size < 1 || opened.size > maximumBytes) {
       throw new Error("production release input is not a bounded regular file");
@@ -136,7 +198,9 @@ export function readBoundedPublicJson(pathValue, { maximumBytes = MAX_PUBLIC_JSO
         opened.ctimeMs !== after.ctimeMs || opened.mode !== after.mode) {
       throw new Error("production release input changed during read");
     }
-    const text = contents.toString("utf8"); const value = JSON.parse(text);
+    const text = contents.toString("utf8");
+    assertUnambiguousJson(text);
+    const value = JSON.parse(text);
     if (requireCanonical && text !== `${canonicalJson(value)}\n`) {
       throw new Error("production release input is not canonical JSON");
     }

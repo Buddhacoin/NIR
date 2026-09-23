@@ -201,7 +201,11 @@ Wallet commands use the same flow with `wallet` and
 `release:install-production-wallet`. A missing, failed, stale, future, expired, or
 mixed-context preflight is rejected before an output package or installation target
 is created. Inputs are read through pinned no-follow descriptors and canonical
-reports reject alternate byte encodings. Output activation is exclusive and
+reports reject alternate byte encodings. The production reader also rejects
+duplicate JSON keys (including escaped aliases), excessive nesting, oversized
+files, symlinks, FIFOs and files replaced or truncated during a read. Signed
+source files are likewise read and identity-checked through no-follow descriptors,
+closing the former `lstat`/path-read replacement window. Output activation is exclusive and
 no-replace; parent, temporary, and target identities are checked around activation,
 and cleanup removes only inodes created by that attempt. The output parent remains
 an operator-controlled local security boundary.

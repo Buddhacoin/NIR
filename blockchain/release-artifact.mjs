@@ -9,7 +9,6 @@ import {
   mkdirSync,
   openSync,
   readSync,
-  readFileSync,
   readlinkSync,
   readdirSync,
   rmSync,
@@ -21,6 +20,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import {
+  readReleaseSourceFile,
   verifyReleaseFiles,
   verifyReleaseManifest,
   verifySignedRelease,
@@ -252,11 +252,7 @@ export function createReleaseArtifact(root, paths, { kind, sourceManifest } = {}
     if (absolute !== base && !absolute.startsWith(`${base}${sep}`)) {
       throw new Error("artifact source escapes the root");
     }
-    const metadata = lstatSync(absolute);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error("artifact source is not a regular file");
-    }
-    const contents = readFileSync(absolute);
+    const { contents, metadata } = readReleaseSourceFile(absolute);
     return {
       content: contents.toString("base64"),
       executable: (metadata.mode & 0o111) !== 0,

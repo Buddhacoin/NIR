@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync,
-  rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,10 +14,12 @@ import {
 } from "../blockchain/rehearsal-attestation.mjs";
 import {
   createProductionReleasePackage, readBoundedPublicJson, verifyProductionReleasePackage,
+  installProductionReleasePackage, serializeProductionReleasePackage,
   writeProductionPackageExclusive,
 } from "../blockchain/production-release-gate.mjs";
 import { artifactPaths, createReleaseArtifact } from "../blockchain/release-artifact.mjs";
-import { createReleaseManifest, signReleaseManifest } from "../blockchain/release-manifest.mjs";
+import { createReleaseManifest, readReleaseSourceFile,
+  signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition-drill.mjs";
 
 const NOW = 1_000_000;
@@ -218,6 +220,9 @@ test("release CLI blocks missing/stale production evidence before artifact or in
     assert.equal(built.status, 0, built.stderr);
     const packageValue = readBoundedPublicJson(output, { requireCanonical: true });
     assert.equal(packageValue.format, "nir-production-release-package-v1");
+    const verified = spawnSync(process.execPath, [cli, "verify-production-artifact", output,
+      envelope, values.signer.address, String(NOW)], { encoding: "utf8" });
+    assert.equal(verified.status, 0, verified.stderr);
     const missingOutput = join(values.root, "missing.nirprod");
     const missing = spawnSync(process.execPath, [cli, "build-production", "node", values.root,
       envelope, values.signer.address, target, join(values.root, "absent.json"), String(NOW),
@@ -235,5 +240,142 @@ test("release CLI blocks missing/stale production evidence before artifact or in
     const validInstall = spawnSync(process.execPath, [cli, "install-production-node", output,
       envelope, values.signer.address, String(NOW), install], { encoding: "utf8" });
     assert.equal(validInstall.status, 0, validInstall.stderr); assert.equal(existsSync(install), true);
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("deterministic mutant corpus cannot forge report, artifact, target, or package fields", () => {
+  const values = fixture();
+  try {
+    const options = { now: NOW, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address };
+    const original = createProductionReleasePackage(values.artifact, { ...options,
+      productionReport: values.productionReport, productionTarget: values.productionTarget });
+    let state = 0x9e3779b9;
+    const random = () => { state = (Math.imul(state ^ (state >>> 16), 0x45d9f3b) + 1) >>> 0; return state; };
+    for (let index = 0; index < 48; index += 1) {
+      const mutant = structuredClone(original); const choice = random() % 8;
+      if (choice === 0) mutant.packageHash = `${mutant.packageHash[0] === "0" ? "1" : "0"}${mutant.packageHash.slice(1)}`;
+      else if (choice === 1) mutant.productionTarget.networkId = `mutant-${random()}`;
+      else if (choice === 2) mutant.productionTarget.finalizedTip = (random() % 16).toString(16).repeat(64);
+      else if (choice === 3) mutant.productionTarget.sourceRevision = "f".repeat(40);
+      else if (choice === 4) mutant.productionReport.observedAt += 1;
+      else if (choice === 5) mutant.productionReport.evidence.expectedContext.genesisHash = "e".repeat(64);
+      else if (choice === 6) mutant.artifact.entries[0].content = Buffer.from(`mutant-${random()}`).toString("base64");
+      else mutant.unexpected = true;
+      if (choice > 0 && choice < 7) {
+        const { packageHash: _old, ...payload } = mutant;
+        mutant.packageHash = hashObject(payload, "PRODUCTION_RELEASE_PACKAGE_V1");
+      }
+      assert.throws(() => verifyProductionReleasePackage(mutant, options));
+    }
+    assert.equal(serializeProductionReleasePackage(original, options),
+      serializeProductionReleasePackage(createProductionReleasePackage(values.artifact, {
+        ...options, productionReport: values.productionReport,
+        productionTarget: values.productionTarget,
+      }), options));
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production readers reject duplicate keys, noncanonical encodings, deep, oversized, FIFO and changed files", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-production-reader-adversarial-"));
+  try {
+    const duplicate = join(root, "duplicate.json");
+    writeFileSync(duplicate, '{"a":1,"\\u0061":2}\n');
+    assert.throws(() => readBoundedPublicJson(duplicate), /duplicate/);
+    const noncanonical = join(root, "noncanonical.json");
+    writeFileSync(noncanonical, '{ "a": 1 }\n');
+    assert.throws(() => readBoundedPublicJson(noncanonical, { requireCanonical: true }), /canonical/);
+    const deep = join(root, "deep.json"); writeFileSync(deep, `${"[".repeat(66)}0${"]".repeat(66)}\n`);
+    assert.throws(() => readBoundedPublicJson(deep), /bounds/);
+    const oversized = join(root, "oversized.json"); writeFileSync(oversized, "{}");
+    truncateSync(oversized, 1025);
+    assert.throws(() => readBoundedPublicJson(oversized, { maximumBytes: 1024 }), /bounded/);
+    const changed = join(root, "changed.json"); writeFileSync(changed, '{"value":"original"}\n');
+    assert.throws(() => readBoundedPublicJson(changed, { _afterOpen(path) { truncateSync(path, 2); } }),
+      /changed/);
+    const fifo = join(root, "input.fifo"); execFileSync("mkfifo", [fifo]);
+    const started = Date.now();
+    assert.throws(() => readBoundedPublicJson(fifo), /bounded regular file/);
+    assert.ok(Date.now() - started < 1_000, "FIFO input must fail without blocking");
+  } finally { rmSync(root, { force: true, recursive: true }); }
+});
+
+test("freshness and expiry boundaries are inclusive only at the reviewed limits", () => {
+  const values = fixture();
+  try {
+    const make = (now, productionTarget = values.productionTarget) =>
+      createProductionReleasePackage(values.artifact, { now,
+        productionReport: values.productionReport, productionTarget,
+        signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    assert.doesNotThrow(() => make(NOW + values.productionTarget.maxPreflightAgeMs));
+    assert.throws(() => make(NOW + values.productionTarget.maxPreflightAgeMs + 1), /stale/);
+    assert.doesNotThrow(() => make(NOW - values.productionTarget.maxFutureSkewMs));
+    assert.throws(() => make(NOW - values.productionTarget.maxFutureSkewMs - 1), /future/);
+    const expiryTarget = { ...values.productionTarget, maxPreflightAgeMs: 20_000 };
+    assert.doesNotThrow(() => make(NOW + 10_000, expiryTarget));
+    assert.throws(() => make(NOW + 10_001, expiryTarget), /context/);
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production install verifies before writes and interrupted or raced activation cleans only its generation", () => {
+  const values = fixture();
+  try {
+    const options = { kind: "node", now: NOW, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address };
+    const packageValue = createProductionReleasePackage(values.artifact, { ...options,
+      productionReport: values.productionReport, productionTarget: values.productionTarget });
+    const invalid = structuredClone(packageValue); invalid.productionReport.observedAt += 1;
+    const invalidTarget = join(values.root, "invalid-install"); let reachedActivation = false;
+    assert.throws(() => installProductionReleasePackage(invalid, invalidTarget, { ...options,
+      _beforeActivation() { reachedActivation = true; },
+    }));
+    assert.equal(reachedActivation, false); assert.equal(existsSync(invalidTarget), false);
+    assert.equal(readdirSync(values.root).some((name) => name.startsWith(".invalid-install.nir-generation-")), false);
+
+    const interruptedTarget = join(values.root, "interrupted-install");
+    assert.throws(() => installProductionReleasePackage(packageValue, interruptedTarget, { ...options,
+      _beforeActivation() { throw new Error("simulated interruption"); },
+    }), /simulated interruption/);
+    assert.equal(existsSync(interruptedTarget), false);
+    assert.equal(readdirSync(values.root).some((name) => name.startsWith(".interrupted-install.nir-generation-")), false);
+
+    const racedTarget = join(values.root, "raced-install");
+    assert.throws(() => installProductionReleasePackage(packageValue, racedTarget, { ...options,
+      _beforeActivation() { mkdirSync(racedTarget); },
+    }), /EEXIST/);
+    assert.equal(lstatSync(racedTarget).isDirectory(), true);
+    assert.equal(readdirSync(values.root).some((name) => name.startsWith(".raced-install.nir-generation-")), false);
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("interrupted output activation leaves no package and source/package substitution fails closed", () => {
+  const values = fixture();
+  try {
+    const options = { now: NOW, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address };
+    const packageValue = createProductionReleasePackage(values.artifact, { ...options,
+      productionReport: values.productionReport, productionTarget: values.productionTarget });
+    const output = join(values.root, "interrupted.nirprod");
+    assert.throws(() => writeProductionPackageExclusive(output, packageValue, { ...options,
+      _afterLink() { throw new Error("simulated output interruption"); },
+    }), /simulated output interruption/);
+    assert.equal(existsSync(output), false);
+    assert.equal(readdirSync(values.root).some((name) => name.startsWith(".interrupted.nirprod.nir-production-")), false);
+
+    const packagePath = join(values.root, "package.nirprod");
+    const replacement = join(values.root, "replacement.nirprod");
+    writeFileSync(packagePath, serializeProductionReleasePackage(packageValue, options));
+    writeFileSync(replacement, `${canonicalJson({ forged: true })}\n`);
+    assert.throws(() => readBoundedPublicJson(packagePath, { requireCanonical: true,
+      _afterOpen(path) { renameSync(replacement, path); },
+    }), /changed/);
+
+    const source = join(values.root, "source-race.mjs");
+    const movedSource = join(values.root, "source-race-opened.mjs");
+    writeFileSync(source, "export const trusted = true;\n");
+    assert.throws(() => readReleaseSourceFile(source, { _afterOpen(path) {
+      renameSync(path, movedSource); writeFileSync(path, "export const attacker = true;\n");
+    } }), /changed/);
+    assert.equal(readFileSync(source, "utf8"), "export const attacker = true;\n");
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });
