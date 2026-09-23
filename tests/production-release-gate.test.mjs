@@ -1051,6 +1051,37 @@ test("production wallet bridge and UI verify anchored generations before bind on
       transition: transitionEnvelope,
     }, { expectedCheckpointHash: activatedCheckpoint.checkpointHash, now: NOW + 1 }).verified, true);
     const exportCli = new URL("../blockchain/production-wallet-export-cli.mjs", import.meta.url).pathname;
+    const rotatedExportPath = join(values.root, "portable-rotated-export.json");
+    const rotatedCheckpointPath = join(values.root, "portable-rotated-checkpoint.json");
+    const rotatedInclusionPath = join(values.root, "portable-rotated-inclusion.json");
+    const transitionPath = join(values.root, "portable-authority-transition.json");
+    const consistencyPath = join(values.root, "portable-rotation-consistency.json");
+    writeFileSync(rotatedExportPath, `${canonicalJson(activatedRelease.export)}\n`);
+    writeFileSync(rotatedCheckpointPath, `${canonicalJson(activatedCheckpoint)}\n`);
+    writeFileSync(rotatedInclusionPath,
+      `${canonicalJson(createWalletReleaseInclusionProof(latestTransparencyStore, 6))}\n`);
+    writeFileSync(transitionPath, `${canonicalJson(transitionEnvelope)}\n`);
+    writeFileSync(consistencyPath, `${canonicalJson(rotationProof)}\n`);
+    const rotatedVerifyArguments = [rotatedExportPath, values.signer.address,
+      nextAuthoritySet.setId, NETWORK, evidence.productionTarget.genesisHash,
+      activatedRelease.walletPackage.packageHash, activatedRelease.toolPackage.packageHash,
+      rotatedCheckpointPath, rotatedInclusionPath, activatedCheckpoint.checkpointHash,
+      String(NOW + 1)];
+    const missingRotationProof = spawnSync(process.execPath,
+      [exportCli, "verify", ...rotatedVerifyArguments], { encoding: "utf8" });
+    assert.equal(missingRotationProof.status, 1);
+    assert.match(missingRotationProof.stderr, /transition proof/);
+    const rotatedVerify = spawnSync(process.execPath,
+      [exportCli, "verify", ...rotatedVerifyArguments, transitionPath, consistencyPath],
+      { encoding: "utf8" });
+    assert.equal(rotatedVerify.status, 0, rotatedVerify.stderr);
+    const rotatedImportTarget = join(values.root, "portable-rotated-import");
+    const rotatedImport = spawnSync(process.execPath,
+      [exportCli, "import", ...rotatedVerifyArguments, rotatedImportTarget,
+        transitionPath, consistencyPath], { encoding: "utf8" });
+    assert.equal(rotatedImport.status, 0, rotatedImport.stderr);
+    assert.equal(JSON.parse(rotatedImport.stdout).packageHash,
+      activatedRelease.walletPackage.packageHash);
     const exportRoots = [join(values.root, "export-root-a"), join(values.root, "export-root-b")];
     for (const root of exportRoots) mkdirSync(root);
     const packageInputs = exportRoots.map((root) => ({

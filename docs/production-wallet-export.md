@@ -18,7 +18,7 @@ Typical offline flow:
 2. Distribute `BUNDLE` to release authorities. Each authority uses `release:bundle-sign BUNDLE ENCRYPTED_VAULT APPROVAL` offline.
 3. Run `wallet:export-production assemble BUNDLE AUTHORITY_SET EXPORT APPROVAL...`.
 4. Append the assembled export with `wallet:release-transparency append`. Create a checkpoint payload, obtain the configured authority quorum with the offline `sign` command, assemble it, and export the inclusion proof. Publish the compact gossip checkpoint through at least two operator-selected channels.
-5. On the destination, run `wallet:export-production verify EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH SIGNED_CHECKPOINT INCLUSION_PROOF TRUSTED_CHECKPOINT_HASH NOW_MS`. The authority-set ID and checkpoint hash must come from operator trust channels, not from the archive.
+5. On the destination, run `wallet:export-production verify EXPORT TRUSTED_RELEASE_ADDRESS TRUSTED_AUTHORITY_SET_ID NETWORK GENESIS WALLET_PACKAGE_HASH TOOL_PACKAGE_HASH SIGNED_CHECKPOINT INCLUSION_PROOF TRUSTED_CHECKPOINT_HASH NOW_MS [TRANSITION CONSISTENCY_PROOF]`. Supply the final two files together for a release proved across an authority rotation. The authority-set ID and checkpoint hash must come from operator trust channels, not from the archive.
 6. Run the same command with `import` and append `TARGET`. For an update, also append the exact current installation, its signed release, and its expected package hash.
 
 Verification rejects noncanonical JSON, extra/missing/ambiguous paths, case collisions, traversal,
@@ -45,6 +45,8 @@ commits the approved transition into both store snapshots. The old set remains a
 delayed activation sequence, is permanently tombstoned at activation, and cannot be reintroduced.
 During the bounded grace window an old release may be checked against the first new-set checkpoint
 only when the dual-signed transition and a consistency proof from the last old root are supplied.
+The same transition and consistency files are mandatory on the offline `verify` and `import` CLI
+for releases authorized by the new set; omitting either file fails closed before installation.
 Skipped generations, self-authorized takeover, replayed nonce/set IDs, mixed network/genesis,
 rollback, and signing outside the activation/grace rules fail closed.
 
