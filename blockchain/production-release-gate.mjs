@@ -256,7 +256,8 @@ export function verifyProductionInstallation(targetPath, {
   if (packageValue.artifact.artifactHash !== productionProvenance.artifactHash) {
     throw new Error("production installation artifact does not match its provenance");
   }
-  return { ...(includeArtifact ? { artifact: packageValue.artifact } : {}),
+  return { ...(includeArtifact ? { artifact: packageValue.artifact,
+    productionReport: packageValue.productionReport } : {}),
     artifactHash: packageValue.artifact.artifactHash, files: installed.files,
     kind, packageHash: packageValue.packageHash,
     productionReportHash: packageValue.productionReport.reportHash,

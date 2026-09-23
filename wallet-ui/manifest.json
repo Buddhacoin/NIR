@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "NIR Wallet Dev Preview",
+  "name": "NIR Wallet",
   "version": "0.7.0",
-  "description": "Valueless testnet interface preview for the independent NIR network",
+  "description": "Verified wallet interface for the independent NIR network",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1spnrvEc4lOeKPugnlZ8dWGkhaW3ohhy/2d1PQbQOE7Y/8G00yMTZ9s3E6tYylHJqdX1K9Aw3wubM8Px4K6t3daeYZW7HBrKu8Y1Otkgw/0t4VehrzvhrkLqylNt+LWv0FD5uZuoTTNs9WRa5Mt8Zr7fEdygXmVNFlf5hlXo2EQ3MoGnOSp95tUBBgspqZaJH6rfH16QmY2fZvCVt+bv1i0fQ9sl4+gOP6FUwLwQ6GV1K1srf2QbRsIwqUXcP8Ce0kKyukq5hfQHiKfVOvk0iuvWoVrFqGo0OwMGQ5CUHXOukBuuOPuUHUtSVAnTm0cRle3WD4qWtVFK1WaY/jAs2wIDAQAB",
   "action": { "default_popup": "index.html", "default_title": "NIR Wallet", "default_icon": "nir-coin-icon.png" },
   "icons": { "16": "nir-coin-icon.png", "48": "nir-coin-icon.png", "128": "nir-coin-icon.png" },
   "permissions": [],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "host_permissions": ["http://127.0.0.1/*"],
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'"
+    "extension_pages": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'"
   }
 }

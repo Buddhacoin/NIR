@@ -384,6 +384,52 @@ immutable only when its `v` query exactly equals that signed artifact entry's
 `npm run wallet:preview` remains a developer-only convenience server. It does not
 perform production provenance checks and must not be used as a production launcher.
 
+### Anchored browser extension
+
+Do not point a browser at the repository's `wallet-ui/` directory or copy an active
+installation by hand. The production extension installer reconstructs a fresh atomic
+generation from the already verified wallet artifact snapshot:
+
+```bash
+npm --prefix /absolute/path/to/active-tool run wallet:extension-production -- \
+  install /absolute/path/to/active-wallet /secure/operator/wallet-production-head \
+  wallet-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /separate/offline/location/wallet-head-anchor.json \
+  /absolute/path/to/active-tool /secure/operator/tool-production-head \
+  /separate/offline/location/tool-head-anchor.json \
+  /secure/operator/nir-browser-extension
+```
+
+Before handing a path to the browser, obtain a new launch authorization record:
+
+```bash
+npm --prefix /absolute/path/to/active-tool run wallet:extension-production -- \
+  verify-launch /absolute/path/to/active-wallet /secure/operator/wallet-production-head \
+  wallet-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /separate/offline/location/wallet-head-anchor.json \
+  /absolute/path/to/active-tool /secure/operator/tool-production-head \
+  /separate/offline/location/tool-head-anchor.json \
+  /secure/operator/nir-browser-extension
+```
+
+Load only the exact real `extensionPath` from that JSON record. The record is
+signed-free and is not authority by itself; its value comes from the immediately
+reverified release signature, supervisor heads, external anchors, production
+provenance and installed bytes. The extension has an exact 14-file source allowlist,
+MV3 exact-schema manifest, no general permissions, one loopback host permission, no
+background/content scripts, no remote code or dynamic evaluation, and a restrictive
+extension CSP. Its embedded public Chrome key gives unpacked generations a stable
+extension identity; no private signing key is present.
+
+Updates use the same command with `update` followed by the current extension target,
+the previous signed release, exact current package hash and a new target. They are
+always installed as a separate atomic generation; equal-version replay, downgrade,
+mixed network/genesis and an existing destination fail before activation. Nothing is
+deleted or switched automatically. Browser binary integrity, browser policy and store
+or CRX distribution remain external operational trust boundaries. The reproducible
+ZIP commands below and loading repository `wallet-ui/` unpacked remain developer and
+independent-build workflows, not substitutes for the anchored production installer.
+
 ## Build the browser extension ZIP
 
 The extension recipe uses the same signed source release and produces an

@@ -84,11 +84,13 @@ test("wallet provides safe onboarding, recovery guidance, and session revocation
 
 test("wallet limits browser privileges and supports accessible system settings", () => {
   assert.match(html, /Content-Security-Policy/);
+  assert.doesNotMatch(html, /http:\/\/localhost/);
   assert.match(html, /aria-live="polite"/);
   assert.deepEqual(extensionManifest.permissions, []);
-  assert.deepEqual(extensionManifest.host_permissions,
-    ["http://127.0.0.1/*", "http://localhost/*"]);
+  assert.deepEqual(extensionManifest.host_permissions, ["http://127.0.0.1/*"]);
+  assert.match(extensionManifest.key, /^[A-Za-z0-9+/]+=*$/);
   assert.match(extensionManifest.content_security_policy.extension_pages, /object-src 'none'/);
+  assert.doesNotMatch(extensionManifest.content_security_policy.extension_pages, /localhost|unsafe-eval/);
   assert.match(script, /globalThis\.top !== globalThis\.self/);
   assert.match(script, /NIR Wallet framing is forbidden/);
   assert.doesNotMatch(script, /\.innerHTML\s*=|insertAdjacentHTML|document\.write/);

@@ -23,6 +23,7 @@
     "wallet:bridge": "node blockchain/wallet-bridge-cli.mjs",
     "wallet:bridge-production": "node blockchain/wallet-bridge-cli.mjs --production",
     "wallet:serve-production": "node blockchain/wallet-ui-cli.mjs",
+    "wallet:extension-production": "node blockchain/production-wallet-extension-cli.mjs",
     "beacon:serve": "node blockchain/beacon-service.mjs",
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "progress-beacon:aggregate": "node blockchain/beacon-aggregate.mjs progress",

