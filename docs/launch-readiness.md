@@ -4,6 +4,11 @@ NIR is not a launched currency. The current repository is suitable for local,
 valueless development only. Passing automated tests is necessary, but it is not
 evidence that real funds are safe.
 
+The ordered operator workflow, required artifacts and boundary between machine
+evidence and manual review are canonicalized in
+[`public-testnet-gates.md`](public-testnet-gates.md). If a runbook summary differs,
+the stricter gate in that matrix applies.
+
 ## Current gate: local devnet
 
 Implemented and continuously tested:
@@ -60,8 +65,10 @@ Required before inviting unknown operators:
   are implemented locally;
 - versioned protocol upgrades governed by a delayed on-chain activation rule
   and a four-process local upgrade/restart/forward-recovery scheduling rehearsal
-  are implemented; independent-host/operator drills and an executable recovery
-  version with semantic rollback rehearsal remain;
+  are implemented. Validator recovery is bound into version-gated block headers,
+  state snapshots and light-client verification through
+  `recoveryStateCommitment`; independent-host/operator execution and retained
+  external evidence remain;
 - at least four validator and fallback-beacon operators controlled by genuinely
   independent organizations;
 - an internal security review with every critical finding closed.
@@ -71,7 +78,8 @@ The developer testnet must remain explicitly valueless and resettable.
 ### Next measurable exit work
 
 Code work is accepted against this gate only when it closes one of these
-remaining checks and adds a reproducible failure test:
+remaining checks and adds a reproducible failure test. The gate matrix gives the
+canonical command and artifact for each check:
 
 1. independent operators deploy the implemented certificate lifecycle and
    demonstrate issuance, renewal, revocation, replay rejection, restart and
@@ -84,8 +92,9 @@ remaining checks and adds a reproducible failure test:
    platforms without trusting the download location; portable `.nirpkg`
    installation is implemented locally, while platform-signed native packaging
    and cross-platform release rehearsal remain;
-4. four independently administered operators complete discovery, rotation,
-   backup and recovery drills on separate hosts;
+4. four independently administered validator operators, a live beacon quorum
+   and two archive operators complete discovery, rotation, backup and recovery
+   drills on separate hosts, then publish a v2 multi-host evidence package;
 5. the internal critical findings have either executable closure evidence or a
    clearly external dependency that code alone cannot satisfy.
 
