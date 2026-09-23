@@ -14,6 +14,7 @@ validator/beacon/archive report, then commits to:
 - the exact report hash;
 - network ID, NIR genesis hash, finalized validator tip;
 - signed source-release manifest and witnessed release-checkpoint hashes;
+- the exact deterministic partition-drill plan hash;
 - the attestor-set ID;
 - observation time, expiry of at most 24 hours, and a 256-bit run nonce.
 
@@ -31,7 +32,7 @@ Canonical public JSON files must not be group/world-writable. Vaults must be own
 All CLI reads are bounded, descriptor-bound, single-link, and `O_NOFOLLOW`.
 
 ```text
-node blockchain/rehearsal-attestation-cli.mjs statement REPORT.json SET.json RUN_NONCE OBSERVED_MS EXPIRES_MS
+node blockchain/rehearsal-attestation-cli.mjs statement REPORT.json SET.json RUN_NONCE PLAN_HASH OBSERVED_MS EXPIRES_MS
 ```
 
 Each operator independently reviews that statement and signs with an encrypted vault. The password

@@ -25,7 +25,8 @@ function fixture() {
   const operators = wallets.map((wallet, index) => ({ ...publicWallet(wallet),
     operatorId: `operator-${index}` }));
   const operatorSet = createRehearsalAttestorSet({ operators, threshold: 3 });
-  const statement = { expiresAt: 2_000, format: "nir-rehearsal-attestation-v1",
+  const statement = { drillPlanHash: "0".repeat(64), expiresAt: 2_000,
+    format: "nir-rehearsal-attestation-v1",
     genesisHash: "1".repeat(64), networkId: "nir-rehearsal-test",
     observedAt: 1_000, releaseCheckpointHash: `sha3-256:${"2".repeat(64)}`,
     releaseManifestHash: "3".repeat(64), reportHash: `sha3-256:${"4".repeat(64)}`,

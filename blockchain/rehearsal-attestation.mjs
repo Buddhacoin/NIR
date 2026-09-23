@@ -17,6 +17,7 @@ const PACKAGE_FORMAT = "nir-rehearsal-attestation-package-v1";
 const INPUT_FORMAT = "nir-production-preflight-rehearsal-input-v1";
 const STORE_RECORD_FORMAT = "nir-rehearsal-attestation-store-record-v1";
 const STORE_HEAD_FORMAT = "nir-rehearsal-attestation-store-head-v1";
+const STORE_TRANSCRIPT_FORMAT = "nir-rehearsal-attestation-store-transcript-v1";
 const HASH = /^(?:sha3-256:)?[0-9a-f]{64}$/;
 const NONCE = /^[0-9a-f]{64}$/;
 const OPERATOR = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
@@ -78,12 +79,13 @@ export function validateRehearsalAttestorSet(value) {
 }
 
 function statementPayload(value) {
-  exact(value, ["expiresAt", "format", "genesisHash", "networkId", "observedAt",
+  exact(value, ["drillPlanHash", "expiresAt", "format", "genesisHash", "networkId", "observedAt",
     "releaseCheckpointHash", "releaseManifestHash", "reportHash", "runNonce", "setId",
     "validatorTip", "version"], "rehearsal attestation statement");
   if (value.format !== ATTESTATION_FORMAT || value.version !== 1 ||
       typeof value.networkId !== "string" || value.networkId.length < 3 || value.networkId.length > 128 ||
-      !HASH.test(value.genesisHash ?? "") || !HASH.test(value.releaseCheckpointHash ?? "") ||
+      !HASH.test(value.drillPlanHash ?? "") || !HASH.test(value.genesisHash ?? "") ||
+      !HASH.test(value.releaseCheckpointHash ?? "") ||
       !HASH.test(value.releaseManifestHash ?? "") || !HASH.test(value.reportHash ?? "") ||
       !HASH.test(value.setId ?? "") || !HASH.test(value.validatorTip ?? "") ||
       !NONCE.test(value.runNonce ?? "") || !Number.isSafeInteger(value.observedAt) ||
@@ -94,12 +96,14 @@ function statementPayload(value) {
   return structuredClone(value);
 }
 
-export function createRehearsalStatement(report, { expiresAt, observedAt, runNonce, setId }) {
+export function createRehearsalStatement(report, {
+  drillPlanHash, expiresAt, observedAt, runNonce, setId,
+}) {
   if (!Number.isSafeInteger(report?.completedAt) || report.completedAt < 0 || observedAt < report.completedAt) {
     throw new Error("operator observation cannot precede the rehearsal report");
   }
   const validation = validateRealBeaconArchiveReport(report, { now: report.completedAt });
-  const statement = statementPayload({ expiresAt, format: ATTESTATION_FORMAT,
+  const statement = statementPayload({ drillPlanHash, expiresAt, format: ATTESTATION_FORMAT,
     genesisHash: hashObject(report.validator.report.genesis, "GENESIS"),
     networkId: validation.networkId, observedAt,
     releaseCheckpointHash: validation.releaseCheckpointHash,
@@ -334,6 +338,40 @@ function replaceOwned(store, name, value) {
 export function loadRehearsalAttestationStore(path, options = {}) {
   const store = openStore(path, false);
   try { return loadStore(store, options._afterRootOpen); } finally { closeSync(store.descriptor); }
+}
+
+export function verifyRehearsalAttestationStoreTranscript(value) {
+  exact(value, ["format", "head", "records", "transcriptHash", "version"],
+    "rehearsal attestation store transcript");
+  if (value.format !== STORE_TRANSCRIPT_FORMAT || value.version !== 1 ||
+      !Array.isArray(value.records) || value.records.length < 1 || value.records.length > MAX_RECORDS) {
+    throw new Error("rehearsal attestation store transcript is invalid");
+  }
+  let previous = null;
+  const records = value.records.map((envelope, index) => {
+    exact(envelope, ["record", "recordHash"], "attestation transcript record");
+    const record = recordPayload(envelope.record); const recordHash = digest(record);
+    if (envelope.recordHash !== recordHash || record.sequence !== index + 1 ||
+        record.previousRecordHash !== previous) {
+      throw new Error("attestation transcript chain is rolled back, reordered, or corrupt");
+    }
+    previous = recordHash; return { record, recordHash };
+  });
+  const head = validateHead(value.head); const expectedHead = headValue(records.length, previous);
+  const { transcriptHash, ...payload } = value;
+  if (canonicalJson(head) !== canonicalJson(expectedHead) || transcriptHash !== digest(payload)) {
+    throw new Error("attestation transcript head or commitment is invalid");
+  }
+  return structuredClone(value);
+}
+
+export function exportRehearsalAttestationStoreTranscript(path) {
+  const records = loadRehearsalAttestationStore(path);
+  if (records.length < 1) throw new Error("cannot export an empty attestation store");
+  const envelopes = records.map(({ recordHash, ...record }) => ({ record, recordHash }));
+  const payload = { format: STORE_TRANSCRIPT_FORMAT,
+    head: headValue(records.length, records.at(-1).recordHash), records: envelopes, version: 1 };
+  return verifyRehearsalAttestationStoreTranscript({ ...payload, transcriptHash: digest(payload) });
 }
 
 export function acceptRehearsalAttestationQuorum(path, attestations, options) {

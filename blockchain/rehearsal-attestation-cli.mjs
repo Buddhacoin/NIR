@@ -44,12 +44,12 @@ function integer(value, label) {
 
 try {
   const [command, ...args] = process.argv.slice(2); let output;
-  if (command === "statement" && args.length === 5) {
-    const [reportPath, setPath, runNonce, observedAt, expiresAt] = args;
+  if (command === "statement" && args.length === 6) {
+    const [reportPath, setPath, runNonce, drillPlanHash, observedAt, expiresAt] = args;
     const set = readJson(setPath, 512 * 1024);
     output = createRehearsalStatement(readJson(reportPath, 8 * 1024 * 1024), {
-      expiresAt: integer(expiresAt, "expiry"), observedAt: integer(observedAt, "observation time"),
-      runNonce, setId: set.setId,
+      drillPlanHash, expiresAt: integer(expiresAt, "expiry"),
+      observedAt: integer(observedAt, "observation time"), runNonce, setId: set.setId,
     });
   } else if (command === "sign" && args.length === 4) {
     const [statementPath, setPath, vaultPath, operatorId] = args;
@@ -74,7 +74,7 @@ try {
       operatorSet: readJson(setPath, 512 * 1024),
     });
   } else {
-    throw new Error("usage: rehearsal-attestation <statement REPORT SET NONCE OBSERVED EXPIRES|sign STATEMENT SET VAULT OPERATOR|accept STORE SET ATTESTATIONS NOW [SKEW]|verify INPUT SET NOW [SKEW]>");
+    throw new Error("usage: rehearsal-attestation <statement REPORT SET NONCE PLAN_HASH OBSERVED EXPIRES|sign STATEMENT SET VAULT OPERATOR|accept STORE SET ATTESTATIONS NOW [SKEW]|verify INPUT SET NOW [SKEW]>");
   }
   process.stdout.write(serializeRehearsalAttestation(output));
 } catch {
