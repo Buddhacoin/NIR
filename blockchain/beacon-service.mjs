@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import {
-  closeSync, constants, fstatSync, lstatSync, openSync, readFileSync,
-} from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
 
@@ -10,6 +8,7 @@ import { validateBeaconRequesterPolicy } from "./beacon-request-auth.mjs";
 import { openBeaconStateStore } from "./beacon-state-store.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { decryptWallet } from "./vault.mjs";
+import { readRestrictedPasswordFd } from "./operator-secret-input.mjs";
 
 function readBoundedFile(path, { privateFile = true } = {}) {
   if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW === 0) {
@@ -41,6 +40,19 @@ function readPrivateJson(path) {
 }
 
 function readSecret(prompt) {
+  const inheritedText = process.env.NIR_BEACON_PASSWORD_FD;
+  if (inheritedText !== undefined) {
+    delete process.env.NIR_BEACON_PASSWORD_FD;
+    const descriptor = Number(inheritedText);
+    if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 255) {
+      return Promise.reject(new Error("beacon password descriptor is invalid"));
+    }
+    let password;
+    try {
+      password = readRestrictedPasswordFd(descriptor, "beacon vault");
+      return Promise.resolve(password.toString("utf8"));
+    } finally { password?.fill(0); closeSync(descriptor); }
+  }
   return new Promise((resolve, reject) => {
     if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
       reject(new Error("secure password entry requires an interactive terminal")); return;

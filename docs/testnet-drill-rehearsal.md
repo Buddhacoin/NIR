@@ -97,3 +97,39 @@ explicit development certificate mode, and bounded startup/request/shutdown/outp
 Cleanup terminates every owned process group, escalates after a deadline, and removes only the owned
 random temporary directory. A runtime crash, replay acceptance, invalid signature, failed catch-up,
 resource overflow, or incomplete cleanup makes the command fail.
+
+## Real beacon and archive extension
+
+The extended command requires an exact external release checkpoint binding:
+
+```text
+node blockchain/testnet-drill-real-runtime-cli.mjs services sha3-256:<64-hex-digest>
+```
+
+It first completes the real validator recovery scenario above. Its finalized network ID and tip,
+together with the supplied release checkpoint, determine both beacon candidate IDs. Three independent
+ephemeral beacon operators then run the actual `beacon-service.mjs`, each with a separate encrypted
+vault, durable state log, requester policy, key, and loopback port. Vault passwords travel only over
+restricted inherited file descriptors; they are absent from argv, environment values, files, logs,
+and the report.
+
+Each service creates a signed share and rejects an exact request replay. After one service stops, two
+valid shares are explicitly rejected because the configured three-operator 2/3+1 quorum is three.
+The stopped service restarts from its durable state, rejects the pre-restart nonce, returns the exact
+previously issued share for the old context, and supplies the missing share for the new context. The
+offline validator independently verifies unique operator identities, every share signature and
+context, quorum size, and the aggregate value. These ephemeral operators are a local rehearsal set;
+the result does not claim enrollment in an external or production beacon registry.
+
+Two independent archive operators sign real history archives at the validator tip and expose them
+through separate `archive:serve` processes. With one service stopped, the standard remote restore
+path must reject the single remaining source. After restart it downloads matching manifests and
+chunks from two distinct trusted signers and installs the verified account-history index. Offline
+validation repeats both archive signature/content checks and binds recovery height and tip to the
+replayed validator chain.
+
+Beacon/archive socket failures, process IDs, HTTP replay status, and outage attempts remain hashed
+controller observations. Shares, aggregates, archive artifacts, validator health, and finalized
+blocks are cryptographically reverified. A scenario PASS requires the latter evidence; controller
+assertions alone cannot manufacture quorum. All services inherit the same process-group cleanup,
+bounded output, timeout, disk, loopback-only, no-shell, and owned-temporary-directory rules.
