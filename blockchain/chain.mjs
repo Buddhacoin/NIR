@@ -27,6 +27,7 @@ import {
   MINING_POOL,
   MIN_PROGRESS_CANDIDATE_BOND,
   PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
+  RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
@@ -1000,7 +1001,7 @@ function unsignedBlock(block) {
   return unsigned;
 }
 
-const BLOCK_FIELDS = Object.freeze([
+const LEGACY_BLOCK_FIELDS = Object.freeze([
   "accountStateRoot",
   "beaconRotation",
   "capabilityMemoryRoot",
@@ -1025,7 +1026,6 @@ const BLOCK_FIELDS = Object.freeze([
   "protocolVersion",
   "randomnessCommits",
   "randomnessReveals",
-  "recoveryStateCommitment",
   "round",
   "roundCertificate",
   "safetySettlements",
@@ -1037,21 +1037,55 @@ const BLOCK_FIELDS = Object.freeze([
   "validatorRotation",
 ].sort());
 
+const RECOVERY_BLOCK_FIELDS = Object.freeze([
+  ...LEGACY_BLOCK_FIELDS,
+  "recoveryStateCommitment",
+].sort());
+
+export function blockFieldsForProtocol(protocolVersion) {
+  if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
+    throw new Error("block protocol version is unsupported");
+  }
+  return protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+    ? RECOVERY_BLOCK_FIELDS : LEGACY_BLOCK_FIELDS;
+}
+
 function requireExactBlockSchema(block) {
   consensusValueBytes(block);
   if (!block || Object.getPrototypeOf(block) !== Object.prototype ||
-      Object.keys(block).sort().join("\0") !== BLOCK_FIELDS.join("\0")) {
+      Object.keys(block).sort().join("\0") !==
+        blockFieldsForProtocol(block?.protocolVersion).join("\0")) {
     throw new Error("block schema contains missing or extra fields");
   }
 }
 
-const FINALITY_HEADER_FORMAT = "nir-finality-header-v2";
+export function validateIntrinsicBlock(block, {
+  expectedNetworkId, expectedProtocolVersion, previousBlock,
+} = {}) {
+  requireExactBlockSchema(block);
+  const hashes = [block.accountStateRoot, block.capabilityMemoryRoot, block.peerRegistryHash,
+    block.previousHash, block.stateRoot, block.transactionsRoot];
+  if (block.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION) {
+    hashes.push(block.recoveryStateCommitment);
+  }
+  if (block.networkId !== expectedNetworkId ||
+      block.protocolVersion !== expectedProtocolVersion ||
+      !previousBlock || block.height !== previousBlock.height + 1 ||
+      block.previousHash !== previousBlock.hash ||
+      !Number.isSafeInteger(block.timestamp) || block.timestamp < previousBlock.timestamp ||
+      hashes.some((value) => !/^[0-9a-f]{64}$/.test(value ?? "")) ||
+      block.hash !== blockHash(block)) {
+    throw new Error("block intrinsic context is invalid");
+  }
+  return block;
+}
 
 export function finalityHeaderFormat(protocolVersion) {
   if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     throw new Error("finality header protocol version is unsupported");
   }
-  return FINALITY_HEADER_FORMAT;
+  return protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+    ? "nir-finality-header-v2" : "nir-finality-header-v1";
 }
 
 export function blockHeader(block) {
@@ -1083,7 +1117,8 @@ export function blockHeader(block) {
     previousHash,
     protocolUpgrade: protocolUpgrade ?? null,
     protocolVersion,
-    recoveryStateCommitment,
+    ...(protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? { recoveryStateCommitment } : {}),
     stateRoot,
     timestamp,
     transactionCount,
@@ -1328,6 +1363,7 @@ export class NirChain {
     peerRegistry = null,
     evaluatorBondAmount = MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp = Date.now(),
+    genesisProtocolVersion = PROTOCOL_VERSION,
   }, { supportedProtocolVersions } = {}) {
     if (
       typeof networkId !== "string" ||
@@ -1348,12 +1384,16 @@ export class NirChain {
     this.#supportedProtocolVersions = normalizeSupportedProtocolVersions(
       supportedProtocolVersions,
     );
+    if (!this.#supportedProtocolVersions.includes(genesisProtocolVersion)) {
+      throw new Error("genesis protocol version is unsupported");
+    }
     this.#genesisConfig = structuredClone({
       beaconAuthorities,
       capabilityReferences,
       evaluatorBondAmount,
       evaluators,
       genesisTimestamp,
+      genesisProtocolVersion,
       networkId,
       peerRegistry,
       safetyPolicyCommitments,
@@ -1451,7 +1491,7 @@ export class NirChain {
     this.#progressCommitments = new Map();
     this.#progressEscrows = new Map();
     this.#progressFraudEvidence = new Map();
-    this.#protocolVersion = PROTOCOL_VERSION;
+    this.#protocolVersion = genesisProtocolVersion;
     this.#peerRegistry = peerRegistry === null ? null : verifyPeerRegistry(peerRegistry, {
       currentHeight: 0,
       networkId,
@@ -1493,8 +1533,9 @@ export class NirChain {
       genesisTimestamp,
       networkId,
       peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
-      protocolVersion: PROTOCOL_VERSION,
-      recoveryStateCommitment,
+      protocolVersion: this.#protocolVersion,
+      ...(this.#protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+        ? { recoveryStateCommitment } : {}),
       safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
       stateRoot,
       transactionCount: 0,
@@ -1517,8 +1558,9 @@ export class NirChain {
         progressRewards: [],
         safetySettlements: [],
         stateRoot,
-        protocolVersion: PROTOCOL_VERSION,
-        recoveryStateCommitment,
+        protocolVersion: this.#protocolVersion,
+        ...(this.#protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+          ? { recoveryStateCommitment } : {}),
         timestamp: genesisTimestamp,
         transactionCount: 0,
         transactions: [],
@@ -1529,16 +1571,23 @@ export class NirChain {
 
   static fromVerifiedSnapshot(genesisConfig, snapshot, options = {}) {
     const chain = new NirChain(genesisConfig, options);
+    const snapshotHasRecoveryCommitment =
+      snapshot?.state?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
-        snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
-        snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
-        snapshot.recoveryStateCommitment !== validatorRecoveryStateCommitment({
-          activePlanHash: snapshot.state?.validatorRecoveryPlan?.planHash ?? null,
-          generation: snapshot.state?.validatorRecoveryGeneration,
-          networkId: snapshot.networkId,
-        }) ||
+        (snapshotHasRecoveryCommitment && (
+          snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
+          snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
+          snapshot.recoveryStateCommitment !== validatorRecoveryStateCommitment({
+            activePlanHash: snapshot.state?.validatorRecoveryPlan?.planHash ?? null,
+            generation: snapshot.state?.validatorRecoveryGeneration,
+            networkId: snapshot.networkId,
+          }))) ||
+        (!snapshotHasRecoveryCommitment && (
+          snapshot.recoveryStateCommitment !== undefined ||
+          snapshot.state?.recoveryStateCommitment !== undefined ||
+          snapshot.checkpoint?.recoveryStateCommitment !== undefined)) ||
         computeChainStateRoot(snapshot.state) !== snapshot.stateRoot) {
       throw new Error("verified snapshot does not match the target chain");
     }
@@ -2403,11 +2452,13 @@ export class NirChain {
       progressFraudEvidence: overrides.progressFraudEvidence ?? this.#progressFraudEvidence,
       protocolVersion,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
-      recoveryStateCommitment: validatorRecoveryStateCommitment({
-        activePlanHash: recoveryPlan?.planHash ?? null,
-        generation: recoveryGeneration,
-        networkId: this.#networkId,
-      }),
+      ...(protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION ? {
+        recoveryStateCommitment: validatorRecoveryStateCommitment({
+          activePlanHash: recoveryPlan?.planHash ?? null,
+          generation: recoveryGeneration,
+          networkId: this.#networkId,
+        }),
+      } : {}),
       registeredBeaconAuthorities:
         overrides.registeredBeaconAuthorities ?? this.#registeredBeaconAuthorities,
       retiredBeaconAuthorities:
@@ -2470,7 +2521,8 @@ export class NirChain {
         progressFraudEvidence: this.#progressFraudEvidence,
         protocolVersion: this.#protocolVersion,
         randomnessFaults: this.#randomnessFaults,
-        recoveryStateCommitment: this.recoveryStateCommitment,
+        ...(this.#protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+          ? { recoveryStateCommitment: this.recoveryStateCommitment } : {}),
         registeredBeaconAuthorities: this.#registeredBeaconAuthorities,
         retiredBeaconAuthorities: this.#retiredBeaconAuthorities,
         registeredValidators: this.#registeredValidators,
@@ -3044,7 +3096,8 @@ export class NirChain {
       proposer,
       protocolUpgrade: scheduledProtocolUpgrade,
       protocolVersion: nextProtocolVersion,
-      recoveryStateCommitment: "0".repeat(64),
+      ...(nextProtocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+        ? { recoveryStateCommitment: "0".repeat(64) } : {}),
       round,
       roundCertificate,
       timestamp,
@@ -3069,7 +3122,8 @@ export class NirChain {
         ...proposal,
         accountStateRoot: trial.accountStateRoot,
         capabilityMemoryRoot: trial.capabilityMemoryRoot,
-        recoveryStateCommitment: trial.recoveryStateCommitment,
+        ...(nextProtocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+          ? { recoveryStateCommitment: trial.recoveryStateCommitment } : {}),
         stateRoot: trial.stateRoot,
       };
     } catch {
@@ -4340,7 +4394,6 @@ export class NirChain {
   #applyBlock(block, verifyCertificate, verifyStateRoot = true) {
     const previous = this.#blocks.at(-1);
     requireExactBlockSchema(block);
-    if (block.networkId !== this.#networkId) throw new Error("wrong network id");
     if (block.height !== previous.height + 1) throw new Error("unexpected block height");
     const protocolState = protocolTransition({
       blockVersion: block.protocolVersion,
@@ -4351,14 +4404,12 @@ export class NirChain {
       supportedVersions: this.#supportedProtocolVersions,
     });
     consensusEncodingVersionForProtocol(protocolState.protocolVersion);
+    validateIntrinsicBlock(block, { expectedNetworkId: this.#networkId,
+      expectedProtocolVersion: protocolState.protocolVersion, previousBlock: previous });
     if (block.transactions?.length === 1 &&
         block.transactions[0]?.type === "validator-recovery" &&
         protocolState.protocolVersion !== this.#protocolVersion) {
       throw new Error("validator recovery cannot share a protocol activation boundary");
-    }
-    if (block.previousHash !== previous.hash) throw new Error("broken hash chain");
-    if (!Number.isSafeInteger(block.timestamp) || block.timestamp < previous.timestamp) {
-      throw new Error("invalid block timestamp");
     }
     if (block.timestamp > Date.now() + MAX_FUTURE_DRIFT_MS) {
       throw new Error("block timestamp is too far in the future");
@@ -4923,6 +4974,9 @@ export class NirChain {
           block.feeRecipient, previous, block.height,
         );
       } else if (transaction.type === "validator-recovery-plan") {
+        if (protocolState.protocolVersion < RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION) {
+          throw new Error("validator recovery plans require the recovery commitment protocol");
+        }
         if (validatorRecoveryPlan || this.#pendingValidatorRotation || block.validatorRotation) {
           throw new Error("validator recovery plan conflicts with pending membership state");
         }
@@ -5379,7 +5433,9 @@ export class NirChain {
       generation: validatorRecoveryGeneration,
       networkId: this.#networkId,
     });
-    if (verifyStateRoot && block.recoveryStateCommitment !== expectedRecoveryStateCommitment) {
+    if (verifyStateRoot && protocolState.protocolVersion >=
+        RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION &&
+        block.recoveryStateCommitment !== expectedRecoveryStateCommitment) {
       throw new Error("block recovery state commitment is invalid");
     }
     if (verifyStateRoot && block.stateRoot !== expectedStateRoot) {

@@ -83,6 +83,9 @@ test("a quorum-scheduled version activates exactly after its notice window", () 
   chain.appendBlock(schedulingBlock);
   oldNode.appendBlock(schedulingBlock);
   blocks.push(schedulingBlock);
+  assert.equal(createFinalityProof(schedulingBlock).format, "nir-finality-proof-v2");
+  assert.equal(createFinalityProof(schedulingBlock).header.format, "nir-finality-header-v1");
+  assert.equal(schedulingBlock.recoveryStateCommitment, undefined);
   assert.deepEqual(chain.pendingProtocolUpgrade,
     schedule(PROTOCOL_VERSION + 1, activationHeight));
   assert.equal(chain.protocolVersion, PROTOCOL_VERSION);
@@ -105,11 +108,18 @@ test("a quorum-scheduled version activates exactly after its notice window", () 
   assert.equal(activationProposal.height, activationHeight);
   assert.equal(activationProposal.protocolVersion, PROTOCOL_VERSION + 1);
   const wrongVersion = { ...activationProposal, protocolVersion: PROTOCOL_VERSION };
-  assert.throws(() => chain.validateProposal(wrongVersion), /activation height/);
+  assert.throws(() => chain.validateProposal(wrongVersion), /schema|activation height/);
+  const missingV25Commitment = structuredClone(activationProposal);
+  delete missingV25Commitment.recoveryStateCommitment;
+  assert.throws(() => chain.validateProposal(missingV25Commitment),
+    /block schema|unsupported value type/);
 
   const activationBlock = finalizeBlock(activationProposal, validators.slice(0, 3));
   chain.appendBlock(activationBlock);
   blocks.push(activationBlock);
+  assert.equal(createFinalityProof(activationBlock).format, "nir-finality-proof-v3");
+  assert.equal(createFinalityProof(activationBlock).header.format, "nir-finality-header-v2");
+  assert.match(activationBlock.recoveryStateCommitment, /^[0-9a-f]{64}$/);
   assert.throws(() => oldNode.appendBlock(activationBlock), /unsupported protocol version/);
   assert.equal(chain.protocolVersion, PROTOCOL_VERSION + 1);
   assert.equal(chain.pendingProtocolUpgrade, null);

@@ -25,7 +25,7 @@ function entry(height, previousHash) {
     peerRegistryHash: hash("d"),
     previousHash,
     protocolUpgrade: null,
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: PROTOCOL_VERSION + 1,
     recoveryStateCommitment: hash("9"),
     stateRoot: hash("e"),
     timestamp: height,
@@ -39,7 +39,8 @@ test("wallet finality headers persist as a checkpoint-anchored continuous chain"
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-headers-"));
   const path = join(directory, "headers.json");
   const genesisCheckpoint = {
-    accountStateRoot: hash("1"), height: 0, stateRoot: hash("2"), tipHash: hash("3"),
+    accountStateRoot: hash("1"), height: 0, protocolVersion: PROTOCOL_VERSION + 1,
+    stateRoot: hash("2"), tipHash: hash("3"),
   };
   const options = {
     checkpoint: null, genesisCheckpoint, networkId: "nir-header-store-test",

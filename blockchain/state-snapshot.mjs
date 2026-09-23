@@ -4,6 +4,7 @@ import { capabilityMemorySnapshotRoot } from "./memory.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
 import { validatorRecoveryStateCommitment } from "./validator-recovery.mjs";
+import { RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION } from "./constants.mjs";
 
 const FORMAT = "nir-state-snapshot-v1";
 export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -20,7 +21,8 @@ function snapshotPayload(chain) {
     format: FORMAT,
     height: chain.height,
     networkId: chain.networkId,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     state: exported.state,
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,
@@ -48,7 +50,9 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
       typeof snapshot.networkId !== "string" || snapshot.networkId.length === 0 ||
       !/^[0-9a-f]{64}$/.test(snapshot.tipHash ?? "") ||
       !/^[0-9a-f]{64}$/.test(snapshot.stateRoot ?? "") ||
-      !/^[0-9a-f]{64}$/.test(snapshot.recoveryStateCommitment ?? "") ||
+      (snapshot.state?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+        ? !/^[0-9a-f]{64}$/.test(snapshot.recoveryStateCommitment ?? "")
+        : snapshot.recoveryStateCommitment !== undefined) ||
       !/^[0-9a-f]{64}$/.test(snapshot.snapshotHash ?? "") ||
       Buffer.byteLength(canonicalJson(snapshot)) > MAX_SNAPSHOT_BYTES) {
     throw new Error("state snapshot header is invalid");
@@ -66,10 +70,15 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
   }
   const recoveryGeneration = snapshot.state?.validatorRecoveryGeneration;
   const activePlanHash = snapshot.state?.validatorRecoveryPlan?.planHash ?? null;
-  if (snapshot.recoveryStateCommitment !== validatorRecoveryStateCommitment({
-    activePlanHash, generation: recoveryGeneration, networkId: snapshot.networkId,
-  }) || snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
-      snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment) {
+  const recoveryCommitmentActive =
+    snapshot.state?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
+  if ((recoveryCommitmentActive && (
+    snapshot.recoveryStateCommitment !== validatorRecoveryStateCommitment({
+      activePlanHash, generation: recoveryGeneration, networkId: snapshot.networkId,
+    }) || snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
+      snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment)) ||
+      (!recoveryCommitmentActive && (snapshot.state?.recoveryStateCommitment !== undefined ||
+        snapshot.checkpoint?.recoveryStateCommitment !== undefined))) {
     throw new Error("state snapshot recovery commitment is invalid");
   }
   if (!snapshot.checkpoint || snapshot.checkpoint.height !== snapshot.height ||

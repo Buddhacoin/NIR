@@ -1,10 +1,12 @@
 import { canonicalJson, verifyObject } from "./crypto.mjs";
 import {
   blockHeader, blockHeaderHash, finalityHeaderFormat, prepareCertificateHash,
+  validateIntrinsicBlock,
 } from "./chain.mjs";
 import {
   MAX_VALIDATORS,
   PROTOCOL_VERSION,
+  RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "./constants.mjs";
 import {
@@ -29,14 +31,14 @@ import {
 import { advanceValidatorRecoveryTrustStore } from "./validator-recovery-trust-store.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
-const FORMAT = "nir-finality-proof-v3";
 export const MAX_FINALITY_PROOFS = 512;
 export const MAX_FINALITY_CHAIN_BYTES = 32 * 1024 * 1024;
 
 export function createFinalityProof(block) {
   return {
     certificate: structuredClone(block.certificate ?? []),
-    format: FORMAT,
+    format: block.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? "nir-finality-proof-v3" : "nir-finality-proof-v2",
     hash: block.hash,
     header: blockHeader(block),
     prepareCertificate: structuredClone(block.prepareCertificate ?? []),
@@ -110,7 +112,9 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
   const expectedKeys = [
     "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height", "networkId",
     "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion",
-    "recoveryStateCommitment", "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
+    ...(header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? ["recoveryStateCommitment"] : []),
+    "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
   ];
   if (header?.format !== finalityHeaderFormat(header?.protocolVersion) ||
       Object.keys(header ?? {}).sort().join(",") !== expectedKeys.sort().join(",") ||
@@ -124,7 +128,8 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
       !HASH.test(header.transactionsRoot ?? "") ||
       !HASH.test(header.bodyHash ?? "") || !HASH.test(header.capabilityMemoryRoot ?? "") ||
       !HASH.test(header.peerRegistryHash ?? "") ||
-      !HASH.test(header.recoveryStateCommitment ?? "")) {
+      (header.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION &&
+        !HASH.test(header.recoveryStateCommitment ?? ""))) {
     throw new Error("light client finality header is invalid");
   }
   if (header.protocolUpgrade !== null) {
@@ -139,7 +144,10 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
 }
 
 function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
-  if (!proof || proof.format !== FORMAT ||
+  const expectedFormat = proof?.header?.protocolVersion >=
+    RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+    ? "nir-finality-proof-v3" : "nir-finality-proof-v2";
+  if (!proof || proof.format !== expectedFormat ||
       Object.keys(proof).sort().join(",") !==
         "certificate,format,hash,header,prepareCertificate,round" ||
       !Number.isSafeInteger(proof.round) || proof.round < 0) {
@@ -246,6 +254,9 @@ export function verifyValidatorRecoveryTransition({
 } = {}) {
   const previousHeader = validateProof(previousProof, expectedNetworkId,
     SUPPORTED_PROTOCOL_VERSIONS);
+  if (previousHeader.protocolVersion < RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION) {
+    throw new Error("light client recovery requires the recovery commitment protocol");
+  }
   const current = normalizeValidators(trustedValidators);
   verifyVotes(previousProof, current);
   const hasPeerRegistry = previousHeader.peerRegistryHash !== "0".repeat(64);
@@ -271,11 +282,14 @@ export function verifyValidatorRecoveryTransition({
   if (verifiedPlan.scheduledHeight > previousHeader.height) {
     throw new Error("light client recovery plan was not precommitted before the trigger");
   }
+  validateIntrinsicBlock(recoveryBlock, { expectedNetworkId,
+    expectedProtocolVersion: previousHeader.protocolVersion,
+    previousBlock: { hash: previousProof.hash, height: previousHeader.height,
+      timestamp: previousHeader.timestamp } });
   const reserveOrder = verifiedPlan.reserves.map(({ address }) => address).sort();
   const expectedProposer = reserveOrder[recoveryBlock?.height % reserveOrder.length];
   if (!recoveryBlock || recoveryBlock.height !== previousHeader.height + 1 ||
       recoveryBlock.previousHash !== previousProof.hash ||
-      recoveryBlock.hash !== blockHeaderHash(blockHeader(recoveryBlock)) ||
       recoveryBlock.transactions?.length !== 1 ||
       recoveryBlock.transactions[0]?.type !== "validator-recovery" ||
       recoveryBlock.transactionCount !== 1 ||

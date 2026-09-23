@@ -29,6 +29,7 @@ function fixture() {
       capabilitiesBps: { "reasoning-v1": 1 },
     }],
     evaluators: members(evaluators, "evaluator"),
+    genesisProtocolVersion: PROTOCOL_VERSION + 1,
     genesisTimestamp: 0,
     networkId: "nir-light-test",
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
@@ -52,7 +53,8 @@ test("compact finality proofs advance a checkpoint without full block bodies", (
   const second = append(chain, validators, 2);
   const proofs = [createFinalityProof(first), createFinalityProof(second)];
   const result = verifyFinalityProofChain(proofs, {
-    checkpoint: { height: 0, stateRoot: genesis.stateRoot, tipHash: genesis.hash },
+    checkpoint: { height: 0, protocolVersion: PROTOCOL_VERSION + 1,
+      stateRoot: genesis.stateRoot, tipHash: genesis.hash },
     expectedNetworkId: chain.networkId,
     trustedValidators: validatorMembers,
   });
@@ -61,7 +63,7 @@ test("compact finality proofs advance a checkpoint without full block bodies", (
     height: 2,
     networkId: chain.networkId,
     pendingProtocolUpgrade: null,
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: PROTOCOL_VERSION + 1,
     recoveryStateCommitment: second.recoveryStateCommitment,
     stateRoot: second.stateRoot,
     tipHash: second.hash,
@@ -77,7 +79,8 @@ test("light client rejects a forged header, discontinuity, and minority certific
   const genesis = chain.blocks()[0];
   const block = append(chain, validators, 1);
   const options = {
-    checkpoint: { height: 0, stateRoot: genesis.stateRoot, tipHash: genesis.hash },
+    checkpoint: { height: 0, protocolVersion: PROTOCOL_VERSION + 1,
+      stateRoot: genesis.stateRoot, tipHash: genesis.hash },
     expectedNetworkId: chain.networkId,
     trustedValidators: validatorMembers,
   };

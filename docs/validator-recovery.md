@@ -5,7 +5,7 @@ failure: a finalized validator-admission omission proof whose deterministic
 slashing leaves fewer than the old-set quorum enabled. It is not a timeout
 takeover, an operator override, or a general fork-choice rule.
 
-A normal finalized block schedules `nir-validator-recovery-plan-v1` at least
+A protocol-v25 normal finalized block schedules `nir-validator-recovery-plan-v1` at least
 64 heights before it can be used. The plan binds the network, current validator
 set, next recovery generation, equally sized reserve set, and (when peer
 discovery is active) an exact replacement transport registry. Every reserve
@@ -39,8 +39,14 @@ proof, exact checkpoint, reserve certificate, and `H+1` continuity. Every v2
 finality header also commits to `networkId`, completed recovery generation, and
 the active plan hash (or `null`) under `VALIDATOR_RECOVERY_STATE_V1`. Scheduling,
 normal validator rotation, and recovery therefore change an authenticated
-header value rather than relying on a post-event manual pin. Legacy v1 headers
-and v2 finality-proof envelopes fail closed.
+header value rather than relying on a post-event manual pin. The format cutover
+is consensus-versioned: protocol v24 continues to use the original block shape,
+v1 finality header, v2 proof envelope, and snapshot/state-root shape. The
+scheduled activation block for protocol v25 atomically begins the block field,
+v2 header, v3 proof, and state-root commitment. A fresh network may opt into v25
+only by committing `genesisProtocolVersion: 25` in its genesis configuration.
+Recovery plans are rejected under v24, and missing, downgraded, or cross-version
+shapes are rejected rather than silently interpreted.
 
 The light verifier recomputes this commitment from the supplied plan and the
 previously authenticated `H` header. An unproved plan supplied alongside the
@@ -50,7 +56,11 @@ old header/certificates/transaction root, and the deterministic peer-registry
 transition against the previous authenticated registry. The bounded durable
 recovery trust store rejects lower heights or generations, conflicting views at
 one height, and reused plan/evidence hashes; it advances a generation only from
-the verified recovery result. A recovery block is
+the verified recovery result. Its canonical parent directory is opened without
+symlink following and pinned by device/inode for the process lifetime. Identity
+is rechecked around lock acquisition, CAS reread, atomic activation, directory
+fsync, and lock release; replacement poisons the store instead of following the
+new path. A recovery block is
 rejected at a scheduled protocol-version
 activation boundary rather than combining two exceptional transitions.
 

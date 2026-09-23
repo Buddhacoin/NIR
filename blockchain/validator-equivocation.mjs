@@ -1,4 +1,6 @@
-import { MIN_TRANSFER_FEE, SIGNATURE_ALGORITHM } from "./constants.mjs";
+import {
+  MIN_TRANSFER_FEE, RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION, SIGNATURE_ALGORITHM,
+} from "./constants.mjs";
 import {
   addressFromPublicKey,
   canonicalJson,
@@ -18,10 +20,10 @@ const EVIDENCE_FIELDS = [
   "round", "statements", "validator",
 ];
 const EVIDENCE_STATEMENT_FIELDS = ["blockHash", "header", "signature"];
-const HEADER_FIELDS = [
+const LEGACY_HEADER_FIELDS = [
   "accountStateRoot", "bodyHash", "capabilityMemoryRoot", "format", "height",
   "networkId", "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion",
-  "recoveryStateCommitment", "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
+  "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
 ];
 const TRANSACTION_FIELDS = [
   "algorithm", "evidence", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -41,15 +43,18 @@ function unsignedTransaction(transaction) {
 }
 
 function assertHeader(header) {
-  exact(header, HEADER_FIELDS, "validator equivocation block header");
-  if (header.format !== "nir-finality-header-v2" ||
+  const recoveryFormat = header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
+  exact(header, recoveryFormat ? [...LEGACY_HEADER_FIELDS, "recoveryStateCommitment"] :
+    LEGACY_HEADER_FIELDS, "validator equivocation block header");
+  if (header.format !== (recoveryFormat ? "nir-finality-header-v2" : "nir-finality-header-v1") ||
       typeof header.networkId !== "string" || header.networkId.length < 1 ||
       header.networkId.length > 128 || !Number.isSafeInteger(header.height) ||
       header.height < 1 || !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
       !Number.isSafeInteger(header.protocolVersion) || header.protocolVersion < 1 ||
       !Number.isSafeInteger(header.transactionCount) || header.transactionCount < 0 ||
       [header.accountStateRoot, header.bodyHash, header.capabilityMemoryRoot,
-        header.peerRegistryHash, header.previousHash, header.recoveryStateCommitment, header.stateRoot,
+        header.peerRegistryHash, header.previousHash,
+        ...(recoveryFormat ? [header.recoveryStateCommitment] : []), header.stateRoot,
         header.transactionsRoot].some((value) => !HASH.test(value ?? ""))) {
     throw new Error("validator equivocation block header is invalid");
   }

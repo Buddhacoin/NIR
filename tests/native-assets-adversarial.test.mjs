@@ -118,8 +118,10 @@ test("capacity-neutral full-balance transfer remains possible at the balance-ent
     (BigInt(balances.get(context.treasury.address)) - funding).toString());
   balances.set(creator.address, funding.toString());
   exported.state.balances = [...balances].sort(([left], [right]) => left.localeCompare(right));
+  exported.state.recoveryStateCommitment = base.recoveryStateCommitment;
   const stateRoot = computeChainStateRoot(exported.state);
-  const checkpoint = { ...base.blocks().at(-1), protocolVersion: 25, stateRoot };
+  const checkpoint = { ...base.blocks().at(-1), protocolVersion: 25,
+    recoveryStateCommitment: base.recoveryStateCommitment, stateRoot };
   const chain = NirChain.fromVerifiedSnapshot(context.genesis, { capabilityMemory: exported.capabilityMemory,
     checkpoint, height: 0, networkId: base.networkId, state: exported.state,
     recoveryStateCommitment: base.recoveryStateCommitment,

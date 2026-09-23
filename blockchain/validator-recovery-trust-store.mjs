@@ -1,8 +1,8 @@
 import {
   closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync,
-  readFileSync, renameSync, rmSync, unlinkSync, writeFileSync,
+  readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalJson } from "./crypto.mjs";
 import { validatorRecoveryStateCommitment } from "./validator-recovery.mjs";
@@ -49,56 +49,131 @@ function validateStore(value, networkId) {
 
 function sameIdentity(left, right) { return left.dev === right.dev && left.ino === right.ino; }
 
-function withExclusiveLock(path, action) {
+function canonicalTarget(path, { createDirectory = false } = {}) {
+  const requested = resolve(path);
+  if (createDirectory) mkdirSync(dirname(requested), { recursive: true, mode: 0o700 });
+  return join(realpathSync(dirname(requested)), basename(requested));
+}
+
+const pinnedRoots = new Map();
+
+function pinnedRoot(path) {
+  const directory = dirname(path);
+  let root = pinnedRoots.get(directory);
+  if (!root) {
+    if (!constants.O_NOFOLLOW || !constants.O_DIRECTORY) {
+      throw new Error("validator recovery trust store requires secure directory opens");
+    }
+    const canonical = realpathSync(directory);
+    if (canonical !== directory) {
+      throw new Error("validator recovery trust store root must be canonical");
+    }
+    const descriptor = openSync(directory,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const identity = fstatSync(descriptor);
+    const linked = lstatSync(directory);
+    if (!identity.isDirectory() || linked.isSymbolicLink() || !linked.isDirectory() ||
+        !sameIdentity(identity, linked)) {
+      closeSync(descriptor);
+      throw new Error("validator recovery trust store root is unsafe");
+    }
+    root = { descriptor, identity, poisoned: false };
+    pinnedRoots.set(directory, root);
+  }
+  return {
+    assert(stage) {
+      if (root.poisoned) throw new Error("validator recovery trust store root was replaced");
+      try {
+        const opened = fstatSync(root.descriptor);
+        const linked = lstatSync(directory);
+        if (!opened.isDirectory() || linked.isSymbolicLink() || !linked.isDirectory() ||
+            !sameIdentity(opened, root.identity) || !sameIdentity(linked, root.identity) ||
+            realpathSync(directory) !== directory) {
+          throw new Error(`validator recovery trust store root changed ${stage}`);
+        }
+      } catch (error) {
+        root.poisoned = true;
+        if (error?.message?.startsWith("validator recovery trust store root changed")) throw error;
+        throw new Error(`validator recovery trust store root changed ${stage}`, { cause: error });
+      }
+    },
+    descriptor: root.descriptor,
+    get poisoned() { return root.poisoned; },
+  };
+}
+
+function withExclusiveLock(path, root, action) {
   const lockPath = `${path}.lock`;
+  root.assert("before lock acquire");
   const descriptor = openSync(lockPath, "wx", 0o600);
   try {
     writeFileSync(descriptor, `${process.pid}\n`);
     fsyncSync(descriptor);
+    root.assert("after lock acquire");
     return action();
   } finally {
     closeSync(descriptor);
-    unlinkSync(lockPath);
+    if (!root.poisoned) {
+      root.assert("before lock release");
+      unlinkSync(lockPath);
+      root.assert("after lock release");
+    }
   }
 }
 
-function writeAtomic(path, value, { noReplace = false } = {}) {
-  const directory = dirname(path);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
+function writeAtomic(path, value, root, { noReplace = false } = {}) {
   const temporary = `${path}.${process.pid}.tmp`;
   let descriptor;
+  let temporaryIdentity;
   try {
+    root.assert("before temporary create");
     descriptor = openSync(temporary, "wx", 0o600);
+    temporaryIdentity = fstatSync(descriptor);
     writeFileSync(descriptor, `${canonicalJson(value)}\n`);
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
+    root.assert("before store activation");
     if (noReplace) {
       linkSync(temporary, path);
       unlinkSync(temporary);
     } else {
       renameSync(temporary, path);
     }
-    const directoryDescriptor = openSync(directory,
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try { fsyncSync(directoryDescriptor); } finally { closeSync(directoryDescriptor); }
+    root.assert("after store activation");
+    fsyncSync(root.descriptor);
+    root.assert("after store directory sync");
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
-    rmSync(temporary, { force: true });
+    if (!root.poisoned && temporaryIdentity) {
+      root.assert("before temporary cleanup");
+      try {
+        const linked = lstatSync(temporary);
+        if (linked.isSymbolicLink() || !sameIdentity(linked, temporaryIdentity)) {
+          throw new Error("validator recovery trust temporary identity changed");
+        }
+        unlinkSync(temporary);
+        root.assert("after temporary cleanup");
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
   }
 }
 
 export function createValidatorRecoveryTrustStore(path, { checkpoint, networkId }) {
-  const target = resolve(path);
+  const target = canonicalTarget(path, { createDirectory: true });
   const value = validateStore({ checkpoint: validateCheckpoint(checkpoint, networkId),
     format: FORMAT, networkId, usedEvidenceHashes: [], usedPlanHashes: [] }, networkId);
-  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  withExclusiveLock(target, () => writeAtomic(target, value, { noReplace: true }));
+  const root = pinnedRoot(target);
+  withExclusiveLock(target, root, () => writeAtomic(target, value, root, { noReplace: true }));
   return value;
 }
 
 export function loadValidatorRecoveryTrustStore(path, { networkId }) {
-  const target = resolve(path);
+  const target = canonicalTarget(path);
+  const root = pinnedRoot(target);
+  root.assert("before store read");
   const metadata = lstatSync(target);
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 ||
       metadata.size > MAX_BYTES) throw new Error("validator recovery trust store is unsafe");
@@ -109,6 +184,7 @@ export function loadValidatorRecoveryTrustStore(path, { networkId }) {
       throw new Error("validator recovery trust store changed during open");
     }
     const value = validateStore(JSON.parse(readFileSync(descriptor, "utf8")), networkId);
+    root.assert("after store read");
     if (!sameIdentity(opened, lstatSync(target))) {
       throw new Error("validator recovery trust store changed during read");
     }
@@ -119,7 +195,9 @@ export function loadValidatorRecoveryTrustStore(path, { networkId }) {
 export function advanceValidatorRecoveryTrustStore(path, currentValue, {
   checkpoint, transition = null,
 } = {}) {
-  const target = resolve(path);
+  const target = canonicalTarget(path);
+  const root = pinnedRoot(target);
+  root.assert("before advance");
   const current = validateStore(currentValue, currentValue?.networkId);
   const nextCheckpoint = validateCheckpoint(checkpoint, current.networkId);
   const old = current.checkpoint;
@@ -160,12 +238,13 @@ export function advanceValidatorRecoveryTrustStore(path, currentValue, {
   }
   const next = validateStore({ ...current, checkpoint: nextCheckpoint,
     usedEvidenceHashes, usedPlanHashes }, current.networkId);
-  return withExclusiveLock(target, () => {
+  return withExclusiveLock(target, root, () => {
     const persisted = loadValidatorRecoveryTrustStore(target, { networkId: current.networkId });
     if (canonicalJson(persisted) !== canonicalJson(current)) {
       throw new Error("validator recovery trust store compare-and-swap failed");
     }
-    writeAtomic(target, next);
+    root.assert("after compare-and-swap read");
+    writeAtomic(target, next, root);
     return next;
   });
 }

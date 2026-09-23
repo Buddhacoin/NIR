@@ -80,6 +80,7 @@ function fixture() {
       behaviorCommitment: "2".repeat(64), capabilitiesBps: { "reasoning-v1": 1 },
       contentHash: `sha256:${"3".repeat(64)}` }],
     evaluators: members(evaluators, "evaluator"), genesisTimestamp: 0,
+    genesisProtocolVersion: 25,
     networkId: "nir-validator-recovery-test",
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: treasury.address, validators: members(validators, "validator"),
@@ -306,6 +307,33 @@ test("precommitted reserve quorum recovers exactly H+1 and preserves slashing ec
   assert.equal(values.chain.fork().stateRoot, values.chain.stateRoot);
   assert.throws(() => values.chain.buildBlock({ timestamp: TREASURY_VESTING_MS + 69,
     transactions: [values.transition] }), /recovery plan is unavailable/);
+});
+
+test("full node and light client reject the same intrinsically invalid recovery blocks", (t) => {
+  const values = prepareRecovery(t);
+  const oldProof = createFinalityProof(values.omission);
+  const proposal = values.chain.buildBlock({ timestamp: TREASURY_VESTING_MS + 68,
+    transactions: [values.transition] });
+  const cases = [
+    ["wrong network", (block) => { block.networkId = "nir-wrong-recovery-network"; }],
+    ["decreasing timestamp", (block) => { block.timestamp = values.omission.timestamp - 1; }],
+    ["unknown field", (block) => { block.uncommittedExtension = true; }],
+  ];
+  for (const [label, mutate] of cases) {
+    const malformed = structuredClone(proposal);
+    mutate(malformed);
+    const signed = finalizeValidatorRecoveryBlock(malformed,
+      recoverySigners(values.reserves, t, `nir-recovery-intrinsic-${label.replaceAll(" ", "-")}-`)
+        .slice(0, 3), values.plan,
+      { checkpointHash: values.checkpointHash, evidenceHash: values.evidence.evidenceHash });
+    assert.throws(() => values.chain.fork().appendBlock(signed),
+      /schema|intrinsic context/, `${label} full-node acceptance diverged`);
+    assert.throws(() => verifyValidatorRecoveryTransition({
+      expectedNetworkId: values.chain.networkId, plan: values.plan,
+      previousProof: oldProof, recoveryBlock: signed,
+      trustedValidators: members(values.validators, "validator"),
+    }), /schema|intrinsic context/, `${label} light-client acceptance diverged`);
+  }
 });
 
 test("reserve plan delay, possession, bonds, and role separation fail closed", () => {
@@ -600,6 +628,32 @@ test("recovery trust store rejects rollback, forks, mixed generations, and repla
         usedPlanHash: "b".repeat(64) },
     }), /invalid or replayed/);
     assert.throws(() => loadValidatorRecoveryTrustStore(path, { networkId: "other" }), /invalid/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("recovery trust store is poisoned when its pinned parent is replaced", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-trust-root-"));
+  const live = join(directory, "live");
+  const displaced = join(directory, "displaced");
+  mkdirSync(live);
+  const path = join(live, "trust.json");
+  const networkId = "nir-recovery-trust-root-test";
+  const checkpoint = { height: 0, recoveryGeneration: 0,
+    recoveryStateCommitment: validatorRecoveryStateCommitment({ activePlanHash: null,
+      generation: 0, networkId }), stateRoot: "1".repeat(64), tipHash: "2".repeat(64) };
+  try {
+    const store = createValidatorRecoveryTrustStore(path, { checkpoint, networkId });
+    const original = readFileSync(path, "utf8");
+    renameSync(live, displaced);
+    mkdirSync(live);
+    writeFileSync(path, original, { mode: 0o600 });
+    assert.throws(() => advanceValidatorRecoveryTrustStore(path, store, {
+      checkpoint: { ...checkpoint, height: 1, stateRoot: "3".repeat(64),
+        tipHash: "4".repeat(64) },
+    }), /root changed|root was replaced/);
+    assert.equal(readFileSync(join(displaced, "trust.json"), "utf8"), original);
+    assert.equal(readFileSync(path, "utf8"), original);
+    assert.throws(() => loadValidatorRecoveryTrustStore(path, { networkId }), /root was replaced/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

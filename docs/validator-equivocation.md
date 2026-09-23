@@ -3,9 +3,10 @@
 NIR accepts a narrowly objective `validator-equivocation` transaction for a
 validator that signs two conflicting prepare values for the same network,
 height, parent and round. Prepare signatures bind
-`{blockHash,height,round}`. Finality proofs carrying those signatures use the
-exact `nir-finality-proof-v3` schema; older v1/v2 shapes are rejected rather than
-being interpreted under the new signature domain.
+`{blockHash,height,round}`. Protocol-v24 finality proofs retain the exact v2
+envelope/v1-header pair; protocol v25 uses the exact v3/v2 pair with the
+recovery-state commitment. Cross-version shapes are rejected rather than being
+interpreted under another signature domain.
 
 The signed prepare round is carried by each prepare vote. A value prepared in
 round 0 may be recovered and finalized by an outer round-1 block; adjudication
@@ -48,7 +49,7 @@ penalties become available only after an on-chain validator bond exists.
 Slashing does **not** silently change the active finality set or its
 `validatorSetId`. Doing so would leave light clients and wallets on a different
 trust set. Until a normal delayed, dual-quorum `ValidatorHandoff` activates,
-full nodes and `nir-finality-proof-v3` verification continue to use the old
+full nodes and the version-matched compact finality proof continue to use the old
 set. The local `ValidatorReplica` for a disabled identity refuses to propose,
 prepare, commit or issue round timeouts. If that identity is the scheduled
 proposer, the normal round-timeout path selects another proposer.

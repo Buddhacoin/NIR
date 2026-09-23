@@ -597,13 +597,13 @@ test("objective evaluator equivocation slashes once and bonded replacements reco
     capabilityMemory: tamperedSnapshot.capabilityMemory,
     checkpoint: { ...checkpoint, stateRoot: tamperedRoot }, height: chain.height,
     networkId: chain.networkId, state: tamperedSnapshot.state, stateRoot: tamperedRoot,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     tipHash: checkpoint.hash,
   }), /escrow bond or role binding is invalid/);
   const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
     networkId: chain.networkId, state: exported.state, stateRoot: chain.stateRoot,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     tipHash: chain.tipHash,
   });
   assert.equal(restored.stateRoot, chain.stateRoot);
@@ -655,7 +655,7 @@ test("objective evaluator equivocation slashes once and bonded replacements reco
   const recovered = NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: settled.capabilityMemory, checkpoint: restored.blocks().at(-1),
     height: restored.height, networkId: restored.networkId, state: settled.state,
-    recoveryStateCommitment: restored.recoveryStateCommitment,
+    ...(restored.protocolVersion >= 25 ? { recoveryStateCommitment: restored.recoveryStateCommitment } : {}),
     stateRoot: restored.stateRoot, tipHash: restored.tipHash,
   });
   const rootAfter = recovered.stateRoot;
@@ -824,7 +824,7 @@ test("objective evaluator equivocation slashes once and bonded replacements reco
   const restartedPending = NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: pendingSnapshot.capabilityMemory, checkpoint: recovered.blocks().at(-1),
     height: recovered.height, networkId: recovered.networkId, state: pendingSnapshot.state,
-    recoveryStateCommitment: recovered.recoveryStateCommitment,
+    ...(recovered.protocolVersion >= 25 ? { recoveryStateCommitment: recovered.recoveryStateCommitment } : {}),
     stateRoot: recovered.stateRoot, tipHash: recovered.tipHash,
   });
   advanceEmptyBlocks(restartedPending, validators, EVALUATOR_ACTIVATION_DELAY_BLOCKS,
@@ -990,7 +990,7 @@ test("snapshot rejects unbounded progress escrow and fraud replay state", () => 
   assert.throws(() => NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
     networkId: chain.networkId, state: exported.state, stateRoot: forgedRoot,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     tipHash: checkpoint.hash,
   }), /replay snapshot state is invalid/);
 
@@ -1004,7 +1004,7 @@ test("snapshot rejects unbounded progress escrow and fraud replay state", () => 
   assert.throws(() => NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: oversizedEscrows.capabilityMemory, checkpoint: escrowCheckpoint,
     height: chain.height, networkId: chain.networkId, state: oversizedEscrows.state,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     stateRoot: escrowRoot, tipHash: escrowCheckpoint.hash,
   }), /escrow snapshot capacity is exceeded/);
 });
@@ -1275,7 +1275,7 @@ test("deterministic state model covers parallel progress bond lifecycle", () => 
   const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
     networkId: chain.networkId, state: exported.state, stateRoot: chain.stateRoot,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     tipHash: chain.tipHash,
   });
   const fork = chain.fork();
@@ -1364,7 +1364,7 @@ test("unbound progress bond gets no committee and abandoned admission burns afte
   const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
     networkId: chain.networkId, state: exported.state, stateRoot: chain.stateRoot,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     tipHash: chain.tipHash,
   });
   const replayed = new NirChain(genesisConfig);
@@ -2419,7 +2419,7 @@ test("a delegation cannot be reduced below current-epoch consumption", () => {
     checkpoint: chain.blocks().at(-1),
     height: chain.height,
     networkId: chain.networkId,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     state: snapshot.state,
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,
@@ -2473,7 +2473,7 @@ test("one thousand credit transfers conserve NIR across fork restart and replay"
         checkpoint: chain.blocks().at(-1),
         height: chain.height,
         networkId: chain.networkId,
-        recoveryStateCommitment: chain.recoveryStateCommitment,
+        ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
         state: snapshot.state,
         stateRoot: chain.stateRoot,
         tipHash: chain.tipHash,
@@ -2574,7 +2574,7 @@ test("account proof and snapshot credit views reset after, not at, the epoch bou
       checkpoint: chain.blocks().at(-1),
       height,
       networkId: chain.networkId,
-      recoveryStateCommitment: chain.recoveryStateCommitment,
+      ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
       state: exported.state,
       stateRoot: chain.stateRoot,
       tipHash: chain.tipHash,
@@ -2650,7 +2650,7 @@ test("a new key and artifact wrapper cannot reward the same canonical content af
     checkpoint,
     height: chain.height,
     networkId: chain.networkId,
-    recoveryStateCommitment: chain.recoveryStateCommitment,
+    ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     state: exported.state,
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,
@@ -3038,7 +3038,7 @@ test("tampering with a finalized block invalidates its quorum certificate", () =
   const block = chain.buildBlock({ timestamp: 1 });
   const finalized = finalizeBlock(block, quorumFor(block, validators));
   finalized.timestamp = 2;
-  assert.throws(() => chain.appendBlock(finalized), /block hash mismatch/);
+  assert.throws(() => chain.appendBlock(finalized), /block hash mismatch|intrinsic context/);
 });
 
 test("a block cannot claim a false world capability memory root", () => {

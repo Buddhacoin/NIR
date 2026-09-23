@@ -107,6 +107,8 @@ export async function runProtocolUpgradeRehearsal({ directory, firstValidatorPor
     counterfactualState.pendingProtocolUpgrade = null;
     counterfactualState.assets = [];
     counterfactualState.assetBalances = [];
+    counterfactualState.recoveryStateCommitment = preProbeChain.recoveryStateCommitment;
+    premature.recoveryStateCommitment = preProbeChain.recoveryStateCommitment;
     premature.stateRoot = computeChainStateRoot(counterfactualState);
     const prematureProposalHash = blockHash(premature);
     const prematureResults = await Promise.all(urls.map((url) =>
