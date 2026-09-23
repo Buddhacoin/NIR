@@ -14,8 +14,16 @@ import { verifyValidatorHandoff } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
 import {
-  verifyValidatorRecoveryEnvelope, verifyValidatorRecoveryVotes,
+  verifyValidatorRecoveryEnvelope, verifyValidatorRecoveryPlanAcceptance,
+  verifyValidatorRecoveryVotes,
 } from "./validator-recovery.mjs";
+import {
+  verifyValidatorAdmissionOmissionEvidence,
+  verifyValidatorAdmissionOmissionTransactionEnvelope,
+} from "./validator-admission-omission.mjs";
+import {
+  createValidatorRecoveryPeerRegistry, peerRegistryHash,
+} from "./peer-registry.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const FORMAT = "nir-finality-proof-v2";
@@ -229,13 +237,32 @@ export function verifyFinalityProofChain(proofs, {
 }
 
 export function verifyValidatorRecoveryTransition({
-  expectedNetworkId, plan, previousProof, recoveryBlock, trustedValidators,
+  expectedNetworkId, plan, previousPeerRegistry = null, previousProof, recoveryBlock,
+  trustedPlanHash, trustedValidators,
 } = {}) {
   const previousHeader = validateProof(previousProof, expectedNetworkId,
     SUPPORTED_PROTOCOL_VERSIONS);
   const current = normalizeValidators(trustedValidators);
   verifyVotes(previousProof, current);
-  const reserveOrder = plan?.reserves?.map(({ address }) => address).sort() ?? [];
+  if (!/^[0-9a-f]{64}$/.test(trustedPlanHash ?? "")) {
+    throw new Error("light client recovery plan hash is not pre-pinned");
+  }
+  const hasPeerRegistry = previousHeader.peerRegistryHash !== "0".repeat(64);
+  if (hasPeerRegistry !== (previousPeerRegistry !== null) ||
+      (previousPeerRegistry && peerRegistryHash(previousPeerRegistry) !==
+        previousHeader.peerRegistryHash)) {
+    throw new Error("light client previous peer registry proof is invalid");
+  }
+  const verifiedPlan = verifyValidatorRecoveryPlanAcceptance(plan, {
+    activeValidators: current,
+    networkId: expectedNetworkId,
+    peerRegistryRequired: hasPeerRegistry,
+    trustedPlanHash,
+  });
+  if (verifiedPlan.scheduledHeight > previousHeader.height) {
+    throw new Error("light client recovery plan was not precommitted before the trigger");
+  }
+  const reserveOrder = verifiedPlan.reserves.map(({ address }) => address).sort();
   const expectedProposer = reserveOrder[recoveryBlock?.height % reserveOrder.length];
   if (!recoveryBlock || recoveryBlock.height !== previousHeader.height + 1 ||
       recoveryBlock.previousHash !== previousProof.hash ||
@@ -265,10 +292,36 @@ export function verifyValidatorRecoveryTransition({
   const context = verifyValidatorRecoveryEnvelope(transition, {
     currentHeight: recoveryBlock.height,
     networkId: expectedNetworkId,
-    plan,
+    plan: verifiedPlan,
     previousBlock: { hash: previousProof.hash, height: previousHeader.height,
       previousHash: previousHeader.previousHash, stateRoot: previousHeader.stateRoot },
   });
+  verifyValidatorAdmissionOmissionTransactionEnvelope(
+    transition.evidenceTransaction, expectedNetworkId,
+  );
+  verifyValidatorAdmissionOmissionEvidence(transition.evidenceTransaction.evidence, {
+    canonicalBlockHash: previousProof.hash,
+    canonicalCertificate: previousProof.certificate,
+    canonicalHeader: previousHeader,
+    canonicalPrepareCertificateHash: prepareCertificateHash(previousProof.prepareCertificate),
+    canonicalRound: previousProof.round,
+    canonicalTransactionIds: transition.evidenceTransaction.evidence.transactionIds,
+    currentHeight: recoveryBlock.height,
+    networkId: expectedNetworkId,
+    validators: current,
+  });
+  const expectedPeerRegistryHash = hasPeerRegistry
+    ? peerRegistryHash(createValidatorRecoveryPeerRegistry({
+      activationHeight: recoveryBlock.height,
+      generation: verifiedPlan.generation,
+      networkId: expectedNetworkId,
+      peers: verifiedPlan.peers,
+      planHash: verifiedPlan.planHash,
+      previousRegistry: previousPeerRegistry,
+    })) : "0".repeat(64);
+  if (recoveryBlock.peerRegistryHash !== expectedPeerRegistryHash) {
+    throw new Error("light client recovery peer registry commitment is invalid");
+  }
   verifyValidatorRecoveryVotes({ commits: recoveryBlock.certificate,
     prepares: recoveryBlock.prepareCertificate }, {
     blockHash: recoveryBlock.hash,
@@ -278,9 +331,9 @@ export function verifyValidatorRecoveryTransition({
     height: recoveryBlock.height,
     networkId: expectedNetworkId,
     planHash: transition.planHash,
-    reserveSetId: plan.reserveSetId,
-  }, plan);
+    reserveSetId: verifiedPlan.reserveSetId,
+  }, verifiedPlan);
   return { height: recoveryBlock.height, stateRoot: recoveryBlock.stateRoot,
-    tipHash: recoveryBlock.hash, trustedValidators: structuredClone(plan.reserves),
-    validatorSetId: plan.reserveSetId };
+    tipHash: recoveryBlock.hash, trustedValidators: structuredClone(verifiedPlan.reserves),
+    validatorSetId: verifiedPlan.reserveSetId };
 }

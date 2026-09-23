@@ -18,8 +18,12 @@ companies.
 Recovery requires the next block at exactly `H+1`, where `H` is the finalized
 omitting block. A reserve quorum first prepares and commits an exact checkpoint
 over the old tip, then prepares and commits the sole recovery proposal. Reserve
-software persists one checkpoint and proposal lock per generation and height,
-so restart cannot authorize a split view. The recovery block contains only the
+software persists one checkpoint and proposal lock per generation, so restart
+cannot authorize a split view. A generation is globally single-use:
+height changes and competing forks do not release its lock. The production
+signer API re-reads the journal while holding an exclusive filesystem lock,
+fsyncs the value, and only then releases a signature; raw wallet signing is not
+an accepted recovery-finalization API. The recovery block contains only the
 recovery transition: no ordinary transaction, reward, randomness contribution,
 membership rotation, peer update, or protocol upgrade can share it.
 
@@ -32,9 +36,13 @@ cannot complete. Local admission receipts are discarded after commit. Plan,
 generation, locks, peer-registry lineage, slashing state, and balances are
 covered by snapshots/state roots; the light verifier checks the old finality
 proof, exact checkpoint, reserve certificate, and `H+1` continuity.
-The light verifier receives the plan from its previously authenticated state
-checkpoint; an unproved plan supplied alongside the recovery block is not a
-trust anchor. A recovery block is rejected at a scheduled protocol-version
+The light verifier requires an explicitly pre-pinned plan hash from its
+previously authenticated state checkpoint; an unproved plan supplied alongside
+the recovery block is not a trust anchor. It rechecks the complete plan and
+reserve acceptance certificate, the omission evidence against the authenticated
+old header/certificates/transaction root, and the deterministic peer-registry
+transition against the previous authenticated registry. A recovery block is
+rejected at a scheduled protocol-version
 activation boundary rather than combining two exceptional transitions.
 
 Limits are deliberate. Wall-clock delay cannot activate reserves while chain

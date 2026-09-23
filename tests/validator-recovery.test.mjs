@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,7 +22,6 @@ import {
 } from "../blockchain/validator-admission-omission.mjs";
 import {
   createValidatorRecoveryCheckpointCertificate,
-  createValidatorRecoveryCheckpointVote,
   createValidatorRecoveryPlan,
   createValidatorRecoveryPlanTransaction,
   verifyValidatorRecoveryCheckpoint,
@@ -33,6 +33,7 @@ import {
   createValidatorRecoveryPeerRegistry, peerRegistryHash,
 } from "../blockchain/peer-registry.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
+import { transactionRoot } from "../blockchain/transaction-tree.mjs";
 
 function members(wallets, prefix) {
   return wallets.map((wallet, index) => ({ ...publicWallet(wallet), operatorId: `${prefix}-${index}` }));
@@ -47,6 +48,13 @@ function quorumFor(block, wallets) {
 function append(chain, proposal, wallets) {
   const block = finalizeBlock(proposal, quorumFor(proposal, wallets));
   chain.appendBlock(block); return block;
+}
+
+function recoverySigners(wallets, t, prefix = "nir-recovery-signers-") {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  t?.after(() => rmSync(directory, { recursive: true, force: true }));
+  return wallets.map((wallet, index) =>
+    new ValidatorRecoveryLockStore(join(directory, `${index}.json`), wallet));
 }
 
 function fixture() {
@@ -68,7 +76,7 @@ function fixture() {
   return { chain: new NirChain(genesisConfig), genesisConfig, reserves, treasury, validators };
 }
 
-function prepareRecovery() {
+function prepareRecovery(t) {
   const values = fixture();
   const { chain, reserves, treasury, validators } = values;
   const all = [...validators, ...reserves];
@@ -84,6 +92,7 @@ function prepareRecovery() {
       wallet,
     })) }), validators);
   const reserveMembers = members(reserves, "reserve");
+  const reserveSigners = recoverySigners(reserves, t);
   const plan = createValidatorRecoveryPlan({
     activationHeight: 67, activeValidators: members(validators, "validator"), generation: 1,
     networkId: chain.networkId,
@@ -125,10 +134,10 @@ function prepareRecovery() {
     planHash: plan.planHash, previousHash: omission.previousHash,
     reserveSetId: plan.reserveSetId, stateRoot: omission.stateRoot };
   const checkpointCertificate = createValidatorRecoveryCheckpointCertificate({
-    prepares: reserves.slice(0, 3).map((wallet) =>
-      createValidatorRecoveryCheckpointVote(checkpoint, wallet, "prepare")),
-    commits: reserves.slice(0, 3).map((wallet) =>
-      createValidatorRecoveryCheckpointVote(checkpoint, wallet, "commit")),
+    prepares: reserveSigners.slice(0, 3).map((signer) =>
+      signer.checkpointVote(checkpoint, "prepare")),
+    commits: reserveSigners.slice(0, 3).map((signer) =>
+      signer.checkpointVote(checkpoint, "commit")),
   });
   const verifiedCheckpoint = verifyValidatorRecoveryCheckpoint(
     checkpointCertificate, checkpoint, plan,
@@ -137,7 +146,7 @@ function prepareRecovery() {
     format: "nir-validator-recovery-transition-v1", generation: plan.generation,
     planHash: plan.planHash, type: "validator-recovery" };
   return { ...values, checkpointHash: verifiedCheckpoint.certificateHash, evidence,
-    omission, plan, safetyBondAmount, transition };
+    omission, plan, reserveSigners, safetyBondAmount, transition };
 }
 
 function snapshotRestore(chain, genesisConfig) {
@@ -147,15 +156,18 @@ function snapshotRestore(chain, genesisConfig) {
     state: snapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash });
 }
 
-test("precommitted reserve quorum recovers exactly H+1 and preserves slashing economics", () => {
-  const values = prepareRecovery();
+test("precommitted reserve quorum recovers exactly H+1 and preserves slashing economics", (t) => {
+  const values = prepareRecovery(t);
   const fork = values.chain.fork();
   const restoredBefore = snapshotRestore(values.chain, values.genesisConfig);
   const burnedBefore = values.chain.burned;
   const reporterBefore = values.chain.balance(values.treasury.address);
   const proposal = values.chain.buildBlock({ timestamp: TREASURY_VESTING_MS + 68,
     transactions: [values.transition] });
-  const recovered = finalizeValidatorRecoveryBlock(proposal, values.reserves.slice(0, 3),
+  assert.throws(() => finalizeValidatorRecoveryBlock(proposal, values.reserves.slice(0, 3),
+    values.plan, { checkpointHash: values.checkpointHash,
+      evidenceHash: values.evidence.evidenceHash }), /durable reserve signers/);
+  const recovered = finalizeValidatorRecoveryBlock(proposal, values.reserveSigners.slice(0, 3),
     values.plan, { checkpointHash: values.checkpointHash,
       evidenceHash: values.evidence.evidenceHash });
   const oldProof = createFinalityProof(values.omission);
@@ -176,8 +188,40 @@ test("precommitted reserve quorum recovers exactly H+1 and preserves slashing ec
   assert.equal(restoredBefore.stateRoot, values.chain.stateRoot);
   const light = verifyValidatorRecoveryTransition({ expectedNetworkId: values.chain.networkId,
     plan: values.plan, previousProof: oldProof, recoveryBlock: recovered,
+    trustedPlanHash: values.plan.planHash,
     trustedValidators: members(values.validators, "validator") });
   assert.equal(light.validatorSetId, values.plan.reserveSetId);
+  assert.throws(() => verifyValidatorRecoveryTransition({
+    expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
+    recoveryBlock: recovered, trustedValidators: members(values.validators, "validator"),
+  }), /plan hash is not pre-pinned/);
+  assert.throws(() => verifyValidatorRecoveryTransition({
+    expectedNetworkId: values.chain.networkId, plan: values.plan,
+    previousProof: oldProof, recoveryBlock: recovered, trustedPlanHash: "0".repeat(64),
+    trustedValidators: members(values.validators, "validator"),
+  }), /plan context is invalid/);
+
+  const fakeEvidenceProposal = structuredClone(proposal);
+  fakeEvidenceProposal.transactions[0].evidenceTransaction.evidence.evidenceHash = "a".repeat(64);
+  fakeEvidenceProposal.transactionsRoot = transactionRoot(fakeEvidenceProposal.transactions);
+  const fakeEvidence = finalizeValidatorRecoveryBlock(fakeEvidenceProposal,
+    recoverySigners(values.reserves, t, "nir-fake-evidence-signers-").slice(0, 3), values.plan,
+    { checkpointHash: values.checkpointHash, evidenceHash: "a".repeat(64) });
+  assert.throws(() => verifyValidatorRecoveryTransition({
+    expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
+    recoveryBlock: fakeEvidence, trustedPlanHash: values.plan.planHash,
+    trustedValidators: members(values.validators, "validator"),
+  }), /omission|signature|evidence/);
+
+  const swappedPeerProposal = { ...structuredClone(proposal), peerRegistryHash: "b".repeat(64) };
+  const swappedPeer = finalizeValidatorRecoveryBlock(swappedPeerProposal,
+    recoverySigners(values.reserves, t, "nir-peer-swap-signers-").slice(0, 3), values.plan,
+    { checkpointHash: values.checkpointHash, evidenceHash: values.evidence.evidenceHash });
+  assert.throws(() => verifyValidatorRecoveryTransition({
+    expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof: oldProof,
+    recoveryBlock: swappedPeer, trustedPlanHash: values.plan.planHash,
+    trustedValidators: members(values.validators, "validator"),
+  }), /peer registry commitment/);
   const restored = snapshotRestore(values.chain, values.genesisConfig);
   assert.equal(restored.stateRoot, values.chain.stateRoot);
   assert.equal(restored.validatorRecoveryGeneration, 1);
@@ -207,7 +251,7 @@ test("reserve plan delay, possession, bonds, and role separation fail closed", (
   bonds.delete(reserves[0].address);
   assert.throws(() => verifyValidatorRecoveryPlan(valid, { activeValidators: active, bonds,
     currentHeight: 0, expectedGeneration: 1, networkId: "nir-recovery-unit",
-    registeredValidators: registered }), /unknown, or unbonded/);
+    registeredValidators: registered }), /unknown or unbonded/);
   const overlapping = structuredClone(valid);
   overlapping.reserves[0] = active[0];
   assert.throws(() => verifyValidatorRecoveryPlan(overlapping, { activeValidators: active,
@@ -249,14 +293,14 @@ test("reserve plan delay, possession, bonds, and role separation fail closed", (
   assert.equal(validatorSetId(active), validatorSetId([...active].reverse()));
 });
 
-test("recovery rejects forged checkpoints and mixed ordinary consensus work", () => {
-  const values = prepareRecovery();
+test("recovery rejects forged checkpoints and mixed ordinary consensus work", (t) => {
+  const values = prepareRecovery(t);
   const root = values.chain.stateRoot;
   const forged = structuredClone(values.transition);
   forged.checkpointCertificate.commits[0].signature += "A";
   const proposal = values.chain.buildBlock({ timestamp: TREASURY_VESTING_MS + 68,
     transactions: [forged] });
-  const block = finalizeValidatorRecoveryBlock(proposal, values.reserves.slice(0, 3), values.plan,
+  const block = finalizeValidatorRecoveryBlock(proposal, values.reserveSigners.slice(0, 3), values.plan,
     { checkpointHash: values.checkpointHash, evidenceHash: values.evidence.evidenceHash });
   assert.throws(() => values.chain.appendBlock(block), /(checkpoint|block) vote is invalid/);
   assert.equal(values.chain.stateRoot, root);
@@ -285,6 +329,43 @@ test("reserve locks survive restart and reject split checkpoint or recovery view
     assert.throws(() => new ValidatorRecoveryLockStore(join(directory, "locks.json"), wallet)
       .recoveryVote({ ...recovery, evidenceHash: "a".repeat(64) }, "commit"),
     /conflicts with a persisted vote/);
+    assert.throws(() => restarted.checkpointVote({ ...checkpoint,
+      blockHash: "6".repeat(64), height: 11 }, "prepare"),
+    /conflicts with a persisted vote/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("durable reserve signer re-reads under an exclusive interprocess lock", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-cas-"));
+  const path = join(directory, "locks.json");
+  const walletPath = join(directory, "wallet.json");
+  const wallet = generateWallet();
+  const context = { blockHash: "1".repeat(64), generation: 1, height: 10,
+    networkId: "n", planHash: "2".repeat(64), previousHash: "3".repeat(64),
+    reserveSetId: "4".repeat(64), stateRoot: "5".repeat(64) };
+  try {
+    writeFileSync(walletPath, JSON.stringify(wallet), { mode: 0o600 });
+    const first = new ValidatorRecoveryLockStore(path, wallet);
+    const stale = new ValidatorRecoveryLockStore(path, wallet);
+    first.checkpointVote(context, "prepare");
+    assert.throws(() => stale.checkpointVote({ ...context,
+      blockHash: "6".repeat(64) }, "prepare"), /conflicts with a persisted vote/);
+    const program = `
+      import { readFileSync } from "node:fs";
+      import { ValidatorRecoveryLockStore } from "./blockchain/validator-recovery-store.mjs";
+      const [path, walletPath, encoded] = process.argv.slice(1);
+      new ValidatorRecoveryLockStore(path, JSON.parse(readFileSync(walletPath, "utf8")))
+        .checkpointVote(JSON.parse(encoded), "prepare");`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", program,
+      path, walletPath, JSON.stringify({ ...context, height: 11 })], {
+      cwd: process.cwd(), encoding: "utf8",
+    });
+    assert.notEqual(child.status, 0);
+    assert.match(child.stderr, /conflicts with a persisted vote/);
+    const freshPath = join(directory, "crash-locks.json");
+    symlinkSync("99999999", `${freshPath}.signer-lock`);
+    assert.doesNotThrow(() => new ValidatorRecoveryLockStore(freshPath, wallet)
+      .checkpointVote({ ...context, generation: 2 }, "prepare"));
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 

@@ -92,20 +92,19 @@ export function createValidatorRecoveryPlan({
   return { ...payload, approvals, planHash };
 }
 
-export function verifyValidatorRecoveryPlan(plan, {
-  activeValidators, bonds, currentHeight, expectedGeneration, networkId,
-  peerRegistryRequired = false, registeredValidators,
+export function verifyValidatorRecoveryPlanAcceptance(plan, {
+  activeValidators, networkId, peerRegistryRequired = false, trustedPlanHash,
 } = {}) {
   exact(plan, ["activationHeight", "activeSetId", "approvals", "format", "generation",
     "networkId", "peers", "planHash", "reserves", "reserveSetId", "scheduledHeight"],
   "validator recovery plan");
   const reserves = normalizedReserves(plan.reserves);
   if (plan.format !== "nir-validator-recovery-plan-v1" || plan.networkId !== networkId ||
-      plan.generation !== expectedGeneration || !Number.isSafeInteger(plan.generation) ||
+      !Array.isArray(activeValidators) || !Number.isSafeInteger(plan.generation) ||
       plan.generation < 1 || !Number.isSafeInteger(plan.scheduledHeight) ||
-      plan.scheduledHeight !== currentHeight || !Number.isSafeInteger(plan.activationHeight) ||
+      !Number.isSafeInteger(plan.activationHeight) ||
       plan.activationHeight < plan.scheduledHeight + VALIDATOR_RECOVERY_DELAY_BLOCKS ||
-      !(bonds instanceof Map) || !(registeredValidators instanceof Map)) {
+      (trustedPlanHash !== undefined && plan.planHash !== trustedPlanHash)) {
     throw new Error("validator recovery plan context is invalid");
   }
   if (plan.activeSetId !== recoverySetId(activeValidators)) {
@@ -119,10 +118,8 @@ export function verifyValidatorRecoveryPlan(plan, {
   const activeOperators = new Set(activeValidators.map(({ operatorId }) => operatorId));
   if (reserves.length !== activeValidators.length ||
       reserves.some((member) => activeAddresses.has(member.address) ||
-      activeOperators.has(member.operatorId) ||
-      canonicalJson(registeredValidators.get(member.address)) !== canonicalJson(member) ||
-      (bonds.get(member.address) ?? 0n) < MIN_VALIDATOR_BOND)) {
-    throw new Error("validator recovery reserve set is unequal, active, unknown, or unbonded");
+      activeOperators.has(member.operatorId))) {
+    throw new Error("validator recovery reserve set is unequal or overlaps the active set");
   }
   if (!Array.isArray(plan.approvals) || plan.approvals.length !== reserves.length ||
       Buffer.byteLength(canonicalJson(plan)) > MAX_RECOVERY_CERTIFICATE_BYTES) {
@@ -158,6 +155,25 @@ export function verifyValidatorRecoveryPlan(plan, {
   return structuredClone({ ...plan, reserves });
 }
 
+export function verifyValidatorRecoveryPlan(plan, {
+  activeValidators, bonds, currentHeight, expectedGeneration, networkId,
+  peerRegistryRequired = false, registeredValidators,
+} = {}) {
+  const verified = verifyValidatorRecoveryPlanAcceptance(plan, {
+    activeValidators, networkId, peerRegistryRequired,
+  });
+  if (verified.generation !== expectedGeneration || verified.scheduledHeight !== currentHeight ||
+      !(bonds instanceof Map) || !(registeredValidators instanceof Map)) {
+    throw new Error("validator recovery plan context is invalid");
+  }
+  if (verified.reserves.some((member) =>
+    canonicalJson(registeredValidators.get(member.address)) !== canonicalJson(member) ||
+    (bonds.get(member.address) ?? 0n) < MIN_VALIDATOR_BOND)) {
+    throw new Error("validator recovery reserve is unknown or unbonded");
+  }
+  return verified;
+}
+
 export function createValidatorRecoveryPlanTransaction({ fee = MIN_TRANSFER_FEE.toString(),
   networkId, nonce, plan, wallet }) {
   const unsigned = { algorithm: SIGNATURE_ALGORITHM, fee: String(fee), networkId, nonce,
@@ -181,17 +197,10 @@ export function verifyValidatorRecoveryPlanTransaction(transaction, networkId) {
   return structuredClone(transaction);
 }
 
-function checkpointPayload({ blockHash, generation, height, networkId, planHash, previousHash,
+export function validatorRecoveryCheckpointPayload({ blockHash, generation, height, networkId, planHash, previousHash,
   reserveSetId, stateRoot }) {
   return { blockHash, format: "nir-validator-recovery-checkpoint-v1", generation, height,
     networkId, planHash, previousHash, reserveSetId, stateRoot };
-}
-
-export function createValidatorRecoveryCheckpointVote(context, wallet, phase = "prepare") {
-  const payload = checkpointPayload(context);
-  return { phase, reserve: wallet.address, signature: signObject(payload, wallet,
-    phase === "prepare" ? "VALIDATOR_RECOVERY_CHECKPOINT_PREPARE_V1" :
-      "VALIDATOR_RECOVERY_CHECKPOINT_COMMIT_V1") };
 }
 
 export function verifyValidatorRecoveryCheckpoint(certificate, context, plan) {
@@ -199,7 +208,7 @@ export function verifyValidatorRecoveryCheckpoint(certificate, context, plan) {
   if (certificate.format !== "nir-validator-recovery-checkpoint-certificate-v1") {
     throw new Error("validator recovery checkpoint certificate format is invalid");
   }
-  const payload = checkpointPayload(context);
+  const payload = validatorRecoveryCheckpointPayload(context);
   if (payload.networkId !== plan.networkId || payload.planHash !== plan.planHash ||
       payload.generation !== plan.generation || payload.reserveSetId !== plan.reserveSetId ||
       !Number.isSafeInteger(payload.height) || payload.height < plan.activationHeight ||
@@ -236,21 +245,14 @@ export function createValidatorRecoveryCheckpointCertificate({ commits, prepares
     prepares: [...prepares].sort((a, b) => a.reserve < b.reserve ? -1 : 1) };
 }
 
-function recoveryVotePayload({ blockHash, checkpointHash, evidenceHash, generation, height,
+export function validatorRecoveryVotePayload({ blockHash, checkpointHash, evidenceHash, generation, height,
   networkId, planHash, reserveSetId }) {
   return { blockHash, checkpointHash, evidenceHash, format: "nir-validator-recovery-vote-v1",
     generation, height, networkId, planHash, reserveSetId };
 }
 
-export function createValidatorRecoveryVote(context, wallet, phase = "prepare") {
-  const payload = recoveryVotePayload(context);
-  return { phase, reserve: wallet.address, signature: signObject(payload, wallet,
-    phase === "prepare" ? "VALIDATOR_RECOVERY_BLOCK_PREPARE_V1" :
-      "VALIDATOR_RECOVERY_BLOCK_COMMIT_V1") };
-}
-
 export function verifyValidatorRecoveryVotes({ commits, prepares }, context, plan) {
-  const payload = recoveryVotePayload(context);
+  const payload = validatorRecoveryVotePayload(context);
   if (payload.networkId !== plan.networkId || payload.planHash !== plan.planHash ||
       payload.generation !== plan.generation || payload.reserveSetId !== plan.reserveSetId ||
       !HASH.test(payload.blockHash ?? "") || !HASH.test(payload.checkpointHash ?? "") ||

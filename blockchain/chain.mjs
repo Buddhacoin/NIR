@@ -105,13 +105,13 @@ import {
   verifyValidatorAdmissionOmissionTransactionEnvelope,
 } from "./validator-admission-omission.mjs";
 import {
-  createValidatorRecoveryVote,
   verifyValidatorRecoveryCheckpoint,
   verifyValidatorRecoveryEnvelope,
   verifyValidatorRecoveryPlan,
   verifyValidatorRecoveryPlanTransaction,
   verifyValidatorRecoveryVotes,
 } from "./validator-recovery.mjs";
+import { ValidatorRecoveryLockStore } from "./validator-recovery-store.mjs";
 import {
   appendAccountHistory,
   emptyAccountHistory,
@@ -1138,16 +1138,20 @@ export function finalizeBlock(block, validatorWallets) {
   return { ...block, hash: blockHash(block), prepareCertificate, certificate };
 }
 
-export function finalizeValidatorRecoveryBlock(block, reserveWallets, plan, {
+export function finalizeValidatorRecoveryBlock(block, reserveSigners, plan, {
   checkpointHash, evidenceHash,
 }) {
   const context = { blockHash: blockHash(block), checkpointHash, evidenceHash,
     generation: plan.generation, height: block.height, networkId: block.networkId,
     planHash: plan.planHash, reserveSetId: plan.reserveSetId };
-  const prepareCertificate = reserveWallets.map((wallet) =>
-    createValidatorRecoveryVote(context, wallet, "prepare"));
-  const certificate = reserveWallets.map((wallet) =>
-    createValidatorRecoveryVote(context, wallet, "commit"));
+  if (!Array.isArray(reserveSigners) || reserveSigners.some((signer) =>
+    !(signer instanceof ValidatorRecoveryLockStore))) {
+    throw new Error("validator recovery requires durable reserve signers");
+  }
+  const prepareCertificate = reserveSigners.map((signer) =>
+    signer.recoveryVote(context, "prepare"));
+  const certificate = reserveSigners.map((signer) =>
+    signer.recoveryVote(context, "commit"));
   return { ...block, certificate, hash: context.blockHash, prepareCertificate };
 }
 
