@@ -29,6 +29,7 @@
     "wallet:runtime-policy": "node blockchain/production-runtime-policy-cli.mjs",
     "beacon:serve": "node blockchain/beacon-service.mjs",
     "launch-evidence:sidecar": "node blockchain/launch-evidence-sidecar-cli.mjs",
+    "launch-review": "node blockchain/launch-review-cli.mjs",
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "progress-beacon:aggregate": "node blockchain/beacon-aggregate.mjs progress",
     "node:init-dev": "node blockchain/node-cli.mjs init-dev",

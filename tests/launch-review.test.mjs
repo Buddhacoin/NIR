@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+
+import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { createLaunchReview, signLaunchReview, verifyLaunchReview } from "../blockchain/launch-review.mjs";
+
+const NOW = 1_800_000_000_000;
+const H = (value) => value.repeat(64);
+
+function fixture() {
+  const wallets = Array.from({ length: 6 }, generateWallet);
+  const reviewers = wallets.map((wallet, index) => ({ ...publicWallet(wallet),
+    reviewerId: `${index < 4 ? "operator" : "security"}-${index}`, role: index < 4 ? "operator" : "security-reviewer" }));
+  const review = createLaunchReview({ evidence: [...Array(14).keys()].map((gate) => ({
+    artifactHash: H(String(gate % 10)), gate, resultHash: H(String((gate + 1) % 10)),
+  })), expiresAt: NOW + 60_000, networkId: "nir-public-dev", observedAt: NOW - 1_000, reviewers });
+  return { review, reviewers, wallets };
+}
+
+test("launch review binds every gate and every configured reviewer", () => {
+  const values = fixture(); let signed = values.review;
+  values.wallets.forEach((wallet, index) => { signed = signLaunchReview(signed, wallet, values.reviewers[index].reviewerId); });
+  assert.deepEqual(verifyLaunchReview(signed, { expectedNetworkId: "nir-public-dev", now: NOW }), {
+    approvals: 6, evidenceGates: 14, networkId: "nir-public-dev", reviewHash: signed.reviewHash,
+    status: "LAUNCH-REVIEW-CRYPTOGRAPHIC-PASS",
+  });
+});
+
+test("launch review rejects missing gates, forged approvals, and stale contexts", () => {
+  const values = fixture();
+  assert.throws(() => createLaunchReview({ ...values.review, evidence: values.review.evidence.slice(1) }), /membership|evidence/);
+  const partlySigned = signLaunchReview(values.review, values.wallets[0], values.reviewers[0].reviewerId);
+  assert.throws(() => verifyLaunchReview(partlySigned, { expectedNetworkId: "nir-public-dev", now: NOW }), /every configured/);
+  const forged = structuredClone(partlySigned); forged.approvals[0].signature = "AAAA";
+  assert.throws(() => signLaunchReview(forged, values.wallets[1], values.reviewers[1].reviewerId), /forged/);
+  let signed = values.review;
+  values.wallets.forEach((wallet, index) => { signed = signLaunchReview(signed, wallet, values.reviewers[index].reviewerId); });
+  assert.throws(() => verifyLaunchReview(signed, { expectedNetworkId: "nir-public-dev", now: NOW + 60_001 }), /context/);
+});
+
+test("launch review CLI fails closed without an exact command", () => {
+  const result = spawnSync(process.execPath, ["blockchain/launch-review-cli.mjs"], {
+    cwd: process.cwd(), encoding: "utf8", env: { ...process.env },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /launch review command failed/);
+});
