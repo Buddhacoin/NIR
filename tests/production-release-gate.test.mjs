@@ -31,6 +31,10 @@ import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createProductionStartupGuard,
   createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
+import {
+  assembleProductionRuntimePolicy, createProductionRuntimePolicy, inspectProductionRuntime,
+  signProductionRuntimePolicy,
+} from "../blockchain/production-runtime-policy.mjs";
 import { signOfflineReleaseBundle } from "../blockchain/offline-release-bundle.mjs";
 import { createReleaseAuthoritySet } from "../blockchain/offline-release-governance.mjs";
 import {
@@ -1199,6 +1203,22 @@ test("production wallet bridge and UI verify anchored generations before bind on
       trustedAddress: values.signer.address });
     const toolAnchorPath = join(values.root, "bridge-tool-head-anchor.json");
     writeFileSync(toolAnchorPath, `${canonicalJson(exportProductionHeadAnchor(toolHead))}\n`);
+    const runtimeNow = Date.now();
+    const runtimePolicy = createProductionRuntimePolicy({ authoritySet,
+      binding: { genesisHash: evidence.productionTarget.genesisHash, networkId: NETWORK,
+        releaseManifestHash: manifest.manifestHash, releaseVersion: manifest.releaseVersion,
+        sourceRevision: manifest.sourceRevision, toolPackageHash: toolPackage.packageHash,
+        walletPackageHash: packageValue.packageHash },
+      commands: ["bridge", "extension", "ui"], createdAt: runtimeNow - 60_000,
+      expiresAt: runtimeNow + 3_600_000, runtime: inspectProductionRuntime(), sequence: 1 });
+    const runtimePolicyApprovals = releaseAuthorities.slice(0, 3).map((wallet, index) =>
+      signProductionRuntimePolicy(runtimePolicy, authoritySet,
+        { operatorId: `wallet-export-${index}`, wallet }));
+    const runtimePolicyEnvelope = assembleProductionRuntimePolicy(runtimePolicy, authoritySet,
+      runtimePolicyApprovals);
+    const runtimePolicyPath = join(values.root, "production-runtime-policy.json");
+    writeFileSync(runtimePolicyPath, `${canonicalJson(runtimePolicyEnvelope)}\n`);
+    const runtimeTrustArguments = [runtimePolicyPath, runtimePolicy.policyHash, "1"];
     const signedPath = join(values.root, "wallet-signed.json");
     writeFileSync(signedPath, `${JSON.stringify(signedRelease, null, 2)}\n`);
     const vault = join(values.root, "wallet.nir");
@@ -1207,7 +1227,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const extensionCli = join(toolGeneration, "blockchain/production-wallet-extension-cli.mjs");
     const extensionTarget = join(values.root, "browser-extension");
     const extensionTrustArguments = [installation, head, signedPath, values.signer.address,
-      anchorPath, toolInstallation, toolHead, toolAnchorPath];
+      anchorPath, toolInstallation, toolHead, toolAnchorPath, ...runtimeTrustArguments];
     const extensionInstall = spawnSync(process.execPath,
       [extensionCli, "install", ...extensionTrustArguments, extensionTarget], { encoding: "utf8" });
     assert.equal(extensionInstall.status, 0, extensionInstall.stderr);
@@ -1267,7 +1287,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
       const port = await unusedPort();
       child = spawn(process.execPath, [cli, "--production", installation, head, signedPath,
         values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-        vault, String(port), origin],
+        ...runtimeTrustArguments, vault, String(port), origin],
       { stdio: ["ignore", "pipe", "pipe"] });
       await waitForOutput(child, /Listening only/);
       assert.equal(await fetch(`http://127.0.0.1:${port}/v1/wallet`).then((response) => response.status), 403);
@@ -1279,11 +1299,23 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const walletGeneration = join(values.root, readlinkSync(installation));
     const walletProvenancePath = join(walletGeneration, "NIR-PRODUCTION.json");
     const originalWalletProvenance = readFileSync(walletProvenancePath);
+    const staleRuntimePort = await unusedPort();
+    const staleRuntime = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
+      values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
+      runtimePolicyPath, "f".repeat(64), "1", String(staleRuntimePort), "127.0.0.1"],
+    { encoding: "utf8" });
+    assert.equal(staleRuntime.status, 1); assert.match(staleRuntime.stderr, /runtime policy|startup failed/i);
+    const staleRuntimeReservation = createNetServer();
+    await new Promise((resolvePromise, reject) => {
+      staleRuntimeReservation.once("error", reject);
+      staleRuntimeReservation.listen(staleRuntimePort, "127.0.0.1", resolvePromise);
+    });
+    await new Promise((resolvePromise) => staleRuntimeReservation.close(resolvePromise));
     for (let restart = 0; restart < 2; restart += 1) {
       const port = await unusedPort();
       child = spawn(process.execPath, [uiCli, installation, head, signedPath,
         values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-        String(port), "127.0.0.1"], { stdio: ["ignore", "pipe", "pipe"] });
+        ...runtimeTrustArguments, String(port), "127.0.0.1"], { stdio: ["ignore", "pipe", "pipe"] });
       await waitForOutput(child, /Listening only/);
       const originUrl = `http://127.0.0.1:${port}`;
       const shell = await fetch(`${originUrl}/`);
@@ -1336,7 +1368,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const ipv6Port = await unusedPort("::1");
     child = spawn(process.execPath, [uiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      String(ipv6Port), "::1"], { stdio: ["ignore", "pipe", "pipe"] });
+      ...runtimeTrustArguments, String(ipv6Port), "::1"], { stdio: ["ignore", "pipe", "pipe"] });
     await waitForOutput(child, /Listening only/);
     assert.equal((await fetch(`http://[::1]:${ipv6Port}/`)).status, 200);
     await stopChild(child); child = null;
@@ -1344,7 +1376,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const sourceUiPort = await unusedPort();
     const externalUi = spawnSync(process.execPath, [sourceUiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      String(sourceUiPort), "127.0.0.1"], { encoding: "utf8" });
+      ...runtimeTrustArguments, String(sourceUiPort), "127.0.0.1"], { encoding: "utf8" });
     assert.equal(externalUi.status, 1);
     assert.match(externalUi.stderr, /Wallet UI startup failed/);
     const sourceUiReservation = createNetServer();
@@ -1356,7 +1388,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const nonLoopbackPort = await unusedPort();
     const nonLoopback = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      String(nonLoopbackPort), "0.0.0.0"], { encoding: "utf8" });
+      ...runtimeTrustArguments, String(nonLoopbackPort), "0.0.0.0"], { encoding: "utf8" });
     assert.equal(nonLoopback.status, 1);
     const nonLoopbackReservation = createNetServer();
     await new Promise((resolvePromise, reject) => {
@@ -1371,7 +1403,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const occupiedPort = occupied.address().port;
     const portRace = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      String(occupiedPort), "127.0.0.1"], { encoding: "utf8" });
+      ...runtimeTrustArguments, String(occupiedPort), "127.0.0.1"], { encoding: "utf8" });
     assert.equal(portRace.status, 1);
     assert.match(portRace.stderr, /loopback listener is unavailable/);
     assert.doesNotMatch(portRace.stderr, /node:internal|\/Users\//);
@@ -1382,7 +1414,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const substitutedPort = await unusedPort();
     const substituted = spawnSync(process.execPath, [sourceCli, "--production", installation, head,
       signedPath, values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      vault, String(substitutedPort), origin], { encoding: "utf8" });
+      ...runtimeTrustArguments, vault, String(substitutedPort), origin], { encoding: "utf8" });
     assert.equal(substituted.status, 1);
     assert.match(substituted.stderr, /Wallet bridge failed/);
     const substitutedReservation = createNetServer();
@@ -1407,12 +1439,12 @@ test("production wallet bridge and UI verify anchored generations before bind on
       `${canonicalJson(exportProductionHeadAnchor(oldToolHead))}\n`);
     const staleExtension = spawnSync(process.execPath, [extensionCli, "verify-launch",
       installation, head, signedPath, values.signer.address, anchorPath, toolInstallation,
-      toolHead, oldToolAnchorPath, extensionTarget], { encoding: "utf8" });
+      toolHead, oldToolAnchorPath, ...runtimeTrustArguments, extensionTarget], { encoding: "utf8" });
     assert.equal(staleExtension.status, 1);
     const rollbackPort = await unusedPort();
     const rollbackBlocked = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, oldToolAnchorPath,
-      String(rollbackPort), "127.0.0.1"], { encoding: "utf8" });
+      ...runtimeTrustArguments, String(rollbackPort), "127.0.0.1"], { encoding: "utf8" });
     assert.equal(rollbackBlocked.status, 1);
     assert.match(rollbackBlocked.stderr, /Wallet UI startup failed/);
     const rollbackReservation = createNetServer();
@@ -1446,13 +1478,13 @@ test("production wallet bridge and UI verify anchored generations before bind on
     const blockedPort = await unusedPort();
     const blocked = spawnSync(process.execPath, [cli, "--production", installation, head,
       signedPath, values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      vault, String(blockedPort), origin],
+      ...runtimeTrustArguments, vault, String(blockedPort), origin],
     { encoding: "utf8" });
     assert.equal(blocked.status, 1); assert.match(blocked.stderr, /Wallet bridge failed/);
     const blockedUiPort = await unusedPort();
     const blockedUi = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
       values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
-      String(blockedUiPort), "127.0.0.1"], { encoding: "utf8" });
+      ...runtimeTrustArguments, String(blockedUiPort), "127.0.0.1"], { encoding: "utf8" });
     assert.equal(blockedUi.status, 1); assert.match(blockedUi.stderr, /Wallet UI startup failed/);
     const reservation = createNetServer();
     await new Promise((resolvePromise, reject) => {

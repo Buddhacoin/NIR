@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { readBoundedPublicJson } from "./production-release-gate.mjs";
 import { verifyProductionStartupFromHead } from "./production-head-store.mjs";
+import { verifyProductionRuntimePolicy } from "./production-runtime-policy.mjs";
 
 function readAnchor(path) {
   return path ? readBoundedPublicJson(path, {
@@ -42,6 +43,28 @@ function assertSameReleaseLineage(wallet, tool) {
     wallet.productionTarget[field] !== tool.productionTarget[field])) {
     throw new Error("production wallet and bridge tool release lineage is mixed");
   }
+}
+
+function runtimeBinding(wallet, tool) {
+  return { genesisHash: wallet.productionTarget.genesisHash,
+    networkId: wallet.productionTarget.networkId,
+    releaseManifestHash: wallet.productionTarget.releaseManifestHash,
+    releaseVersion: wallet.productionTarget.releaseVersion,
+    sourceRevision: wallet.productionTarget.sourceRevision,
+    toolPackageHash: tool.packageHash, walletPackageHash: wallet.packageHash };
+}
+
+export function createProductionRuntimePolicyGuard({ command, expectedPolicyHash,
+  expectedSequence, policyPath, tool, wallet } = {}) {
+  if (!policyPath || !expectedPolicyHash || !Number.isSafeInteger(expectedSequence) ||
+      expectedSequence < 1) throw new Error("production runtime policy trust inputs are required");
+  const envelope = readBoundedPublicJson(policyPath, {
+    maximumBytes: 4 * 1024 * 1024, requireCanonical: true,
+  });
+  const expectedBinding = runtimeBinding(wallet, tool);
+  const verify = () => verifyProductionRuntimePolicy(envelope, { command, expectedBinding,
+    expectedPolicyHash, expectedSequence, now: Date.now() });
+  return { initial: verify(), verifyBeforeSensitiveAction: verify };
 }
 
 export function createProductionStartupGuard({

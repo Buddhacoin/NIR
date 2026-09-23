@@ -339,6 +339,7 @@ npm --prefix /absolute/path/to/active-tool run wallet:bridge-production -- \
   /separate/offline/location/wallet-head-anchor.json \
   /absolute/path/to/active-tool /secure/operator/tool-production-head \
   /separate/offline/location/tool-head-anchor.json \
+  /secure/operator/runtime-policy.json EXPECTED_POLICY_HASH POLICY_SEQUENCE \
   /secure/operator/wallet.nir 8788 http://127.0.0.1:8765 \
   genesis.json validator-handoffs.json
 ```
@@ -348,9 +349,10 @@ inside the exact active tool generation and reverifies every signed tool file. I
 also reverifies the wallet generation and rejects mixed source revision, release
 manifest, release version, network or genesis. The entire pair is checked again
 directly before `listen()`. An unauthenticated browser request still receives `403`;
-production provenance does not weaken origin or session authentication. The system
-Node.js executable, OS loader and the privileged supervisor that invokes Node remain
-an operational trust boundary; this repository does not bundle or attest the OS.
+production provenance does not weaken origin or session authentication. A threshold-signed
+runtime policy additionally binds the exact system Node.js executable and build; see
+`docs/production-runtime-policy.md`. The kernel, OS loader and privileged supervisor remain
+an operational trust boundary, and this repository does not replace OS code signing.
 Neither entrypoint automatically switches generations, updates an anchor, or performs
 deployment.
 
@@ -363,7 +365,9 @@ npm --prefix /absolute/path/to/active-tool run wallet:serve-production -- \
   wallet-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
   /separate/offline/location/wallet-head-anchor.json \
   /absolute/path/to/active-tool /secure/operator/tool-production-head \
-  /separate/offline/location/tool-head-anchor.json 8765 127.0.0.1
+  /separate/offline/location/tool-head-anchor.json \
+  /secure/operator/runtime-policy.json EXPECTED_POLICY_HASH POLICY_SEQUENCE \
+  8765 127.0.0.1
 ```
 
 The launcher snapshots the exact signed wallet artifact bytes into bounded memory,
@@ -397,6 +401,7 @@ npm --prefix /absolute/path/to/active-tool run wallet:extension-production -- \
   /separate/offline/location/wallet-head-anchor.json \
   /absolute/path/to/active-tool /secure/operator/tool-production-head \
   /separate/offline/location/tool-head-anchor.json \
+  /secure/operator/runtime-policy.json EXPECTED_POLICY_HASH POLICY_SEQUENCE \
   /secure/operator/nir-browser-extension
 ```
 
@@ -409,6 +414,7 @@ npm --prefix /absolute/path/to/active-tool run wallet:extension-production -- \
   /separate/offline/location/wallet-head-anchor.json \
   /absolute/path/to/active-tool /secure/operator/tool-production-head \
   /separate/offline/location/tool-head-anchor.json \
+  /secure/operator/runtime-policy.json EXPECTED_POLICY_HASH POLICY_SEQUENCE \
   /secure/operator/nir-browser-extension
 ```
 

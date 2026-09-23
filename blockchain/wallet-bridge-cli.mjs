@@ -7,7 +7,8 @@ import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { NirChain } from "./chain.mjs";
-import { createWalletBridgeProductionGuard } from "./production-startup.mjs";
+import { createProductionRuntimePolicyGuard,
+  createWalletBridgeProductionGuard } from "./production-startup.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -61,14 +62,18 @@ function selectCompatibleHistory(left, right) {
 const rawArguments = process.argv.slice(2);
 const productionMode = rawArguments[0] === "--production";
 let productionGuard = null;
+let runtimePolicyGuard = null;
 let walletArguments = rawArguments;
 let productionArgumentError = null;
 if (productionMode) {
   const [, installationTarget, headStore, signedReleasePath, trustedAddress, externalAnchorPath,
-    toolInstallationTarget, toolHeadStore, toolExternalAnchorPath, ...remaining] = rawArguments;
+    toolInstallationTarget, toolHeadStore, toolExternalAnchorPath, runtimePolicyPath,
+    expectedRuntimePolicyHash, runtimePolicySequenceText, ...remaining] = rawArguments;
   if (!installationTarget || !headStore || !signedReleasePath || !trustedAddress ||
       !externalAnchorPath || !toolInstallationTarget || !toolHeadStore ||
-      !toolExternalAnchorPath || remaining.length < 1 || remaining.length > 5) {
+      !toolExternalAnchorPath || !runtimePolicyPath || !expectedRuntimePolicyHash ||
+      !Number.isSafeInteger(Number(runtimePolicySequenceText)) || Number(runtimePolicySequenceText) < 1 ||
+      remaining.length < 1 || remaining.length > 5) {
     productionArgumentError = new Error(
       "production wallet bridge requires wallet and tool installations, heads, anchors, release, signer and wallet arguments",
     );
@@ -80,6 +85,10 @@ if (productionMode) {
         toolInstallationTarget, trustedAddress, walletExternalAnchorPath: externalAnchorPath,
         walletHeadStore: headStore, walletInstallationTarget: installationTarget,
       });
+      runtimePolicyGuard = createProductionRuntimePolicyGuard({ command: "bridge",
+        expectedPolicyHash: expectedRuntimePolicyHash,
+        expectedSequence: Number(runtimePolicySequenceText), policyPath: runtimePolicyPath,
+        tool: productionGuard.initial.tool, wallet: productionGuard.initial.wallet });
     } catch (error) { productionArgumentError = error; }
   }
 }
@@ -129,6 +138,7 @@ try {
     ...(genesis ? { trustHistoryPath } : {}),
     vaultPath,
     authorize: async (intent) => {
+      if (runtimePolicyGuard !== null) runtimePolicyGuard.verifyBeforeSensitiveAction();
       console.error("\nNIR signing request");
       console.error(`Action: ${intent.type ?? "transfer"}`);
       console.error(`Network: ${intent.networkId}`);
@@ -143,10 +153,13 @@ try {
       console.error(`Request: ${intent.requestId}`);
       const confirmation = await readSecret("Type SIGN to approve: ");
       if (confirmation !== "SIGN") return null;
-      return readSecret("Wallet password: ");
+      const password = await readSecret("Wallet password: ");
+      if (runtimePolicyGuard !== null) runtimePolicyGuard.verifyBeforeSensitiveAction();
+      return password;
     },
   });
   if (productionGuard !== null) productionGuard.verifyBeforeOpen();
+  if (runtimePolicyGuard !== null) runtimePolicyGuard.verifyBeforeSensitiveAction();
   server.listen(port, "127.0.0.1", () => {
     console.log(`NIR wallet bridge for ${wallet.address}`);
     console.log(`Listening only on http://127.0.0.1:${port}`);
