@@ -327,25 +327,32 @@ head swap window. Missing or rolled-back heads, a stale external anchor, mixed
 network/genesis/kind, modified installed bytes, replaced activation links, and an
 entrypoint outside the active generation all exit nonzero before binding the port.
 
-The wallet bridge uses the separately anchored wallet/UI generation and preserves
-the existing bridge origin, pairing, session and confirmation rules:
+The wallet bridge requires two independently anchored active generations: the
+wallet/UI package and the node/tool package containing the bridge executable. Both
+must verify against the same signed source release, trusted signer, network and
+genesis lineage. Run the bridge script through the active tool installation:
 
 ```bash
-npm run wallet:bridge-production -- \
+npm --prefix /absolute/path/to/active-tool run wallet:bridge-production -- \
   /absolute/path/to/active-wallet /secure/operator/wallet-production-head \
   wallet-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
   /separate/offline/location/wallet-head-anchor.json \
+  /absolute/path/to/active-tool /secure/operator/tool-production-head \
+  /separate/offline/location/tool-head-anchor.json \
   /secure/operator/wallet.nir 8788 http://127.0.0.1:8765 \
   genesis.json validator-handoffs.json
 ```
 
-It verifies once before reading wallet/public trust configuration and again directly
-before `listen()`. An unauthenticated browser request still receives `403`; production
-provenance does not weaken origin or session authentication. Operators should run
-the bridge executable from a separately verified production node/tool installation;
-the wallet head authenticates the wallet application generation, not the host Node.js
-binary. Neither entrypoint automatically switches generations, updates an anchor,
-or performs deployment.
+The first check proves that the currently executing `wallet-bridge-cli.mjs` resolves
+inside the exact active tool generation and reverifies every signed tool file. It
+also reverifies the wallet generation and rejects mixed source revision, release
+manifest, release version, network or genesis. The entire pair is checked again
+directly before `listen()`. An unauthenticated browser request still receives `403`;
+production provenance does not weaken origin or session authentication. The system
+Node.js executable, OS loader and the privileged supervisor that invokes Node remain
+an operational trust boundary; this repository does not bundle or attest the OS.
+Neither entrypoint automatically switches generations, updates an anchor, or performs
+deployment.
 
 ## Build the browser extension ZIP
 

@@ -33,6 +33,17 @@ function assertEntrypointIsInstalled(installationTarget, moduleUrl) {
   }
 }
 
+const RELEASE_LINEAGE_FIELDS = [
+  "genesisHash", "networkId", "releaseManifestHash", "releaseVersion", "sourceRevision",
+];
+
+function assertSameReleaseLineage(wallet, tool) {
+  if (RELEASE_LINEAGE_FIELDS.some((field) =>
+    wallet.productionTarget[field] !== tool.productionTarget[field])) {
+    throw new Error("production wallet and bridge tool release lineage is mixed");
+  }
+}
+
 export function createProductionStartupGuard({
   externalAnchorPath, headStore, installationTarget, kind, moduleUrl,
   requireExternalAnchor = true, requireInstalledEntrypoint = kind === "node",
@@ -57,4 +68,29 @@ export function createProductionStartupGuard({
     return result;
   };
   return { initial: verify(), verifyBeforeOpen: verify };
+}
+
+export function createWalletBridgeProductionGuard({
+  moduleUrl, signedReleasePath, toolExternalAnchorPath, toolHeadStore,
+  toolInstallationTarget, trustedAddress, walletExternalAnchorPath, walletHeadStore,
+  walletInstallationTarget,
+} = {}) {
+  const tool = createProductionStartupGuard({
+    externalAnchorPath: toolExternalAnchorPath, headStore: toolHeadStore,
+    installationTarget: toolInstallationTarget, kind: "node", moduleUrl,
+    signedReleasePath, trustedAddress,
+  });
+  const wallet = createProductionStartupGuard({
+    externalAnchorPath: walletExternalAnchorPath, headStore: walletHeadStore,
+    installationTarget: walletInstallationTarget, kind: "wallet",
+    requireInstalledEntrypoint: false, signedReleasePath, trustedAddress,
+  });
+  const verify = () => {
+    const toolResult = tool.verifyBeforeOpen();
+    const walletResult = wallet.verifyBeforeOpen();
+    assertSameReleaseLineage(walletResult, toolResult);
+    return { tool: toolResult, wallet: walletResult };
+  };
+  assertSameReleaseLineage(wallet.initial, tool.initial);
+  return { initial: { tool: tool.initial, wallet: wallet.initial }, verifyBeforeOpen: verify };
 }

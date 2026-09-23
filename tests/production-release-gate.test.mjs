@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readlinkSync, readdirSync, renameSync, rmSync, symlinkSync, truncateSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +26,8 @@ import { createReleaseManifest, readReleaseSourceFile,
   signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition-drill.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
-import { createProductionStartupGuard } from "../blockchain/production-startup.mjs";
+import { createProductionStartupGuard,
+  createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
 import {
   advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
   repairProductionHeadCopies, verifyProductionStartupFromHead,
@@ -720,18 +721,31 @@ test("production node guard self-binds active generation and entrypoint refuses 
 test("production wallet bridge verifies anchored wallet generation before bind on every restart", async () => {
   const values = fixture(); let child = null;
   try {
+    const sourceBlockchain = new URL("../blockchain/", import.meta.url).pathname;
+    const runtimeFiles = readdirSync(sourceBlockchain).filter((name) => name.endsWith(".mjs"));
+    for (const name of runtimeFiles) {
+      copyFileSync(join(sourceBlockchain, name), join(values.root, "blockchain", name));
+    }
+    copyFileSync(new URL("../package.json", import.meta.url), join(values.root, "package.json"));
     mkdirSync(join(values.root, "wallet-ui"));
     writeFileSync(join(values.root, "wallet-ui/app.js"), "export const wallet = true;\n");
-    const paths = ["blockchain/node.mjs", "package.json", "wallet-ui/app.js"];
+    const paths = ["package.json", "wallet-ui/app.js",
+      ...runtimeFiles.map((name) => `blockchain/${name}`)];
     const manifest = createReleaseManifest(values.root, paths, {
       releaseVersion: "2.0.0", sourceRevision: values.manifest.sourceRevision,
     });
     const signedRelease = signReleaseManifest(manifest, values.signer);
     const evidence = productionEvidence(values.root, manifest, "wallet-entrypoint-attestations");
-    const artifact = createReleaseArtifact(values.root, artifactPaths("wallet", paths), {
+    const walletArtifact = createReleaseArtifact(values.root, artifactPaths("wallet", paths), {
       kind: "wallet", sourceManifest: manifest,
     });
-    const packageValue = createProductionReleasePackage(artifact, { now: NOW,
+    const toolArtifact = createReleaseArtifact(values.root, artifactPaths("node", paths), {
+      kind: "node", sourceManifest: manifest,
+    });
+    const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
+      productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
+      signedRelease, trustedAddress: values.signer.address });
+    const toolPackage = createProductionReleasePackage(toolArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
       signedRelease, trustedAddress: values.signer.address });
     const installation = join(values.root, "wallet-app");
@@ -743,21 +757,76 @@ test("production wallet bridge verifies anchored wallet generation before bind o
       trustedAddress: values.signer.address });
     const anchorPath = join(values.root, "wallet-head-anchor.json");
     writeFileSync(anchorPath, `${canonicalJson(exportProductionHeadAnchor(head))}\n`);
+    const toolInstallation = join(values.root, "bridge-tool");
+    installProductionReleasePackage(toolPackage, toolInstallation, { kind: "node", now: NOW,
+      signedRelease, trustedAddress: values.signer.address });
+    const toolHead = join(values.root, "bridge-tool-head");
+    advanceProductionHead(toolHead, toolInstallation, { kind: "node",
+      newPackageHash: toolPackage.packageHash, signedRelease,
+      trustedAddress: values.signer.address });
+    const toolAnchorPath = join(values.root, "bridge-tool-head-anchor.json");
+    writeFileSync(toolAnchorPath, `${canonicalJson(exportProductionHeadAnchor(toolHead))}\n`);
     const signedPath = join(values.root, "wallet-signed.json");
     writeFileSync(signedPath, `${JSON.stringify(signedRelease, null, 2)}\n`);
     const vault = join(values.root, "wallet.nir");
     createWalletFile({ path: vault, password: "production-wallet-password" });
-    const cli = new URL("../blockchain/wallet-bridge-cli.mjs", import.meta.url).pathname;
+    const toolGeneration = join(values.root, readlinkSync(toolInstallation));
+    const cli = join(toolGeneration, "blockchain/wallet-bridge-cli.mjs");
     const origin = "http://127.0.0.1:8765";
     for (let restart = 0; restart < 2; restart += 1) {
       const port = await unusedPort();
       child = spawn(process.execPath, [cli, "--production", installation, head, signedPath,
-        values.signer.address, anchorPath, vault, String(port), origin],
+        values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
+        vault, String(port), origin],
       { stdio: ["ignore", "pipe", "pipe"] });
       await waitForOutput(child, /Listening only/);
       assert.equal(await fetch(`http://127.0.0.1:${port}/v1/wallet`).then((response) => response.status), 403);
       await stopChild(child); child = null;
     }
+
+    const sourceCli = new URL("../blockchain/wallet-bridge-cli.mjs", import.meta.url).pathname;
+    const substitutedPort = await unusedPort();
+    const substituted = spawnSync(process.execPath, [sourceCli, "--production", installation, head,
+      signedPath, values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
+      vault, String(substitutedPort), origin], { encoding: "utf8" });
+    assert.equal(substituted.status, 1);
+    assert.match(substituted.stderr, /Wallet bridge failed/);
+    const substitutedReservation = createNetServer();
+    await new Promise((resolvePromise, reject) => {
+      substitutedReservation.once("error", reject);
+      substitutedReservation.listen(substitutedPort, "127.0.0.1", resolvePromise);
+    });
+    await new Promise((resolvePromise) => substitutedReservation.close(resolvePromise));
+
+    const oldToolPackage = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: values.productionReport, productionTarget: values.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const oldToolInstallation = join(values.root, "old-bridge-tool");
+    installProductionReleasePackage(oldToolPackage, oldToolInstallation, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const oldToolHead = join(values.root, "old-bridge-tool-head");
+    advanceProductionHead(oldToolHead, oldToolInstallation, { kind: "node",
+      newPackageHash: oldToolPackage.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address });
+    const oldToolAnchorPath = join(values.root, "old-bridge-tool-anchor.json");
+    writeFileSync(oldToolAnchorPath,
+      `${canonicalJson(exportProductionHeadAnchor(oldToolHead))}\n`);
+    assert.throws(() => createWalletBridgeProductionGuard({
+      moduleUrl: pathToFileURL(join(values.root, readlinkSync(oldToolInstallation),
+        "blockchain/node.mjs")).href,
+      signedReleasePath: signedPath, toolExternalAnchorPath: oldToolAnchorPath,
+      toolHeadStore: oldToolHead, toolInstallationTarget: oldToolInstallation,
+      trustedAddress: values.signer.address, walletExternalAnchorPath: anchorPath,
+      walletHeadStore: head, walletInstallationTarget: installation,
+    }), /release|manifest|artifact|contents/);
+
+    const startupGuard = createWalletBridgeProductionGuard({
+      moduleUrl: pathToFileURL(cli).href, signedReleasePath: signedPath,
+      toolExternalAnchorPath: toolAnchorPath, toolHeadStore: toolHead,
+      toolInstallationTarget: toolInstallation, trustedAddress: values.signer.address,
+      walletExternalAnchorPath: anchorPath, walletHeadStore: head,
+      walletInstallationTarget: installation,
+    });
 
     const generation = join(values.root, readlinkSync(installation));
     const provenancePath = join(generation, "NIR-PRODUCTION.json");
@@ -766,7 +835,8 @@ test("production wallet bridge verifies anchored wallet generation before bind o
     writeFileSync(provenancePath, `${canonicalJson(provenance)}\n`);
     const blockedPort = await unusedPort();
     const blocked = spawnSync(process.execPath, [cli, "--production", installation, head,
-      signedPath, values.signer.address, anchorPath, vault, String(blockedPort), origin],
+      signedPath, values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
+      vault, String(blockedPort), origin],
     { encoding: "utf8" });
     assert.equal(blocked.status, 1); assert.match(blocked.stderr, /Wallet bridge failed/);
     const reservation = createNetServer();
@@ -775,6 +845,8 @@ test("production wallet bridge verifies anchored wallet generation before bind o
       reservation.listen(blockedPort, "127.0.0.1", resolvePromise);
     });
     await new Promise((resolvePromise) => reservation.close(resolvePromise));
+    writeFileSync(cli, "throw new Error('substituted bridge executable');\n");
+    assert.throws(() => startupGuard.verifyBeforeOpen(), /contents differ|artifact/);
   } finally {
     if (child !== null) await stopChild(child);
     rmSync(values.root, { force: true, recursive: true });

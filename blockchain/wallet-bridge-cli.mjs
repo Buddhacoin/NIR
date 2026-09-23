@@ -7,7 +7,7 @@ import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { NirChain } from "./chain.mjs";
-import { createProductionStartupGuard } from "./production-startup.mjs";
+import { createWalletBridgeProductionGuard } from "./production-startup.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -65,18 +65,20 @@ let walletArguments = rawArguments;
 let productionArgumentError = null;
 if (productionMode) {
   const [, installationTarget, headStore, signedReleasePath, trustedAddress, externalAnchorPath,
-    ...remaining] = rawArguments;
+    toolInstallationTarget, toolHeadStore, toolExternalAnchorPath, ...remaining] = rawArguments;
   if (!installationTarget || !headStore || !signedReleasePath || !trustedAddress ||
-      !externalAnchorPath || remaining.length < 1 || remaining.length > 5) {
+      !externalAnchorPath || !toolInstallationTarget || !toolHeadStore ||
+      !toolExternalAnchorPath || remaining.length < 1 || remaining.length > 5) {
     productionArgumentError = new Error(
-      "production wallet bridge requires installation, head, release, signer and wallet arguments",
+      "production wallet bridge requires wallet and tool installations, heads, anchors, release, signer and wallet arguments",
     );
   } else {
     walletArguments = remaining.slice(0, 5);
     try {
-      productionGuard = createProductionStartupGuard({
-        externalAnchorPath, headStore, installationTarget, kind: "wallet",
-        requireInstalledEntrypoint: false, signedReleasePath, trustedAddress,
+      productionGuard = createWalletBridgeProductionGuard({
+        moduleUrl: import.meta.url, signedReleasePath, toolExternalAnchorPath, toolHeadStore,
+        toolInstallationTarget, trustedAddress, walletExternalAnchorPath: externalAnchorPath,
+        walletHeadStore: headStore, walletInstallationTarget: installationTarget,
       });
     } catch (error) { productionArgumentError = error; }
   }
