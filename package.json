@@ -28,6 +28,7 @@
     "wallet:release-transparency": "node blockchain/production-wallet-transparency-cli.mjs",
     "wallet:runtime-policy": "node blockchain/production-runtime-policy-cli.mjs",
     "beacon:serve": "node blockchain/beacon-service.mjs",
+    "launch-evidence:sidecar": "node blockchain/launch-evidence-sidecar-cli.mjs",
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "progress-beacon:aggregate": "node blockchain/beacon-aggregate.mjs progress",
     "node:init-dev": "node blockchain/node-cli.mjs init-dev",

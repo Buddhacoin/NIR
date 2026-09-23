@@ -138,6 +138,14 @@ test("operator sidecar signs only the configured receipt challenge", async (t) =
   assert.equal(metrics.accepted, 2);
 });
 
+test("operator sidecar CLI refuses startup without an inherited password descriptor", () => {
+  const result = spawnSync(process.execPath, ["blockchain/launch-evidence-sidecar-cli.mjs"], {
+    cwd: process.cwd(), encoding: "utf8", env: { ...process.env },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /launch evidence sidecar failed to start/);
+});
+
 test("declared-only, duplicate, forged, mixed, stale, and replayed evidence fail closed", async (t) => {
   const values = await fixture(t);
   const evidence = await collectMultiHostLaunchEvidence(values.plan, values.receipts, {

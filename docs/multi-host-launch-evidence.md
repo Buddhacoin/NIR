@@ -59,6 +59,26 @@ the plan; keep its local listener private. The sidecar proves key control for
 the configured receipt, not physical co-location with the validator, beacon or
 archive process.
 
+Start it with the operator CLI. `PLAN` and `RECEIPT` must be canonical JSON,
+single-link files that are not writable by group or others. `VAULT` must be a
+single-link, owner-only `0600` encrypted vault. The secret itself is never an
+argument or environment value: the environment contains only the number of an
+already inherited restricted file descriptor. The listener is deliberately
+fixed to `127.0.0.1`; the operator's existing HTTPS proxy is responsible for
+the public origin in the plan.
+
+```sh
+NIR_LAUNCH_EVIDENCE_PASSWORD_FD=3 \
+  node blockchain/launch-evidence-sidecar-cli.mjs \
+  plan.json host-receipt.json operator-vault.json 8797 3< /secure/password-fd
+```
+
+The password descriptor is consumed and closed at startup, and the CLI clears
+its in-memory password buffer immediately after decrypting the vault. The
+optional `--allow-insecure-localhost` mode exists solely for local fixtures;
+never use it for a public operator. The endpoint has no general signing route:
+it will answer only challenges bound to that one plan and receipt.
+
 ## PASS contract
 
 A package passes only when all of these hold:
