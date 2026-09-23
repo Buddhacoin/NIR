@@ -31,6 +31,10 @@ test("round-one blocks require a quorum timeout certificate", () => {
     const certificate = wallets.slice(0, 3).map((wallet) => timeoutForRound(timeoutFields, wallet));
     const block = chain.buildBlock({ timestamp: 1, round: 1, roundCertificate: certificate });
     assert.equal(blockHash(block), blockHash(value));
+    assert.equal(block.stateRoot, value.stateRoot);
+    assert.equal(block.accountStateRoot, value.accountStateRoot);
+    assert.equal(block.capabilityMemoryRoot, value.capabilityMemoryRoot);
+    assert.notEqual(block.stateRoot, "0".repeat(64));
     const proposer = wallets.find(({ address }) => address === block.proposer);
     const signers = [proposer, ...wallets.filter(({ address }) =>
       address !== block.proposer).slice(0, 2)];

@@ -3014,7 +3014,7 @@ export class NirChain {
       certificate: [],
       hash: blockHash(provisional),
       prepareCertificate: [],
-      proposer,
+      proposer: recovery ? proposer : this.expectedProposer(height, 0),
       round: 0,
       roundCertificate: null,
     };
