@@ -47,15 +47,17 @@ function payload(value) {
     seenGates.add(entry.gate); priorGate = entry.gate;
     return { artifactHash: entry.artifactHash, gate: entry.gate, resultHash: entry.resultHash };
   });
-  const seenReviewers = new Set(); let priorReviewer = null; let operators = 0; let security = 0;
+  const seenReviewers = new Set(); const seenAddresses = new Set(); const seenKeys = new Set();
+  let priorReviewer = null; let operators = 0; let security = 0;
   const reviewers = value.reviewers.map((entry) => {
     exact(entry, ["address", "algorithm", "publicKey", "reviewerId", "role"], "launch reviewer");
     const reviewerId = text(entry.reviewerId, "launch reviewer ID", 96);
     if (entry.algorithm !== SIGNATURE_ALGORITHM || addressFromPublicKey(entry.publicKey ?? "") !== entry.address ||
-        !ROLES.has(entry.role) || seenReviewers.has(reviewerId) || (priorReviewer !== null && reviewerId <= priorReviewer)) {
+        !ROLES.has(entry.role) || seenReviewers.has(reviewerId) || seenAddresses.has(entry.address) ||
+        seenKeys.has(entry.publicKey) || (priorReviewer !== null && reviewerId <= priorReviewer)) {
       throw new Error("launch reviewer is invalid, duplicated, or unordered");
     }
-    seenReviewers.add(reviewerId); priorReviewer = reviewerId;
+    seenReviewers.add(reviewerId); seenAddresses.add(entry.address); seenKeys.add(entry.publicKey); priorReviewer = reviewerId;
     if (entry.role === "operator") operators += 1; else security += 1;
     return { address: entry.address, algorithm: entry.algorithm, publicKey: entry.publicKey,
       reviewerId, role: entry.role };

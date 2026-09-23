@@ -34,6 +34,10 @@ test("launch review binds every gate and every configured reviewer", () => {
 test("launch review rejects missing gates, forged approvals, and stale contexts", () => {
   const values = fixture();
   assert.throws(() => createLaunchReview({ ...values.review, evidence: values.review.evidence.slice(1) }), /membership|evidence/);
+  const reusedKey = structuredClone(values.review);
+  reusedKey.reviewers[1].address = reusedKey.reviewers[0].address;
+  reusedKey.reviewers[1].publicKey = reusedKey.reviewers[0].publicKey;
+  assert.throws(() => createLaunchReview(reusedKey), /duplicated/);
   const partlySigned = signLaunchReview(values.review, values.wallets[0], values.reviewers[0].reviewerId);
   assert.throws(() => verifyLaunchReview(partlySigned, { expectedNetworkId: "nir-public-dev", now: NOW }), /every configured/);
   const forged = structuredClone(partlySigned); forged.approvals[0].signature = "AAAA";
