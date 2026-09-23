@@ -26,26 +26,37 @@ import {
   signResetManifest,
   verifyResetManifest,
 } from "./testnet-reset.mjs";
+import { readRestrictedPasswordFd } from "./operator-secret-input.mjs";
 import { decryptWallet } from "./vault.mjs";
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 
-function readBounded(path, name, maximumBytes) {
+function readBounded(path, name, maximumBytes, { privateFile = false } = {}) {
   if (!path) throw new Error(`${name} file is unsafe or too large`);
+  if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW === 0) {
+    throw new Error(`${name} requires secure no-follow filesystem support`);
+  }
   const before = lstatSync(path);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > maximumBytes) {
+  const uid = process.getuid?.();
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 1 ||
+      before.size > maximumBytes || privateFile && ((before.mode & 0o777) !== 0o600 ||
+      uid !== undefined && before.uid !== uid) || !privateFile && (before.mode & 0o022) !== 0) {
     throw new Error(`${name} file is unsafe or too large`);
   }
   let descriptor;
   try {
     descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
-        opened.size !== before.size) throw new Error(`${name} file changed during open`);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev ||
+        opened.ino !== before.ino || opened.size !== before.size) {
+      throw new Error(`${name} file changed during open`);
+    }
     const contents = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+    const after = fstatSync(descriptor); const linked = lstatSync(path);
+    if (contents.length !== opened.size || after.size !== opened.size ||
+        after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs ||
+        linked.dev !== opened.dev || linked.ino !== opened.ino) {
       throw new Error(`${name} file changed during read`);
     }
     return contents;
@@ -54,8 +65,8 @@ function readBounded(path, name, maximumBytes) {
   }
 }
 
-function readJson(path, name) {
-  return parseConsensusJson(readBounded(path, name, MAX_JSON_BYTES).toString("utf8"));
+function readJson(path, name, options = {}) {
+  return parseConsensusJson(readBounded(path, name, MAX_JSON_BYTES, options).toString("utf8"));
 }
 
 function exactRequest(value) {
@@ -68,6 +79,16 @@ function exactRequest(value) {
 }
 
 function readSecret(prompt) {
+  const inheritedText = process.env.NIR_TESTNET_RESET_PASSWORD_FD;
+  if (inheritedText !== undefined) {
+    delete process.env.NIR_TESTNET_RESET_PASSWORD_FD;
+    const descriptor = Number(inheritedText);
+    if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 255) {
+      return Promise.reject(new Error("reset password descriptor is invalid"));
+    }
+    try { return Promise.resolve(readRestrictedPasswordFd(descriptor, "reset validator vault")); }
+    finally { closeSync(descriptor); }
+  }
   return new Promise((resolveSecret, reject) => {
     if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
       reject(new Error("secure password entry requires an interactive terminal")); return;
@@ -77,7 +98,7 @@ function readSecret(prompt) {
     const finish = (error) => {
       process.stdin.off("data", onData); process.stdin.setRawMode(false);
       process.stdin.pause(); process.stdout.write("\n");
-      error ? reject(error) : resolveSecret(value);
+      error ? reject(error) : resolveSecret(Buffer.from(value, "utf8"));
     };
     const onData = (chunk) => {
       for (const character of chunk.toString("utf8")) {
@@ -148,15 +169,16 @@ try {
         manifest.oldNetworkId !== oldIdentity.networkId) {
       throw new Error("reset manifest does not match the trusted old genesis");
     }
-    const password = await readSecret("Validator vault password: ");
-    const wallet = decryptWallet(readJson(vaultPath, "validator vault"), password);
+    const password = await readSecret("Validator vault password: "); let wallet;
     try {
+      wallet = decryptWallet(readJson(vaultPath, "validator vault", { privateFile: true }),
+        password.toString("utf8"));
       console.log(JSON.stringify(signResetManifest(manifest, wallet, {
         handoffs,
         oldGenesis,
       }), null, 2));
     } finally {
-      wallet.privateKey = "";
+      password.fill(0); if (wallet) wallet.privateKey = "";
     }
   } else if ((command === "verify" || command === "drill") &&
       args.length === (command === "verify" ? 5 : 6)) {

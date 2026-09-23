@@ -77,6 +77,22 @@ npm run testnet:reset -- sign \
   reset-plan-2.json validator-3.nir > reset-signed.json
 ```
 
+For a non-interactive operator, pass the encrypted vault password through an
+inherited restricted file descriptor rather than a command argument or an
+environment value. The environment variable carries only the descriptor
+number; the CLI consumes and closes it before signing:
+
+```sh
+NIR_TESTNET_RESET_PASSWORD_FD=3 npm run testnet:reset -- sign \
+  old-genesis.json validator-handoffs.json reset-manifest.json validator-vault.json \
+  3< /secure/password-fd
+```
+
+The validator vault must be a single-link owner-only `0600` file. Other input
+artifacts must be single-link files not writable by group or others. The reset
+tool only creates a non-destructive drill directory; it never deletes or
+replaces a running network.
+
 The signer must independently inspect the old and new genesis files, incident
 report hash, activation time, reason, and previous approvals before entering a
 vault password. Shell redirection must target a new file, never an input file.
