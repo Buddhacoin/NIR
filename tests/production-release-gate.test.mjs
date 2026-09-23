@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createServer as createNetServer } from "node:net";
 import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readlinkSync, readdirSync, renameSync, rmSync, symlinkSync, truncateSync,
-  writeFileSync } from "node:fs";
+  unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { evaluateDeveloperTestnetProductionPreflight } from "../blockchain/developer-testnet-production-preflight.mjs";
@@ -23,6 +25,8 @@ import { artifactPaths, createReleaseArtifact, installNodeArtifact,
 import { createReleaseManifest, readReleaseSourceFile,
   signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition-drill.mjs";
+import { createWalletFile } from "../blockchain/wallet-files.mjs";
+import { createProductionStartupGuard } from "../blockchain/production-startup.mjs";
 import {
   advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
   repairProductionHeadCopies, verifyProductionStartupFromHead,
@@ -125,6 +129,37 @@ function releaseVariant(values, version, suffix) {
     productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
     signedRelease, trustedAddress: values.signer.address });
   return { artifact, manifest, packageValue, signedRelease, ...evidence };
+}
+
+async function unusedPort() {
+  const server = createNetServer();
+  await new Promise((resolvePromise, reject) => {
+    server.once("error", reject); server.listen(0, "127.0.0.1", resolvePromise);
+  });
+  const port = server.address().port;
+  await new Promise((resolvePromise) => server.close(resolvePromise));
+  return port;
+}
+
+async function waitForOutput(child, pattern) {
+  let output = ""; let errors = "";
+  return new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error(`startup timeout: ${output} ${errors}`)), 8_000);
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (pattern.test(output)) { clearTimeout(timer); resolvePromise(output); }
+    });
+    child.stderr.on("data", (chunk) => { errors += chunk; });
+    child.once("exit", (code) => {
+      clearTimeout(timer); reject(new Error(`startup exited ${code}: ${errors}`));
+    });
+  });
+}
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+  const exited = new Promise((resolvePromise) => child.once("exit", resolvePromise));
+  child.kill("SIGTERM"); await exited;
 }
 
 test("production package is bound to exact signed release, network, genesis and finalized tip", () => {
@@ -635,4 +670,113 @@ test("production head rejects divergent copies, replay, symlink roots and determ
     assert.equal(readFileSync(join(swapRoot, "foreign"), "utf8"), "preserve\n");
     assert.equal(existsSync(join(swapRoot, "HEAD.primary.json")), false);
   } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production node guard self-binds active generation and entrypoint refuses to open a port on failure", async () => {
+  const values = fixture();
+  try {
+    const packageValue = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: values.productionReport, productionTarget: values.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const target = join(values.root, "guarded-node");
+    installProductionReleasePackage(packageValue, target, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const head = join(values.root, "guarded-head");
+    advanceProductionHead(head, target, { kind: "node", newPackageHash: packageValue.packageHash,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const anchorPath = join(values.root, "guarded-head-anchor.json");
+    writeFileSync(anchorPath, `${canonicalJson(exportProductionHeadAnchor(head))}\n`);
+    const signedPath = join(values.root, "guarded-signed.json");
+    writeFileSync(signedPath, `${JSON.stringify(values.signedRelease, null, 2)}\n`);
+    const generation = join(values.root, readlinkSync(target));
+    assert.throws(() => createProductionStartupGuard({ headStore: head,
+      installationTarget: target,
+      kind: "node", moduleUrl: pathToFileURL(join(generation, "blockchain/node.mjs")).href,
+      signedReleasePath: signedPath, trustedAddress: values.signer.address }), /external monotonic anchor/);
+    const guard = createProductionStartupGuard({ externalAnchorPath: anchorPath,
+      headStore: head, installationTarget: target,
+      kind: "node", moduleUrl: pathToFileURL(join(generation, "blockchain/node.mjs")).href,
+      signedReleasePath: signedPath, trustedAddress: values.signer.address });
+    assert.equal(guard.initial.packageHash, packageValue.packageHash);
+    assert.equal(guard.verifyBeforeOpen().packageHash, packageValue.packageHash);
+    unlinkSync(target); symlinkSync("invalid-generation", target, "dir");
+    assert.throws(() => guard.verifyBeforeOpen(), /activation|ENOENT/);
+
+    const port = await unusedPort();
+    const nodeCli = new URL("../blockchain/node-cli.mjs", import.meta.url).pathname;
+    const failed = spawnSync(process.execPath, [nodeCli, "serve-production", target, head,
+      signedPath, values.signer.address, join(values.root, "runtime"), String(port), "127.0.0.1",
+      anchorPath],
+    { encoding: "utf8" });
+    assert.equal(failed.status, 1); assert.match(failed.stderr, /Node operation failed/);
+    const reservation = createNetServer();
+    await new Promise((resolvePromise, reject) => {
+      reservation.once("error", reject); reservation.listen(port, "127.0.0.1", resolvePromise);
+    });
+    await new Promise((resolvePromise) => reservation.close(resolvePromise));
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production wallet bridge verifies anchored wallet generation before bind on every restart", async () => {
+  const values = fixture(); let child = null;
+  try {
+    mkdirSync(join(values.root, "wallet-ui"));
+    writeFileSync(join(values.root, "wallet-ui/app.js"), "export const wallet = true;\n");
+    const paths = ["blockchain/node.mjs", "package.json", "wallet-ui/app.js"];
+    const manifest = createReleaseManifest(values.root, paths, {
+      releaseVersion: "2.0.0", sourceRevision: values.manifest.sourceRevision,
+    });
+    const signedRelease = signReleaseManifest(manifest, values.signer);
+    const evidence = productionEvidence(values.root, manifest, "wallet-entrypoint-attestations");
+    const artifact = createReleaseArtifact(values.root, artifactPaths("wallet", paths), {
+      kind: "wallet", sourceManifest: manifest,
+    });
+    const packageValue = createProductionReleasePackage(artifact, { now: NOW,
+      productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
+      signedRelease, trustedAddress: values.signer.address });
+    const installation = join(values.root, "wallet-app");
+    installProductionReleasePackage(packageValue, installation, { kind: "wallet", now: NOW,
+      signedRelease, trustedAddress: values.signer.address });
+    const head = join(values.root, "wallet-head");
+    advanceProductionHead(head, installation, { kind: "wallet",
+      newPackageHash: packageValue.packageHash, signedRelease,
+      trustedAddress: values.signer.address });
+    const anchorPath = join(values.root, "wallet-head-anchor.json");
+    writeFileSync(anchorPath, `${canonicalJson(exportProductionHeadAnchor(head))}\n`);
+    const signedPath = join(values.root, "wallet-signed.json");
+    writeFileSync(signedPath, `${JSON.stringify(signedRelease, null, 2)}\n`);
+    const vault = join(values.root, "wallet.nir");
+    createWalletFile({ path: vault, password: "production-wallet-password" });
+    const cli = new URL("../blockchain/wallet-bridge-cli.mjs", import.meta.url).pathname;
+    const origin = "http://127.0.0.1:8765";
+    for (let restart = 0; restart < 2; restart += 1) {
+      const port = await unusedPort();
+      child = spawn(process.execPath, [cli, "--production", installation, head, signedPath,
+        values.signer.address, anchorPath, vault, String(port), origin],
+      { stdio: ["ignore", "pipe", "pipe"] });
+      await waitForOutput(child, /Listening only/);
+      assert.equal(await fetch(`http://127.0.0.1:${port}/v1/wallet`).then((response) => response.status), 403);
+      await stopChild(child); child = null;
+    }
+
+    const generation = join(values.root, readlinkSync(installation));
+    const provenancePath = join(generation, "NIR-PRODUCTION.json");
+    const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
+    provenance.packageHash = "f".repeat(64);
+    writeFileSync(provenancePath, `${canonicalJson(provenance)}\n`);
+    const blockedPort = await unusedPort();
+    const blocked = spawnSync(process.execPath, [cli, "--production", installation, head,
+      signedPath, values.signer.address, anchorPath, vault, String(blockedPort), origin],
+    { encoding: "utf8" });
+    assert.equal(blocked.status, 1); assert.match(blocked.stderr, /Wallet bridge failed/);
+    const reservation = createNetServer();
+    await new Promise((resolvePromise, reject) => {
+      reservation.once("error", reject);
+      reservation.listen(blockedPort, "127.0.0.1", resolvePromise);
+    });
+    await new Promise((resolvePromise) => reservation.close(resolvePromise));
+  } finally {
+    if (child !== null) await stopChild(child);
+    rmSync(values.root, { force: true, recursive: true });
+  }
 });

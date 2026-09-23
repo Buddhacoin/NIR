@@ -17,8 +17,9 @@ import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { createNodeHttpServer } from "./node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "./node-store.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
+import { createProductionStartupGuard } from "./production-startup.mjs";
 
-const [command, directory, parameter = "", extra = ""] = process.argv.slice(2);
+const [command, directory, parameter = "", extra = "", ...remaining] = process.argv.slice(2);
 
 function readBoundedJson(path, maximumBytes = MAX_SNAPSHOT_BYTES) {
   if (statSync(path).size > maximumBytes) throw new Error("input JSON is too large");
@@ -63,6 +64,33 @@ try {
     server.listen(port, host, () => {
       console.log(`NIR ${node.networkId} node listening on http://${host}:${port} at height ${node.height}`);
     });
+  } else if (command === "serve-production" && directory && parameter && extra &&
+      remaining.length === 5) {
+    const installationTarget = directory; const headStore = parameter;
+    const signedReleasePath = extra;
+    const [trustedAddress, runtimeDirectory, portText, host, externalAnchorPath] = remaining;
+    const port = Number(portText);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || !host) {
+      throw new Error("invalid production node listener");
+    }
+    const guard = createProductionStartupGuard({ externalAnchorPath, headStore,
+      installationTarget, kind: "node", moduleUrl: import.meta.url, signedReleasePath,
+      trustedAddress });
+    const releaseLock = acquireDataDirectoryLock(runtimeDirectory); let server;
+    try {
+      const node = new PersistentDevNode(runtimeDirectory);
+      server = createNodeHttpServer(node);
+      guard.verifyBeforeOpen();
+      process.once("exit", releaseLock);
+      const shutdown = () => server.close(() => { releaseLock(); process.exit(0); });
+      process.once("SIGINT", shutdown); process.once("SIGTERM", shutdown);
+      server.listen(port, host, () => {
+        console.log(`NIR production package ${guard.initial.packageHash} listening on http://${host}:${port}`);
+      });
+    } catch (error) {
+      if (server?.listening) server.close();
+      releaseLock(); throw error;
+    }
   } else if (command === "backup" && directory && parameter) {
     const genesis = JSON.parse(readFileSync(join(directory, "genesis.json"), "utf8"));
     console.log(JSON.stringify(exportBlockStoreBackup(directory, parameter, genesis), null, 2));
@@ -102,7 +130,7 @@ try {
     });
     console.log(JSON.stringify(result, null, 2));
   } else {
-    throw new Error("usage: node:init-dev <new-directory> | node:serve <directory> [port] [host] | node:backup <directory> <new-backup-directory> | node:verify-backup <backup-directory> | snapshot-install <directory> <snapshot.json> [handoffs.json] | prune-plan|prune-stage|prune-verify|prune-finalize <directory> [handoffs.json]");
+    throw new Error("usage: node:init-dev <new-directory> | node:serve <directory> [port] [host] | node:serve-production <installation> <head-store> <signed-release> <trusted-address> <runtime-directory> <port> <host> <external-anchor> | node:backup <directory> <new-backup-directory> | node:verify-backup <backup-directory> | snapshot-install <directory> <snapshot.json> [handoffs.json] | prune-plan|prune-stage|prune-verify|prune-finalize <directory> [handoffs.json]");
   }
 } catch (error) {
   console.error(`Node operation failed: ${error.message}`);

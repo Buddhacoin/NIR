@@ -302,6 +302,51 @@ an externally retained anchor, replacing both copies with the same older valid
 prefix is indistinguishable from a legitimate older state. Keep exported anchors
 outside the node and update them only after independently confirming the new head.
 
+### Production startup entrypoints
+
+Developer/testnet commands remain unchanged. Production mode is explicit and runs
+the supervisor-head verification before opening a listener or wallet bridge. The
+node entrypoint also proves that its currently executing module is physically under
+the exact active generation it just verified; invoking a source-checkout CLI while
+pointing it at some other valid installation fails closed. Both production entrypoints
+require an externally retained monotonic head anchor; there is no local-only fallback.
+
+Run the installed node script (or its installed package script), not the checkout:
+
+```bash
+npm --prefix /absolute/path/to/active-node run node:serve-production -- \
+  /absolute/path/to/active-node /secure/operator/production-head \
+  signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /secure/operator/runtime-data 8787 127.0.0.1 \
+  /separate/offline/location/production-head-anchor.json
+```
+
+The first verification happens before the runtime/data-directory object is opened.
+A second verification runs immediately before `listen()`, closing the activation or
+head swap window. Missing or rolled-back heads, a stale external anchor, mixed
+network/genesis/kind, modified installed bytes, replaced activation links, and an
+entrypoint outside the active generation all exit nonzero before binding the port.
+
+The wallet bridge uses the separately anchored wallet/UI generation and preserves
+the existing bridge origin, pairing, session and confirmation rules:
+
+```bash
+npm run wallet:bridge-production -- \
+  /absolute/path/to/active-wallet /secure/operator/wallet-production-head \
+  wallet-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /separate/offline/location/wallet-head-anchor.json \
+  /secure/operator/wallet.nir 8788 http://127.0.0.1:8765 \
+  genesis.json validator-handoffs.json
+```
+
+It verifies once before reading wallet/public trust configuration and again directly
+before `listen()`. An unauthenticated browser request still receives `403`; production
+provenance does not weaken origin or session authentication. Operators should run
+the bridge executable from a separately verified production node/tool installation;
+the wallet head authenticates the wallet application generation, not the host Node.js
+binary. Neither entrypoint automatically switches generations, updates an anchor,
+or performs deployment.
+
 ## Build the browser extension ZIP
 
 The extension recipe uses the same signed source release and produces an

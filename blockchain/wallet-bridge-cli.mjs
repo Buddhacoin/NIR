@@ -7,6 +7,7 @@ import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { NirChain } from "./chain.mjs";
+import { createProductionStartupGuard } from "./production-startup.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -57,9 +58,33 @@ function selectCompatibleHistory(left, right) {
   return longer;
 }
 
+const rawArguments = process.argv.slice(2);
+const productionMode = rawArguments[0] === "--production";
+let productionGuard = null;
+let walletArguments = rawArguments;
+let productionArgumentError = null;
+if (productionMode) {
+  const [, installationTarget, headStore, signedReleasePath, trustedAddress, externalAnchorPath,
+    ...remaining] = rawArguments;
+  if (!installationTarget || !headStore || !signedReleasePath || !trustedAddress ||
+      !externalAnchorPath || remaining.length < 1 || remaining.length > 5) {
+    productionArgumentError = new Error(
+      "production wallet bridge requires installation, head, release, signer and wallet arguments",
+    );
+  } else {
+    walletArguments = remaining.slice(0, 5);
+    try {
+      productionGuard = createProductionStartupGuard({
+        externalAnchorPath, headStore, installationTarget, kind: "wallet",
+        requireInstalledEntrypoint: false, signedReleasePath, trustedAddress,
+      });
+    } catch (error) { productionArgumentError = error; }
+  }
+}
 const [vaultPath, portText = "8788", origin = "http://127.0.0.1:8765", genesisPath, handoffPath] =
-  process.argv.slice(2);
+  walletArguments;
 try {
+  if (productionArgumentError !== null) throw productionArgumentError;
   const port = Number(portText);
   if (!vaultPath || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
     throw new Error("usage: wallet:bridge <vault> [port] [exact-browser-origin] [genesis.json] [validator-handoffs.json]");
@@ -119,6 +144,7 @@ try {
       return readSecret("Wallet password: ");
     },
   });
+  if (productionGuard !== null) productionGuard.verifyBeforeOpen();
   server.listen(port, "127.0.0.1", () => {
     console.log(`NIR wallet bridge for ${wallet.address}`);
     console.log(`Listening only on http://127.0.0.1:${port}`);
