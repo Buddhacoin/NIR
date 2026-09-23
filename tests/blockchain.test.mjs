@@ -46,6 +46,7 @@ import {
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
+  INITIAL_EPOCH_REWARD,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_ALLOCATION,
   TREASURY_VESTING_MS,
@@ -123,12 +124,13 @@ function quorumFor(block, validators) {
   ];
 }
 
-function lockProgressBond(chain, validators, candidateOwner, candidateId, timestamp) {
+function lockProgressBond(chain, validators, candidateOwner, candidateId, timestamp,
+  amount = MIN_PROGRESS_CANDIDATE_BOND) {
   const sponsor = TEST_TREASURY_WALLETS.get(chain);
   const bond = createCandidateBond({
     wallet: sponsor, networkId: chain.networkId, candidateId,
     candidateOwner, purpose: "progress",
-    amount: MIN_PROGRESS_CANDIDATE_BOND.toString(), fee: "0",
+    amount: amount.toString(), fee: "0",
     nonce: chain.nextNonce(sponsor.address),
   });
   const block = chain.buildBlock({ transactions: [bond], timestamp });
@@ -227,6 +229,7 @@ function progressClaim(
   label = "proof-a",
   recipient = submitterWallet.address,
   canonicalContentLabel = `artifact-${label}`,
+  bondAmount = INITIAL_EPOCH_REWARD,
 ) {
   const artifactHash = `sha256:${fingerprint(`artifact-${label}`)}`;
   const contentHash = `sha256:${fingerprint(canonicalContentLabel)}`;
@@ -247,7 +250,7 @@ function progressClaim(
   });
   timestamp = lockProgressBond(
     chain, validators, submitterWallet.address, admission.candidateId,
-    Math.max(timestamp, TREASURY_VESTING_MS),
+    Math.max(timestamp, TREASURY_VESTING_MS), bondAmount,
   );
   const admissionBlock = chain.buildBlock({ transactions: [admission], timestamp });
   chain.appendBlock(finalizeBlock(admissionBlock, quorumFor(admissionBlock, validators)));
@@ -421,6 +424,126 @@ test("a finalized progress block mints its fixed epoch budget", () => {
     chain.capabilityMemoryRoot,
     block.progressRewards[0].evaluation.frontierRootAfter,
   );
+});
+
+test("progress issuance cannot exceed the exact candidate bond at risk", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const claim = progressClaim(
+    chain, evaluators, validators, miner, "under-collateralized", miner.address,
+    "under-collateralized-content", MIN_PROGRESS_CANDIDATE_BOND,
+  );
+  const rootBefore = chain.stateRoot;
+  assert.throws(
+    () => chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) }),
+    /exceeds its locked candidate bond collateral/,
+  );
+  assert.equal(chain.stateRoot, rootBefore);
+});
+
+test("protocol operator keys cannot submit progress or receive its issuance", () => {
+  for (const role of ["evaluator", "validator", "beacon"]) {
+    const context = fixture();
+    const operator = role === "evaluator" ? context.evaluators[0]
+      : role === "validator" ? context.validators[0] : context.beaconAuthorities[0];
+    const ordinary = generateWallet();
+    for (const mode of ["submitter", "recipient"]) {
+      const sender = mode === "submitter" ? operator : ordinary;
+      const recipient = mode === "recipient" ? operator.address : sender.address;
+      const admission = createProgressCommitment({
+        wallet: sender, networkId: context.chain.networkId, recipient,
+        artifactHash: `sha256:${fingerprint(`${role}-${mode}-artifact`)}`,
+        baselineHash: `sha256:${fingerprint("baseline")}`,
+        baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+        contentHash: `sha256:${fingerprint(`${role}-${mode}-content`)}`,
+        suiteCommitment: fingerprint(`${role}-${mode}-suite`), nonce: 0,
+      });
+      lockProgressBond(
+        context.chain, context.validators, sender.address, admission.candidateId,
+        TREASURY_VESTING_MS, INITIAL_EPOCH_REWARD,
+      );
+      const rootBefore = context.chain.stateRoot;
+      const proposal = context.chain.buildBlock({ transactions: [admission],
+        timestamp: currentTimestamp(context.chain) });
+      assert.throws(() => context.chain.appendBlock(finalizeBlock(
+        proposal, quorumFor(proposal, context.validators))), /outside protocol operator roles/);
+      assert.equal(context.chain.stateRoot, rootBefore);
+      assert.equal(context.chain.nextNonce(sender.address), 0);
+    }
+  }
+});
+
+test("same-block validator registration cannot race progress role separation", () => {
+  for (const progressFirst of [true, false]) {
+    const { chain, treasury, validators } = fixture();
+    const operator = generateWallet();
+    const funding = createTransfer({ wallet: treasury, networkId: chain.networkId,
+      recipient: operator.address, amount: (MIN_VALIDATOR_BOND + MIN_TRANSFER_FEE).toString(),
+      nonce: chain.nextNonce(treasury.address) });
+    const fundingBlock = chain.buildBlock({ transactions: [funding], timestamp: TREASURY_VESTING_MS });
+    chain.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
+    const admission = createProgressCommitment({ wallet: operator, networkId: chain.networkId,
+      recipient: operator.address, artifactHash: `sha256:${fingerprint(`race-artifact-${progressFirst}`)}`,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+      contentHash: `sha256:${fingerprint(`race-content-${progressFirst}`)}`,
+      suiteCommitment: fingerprint(`race-suite-${progressFirst}`),
+      nonce: progressFirst ? 0 : 1 });
+    lockProgressBond(chain, validators, operator.address, admission.candidateId,
+      currentTimestamp(chain), INITIAL_EPOCH_REWARD);
+    const validatorBond = createValidatorBond({ wallet: operator, networkId: chain.networkId,
+      amount: MIN_VALIDATOR_BOND.toString(), nonce: progressFirst ? 1 : 0,
+      operatorId: `race-validator-${progressFirst}` });
+    const rootBefore = chain.stateRoot;
+    const proposal = chain.buildBlock({ transactions: progressFirst
+      ? [admission, validatorBond] : [validatorBond, admission], timestamp: currentTimestamp(chain) });
+    assert.throws(() => chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators))),
+      /validator key cannot have a pending progress commitment|outside protocol operator roles/);
+    assert.equal(chain.stateRoot, rootBefore);
+    assert.equal(chain.nextNonce(operator.address), 0);
+  }
+});
+
+test("weak-baseline gain cannot exceed the measured world-frontier delta", () => {
+  const { chain, evaluators, validators } = fixture();
+  const firstMiner = generateWallet();
+  const first = progressClaim(chain, evaluators, validators, firstMiner, "frontier-anchor");
+  const firstBlock = chain.buildBlock({ rewardClaims: [first], timestamp: currentTimestamp(chain) });
+  chain.appendBlock(finalizeBlock(firstBlock, quorumFor(firstBlock, validators)));
+
+  const attacker = generateWallet();
+  const valid = progressClaim(chain, evaluators, validators, attacker, "second-frontier");
+  const assigned = valid.attestations.map(({ evaluator }) =>
+    evaluators.find((wallet) => wallet.address === evaluator));
+  const inflated = createProgressClaim({
+    networkId: chain.networkId, epoch: valid.epoch, recipient: attacker.address,
+    evaluation: { ...valid.evaluation,
+      gainPpm: valid.evaluation.noveltyBps * 100 + 1 },
+    evaluatorWallets: assigned,
+  });
+  assert.throws(() => chain.buildBlock({ rewardClaims: [inflated],
+    timestamp: currentTimestamp(chain, MIN_REWARD_INTERVAL_MS) }), /world-frontier improvement bound/);
+});
+
+test("simultaneous wrappers cannot split one frontier delta into two rewards", () => {
+  const { chain, evaluators, validators } = fixture();
+  const firstOriginal = progressClaim(chain, evaluators, validators, generateWallet(), "split-first");
+  const secondOriginal = progressClaim(chain, evaluators, validators, generateWallet(), "split-second");
+  const targetEpoch = chain.height + 1;
+  const retarget = (claim) => createProgressClaim({ networkId: chain.networkId,
+    epoch: targetEpoch, recipient: claim.recipient,
+    evaluation: { ...claim.evaluation, challengeEpoch: targetEpoch },
+    evaluatorWallets: claim.attestations.map(({ evaluator }) =>
+      evaluators.find((wallet) => wallet.address === evaluator)) });
+  const first = retarget(firstOriginal); const second = retarget(secondOriginal);
+  assert.deepEqual(first.evaluation.capabilitiesBps, second.evaluation.capabilitiesBps);
+  const rootBefore = chain.stateRoot;
+  assert.throws(() => chain.buildBlock({ rewardClaims: [second, first],
+    timestamp: currentTimestamp(chain) }), /no new world-frontier capability/);
+  assert.equal(chain.stateRoot, rootBefore);
+  const accepted = chain.buildBlock({ rewardClaims: [first], timestamp: currentTimestamp(chain) });
+  chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, validators)));
+  assert.equal(accepted.progressRewards.length, 1);
 });
 
 test("free multi-key progress committee grinding is rejected before state transition", () => {

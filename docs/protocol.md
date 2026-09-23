@@ -115,6 +115,14 @@ timeouts also lose the bond. This removes the free multi-key/wrapper sampling
 path but does not make the protocol Sybil-proof: capital can still buy multiple
 samples, and initial mining waits for vested or circulating NIR.
 
+The minimum bond is only an admission floor. A rewarded claim is accepted only
+when its exact allocated reward is no larger than its bound bond; otherwise the
+whole reward block is invalid. A lone claim in the first issuance epoch must
+therefore have 50 NIR locked, while several claims may lock their smaller exact
+allocations. The bond is returned after acceptance, so this is a bounded
+collateral/exposure rule, not proof that a dishonest evaluator quorum will be
+slashed after it approves fabricated measurements.
+
 This removes the block hash and its proposer from committee selection. A
 malicious assigned epoch member can stop progress by withholding its reveal,
 but cannot make consensus accept another subset or alternate seed. Protocol
@@ -326,6 +334,13 @@ cannot increase the epoch budget. A non-empty rewarded block consumes exactly
 issuance epoch. The ten-minute consensus interval still applies between
 rewarded blocks, and the 21 million NIR cap truncates the last budget.
 
+Consensus additionally caps evaluator-reported positive gain at
+`100 × novelty_bps`, where `novelty_bps` is recomputed from the state-rooted
+world-frontier transition. Choosing an old or weak but known baseline therefore
+cannot inflate the score beyond the candidate's measured marginal frontier
+movement. The submitter and reward recipient addresses must not be registered
+validator, beacon, or evaluator keys.
+
 This prevents a submitter from choosing the number of minted coins, but it does
 not make allocation independent of censorship. A proposer or finality cartel
 can omit otherwise valid claims; the claims that remain in the block then split
@@ -356,8 +371,9 @@ grading is not reliable.
 - **Evaluator capture:** random selection, heterogeneous operators, bonds, and
   conflicting-result slashing.
 - **Role capture:** evaluation and block-finality keys belong to disjoint
-  operator registries; production admission must prove that those operators are
-  independently controlled.
+  operator registries, and those exact keys cannot submit a progress candidate
+  or receive its issuance. Distinct keys and operator IDs do not prove that the
+  people or companies controlling them are independent.
 - **Duplicate work:** the canonical content commitment is permanently recorded
   in the capability-memory root, and lineage is fixed before challenge. Exact
   commitment replay under a new key, wrapper or transcript is rejected.

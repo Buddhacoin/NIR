@@ -1027,6 +1027,16 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
     .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
 }
 
+function assertProgressRewardCollateral(rewards, candidateBonds) {
+  for (const reward of rewards) {
+    const bond = candidateBonds.get(reward.evaluation?.candidateId);
+    const amount = parseAtomic(reward.amount, "reward amount");
+    if (!bond || bond.purpose !== "progress" || !bond.admissionBound || amount > bond.bond) {
+      throw new Error("progress reward exceeds its locked candidate bond collateral");
+    }
+  }
+}
+
 function snapshotEntries(value, field) {
   if (!Array.isArray(value)) throw new Error(`${field} snapshot is invalid`);
   const result = new Map();
@@ -1399,12 +1409,18 @@ export class NirChain {
           ))) {
         throw new Error("candidate bond snapshot is invalid");
       }
-      candidateBonds.set(candidateId, {
+      const normalizedCandidate = {
         ...structuredClone(candidate),
         bond: snapshotAtomic(candidate.bond, "candidate bond"),
         randomnessCommits: snapshotEntries(candidate.randomnessCommits, "randomness commits"),
         randomnessReveals: snapshotEntries(candidate.randomnessReveals, "randomness reveals"),
-      });
+      };
+      if (normalizedCandidate.bond === 0n ||
+          (normalizedCandidate.purpose === "progress" &&
+            normalizedCandidate.bond < MIN_PROGRESS_CANDIDATE_BOND)) {
+        throw new Error("candidate bond snapshot amount is invalid");
+      }
+      candidateBonds.set(candidateId, normalizedCandidate);
     }
     const creditStakes = snapshotEntries(state.creditStakes, "credit stakes");
     for (const [address, value] of creditStakes) {
@@ -1521,6 +1537,22 @@ export class NirChain {
     if ([...disabledValidators].some((address) => !registeredMembers.has(address) ||
         (validatorBonds.get(address) ?? 0n) !== 0n)) {
       throw new Error("disabled validator snapshot state is inconsistent");
+    }
+    for (const [candidateId, commitment] of progressCommitments) {
+      const bond = candidateBonds.get(candidateId);
+      if (!bond || bond.purpose !== "progress" || !bond.admissionBound ||
+          bond.candidateOwner !== commitment.sender ||
+          [commitment.sender, commitment.recipient].some((address) =>
+            chain.#evaluators.has(address) || chain.#beaconAuthorities.has(address) ||
+            registeredMembers.has(address))) {
+        throw new Error("progress commitment snapshot role or bond binding is invalid");
+      }
+    }
+    for (const [candidateId, bond] of candidateBonds) {
+      if (bond.purpose === "progress" && bond.admissionBound &&
+          !progressCommitments.has(candidateId)) {
+        throw new Error("bound progress bond snapshot has no commitment");
+      }
     }
     const memory = CapabilityMemory.fromSnapshot(snapshot.capabilityMemory);
     if (memory.stateRoot !== state.capabilityMemoryRoot) {
@@ -1941,6 +1973,9 @@ export class NirChain {
     ) {
       throw new Error("progress claim uses an invalid world frontier transition");
     }
+    if (claim.evaluation.gainPpm > novelty.noveltyBps * 100) {
+      throw new Error("progress gain exceeds its world-frontier improvement bound");
+    }
     const payload = progressReceiptPayload({
       networkId: claim.networkId,
       epoch: claim.epoch,
@@ -2097,6 +2132,7 @@ export class NirChain {
         this.#progressCommitments,
       );
     }
+    assertProgressRewardCollateral(progressRewards, this.#candidateBonds);
     if (!Array.isArray(safetyClaims) || safetyClaims.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
       throw new Error("too many safety settlements in one block");
     }
@@ -2592,7 +2628,7 @@ export class NirChain {
 
   #applyProgressCommitment(
     transaction, nonces, progressCommitments, capabilityMemory, candidateBonds,
-    height, randomnessRound,
+    registeredValidators, height, randomnessRound,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -2614,6 +2650,11 @@ export class NirChain {
     }
     assertAddress(transaction.sender, "progress submitter");
     assertAddress(transaction.recipient, "progress recipient");
+    if ([transaction.sender, transaction.recipient].some((address) =>
+      this.#evaluators.has(address) || this.#beaconAuthorities.has(address) ||
+      registeredValidators.has(address))) {
+      throw new Error("progress submitter and recipient must use keys outside protocol operator roles");
+    }
     const candidateBond = candidateBonds.get(transaction.candidateId);
     if (
       !candidateBond || candidateBond.purpose !== "progress" ||
@@ -2685,8 +2726,12 @@ export class NirChain {
 
   #applyValidatorBond(
     transaction, balances, nonces, validatorBonds, registeredValidators,
-    disabledValidators, proposer,
+    disabledValidators, progressCommitments, proposer,
   ) {
+    if ([...progressCommitments.values()].some(({ sender, recipient }) =>
+      transaction.sender === sender || transaction.sender === recipient)) {
+      throw new Error("validator key cannot have a pending progress commitment");
+    }
     let validator = registeredValidators.get(transaction.sender);
     if (transaction.type !== "validator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
         transaction.networkId !== this.#networkId ||
@@ -3309,6 +3354,7 @@ export class NirChain {
     ) {
       throw new Error("invalid progress reward allocation");
     }
+    assertProgressRewardCollateral(block.progressRewards, this.#candidateBonds);
 
     const accountHistories = new Map([...this.#accountHistories]
       .map(([address, history]) => [address, { ...history }]));
@@ -3427,6 +3473,9 @@ export class NirChain {
       if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
         throw new Error("progress reward has no locked candidate bond");
       }
+      if (amount > bond.bond) {
+        throw new Error("progress reward exceeds its locked candidate bond collateral");
+      }
       balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
       candidateBonds.delete(reward.evaluation.candidateId);
       progressCommitments.delete(reward.evaluation.candidateId);
@@ -3457,13 +3506,14 @@ export class NirChain {
           progressCommitments,
           capabilityMemory,
           candidateBonds,
+          registeredValidators,
           block.height,
           epochRandomness.round,
         );
       } else if (transaction.type === "validator-bond") {
         this.#applyValidatorBond(
           transaction, balances, nonces, validatorBonds, registeredValidators,
-          disabledValidators, block.feeRecipient,
+          disabledValidators, progressCommitments, block.feeRecipient,
         );
       } else if (transaction.type === "validator-equivocation") {
         newlyBurned += this.#applyValidatorEquivocation(
