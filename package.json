@@ -75,6 +75,7 @@
     "release:install-production-update-node": "node blockchain/release-cli.mjs install-production-update-node",
     "release:verify-production-wallet-install": "node blockchain/release-cli.mjs verify-production-wallet-install",
     "release:verify-production-node-install": "node blockchain/release-cli.mjs verify-production-node-install",
+    "release:production-head": "node blockchain/production-head-cli.mjs",
     "release:verify-node-install": "node blockchain/release-cli.mjs verify-node-install",
     "release:inventory-wallet": "node blockchain/release-cli.mjs inventory-wallet",
     "release:inventory-node": "node blockchain/release-cli.mjs inventory-node",

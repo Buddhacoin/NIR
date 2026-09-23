@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync,
-  readdirSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+  readlinkSync, readdirSync, renameSync, rmSync, symlinkSync, truncateSync,
+  writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +23,10 @@ import { artifactPaths, createReleaseArtifact, installNodeArtifact,
 import { createReleaseManifest, readReleaseSourceFile,
   signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition-drill.mjs";
+import {
+  advanceProductionHead, exportProductionHeadAnchor, loadProductionHeadStore,
+  repairProductionHeadCopies, verifyProductionStartupFromHead,
+} from "../blockchain/production-head-store.mjs";
 
 const NOW = 1_000_000;
 const NETWORK = "nir-production-release-gate-testnet";
@@ -104,6 +109,22 @@ function fixture() {
   const evidence = productionEvidence(root, manifest);
   const artifact = createReleaseArtifact(root, artifactPaths("node", paths), { kind: "node", sourceManifest: manifest });
   return { artifact, manifest, root, signedRelease, signer, ...evidence };
+}
+
+function releaseVariant(values, version, suffix) {
+  const paths = ["blockchain/node.mjs", "package.json"];
+  const manifest = createReleaseManifest(values.root, paths, {
+    releaseVersion: version, sourceRevision: values.manifest.sourceRevision,
+  });
+  const signedRelease = signReleaseManifest(manifest, values.signer);
+  const evidence = productionEvidence(values.root, manifest, `attestation-store-${suffix}`);
+  const artifact = createReleaseArtifact(values.root, artifactPaths("node", paths), {
+    kind: "node", sourceManifest: manifest,
+  });
+  const packageValue = createProductionReleasePackage(artifact, { now: NOW,
+    productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
+    signedRelease, trustedAddress: values.signer.address });
+  return { artifact, manifest, packageValue, signedRelease, ...evidence };
 }
 
 test("production package is bound to exact signed release, network, genesis and finalized tip", () => {
@@ -472,5 +493,146 @@ test("production startup rejects developer installs and update requires exact cu
       signedRelease: newerSignedRelease, trustedAddress: values.signer.address,
     }), /trusted startup package/);
     assert.equal(existsSync(wrongHeadTarget), false);
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("monotonic production head survives torn copies and external anchor detects coordinated rollback", () => {
+  const values = fixture(); const store = join(values.root, "production-head");
+  try {
+    const oldPackage = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: values.productionReport, productionTarget: values.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const oldTarget = join(values.root, "head-old");
+    installProductionReleasePackage(oldPackage, oldTarget, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const first = advanceProductionHead(store, oldTarget, { kind: "node",
+      newPackageHash: oldPackage.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address });
+    assert.equal(first.count, 1); assert.equal(first.copiesSynchronized, true);
+    const oldPrimary = readFileSync(join(store, "HEAD.primary.json"));
+    const oldBackup = readFileSync(join(store, "HEAD.backup.json"));
+
+    const newer = releaseVariant(values, "1.2.4", "head-newer");
+    const newerTarget = join(values.root, "head-newer");
+    installProductionReleasePackage(newer.packageValue, newerTarget, { kind: "node", now: NOW,
+      previousInstallation: oldTarget, previousSignedRelease: values.signedRelease,
+      expectedPreviousPackageHash: oldPackage.packageHash,
+      signedRelease: newer.signedRelease, trustedAddress: values.signer.address });
+    const second = advanceProductionHead(store, newerTarget, { kind: "node",
+      expectedPreviousPackageHash: oldPackage.packageHash,
+      newPackageHash: newer.packageValue.packageHash, signedRelease: newer.signedRelease,
+      trustedAddress: values.signer.address });
+    const secondAnchor = exportProductionHeadAnchor(store);
+    const secondPrimary = readFileSync(join(store, "HEAD.primary.json"));
+    const secondBackup = readFileSync(join(store, "HEAD.backup.json"));
+    assert.equal(second.count, 2);
+    assert.equal(verifyProductionStartupFromHead(store, newerTarget, {
+      externalAnchor: secondAnchor, signedRelease: newer.signedRelease,
+      trustedAddress: values.signer.address,
+    }).packageHash, newer.packageValue.packageHash);
+
+    writeFileSync(join(store, "HEAD.primary.json"), oldPrimary);
+    writeFileSync(join(store, "HEAD.backup.json"), oldBackup);
+    assert.equal(loadProductionHeadStore(store).count, 1,
+      "without an external anchor coordinated local rollback is not detectable");
+    assert.throws(() => loadProductionHeadStore(store, { externalAnchor: secondAnchor }),
+      /below|prefix/);
+    writeFileSync(join(store, "HEAD.primary.json"), secondPrimary);
+    writeFileSync(join(store, "HEAD.backup.json"), secondBackup);
+
+    const newest = releaseVariant(values, "1.2.5", "head-newest");
+    const newestTarget = join(values.root, "head-newest");
+    installProductionReleasePackage(newest.packageValue, newestTarget, { kind: "node", now: NOW,
+      previousInstallation: newerTarget, previousSignedRelease: newer.signedRelease,
+      expectedPreviousPackageHash: newer.packageValue.packageHash,
+      signedRelease: newest.signedRelease, trustedAddress: values.signer.address });
+    assert.throws(() => advanceProductionHead(store, newestTarget, { kind: "node",
+      expectedPreviousPackageHash: newer.packageValue.packageHash,
+      newPackageHash: newest.packageValue.packageHash, signedRelease: newest.signedRelease,
+      trustedAddress: values.signer.address,
+      _afterFirstCopy() { throw new Error("simulated crash after first durable copy"); },
+    }), /simulated crash/);
+    const recovered = loadProductionHeadStore(store, { externalAnchor: secondAnchor });
+    assert.equal(recovered.count, 3); assert.equal(recovered.copiesSynchronized, false);
+    assert.equal(verifyProductionStartupFromHead(store, newestTarget, {
+      signedRelease: newest.signedRelease, trustedAddress: values.signer.address,
+    }).packageHash, newest.packageValue.packageHash);
+
+    writeFileSync(join(store, "HEAD.primary.json"), "torn\n");
+    assert.equal(loadProductionHeadStore(store).copiesValid, 1);
+    const repaired = repairProductionHeadCopies(store);
+    assert.equal(repaired.copiesSynchronized, true); assert.equal(repaired.count, 3);
+
+    const signedPath = join(values.root, "newest-signed.json");
+    writeFileSync(signedPath, `${JSON.stringify(newest.signedRelease, null, 2)}\n`);
+    const headCli = new URL("../blockchain/production-head-cli.mjs", import.meta.url).pathname;
+    const startup = spawnSync(process.execPath, [headCli, "startup", store, newestTarget,
+      signedPath, values.signer.address], { encoding: "utf8" });
+    assert.equal(startup.status, 0, startup.stderr);
+    assert.equal(JSON.parse(startup.stdout).packageHash, newest.packageValue.packageHash);
+
+    writeFileSync(join(store, ".writer.lock"), "busy\n", { mode: 0o600 });
+    assert.throws(() => repairProductionHeadCopies(store), /EEXIST/);
+    rmSync(join(store, ".writer.lock"));
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("production head rejects divergent copies, replay, symlink roots and deterministic root swaps", () => {
+  const values = fixture();
+  try {
+    const packageValue = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: values.productionReport, productionTarget: values.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const target = join(values.root, "head-target");
+    installProductionReleasePackage(packageValue, target, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const store = join(values.root, "head-store");
+    advanceProductionHead(store, target, { kind: "node", newPackageHash: packageValue.packageHash,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    assert.throws(() => advanceProductionHead(store, target, { kind: "node",
+      expectedPreviousPackageHash: packageValue.packageHash,
+      newPackageHash: packageValue.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address }), /replay|increase/);
+
+    const racedTarget = join(values.root, "head-raced-target");
+    installProductionReleasePackage(packageValue, racedTarget, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const racedStore = join(values.root, "head-raced-store");
+    assert.throws(() => advanceProductionHead(racedStore, racedTarget, { kind: "node",
+      newPackageHash: packageValue.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address,
+      _afterCandidateVerification() {
+        const generation = join(values.root, readlinkSync(racedTarget));
+        writeFileSync(join(generation, "blockchain/node.mjs"), "tampered-before-head-commit\n");
+      },
+    }), /contents differ/);
+    assert.equal(loadProductionHeadStore(racedStore).count, 0);
+
+    const different = releaseVariant(values, "1.2.4", "divergent");
+    const differentTarget = join(values.root, "different-target");
+    installProductionReleasePackage(different.packageValue, differentTarget, { kind: "node", now: NOW,
+      signedRelease: different.signedRelease, trustedAddress: values.signer.address });
+    const differentStore = join(values.root, "different-store");
+    advanceProductionHead(differentStore, differentTarget, { kind: "node",
+      newPackageHash: different.packageValue.packageHash, signedRelease: different.signedRelease,
+      trustedAddress: values.signer.address });
+    writeFileSync(join(store, "HEAD.primary.json"),
+      readFileSync(join(differentStore, "HEAD.primary.json")));
+    assert.throws(() => loadProductionHeadStore(store), /diverged/);
+
+    const symlinkRoot = join(values.root, "head-link"); symlinkSync("head-store", symlinkRoot, "dir");
+    assert.throws(() => loadProductionHeadStore(symlinkRoot), /unsafe|ELOOP/);
+
+    const swapRoot = join(values.root, "swap-store"); const savedRoot = `${swapRoot}-saved`;
+    assert.throws(() => advanceProductionHead(swapRoot, target, { kind: "node",
+      newPackageHash: packageValue.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address,
+      _beforeCopyRename({ root }) {
+        renameSync(root, savedRoot); mkdirSync(root, { mode: 0o700 });
+        writeFileSync(join(root, "foreign"), "preserve\n");
+      },
+    }), /root changed|writer lock changed|ENOENT/);
+    assert.equal(readFileSync(join(swapRoot, "foreign"), "utf8"), "preserve\n");
+    assert.equal(existsSync(join(swapRoot, "HEAD.primary.json")), false);
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });

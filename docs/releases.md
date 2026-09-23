@@ -256,6 +256,52 @@ This tooling does not stop processes, switch live services, deploy hosts, or del
 the previous generation. Wallet production install, verify, and update commands use
 the corresponding `wallet` names.
 
+### Crash-safe supervisor head
+
+Passing an expected hash by hand on every restart is error-prone. The local
+supervisor anchor records the accepted production package sequence in two private,
+fsync-backed copies. Every append commits to the previous record hash and the exact
+network, genesis, kind, stable version, and package hash. It rejects repeated package
+hashes, non-increasing versions, mixed contexts, stale expected heads, unsafe roots,
+symlinks, and concurrent writers. A candidate generation is fully reverified both
+before and under the writer lock; only then are the backup and primary copies
+advanced. The command never changes the live activation or deletes a generation.
+
+After installing the first fully verified generation:
+
+```bash
+npm run release:production-head -- advance \
+  /secure/operator/production-head node /absolute/path/to/new-node \
+  signed-release.json nir1TRUSTED_RELEASE_ADDRESS - NEW_PACKAGE_HASH
+
+npm run release:production-head -- startup \
+  /secure/operator/production-head /absolute/path/to/new-node \
+  signed-release.json nir1TRUSTED_RELEASE_ADDRESS
+```
+
+For an update, pass the currently anchored package hash instead of `-`, after the
+new generation has been installed and verified. `startup` obtains the expected hash
+from the monotonic head and invokes the complete production installation verifier;
+the supervisor must not start the process unless this command succeeds.
+
+`export-anchor` emits canonical public anchor JSON suitable for offline storage or
+publication. Supplying that file to `startup`, `verify`, `repair`, or `advance`
+requires the local history to contain it as an exact prefix. A newer local history
+is allowed. A torn or invalid copy is tolerated only when the other copy and complete
+hash chain verify; `repair` restores both copies while holding the writer lock.
+
+```bash
+npm run release:production-head -- export-anchor /secure/operator/production-head \
+  > /separate/offline/location/production-head-anchor.json
+npm run release:production-head -- repair /secure/operator/production-head \
+  /separate/offline/location/production-head-anchor.json
+```
+
+Two coordinated local copies are redundancy, not an anti-rollback oracle. Without
+an externally retained anchor, replacing both copies with the same older valid
+prefix is indistinguishable from a legitimate older state. Keep exported anchors
+outside the node and update them only after independently confirming the new head.
+
 ## Build the browser extension ZIP
 
 The extension recipe uses the same signed source release and produces an
