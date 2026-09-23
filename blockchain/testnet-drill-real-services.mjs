@@ -12,12 +12,25 @@ import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { createSignedHistoryArchive, verifySignedHistoryArchive } from "./archive-sync.mjs";
 import { restoreHistoryArchiveFromSources } from "./archive-service.mjs";
 import { createBeaconShareRequest } from "./beacon-request-auth.mjs";
+import { initializeBlockStore } from "./block-store.mjs";
 import { NirChain } from "./chain.mjs";
+import { SAFETY_POLICY_V1_COMMITMENT } from "./constants.mjs";
 import {
   addressFromPublicKey, canonicalJson, generateWallet, publicWallet, verifyObject,
 } from "./crypto.mjs";
 import { requestJson } from "./http-client.mjs";
+import { validateOfflineReleaseBundle } from "./offline-release-bundle.mjs";
+import {
+  validateReleaseTransparencyAnchor, validateReleaseTransparencyCheckpoint,
+} from "./offline-release-governance.mjs";
+import {
+  selectReleaseWitnessView, validateReleaseWitnessSet,
+} from "./offline-release-witness.mjs";
 import { createFallbackBeacon } from "./operators.mjs";
+import {
+  createPeerRegistry, EMPTY_PEER_REGISTRY_HASH, peerRegistryHash,
+} from "./peer-registry.mjs";
+import { verifySignedRelease } from "./release-manifest.mjs";
 import {
   runRealValidatorRecoveryRehearsal, validateRealValidatorRecoveryReport,
 } from "./testnet-drill-real-runtime.mjs";
@@ -28,8 +41,7 @@ const REPOSITORY = resolve(HERE, "..");
 const BEACON_CLI = join(HERE, "beacon-service.mjs");
 const ARCHIVE_CLI = join(HERE, "archive-cli.mjs");
 const LOOPBACK = "127.0.0.1";
-const FORMAT = "nir-real-beacon-archive-rehearsal-v1";
-const RELEASE = /^sha3-256:[0-9a-f]{64}$/;
+const FORMAT = "nir-real-beacon-archive-rehearsal-v2";
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_DISK_BYTES = 96 * 1024 * 1024;
 
@@ -49,6 +61,86 @@ function deadline(promise, milliseconds, label) {
 }
 function writeJson(path, value) {
   writeFileSync(path, `${canonicalJson(value)}\n`, { flag: "wx", mode: 0o600 });
+}
+
+function members(wallets, prefix) {
+  return wallets.map((wallet, index) => ({ ...publicWallet(wallet), operatorId: `${prefix}-${index}` }));
+}
+
+function initializeBoundDevnet(directory, {
+  beaconWallets, firstValidatorPort, networkId,
+}) {
+  if (!Array.isArray(beaconWallets) || beaconWallets.length !== 4) {
+    throw new Error("rehearsal beacon authority set is invalid");
+  }
+  const root = resolve(directory); const coordinatorDirectory = join(root, "coordinator");
+  mkdirSync(join(coordinatorDirectory, "blocks"), { recursive: true, mode: 0o700 });
+  const validators = Array.from({ length: 4 }, generateWallet);
+  const validatorTransports = Array.from({ length: 4 }, generateWallet);
+  const evaluators = Array.from({ length: 4 }, generateWallet);
+  const treasury = generateWallet(); const coordinator = generateWallet();
+  const validatorUrls = validators.map((_, index) =>
+    `http://127.0.0.1:${firstValidatorPort + index}`);
+  const peerRegistry = createPeerRegistry({ activationHeight: 0, epoch: 0, networkId,
+    peers: validators.map((validator, index) => ({ tlsCertificateSha256: null,
+      transport: publicWallet(validatorTransports[index]), url: validatorUrls[index],
+      validatorAddress: validator.address })), previousRegistryHash: EMPTY_PEER_REGISTRY_HASH }, validators);
+  const genesis = { beaconAuthorities: members(beaconWallets, "beacon"),
+    capabilityReferences: [{ artifactHash: `sha256:${"1".repeat(64)}`,
+      behaviorCommitment: "2".repeat(64), capabilitiesBps: { "reasoning-v1": 1 } }],
+    evaluators: members(evaluators, "evaluator"), genesisTimestamp: 0, networkId, peerRegistry,
+    safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT], treasuryAddress: treasury.address,
+    validators: members(validators, "validator") };
+  writeJson(join(coordinatorDirectory, "genesis.json"), genesis);
+  writeJson(join(coordinatorDirectory, "TREASURY-DEV-KEY.json"), treasury);
+  writeJson(join(coordinatorDirectory, "COORDINATOR-KEY.json"), coordinator);
+  initializeBlockStore(coordinatorDirectory, new NirChain(genesis));
+  const validatorDirectories = validators.map((wallet, index) => {
+    const target = join(root, "validators", `validator-${index}`);
+    for (const name of ["blocks", "commits", "prepares", "timeouts", "mempool"]) {
+      mkdirSync(join(target, name), { recursive: true, mode: 0o700 });
+    }
+    writeJson(join(target, "genesis.json"), genesis);
+    writeJson(join(target, "VALIDATOR-KEY.json"), wallet);
+    writeJson(join(target, "AUTHORIZED-COORDINATOR.json"), publicWallet(coordinator));
+    initializeBlockStore(target, new NirChain(genesis));
+    writeJson(join(target, "PEERS.json"), validatorUrls);
+    writeJson(join(target, "PEER-REGISTRY.json"), peerRegistry);
+    writeJson(join(target, "PEER-REGISTRIES.json"), [peerRegistry]);
+    writeJson(join(target, "TRANSPORT-KEY.json"), validatorTransports[index]);
+    return target;
+  });
+  writeJson(join(root, "network.json"), { coordinatorDirectory, networkId,
+    peerRegistryHash: peerRegistryHash(peerRegistry), validatorDirectories, validatorUrls });
+  return { coordinatorDirectory, directory: root, networkId, validatorDirectories, validatorUrls };
+}
+
+function validateReleaseEvidence(value, networkId, observedNow) {
+  exact(value, ["anchor", "bundle", "checkpoint", "maxAgeMs", "maxFutureSkewMs",
+    "signedRelease", "trustedAddress", "witnessReceipts", "witnessSet"], "release evidence");
+  if (!Number.isSafeInteger(observedNow) || observedNow < 0 ||
+      !Number.isSafeInteger(value.maxAgeMs) || value.maxAgeMs < 1 || value.maxAgeMs > 86_400_000 ||
+      !Number.isSafeInteger(value.maxFutureSkewMs) || value.maxFutureSkewMs < 0 ||
+      value.maxFutureSkewMs > 300_000) {
+    throw new Error("release evidence time policy is invalid");
+  }
+  const signed = verifySignedRelease(value.signedRelease, { trustedAddress: value.trustedAddress });
+  const bundle = validateOfflineReleaseBundle(value.bundle);
+  const anchor = validateReleaseTransparencyAnchor(value.anchor);
+  const checkpoint = validateReleaseTransparencyCheckpoint(value.checkpoint, anchor);
+  const witnessSet = validateReleaseWitnessSet(value.witnessSet);
+  const selection = selectReleaseWitnessView(value.witnessReceipts, { anchor,
+    maxAgeMs: value.maxAgeMs, maxFutureSkewMs: value.maxFutureSkewMs, now: observedNow,
+    sequence: checkpoint.sequence, witnessSet });
+  if (anchor.networkId !== networkId || checkpoint.networkId !== networkId ||
+      bundle.manifest.networkId !== networkId || checkpoint.lastBundleHash !== bundle.bundleHash ||
+      selection.checkpointHash !== checkpoint.checkpointHash || selection.entryHash !== checkpoint.entryHash ||
+      bundle.manifest.releaseVersion !== signed.manifest.releaseVersion ||
+      bundle.manifest.sourceRevision !== signed.manifest.sourceRevision) {
+    throw new Error("release evidence is not one exact witnessed release view");
+  }
+  return { anchor, bundle, checkpoint, manifest: signed.manifest, selection,
+    signer: signed.signer, witnessSet };
 }
 
 async function reservePorts(count) {
@@ -171,7 +263,8 @@ async function beaconShare(url, fields, requester, options = {}) {
 }
 
 function verifyBeaconShares(authorities, shares, context) {
-  if (!Array.isArray(authorities) || authorities.length !== 3 || !Array.isArray(shares)) {
+  if (!Array.isArray(authorities) || authorities.length < 4 || authorities.length > 64 ||
+      !Array.isArray(shares) || shares.length > authorities.length) {
     throw new Error("beacon quorum input is invalid");
   }
   const trusted = new Map(authorities.map((authority) => [authority.address, authority]));
@@ -204,12 +297,12 @@ function chainFromValidatorReport(report) {
   return chain;
 }
 
-function servicePayload(fields) { return { ...fields, format: FORMAT, version: 1 }; }
+function servicePayload(fields) { return { ...fields, format: FORMAT, version: 2 }; }
 
-export function validateRealBeaconArchiveReport(value) {
-  exact(value, ["archive", "beacon", "completedAt", "format", "networkId", "releaseCheckpointHash",
+export function validateRealBeaconArchiveReport(value, { now = Date.now() } = {}) {
+  exact(value, ["archive", "beacon", "completedAt", "format", "networkId", "releaseEvidence",
     "startedAt", "transcriptHash", "validator", "version"], "real service rehearsal report");
-  if (value.format !== FORMAT || value.version !== 1 || !RELEASE.test(value.releaseCheckpointHash ?? "") ||
+  if (value.format !== FORMAT || value.version !== 2 ||
       !Number.isSafeInteger(value.startedAt) || !Number.isSafeInteger(value.completedAt) ||
       value.completedAt < value.startedAt || value.completedAt - value.startedAt > 90_000) {
     throw new Error("real service rehearsal report header is invalid");
@@ -218,26 +311,36 @@ export function validateRealBeaconArchiveReport(value) {
   if (value.transcriptHash !== digest(unsigned)) throw new Error("real service transcript was mutated");
   exact(value.validator, ["report", "validation"], "validator rehearsal binding");
   const validator = validateRealValidatorRecoveryReport(value.validator.report);
+  const release = validateReleaseEvidence(value.releaseEvidence, value.networkId, now);
   if (canonicalJson(validator) !== canonicalJson(value.validator.validation) ||
       validator.transcriptHash !== value.validator.validation.transcriptHash ||
       validator.tipHash !== value.validator.validation.tipHash ||
       validator.tipHash !== value.beacon.validatorTip || value.networkId !== value.validator.report.networkId ||
-      value.releaseCheckpointHash !== value.beacon.releaseCheckpointHash) {
+      release.checkpoint.checkpointHash !== value.beacon.releaseCheckpointHash ||
+      release.manifest.manifestHash !== value.beacon.releaseManifestHash) {
     throw new Error("service transcript is not bound to the validator or release checkpoint");
   }
   const chain = chainFromValidatorReport(value.validator.report);
   exact(value.beacon, ["aggregate", "authorities", "candidateId", "firstShares",
     "outageCandidateId", "outageQuorumRejected", "recoveryShares", "releaseCheckpointHash",
-    "replayRejected", "replayStatus", "restartReplayRejected", "restartStableShare",
+    "releaseManifestHash", "replayRejected", "replayStatus", "restartReplayRejected", "restartStableShare",
     "validatorTip"], "real beacon evidence");
+  if (canonicalJson(value.beacon.authorities) !==
+      canonicalJson(value.validator.report.genesis.beaconAuthorities)) {
+    throw new Error("beacon authorities are not the on-chain genesis registry");
+  }
   const expectedCandidate = digest({ networkId: value.networkId, purpose: "initial",
-    releaseCheckpointHash: value.releaseCheckpointHash, validatorTip: chain.tipHash });
+    releaseCheckpointHash: release.checkpoint.checkpointHash,
+    releaseManifestHash: release.manifest.manifestHash, validatorTip: chain.tipHash });
   const expectedOutage = digest({ networkId: value.networkId, purpose: "outage-recovery",
-    releaseCheckpointHash: value.releaseCheckpointHash, validatorTip: chain.tipHash });
+    releaseCheckpointHash: release.checkpoint.checkpointHash,
+    releaseManifestHash: release.manifest.manifestHash, validatorTip: chain.tipHash });
   if (value.beacon.candidateId !== expectedCandidate || value.beacon.outageCandidateId !== expectedOutage ||
       !value.beacon.outageQuorumRejected || !value.beacon.replayRejected ||
       !value.beacon.restartReplayRejected || value.beacon.replayStatus !== 409 ||
-      canonicalJson(value.beacon.restartStableShare) !== canonicalJson(value.beacon.firstShares[2])) {
+      canonicalJson(value.beacon.restartStableShare) !== canonicalJson(value.beacon.firstShares[2]) ||
+      value.beacon.releaseCheckpointHash !== release.checkpoint.checkpointHash ||
+      value.beacon.releaseManifestHash !== release.manifest.manifestHash) {
     throw new Error("beacon restart or fail-closed evidence is invalid");
   }
   verifyBeaconShares(value.beacon.authorities, value.beacon.firstShares, {
@@ -271,13 +374,13 @@ export function validateRealBeaconArchiveReport(value) {
   }
   return { archiveRecovery: true, beaconQuorumRecovery: true, format: FORMAT,
     harnessStatus: "PASS", networkId: value.networkId, scenarioStatus: "PASS",
-    transcriptHash: value.transcriptHash, validatorTip: chain.tipHash, version: 1 };
+    releaseCheckpointHash: release.checkpoint.checkpointHash,
+    transcriptHash: value.transcriptHash, validatorTip: chain.tipHash, version: 2 };
 }
 
-export async function runRealBeaconArchiveRehearsal({ releaseCheckpointHash, ...options } = {}) {
-  if (!RELEASE.test(releaseCheckpointHash ?? "")) {
-    throw new Error("a concrete release checkpoint hash is required");
-  }
+export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...options } = {}) {
+  const networkId = "nir-real-recovery-devnet";
+  const verifiedRelease = validateReleaseEvidence(releaseEvidence, networkId, Date.now());
   const limits = { maxOutputBytes: options.maxOutputBytes ?? MAX_OUTPUT_BYTES,
     requestTimeoutMs: options.requestTimeoutMs ?? 2_000,
     shutdownTimeoutMs: options.shutdownTimeoutMs ?? 750,
@@ -288,17 +391,20 @@ export async function runRealBeaconArchiveRehearsal({ releaseCheckpointHash, ...
       throw new Error(`real service rehearsal ${name} is invalid`);
     }
   }
-  const validator = await runRealValidatorRecoveryRehearsal(options.validator ?? {});
+  const beaconWallets = Array.from({ length: 4 }, generateWallet);
+  const validator = await runRealValidatorRecoveryRehearsal({ ...(options.validator ?? {}),
+    _networkInitializer: (directory, initializerOptions) => initializeBoundDevnet(directory, {
+      ...initializerOptions, beaconWallets,
+    }) });
   const chain = chainFromValidatorReport(validator.report);
   const root = mkdtempSync(join(tmpdir(), "nir-real-services-"));
   const records = []; let reservations = [];
   let failure; let result;
   try {
-    reservations = await reservePorts(5);
+    reservations = await reservePorts(6);
     const startedAt = Date.now();
     const requester = generateWallet();
-    const beaconWallets = Array.from({ length: 3 }, generateWallet);
-    const authorities = beaconWallets.map(publicWallet);
+    const authorities = structuredClone(validator.report.genesis.beaconAuthorities);
     const beaconConfigs = beaconWallets.map((wallet, index) => {
       const password = `beacon-rehearsal-${index}-Strong-42`;
       const vaultPath = join(root, `beacon-${index}.nirvault.json`);
@@ -327,9 +433,10 @@ export async function runRealBeaconArchiveRehearsal({ releaseCheckpointHash, ...
       throw new Error("injected real beacon crash");
     }
     const candidateId = digest({ networkId: chain.networkId, purpose: "initial",
-      releaseCheckpointHash, validatorTip: chain.tipHash });
+      releaseCheckpointHash: verifiedRelease.checkpoint.checkpointHash,
+      releaseManifestHash: verifiedRelease.manifest.manifestHash, validatorTip: chain.tipHash });
     const firstRequests = []; const firstShares = [];
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       const exchange = await beaconShare(`http://${LOOPBACK}:${beaconConfigs[index].port}`, {
         beaconAddress: beaconWallets[index].address, candidateId, networkId: chain.networkId,
         purpose: "fallback", round: 1,
@@ -342,10 +449,12 @@ export async function runRealBeaconArchiveRehearsal({ releaseCheckpointHash, ...
       body: firstRequests[0], method: "POST", timeoutMs: limits.requestTimeoutMs,
     });
     if (replay.status !== 409) throw new Error("real beacon accepted a replayed request");
-    const stoppedBeacon = records[2];
-    if (!(await stopGroup(stoppedBeacon, limits)).stopped) throw new Error("beacon outage failed");
+    for (const index of [2, 3]) if (!(await stopGroup(records[index], limits)).stopped) {
+      throw new Error("beacon outage failed");
+    }
     const outageCandidateId = digest({ networkId: chain.networkId, purpose: "outage-recovery",
-      releaseCheckpointHash, validatorTip: chain.tipHash });
+      releaseCheckpointHash: verifiedRelease.checkpoint.checkpointHash,
+      releaseManifestHash: verifiedRelease.manifest.manifestHash, validatorTip: chain.tipHash });
     const recoveryShares = [];
     for (let index = 0; index < 2; index += 1) {
       const exchange = await beaconShare(`http://${LOOPBACK}:${beaconConfigs[index].port}`, {
@@ -395,7 +504,7 @@ export async function runRealBeaconArchiveRehearsal({ releaseCheckpointHash, ...
     });
     const archiveRecords = [];
     for (let index = 0; index < 2; index += 1) {
-      const reservationIndex = index + 3;
+      const reservationIndex = index + 4;
       const port = reservations[reservationIndex].address().port;
       await new Promise((resolvePromise) => reservations[reservationIndex].close(resolvePromise));
       const record = startArchive(archivePaths[index], port, limits);
@@ -428,10 +537,13 @@ export async function runRealBeaconArchiveRehearsal({ releaseCheckpointHash, ...
     const fields = servicePayload({ archive: { artifacts, operators: archiveOperators,
       outageQuorumRejected: archiveOutageRejected, recovery },
     beacon: { aggregate, authorities, candidateId, firstShares, outageCandidateId,
-      outageQuorumRejected, recoveryShares, releaseCheckpointHash, replayRejected: true,
+      outageQuorumRejected, recoveryShares,
+      releaseCheckpointHash: verifiedRelease.checkpoint.checkpointHash,
+      releaseManifestHash: verifiedRelease.manifest.manifestHash, replayRejected: true,
       replayStatus: replay.status, restartReplayRejected: true,
       restartStableShare: stableExchange.response.body, validatorTip: chain.tipHash },
-    completedAt: Date.now(), networkId: chain.networkId, releaseCheckpointHash, startedAt,
+    completedAt: Date.now(), networkId: chain.networkId,
+    releaseEvidence: structuredClone(releaseEvidence), startedAt,
     validator: { report: validator.report, validation: validator.validation } });
     const report = { ...fields, transcriptHash: digest(fields) };
     const validation = validateRealBeaconArchiveReport(report);

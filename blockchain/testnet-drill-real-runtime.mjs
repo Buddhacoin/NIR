@@ -299,7 +299,9 @@ export async function runRealValidatorRecoveryRehearsal(options = {}) {
   const records = []; let failure; let result; let reservations;
   try {
     reservations = await reserveContiguousPorts();
-    const layout = initializeDistributedDevnet(join(root, "network"), {
+    const networkInitializer = options._networkInitializer ?? initializeDistributedDevnet;
+    if (typeof networkInitializer !== "function") throw new Error("network initializer is invalid");
+    const layout = networkInitializer(join(root, "network"), {
       firstValidatorPort: reservations.first, networkId: "nir-real-recovery-devnet",
     });
     for (let index = 0; index < 4; index += 1) {

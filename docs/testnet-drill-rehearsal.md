@@ -100,26 +100,40 @@ resource overflow, or incomplete cleanup makes the command fail.
 
 ## Real beacon and archive extension
 
-The extended command requires an exact external release checkpoint binding:
+The extended command requires one canonical JSON file containing a signed source-release envelope,
+the exact offline bundle, transparency anchor/checkpoint, trusted release-signer address, witness set,
+fresh witness receipts, and their explicit time policy:
 
 ```text
-node blockchain/testnet-drill-real-runtime-cli.mjs services sha3-256:<64-hex-digest>
+node blockchain/testnet-drill-real-runtime-cli.mjs services /absolute/path/release-evidence.json
 ```
 
-It first completes the real validator recovery scenario above. Its finalized network ID and tip,
-together with the supplied release checkpoint, determine both beacon candidate IDs. Three independent
-ephemeral beacon operators then run the actual `beacon-service.mjs`, each with a separate encrypted
+The CLI reads that file descriptor-bound with `O_NOFOLLOW`, an 8 MiB limit, single-link and
+inode/metadata checks. Before any service starts, it verifies the post-quantum release signature
+against the supplied trusted address, the offline bundle contents, the transparency checkpoint and
+bundle linkage, and a unique fresh witness quorum. Network ID, release version, and source revision
+must agree exactly. Witness age is evaluated against the validator's supplied/current clock, not an
+untrusted timestamp in the evidence; maximum age is capped at 24 hours and future skew at five
+minutes. A checkpoint hash string by itself is not accepted.
+
+The command then completes the real validator recovery scenario above. The custom local genesis
+contains the exact four beacon public identities whose services are launched; the report embeds the
+genesis and finalized blocks and offline validation replays the chain before accepting that registry.
+The finalized network ID/tip plus the verified checkpoint and signed source-manifest hashes determine
+both beacon candidate IDs. Four independent ephemeral beacon operators run the actual
+`beacon-service.mjs`, each with a separate encrypted
 vault, durable state log, requester policy, key, and loopback port. Vault passwords travel only over
 restricted inherited file descriptors; they are absent from argv, environment values, files, logs,
 and the report.
 
 Each service creates a signed share and rejects an exact request replay. After one service stops, two
-valid shares are explicitly rejected because the configured three-operator 2/3+1 quorum is three.
-The stopped service restarts from its durable state, rejects the pre-restart nonce, returns the exact
+services are deliberately stopped; two valid shares are explicitly rejected because the on-chain
+four-operator 2/3+1 quorum is three. One stopped service restarts from its durable state, rejects the pre-restart nonce, returns the exact
 previously issued share for the old context, and supplies the missing share for the new context. The
 offline validator independently verifies unique operator identities, every share signature and
-context, quorum size, and the aggregate value. These ephemeral operators are a local rehearsal set;
-the result does not claim enrollment in an external or production beacon registry.
+context, quorum size, aggregate value, and byte-for-byte equality with the replayed genesis registry.
+These are real local development services and an actual local chain registry; the result still does
+not claim external operator independence or production enrollment.
 
 Two independent archive operators sign real history archives at the validator tip and expose them
 through separate `archive:serve` processes. With one service stopped, the standard remote restore
@@ -130,6 +144,8 @@ replayed validator chain.
 
 Beacon/archive socket failures, process IDs, HTTP replay status, and outage attempts remain hashed
 controller observations. Shares, aggregates, archive artifacts, validator health, and finalized
-blocks are cryptographically reverified. A scenario PASS requires the latter evidence; controller
+blocks, source release, transparency checkpoint, and witness quorum are cryptographically reverified.
+Mutation of the registry, signer, witness quorum, validator tip, release view, or mixing evidence from
+different runs fails closed. A scenario PASS requires the latter evidence; controller
 assertions alone cannot manufacture quorum. All services inherit the same process-group cleanup,
 bounded output, timeout, disk, loopback-only, no-shell, and owned-temporary-directory rules.
