@@ -45,6 +45,7 @@ function account(value, expectedAddress) {
   const resources = value.resources;
   exactKeys(resources, new Set([
     "atomicStake", "availableTransferCredits", "delegations", "pendingUnstake",
+    "pendingProgressBondRefund", "pendingProgressReward",
   ]), "account resources");
   const result = {
     address: value.address,

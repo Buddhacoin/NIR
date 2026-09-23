@@ -105,10 +105,13 @@ const MAX_MEMPOOL_TRANSACTIONS = 1_000;
 
 function accountResources(chain, address) {
   const pendingUnstake = chain.creditUnstake(address);
+  const authenticatedResources = chain.accountState(address).resources;
   return {
     atomicStake: chain.creditStake(address).toString(),
     availableTransferCredits: chain.transferCredits(address).toString(),
     delegations: chain.creditDelegations(address),
+    pendingProgressBondRefund: authenticatedResources.pendingProgressBondRefund,
+    pendingProgressReward: authenticatedResources.pendingProgressReward,
     pendingUnstake: pendingUnstake ? {
       amount: pendingUnstake.amount.toString(), unlockHeight: pendingUnstake.unlockHeight,
     } : null,

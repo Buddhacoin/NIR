@@ -28,6 +28,15 @@ function validateAccount(account) {
       !Number.isSafeInteger(pending.unlockHeight) || pending.unlockHeight < 1)) {
     throw new Error("account proof pending unstake is invalid");
   }
+  for (const [field, value] of [["pending progress reward", account.resources.pendingProgressReward],
+    ["pending progress bond refund", account.resources.pendingProgressBondRefund]]) {
+    if (value !== undefined && value !== null && (!ATOMIC.test(value.amount ?? "") ||
+        BigInt(value.amount) === 0n || !Number.isSafeInteger(value.count) || value.count < 1 ||
+        value.count > 1_000_000 || !Number.isSafeInteger(value.nextUnlockHeight) ||
+        value.nextUnlockHeight < 1)) {
+      throw new Error(`account proof ${field} is invalid`);
+    }
+  }
   for (const delegation of account.resources.delegations) {
     if (!delegation || delegation.owner !== account.address ||
         !ADDRESS.test(delegation.delegate ?? "") || delegation.delegate === account.address ||

@@ -4,11 +4,14 @@ import test from "node:test";
 
 import {
   NirChain,
+  MAX_PROGRESS_FRAUD_EVIDENCE,
+  MAX_PROGRESS_REWARD_ESCROWS,
   MAX_PROGRESS_COMMITMENT_AGE,
   PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS,
   allocateProgressRewards,
   blockHash,
   computeProgressScore,
+  computeChainStateRoot,
   createBeaconBond,
   createCreditStake,
   createCreditDelegation,
@@ -21,6 +24,7 @@ import {
   progressCandidateId,
   createValidatorBond,
   createProgressClaim,
+  createProgressEvaluatorEquivocationEvidence,
   createSponsoredTransfer,
   createTransfer,
   createMultisigTransfer,
@@ -52,6 +56,7 @@ import {
   TREASURY_VESTING_MS,
   TRANSFER_CREDIT_STAKE_UNIT,
   TRANSFER_CREDITS_PER_STAKE_UNIT,
+  PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
   scheduledEpochBudget,
 } from "../blockchain/constants.mjs";
 import {
@@ -148,9 +153,26 @@ function assertProgressBondConservation(chain) {
   const locked = state.candidateBonds.reduce(
     (total, [, bond]) => total + BigInt(bond.bond), 0n,
   );
-  assert.equal(liquid + locked + chain.burned, chain.issued);
+  const escrowedRewards = state.progressEscrows.reduce(
+    (total, [, escrow]) => total + BigInt(escrow.amount), 0n,
+  );
+  assert.equal(liquid + locked + escrowedRewards + chain.burned, chain.issued);
   assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
   assert.ok(chain.issued <= MAX_SUPPLY);
+}
+
+function advanceEmptyBlocks(chain, validators, count, timestamp = currentTimestamp(chain)) {
+  for (let index = 0; index < count; index += 1) {
+    const block = chain.buildBlock({ timestamp });
+    chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  }
+}
+
+function matureProgressRewards(chain, validators) {
+  const escrows = chain.consensusSnapshot().state.progressEscrows;
+  if (escrows.length === 0) return;
+  const unlockHeight = Math.max(...escrows.map(([, escrow]) => escrow.unlockHeight));
+  advanceEmptyBlocks(chain, validators, unlockHeight - chain.height);
 }
 
 function assignedEvaluatorWallets(chain, candidateId, evaluators) {
@@ -274,9 +296,11 @@ function progressClaim(
   const challenge = chain.progressChallenge(admission.candidateId);
   const assignedEvaluators = challenge.committee.map((address) =>
     evaluators.find((wallet) => wallet.address === address));
-  const capabilitiesBps = label === "second-frontier"
-    ? { "code-v1": 8_600, "reasoning-v1": 8_400 }
-    : { "code-v1": 8_400, "reasoning-v1": 8_200 };
+  const capabilitiesBps = label.startsWith("independent-")
+    ? { "code-v1": 7_000, "reasoning-v1": 8_000, "vision-v1": 1_000 }
+    : label === "second-frontier"
+      ? { "code-v1": 8_600, "reasoning-v1": 8_400 }
+      : { "code-v1": 8_400, "reasoning-v1": 8_200 };
   const evaluation = chain.prepareProgressEvaluation({
     artifactHash,
     baselineHash,
@@ -417,6 +441,15 @@ test("a finalized progress block mints its fixed epoch budget", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  assert.equal(formatNir(chain.balance(miner.address)), "0.00000000 NIR");
+  assert.equal(chain.balance(treasury.address), sponsorBalanceBefore - INITIAL_EPOCH_REWARD);
+  assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
+  assert.equal(chain.accountState(miner.address).resources.pendingProgressReward.amount,
+    INITIAL_EPOCH_REWARD.toString());
+  advanceEmptyBlocks(chain, validators, PROGRESS_REWARD_ESCROW_DELAY_BLOCKS - 1);
+  assert.equal(chain.balance(miner.address), 0n);
+  assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
+  advanceEmptyBlocks(chain, validators, 1);
   assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
   assert.equal(chain.balance(treasury.address), sponsorBalanceBefore);
   assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
@@ -439,6 +472,305 @@ test("progress issuance cannot exceed the exact candidate bond at risk", () => {
     /exceeds its locked candidate bond collateral/,
   );
   assert.equal(chain.stateRoot, rootBefore);
+});
+
+test("one empty boundary block matures multiple independent progress escrows", () => {
+  const { beaconAuthorities, chain, evaluators, treasury, validators } = fixture();
+  const owners = [generateWallet(), generateWallet()];
+  const definitions = owners.map((owner, index) => ({
+    owner,
+    artifactHash: `sha256:${fingerprint(`batch-artifact-${index}`)}`,
+    contentHash: `sha256:${fingerprint(`batch-content-${index}`)}`,
+    suiteCommitment: fingerprint(`batch-suite-${index}`),
+  }));
+  const admissions = definitions.map((definition) => createProgressCommitment({
+    wallet: definition.owner, networkId: chain.networkId, recipient: definition.owner.address,
+    artifactHash: definition.artifactHash, baselineHash: `sha256:${fingerprint("baseline")}`,
+    baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+    contentHash: definition.contentHash, suiteCommitment: definition.suiteCommitment, nonce: 0,
+  }));
+  const bonds = admissions.map((admission, index) => createCandidateBond({
+    wallet: treasury, networkId: chain.networkId, candidateId: admission.candidateId,
+    candidateOwner: owners[index].address, purpose: "progress",
+    amount: INITIAL_EPOCH_REWARD.toString(), fee: "0", nonce: index,
+  }));
+  let block = chain.buildBlock({ transactions: bonds, timestamp: TREASURY_VESTING_MS });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  block = chain.buildBlock({ transactions: admissions, timestamp: TREASURY_VESTING_MS });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  advanceEpochRandomness(chain, beaconAuthorities, validators, TREASURY_VESTING_MS);
+
+  const round = chain.height + 1;
+  const progressBeacons = admissions.map((admission) => {
+    const wallets = chain.progressBeaconCommittee(admission.candidateId)
+      .map((address) => beaconAuthorities.find((wallet) => wallet.address === address));
+    return createProgressBeacon({
+      networkId: chain.networkId, candidateId: admission.candidateId, round,
+      shares: wallets.map((wallet, index) => createProgressBeaconShare({
+        wallet, networkId: chain.networkId, candidateId: admission.candidateId, round,
+        value: fingerprint(`${admission.candidateId}-batch-beacon-${index}`),
+      })),
+    });
+  });
+  block = chain.buildBlock({ progressBeacons, timestamp: TREASURY_VESTING_MS });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+
+  const claims = admissions.map((admission, index) => {
+    const challenge = chain.progressChallenge(admission.candidateId);
+    const evaluation = chain.prepareProgressEvaluation({
+      artifactHash: definitions[index].artifactHash,
+      baselineHash: `sha256:${fingerprint("baseline")}`,
+      baselineContentHash: `sha256:${fingerprint("baseline-content")}`,
+      contentHash: definitions[index].contentHash,
+      candidateId: admission.candidateId,
+      executionBundleHash: fingerprint(`batch-execution-${index}`),
+      suiteCommitment: definitions[index].suiteCommitment,
+      parents: [`sha256:${fingerprint("baseline")}`],
+      committedEpoch: challenge.committedHeight, challengeEpoch: chain.height + 1,
+      challengeSeed: challenge.challengeSeed,
+      behaviorCommitment: fingerprint(`batch-behavior-${index}`),
+      capabilitiesBps: index === 0
+        ? { "code-v1": 8_400, "reasoning-v1": 8_200 }
+        : { "code-v1": 7_000, "reasoning-v1": 8_000, "vision-v1": 1_000 },
+      gainPpm: 10_000, generalityBps: 10_000, reproducibilityBps: 10_000,
+      safetyBps: 10_000, safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+      criticalSafetyPass: true, candidateEnergyWh: 100, baselineEnergyWh: 100,
+      energyAttested: true,
+    });
+    return createProgressClaim({
+      networkId: chain.networkId, epoch: chain.height + 1, recipient: owners[index].address,
+      evaluation, evaluatorWallets: challenge.committee.map((address) =>
+        evaluators.find((wallet) => wallet.address === address)),
+    });
+  });
+  const memoryBefore = chain.capabilityMemoryRoot;
+  block = chain.buildBlock({ rewardClaims: claims, timestamp: TREASURY_VESTING_MS });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  const allocations = new Map(block.progressRewards.map((reward) =>
+    [reward.recipient, BigInt(reward.amount)]));
+  advanceEmptyBlocks(chain, validators, PROGRESS_REWARD_ESCROW_DELAY_BLOCKS - 1,
+    TREASURY_VESTING_MS);
+  assert.deepEqual(owners.map(({ address }) => chain.balance(address)), [0n, 0n]);
+  assert.equal(chain.capabilityMemoryRoot, memoryBefore);
+  advanceEmptyBlocks(chain, validators, 1, TREASURY_VESTING_MS);
+  assert.deepEqual(owners.map(({ address }) => chain.balance(address)),
+    owners.map(({ address }) => allocations.get(address)));
+  assert.notEqual(chain.capabilityMemoryRoot, memoryBefore);
+  assert.equal(chain.consensusSnapshot().state.progressEscrows.length, 0);
+});
+
+test("objective evaluator equivocation burns escrow at the boundary and survives restart", () => {
+  const { chain, evaluators, genesisConfig, validators } = fixture();
+  const miner = generateWallet();
+  const memoryRootBefore = chain.capabilityMemoryRoot;
+  const claim = progressClaim(chain, evaluators, validators, miner, "escrow-fraud");
+  const rewardBlock = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const proof = chain.accountStateProof(miner.address);
+  assert.equal(proof.account.resources.pendingProgressReward.amount, INITIAL_EPOCH_REWARD.toString());
+  assert.deepEqual(verifyAccountStateProof(proof.account, proof.inclusionProof, proof.accountStateRoot),
+    proof.account);
+  const tamperedAccount = structuredClone(proof.account);
+  tamperedAccount.resources.pendingProgressReward.amount =
+    (INITIAL_EPOCH_REWARD + 1n).toString();
+  assert.throws(() => verifyAccountStateProof(
+    tamperedAccount, proof.inclusionProof, proof.accountStateRoot,
+  ), /root does not match/);
+
+  const exported = chain.consensusSnapshot();
+  const checkpoint = chain.blocks().at(-1);
+  const tamperedSnapshot = structuredClone(exported);
+  tamperedSnapshot.state.progressEscrows[0][1].acceptedReceiptHash = "0".repeat(64);
+  const tamperedRoot = computeChainStateRoot(tamperedSnapshot.state);
+  assert.throws(() => NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: tamperedSnapshot.capabilityMemory,
+    checkpoint: { ...checkpoint, stateRoot: tamperedRoot }, height: chain.height,
+    networkId: chain.networkId, state: tamperedSnapshot.state, stateRoot: tamperedRoot,
+    tipHash: checkpoint.hash,
+  }), /escrow bond or role binding is invalid/);
+  const restored = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
+    networkId: chain.networkId, state: exported.state, stateRoot: chain.stateRoot,
+    tipHash: chain.tipHash,
+  });
+  assert.equal(restored.stateRoot, chain.stateRoot);
+  assert.equal(restored.capabilityMemoryRoot, memoryRootBefore);
+
+  const signerWallets = claim.attestations.map(({ evaluator }) =>
+    evaluators.find((wallet) => wallet.address === evaluator));
+  const conflictingClaim = createProgressClaim({
+    networkId: chain.networkId,
+    epoch: claim.epoch,
+    recipient: claim.recipient,
+    evaluation: { ...claim.evaluation,
+      executionBundleHash: fingerprint("conflicting-execution-bundle") },
+    evaluatorWallets: signerWallets,
+  });
+  const evidence = createProgressEvaluatorEquivocationEvidence({
+    candidateId: claim.evaluation.candidateId, conflictingClaim,
+  });
+  advanceEmptyBlocks(restored, validators, PROGRESS_REWARD_ESCROW_DELAY_BLOCKS - 1);
+  const duplicateBlock = restored.buildBlock({
+    progressFraudProofs: [evidence, evidence], timestamp: currentTimestamp(restored),
+  });
+  const boundaryRoot = restored.stateRoot;
+  assert.throws(() => restored.appendBlock(finalizeBlock(duplicateBlock,
+    quorumFor(duplicateBlock, validators))), /duplicate progress fraud proof/);
+  assert.equal(restored.stateRoot, boundaryRoot);
+  const fraudBlock = restored.buildBlock({
+    progressFraudProofs: [evidence], timestamp: currentTimestamp(restored),
+  });
+  restored.appendBlock(finalizeBlock(fraudBlock, quorumFor(fraudBlock, validators)));
+  assert.equal(restored.capabilityMemoryRoot, memoryRootBefore);
+  assert.equal(restored.balance(miner.address), 0n);
+  assert.equal(restored.burned, INITIAL_EPOCH_REWARD * 2n);
+  assert.equal(restored.accountState(miner.address).resources.pendingProgressReward, null);
+  assertProgressBondConservation(restored);
+  const settled = restored.consensusSnapshot();
+  const recovered = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: settled.capabilityMemory, checkpoint: restored.blocks().at(-1),
+    height: restored.height, networkId: restored.networkId, state: settled.state,
+    stateRoot: restored.stateRoot, tipHash: restored.tipHash,
+  });
+  const rootAfter = recovered.stateRoot;
+  const replay = recovered.buildBlock({
+    progressFraudProofs: [evidence], timestamp: currentTimestamp(recovered),
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(replay, quorumFor(replay, validators))),
+    /invalid or replayed|late or has no escrow/);
+  assert.equal(recovered.stateRoot, rootAfter);
+});
+
+test("false and late progress evidence cannot confiscate escrow", () => {
+  const { chain, evaluators, validators } = fixture();
+  const miner = generateWallet();
+  const claim = progressClaim(chain, evaluators, validators, miner, "false-evidence");
+  const rewardBlock = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
+  chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  const falseEvidence = createProgressEvaluatorEquivocationEvidence({
+    candidateId: claim.evaluation.candidateId, conflictingClaim: claim,
+  });
+  const before = chain.stateRoot;
+  const falseBlock = chain.buildBlock({ progressFraudProofs: [falseEvidence],
+    timestamp: currentTimestamp(chain) });
+  assert.throws(() => chain.appendBlock(finalizeBlock(falseBlock, quorumFor(falseBlock, validators))),
+    /does not prove a conflicting receipt/);
+  assert.equal(chain.stateRoot, before);
+  const signerWallets = claim.attestations.map(({ evaluator }) =>
+    evaluators.find((wallet) => wallet.address === evaluator));
+  const partialClaim = createProgressClaim({
+    networkId: chain.networkId, epoch: claim.epoch, recipient: claim.recipient,
+    evaluation: { ...claim.evaluation, executionBundleHash: fingerprint("partial-conflict") },
+    evaluatorWallets: signerWallets,
+  });
+  partialClaim.attestations.pop();
+  const partialEvidence = createProgressEvaluatorEquivocationEvidence({
+    candidateId: claim.evaluation.candidateId, conflictingClaim: partialClaim,
+  });
+  const partialBlock = chain.buildBlock({ progressFraudProofs: [partialEvidence],
+    timestamp: currentTimestamp(chain) });
+  assert.throws(() => chain.appendBlock(finalizeBlock(partialBlock,
+    quorumFor(partialBlock, validators))), /no assigned quorum/);
+  assert.equal(chain.stateRoot, before);
+  matureProgressRewards(chain, validators);
+  assert.equal(chain.balance(miner.address), INITIAL_EPOCH_REWARD);
+  const lateBlock = chain.buildBlock({ progressFraudProofs: [falseEvidence],
+    timestamp: currentTimestamp(chain) });
+  assert.throws(() => chain.appendBlock(finalizeBlock(lateBlock, quorumFor(lateBlock, validators))),
+    /late or has no escrow/);
+  assert.equal(chain.balance(miner.address), INITIAL_EPOCH_REWARD);
+});
+
+test("pending capability is not a baseline and independent reservations survive another fraud", () => {
+  const { chain, evaluators, validators } = fixture();
+  const firstMiner = generateWallet();
+  const secondMiner = generateWallet();
+  const memoryRootBefore = chain.capabilityMemoryRoot;
+  const firstClaim = progressClaim(chain, evaluators, validators, firstMiner, "pending-parent");
+  const firstReward = chain.buildBlock({ rewardClaims: [firstClaim],
+    timestamp: currentTimestamp(chain) });
+  chain.appendBlock(finalizeBlock(firstReward, quorumFor(firstReward, validators)));
+
+  const illegalChild = createProgressCommitment({
+    wallet: secondMiner, networkId: chain.networkId, recipient: secondMiner.address,
+    artifactHash: `sha256:${fingerprint("pending-child-artifact")}`,
+    baselineHash: firstClaim.evaluation.artifactHash,
+    baselineContentHash: firstClaim.evaluation.contentHash,
+    contentHash: `sha256:${fingerprint("pending-child-content")}`,
+    suiteCommitment: fingerprint("pending-child-suite"), nonce: 0,
+  });
+  lockProgressBond(chain, validators, secondMiner.address, illegalChild.candidateId,
+    currentTimestamp(chain), INITIAL_EPOCH_REWARD);
+  const illegalBlock = chain.buildBlock({ transactions: [illegalChild],
+    timestamp: currentTimestamp(chain) });
+  assert.throws(() => chain.appendBlock(finalizeBlock(illegalBlock,
+    quorumFor(illegalBlock, validators))), /pending progress escrow cannot be used as a baseline/);
+  assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
+
+  const independentMiner = generateWallet();
+  const independentClaim = progressClaim(
+    chain, evaluators, validators, independentMiner, "independent-vision",
+  );
+  const independentReward = chain.buildBlock({ rewardClaims: [independentClaim],
+    timestamp: currentTimestamp(chain, MIN_REWARD_INTERVAL_MS) });
+  chain.appendBlock(finalizeBlock(independentReward,
+    quorumFor(independentReward, validators)));
+
+  const signers = firstClaim.attestations.map(({ evaluator }) =>
+    evaluators.find((wallet) => wallet.address === evaluator));
+  const conflicting = createProgressClaim({
+    networkId: chain.networkId, epoch: firstClaim.epoch, recipient: firstClaim.recipient,
+    evaluation: { ...firstClaim.evaluation,
+      executionBundleHash: fingerprint("pending-parent-conflict") },
+    evaluatorWallets: signers,
+  });
+  const evidence = createProgressEvaluatorEquivocationEvidence({
+    candidateId: firstClaim.evaluation.candidateId, conflictingClaim: conflicting,
+  });
+  const firstEscrow = chain.consensusSnapshot().state.progressEscrows
+    .find(([candidateId]) => candidateId === firstClaim.evaluation.candidateId)[1];
+  advanceEmptyBlocks(chain, validators, firstEscrow.unlockHeight - chain.height - 1);
+  const fraud = chain.buildBlock({ progressFraudProofs: [evidence],
+    timestamp: currentTimestamp(chain) });
+  chain.appendBlock(finalizeBlock(fraud, quorumFor(fraud, validators)));
+  assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
+  assert.equal(chain.accountState(independentMiner.address).resources.pendingProgressReward.amount,
+    independentReward.progressRewards[0].amount);
+  matureProgressRewards(chain, validators);
+  assert.equal(chain.balance(independentMiner.address),
+    BigInt(independentReward.progressRewards[0].amount));
+  assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
+});
+
+test("snapshot rejects unbounded progress escrow and fraud replay state", () => {
+  const { chain, genesisConfig, validators } = fixture();
+  const block = chain.buildBlock({ timestamp: 1 });
+  chain.appendBlock(finalizeBlock(block, quorumFor(block, validators)));
+  const exported = chain.consensusSnapshot();
+  exported.state.progressFraudEvidence = Array.from(
+    { length: MAX_PROGRESS_FRAUD_EVIDENCE + 1 },
+    (_, index) => [fingerprint(`oversized-fraud-${index}`), 1],
+  );
+  const forgedRoot = computeChainStateRoot(exported.state);
+  const checkpoint = { ...chain.blocks().at(-1), stateRoot: forgedRoot };
+  assert.throws(() => NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: exported.capabilityMemory, checkpoint, height: chain.height,
+    networkId: chain.networkId, state: exported.state, stateRoot: forgedRoot,
+    tipHash: checkpoint.hash,
+  }), /replay snapshot state is invalid/);
+
+  const oversizedEscrows = chain.consensusSnapshot();
+  oversizedEscrows.state.progressEscrows = Array.from(
+    { length: MAX_PROGRESS_REWARD_ESCROWS + 1 },
+    (_, index) => [fingerprint(`oversized-escrow-${index}`), {}],
+  );
+  const escrowRoot = computeChainStateRoot(oversizedEscrows.state);
+  const escrowCheckpoint = { ...chain.blocks().at(-1), stateRoot: escrowRoot };
+  assert.throws(() => NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: oversizedEscrows.capabilityMemory, checkpoint: escrowCheckpoint,
+    height: chain.height, networkId: chain.networkId, state: oversizedEscrows.state,
+    stateRoot: escrowRoot, tipHash: escrowCheckpoint.hash,
+  }), /escrow snapshot capacity is exceeded/);
 });
 
 test("protocol operator keys cannot submit progress or receive its issuance", () => {
@@ -539,7 +871,7 @@ test("simultaneous wrappers cannot split one frontier delta into two rewards", (
   assert.deepEqual(first.evaluation.capabilitiesBps, second.evaluation.capabilitiesBps);
   const rootBefore = chain.stateRoot;
   assert.throws(() => chain.buildBlock({ rewardClaims: [second, first],
-    timestamp: currentTimestamp(chain) }), /no new world-frontier capability/);
+    timestamp: currentTimestamp(chain) }), /pending escrow reservation/);
   assert.equal(chain.stateRoot, rootBefore);
   const accepted = chain.buildBlock({ rewardClaims: [first], timestamp: currentTimestamp(chain) });
   chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, validators)));
@@ -599,6 +931,7 @@ test("deterministic state model covers parallel progress bond lifecycle", () => 
     rewardClaims: [fundingClaim], timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(fundingReward, quorumFor(fundingReward, validators)));
+  matureProgressRewards(chain, validators);
   assertProgressBondConservation(chain);
   const sponsorBalancesBefore = new Map([
     [treasury.address, chain.balance(treasury.address)],
@@ -1129,7 +1462,9 @@ test("empty blocks do not consume intelligence issuance epochs", () => {
   assert.equal(rewarded.issuanceEpoch, 0);
   chain.appendBlock(finalizeBlock(rewarded, quorumFor(rewarded, validators)));
   assert.equal(chain.nextIssuanceEpoch, 1);
-  assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
+  assert.equal(formatNir(chain.balance(miner.address)), "0.00000000 NIR");
+  assert.equal(chain.accountState(miner.address).resources.pendingProgressReward.amount,
+    INITIAL_EPOCH_REWARD.toString());
 });
 
 test("fast hardware cannot accelerate intelligence issuance", () => {
@@ -1140,6 +1475,7 @@ test("fast hardware cannot accelerate intelligence issuance", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(first, quorumFor(first, validators)));
+  matureProgressRewards(chain, validators);
 
   const secondMiner = generateWallet();
   const secondClaim = progressClaim(
@@ -1193,6 +1529,7 @@ test("a post-quantum signed transfer changes balances and nonce", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const earlierAliceTransactions = chain.blocks().flatMap(({ transactions }) => transactions)
     .filter(({ sender, recipient }) => sender === alice.address || recipient === alice.address)
     .map(transactionId);
@@ -1227,6 +1564,7 @@ test("a transfer below the consensus fee floor is rejected", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const transaction = createTransfer({
     wallet: alice,
     networkId: chain.networkId,
@@ -1263,6 +1601,7 @@ test("a two-of-three post-quantum vault can spend only with its threshold", () =
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
 
   const insufficient = createMultisigTransfer({
     signerWallets: members.slice(0, 1), memberPublicKeys, threshold: 2,
@@ -1306,6 +1645,7 @@ test("candidate bonds, safety payouts, and burns are consensus state", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const bondTimestamp = activateRandomnessValidators(
     chain, validators, submitter, currentTimestamp(chain),
   );
@@ -1384,6 +1724,7 @@ test("validators cannot approve a forged safety payout amount", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const bondTimestamp = activateRandomnessValidators(
     chain, validators, submitter, currentTimestamp(chain),
   );
@@ -1430,6 +1771,7 @@ test("a fallback beacon assigns the committee and slashes a missing revealer", (
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const bondTimestamp = activateRandomnessValidators(
     chain, validators, submitter, currentTimestamp(chain),
   );
@@ -1519,6 +1861,7 @@ test("a modified transfer signature is rejected atomically", () => {
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const transaction = createTransfer({
     wallet: alice,
     networkId: chain.networkId,
@@ -1562,6 +1905,7 @@ test("a fee sponsor can pay for an exact transfer without controlling its funds"
     timestamp: currentTimestamp(chain),
   });
   chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock, validators)));
+  matureProgressRewards(chain, validators);
   const funding = createTransfer({
     wallet: sponsor, networkId: chain.networkId, recipient: alice.address,
     amount: "100", nonce: chain.nextNonce(sponsor.address),

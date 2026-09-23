@@ -37,6 +37,16 @@ export function normalizeAccountState(account) {
       !Number.isSafeInteger(pending.unlockHeight) || pending.unlockHeight < 1)) {
     throw new Error("account tree pending unstake is invalid");
   }
+  const progressEscrow = (value, field) => {
+    if (value === undefined || value === null) return null;
+    if (!value || !ATOMIC.test(value.amount ?? "") || BigInt(value.amount) === 0n ||
+        !Number.isSafeInteger(value.count) || value.count < 1 || value.count > 1_000_000 ||
+        !Number.isSafeInteger(value.nextUnlockHeight) || value.nextUnlockHeight < 1) {
+      throw new Error(`account tree ${field} is invalid`);
+    }
+    return { amount: value.amount, count: value.count,
+      nextUnlockHeight: value.nextUnlockHeight };
+  };
   const delegations = account.resources.delegations.map((delegation) => {
     if (!delegation || delegation.owner !== account.address ||
         !ADDRESS.test(delegation.delegate ?? "") || delegation.delegate === account.address ||
@@ -63,6 +73,10 @@ export function normalizeAccountState(account) {
       pendingUnstake: pending === null ? null : {
         amount: pending.amount, unlockHeight: pending.unlockHeight,
       },
+      pendingProgressBondRefund: progressEscrow(
+        account.resources.pendingProgressBondRefund, "pending progress bond refund"),
+      pendingProgressReward: progressEscrow(
+        account.resources.pendingProgressReward, "pending progress reward"),
     },
   };
 }
@@ -75,6 +89,7 @@ export function emptyAccountState(address) {
     nextNonce: 0,
     resources: {
       atomicStake: "0", availableTransferCredits: "0", delegations: [], pendingUnstake: null,
+      pendingProgressBondRefund: null, pendingProgressReward: null,
     },
   };
 }

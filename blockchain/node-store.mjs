@@ -128,6 +128,7 @@ export class PersistentDevNode {
   account(address) {
     const balance = this.#chain.balance(address);
     const pendingUnstake = this.#chain.creditUnstake(address);
+    const authenticatedResources = this.#chain.accountState(address).resources;
     return {
       address,
       atomicBalance: balance.toString(),
@@ -137,6 +138,8 @@ export class PersistentDevNode {
         atomicStake: this.#chain.creditStake(address).toString(),
         availableTransferCredits: this.#chain.transferCredits(address).toString(),
         delegations: this.#chain.creditDelegations(address),
+        pendingProgressBondRefund: authenticatedResources.pendingProgressBondRefund,
+        pendingProgressReward: authenticatedResources.pendingProgressReward,
         pendingUnstake: pendingUnstake ? {
           amount: pendingUnstake.amount.toString(), unlockHeight: pendingUnstake.unlockHeight,
         } : null,

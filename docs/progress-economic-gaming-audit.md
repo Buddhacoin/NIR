@@ -39,11 +39,11 @@ evaluators, censor competing claims, or share rewards off chain. Preventing the
 exact protocol-role key from self-submitting closes a direct confusion path but
 does not establish real-world independence or Sybil resistance.
 
-The collateral ceiling limits issuance per attempt, but an accepted candidate's
-bond is refunded. It is not a post-reward fraud bond, and consensus currently
-has no objective proof that can claw back a reward when an evaluator quorum
-colludes. SR-01 therefore remains critical: signatures authenticate statements,
-not physical model execution, energy use, or honest measurements.
+The collateral ceiling limits issuance per attempt. The accepted reward and
+bond now remain locked for 64 finalized blocks; a second conflicting receipt
+signed by the full assigned committee burns both. This closes only objective
+committee equivocation. SR-01 remains critical for private execution, energy,
+company independence and honest-measurement claims that signatures cannot prove.
 
 Challenge randomness is derived after commitment, but the chain cannot prove
 that an off-chain task family was genuinely secret, unpredictable, broad, or

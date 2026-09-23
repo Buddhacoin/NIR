@@ -46,6 +46,11 @@ challenge randomness, complete assigned committees, quorum receipts, duplicate
 fingerprint and canonical-content rejection, pre-challenge lineage binding,
 policy vetoes, reward-rate limits, an exact-key protocol-role exclusion, a
 world-frontier bound on reported gain, and per-candidate reward collateral.
+Rewards, collateral, and capability-memory admission are delayed for 64
+finalized blocks. A different receipt signed by the complete originally
+assigned committee is objective equivocation evidence and burns both economic
+escrows before admission; false, partial, replayed, or late evidence cannot do
+so. This does not prove which of two signed executions was physically honest.
 Canonical-content checking is an evaluator-attested commitment; validators do
 not see private model bytes and cannot independently recognize semantic copies.
 

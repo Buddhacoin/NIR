@@ -108,7 +108,8 @@ An admission is valid only after a separate finalized progress-purpose bond
 locks at least 1 NIR against its exact `candidateId` and author. A third party
 may sponsor a small participant, but the sponsor signs the lock and is the only
 refund address. Merely locking an unbound bond reveals no committee; an unused
-lock returns after 64 blocks. Successful evaluation refunds a bound bond; an
+lock returns after 64 blocks. Successful evaluation moves a bound bond into the
+64-finalized-block reward escrow and refunds it only after that window; an
 unrewarded admission burns the full bond after 1,024
 blocks. There is no free cancellation after committee assignment, so honest
 timeouts also lose the bond. This removes the free multi-key/wrapper sampling
@@ -119,9 +120,9 @@ The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
 whole reward block is invalid. A lone claim in the first issuance epoch must
 therefore have 50 NIR locked, while several claims may lock their smaller exact
-allocations. The bond is returned after acceptance, so this is a bounded
-collateral/exposure rule, not proof that a dishonest evaluator quorum will be
-slashed after it approves fabricated measurements.
+allocations. The bond and reward remain unavailable through the objective fraud
+window. Full assigned-committee equivocation burns both; private execution
+dishonesty remains outside the objectively provable subset.
 
 This removes the block hash and its proposer from committee selection. A
 malicious assigned epoch member can stop progress by withholding its reveal,
@@ -455,7 +456,8 @@ compared with a deliberately weak baseline earns nothing because it does not
 move the world frontier. A candidate is novel only for the measured marginal
 delta above the previous best. Its challenge is derived after the complete
 artifact is committed, so stored answers cannot be prepared for the exact test.
-Every accepted change produces a new deterministic memory root.
+Every challenge-free matured change produces a new deterministic memory root;
+pending escrow evaluations are reservations and are not valid baselines.
 That root is committed by genesis and every block, so all validators must apply
 the same history before they can finalize another intelligence reward.
 

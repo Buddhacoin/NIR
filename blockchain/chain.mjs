@@ -15,6 +15,7 @@ import {
   MIN_TRANSFER_FEE,
   MIN_REWARD_INTERVAL_MS,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
+  MAX_PROGRESS_FRAUD_PROOFS_PER_BLOCK,
   MAX_SAFETY_SETTLEMENTS_PER_BLOCK,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
@@ -22,6 +23,7 @@ import {
   MIN_BEACON_BOND,
   MINING_POOL,
   MIN_PROGRESS_CANDIDATE_BOND,
+  PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
   SIGNATURE_ALGORITHM,
@@ -138,6 +140,38 @@ function assetBalanceKey(assetId, address) { return `${assetId}:${address}`; }
 const MAX_PENDING_PROGRESS_COMMITMENTS = 4_096;
 export const MAX_PROGRESS_COMMITMENT_AGE = 1_024;
 export const PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS = 64;
+export const MAX_PROGRESS_REWARD_ESCROWS =
+  MAX_PROGRESS_REWARDS_PER_BLOCK * PROGRESS_REWARD_ESCROW_DELAY_BLOCKS;
+export const MAX_PROGRESS_FRAUD_EVIDENCE =
+  MAX_PROGRESS_FRAUD_PROOFS_PER_BLOCK * (PROGRESS_REWARD_ESCROW_DELAY_BLOCKS + 1);
+
+function orderedProgressEscrows(progressEscrows) {
+  return [...progressEscrows].sort(([, left], [, right]) =>
+    left.createdHeight - right.createdHeight || left.fingerprint.localeCompare(right.fingerprint));
+}
+
+function progressReservation(evaluation, marginalCapabilities) {
+  return {
+    artifactHash: evaluation.artifactHash,
+    behaviorCommitment: evaluation.behaviorCommitment,
+    contentHash: evaluation.contentHash,
+    marginalCapabilities: [...marginalCapabilities].sort(),
+  };
+}
+
+function assertProgressReservationAvailable(evaluation, marginalCapabilities, reservations) {
+  const candidate = progressReservation(evaluation, marginalCapabilities);
+  for (const reserved of reservations) {
+    if (candidate.artifactHash === reserved.artifactHash ||
+        candidate.contentHash === reserved.contentHash ||
+        candidate.behaviorCommitment === reserved.behaviorCommitment ||
+        candidate.marginalCapabilities.some((capability) =>
+          reserved.marginalCapabilities.includes(capability))) {
+      throw new Error("progress capability collides with a pending escrow reservation");
+    }
+  }
+  reservations.push(candidate);
+}
 
 function operatorRegistry(entries, role) {
   if (
@@ -204,12 +238,31 @@ export function computeChainStateRoot(state) {
 
 function accountStatesFromMaps({
   accountHistories, balances, creditDelegations, creditStakes, creditUnstakes, creditUsage,
-  height, nonces,
+  height, nonces, progressEscrows,
 }) {
+  const escrowSummaries = new Map();
+  for (const escrow of progressEscrows.values()) {
+    for (const [address, field, amountField] of [
+      [escrow.recipient, "pendingProgressReward", "amount"],
+      [escrow.refundAddress, "pendingProgressBondRefund", "bondAmount"],
+    ]) {
+      const summary = escrowSummaries.get(address) ?? {};
+      const current = summary[field] ?? { amount: 0n, count: 0,
+        nextUnlockHeight: escrow.unlockHeight };
+      summary[field] = {
+        amount: current.amount + escrow[amountField],
+        count: current.count + 1,
+        nextUnlockHeight: Math.min(current.nextUnlockHeight, escrow.unlockHeight),
+      };
+      escrowSummaries.set(address, summary);
+    }
+  }
   const addresses = new Set([
     ...accountHistories.keys(), ...balances.keys(), ...creditStakes.keys(), ...creditUnstakes.keys(),
     ...creditUsage.keys(), ...nonces.keys(),
     ...[...creditDelegations.values()].map(({ owner }) => owner),
+    ...[...progressEscrows.values()].flatMap(({ recipient, refundAddress }) =>
+      [recipient, refundAddress]),
   ]);
   const epoch = transferCreditEpoch(height);
   return [...addresses].sort().map((address) => {
@@ -218,6 +271,10 @@ function accountStatesFromMaps({
     const usage = creditUsage.get(address);
     const spent = usage?.epoch === epoch ? BigInt(usage.spent) : 0n;
     const pending = creditUnstakes.get(address) ?? null;
+    const escrowSummary = (field) => {
+      const summary = escrowSummaries.get(address)?.[field];
+      return summary ? { ...summary, amount: summary.amount.toString() } : null;
+    };
     return normalizeAccountState({
       address,
       atomicBalance: (balances.get(address) ?? 0n).toString(),
@@ -231,6 +288,8 @@ function accountStatesFromMaps({
         pendingUnstake: pending ? {
           amount: pending.amount.toString(), unlockHeight: pending.unlockHeight,
         } : null,
+        pendingProgressBondRefund: escrowSummary("pendingProgressBondRefund"),
+        pendingProgressReward: escrowSummary("pendingProgressReward"),
       },
     });
   });
@@ -828,6 +887,16 @@ export function createProgressClaim({
   };
 }
 
+export function createProgressEvaluatorEquivocationEvidence({ candidateId, conflictingClaim }) {
+  if (!/^[0-9a-f]{64}$/.test(candidateId ?? "") || !conflictingClaim ||
+      conflictingClaim.evaluation?.candidateId !== candidateId) {
+    throw new Error("progress fraud evidence input is invalid");
+  }
+  const payload = { candidateId, conflictingClaim: structuredClone(conflictingClaim),
+    format: "nir-progress-evaluator-equivocation-v1" };
+  return { ...payload, evidenceHash: hashObject(payload, "PROGRESS_FRAUD_EVIDENCE_V1") };
+}
+
 function unsignedBlock(block) {
   const {
     certificate: _certificate,
@@ -858,6 +927,7 @@ const BLOCK_FIELDS = Object.freeze([
   "prepareCertificate",
   "previousHash",
   "progressBeacons",
+  "progressFraudProofs",
   "progressRewards",
   "proposer",
   "protocolUpgrade",
@@ -1102,6 +1172,8 @@ export class NirChain {
   #pendingProtocolUpgrade;
   #peerRegistry;
   #progressCommitments;
+  #progressEscrows;
+  #progressFraudEvidence;
   #protocolVersion;
   #safetyEvidence;
   #safetyPolicies;
@@ -1215,6 +1287,8 @@ export class NirChain {
     this.#pendingValidatorRotation = null;
     this.#pendingProtocolUpgrade = null;
     this.#progressCommitments = new Map();
+    this.#progressEscrows = new Map();
+    this.#progressFraudEvidence = new Map();
     this.#protocolVersion = PROTOCOL_VERSION;
     this.#peerRegistry = peerRegistry === null ? null : verifyPeerRegistry(peerRegistry, {
       currentHeight: 0,
@@ -1534,6 +1608,66 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    const progressEscrows = snapshotEntries(state.progressEscrows, "progress reward escrows");
+    if (progressEscrows.size > MAX_PROGRESS_REWARD_ESCROWS) {
+      throw new Error("progress reward escrow snapshot capacity is exceeded");
+    }
+    for (const [candidateId, escrow] of progressEscrows) {
+      const expectedKeys = ["acceptedReceiptHash", "amount", "bondAmount", "candidateId",
+        "committee", "createdHeight", "epoch", "evaluation", "fingerprint", "recipient",
+        "marginalCapabilities", "refundAddress", "unlockHeight"].sort().join("\0");
+      if (!/^[0-9a-f]{64}$/.test(candidateId) || !escrow ||
+          Object.keys(escrow).sort().join("\0") !== expectedKeys || escrow.candidateId !== candidateId ||
+          !/^[0-9a-f]{64}$/.test(escrow.acceptedReceiptHash ?? "") ||
+          !/^[0-9a-f]{64}$/.test(escrow.fingerprint ?? "") ||
+          !/^nir1[0-9a-f]{64}$/.test(escrow.recipient ?? "") ||
+          !/^nir1[0-9a-f]{64}$/.test(escrow.refundAddress ?? "") ||
+          !Number.isSafeInteger(escrow.createdHeight) || escrow.createdHeight < 1 ||
+          !Number.isSafeInteger(escrow.epoch) || escrow.epoch !== escrow.createdHeight ||
+          !Number.isSafeInteger(escrow.unlockHeight) ||
+          escrow.unlockHeight !== escrow.createdHeight + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS ||
+          escrow.evaluation?.candidateId !== candidateId ||
+          !Array.isArray(escrow.marginalCapabilities) || escrow.marginalCapabilities.length === 0 ||
+          escrow.marginalCapabilities.length > 256 ||
+          new Set(escrow.marginalCapabilities).size !== escrow.marginalCapabilities.length ||
+          escrow.marginalCapabilities.some((capability, index) =>
+            typeof capability !== "string" || Buffer.byteLength(capability) === 0 ||
+            Buffer.byteLength(capability) > 64 ||
+            (index > 0 && capability <= escrow.marginalCapabilities[index - 1])) ||
+          !Array.isArray(escrow.committee) || escrow.committee.length !== chain.#evaluationQuorum ||
+          new Set(escrow.committee).size !== escrow.committee.length ||
+          escrow.committee.some((address) => !chain.#evaluators.has(address))) {
+        throw new Error("progress reward escrow snapshot is invalid");
+      }
+      const amount = snapshotAtomic(escrow.amount, "progress escrow reward");
+      const bondAmount = snapshotAtomic(escrow.bondAmount, "progress escrow bond");
+      const bond = candidateBonds.get(candidateId);
+      const acceptedReceipt = progressReceiptPayload({
+        networkId: chain.#networkId, epoch: escrow.epoch,
+        recipient: escrow.recipient, evaluation: escrow.evaluation,
+      });
+      if (amount === 0n || bondAmount === 0n || amount > bondAmount ||
+          acceptedReceipt.fingerprint !== escrow.fingerprint ||
+          hashObject(acceptedReceipt, "PROGRESS_ESCROW_RECEIPT_V1") !== escrow.acceptedReceiptHash ||
+          !bond || bond.purpose !== "progress" || !bond.admissionBound ||
+          bond.bond !== bondAmount || bond.submitter !== escrow.refundAddress ||
+          [bond.candidateOwner, escrow.recipient, escrow.refundAddress].some((address) =>
+            chain.#evaluators.has(address) || chain.#beaconAuthorities.has(address) ||
+            registeredMembers.has(address))) {
+        throw new Error("progress reward escrow bond or role binding is invalid");
+      }
+      progressEscrows.set(candidateId, { ...structuredClone(escrow), amount, bondAmount });
+    }
+    const progressFraudEvidence = snapshotEntries(
+      state.progressFraudEvidence, "progress fraud evidence",
+    );
+    if (progressFraudEvidence.size > MAX_PROGRESS_FRAUD_EVIDENCE ||
+        [...progressFraudEvidence].some(([hash, acceptedHeight]) =>
+          !/^[0-9a-f]{64}$/.test(hash) || !Number.isSafeInteger(acceptedHeight) ||
+          acceptedHeight < 1 || acceptedHeight > snapshot.height ||
+          snapshot.height > acceptedHeight + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS)) {
+      throw new Error("progress fraud replay snapshot state is invalid");
+    }
     if ([...disabledValidators].some((address) => !registeredMembers.has(address) ||
         (validatorBonds.get(address) ?? 0n) !== 0n)) {
       throw new Error("disabled validator snapshot state is inconsistent");
@@ -1550,13 +1684,21 @@ export class NirChain {
     }
     for (const [candidateId, bond] of candidateBonds) {
       if (bond.purpose === "progress" && bond.admissionBound &&
-          !progressCommitments.has(candidateId)) {
-        throw new Error("bound progress bond snapshot has no commitment");
+          Number(progressCommitments.has(candidateId)) + Number(progressEscrows.has(candidateId)) !== 1) {
+        throw new Error("bound progress bond snapshot has no unique commitment or escrow");
       }
     }
     const memory = CapabilityMemory.fromSnapshot(snapshot.capabilityMemory);
     if (memory.stateRoot !== state.capabilityMemoryRoot) {
       throw new Error("capability memory snapshot root is invalid");
+    }
+    const reservedMemory = memory.clone();
+    for (const [, escrow] of orderedProgressEscrows(progressEscrows)) {
+      const report = reservedMemory.accept(escrow.evaluation);
+      if (JSON.stringify(Object.keys(report.marginalGainsBps).sort()) !==
+          JSON.stringify(escrow.marginalCapabilities)) {
+        throw new Error("progress escrow capability reservation is invalid");
+      }
     }
     chain.#accountHistories = accountHistories;
     chain.#assetBalances = assetBalances;
@@ -1595,6 +1737,8 @@ export class NirChain {
     );
     chain.#pendingValidatorRotation = structuredClone(state.pendingValidatorRotation);
     chain.#progressCommitments = progressCommitments;
+    chain.#progressEscrows = progressEscrows;
+    chain.#progressFraudEvidence = progressFraudEvidence;
     chain.#peerRegistry = structuredClone(state.peerRegistry);
     chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
     chain.#registeredValidators = registeredMembers;
@@ -1603,6 +1747,10 @@ export class NirChain {
       throw new Error("snapshot replay-protection sets are invalid");
     }
     chain.#rewardedProofs = new Set(state.rewardedProofs);
+    if ([...progressEscrows.values()].some(({ fingerprint }) =>
+      !chain.#rewardedProofs.has(fingerprint))) {
+      throw new Error("progress reward escrow snapshot has no rewarded fingerprint");
+    }
     chain.#safetyEvidence = new Set(state.safetyEvidence);
     chain.#validatorBonds = validatorBonds;
     chain.#validatorEquivocationEvidence = validatorEquivocationEvidence;
@@ -1685,6 +1833,7 @@ export class NirChain {
       creditUsage: overrides.creditUsage ?? this.#creditUsage,
       height: overrides.height ?? this.height,
       nonces: overrides.nonces ?? this.#nonces,
+      progressEscrows: overrides.progressEscrows ?? this.#progressEscrows,
     });
   }
 
@@ -1741,6 +1890,8 @@ export class NirChain {
           ? this.#pendingProtocolUpgrade : overrides.pendingProtocolUpgrade,
       peerRegistry: overrides.peerRegistry === undefined ? this.#peerRegistry : overrides.peerRegistry,
       progressCommitments: overrides.progressCommitments ?? this.#progressCommitments,
+      progressEscrows: overrides.progressEscrows ?? this.#progressEscrows,
+      progressFraudEvidence: overrides.progressFraudEvidence ?? this.#progressFraudEvidence,
       protocolVersion,
       randomnessFaults: overrides.randomnessFaults ?? this.#randomnessFaults,
       registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
@@ -1784,6 +1935,8 @@ export class NirChain {
         pendingValidatorRotation: this.#pendingValidatorRotation,
         peerRegistry: this.#peerRegistry,
         progressCommitments: this.#progressCommitments,
+        progressEscrows: this.#progressEscrows,
+        progressFraudEvidence: this.#progressFraudEvidence,
         protocolVersion: this.#protocolVersion,
         randomnessFaults: this.#randomnessFaults,
         registeredValidators: this.#registeredValidators,
@@ -2023,7 +2176,61 @@ export class NirChain {
     ) {
       throw new Error("progress receipt was not signed by the assigned committee");
     }
-    capabilityMemory.accept(claim.evaluation);
+    return novelty;
+  }
+
+  #verifyProgressFraudProof(evidence, height, progressEscrows, progressFraudEvidence) {
+    if (!evidence || Object.keys(evidence).sort().join("\0") !==
+        ["candidateId", "conflictingClaim", "evidenceHash", "format"].sort().join("\0") ||
+        evidence.format !== "nir-progress-evaluator-equivocation-v1" ||
+        !/^[0-9a-f]{64}$/.test(evidence.candidateId ?? "") ||
+        !/^[0-9a-f]{64}$/.test(evidence.evidenceHash ?? "") ||
+        progressFraudEvidence.has(evidence.evidenceHash)) {
+      throw new Error("progress fraud evidence is invalid or replayed");
+    }
+    const { evidenceHash, ...payload } = evidence;
+    if (evidenceHash !== hashObject(payload, "PROGRESS_FRAUD_EVIDENCE_V1")) {
+      throw new Error("progress fraud evidence hash is invalid");
+    }
+    const escrow = progressEscrows.get(evidence.candidateId);
+    if (!escrow || height > escrow.unlockHeight) {
+      throw new Error("progress fraud evidence is late or has no escrow");
+    }
+    const claim = evidence.conflictingClaim;
+    if (!claim || Object.keys(claim).sort().join("\0") !==
+        ["attestations", "epoch", "evaluation", "fingerprint", "networkId", "recipient", "score"]
+          .sort().join("\0") || claim.networkId !== this.#networkId ||
+        claim.epoch !== escrow.epoch || claim.evaluation?.candidateId !== evidence.candidateId) {
+      throw new Error("conflicting progress receipt context is invalid");
+    }
+    const receipt = progressReceiptPayload({ networkId: claim.networkId, epoch: claim.epoch,
+      recipient: claim.recipient, evaluation: claim.evaluation });
+    if (claim.fingerprint !== receipt.fingerprint || claim.score !== receipt.score ||
+        hashObject(receipt, "PROGRESS_ESCROW_RECEIPT_V1") === escrow.acceptedReceiptHash) {
+      throw new Error("progress fraud evidence does not prove a conflicting receipt");
+    }
+    if (!Array.isArray(claim.attestations) || claim.attestations.length !== escrow.committee.length) {
+      throw new Error("conflicting progress receipt has no assigned quorum");
+    }
+    const seen = new Set();
+    for (const attestation of claim.attestations) {
+      const evaluator = this.#evaluators.get(attestation?.evaluator);
+      if (!evaluator || !escrow.committee.includes(attestation.evaluator) ||
+          seen.has(attestation.evaluator) || typeof attestation.signature !== "string" ||
+          attestation.signature.length > 7_000 ||
+          !verifyObject(receipt, attestation.signature, evaluator.publicKey, "PROGRESS_RECEIPT")) {
+        throw new Error("conflicting progress receipt signature is invalid");
+      }
+      seen.add(attestation.evaluator);
+    }
+    if (seen.size !== escrow.committee.length) {
+      throw new Error("conflicting progress receipt committee is incomplete");
+    }
+    if (progressFraudEvidence.size >= MAX_PROGRESS_FRAUD_EVIDENCE) {
+      throw new Error("progress fraud replay capacity is exceeded");
+    }
+    progressFraudEvidence.set(evidenceHash, height);
+    return evidence.candidateId;
   }
 
   #verifySafetyClaim(claim, epoch, candidateBonds, safetyEvidence) {
@@ -2085,6 +2292,7 @@ export class NirChain {
     randomnessCommits = [], randomnessReveals = [], fallbackBeacons = [],
     epochRandomnessCommits = [], epochRandomnessReveals = [],
     progressBeacons = [],
+    progressFraudProofs = [],
     validatorRotation = null, peerRegistryUpdate = null,
     protocolUpgrade = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
@@ -2124,12 +2332,17 @@ export class NirChain {
       throw new Error("intelligence rewards are being issued too quickly");
     }
     const stagedMemory = this.#capabilityMemory.clone();
+    const reservations = orderedProgressEscrows(this.#progressEscrows)
+      .map(([, escrow]) => progressReservation(escrow.evaluation, escrow.marginalCapabilities));
     for (const claim of progressRewards) {
-      this.#verifyProgressClaim(
+      const novelty = this.#verifyProgressClaim(
         claim,
         height,
         stagedMemory,
         this.#progressCommitments,
+      );
+      assertProgressReservationAvailable(
+        claim.evaluation, Object.keys(novelty.marginalGainsBps), reservations,
       );
     }
     assertProgressRewardCollateral(progressRewards, this.#candidateBonds);
@@ -2188,7 +2401,7 @@ export class NirChain {
     }
     const proposal = {
       accountStateRoot: "0".repeat(64),
-      capabilityMemoryRoot: stagedMemory.stateRoot,
+      capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
       height,
       networkId: this.#networkId,
       peerRegistryHash: nextPeerRegistry ? peerRegistryHash(nextPeerRegistry) : "0".repeat(64),
@@ -2198,6 +2411,7 @@ export class NirChain {
       epochRandomnessCommits,
       epochRandomnessReveals,
       progressRewards,
+      progressFraudProofs,
       fallbackBeacons,
       progressBeacons,
       randomnessCommits,
@@ -2232,6 +2446,7 @@ export class NirChain {
       return {
         ...proposal,
         accountStateRoot: trial.accountStateRoot,
+        capabilityMemoryRoot: trial.capabilityMemoryRoot,
         stateRoot: trial.stateRoot,
       };
     } catch {
@@ -2628,7 +2843,7 @@ export class NirChain {
 
   #applyProgressCommitment(
     transaction, nonces, progressCommitments, capabilityMemory, candidateBonds,
-    registeredValidators, height, randomnessRound,
+    progressEscrows, registeredValidators, height, randomnessRound,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -2666,6 +2881,10 @@ export class NirChain {
     }
     if (capabilityMemory.contentForArtifact(transaction.baselineHash) !==
         transaction.baselineContentHash) {
+      if ([...progressEscrows.values()].some(({ evaluation }) =>
+        evaluation.artifactHash === transaction.baselineHash)) {
+        throw new Error("pending progress escrow cannot be used as a baseline");
+      }
       throw new Error("baseline canonical content does not match the known baseline artifact");
     }
     const expectedId = progressCandidateId(transaction);
@@ -2673,6 +2892,9 @@ export class NirChain {
       transaction.candidateId !== expectedId ||
       progressCommitments.has(expectedId) ||
       capabilityMemory.hasContent(transaction.contentHash) ||
+      [...progressEscrows.values()].some(({ evaluation }) =>
+        evaluation.artifactHash === transaction.artifactHash ||
+        evaluation.contentHash === transaction.contentHash) ||
       [...progressCommitments.values()].some(({ contentHash }) =>
         contentHash === transaction.contentHash) ||
       progressCommitments.size >= MAX_PENDING_PROGRESS_COMMITMENTS ||
@@ -3157,6 +3379,9 @@ export class NirChain {
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
     fork.#progressCommitments = new Map(this.#progressCommitments);
+    fork.#progressEscrows = new Map([...this.#progressEscrows]
+      .map(([candidateId, escrow]) => [candidateId, structuredClone(escrow)]));
+    fork.#progressFraudEvidence = new Map(this.#progressFraudEvidence);
     fork.#protocolVersion = this.#protocolVersion;
     fork.#randomnessFaults = new Map(this.#randomnessFaults);
     fork.#registeredValidators = new Map(this.#registeredValidators);
@@ -3214,6 +3439,7 @@ export class NirChain {
       throw new Error("block timestamp is too far in the future");
     }
     if (!Array.isArray(block.transactions) || !Array.isArray(block.progressRewards) ||
+        !Array.isArray(block.progressFraudProofs) ||
         !Array.isArray(block.safetySettlements) || !Array.isArray(block.randomnessCommits) ||
         !Array.isArray(block.randomnessReveals) || !Array.isArray(block.fallbackBeacons) ||
         !Array.isArray(block.progressBeacons) || !Array.isArray(block.epochRandomnessCommits) ||
@@ -3249,6 +3475,9 @@ export class NirChain {
     }
     if (block.progressRewards.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
       throw new Error("too many progress rewards in one block");
+    }
+    if (block.progressFraudProofs.length > MAX_PROGRESS_FRAUD_PROOFS_PER_BLOCK) {
+      throw new Error("too many progress fraud proofs in one block");
     }
     if (block.safetySettlements.length > MAX_SAFETY_SETTLEMENTS_PER_BLOCK) {
       throw new Error("too many safety settlements in one block");
@@ -3297,6 +3526,9 @@ export class NirChain {
     }
 
     const capabilityMemory = this.#capabilityMemory.clone();
+    const progressNoveltyReports = new Map();
+    const capabilityReservations = orderedProgressEscrows(this.#progressEscrows)
+      .map(([, escrow]) => progressReservation(escrow.evaluation, escrow.marginalCapabilities));
     const epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: this.#networkId,
       registry: this.#beaconAuthorities,
@@ -3319,15 +3551,16 @@ export class NirChain {
       epochRandomness.reveal(reveal, block.height);
     }
     for (const claim of block.progressRewards) {
-      this.#verifyProgressClaim(
+      const novelty = this.#verifyProgressClaim(
         claim,
         block.height,
         capabilityMemory,
         this.#progressCommitments,
       );
-    }
-    if (block.capabilityMemoryRoot !== capabilityMemory.stateRoot) {
-      throw new Error("invalid world capability memory root");
+      assertProgressReservationAvailable(
+        claim.evaluation, Object.keys(novelty.marginalGainsBps), capabilityReservations,
+      );
+      progressNoveltyReports.set(claim.evaluation.candidateId, novelty);
     }
 
     if (
@@ -3387,6 +3620,14 @@ export class NirChain {
     const validatorEquivocationEvidence = new Set(this.#validatorEquivocationEvidence);
     const registeredValidators = new Map(this.#registeredValidators);
     const progressCommitments = new Map(this.#progressCommitments);
+    const progressEscrows = new Map([...this.#progressEscrows]
+      .map(([candidateId, escrow]) => [candidateId, structuredClone(escrow)]));
+    const progressFraudEvidence = new Map(this.#progressFraudEvidence);
+    for (const [evidenceHash, acceptedHeight] of progressFraudEvidence) {
+      if (block.height > acceptedHeight + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS) {
+        progressFraudEvidence.delete(evidenceHash);
+      }
+    }
     let scheduledRotation = null;
     if (block.validatorRotation !== null) {
       if (this.#pendingValidatorRotation) throw new Error("a validator rotation is already pending");
@@ -3440,6 +3681,41 @@ export class NirChain {
         if (remaining < MIN_BEACON_BOND) epochRandomness.disable(address);
       }
     }
+    const fraudCandidates = new Set();
+    for (const evidence of block.progressFraudProofs) {
+      if (fraudCandidates.has(evidence?.candidateId)) {
+        throw new Error("duplicate progress fraud proof for candidate in block");
+      }
+      fraudCandidates.add(evidence?.candidateId);
+      const candidateId = this.#verifyProgressFraudProof(
+        evidence, block.height, progressEscrows, progressFraudEvidence,
+      );
+      const escrow = progressEscrows.get(candidateId);
+      const bond = candidateBonds.get(candidateId);
+      if (!escrow || !bond || bond.purpose !== "progress" || !bond.admissionBound ||
+          bond.bond !== escrow.bondAmount || bond.submitter !== escrow.refundAddress) {
+        throw new Error("progress fraud escrow collateral is inconsistent");
+      }
+      newlyBurned += escrow.amount + escrow.bondAmount;
+      progressEscrows.delete(candidateId);
+      candidateBonds.delete(candidateId);
+    }
+    // An objective proof included at unlockHeight wins over maturity in the same transition.
+    for (const [candidateId, escrow] of orderedProgressEscrows(progressEscrows)) {
+      if (block.height >= escrow.unlockHeight) {
+        const bond = candidateBonds.get(candidateId);
+        if (!bond || bond.purpose !== "progress" || !bond.admissionBound ||
+            bond.bond !== escrow.bondAmount || bond.submitter !== escrow.refundAddress) {
+          throw new Error("maturing progress escrow collateral is inconsistent");
+        }
+        capabilityMemory.accept(escrow.evaluation);
+        balances.set(escrow.recipient, (balances.get(escrow.recipient) ?? 0n) + escrow.amount);
+        balances.set(escrow.refundAddress,
+          (balances.get(escrow.refundAddress) ?? 0n) + escrow.bondAmount);
+        progressEscrows.delete(candidateId);
+        candidateBonds.delete(candidateId);
+      }
+    }
     const expectedSafetySettlements = block.safetySettlements.map(({ settlement: _settlement, ...claim }) => ({
       ...claim,
       settlement: this.#verifySafetyClaim(claim, block.height, candidateBonds, safetyEvidence),
@@ -3468,20 +3744,48 @@ export class NirChain {
       rewardedProofs.add(reward.fingerprint);
       const amount = parseAtomic(reward.amount, "reward amount");
       newlyMined += amount;
-      balances.set(reward.recipient, (balances.get(reward.recipient) ?? 0n) + amount);
       const bond = candidateBonds.get(reward.evaluation.candidateId);
+      const commitment = progressCommitments.get(reward.evaluation.candidateId);
       if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
         throw new Error("progress reward has no locked candidate bond");
+      }
+      if (!commitment || !Array.isArray(commitment.committee) ||
+          commitment.committee.length !== this.#evaluationQuorum) {
+        throw new Error("progress reward has no assigned evaluation committee");
       }
       if (amount > bond.bond) {
         throw new Error("progress reward exceeds its locked candidate bond collateral");
       }
-      balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
-      candidateBonds.delete(reward.evaluation.candidateId);
+      if (progressEscrows.size >= MAX_PROGRESS_REWARD_ESCROWS ||
+          progressEscrows.has(reward.evaluation.candidateId)) {
+        throw new Error("progress reward escrow capacity is exceeded");
+      }
+      const receipt = progressReceiptPayload({ networkId: reward.networkId, epoch: reward.epoch,
+        recipient: reward.recipient, evaluation: reward.evaluation });
+      progressEscrows.set(reward.evaluation.candidateId, {
+        acceptedReceiptHash: hashObject(receipt, "PROGRESS_ESCROW_RECEIPT_V1"),
+        amount,
+        bondAmount: bond.bond,
+        candidateId: reward.evaluation.candidateId,
+        committee: [...commitment.committee].sort(),
+        createdHeight: block.height,
+        epoch: reward.epoch,
+        evaluation: structuredClone(reward.evaluation),
+        fingerprint: reward.fingerprint,
+        marginalCapabilities: Object.keys(
+          progressNoveltyReports.get(reward.evaluation.candidateId)?.marginalGainsBps ?? {},
+        ).sort(),
+        recipient: reward.recipient,
+        refundAddress: bond.submitter,
+        unlockHeight: block.height + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
+      });
       progressCommitments.delete(reward.evaluation.candidateId);
     }
     if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
       throw new Error("hard supply cap exceeded");
+    }
+    if (verifyStateRoot && block.capabilityMemoryRoot !== capabilityMemory.stateRoot) {
+      throw new Error("invalid world capability memory root");
     }
     const transactionIds = new Set();
     for (const transaction of block.transactions) {
@@ -3506,6 +3810,7 @@ export class NirChain {
           progressCommitments,
           capabilityMemory,
           candidateBonds,
+          progressEscrows,
           registeredValidators,
           block.height,
           epochRandomness.round,
@@ -3799,6 +4104,8 @@ export class NirChain {
       pendingValidatorRotation: pendingValidatorRotationAfter,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
+      progressEscrows,
+      progressFraudEvidence,
       protocolVersion: protocolState.protocolVersion,
       randomnessFaults,
       registeredValidators,
@@ -3823,6 +4130,7 @@ export class NirChain {
         creditUsage,
         height: block.height,
         nonces,
+        progressEscrows,
       }));
       if (block.accountStateRoot !== expectedAccountStateRoot) {
         throw new Error("block account state root is invalid");
@@ -3852,6 +4160,8 @@ export class NirChain {
     this.#registeredValidators = registeredValidators;
     this.#peerRegistry = nextPeerRegistry;
     this.#progressCommitments = progressCommitments;
+    this.#progressEscrows = progressEscrows;
+    this.#progressFraudEvidence = progressFraudEvidence;
     this.#protocolVersion = protocolState.protocolVersion;
     this.#safetyEvidence = safetyEvidence;
     this.#capabilityMemory = capabilityMemory;

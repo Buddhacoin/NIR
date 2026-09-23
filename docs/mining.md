@@ -15,8 +15,9 @@ frozen baseline and candidate on hidden tasks. A reward is possible only for a
 new world-frontier delta that clears every critical safety gate.
 
 The exact candidate id must first carry a finalized 1 NIR progress bond. The
-author or a consenting sponsor can pay it. It is refunded only after a valid
-reward and otherwise burns when the admission expires after 1,024 blocks; an
+author or a consenting sponsor can pay it. After a valid reward it remains
+locked with that reward for a 64-finalized-block objective fraud window, then
+refunds; otherwise it burns when admission expires after 1,024 blocks. An
 honest timeout is not exempt. An unbound bond receives no committee and is
 reclaimed only after 64 blocks, preventing free pre-admission committee probing.
 This raises the cost of multi-key grinding
