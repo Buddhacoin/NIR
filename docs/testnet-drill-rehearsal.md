@@ -63,3 +63,37 @@ The CLI exits zero when the harness and cleanup succeed even though authenticate
 is expected to remain FAIL. It has no `--require-authenticated-pass` mode; callers that require a real
 drill PASS must inspect `authenticatedDrillStatus` and use the real-service operator workflow. No
 top-level or generic `status: PASS` field is emitted that could be mistaken for consensus success.
+
+## Real validator recovery driver
+
+`blockchain/testnet-drill-real-runtime-cli.mjs` is a narrower real-service integration layer. It
+first inventories the executable validator, finality, beacon, and archive components. Missing or
+symlinked runtime entrypoints fail closed. The current driver exercises only the real validator and
+finality components; beacon and archive are reported as available but `exercised:false`.
+
+The driver creates a fresh valueless development network in a random temporary directory and starts
+four real `network-cli serve-validator` processes on loopback. `DistributedCoordinator` finalizes one
+transfer, one non-proposer validator is stopped, and the remaining 3/4 quorum finalizes a second
+transfer. The stopped validator is launched again from its durable directory, explicitly synchronizes
+from authenticated peers, and returns a validator-signed coordinator-authenticated health response
+for the second finalized tip. The report embeds both finalized blocks, so offline validation replays
+them through `NirChain` and verifies their finality certificates. It also verifies every health
+request and response signature, network, identity, height, and tip binding.
+
+An exact authenticated health request is replayed during the run and must receive a 4xx rejection.
+That rejection and the local PID change are controller transcript assertions, while identity and
+recovered state are cryptographically bound by the validator response and finalized chain. The
+report hash covers both classes and labels the result an authenticated local recovery, not a
+production deployment or an external infrastructure partition. The validation uses explicit
+`harnessStatus` and `scenarioStatus` fields and deliberately has no generic top-level PASS status.
+
+```text
+node blockchain/testnet-drill-real-runtime-cli.mjs
+```
+
+The command takes no host or URL arguments and cannot contact a non-loopback endpoint. Children use
+direct spawn with `shell:false`, isolated process groups, an empty inherited environment except the
+explicit development certificate mode, and bounded startup/request/shutdown/output/disk limits.
+Cleanup terminates every owned process group, escalates after a deadline, and removes only the owned
+random temporary directory. A runtime crash, replay acceptance, invalid signature, failed catch-up,
+resource overflow, or incomplete cleanup makes the command fail.
