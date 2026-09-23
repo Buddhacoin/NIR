@@ -6,9 +6,9 @@ import {
 } from "./http-ingress.mjs";
 
 const MAX_UI_FILES = 256;
-const MAX_UI_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_UI_TOTAL_BYTES = 64 * 1024 * 1024;
-const CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'";
+const MAX_UI_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_UI_TOTAL_BYTES = 32 * 1024 * 1024;
+const CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://[::1]:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'";
 const MIME = Object.freeze({
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -105,10 +105,32 @@ function route(request, snapshot) {
   return { entry, immutable: !NO_STORE.has(relative) && version === entry.digest };
 }
 
-export function createProductionWalletUiServer(snapshot, ingressOptions = {}) {
+function requestAuthority(request, server) {
+  const address = server.address();
+  if (!address || typeof address === "string" ||
+      !new Set(["127.0.0.1", "::1"]).has(address.address)) {
+    throw new Error("wallet UI listener is not a loopback TCP socket");
+  }
+  const expected = address.address === "::1" ? `[::1]:${address.port}`
+    : `127.0.0.1:${address.port}`;
+  if (request.headers.host !== expected) {
+    const error = new Error("wallet UI authority is invalid"); error.status = 421; throw error;
+  }
+  const origin = request.headers.origin;
+  if (origin !== undefined && origin !== `http://${expected}`) {
+    const error = new Error("wallet UI origin is invalid"); error.status = 403; throw error;
+  }
+}
+
+export function createProductionWalletUiServer(snapshot, {
+  ingressOptions = {}, verifyRequest = null,
+} = {}) {
   if (!(snapshot?.files instanceof Map)) throw new Error("production wallet UI snapshot is invalid");
+  if (verifyRequest !== null && typeof verifyRequest !== "function") {
+    throw new Error("production wallet UI request verifier is invalid");
+  }
   const ingress = new HttpIngressGuard({
-    burst: 128, maxActive: 32, maxActivePerAddress: 16, maxAddresses: 32,
+    burst: 64, maxActive: 8, maxActivePerAddress: 4, maxAddresses: 32,
     maxUrlBytes: 512, requestsPerMinute: 600, ...ingressOptions,
   });
   const handler = (request, response) => {
@@ -117,7 +139,9 @@ export function createProductionWalletUiServer(snapshot, ingressOptions = {}) {
     response.once("finish", finish); response.once("close", finish);
     try {
       release = ingress.begin(request);
+      requestAuthority(request, server);
       const { entry, immutable } = route(request, snapshot);
+      if (verifyRequest !== null) verifyRequest();
       const headers = securityHeaders(entry, immutable);
       if (request.headers["if-none-match"] === headers.etag) {
         const { "content-length": ignored, ...notModifiedHeaders } = headers;
@@ -137,8 +161,17 @@ export function createProductionWalletUiServer(snapshot, ingressOptions = {}) {
   };
   const server = createServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, handler);
   hardenHttpServer(server, { headersTimeoutMs: 3_000, keepAliveTimeoutMs: 1_000,
-    maxConnections: 64, maxHeadersCount: 32, maxRequestsPerSocket: 50,
+    maxConnections: 32, maxHeadersCount: 32, maxRequestsPerSocket: 50,
     requestTimeoutMs: 5_000 });
+  server.setTimeout(5_000, (socket) => socket.destroy());
+  const rejectExpectation = (request, response) => {
+    request.resume();
+    response.writeHead(417, { "cache-control": "no-store", connection: "close",
+      "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
+    response.end("request rejected\n");
+  };
+  server.on("checkContinue", rejectExpectation);
+  server.on("checkExpectation", rejectExpectation);
   server.ingressMetrics = () => ingress.metrics();
   return server;
 }

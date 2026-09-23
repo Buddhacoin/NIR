@@ -23,13 +23,20 @@ try {
     walletExternalAnchorPath, walletHeadStore, walletInstallationTarget,
   });
   const snapshot = walletUiSnapshotFromArtifact(guard.initial.wallet.artifact);
-  const server = createProductionWalletUiServer(snapshot);
+  const server = createProductionWalletUiServer(snapshot, {
+    verifyRequest: () => guard.verifyBeforeOpen(),
+  });
   guard.verifyBeforeOpen();
   const shutdown = () => server.gracefulShutdown().then(() => process.exit(0), () => process.exit(1));
   process.once("SIGINT", shutdown); process.once("SIGTERM", shutdown);
+  server.once("error", () => {
+    console.error("Wallet UI startup failed: loopback listener is unavailable");
+    server.gracefulShutdown().then(() => process.exit(1), () => process.exit(1));
+  });
   server.listen(port, host, () => {
+    const displayHost = host === "::1" ? "[::1]" : host;
     console.log(`NIR production wallet UI ${guard.initial.wallet.packageHash}`);
-    console.log(`Listening only on http://${host}:${port}`);
+    console.log(`Listening only on http://${displayHost}:${port}`);
   });
 } catch (error) {
   console.error(`Wallet UI startup failed: ${error.message}`);

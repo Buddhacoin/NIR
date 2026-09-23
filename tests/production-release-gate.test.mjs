@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { request as httpRequest } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readlinkSync, readdirSync, renameSync, rmSync, symlinkSync, truncateSync,
@@ -132,14 +133,23 @@ function releaseVariant(values, version, suffix) {
   return { artifact, manifest, packageValue, signedRelease, ...evidence };
 }
 
-async function unusedPort() {
+async function unusedPort(host = "127.0.0.1") {
   const server = createNetServer();
   await new Promise((resolvePromise, reject) => {
-    server.once("error", reject); server.listen(0, "127.0.0.1", resolvePromise);
+    server.once("error", reject); server.listen(0, host, resolvePromise);
   });
   const port = server.address().port;
   await new Promise((resolvePromise) => server.close(resolvePromise));
   return port;
+}
+
+function rawHttpStatus(port, path, { headers = {}, host = "127.0.0.1", method = "GET" } = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const request = httpRequest({ headers, host, method, path, port }, (response) => {
+      response.resume(); response.once("end", () => resolvePromise(response.statusCode));
+    });
+    request.once("error", reject); request.end();
+  });
 }
 
 async function waitForOutput(child, pattern) {
@@ -790,6 +800,9 @@ test("production wallet bridge and UI verify anchored generations before bind on
 
     const uiCli = join(toolGeneration, "blockchain/wallet-ui-cli.mjs");
     const appEntry = walletArtifact.entries.find(({ path }) => path === "wallet-ui/app.js");
+    const walletGeneration = join(values.root, readlinkSync(installation));
+    const walletProvenancePath = join(walletGeneration, "NIR-PRODUCTION.json");
+    const originalWalletProvenance = readFileSync(walletProvenancePath);
     for (let restart = 0; restart < 2; restart += 1) {
       const port = await unusedPort();
       child = spawn(process.execPath, [uiCli, installation, head, signedPath,
@@ -800,6 +813,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
       const shell = await fetch(`${originUrl}/`);
       assert.equal(shell.status, 200);
       assert.match(shell.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+      assert.doesNotMatch(shell.headers.get("content-security-policy"), /localhost/);
       assert.equal(shell.headers.get("x-content-type-options"), "nosniff");
       assert.equal(shell.headers.get("cache-control"), "no-store");
       assert.match(await shell.text(), /NIR Wallet/);
@@ -807,6 +821,8 @@ test("production wallet bridge and UI verify anchored generations before bind on
       assert.equal(immutable.status, 200);
       assert.equal(immutable.headers.get("cache-control"),
         "public, max-age=31536000, immutable");
+      assert.deepEqual(Buffer.from(await immutable.arrayBuffer()),
+        Buffer.from(appEntry.content, "base64"));
       assert.equal((await fetch(`${originUrl}/app.js?v=31`)).headers.get("cache-control"),
         "no-store");
       assert.equal((await fetch(`${originUrl}/..%2fpackage.json`)).status, 400);
@@ -815,8 +831,39 @@ test("production wallet bridge and UI verify anchored generations before bind on
       assert.equal((await fetch(`${originUrl}/app.js`, {
         body: "x".repeat(64 * 1024), method: "POST",
       })).status, 413);
+      assert.equal(await rawHttpStatus(port, "/", { headers: { host: `evil.invalid:${port}` } }),
+        421);
+      assert.equal(await rawHttpStatus(port, "/", {
+        headers: { origin: "https://evil.invalid" },
+      }), 403);
+      assert.equal(await rawHttpStatus(port, "/NIR-PRODUCTION.json"), 404);
+      assert.equal(await rawHttpStatus(port, "/", {
+        headers: { "content-length": "1", expect: "100-continue" }, method: "POST",
+      }), 417);
+      for (let index = 0; index < 32; index += 1) {
+        const hostilePath = index % 4 === 0 ? `/..%2f${index}`
+          : index % 4 === 1 ? `//${index}`
+          : index % 4 === 2 ? `/%${index.toString(16).padStart(2, "0")}`
+          : `/app.js?v=${"a".repeat(64)}&duplicate=${index}`;
+        assert.notEqual(await rawHttpStatus(port, hostilePath), 200);
+      }
+      if (restart === 0) {
+        const changed = JSON.parse(originalWalletProvenance.toString("utf8"));
+        changed.packageHash = "e".repeat(64);
+        writeFileSync(walletProvenancePath, `${canonicalJson(changed)}\n`);
+        assert.equal((await fetch(`${originUrl}/`)).status, 400);
+        writeFileSync(walletProvenancePath, originalWalletProvenance);
+        assert.equal((await fetch(`${originUrl}/`)).status, 200);
+      }
       await stopChild(child); child = null;
     }
+    const ipv6Port = await unusedPort("::1");
+    child = spawn(process.execPath, [uiCli, installation, head, signedPath,
+      values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
+      String(ipv6Port), "::1"], { stdio: ["ignore", "pipe", "pipe"] });
+    await waitForOutput(child, /Listening only/);
+    assert.equal((await fetch(`http://[::1]:${ipv6Port}/`)).status, 200);
+    await stopChild(child); child = null;
     const sourceUiCli = new URL("../blockchain/wallet-ui-cli.mjs", import.meta.url).pathname;
     const sourceUiPort = await unusedPort();
     const externalUi = spawnSync(process.execPath, [sourceUiCli, installation, head, signedPath,
@@ -841,6 +888,19 @@ test("production wallet bridge and UI verify anchored generations before bind on
       nonLoopbackReservation.listen(nonLoopbackPort, "127.0.0.1", resolvePromise);
     });
     await new Promise((resolvePromise) => nonLoopbackReservation.close(resolvePromise));
+    const occupied = createNetServer();
+    await new Promise((resolvePromise, reject) => {
+      occupied.once("error", reject); occupied.listen(0, "127.0.0.1", resolvePromise);
+    });
+    const occupiedPort = occupied.address().port;
+    const portRace = spawnSync(process.execPath, [uiCli, installation, head, signedPath,
+      values.signer.address, anchorPath, toolInstallation, toolHead, toolAnchorPath,
+      String(occupiedPort), "127.0.0.1"], { encoding: "utf8" });
+    assert.equal(portRace.status, 1);
+    assert.match(portRace.stderr, /loopback listener is unavailable/);
+    assert.doesNotMatch(portRace.stderr, /node:internal|\/Users\//);
+    assert.equal(occupied.listening, true);
+    await new Promise((resolvePromise) => occupied.close(resolvePromise));
 
     const sourceCli = new URL("../blockchain/wallet-bridge-cli.mjs", import.meta.url).pathname;
     const substitutedPort = await unusedPort();

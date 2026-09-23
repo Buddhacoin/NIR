@@ -367,8 +367,12 @@ npm --prefix /absolute/path/to/active-tool run wallet:serve-production -- \
 ```
 
 The launcher snapshots the exact signed wallet artifact bytes into bounded memory,
-reverifies both active generations immediately before `listen()`, and serves only
-the artifact's allowlisted files. It binds only `127.0.0.1` or `::1`, disables
+reverifies both active generations immediately before `listen()` and before every
+accepted asset response, and serves only the artifact's allowlisted files. A head,
+activation, provenance or installed-byte change therefore makes subsequent requests
+fail closed while the in-memory bytes remain internally consistent. It binds only
+`127.0.0.1` or `::1`, requires the exact bound literal authority (and same origin
+when an `Origin` header is present), disables
 directory listing, ranges, request bodies, encoded/traversal paths and unknown query
 parameters, and applies bounded admission, connection and timeout limits. CSP,
 frame denial, MIME sniffing protection, no-referrer and restrictive permissions
