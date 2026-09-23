@@ -20,6 +20,7 @@ import {
   MAX_NATIVE_ASSETS,
   MAX_NATIVE_ASSET_BALANCES,
   MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
+  MIN_EVALUATOR_BOND,
   MIN_TRANSFER_FEE,
   PROTOCOL_VERSION,
   SAFETY_POLICY_V1_COMMITMENT,
@@ -174,7 +175,9 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
   const history = [];
   const model = {
     assetBalances: new Map(), assets: new Map(),
-    nir: new Map([[treasury.address, TREASURY_ALLOCATION]]), nonces: new Map(),
+    nir: new Map([[treasury.address,
+      TREASURY_ALLOCATION - BigInt(genesis.evaluators.length) * MIN_EVALUATOR_BOND]]),
+    nonces: new Map(),
   };
   const immutableCaps = new Map();
   const lastMinted = new Map();
@@ -241,8 +244,11 @@ test("deterministic asset model preserves supplies, NIR fees, rollback, and repl
     }
     assert.equal(chain.issued, TREASURY_ALLOCATION);
     assert.equal(chain.burned, 0n);
-    assert.equal(addresses.reduce((total, address) => total + chain.balance(address), 0n),
-      chain.issued - chain.burned);
+    const evaluatorBonds = chain.consensusSnapshot().state.evaluatorBonds.reduce(
+      (sum, [, amount]) => sum + BigInt(amount), 0n,
+    );
+    assert.equal(addresses.reduce((total, address) => total + chain.balance(address), 0n) +
+      evaluatorBonds, chain.issued - chain.burned);
     assert.ok(model.assets.size <= MAX_NATIVE_ASSETS);
     assert.ok(model.assetBalances.size <= MAX_NATIVE_ASSET_BALANCES);
     for (const [assetId, asset] of model.assets) {

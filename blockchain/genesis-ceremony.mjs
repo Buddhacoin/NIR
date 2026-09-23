@@ -3,6 +3,7 @@ import { createPublicKey } from "node:crypto";
 import { NirChain, multisigAddress } from "./chain.mjs";
 import {
   MAX_FUTURE_DRIFT_MS,
+  MIN_EVALUATOR_BOND,
   PROTOCOL_VERSION,
   SAFETY_POLICY_V1_COMMITMENT,
   SIGNATURE_ALGORITHM,
@@ -20,6 +21,7 @@ const OPERATOR_ID = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 const PLAN_FIELDS = [
   "beaconAuthorities", "ceremonyOperators", "commitment", "format", "genesisTimestamp",
   "networkId", "protocolVersion", "purpose", "sourceReleaseManifestHash", "treasury",
+  "evaluatorBondAmount",
   "validators", "evaluators", "peerRegistryCommitment", "sourceRelease",
   "validatorSetCommitment",
 ];
@@ -251,6 +253,9 @@ function planPayload(input, withHeader, release) {
       !HASH.test(input.sourceReleaseManifestHash ?? "")) {
     throw new Error("genesis plan header is invalid or unsupported");
   }
+  if (input.evaluatorBondAmount !== MIN_EVALUATOR_BOND.toString()) {
+    throw new Error("genesis evaluator bond must equal the protocol bootstrap amount");
+  }
   exactObject(release, RELEASE_FIELDS, "genesis source release provenance");
   if (input.sourceReleaseManifestHash !== release.manifestHash ||
       (withHeader && canonicalJson(input.sourceRelease) !== canonicalJson(release))) {
@@ -287,6 +292,7 @@ function planPayload(input, withHeader, release) {
   return {
     beaconAuthorities,
     ceremonyOperators: ceremonyOperators(input.ceremonyOperators),
+    evaluatorBondAmount: input.evaluatorBondAmount,
     format: FORMAT,
     genesisTimestamp: input.genesisTimestamp,
     networkId: input.networkId,
@@ -448,6 +454,7 @@ export function compileGenesis(planValue, envelope, options = {}) {
       capabilitiesBps: { "developer-test-v1": 0 },
     }],
     evaluators: plan.evaluators.map(({ endpoint: _endpoint, ...identity }) => identity),
+    evaluatorBondAmount: plan.evaluatorBondAmount,
     genesisTimestamp: plan.genesisTimestamp,
     networkId: plan.networkId,
     peerRegistry: {

@@ -128,11 +128,17 @@ Production must deploy beacon authorities under genuinely independent control.
 If their quorum is unavailable, new challenges pause safely instead of falling
 back to proposer-controlled randomness.
 
-Validator and evaluator identities in this version are configured at genesis,
+Validator and initial evaluator identities in this version are configured at genesis,
 and one configured operator cannot occupy both roles. This is not yet
 permissionless consensus: operator identifiers are self-asserted, and there is
-no consensus-connected external identity attestation, operator rotation,
-evaluator-equivocation slashing, fork recovery, or peer-to-peer transport.
+no consensus-connected external identity attestation. Genesis locks one fixed
+minimum evaluator bond per identity by deducting it from the existing treasury
+allocation. An objectively conflicting full-committee progress receipt burns
+the reward, candidate collateral, and each guilty evaluator bond exactly once,
+then disables those keys. Bonded replacements can fill only disabled vacancies
+after a 64-block activation delay; old keys cannot rebond. This restores protocol
+liveness without claiming that a new key or operator ID proves a different
+company. Fork recovery and peer-to-peer transport remain separate mechanisms.
 Candidate safety bonds, randomness commitments and reveals, committee
 assignments, and critical-failure settlements are consensus state. No single
 block producer supplies the seed. The current commit/reveal construction still

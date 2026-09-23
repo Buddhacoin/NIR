@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
-  ATOMIC_UNITS, MIN_TRANSFER_FEE, PROTOCOL_VERSION, TREASURY_BPS,
+  ATOMIC_UNITS, MIN_EVALUATOR_BOND, MIN_TRANSFER_FEE, PROTOCOL_VERSION, TREASURY_BPS,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import {
@@ -98,6 +98,7 @@ async function fixture(root) {
       nonce: digest(`drill-nonce-${index}`), operatorId: `ceremony-${index}`,
     })),
     evaluators: publicRoles(evaluators, "evaluator", 19200),
+    evaluatorBondAmount: MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp: 0,
     networkId: "nir-multivalidator-ceremony-drill",
     protocolVersion: PROTOCOL_VERSION,

@@ -11,6 +11,7 @@ import test from "node:test";
 
 import { NirChain, multisigAddress } from "../blockchain/chain.mjs";
 import {
+  MIN_EVALUATOR_BOND,
   PROTOCOL_VERSION,
   TREASURY_BPS,
   TREASURY_VESTING_MS,
@@ -98,6 +99,7 @@ function fixture(label = "primary", {
       operatorId: `ceremony-${index}`,
     })),
     evaluators: role(evaluators, "evaluator", 9200),
+    evaluatorBondAmount: MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp: 0,
     networkId: `nir-${label}-valueless-devnet`,
     protocolVersion: PROTOCOL_VERSION,

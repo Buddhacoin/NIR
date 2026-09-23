@@ -19,6 +19,7 @@ import {
   createCreditUnstakeClaim,
   createCreditUnstakeRequest,
   createDelegatedCreditTransfer,
+  createEvaluatorBond,
   createCandidateBond,
   createProgressCommitment,
   progressCandidateId,
@@ -41,11 +42,13 @@ import {
   BEACON_NON_REVEAL_SLASH_BPS,
   CREDIT_UNSTAKE_DELAY_BLOCKS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
+  EVALUATOR_ACTIVATION_DELAY_BLOCKS,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
   MINING_POOL,
   MIN_PROGRESS_CANDIDATE_BOND,
+  MIN_EVALUATOR_BOND,
   MIN_BEACON_BOND,
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
@@ -156,7 +159,10 @@ function assertProgressBondConservation(chain) {
   const escrowedRewards = state.progressEscrows.reduce(
     (total, [, escrow]) => total + BigInt(escrow.amount), 0n,
   );
-  assert.equal(liquid + locked + escrowedRewards + chain.burned, chain.issued);
+  const evaluatorBonds = state.evaluatorBonds.reduce(
+    (total, [, amount]) => total + BigInt(amount), 0n,
+  );
+  assert.equal(liquid + locked + evaluatorBonds + escrowedRewards + chain.burned, chain.issued);
   assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
   assert.ok(chain.issued <= MAX_SUPPLY);
 }
@@ -353,10 +359,14 @@ test("a classical key cannot masquerade as ML-DSA-65", () => {
   assert.throws(() => signObject({ value: 1 }, fakeWallet, "TEST"), /not ML-DSA-65/);
 });
 
-test("genesis supply contains only the locked treasury allocation", () => {
-  const { chain, treasury } = fixture();
+test("fresh genesis funds evaluator bonds without hidden issuance", () => {
+  const { chain, evaluators, treasury } = fixture();
   assert.equal(chain.issued, TREASURY_ALLOCATION);
-  assert.equal(chain.balance(treasury.address), TREASURY_ALLOCATION);
+  const evaluatorBonds = evaluators.reduce(
+    (total, evaluator) => total + chain.evaluatorBond(evaluator.address), 0n,
+  );
+  assert.equal(evaluatorBonds, BigInt(evaluators.length) * MIN_EVALUATOR_BOND);
+  assert.equal(chain.balance(treasury.address) + evaluatorBonds, TREASURY_ALLOCATION);
   assert.ok(chain.issued < MAX_SUPPLY);
 });
 
@@ -429,7 +439,7 @@ test("Python and JavaScript capability memory use the same state root", () => {
   );
 });
 
-test("a finalized progress block mints its fixed epoch budget", () => {
+test("fresh genesis can reach its first reward with the committed evaluator bonds", () => {
   const { chain, evaluators, treasury, validators } = fixture();
   const miner = generateWallet();
   const memoryRootBefore = chain.capabilityMemoryRoot;
@@ -559,8 +569,8 @@ test("one empty boundary block matures multiple independent progress escrows", (
   assert.equal(chain.consensusSnapshot().state.progressEscrows.length, 0);
 });
 
-test("objective evaluator equivocation burns escrow at the boundary and survives restart", () => {
-  const { chain, evaluators, genesisConfig, validators } = fixture();
+test("objective evaluator equivocation slashes once and bonded replacements recover progress", () => {
+  const { beaconAuthorities, chain, evaluators, genesisConfig, treasury, validators } = fixture();
   const miner = generateWallet();
   const memoryRootBefore = chain.capabilityMemoryRoot;
   const claim = progressClaim(chain, evaluators, validators, miner, "escrow-fraud");
@@ -623,7 +633,19 @@ test("objective evaluator equivocation burns escrow at the boundary and survives
   restored.appendBlock(finalizeBlock(fraudBlock, quorumFor(fraudBlock, validators)));
   assert.equal(restored.capabilityMemoryRoot, memoryRootBefore);
   assert.equal(restored.balance(miner.address), 0n);
-  assert.equal(restored.burned, INITIAL_EPOCH_REWARD * 2n);
+  assert.equal(restored.burned,
+    INITIAL_EPOCH_REWARD * 2n + BigInt(signerWallets.length) * MIN_EVALUATOR_BOND);
+  for (const signer of signerWallets) {
+    assert.equal(restored.evaluatorBond(signer.address), 0n);
+    assert.equal(restored.evaluatorFaultCount(signer.address), 1);
+    assert.equal(restored.evaluatorDisabled(signer.address), true);
+  }
+  const slashedFork = restored.fork();
+  for (const signer of signerWallets) {
+    assert.equal(slashedFork.evaluatorBond(signer.address), 0n);
+    assert.equal(slashedFork.evaluatorFaultCount(signer.address), 1);
+    assert.equal(slashedFork.evaluatorDisabled(signer.address), true);
+  }
   assert.equal(restored.accountState(miner.address).resources.pendingProgressReward, null);
   assertProgressBondConservation(restored);
   const settled = restored.consensusSnapshot();
@@ -639,6 +661,69 @@ test("objective evaluator equivocation burns escrow at the boundary and survives
   assert.throws(() => recovered.appendBlock(finalizeBlock(replay, quorumFor(replay, validators))),
     /invalid or replayed|late or has no escrow/);
   assert.equal(recovered.stateRoot, rootAfter);
+
+  const replacements = Array.from({ length: signerWallets.length }, generateWallet);
+  const fundingNonce = recovered.nextNonce(treasury.address);
+  const funding = replacements.map((replacement, index) => createTransfer({
+    wallet: treasury, networkId: recovered.networkId, recipient: replacement.address,
+    amount: (MIN_EVALUATOR_BOND + MIN_TRANSFER_FEE).toString(),
+    nonce: fundingNonce + index,
+  }));
+  const fundingBlock = recovered.buildBlock({ transactions: funding, timestamp: TREASURY_VESTING_MS });
+  recovered.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
+  const registrationHeight = recovered.height + 1;
+  const registrations = replacements.map((replacement, index) => createEvaluatorBond({
+    wallet: replacement, networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
+    operatorId: `replacement-evaluator-${index}`,
+    activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+  }));
+  const registrationBlock = recovered.buildBlock({
+    transactions: registrations, timestamp: TREASURY_VESTING_MS,
+  });
+  recovered.appendBlock(finalizeBlock(registrationBlock, quorumFor(registrationBlock, validators)));
+  assert.equal(recovered.consensusSnapshot().state.pendingEvaluatorRegistrations.length,
+    replacements.length);
+  const pendingSnapshot = recovered.consensusSnapshot();
+  const restartedPending = NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: pendingSnapshot.capabilityMemory, checkpoint: recovered.blocks().at(-1),
+    height: recovered.height, networkId: recovered.networkId, state: pendingSnapshot.state,
+    stateRoot: recovered.stateRoot, tipHash: recovered.tipHash,
+  });
+  advanceEmptyBlocks(restartedPending, validators, EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    TREASURY_VESTING_MS);
+  assert.equal(restartedPending.consensusSnapshot().state.pendingEvaluatorRegistrations.length, 0);
+  for (const replacement of replacements) {
+    assert.equal(restartedPending.evaluatorBond(replacement.address), MIN_EVALUATOR_BOND);
+    assert.equal(restartedPending.evaluatorDisabled(replacement.address), false);
+  }
+  const disabledRebond = createEvaluatorBond({
+    wallet: signerWallets[0], networkId: restartedPending.networkId,
+    amount: "1", nonce: restartedPending.nextNonce(signerWallets[0].address),
+  });
+  const disabledBlock = restartedPending.buildBlock({
+    transactions: [disabledRebond], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => restartedPending.appendBlock(finalizeBlock(
+    disabledBlock, quorumFor(disabledBlock, validators),
+  )), /disabled evaluator identity cannot bond again/);
+  TEST_BEACON_WALLETS.set(restartedPending, beaconAuthorities);
+  TEST_TREASURY_WALLETS.set(restartedPending, treasury);
+  const nextMiner = generateWallet();
+  const recoveredClaim = progressClaim(
+    restartedPending, [...evaluators, ...replacements], validators, nextMiner,
+    "replacement-quorum", nextMiner.address, "replacement-quorum-content",
+  );
+  const recoveredReward = restartedPending.buildBlock({
+    rewardClaims: [recoveredClaim],
+    timestamp: currentTimestamp(restartedPending, MIN_REWARD_INTERVAL_MS),
+  });
+  restartedPending.appendBlock(finalizeBlock(
+    recoveredReward, quorumFor(recoveredReward, validators),
+  ));
+  assert.equal(restartedPending.accountState(nextMiner.address)
+    .resources.pendingProgressReward.amount, INITIAL_EPOCH_REWARD.toString());
+  assertProgressBondConservation(restartedPending);
 });
 
 test("false and late progress evidence cannot confiscate escrow", () => {
@@ -651,11 +736,19 @@ test("false and late progress evidence cannot confiscate escrow", () => {
     candidateId: claim.evaluation.candidateId, conflictingClaim: claim,
   });
   const before = chain.stateRoot;
+  const evaluatorStateBefore = evaluators.map(({ address }) => ({
+    bond: chain.evaluatorBond(address), disabled: chain.evaluatorDisabled(address),
+    faults: chain.evaluatorFaultCount(address),
+  }));
   const falseBlock = chain.buildBlock({ progressFraudProofs: [falseEvidence],
     timestamp: currentTimestamp(chain) });
   assert.throws(() => chain.appendBlock(finalizeBlock(falseBlock, quorumFor(falseBlock, validators))),
     /does not prove a conflicting receipt/);
   assert.equal(chain.stateRoot, before);
+  assert.deepEqual(evaluators.map(({ address }) => ({
+    bond: chain.evaluatorBond(address), disabled: chain.evaluatorDisabled(address),
+    faults: chain.evaluatorFaultCount(address),
+  })), evaluatorStateBefore);
   const signerWallets = claim.attestations.map(({ evaluator }) =>
     evaluators.find((wallet) => wallet.address === evaluator));
   const partialClaim = createProgressClaim({
@@ -672,6 +765,10 @@ test("false and late progress evidence cannot confiscate escrow", () => {
   assert.throws(() => chain.appendBlock(finalizeBlock(partialBlock,
     quorumFor(partialBlock, validators))), /no assigned quorum/);
   assert.equal(chain.stateRoot, before);
+  assert.deepEqual(evaluators.map(({ address }) => ({
+    bond: chain.evaluatorBond(address), disabled: chain.evaluatorDisabled(address),
+    faults: chain.evaluatorFaultCount(address),
+  })), evaluatorStateBefore);
   matureProgressRewards(chain, validators);
   assert.equal(chain.balance(miner.address), INITIAL_EPOCH_REWARD);
   const lateBlock = chain.buildBlock({ progressFraudProofs: [falseEvidence],
@@ -2276,7 +2373,10 @@ test("one thousand credit transfers conserve NIR across fork restart and replay"
   const pending = state.creditUnstakes.reduce(
     (sum, [, unstake]) => sum + BigInt(unstake.amount), 0n,
   );
-  assert.equal(liquid + locked + pending + chain.burned, chain.issued);
+  const evaluatorBonds = state.evaluatorBonds.reduce(
+    (sum, [, amount]) => sum + BigInt(amount), 0n,
+  );
+  assert.equal(liquid + locked + pending + evaluatorBonds + chain.burned, chain.issued);
   assert.equal(chain.issued, TREASURY_ALLOCATION);
 });
 

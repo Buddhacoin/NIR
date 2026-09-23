@@ -23,8 +23,11 @@ receipt for the same candidate, network and challenge epoch, signed by every
 member of the originally assigned evaluator committee. This proves committee
 equivocation without a governance vote or a subjective quality judgment. At
 `unlockHeight`, proofs are checked before maturity. A valid proof burns the
-pending reward and candidate bond and removes the pending evaluation without
-changing capability memory. Evidence hashes are replay-protected for the
+pending reward and candidate bond, burns each guilty committee member's entire
+consensus evaluator bond exactly once, disables those evaluator keys, and
+removes the pending evaluation without changing capability memory. Other
+admissions already assigned to a newly disabled evaluator are cancelled and
+their candidate bonds are refunded. Evidence hashes are replay-protected for the
 64-block horizon. Retention is bounded to 4,160 entries; oversized or stale
 snapshot replay maps are rejected. After escrow removal, the candidate ID also
 makes replay and late evidence inapplicable.
@@ -32,7 +35,8 @@ makes replay and late evidence inapplicable.
 Malformed, forged, partial-quorum, same-receipt, late, replayed, wrong-network,
 or wrong-candidate evidence rejects the whole block and changes no balance,
 nonce, escrow, or state root. State roots and restart snapshots commit escrows,
-pending evaluations, reservations, the replay horizon, issued and burned sums.
+pending evaluations, reservations, evaluator bonds, faults, disabled identities,
+pending replacements, the replay horizon, issued and burned sums.
 As with every chain snapshot, rejecting an otherwise valid older finalized
 snapshot requires the operator or light client to retain its latest trusted
 checkpoint; escrow state alone is not an external anti-rollback anchor.
@@ -46,3 +50,13 @@ those allegations after reward. Exact canonical-content/frontier duplicates
 and protocol-role conflicts remain pre-admission checks. A forged or mismatched
 private execution bundle needs a future independently verifiable execution
 receipt before it can safely authorize confiscation.
+
+Genesis deterministically carves the protocol minimum bond for every evaluator
+out of the existing treasury allocation; this does not mint supply and avoids a
+circular dependency on the first reward. The public ceremony plan commits the
+exact bootstrap amount. A disabled key cannot rebond. A replacement with a
+unique address and self-asserted operator ID must lock the same minimum from a
+normal liquid balance and wait 64 finalized blocks. Replacements only fill
+vacancies, so the active-set size and quorum do not silently expand. Operator IDs
+do not prove real-world independence: a well-funded colluding organization can
+return under new keys after paying the slash and activation delay.

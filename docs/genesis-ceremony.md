@@ -12,6 +12,9 @@ The input is public JSON containing:
   operator IDs, and HTTPS endpoints (loopback HTTP is allowed for local drills).
   Every validator also supplies a separate public transport identity and the required
   TLS certificate pin for HTTPS;
+- `evaluatorBondAmount`, exactly the protocol bootstrap minimum for every listed
+  evaluator. Compilation deducts the aggregate from the existing treasury
+  allocation and commits the locked bonds in genesis, so this creates no supply;
 - a public treasury descriptor whose address is exactly the protocol 2-of-3
   multisignature address and whose policy is the protocol's 12% allocation with
   linear vesting from genesis over `TREASURY_VESTING_MS`;
@@ -153,7 +156,8 @@ npm run genesis:ceremony -- compile \
 ```
 
 Compilation emits the existing `NirChain` genesis configuration, including the
-quorum-signed epoch-zero `peerRegistry`, constructs the chain twice through canonical
+quorum-signed epoch-zero `peerRegistry` and exact evaluator-bond bootstrap,
+constructs the chain twice through canonical
 JSON, and requires the genesis block hash and validator/topology commitments to
 round-trip exactly. Evaluator and beacon endpoints and ceremony entropy remain bound
 by the public plan because the chain genesis schema has no fields for them. The

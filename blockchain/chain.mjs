@@ -3,6 +3,7 @@ import {
   BEACON_NON_REVEAL_SLASH_BPS,
   CREDIT_UNSTAKE_DELAY_BLOCKS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
+  EVALUATOR_ACTIVATION_DELAY_BLOCKS,
   MAX_BLOCK_BYTES,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_CREDIT_DELEGATIONS_PER_OWNER,
@@ -21,6 +22,7 @@ import {
   MAX_TRANSACTIONS_PER_BLOCK,
   MAX_VALIDATORS,
   MIN_BEACON_BOND,
+  MIN_EVALUATOR_BOND,
   MINING_POOL,
   MIN_PROGRESS_CANDIDATE_BOND,
   PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
@@ -364,6 +366,13 @@ const TRANSACTION_SCHEMAS = Object.freeze({
     "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId", "contentHash", "networkId",
     "nonce", "parents", "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
   ]],
+  "evaluator-bond": [[
+    "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ], [
+    "activationHeight", "algorithm", "amount", "fee", "networkId", "nonce",
+    "operatorId", "publicKey", "sender", "signature", "type",
+  ]],
   "validator-equivocation": [[
     "algorithm", "evidence", "fee", "networkId", "nonce", "publicKey", "sender",
     "signature", "type",
@@ -656,6 +665,22 @@ export function createValidatorBond({
   };
   if (operatorId !== undefined) transaction.operatorId = operatorId;
   return { ...transaction, signature: signObject(transaction, wallet, "VALIDATOR_BOND") };
+}
+
+export function createEvaluatorBond({
+  wallet, networkId, amount, nonce, operatorId, activationHeight,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM,
+    amount: String(amount), fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, type: "evaluator-bond",
+  };
+  if (operatorId !== undefined || activationHeight !== undefined) {
+    transaction.operatorId = operatorId;
+    transaction.activationHeight = activationHeight;
+  }
+  return { ...transaction, signature: signObject(transaction, wallet, "EVALUATOR_BOND") };
 }
 
 export function createBeaconBond({
@@ -1150,12 +1175,15 @@ export class NirChain {
   #creditUnstakes;
   #creditUsage;
   #disabledValidators;
+  #disabledEvaluators;
   #evaluationQuorum;
   #epochRandomness;
   #beaconAuthorities;
   #beaconQuorum;
   #evaluatorOrder;
   #evaluators;
+  #evaluatorBonds;
+  #evaluatorFaults;
   #mined;
   #lastRewardTimestamp;
   #networkId;
@@ -1168,6 +1196,7 @@ export class NirChain {
   #validatorBonds;
   #validatorEquivocationEvidence;
   #registeredValidators;
+  #pendingEvaluatorRegistrations;
   #pendingValidatorRotation;
   #pendingProtocolUpgrade;
   #peerRegistry;
@@ -1179,6 +1208,8 @@ export class NirChain {
   #safetyPolicies;
   #treasuryAddress;
   #genesisTimestamp;
+  #genesisEvaluatorBondAllocation;
+  #genesisEvaluatorCount;
   #genesisConfig;
   #validatorOrder;
   #validators;
@@ -1193,6 +1224,7 @@ export class NirChain {
     safetyPolicyCommitments,
     beaconAuthorities,
     peerRegistry = null,
+    evaluatorBondAmount = MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp = Date.now(),
   }, { supportedProtocolVersions } = {}) {
     if (
@@ -1217,6 +1249,7 @@ export class NirChain {
     this.#genesisConfig = structuredClone({
       beaconAuthorities,
       capabilityReferences,
+      evaluatorBondAmount,
       evaluators,
       genesisTimestamp,
       networkId,
@@ -1229,6 +1262,16 @@ export class NirChain {
     this.#treasuryAddress = treasuryAddress;
     this.#validators = operatorRegistry(validators, "validator");
     this.#evaluators = operatorRegistry(evaluators, "evaluator");
+    const genesisEvaluatorBond = parseAtomic(evaluatorBondAmount, "genesis evaluator bond");
+    if (genesisEvaluatorBond < MIN_EVALUATOR_BOND) {
+      throw new Error("genesis evaluator bond is below the protocol minimum");
+    }
+    const genesisEvaluatorBonds = genesisEvaluatorBond * BigInt(this.#evaluators.size);
+    if (genesisEvaluatorBonds > TREASURY_ALLOCATION) {
+      throw new Error("genesis evaluator bonds exceed the treasury allocation");
+    }
+    this.#genesisConfig.evaluatorBondAmount = genesisEvaluatorBond.toString();
+    this.#genesisEvaluatorBondAllocation = genesisEvaluatorBonds;
     this.#beaconAuthorities = operatorRegistry(beaconAuthorities, "beacon authority");
     const validatorOperators = new Set(
       [...this.#validators.values()].map(({ operatorId }) => operatorId),
@@ -1251,6 +1294,7 @@ export class NirChain {
     this.#validatorOrder = [...this.#validators.keys()].sort();
     this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
     this.#evaluatorOrder = [...this.#evaluators.keys()].sort();
+    this.#genesisEvaluatorCount = this.#evaluatorOrder.length;
     this.#evaluationQuorum = Math.floor((this.#evaluatorOrder.length * 2) / 3) + 1;
     this.#beaconQuorum = Math.floor((this.#beaconAuthorities.size * 2) / 3) + 1;
     this.#epochRandomness = new EpochRandomnessMachine({
@@ -1266,7 +1310,7 @@ export class NirChain {
     this.#accountHistories = new Map();
     this.#assetBalances = new Map();
     this.#assets = new Map();
-    this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION]]);
+    this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION - genesisEvaluatorBonds]]);
     this.#beaconBondingActive = false;
     this.#beaconBonds = new Map();
     this.#beaconFaults = new Map();
@@ -1277,6 +1321,11 @@ export class NirChain {
     this.#creditUnstakes = new Map();
     this.#creditUsage = new Map();
     this.#disabledValidators = new Set();
+    this.#disabledEvaluators = new Set();
+    this.#evaluatorBonds = new Map(
+      this.#evaluatorOrder.map((address) => [address, genesisEvaluatorBond]),
+    );
+    this.#evaluatorFaults = new Map();
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
     this.#randomnessFaults = new Map();
@@ -1284,6 +1333,7 @@ export class NirChain {
     this.#validatorBonds = new Map();
     this.#validatorEquivocationEvidence = new Set();
     this.#registeredValidators = new Map(this.#validators);
+    this.#pendingEvaluatorRegistrations = new Map();
     this.#pendingValidatorRotation = null;
     this.#pendingProtocolUpgrade = null;
     this.#progressCommitments = new Map();
@@ -1317,11 +1367,12 @@ export class NirChain {
     const transactionsRoot = transactionRoot([]);
     const genesis = {
       accountStateRoot,
-      balances: { [treasuryAddress]: TREASURY_ALLOCATION.toString() },
+      balances: { [treasuryAddress]: (TREASURY_ALLOCATION - genesisEvaluatorBonds).toString() },
       beaconAuthorities: [...this.#beaconAuthorities.values()].map(({ address, operatorId }) => ({ address, operatorId })),
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
       evaluators: this.#evaluatorOrder.map((address) => ({
         address,
+        bond: genesisEvaluatorBond.toString(),
         operatorId: this.#evaluators.get(address).operatorId,
       })),
       genesisTimestamp,
@@ -1466,6 +1517,74 @@ export class NirChain {
     }
     const disabledValidators = new Set(state.disabledValidators);
     const validatorEquivocationEvidence = new Set(state.validatorEquivocationEvidence);
+    const evaluatorEntries = snapshotEntries(state.evaluators, "evaluators");
+    const evaluators = operatorRegistry([...evaluatorEntries.values()], "evaluator snapshot");
+    for (const [address, member] of chain.#evaluators) {
+      if (canonicalJson(evaluators.get(address)) !== canonicalJson(member)) {
+        throw new Error("snapshot evaluator registry does not preserve genesis identities");
+      }
+    }
+    const pendingEvaluatorRegistrations = snapshotEntries(
+      state.pendingEvaluatorRegistrations, "pending evaluator registrations",
+    );
+    const evaluatorBonds = snapshotEntries(state.evaluatorBonds, "evaluator bonds");
+    for (const [address, value] of evaluatorBonds) {
+      if (!evaluators.has(address) && !pendingEvaluatorRegistrations.has(address)) {
+        throw new Error("evaluator bond snapshot address is invalid");
+      }
+      const amount = snapshotAtomic(value, "evaluator bond");
+      if (amount === 0n) throw new Error("evaluator bond snapshot amount is invalid");
+      evaluatorBonds.set(address, amount);
+    }
+    const evaluatorFaults = snapshotEntries(state.evaluatorFaults, "evaluator faults");
+    for (const [address, value] of evaluatorFaults) {
+      if (!evaluators.has(address) || snapshotInteger(value, "evaluator fault") !== 1) {
+        throw new Error("evaluator fault snapshot is invalid");
+      }
+    }
+    if (!Array.isArray(state.disabledEvaluators) ||
+        state.disabledEvaluators.some((address) => !evaluators.has(address)) ||
+        new Set(state.disabledEvaluators).size !== state.disabledEvaluators.length) {
+      throw new Error("disabled evaluator snapshot state is invalid");
+    }
+    const disabledEvaluators = new Set(state.disabledEvaluators);
+    if (pendingEvaluatorRegistrations.size > chain.#genesisEvaluatorCount ||
+        evaluators.size + pendingEvaluatorRegistrations.size > 256) {
+      throw new Error("pending evaluator registration capacity is exceeded");
+    }
+    for (const [address, pending] of pendingEvaluatorRegistrations) {
+      if (!pending || Object.keys(pending).sort().join("\0") !==
+          ["activationHeight", "address", "algorithm", "operatorId", "publicKey"].sort().join("\0") ||
+          pending.address !== address || evaluators.has(address) ||
+          chain.#validators.has(address) || chain.#beaconAuthorities.has(address) ||
+          pending.algorithm !== SIGNATURE_ALGORITHM ||
+          addressFromPublicKey(pending.publicKey) !== address ||
+          !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(pending.operatorId ?? "") ||
+          !Number.isSafeInteger(pending.activationHeight) ||
+          pending.activationHeight <= snapshot.height ||
+          (evaluatorBonds.get(address) ?? 0n) < MIN_EVALUATOR_BOND) {
+        throw new Error("pending evaluator registration snapshot is invalid");
+      }
+    }
+    const allOperators = [
+      ...evaluators.values(), ...chain.#validators.values(), ...chain.#beaconAuthorities.values(),
+      ...pendingEvaluatorRegistrations.values(),
+    ].map(({ operatorId }) => operatorId);
+    if (new Set(allOperators).size !== allOperators.length) {
+      throw new Error("pending evaluator operator identity is duplicated");
+    }
+    const activeEvaluatorCount = [...evaluators.keys()].filter((address) =>
+      !disabledEvaluators.has(address) &&
+      (evaluatorBonds.get(address) ?? 0n) >= MIN_EVALUATOR_BOND).length;
+    if (activeEvaluatorCount + pendingEvaluatorRegistrations.size >
+        chain.#genesisEvaluatorCount) {
+      throw new Error("evaluator replacement snapshot exceeds the active-set bound");
+    }
+    if ([...disabledEvaluators].some((address) => evaluatorBonds.has(address) ||
+        evaluatorFaults.get(address) !== 1) ||
+        [...evaluatorFaults.keys()].some((address) => !disabledEvaluators.has(address))) {
+      throw new Error("evaluator slash snapshot state is inconsistent");
+    }
     const candidateBonds = snapshotEntries(state.candidateBonds, "candidate bonds");
     for (const [candidateId, candidate] of candidateBonds) {
       if (!/^[0-9a-f]{64}$/.test(candidateId) || !candidate ||
@@ -1598,7 +1717,9 @@ export class NirChain {
         Array.isArray(commitment.committee) &&
         commitment.committee.length === chain.#evaluationQuorum &&
         new Set(commitment.committee).size === commitment.committee.length &&
-        commitment.committee.every((address) => chain.#evaluators.has(address));
+        commitment.committee.every((address) => evaluators.has(address) &&
+          !disabledEvaluators.has(address) &&
+          (evaluatorBonds.get(address) ?? 0n) >= MIN_EVALUATOR_BOND);
       if (!unassigned && !assigned) {
         throw new Error("progress challenge snapshot is invalid");
       }
@@ -1608,6 +1729,22 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    const evaluatorOperators = new Set([...evaluators.values()].map(({ operatorId }) => operatorId));
+    const pendingEvaluatorOperators = new Set(
+      [...pendingEvaluatorRegistrations.values()].map(({ operatorId }) => operatorId),
+    );
+    if ([...evaluators.values()].some(({ address, operatorId }) =>
+      registeredMembers.has(address) || chain.#beaconAuthorities.has(address) ||
+      [...registeredMembers.values(), ...chain.#beaconAuthorities.values()]
+        .some((member) => member.operatorId === operatorId)) ||
+        [...pendingEvaluatorRegistrations.values()].some(({ address, operatorId }) =>
+          registeredMembers.has(address) || chain.#beaconAuthorities.has(address) ||
+          evaluatorOperators.has(operatorId) ||
+          [...registeredMembers.values(), ...chain.#beaconAuthorities.values()]
+            .some((member) => member.operatorId === operatorId)) ||
+        pendingEvaluatorOperators.size !== pendingEvaluatorRegistrations.size) {
+      throw new Error("snapshot evaluator roles or operators overlap another protocol role");
+    }
     const progressEscrows = snapshotEntries(state.progressEscrows, "progress reward escrows");
     if (progressEscrows.size > MAX_PROGRESS_REWARD_ESCROWS) {
       throw new Error("progress reward escrow snapshot capacity is exceeded");
@@ -1636,7 +1773,7 @@ export class NirChain {
             (index > 0 && capability <= escrow.marginalCapabilities[index - 1])) ||
           !Array.isArray(escrow.committee) || escrow.committee.length !== chain.#evaluationQuorum ||
           new Set(escrow.committee).size !== escrow.committee.length ||
-          escrow.committee.some((address) => !chain.#evaluators.has(address))) {
+          escrow.committee.some((address) => !evaluators.has(address))) {
         throw new Error("progress reward escrow snapshot is invalid");
       }
       const amount = snapshotAtomic(escrow.amount, "progress escrow reward");
@@ -1714,6 +1851,7 @@ export class NirChain {
     chain.#creditStakes = creditStakes;
     chain.#creditUnstakes = creditUnstakes;
     chain.#creditUsage = creditUsage;
+    chain.#disabledEvaluators = disabledEvaluators;
     chain.#disabledValidators = disabledValidators;
     chain.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
       networkId: chain.#networkId,
@@ -1722,6 +1860,9 @@ export class NirChain {
       snapshot: state.epochRandomness,
     });
     chain.#lastRewardTimestamp = snapshotSignedInteger(state.lastRewardTimestamp, "last reward timestamp");
+    chain.#evaluatorBonds = evaluatorBonds;
+    chain.#evaluatorFaults = evaluatorFaults;
+    chain.#evaluators = evaluators;
     chain.#mined = snapshotAtomic(state.mined, "mined supply");
     chain.#nonces = nonces;
     chain.#protocolVersion = snapshotInteger(state.protocolVersion, "protocol version");
@@ -1735,6 +1876,7 @@ export class NirChain {
         currentVersion: chain.#protocolVersion,
       },
     );
+    chain.#pendingEvaluatorRegistrations = pendingEvaluatorRegistrations;
     chain.#pendingValidatorRotation = structuredClone(state.pendingValidatorRotation);
     chain.#progressCommitments = progressCommitments;
     chain.#progressEscrows = progressEscrows;
@@ -1877,11 +2019,17 @@ export class NirChain {
       creditStakes: overrides.creditStakes ?? this.#creditStakes,
       creditUnstakes: overrides.creditUnstakes ?? this.#creditUnstakes,
       creditUsage: overrides.creditUsage ?? this.#creditUsage,
+      disabledEvaluators: overrides.disabledEvaluators ?? this.#disabledEvaluators,
       disabledValidators: overrides.disabledValidators ?? this.#disabledValidators,
       epochRandomness: overrides.epochRandomness ?? this.#epochRandomness.snapshot(),
+      evaluatorBonds: overrides.evaluatorBonds ?? this.#evaluatorBonds,
+      evaluatorFaults: overrides.evaluatorFaults ?? this.#evaluatorFaults,
+      evaluators: overrides.evaluators ?? this.#evaluators,
       lastRewardTimestamp: overrides.lastRewardTimestamp ?? this.#lastRewardTimestamp,
       mined: overrides.mined ?? this.#mined,
       nonces: overrides.nonces ?? this.#nonces,
+      pendingEvaluatorRegistrations:
+        overrides.pendingEvaluatorRegistrations ?? this.#pendingEvaluatorRegistrations,
       pendingValidatorRotation:
         overrides.pendingValidatorRotation === undefined
           ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
@@ -1926,11 +2074,15 @@ export class NirChain {
         creditStakes: this.#creditStakes,
         creditUnstakes: this.#creditUnstakes,
         creditUsage: this.#creditUsage,
+        disabledEvaluators: this.#disabledEvaluators,
         disabledValidators: this.#disabledValidators,
         epochRandomness: this.#epochRandomness.snapshot(),
+        evaluatorBonds: this.#evaluatorBonds,
+        evaluatorFaults: this.#evaluatorFaults,
         lastRewardTimestamp: this.#lastRewardTimestamp,
         mined: this.#mined,
         nonces: this.#nonces,
+        pendingEvaluatorRegistrations: this.#pendingEvaluatorRegistrations,
         pendingProtocolUpgrade: this.#pendingProtocolUpgrade,
         pendingValidatorRotation: this.#pendingValidatorRotation,
         peerRegistry: this.#peerRegistry,
@@ -1947,6 +2099,7 @@ export class NirChain {
         validatorEquivocationEvidence: this.#validatorEquivocationEvidence,
         validatorFaults: this.#validatorFaults,
         validators: this.#validators,
+        evaluators: this.#evaluators,
       }),
     };
   }
@@ -1998,6 +2151,9 @@ export class NirChain {
   }
   beaconBond(address) { return this.#beaconBonds.get(address) ?? 0n; }
   beaconFaultCount(address) { return this.#beaconFaults.get(address) ?? 0; }
+  evaluatorBond(address) { return this.#evaluatorBonds.get(address) ?? 0n; }
+  evaluatorDisabled(address) { return this.#disabledEvaluators.has(address); }
+  evaluatorFaultCount(address) { return this.#evaluatorFaults.get(address) ?? 0; }
   get beaconBondingActive() { return this.#beaconBondingActive; }
   creditStake(address) { return this.#creditStakes.get(address) ?? 0n; }
   creditDelegation(owner, delegate) {
@@ -2051,6 +2207,19 @@ export class NirChain {
 
   get peerRegistry() {
     return this.#peerRegistry ? structuredClone(this.#peerRegistry) : null;
+  }
+
+  #eligibleEvaluators(evaluatorBonds = this.#evaluatorBonds,
+    disabledEvaluators = this.#disabledEvaluators, evaluators = this.#evaluators) {
+    return new Map([...evaluators].filter(([address]) =>
+      !disabledEvaluators.has(address) &&
+      (evaluatorBonds.get(address) ?? 0n) >= MIN_EVALUATOR_BOND));
+  }
+
+  #treasuryLockedFloor(timestamp) {
+    const floor = TREASURY_ALLOCATION - this.#genesisEvaluatorBondAllocation -
+      vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+    return floor > 0n ? floor : 0n;
   }
 
   randomnessFault(candidateId) {
@@ -2152,6 +2321,8 @@ export class NirChain {
       const evaluator = this.#evaluators.get(attestation.evaluator);
       if (
         !evaluator ||
+        this.#disabledEvaluators.has(attestation.evaluator) ||
+        (this.#evaluatorBonds.get(attestation.evaluator) ?? 0n) < MIN_EVALUATOR_BOND ||
         typeof attestation.signature !== "string" ||
         attestation.signature.length > 7_000 ||
         !verifyObject(
@@ -2230,7 +2401,7 @@ export class NirChain {
       throw new Error("progress fraud replay capacity is exceeded");
     }
     progressFraudEvidence.set(evidenceHash, height);
-    return evidence.candidateId;
+    return { candidateId: evidence.candidateId, evaluators: [...seen].sort() };
   }
 
   #verifySafetyClaim(claim, epoch, candidateBonds, safetyEvidence) {
@@ -2263,7 +2434,9 @@ export class NirChain {
       if (evaluators.has(attestation.evaluator)) throw new Error("duplicate safety evaluator");
       const evaluator = this.#evaluators.get(attestation.evaluator);
       if (
-        !evaluator || typeof attestation.signature !== "string" || attestation.signature.length > 7_000 ||
+        !evaluator || this.#disabledEvaluators.has(attestation.evaluator) ||
+        (this.#evaluatorBonds.get(attestation.evaluator) ?? 0n) < MIN_EVALUATOR_BOND ||
+        typeof attestation.signature !== "string" || attestation.signature.length > 7_000 ||
         !verifyObject(payload, attestation.signature, evaluator.publicKey, "SAFETY_FAILURE_RECEIPT")
       ) throw new Error("invalid safety evaluator signature");
       evaluators.add(attestation.evaluator);
@@ -2751,19 +2924,13 @@ export class NirChain {
       throw new Error("insufficient balance");
     }
     if (transaction.sender === this.#treasuryAddress) {
-      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
-        this.#genesisTimestamp,
-        timestamp,
-      );
+      const locked = this.#treasuryLockedFloor(timestamp);
       if (senderBalance - amount - (sponsored ? 0n : fee) < locked) {
         throw new Error("treasury funds are still vesting");
       }
     }
     if (sponsored && !creditPaid && transaction.feePayer === this.#treasuryAddress) {
-      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
-        this.#genesisTimestamp,
-        timestamp,
-      );
+      const locked = this.#treasuryLockedFloor(timestamp);
       if (feePayerBalance - fee < locked) throw new Error("treasury funds are still vesting");
     }
     if (creditPaid) {
@@ -2822,7 +2989,7 @@ export class NirChain {
     const senderBalance = balances.get(transaction.sender) ?? 0n;
     if (senderBalance < bond + fee) throw new Error("insufficient balance");
     if (transaction.sender === this.#treasuryAddress) {
-      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+      const locked = this.#treasuryLockedFloor(timestamp);
       if (senderBalance - bond - fee < locked) throw new Error("treasury funds are still vesting");
     }
     balances.set(transaction.sender, senderBalance - bond - fee);
@@ -2843,7 +3010,8 @@ export class NirChain {
 
   #applyProgressCommitment(
     transaction, nonces, progressCommitments, capabilityMemory, candidateBonds,
-    progressEscrows, registeredValidators, height, randomnessRound,
+    progressEscrows, registeredValidators, evaluatorBonds, disabledEvaluators,
+    evaluators, pendingEvaluatorRegistrations, height, randomnessRound,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -2865,8 +3033,13 @@ export class NirChain {
     }
     assertAddress(transaction.sender, "progress submitter");
     assertAddress(transaction.recipient, "progress recipient");
+    if (this.#eligibleEvaluators(evaluatorBonds, disabledEvaluators, evaluators).size <
+        this.#evaluationQuorum) {
+      throw new Error("progress admission has no bonded evaluator quorum");
+    }
     if ([transaction.sender, transaction.recipient].some((address) =>
-      this.#evaluators.has(address) || this.#beaconAuthorities.has(address) ||
+      evaluators.has(address) || pendingEvaluatorRegistrations.has(address) ||
+      this.#beaconAuthorities.has(address) ||
       registeredValidators.has(address))) {
       throw new Error("progress submitter and recipient must use keys outside protocol operator roles");
     }
@@ -2948,7 +3121,8 @@ export class NirChain {
 
   #applyValidatorBond(
     transaction, balances, nonces, validatorBonds, registeredValidators,
-    disabledValidators, progressCommitments, proposer,
+    disabledValidators, progressCommitments, evaluators, pendingEvaluatorRegistrations,
+    proposer,
   ) {
     if ([...progressCommitments.values()].some(({ sender, recipient }) =>
       transaction.sender === sender || transaction.sender === recipient)) {
@@ -2968,8 +3142,10 @@ export class NirChain {
       if (typeof transaction.operatorId !== "string" ||
           !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId) ||
           registeredValidators.size >= MAX_VALIDATORS ||
-          this.#evaluators.has(transaction.sender) || this.#beaconAuthorities.has(transaction.sender) ||
-          [...registeredValidators.values(), ...this.#evaluators.values(), ...this.#beaconAuthorities.values()]
+          evaluators.has(transaction.sender) || pendingEvaluatorRegistrations.has(transaction.sender) ||
+          this.#beaconAuthorities.has(transaction.sender) ||
+          [...registeredValidators.values(), ...evaluators.values(),
+            ...pendingEvaluatorRegistrations.values(), ...this.#beaconAuthorities.values()]
             .some(({ operatorId }) => operatorId === transaction.operatorId)) {
         throw new Error("new validator operator id is invalid or duplicated");
       }
@@ -2993,6 +3169,71 @@ export class NirChain {
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
     validatorBonds.set(transaction.sender, (validatorBonds.get(transaction.sender) ?? 0n) + amount);
+  }
+
+  #applyEvaluatorBond(transaction, balances, nonces, evaluatorBonds,
+    disabledEvaluators, evaluators, pendingEvaluatorRegistrations,
+    registeredValidators, proposer, height) {
+    const evaluator = evaluators.get(transaction.sender);
+    if (transaction.type !== "evaluator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature,
+          transaction.publicKey, "EVALUATOR_BOND")) {
+      throw new Error("evaluator bond transaction is invalid");
+    }
+    if (evaluator && (evaluator.publicKey !== transaction.publicKey ||
+        transaction.operatorId !== undefined || transaction.activationHeight !== undefined)) {
+      throw new Error("evaluator bond identity does not match its registration");
+    }
+    if (evaluator && disabledEvaluators.has(transaction.sender)) {
+      throw new Error("disabled evaluator identity cannot bond again");
+    }
+    if (!evaluator) {
+      const eligibleCount = this.#eligibleEvaluators(
+        evaluatorBonds, disabledEvaluators, evaluators,
+      ).size;
+      const occupiedOperators = [
+        ...evaluators.values(), ...pendingEvaluatorRegistrations.values(),
+        ...registeredValidators.values(), ...this.#beaconAuthorities.values(),
+      ].some(({ operatorId }) => operatorId === transaction.operatorId);
+      if (pendingEvaluatorRegistrations.has(transaction.sender) ||
+          registeredValidators.has(transaction.sender) ||
+          this.#beaconAuthorities.has(transaction.sender) ||
+          typeof transaction.operatorId !== "string" ||
+          !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId) ||
+          occupiedOperators || evaluators.size + pendingEvaluatorRegistrations.size >= 256 ||
+          eligibleCount + pendingEvaluatorRegistrations.size >= this.#genesisEvaluatorCount ||
+          transaction.activationHeight !== height + EVALUATOR_ACTIVATION_DELAY_BLOCKS) {
+        throw new Error("new evaluator registration is invalid or has no vacant slot");
+      }
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const amount = parseAtomic(transaction.amount, "evaluator bond");
+    const fee = parseAtomic(transaction.fee, "fee");
+    if (amount === 0n || (!evaluator && amount < MIN_EVALUATOR_BOND) ||
+        fee < MIN_TRANSFER_FEE) {
+      throw new Error("evaluator bond or fee is below minimum");
+    }
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (balance < amount + fee) throw new Error("insufficient balance");
+    balances.set(transaction.sender, balance - amount - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    evaluatorBonds.set(transaction.sender,
+      (evaluatorBonds.get(transaction.sender) ?? 0n) + amount);
+    if (!evaluator) {
+      pendingEvaluatorRegistrations.set(transaction.sender, {
+        activationHeight: transaction.activationHeight,
+        address: transaction.sender,
+        algorithm: transaction.algorithm,
+        operatorId: transaction.operatorId,
+        publicKey: transaction.publicKey,
+      });
+    }
   }
 
   #applyValidatorEquivocation(
@@ -3071,7 +3312,7 @@ export class NirChain {
     const balance = balances.get(transaction.sender) ?? 0n;
     if (balance < amount + fee) throw new Error("insufficient balance");
     if (transaction.sender === this.#treasuryAddress) {
-      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+      const locked = this.#treasuryLockedFloor(timestamp);
       if (balance - amount - fee < locked) throw new Error("treasury funds are still vesting");
     }
     balances.set(transaction.sender, balance - amount - fee);
@@ -3113,7 +3354,7 @@ export class NirChain {
       throw new Error("insufficient balance");
     }
     if (!payRevocationFromStake && transaction.sender === this.#treasuryAddress) {
-      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+      const locked = this.#treasuryLockedFloor(timestamp);
       if (balance - fee < locked) throw new Error("treasury funds are still vesting");
     }
     const key = creditDelegationKey(transaction.sender, transaction.delegate);
@@ -3220,9 +3461,7 @@ export class NirChain {
     const balance = balances.get(transaction.sender) ?? 0n;
     if (fee < MIN_TRANSFER_FEE || balance < fee) throw new Error("native asset fee is invalid");
     if (transaction.sender === this.#treasuryAddress) {
-      const locked = TREASURY_ALLOCATION - vestedTreasuryAtTimestamp(
-        this.#genesisTimestamp, timestamp,
-      );
+      const locked = this.#treasuryLockedFloor(timestamp);
       if (balance - fee < locked) throw new Error("treasury funds are still vesting");
     }
     return { balance, expectedNonce, fee };
@@ -3364,6 +3603,7 @@ export class NirChain {
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#creditUsage = new Map([...this.#creditUsage]
       .map(([address, usage]) => [address, { ...usage }]));
+    fork.#disabledEvaluators = new Set(this.#disabledEvaluators);
     fork.#disabledValidators = new Set(this.#disabledValidators);
     fork.#capabilityMemory = this.#capabilityMemory.clone();
     fork.#epochRandomness = EpochRandomnessMachine.fromSnapshot({
@@ -3372,9 +3612,16 @@ export class NirChain {
       committeeSize: this.#beaconQuorum,
       snapshot: this.#epochRandomness.snapshot(),
     });
+    fork.#evaluatorBonds = new Map(this.#evaluatorBonds);
+    fork.#evaluatorFaults = new Map(this.#evaluatorFaults);
+    fork.#evaluators = new Map(this.#evaluators);
     fork.#lastRewardTimestamp = this.#lastRewardTimestamp;
     fork.#mined = this.#mined;
     fork.#nonces = new Map(this.#nonces);
+    fork.#pendingEvaluatorRegistrations = new Map(
+      [...this.#pendingEvaluatorRegistrations]
+        .map(([address, pending]) => [address, { ...pending }]),
+    );
     fork.#pendingProtocolUpgrade = structuredClone(this.#pendingProtocolUpgrade);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
@@ -3605,8 +3852,29 @@ export class NirChain {
       .map(([address, pending]) => [address, { ...pending }]));
     const creditUsage = new Map([...this.#creditUsage]
       .map(([address, usage]) => [address, { ...usage }]));
+    const disabledEvaluators = new Set(this.#disabledEvaluators);
     const disabledValidators = new Set(this.#disabledValidators);
+    const evaluatorBonds = new Map(this.#evaluatorBonds);
+    const evaluatorFaults = new Map(this.#evaluatorFaults);
+    const evaluatorsAfter = new Map(this.#evaluators);
     const nonces = new Map(this.#nonces);
+    const pendingEvaluatorRegistrations = new Map(
+      [...this.#pendingEvaluatorRegistrations]
+        .map(([address, pending]) => [address, { ...pending }]),
+    );
+    for (const [address, pending] of pendingEvaluatorRegistrations) {
+      if (pending.activationHeight === block.height) {
+        evaluatorsAfter.set(address, {
+          address: pending.address,
+          algorithm: pending.algorithm,
+          operatorId: pending.operatorId,
+          publicKey: pending.publicKey,
+        });
+        pendingEvaluatorRegistrations.delete(address);
+      } else if (pending.activationHeight < block.height) {
+        throw new Error("evaluator registration activation was skipped");
+      }
+    }
     const rewardedProofs = new Set(this.#rewardedProofs);
     const candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
       ...candidate,
@@ -3682,12 +3950,13 @@ export class NirChain {
       }
     }
     const fraudCandidates = new Set();
+    const newlyDisabledEvaluators = new Set();
     for (const evidence of block.progressFraudProofs) {
       if (fraudCandidates.has(evidence?.candidateId)) {
         throw new Error("duplicate progress fraud proof for candidate in block");
       }
       fraudCandidates.add(evidence?.candidateId);
-      const candidateId = this.#verifyProgressFraudProof(
+      const { candidateId, evaluators } = this.#verifyProgressFraudProof(
         evidence, block.height, progressEscrows, progressFraudEvidence,
       );
       const escrow = progressEscrows.get(candidateId);
@@ -3699,6 +3968,32 @@ export class NirChain {
       newlyBurned += escrow.amount + escrow.bondAmount;
       progressEscrows.delete(candidateId);
       candidateBonds.delete(candidateId);
+      for (const evaluator of evaluators) {
+        if (disabledEvaluators.has(evaluator)) continue;
+        const evaluatorBond = evaluatorBonds.get(evaluator) ?? 0n;
+        if (evaluatorBond < MIN_EVALUATOR_BOND) {
+          throw new Error("equivocating evaluator has no slashable minimum bond");
+        }
+        newlyBurned += evaluatorBond;
+        evaluatorBonds.delete(evaluator);
+        evaluatorFaults.set(evaluator, 1);
+        disabledEvaluators.add(evaluator);
+        newlyDisabledEvaluators.add(evaluator);
+      }
+    }
+    if (newlyDisabledEvaluators.size > 0) {
+      for (const [candidateId, commitment] of progressCommitments) {
+        if (!commitment.committee?.some((address) => newlyDisabledEvaluators.has(address))) {
+          continue;
+        }
+        const bond = candidateBonds.get(candidateId);
+        if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
+          throw new Error("disabled evaluator commitment has no locked candidate bond");
+        }
+        balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
+        candidateBonds.delete(candidateId);
+        progressCommitments.delete(candidateId);
+      }
     }
     // An objective proof included at unlockHeight wins over maturity in the same transition.
     for (const [candidateId, escrow] of orderedProgressEscrows(progressEscrows)) {
@@ -3750,7 +4045,9 @@ export class NirChain {
         throw new Error("progress reward has no locked candidate bond");
       }
       if (!commitment || !Array.isArray(commitment.committee) ||
-          commitment.committee.length !== this.#evaluationQuorum) {
+          commitment.committee.length !== this.#evaluationQuorum ||
+          commitment.committee.some((address) => disabledEvaluators.has(address) ||
+            (evaluatorBonds.get(address) ?? 0n) < MIN_EVALUATOR_BOND)) {
         throw new Error("progress reward has no assigned evaluation committee");
       }
       if (amount > bond.bond) {
@@ -3812,13 +4109,24 @@ export class NirChain {
           candidateBonds,
           progressEscrows,
           registeredValidators,
+          evaluatorBonds,
+          disabledEvaluators,
+          evaluatorsAfter,
+          pendingEvaluatorRegistrations,
           block.height,
           epochRandomness.round,
         );
       } else if (transaction.type === "validator-bond") {
         this.#applyValidatorBond(
           transaction, balances, nonces, validatorBonds, registeredValidators,
-          disabledValidators, progressCommitments, block.feeRecipient,
+          disabledValidators, progressCommitments, evaluatorsAfter,
+          pendingEvaluatorRegistrations, block.feeRecipient,
+        );
+      } else if (transaction.type === "evaluator-bond") {
+        this.#applyEvaluatorBond(
+          transaction, balances, nonces, evaluatorBonds,
+          disabledEvaluators, evaluatorsAfter, pendingEvaluatorRegistrations,
+          registeredValidators, block.feeRecipient, block.height,
         );
       } else if (transaction.type === "validator-equivocation") {
         newlyBurned += this.#applyValidatorEquivocation(
@@ -3943,7 +4251,9 @@ export class NirChain {
         challengeHeight: block.height,
         challengeSeed,
         committee: selectOperatorCommittee({
-          registry: this.#evaluators,
+          registry: this.#eligibleEvaluators(
+            evaluatorBonds, disabledEvaluators, evaluatorsAfter,
+          ),
           randomness: challengeSeed,
           context: { candidateId: claim.candidateId, challengeHeight: block.height },
           size: this.#evaluationQuorum,
@@ -4008,7 +4318,9 @@ export class NirChain {
           ...candidate,
           assignedHeight: block.height,
           committee: selectOperatorCommittee({
-            registry: this.#evaluators,
+            registry: this.#eligibleEvaluators(
+              evaluatorBonds, disabledEvaluators, evaluatorsAfter,
+            ),
             randomness,
             context: { candidateId, committedHeight: candidate.committedHeight },
             size: this.#evaluationQuorum,
@@ -4047,7 +4359,9 @@ export class NirChain {
               ...candidate,
               assignedHeight: block.height,
               committee: selectOperatorCommittee({
-                registry: this.#evaluators, randomness,
+                registry: this.#eligibleEvaluators(
+                  evaluatorBonds, disabledEvaluators, evaluatorsAfter,
+                ), randomness,
                 context: { candidateId, committedHeight: candidate.committedHeight },
                 size: this.#evaluationQuorum,
               }).map(({ address }) => address),
@@ -4096,10 +4410,15 @@ export class NirChain {
       creditUnstakes,
       creditUsage,
       disabledValidators,
+      disabledEvaluators,
       epochRandomness: epochRandomness.snapshot(),
+      evaluatorBonds,
+      evaluatorFaults,
+      evaluators: evaluatorsAfter,
       lastRewardTimestamp: lastRewardTimestampAfter,
       mined: this.#mined + newlyMined,
       nonces,
+      pendingEvaluatorRegistrations,
       pendingProtocolUpgrade: protocolState.pendingUpgrade,
       pendingValidatorRotation: pendingValidatorRotationAfter,
       peerRegistry: nextPeerRegistry,
@@ -4149,8 +4468,13 @@ export class NirChain {
     this.#creditStakes = creditStakes;
     this.#creditUnstakes = creditUnstakes;
     this.#creditUsage = creditUsage;
+    this.#disabledEvaluators = disabledEvaluators;
     this.#disabledValidators = disabledValidators;
+    this.#evaluatorBonds = evaluatorBonds;
+    this.#evaluatorFaults = evaluatorFaults;
+    this.#evaluators = evaluatorsAfter;
     this.#nonces = nonces;
+    this.#pendingEvaluatorRegistrations = pendingEvaluatorRegistrations;
     this.#pendingProtocolUpgrade = protocolState.pendingUpgrade;
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;

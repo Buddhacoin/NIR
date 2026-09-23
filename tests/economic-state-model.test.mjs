@@ -15,6 +15,7 @@ import {
 import {
   ATOMIC_UNITS,
   MAX_SUPPLY,
+  MIN_EVALUATOR_BOND,
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
   TRANSFER_CREDIT_EPOCH_BLOCKS,
@@ -66,9 +67,10 @@ function quorum(block, validators) {
   return [proposer, ...validators.filter((wallet) => wallet !== proposer).slice(0, 2)];
 }
 
-function initialModel(treasury) {
+function initialModel(treasury, evaluatorCount) {
   return {
-    balances: new Map([[treasury.address, TREASURY_ALLOCATION]]),
+    balances: new Map([[treasury.address,
+      TREASURY_ALLOCATION - BigInt(evaluatorCount) * MIN_EVALUATOR_BOND]]),
     creditUsage: new Map(),
     delegations: new Map(),
     fees: 0n,
@@ -197,7 +199,10 @@ function assertEconomicState({ chain, model, treasury, users, validators }) {
   assert.equal(chain.issued, TREASURY_ALLOCATION);
   assert.ok(chain.issued <= MAX_SUPPLY);
   assert.equal(chain.circulatingSupply, chain.issued - chain.burned);
-  assert.equal(balances + stakes + pending + chain.burned, chain.issued,
+  const evaluatorBonds = chain.consensusSnapshot().state.evaluatorBonds.reduce(
+    (sum, [, amount]) => sum + BigInt(amount), 0n,
+  );
+  assert.equal(balances + stakes + pending + evaluatorBonds + chain.burned, chain.issued,
     "native units must be conserved across liquid, staked, pending, and burned state");
 }
 
@@ -211,7 +216,7 @@ test("deterministic native-state model conserves NIR and credits across long mix
     const context = fixture(seed);
     let { chain } = context;
     const { genesis, treasury, users, validators } = context;
-    const model = initialModel(treasury);
+    const model = initialModel(treasury, genesis.evaluators.length);
     const history = [];
     let timestamp = TREASURY_VESTING_MS;
 

@@ -114,15 +114,24 @@ unrewarded admission burns the full bond after 1,024
 blocks. There is no free cancellation after committee assignment, so honest
 timeouts also lose the bond. This removes the free multi-key/wrapper sampling
 path but does not make the protocol Sybil-proof: capital can still buy multiple
-samples, and initial mining waits for vested or circulating NIR.
+samples. Candidate collateral still requires vested or circulating NIR. Evaluator
+eligibility has no circular first-reward dependency: genesis deducts one fixed
+minimum bond per evaluator from the existing treasury allocation and commits the
+locked balances in state and in the public ceremony plan.
 
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
 whole reward block is invalid. A lone claim in the first issuance epoch must
 therefore have 50 NIR locked, while several claims may lock their smaller exact
 allocations. The bond and reward remain unavailable through the objective fraud
-window. Full assigned-committee equivocation burns both; private execution
-dishonesty remains outside the objectively provable subset.
+window. Full assigned-committee equivocation burns both plus every equivocating
+committee member's entire evaluator bond, disables those keys exactly once, and
+refunds other admissions already assigned to them. A disabled key cannot rebond.
+Permissionless replacements lock the same minimum, use a unique address and
+self-asserted operator ID, fill only vacant active-set slots, and wait 64 finalized
+blocks. This recovers quorum without treating a new key as proof of a new company;
+capital can still fund colluding replacements. Private execution dishonesty remains
+outside the objectively provable subset.
 
 This removes the block hash and its proposer from committee selection. A
 malicious assigned epoch member can stop progress by withholding its reveal,
