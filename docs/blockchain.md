@@ -129,16 +129,25 @@ If their quorum is unavailable, new challenges pause safely instead of falling
 back to proposer-controlled randomness.
 
 Validator and initial evaluator identities in this version are configured at genesis,
-and one configured operator cannot occupy both roles. This is not yet
-permissionless consensus: operator identifiers are self-asserted, and there is
-no consensus-connected external identity attestation. Genesis locks one fixed
+and one configured operator cannot occupy both roles. Genesis locks one fixed
 minimum evaluator bond per identity by deducting it from the existing treasury
 allocation. An objectively conflicting full-committee progress receipt burns
 the reward, candidate collateral, and each guilty evaluator bond exactly once,
-then disables those keys. Bonded replacements can fill only disabled vacancies
-after a 64-block activation delay; old keys cannot rebond. This restores protocol
-liveness without claiming that a new key or operator ID proves a different
-company. Fork recovery and peer-to-peer transport remain separate mechanisms.
+then disables those keys. A replacement can fill only a disabled vacancy, must
+lock the same bond, and needs credentials from more than two thirds of the active
+validator set, bound to its network, address, operator ID, public key, evaluator
+role, and exact delayed-activation interval. Credentials may cover at most 1,024
+blocks and activation occurs exactly 64 finalized blocks after registration;
+old keys cannot rebond and a pending registration cannot defer activation.
+Registration spam is bounded by the number of vacancies and locks real NIR.
+Validator credentials authorize a protocol key but do not prove that two operator
+IDs are controlled by different companies; a captured validator quorum can still
+authorize Sybil replacements. The historical evaluator registry is capped, so a
+deployment that exhausts it requires an explicit protocol migration. Fork recovery
+and peer-to-peer transport remain separate mechanisms. Registration credentials
+also do not prove future availability: an authorized replacement that goes offline
+can still delay evaluations until an objective fault or later protocol mechanism
+removes it.
 Candidate safety bonds, randomness commitments and reveals, committee
 assignments, and critical-failure settlements are consensus state. No single
 block producer supplies the seed. The current commit/reveal construction still

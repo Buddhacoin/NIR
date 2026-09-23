@@ -75,6 +75,7 @@ import {
   createFallbackBeaconShare,
   createEpochRandomnessCommit,
   createEpochRandomnessReveal,
+  createOperatorCredential,
   createProgressBeacon,
   createProgressBeaconShare,
   createRandomnessCommit,
@@ -663,27 +664,159 @@ test("objective evaluator equivocation slashes once and bonded replacements reco
   assert.equal(recovered.stateRoot, rootAfter);
 
   const replacements = Array.from({ length: signerWallets.length }, generateWallet);
+  const overflowReplacement = generateWallet();
+  const fundedReplacements = [...replacements, overflowReplacement];
   const fundingNonce = recovered.nextNonce(treasury.address);
-  const funding = replacements.map((replacement, index) => createTransfer({
+  const funding = fundedReplacements.map((replacement, index) => createTransfer({
     wallet: treasury, networkId: recovered.networkId, recipient: replacement.address,
-    amount: (MIN_EVALUATOR_BOND + MIN_TRANSFER_FEE).toString(),
+    amount: (MIN_EVALUATOR_BOND + MIN_VALIDATOR_BOND + 2n * MIN_TRANSFER_FEE).toString(),
     nonce: fundingNonce + index,
   }));
   const fundingBlock = recovered.buildBlock({ transactions: funding, timestamp: TREASURY_VESTING_MS });
   recovered.appendBlock(finalizeBlock(fundingBlock, quorumFor(fundingBlock, validators)));
   const registrationHeight = recovered.height + 1;
+  const credentialsFor = (replacement, operatorId, validFromEpoch = registrationHeight) =>
+    validators.slice(0, 3).map((validator) => createOperatorCredential({
+      authorityWallet: validator, networkId: recovered.networkId,
+      operator: { ...publicWallet(replacement), operatorId }, role: "evaluator",
+      validFromEpoch,
+      validUntilEpoch: validFromEpoch + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    }));
   const registrations = replacements.map((replacement, index) => createEvaluatorBond({
     wallet: replacement, networkId: recovered.networkId,
     amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
     operatorId: `replacement-evaluator-${index}`,
     activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: credentialsFor(replacement, `replacement-evaluator-${index}`),
   }));
+  const uncredentialed = createEvaluatorBond({
+    wallet: replacements[0], networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
+    operatorId: "self-asserted-controller",
+    activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: [],
+  });
+  const beforeUncredentialed = recovered.stateRoot;
+  const uncredentialedBlock = recovered.buildBlock({
+    transactions: [uncredentialed], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    uncredentialedBlock, quorumFor(uncredentialedBlock, validators),
+  )), /credential quorum/);
+  assert.equal(recovered.stateRoot, beforeUncredentialed);
+  assert.equal(recovered.nextNonce(replacements[0].address), 0);
+
+  const duplicatedCredentials = structuredClone(registrations[0].credentials);
+  duplicatedCredentials[1] = structuredClone(duplicatedCredentials[0]);
+  const duplicateCredentialRegistration = createEvaluatorBond({
+    wallet: replacements[0], networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
+    operatorId: "replacement-evaluator-0",
+    activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: duplicatedCredentials,
+  });
+  const duplicateCredentialBlock = recovered.buildBlock({
+    transactions: [duplicateCredentialRegistration], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    duplicateCredentialBlock, quorumFor(duplicateCredentialBlock, validators),
+  )), /credential is duplicated/);
+  assert.equal(recovered.stateRoot, beforeUncredentialed);
+
+  const replayedIdentityCredentialRegistration = createEvaluatorBond({
+    wallet: replacements[1], networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
+    operatorId: "replacement-evaluator-1",
+    activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: registrations[0].credentials,
+  });
+  const replayedIdentityCredentialBlock = recovered.buildBlock({
+    transactions: [replayedIdentityCredentialRegistration], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    replayedIdentityCredentialBlock, quorumFor(replayedIdentityCredentialBlock, validators),
+  )), /credential is duplicated, stale, or invalid/);
+  assert.equal(recovered.stateRoot, beforeUncredentialed);
+  assert.equal(recovered.nextNonce(replacements[1].address), 0);
+
+  const expiredCredentials = validators.slice(0, 3).map((validator) => createOperatorCredential({
+    authorityWallet: validator, networkId: recovered.networkId,
+    operator: { ...publicWallet(replacements[1]), operatorId: "replacement-evaluator-1" },
+    role: "evaluator", validFromEpoch: registrationHeight,
+    validUntilEpoch: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS - 1,
+  }));
+  const expiredCredentialRegistration = createEvaluatorBond({
+    wallet: replacements[1], networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
+    operatorId: "replacement-evaluator-1",
+    activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: expiredCredentials,
+  });
+  const expiredCredentialBlock = recovered.buildBlock({
+    transactions: [expiredCredentialRegistration], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    expiredCredentialBlock, quorumFor(expiredCredentialBlock, validators),
+  )), /credential is duplicated, stale, or invalid/);
+  assert.equal(recovered.stateRoot, beforeUncredentialed);
+
+  const raceEvaluator = registrations[1];
+  const raceValidator = createValidatorBond({
+    wallet: replacements[1], networkId: recovered.networkId,
+    amount: MIN_VALIDATOR_BOND.toString(), nonce: 1, operatorId: "same-block-validator",
+  });
+  const raceBlock = recovered.buildBlock({
+    transactions: [raceEvaluator, raceValidator], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    raceBlock, quorumFor(raceBlock, validators),
+  )), /new validator operator id is invalid or duplicated/);
+  assert.equal(recovered.stateRoot, beforeUncredentialed);
+  const reverseValidator = createValidatorBond({
+    wallet: replacements[2], networkId: recovered.networkId,
+    amount: MIN_VALIDATOR_BOND.toString(), nonce: 0, operatorId: "reverse-race-validator",
+  });
+  const reverseEvaluator = createEvaluatorBond({
+    wallet: replacements[2], networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 1,
+    operatorId: "reverse-race-evaluator",
+    activationHeight: registrationHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: credentialsFor(replacements[2], "reverse-race-evaluator"),
+  });
+  const reverseRaceBlock = recovered.buildBlock({
+    transactions: [reverseValidator, reverseEvaluator], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    reverseRaceBlock, quorumFor(reverseRaceBlock, validators),
+  )), /new evaluator registration is invalid/);
+  assert.equal(recovered.stateRoot, beforeUncredentialed);
   const registrationBlock = recovered.buildBlock({
     transactions: registrations, timestamp: TREASURY_VESTING_MS,
   });
   recovered.appendBlock(finalizeBlock(registrationBlock, quorumFor(registrationBlock, validators)));
   assert.equal(recovered.consensusSnapshot().state.pendingEvaluatorRegistrations.length,
     replacements.length);
+  assert.equal(recovered.consensusSnapshot().state.evaluatorBonds
+    .filter(([address]) => replacements.some((wallet) => wallet.address === address))
+    .reduce((sum, [, amount]) => sum + BigInt(amount), 0n),
+  BigInt(replacements.length) * MIN_EVALUATOR_BOND);
+  const overflowHeight = recovered.height + 1;
+  const overflowRegistration = createEvaluatorBond({
+    wallet: overflowReplacement, networkId: recovered.networkId,
+    amount: MIN_EVALUATOR_BOND.toString(), nonce: 0,
+    operatorId: "overflow-evaluator",
+    activationHeight: overflowHeight + EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+    credentials: credentialsFor(overflowReplacement, "overflow-evaluator", overflowHeight),
+  });
+  const beforeOverflow = recovered.stateRoot;
+  const overflowBlock = recovered.buildBlock({
+    transactions: [overflowRegistration], timestamp: TREASURY_VESTING_MS,
+  });
+  assert.throws(() => recovered.appendBlock(finalizeBlock(
+    overflowBlock, quorumFor(overflowBlock, validators),
+  )), /no vacant slot/);
+  assert.equal(recovered.stateRoot, beforeOverflow);
+  assert.equal(recovered.nextNonce(overflowReplacement.address), 0);
   const pendingSnapshot = recovered.consensusSnapshot();
   const restartedPending = NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: pendingSnapshot.capabilityMemory, checkpoint: recovered.blocks().at(-1),

@@ -4,6 +4,7 @@ import {
   CREDIT_UNSTAKE_DELAY_BLOCKS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+  EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS,
   MAX_BLOCK_BYTES,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_CREDIT_DELEGATIONS_PER_OWNER,
@@ -49,6 +50,7 @@ import {
   combineRandomnessReveals,
   randomnessCommitment,
   selectOperatorCommittee,
+  verifyOperatorCredential,
 } from "./operators.mjs";
 import {
   calculateSafetySettlement,
@@ -370,7 +372,7 @@ const TRANSACTION_SCHEMAS = Object.freeze({
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
     "signature", "type",
   ], [
-    "activationHeight", "algorithm", "amount", "fee", "networkId", "nonce",
+    "activationHeight", "algorithm", "amount", "credentials", "fee", "networkId", "nonce",
     "operatorId", "publicKey", "sender", "signature", "type",
   ]],
   "validator-equivocation": [[
@@ -668,7 +670,7 @@ export function createValidatorBond({
 }
 
 export function createEvaluatorBond({
-  wallet, networkId, amount, nonce, operatorId, activationHeight,
+  wallet, networkId, amount, nonce, operatorId, activationHeight, credentials,
   fee = MIN_TRANSFER_FEE.toString(),
 }) {
   const transaction = {
@@ -679,6 +681,7 @@ export function createEvaluatorBond({
   if (operatorId !== undefined || activationHeight !== undefined) {
     transaction.operatorId = operatorId;
     transaction.activationHeight = activationHeight;
+    transaction.credentials = structuredClone(credentials);
   }
   return { ...transaction, signature: signObject(transaction, wallet, "EVALUATOR_BOND") };
 }
@@ -3173,7 +3176,7 @@ export class NirChain {
 
   #applyEvaluatorBond(transaction, balances, nonces, evaluatorBonds,
     disabledEvaluators, evaluators, pendingEvaluatorRegistrations,
-    registeredValidators, proposer, height) {
+    registeredValidators, activeValidators, proposer, height) {
     const evaluator = evaluators.get(transaction.sender);
     if (transaction.type !== "evaluator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
         transaction.networkId !== this.#networkId ||
@@ -3206,6 +3209,45 @@ export class NirChain {
           eligibleCount + pendingEvaluatorRegistrations.size >= this.#genesisEvaluatorCount ||
           transaction.activationHeight !== height + EVALUATOR_ACTIVATION_DELAY_BLOCKS) {
         throw new Error("new evaluator registration is invalid or has no vacant slot");
+      }
+      const credentialFields = [
+        "algorithm", "authority", "networkId", "operatorAddress", "operatorId",
+        "publicKeyHash", "role", "signature", "validFromEpoch", "validUntilEpoch",
+      ].sort().join("\0");
+      const validatorQuorum = Math.floor((activeValidators.size * 2) / 3) + 1;
+      const authorities = new Map([...activeValidators]
+        .map(([address, member]) => [address, member.publicKey]));
+      const operator = {
+        address: transaction.sender,
+        operatorId: transaction.operatorId,
+        publicKey: transaction.publicKey,
+      };
+      const attesters = new Set();
+      if (!Array.isArray(transaction.credentials) ||
+          transaction.credentials.length < validatorQuorum ||
+          transaction.credentials.length > activeValidators.size) {
+        throw new Error("new evaluator lacks a bounded validator credential quorum");
+      }
+      for (const credential of transaction.credentials) {
+        if (!credential || Object.keys(credential).sort().join("\0") !== credentialFields ||
+            attesters.has(credential.authority) ||
+            !Number.isSafeInteger(credential.validFromEpoch) ||
+            !Number.isSafeInteger(credential.validUntilEpoch) ||
+            credential.validFromEpoch > height ||
+            credential.validUntilEpoch < transaction.activationHeight ||
+            height - credential.validFromEpoch > EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS ||
+            credential.validUntilEpoch - credential.validFromEpoch >
+              EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS ||
+            !verifyOperatorCredential({
+              credential, operator, role: "evaluator", networkId: this.#networkId,
+              epoch: height, authorities,
+            })) {
+          throw new Error("new evaluator credential is duplicated, stale, or invalid");
+        }
+        attesters.add(credential.authority);
+      }
+      if (attesters.size < validatorQuorum) {
+        throw new Error("new evaluator credential quorum is not independent");
       }
     }
     const expectedNonce = nonces.get(transaction.sender) ?? 0;
@@ -4126,7 +4168,7 @@ export class NirChain {
         this.#applyEvaluatorBond(
           transaction, balances, nonces, evaluatorBonds,
           disabledEvaluators, evaluatorsAfter, pendingEvaluatorRegistrations,
-          registeredValidators, block.feeRecipient, block.height,
+          registeredValidators, blockValidators, block.feeRecipient, block.height,
         );
       } else if (transaction.type === "validator-equivocation") {
         newlyBurned += this.#applyValidatorEquivocation(

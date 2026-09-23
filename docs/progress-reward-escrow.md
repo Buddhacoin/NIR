@@ -54,9 +54,15 @@ receipt before it can safely authorize confiscation.
 Genesis deterministically carves the protocol minimum bond for every evaluator
 out of the existing treasury allocation; this does not mint supply and avoids a
 circular dependency on the first reward. The public ceremony plan commits the
-exact bootstrap amount. A disabled key cannot rebond. A replacement with a
-unique address and self-asserted operator ID must lock the same minimum from a
-normal liquid balance and wait 64 finalized blocks. Replacements only fill
-vacancies, so the active-set size and quorum do not silently expand. Operator IDs
-do not prove real-world independence: a well-funded colluding organization can
-return under new keys after paying the slash and activation delay.
+exact bootstrap amount. A disabled key cannot rebond. A replacement must lock
+the same minimum from a normal liquid balance, fill an existing vacancy, and
+wait exactly 64 finalized blocks. More than two thirds of the active validators
+must issue bounded credentials over the replacement's network, address, operator
+ID, public key, evaluator role, and activation interval. This prevents free
+self-asserted vacancy capture and bounds pending registrations by both vacant
+slots and locked capital; credentials are valid for at most 1,024 blocks and a
+pending registration activates deterministically. It does not prove real-world
+independence: a captured validator quorum can authorize colluding replacements,
+and the protocol cannot establish whether nominally distinct operators are one
+company. Credentials also attest a key, not its future availability; an authorized
+offline replacement can still delay progress evaluation.

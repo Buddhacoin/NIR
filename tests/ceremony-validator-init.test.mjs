@@ -11,7 +11,9 @@ import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { multisigAddress } from "../blockchain/chain.mjs";
-import { PROTOCOL_VERSION, TREASURY_BPS, TREASURY_VESTING_MS } from "../blockchain/constants.mjs";
+import {
+  MIN_EVALUATOR_BOND, PROTOCOL_VERSION, TREASURY_BPS, TREASURY_VESTING_MS,
+} from "../blockchain/constants.mjs";
 import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import {
   initializeValidatorFromCeremony,
@@ -130,6 +132,7 @@ function fixture(root) {
       nonce: digest(`nonce-${index}`), operatorId: `ceremony-${index}`,
     })),
     evaluators: roles(evaluators, "evaluator", 9200),
+    evaluatorBondAmount: MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp: 0,
     networkId: "nir-validator-onboarding-devnet",
     protocolVersion: PROTOCOL_VERSION,

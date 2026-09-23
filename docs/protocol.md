@@ -127,11 +127,18 @@ allocations. The bond and reward remain unavailable through the objective fraud
 window. Full assigned-committee equivocation burns both plus every equivocating
 committee member's entire evaluator bond, disables those keys exactly once, and
 refunds other admissions already assigned to them. A disabled key cannot rebond.
-Permissionless replacements lock the same minimum, use a unique address and
-self-asserted operator ID, fill only vacant active-set slots, and wait 64 finalized
-blocks. This recovers quorum without treating a new key as proof of a new company;
-capital can still fund colluding replacements. Private execution dishonesty remains
-outside the objectively provable subset.
+Replacements lock the same minimum, fill only vacant active-set slots, and wait
+exactly 64 finalized blocks. A new address and operator ID must carry credentials
+from more than two thirds of the current validator set, bound to the network,
+address, operator ID, public key, evaluator role, and activation interval. A
+credential interval is capped at 1,024 blocks. Registration therefore is not free,
+cannot reserve more than the available vacancies, and cannot hold a pending slot
+past its deterministic activation. It is not a proof of real-world independence:
+a captured validator quorum can authorize many colluding keys, and protocol
+operator IDs cannot establish company ownership or future availability. An
+authorized replacement that later stays offline remains a progress-liveness risk;
+this credential check is not an inactivity proof. Private execution dishonesty
+remains outside the objectively provable subset.
 
 This removes the block hash and its proposer from committee selection. A
 malicious assigned epoch member can stop progress by withholding its reveal,

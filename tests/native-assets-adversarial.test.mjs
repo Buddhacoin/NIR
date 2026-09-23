@@ -92,7 +92,9 @@ function evidence(context, statements, addresses) {
 }
 
 function totalBalances(chain) {
-  return chain.consensusSnapshot().state.balances.reduce((total, [, amount]) => total + BigInt(amount), 0n);
+  const state = chain.consensusSnapshot().state;
+  return state.balances.reduce((total, [, amount]) => total + BigInt(amount), 0n) +
+    state.evaluatorBonds.reduce((total, [, amount]) => total + BigInt(amount), 0n);
 }
 
 test("capacity-neutral full-balance transfer remains possible at the balance-entry limit", () => {
