@@ -114,6 +114,41 @@ the remainder returns automatically, and its identity becomes a permanent
 tombstone. A selected candidate stays locked through its already-scheduled
 activation. This bounds queue occupancy and makes repeated flooding costly.
 
+### Quorum-receipted inclusion
+
+The validator runtime gives a new `beacon-bond` transaction an inclusion receipt
+only after validating it by itself against finalized state. It therefore cannot
+rely on an unfinalized funding transaction: the exact minimum bond and fee must
+already be available under the transaction nonce. A receipt binds the network,
+transaction ID, sender, nonce, accepting height, next-block inclusion height,
+eight-block forensic expiry, and active validator-set commitment. A client has an
+inclusion promise only after independently verifying receipts from more than two
+thirds of that exact set. Duplicate signers, mixed transactions, stale receipts,
+foreign networks, and forged signatures fail closed.
+
+Each signer durably stores the exact transaction and receipt before acknowledging
+it, reloads both after restart, and refuses to prepare, commit, time out, or install
+the next-height block if it omits that transaction. Protected admissions are
+ordered ahead of ordinary mempool entries and the queue has at most 256 slots,
+below the 1,000-transaction block limit. A receipt quorum and any finality quorum
+therefore intersect in enough honest validators to prevent omission under the
+normal less-than-one-third Byzantine assumption. Validators need not have
+identical mempools; only signers of this exact receipt acquire the obligation. A
+receipt signer that nevertheless signs the omitting finalized block leaves
+objective forensic evidence from its receipt and commit signature. Snapshot
+fast-forward fails closed while an inclusion obligation is outstanding because
+the current snapshot format has no exact transaction-inclusion proof; the signer
+must replay the promised block, which clears the durable receipt atomically.
+
+The off-chain receipt is not global state and does not make an unseen transaction's
+absence globally provable. A submitter must first reach a validator quorum; a
+network or finality cartel able to prevent that can still censor the initial
+request. Receipt-side reservation makes a receipted bond unavoidable while the
+honest quorum remains live, but it is not an on-chain lock until the promised block
+finalizes. Minority acknowledgements are not a promise, forensic evidence does not
+automatically slash funds in this version, and this is not full censorship or
+Sybil resistance.
+
 The activation height is a hard generation boundary. No epoch, progress, or
 fallback beacon contribution is accepted in that block. The epoch machine drops
 the unfinished old-generation attempt, advances the round, and derives a new seed

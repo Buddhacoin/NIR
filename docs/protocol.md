@@ -170,6 +170,15 @@ irreversible identity tombstone. The old address, public key, and operator ID
 cannot re-enter any protocol role. Rotation, retirement, and registration are
 separate-block transitions, and snapshots preserve pending exits and tombstones.
 
+For proposer-censorship resistance after delivery, an independently verified
+quorum of active validators may sign exact next-block inclusion receipts for a
+standalone-valid beacon admission. Receipt signers durably reserve that transaction
+and refuse an omitting proposal, so finality-quorum intersection enforces inclusion
+without assuming identical mempools. Receipt expiry, validator-set commitment,
+sender/nonce binding, and conflicting-receipt evidence are exact. This cannot force
+the network to issue the initial quorum receipt and is not a global availability or
+operator-independence proof.
+
 ### Epoch-randomness transition
 
 The operator module now implements the replacement state machine independently

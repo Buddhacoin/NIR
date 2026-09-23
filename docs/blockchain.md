@@ -139,6 +139,12 @@ and state-rooted. New keys first enter a fixed-bond, delayed, expiring 256-entry
 queue; canonical rank selects eligible newcomers without bond-size priority.
 Unselected expiry burns ten percent. This is key continuity and bounded economic
 anti-spam, not proof of corporate independence.
+For a new admission, validator runtimes can additionally return a signed,
+set-bound next-block inclusion receipt. Only a verified validator quorum is a
+promise. Those signers persist the exact transaction across restart and refuse an
+omitting next-height proposal; the quorum-intersection argument does not require a
+globally identical mempool. Initial delivery to a quorum can still be censored,
+and the off-chain receipt is not represented as globally known consensus state.
 A rotated-out beacon, or any other inactive registration not selected by a
 pending rotation, automatically retires after another 64 finalized blocks.
 Consensus returns only the remaining

@@ -2,6 +2,10 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 
 import { blockHash, transactionId } from "./chain.mjs";
+import {
+  isProtectedBeaconAdmission,
+  verifyAdmissionInclusionCertificate,
+} from "./admission-inclusion.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
 import {
@@ -509,8 +513,24 @@ export function createValidatorHttpServer(validator, options = {}) {
         const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
         const gossip = await boundedAllSettled(urls, (peer, index) =>
           gossipRequest(validator, index, peer, "/v1/gossip/transactions", payload));
+        let inclusionCertificate;
+        if (isProtectedBeaconAdmission(payload)) {
+          try {
+            inclusionCertificate = verifyAdmissionInclusionCertificate([
+              result.receipt,
+              ...gossip.filter(({ status, value }) => status === "fulfilled" && value?.receipt)
+                .map(({ value }) => value.receipt),
+            ], {
+              acceptedHeight: validator.height, networkId: validator.networkId,
+              transaction: payload, validators: validator.validatorMembers,
+            });
+          } catch {
+            // A minority acknowledgement is deliberately not represented as an inclusion promise.
+          }
+        }
         return send(response, 202, {
           ...result,
+          ...(inclusionCertificate ? { inclusionCertificate } : {}),
           gossipedPeers: gossip.filter(({ status, value }) => status === "fulfilled" && value).length,
         });
       }

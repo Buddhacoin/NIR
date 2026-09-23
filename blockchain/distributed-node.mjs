@@ -39,6 +39,13 @@ import {
 } from "./constants.mjs";
 import { canonicalJson, generateWallet, publicWallet, verifyObject } from "./crypto.mjs";
 import {
+  assertAdmissionInclusionObligations,
+  createAdmissionInclusionReceipt,
+  isProtectedBeaconAdmission,
+  verifyAdmissionInclusionCertificate,
+  verifyAdmissionInclusionReceipt,
+} from "./admission-inclusion.mjs";
+import {
   createPeerRequest,
   createPeerResponse,
   verifyPeerRequest,
@@ -171,6 +178,7 @@ function loadChain(directory) {
 export function initializeDistributedDevnet(
   directory,
   {
+    beaconWallets = null,
     networkId = "nir-distributed-devnet",
     firstValidatorPort = 8791,
     tlsCertificateSha256 = null,
@@ -178,6 +186,11 @@ export function initializeDistributedDevnet(
 ) {
   if (tlsCertificateSha256 !== null && !/^[0-9a-f]{64}$/.test(tlsCertificateSha256)) {
     throw new Error("development TLS certificate pin is invalid");
+  }
+  if (beaconWallets !== null && (!Array.isArray(beaconWallets) || beaconWallets.length !== 4 ||
+      beaconWallets.some((wallet) => typeof wallet?.publicKey !== "string" ||
+        typeof wallet?.privateKey !== "string"))) {
+    throw new Error("development beacon wallet fixture is invalid");
   }
   const root = resolve(directory);
   const coordinatorDirectory = join(root, "coordinator");
@@ -187,7 +200,7 @@ export function initializeDistributedDevnet(
   const validators = Array.from({ length: 4 }, generateWallet);
   const validatorTransports = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
-  const beacons = Array.from({ length: 4 }, generateWallet);
+  const beacons = beaconWallets ?? Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const coordinator = generateWallet();
   const validatorUrls = validators.map((_, index) =>
@@ -274,7 +287,9 @@ export class TransactionMempool {
   }
 
   take(limit = MAX_TRANSACTIONS_PER_BLOCK) {
-    return [...this.#transactions.values()].slice(0, limit).map((transaction) =>
+    return [...this.#transactions.values()].sort((left, right) =>
+      Number(isProtectedBeaconAdmission(right)) - Number(isProtectedBeaconAdmission(left)))
+      .slice(0, limit).map((transaction) =>
       structuredClone(transaction));
   }
 
@@ -317,6 +332,7 @@ export class ValidatorReplica {
   #authNotBefore;
   #validators;
   #mempool = new TransactionMempool();
+  #admissionReceipts = new Map();
   #peerUrls;
   #peerTransports;
   #peerTlsPins;
@@ -402,7 +418,37 @@ export class ValidatorReplica {
       }
     }
     for (const name of readdirSync(join(this.#directory, "mempool")).sort()) {
-      if (/^[0-9a-f]{64}\.json$/.test(name)) this.#mempool.add(readJson(join(this.#directory, "mempool", name)));
+      if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+      const transaction = readJson(join(this.#directory, "mempool", name));
+      const id = transactionId(transaction);
+      if (this.#chain.blocks().some((block) =>
+        block.transactions.some((finalized) => transactionId(finalized) === id))) {
+        rmSync(join(this.#directory, "mempool", name), { force: true });
+        rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
+        continue;
+      }
+      this.#mempool.add(transaction);
+      if (isProtectedBeaconAdmission(transaction)) {
+        const receiptPath = join(this.#directory, "mempool", `${id}.receipt.json`);
+        let receipt;
+        if (existsSync(receiptPath)) {
+          receipt = readJson(receiptPath);
+          verifyAdmissionInclusionReceipt(receipt, {
+            acceptedHeight: receipt.acceptedHeight, networkId: this.networkId,
+            currentHeight: this.height, transaction, validators: this.#chain.validatorMembers,
+          });
+          if (receipt.acceptedHeight !== this.height) {
+            throw new Error("durable beacon admission inclusion obligation was violated");
+          }
+        } else {
+          receipt = createAdmissionInclusionReceipt({
+            acceptedHeight: this.height, networkId: this.networkId, transaction,
+            validatorWallet: this.#wallet, validators: this.#chain.validatorMembers,
+          });
+          writeExclusive(receiptPath, receipt, 0o600);
+        }
+        this.#admissionReceipts.set(id, receipt);
+      }
     }
   }
 
@@ -418,6 +464,7 @@ export class ValidatorReplica {
   get peerUrls() { return [...this.#peerUrls]; }
   get peerCount() { return this.#transportView.length; }
   get validatorCount() { return this.#validators.length; }
+  get validatorMembers() { return this.#chain.validatorMembers; }
 
   validatorCountForHeight(height) {
     return this.#chain.validatorMembersForHeight(height).length;
@@ -882,6 +929,10 @@ export class ValidatorReplica {
     if (merged.verified.height <= this.height) {
       throw new Error("state snapshot does not advance the validator");
     }
+    if ([...this.#admissionReceipts.values()].some((receipt) =>
+      receipt.inclusionHeight <= merged.verified.height)) {
+      throw new Error("state snapshot cannot skip a durable beacon admission inclusion obligation");
+    }
     const installed = installBlockStoreSnapshot(
       this.#directory, this.#genesis, merged.snapshot,
       { handoffs: history.handoffs, trustedValidators: this.#genesis.validators },
@@ -918,6 +969,10 @@ export class ValidatorReplica {
     return this.#chain.buildBlock({ transactions, timestamp });
   }
 
+  #assertAdmissionInclusion(proposal) {
+    assertAdmissionInclusionObligations(proposal, this.#admissionReceipts);
+  }
+
   advanceProposal(proposal, nextRound, roundCertificate) {
     if (!proposal || !Number.isSafeInteger(nextRound) || nextRound !== proposal.round + 1) {
       throw new Error("next consensus round is invalid");
@@ -935,6 +990,7 @@ export class ValidatorReplica {
   }
 
   prepareCertificate(proposal, votes) {
+    this.#assertAdmissionInclusion(proposal);
     const rebuilt = this.#chain.buildBlock(proposalFields(proposal));
     if (canonicalJson(rebuilt) !== canonicalJson(proposal)) {
       throw new Error("prepare proposal is not deterministic for this state");
@@ -1015,17 +1071,35 @@ export class ValidatorReplica {
 
   submitTransaction(transaction) {
     const id = transactionId(transaction);
-    if (this.#mempool.has(id)) return { status: "known", transactionId: id };
+    if (this.#mempool.has(id)) return {
+      ...(this.#admissionReceipts.has(id) ? { receipt: this.#admissionReceipts.get(id) } : {}),
+      status: "known", transactionId: id,
+    };
     this.#mempool.add(transaction);
     try {
       const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
       this.#chain.validateProposal(this.#chain.buildBlock({
         transactions: this.#mempool.take(), timestamp,
       }));
+      if (isProtectedBeaconAdmission(transaction)) {
+        this.#chain.validateProposal(this.#chain.buildBlock({ transactions: [transaction], timestamp }));
+      }
       writeExclusive(join(this.#directory, "mempool", `${id}.json`), transaction, 0o600);
-      return { status: "queued", transactionId: id };
+      let receipt;
+      if (isProtectedBeaconAdmission(transaction)) {
+        receipt = createAdmissionInclusionReceipt({
+          acceptedHeight: this.height, networkId: this.networkId, transaction,
+          validatorWallet: this.#wallet, validators: this.#chain.validatorMembers,
+        });
+        writeExclusive(join(this.#directory, "mempool", `${id}.receipt.json`), receipt, 0o600);
+        this.#admissionReceipts.set(id, receipt);
+      }
+      return { ...(receipt ? { receipt } : {}), status: "queued", transactionId: id };
     } catch (error) {
       this.#mempool.remove([transaction]);
+      this.#admissionReceipts.delete(id);
+      rmSync(join(this.#directory, "mempool", `${id}.json`), { force: true });
+      rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
       throw error;
     }
   }
@@ -1039,6 +1113,7 @@ export class ValidatorReplica {
         block.proposer !== this.#chain.expectedProposer(block.height, block.round)) {
       throw new Error("proposal does not extend the validator state");
     }
+    this.#assertAdmissionInclusion(block);
     this.#chain.validateProposal(block);
     const rebuilt = this.#chain.buildBlock(proposalFields(block));
     if (canonicalJson(rebuilt) !== canonicalJson(block)) {
@@ -1176,6 +1251,7 @@ export class ValidatorReplica {
         !Number.isSafeInteger(now) || now < 0) {
       throw new Error("round timeout observation is invalid");
     }
+    this.#assertAdmissionInclusion(proposal);
     const rebuilt = this.#chain.buildBlock(proposalFields(proposal));
     if (canonicalJson(rebuilt) !== canonicalJson(proposal)) {
       throw new Error("timeout proposal is not deterministic for this state");
@@ -1221,6 +1297,7 @@ export class ValidatorReplica {
       if (existing?.hash === block.hash) return { height: this.height, status: "known" };
       throw new Error("committed block conflicts with validator state");
     }
+    this.#assertAdmissionInclusion(block);
     const verified = this.#chain.fork();
     verified.appendBlock(block);
     persistBlock(this.#directory, block, verified);
@@ -1228,7 +1305,10 @@ export class ValidatorReplica {
     this.#refreshTransportView();
     this.#mempool.remove(block.transactions);
     for (const transaction of block.transactions) {
-      rmSync(join(this.#directory, "mempool", `${transactionId(transaction)}.json`), { force: true });
+      const id = transactionId(transaction);
+      this.#admissionReceipts.delete(id);
+      rmSync(join(this.#directory, "mempool", `${id}.json`), { force: true });
+      rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
     }
     return { height: this.height, status: "committed" };
   }
@@ -1434,7 +1514,22 @@ export class DistributedCoordinator {
       if (queued.status === "queued") this.#mempool.remove([transaction]);
       throw new Error(`transaction durability quorum not reached (${relayedPeers}/${quorum})`);
     }
-    return { ...queued, relayedPeers };
+    let inclusionCertificate;
+    if (isProtectedBeaconAdmission(transaction)) {
+      try {
+        inclusionCertificate = verifyAdmissionInclusionCertificate(
+          relays.filter(({ status, value }) => status === "fulfilled" && value?.receipt)
+            .map(({ value }) => value.receipt),
+          { acceptedHeight: this.height, networkId: this.networkId, transaction,
+            currentHeight: this.height,
+            validators: this.#chain.validatorMembers },
+        );
+      } catch (error) {
+        if (queued.status === "queued") this.#mempool.remove([transaction]);
+        throw new Error(`beacon admission inclusion receipt quorum failed: ${error.message}`);
+      }
+    }
+    return { ...queued, ...(inclusionCertificate ? { inclusionCertificate } : {}), relayedPeers };
   }
 
   async #request(index, path, value) {
