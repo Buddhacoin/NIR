@@ -96,3 +96,29 @@ test("launch review CLI signs through an inherited restricted password descripto
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("launch review CLI completes every signature and the final offline verification", () => {
+  const values = fixture(); const root = mkdtempSync(join(tmpdir(), "nir-launch-review-final-"));
+  const reviewPath = join(root, "review.json");
+  try {
+    writeFileSync(reviewPath, `${canonicalJson(values.review)}\n`, { mode: 0o600 });
+    for (const [index, wallet] of values.wallets.entries()) {
+      const password = `launch-review-final-password-${index}`;
+      const vaultPath = join(root, `vault-${index}.json`); const passwordPath = join(root, `password-${index}`);
+      writeFileSync(vaultPath, `${canonicalJson(encryptWallet(wallet, password))}\n`, { mode: 0o600 });
+      writeFileSync(passwordPath, `${password}\n`, { mode: 0o600 });
+      const descriptor = openSync(passwordPath, "r");
+      const signed = spawnSync(process.execPath, ["blockchain/launch-review-cli.mjs", "sign",
+        reviewPath, vaultPath, values.reviewers[index].reviewerId], {
+        cwd: process.cwd(), encoding: "utf8", env: { ...process.env, NIR_LAUNCH_REVIEW_PASSWORD_FD: "3" },
+        stdio: ["ignore", "pipe", "pipe", descriptor],
+      });
+      closeSync(descriptor); assert.equal(signed.status, 0);
+      writeFileSync(reviewPath, signed.stdout, { mode: 0o600 });
+    }
+    const verified = spawnSync(process.execPath, ["blockchain/launch-review-cli.mjs", "verify",
+      reviewPath, "nir-public-dev", String(NOW)], { cwd: process.cwd(), encoding: "utf8", env: { ...process.env } });
+    assert.equal(verified.status, 0);
+    assert.equal(parseConsensusJson(verified.stdout).status, "LAUNCH-REVIEW-CRYPTOGRAPHIC-PASS");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
