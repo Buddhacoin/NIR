@@ -42,9 +42,11 @@ export function normalizeValidatorSet(
 }
 
 export function validatorSetId(members) {
-  return hashObject(members.map(({ address, operatorId, publicKey }) => operatorId === undefined
-    ? { address, publicKey }
-    : { address, operatorId, publicKey }), "FINALITY_VALIDATOR_SET");
+  return hashObject([...members]
+    .sort((left, right) => left.address < right.address ? -1 : left.address > right.address ? 1 : 0)
+    .map(({ address, operatorId, publicKey }) => operatorId === undefined
+      ? { address, publicKey }
+      : { address, operatorId, publicKey }), "FINALITY_VALIDATOR_SET");
 }
 
 // A rotation is certified by the old set as part of a finalized block and only

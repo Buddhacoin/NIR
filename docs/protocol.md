@@ -1,5 +1,11 @@
 # NIR Protocol — Draft 0.1
 
+The consensus recovery exception is specified in
+[Precommitted validator recovery](validator-recovery.md). It is limited to an
+objective finalized omission trigger and an already bonded, delayed reserve
+set; elapsed time, operator intervention, or an unsigned membership list cannot
+change finality membership.
+
 ## 1. Purpose
 
 NIR turns independently verified improvements in machine intelligence into a

@@ -1305,13 +1305,24 @@ export class ValidatorReplica {
       if (existing?.hash === block.hash) return { height: this.height, status: "known" };
       throw new Error("committed block conflicts with validator state");
     }
-    this.#assertAdmissionInclusion(block);
+    const recovery = block.transactions?.length === 1 &&
+      block.transactions[0]?.type === "validator-recovery";
+    if (!recovery) this.#assertAdmissionInclusion(block);
     const verified = this.#chain.fork();
     verified.appendBlock(block);
     persistBlock(this.#directory, block, verified);
     this.#chain = verified;
     this.#refreshTransportView();
     this.#mempool.remove(block.transactions);
+    if (recovery) {
+      for (const id of this.#admissionReceipts.keys()) {
+        const pending = this.#mempool.values().find((entry) => transactionId(entry) === id);
+        if (pending) this.#mempool.remove([pending]);
+        rmSync(join(this.#directory, "mempool", `${id}.json`), { force: true });
+        rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
+      }
+      this.#admissionReceipts.clear();
+    }
     for (const transaction of block.transactions) {
       const id = transactionId(transaction);
       this.#admissionReceipts.delete(id);

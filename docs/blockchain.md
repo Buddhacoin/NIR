@@ -4,6 +4,12 @@ The first chain implementation is a deterministic local ledger. It establishes
 the state-transition rules that a later peer-to-peer network must execute
 identically.
 
+Finality has a deliberately narrow, precommitted recovery path. An equally
+sized bonded reserve set can produce the sole `H+1` recovery block only after a
+finalized omission proof objectively destroys the active quorum. The plan ages
+for 64 blocks and binds reserve and transport keys; there is no timeout or admin
+takeover. See [Precommitted validator recovery](validator-recovery.md).
+
 ## Implemented
 
 - SHA3-256 content-addressed blocks, full 256-bit account addresses, and

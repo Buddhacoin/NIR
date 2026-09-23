@@ -77,12 +77,34 @@ function registryPayload({ activationHeight, epoch, networkId, peers, previousRe
   return { activationHeight, epoch, networkId, peers: normalizedPeers, previousRegistryHash };
 }
 
+export function normalizePeerBindings(peers) {
+  return registryPayload({ activationHeight: 0, epoch: 0, networkId: "nir-peer-bindings",
+    peers, previousRegistryHash: ZERO_HASH }).peers;
+}
+
+export function createValidatorRecoveryPeerRegistry({ activationHeight, generation, networkId,
+  peers, planHash, previousRegistry }) {
+  const payload = registryPayload({ activationHeight,
+    epoch: (previousRegistry?.epoch ?? -1) + 1, networkId, peers,
+    previousRegistryHash: previousRegistry ? peerRegistryHash(previousRegistry) : ZERO_HASH });
+  return { ...payload, format: "nir-validator-recovery-peer-registry-v1", generation, planHash };
+}
+
 export function peerRegistryHash(registry) {
   if (registry?.format === "nir-validator-onboarding-v1") {
     if (registry.onboardingHash !== validatorOnboardingHash(registry)) {
       throw new Error("active onboarding registry commitment is invalid");
     }
     return registry.onboardingHash;
+  }
+  if (registry?.format === "nir-validator-recovery-peer-registry-v1") {
+    const { format, generation, planHash, ...fields } = registry;
+    if (!Number.isSafeInteger(generation) || generation < 1 ||
+        !/^[0-9a-f]{64}$/.test(planHash ?? "")) {
+      throw new Error("validator recovery peer registry is invalid");
+    }
+    return hashObject({ ...registryPayload(fields), format, generation, planHash },
+      "VALIDATOR_RECOVERY_PEER_REGISTRY_V1");
   }
   return hashObject(registryPayload(registry), "PEER_REGISTRY");
 }

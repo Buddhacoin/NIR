@@ -12,6 +12,10 @@ import {
 } from "./protocol-upgrade.mjs";
 import { verifyValidatorHandoff } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
+import { transactionRoot } from "./transaction-tree.mjs";
+import {
+  verifyValidatorRecoveryEnvelope, verifyValidatorRecoveryVotes,
+} from "./validator-recovery.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const FORMAT = "nir-finality-proof-v2";
@@ -222,4 +226,61 @@ export function verifyFinalityProofChain(proofs, {
     transactionsRoot: last.header.transactionsRoot,
     validatorSetId: validatorSetId(current),
   };
+}
+
+export function verifyValidatorRecoveryTransition({
+  expectedNetworkId, plan, previousProof, recoveryBlock, trustedValidators,
+} = {}) {
+  const previousHeader = validateProof(previousProof, expectedNetworkId,
+    SUPPORTED_PROTOCOL_VERSIONS);
+  const current = normalizeValidators(trustedValidators);
+  verifyVotes(previousProof, current);
+  const reserveOrder = plan?.reserves?.map(({ address }) => address).sort() ?? [];
+  const expectedProposer = reserveOrder[recoveryBlock?.height % reserveOrder.length];
+  if (!recoveryBlock || recoveryBlock.height !== previousHeader.height + 1 ||
+      recoveryBlock.previousHash !== previousProof.hash ||
+      recoveryBlock.hash !== blockHeaderHash(blockHeader(recoveryBlock)) ||
+      recoveryBlock.transactions?.length !== 1 ||
+      recoveryBlock.transactions[0]?.type !== "validator-recovery" ||
+      recoveryBlock.transactionCount !== 1 ||
+      recoveryBlock.transactionsRoot !== transactionRoot(recoveryBlock.transactions) ||
+      recoveryBlock.proposer !== expectedProposer ||
+      recoveryBlock.feeRecipient !== expectedProposer || recoveryBlock.round !== 0 ||
+      recoveryBlock.roundCertificate !== null || recoveryBlock.protocolUpgrade !== null ||
+      recoveryBlock.protocolVersion !== previousHeader.protocolVersion ||
+      recoveryBlock.validatorRotation !== null || recoveryBlock.beaconRotation !== null ||
+      recoveryBlock.peerRegistryUpdate !== null ||
+      recoveryBlock.progressRewards.length !== 0 ||
+      recoveryBlock.progressFraudProofs.length !== 0 ||
+      recoveryBlock.safetySettlements.length !== 0 ||
+      recoveryBlock.randomnessCommits.length !== 0 ||
+      recoveryBlock.randomnessReveals.length !== 0 ||
+      recoveryBlock.fallbackBeacons.length !== 0 ||
+      recoveryBlock.progressBeacons.length !== 0 ||
+      recoveryBlock.epochRandomnessCommits.length !== 0 ||
+      recoveryBlock.epochRandomnessReveals.length !== 0) {
+    throw new Error("light client validator recovery chain is invalid");
+  }
+  const transition = recoveryBlock.transactions[0];
+  const context = verifyValidatorRecoveryEnvelope(transition, {
+    currentHeight: recoveryBlock.height,
+    networkId: expectedNetworkId,
+    plan,
+    previousBlock: { hash: previousProof.hash, height: previousHeader.height,
+      previousHash: previousHeader.previousHash, stateRoot: previousHeader.stateRoot },
+  });
+  verifyValidatorRecoveryVotes({ commits: recoveryBlock.certificate,
+    prepares: recoveryBlock.prepareCertificate }, {
+    blockHash: recoveryBlock.hash,
+    checkpointHash: context.checkpointHash,
+    evidenceHash: context.evidenceHash,
+    generation: transition.generation,
+    height: recoveryBlock.height,
+    networkId: expectedNetworkId,
+    planHash: transition.planHash,
+    reserveSetId: plan.reserveSetId,
+  }, plan);
+  return { height: recoveryBlock.height, stateRoot: recoveryBlock.stateRoot,
+    tipHash: recoveryBlock.hash, trustedValidators: structuredClone(plan.reserves),
+    validatorSetId: plan.reserveSetId };
 }

@@ -57,7 +57,9 @@ import {
   safetyFailurePayload,
 } from "./safety-bounty.mjs";
 import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
-import { peerRegistryHash, verifyPeerRegistry } from "./peer-registry.mjs";
+import {
+  createValidatorRecoveryPeerRegistry, peerRegistryHash, verifyPeerRegistry,
+} from "./peer-registry.mjs";
 import {
   BEACON_ADMISSION_DELAY_BLOCKS,
   BEACON_ADMISSION_EXPIRY_BLOCKS,
@@ -102,6 +104,14 @@ import {
   verifyValidatorAdmissionOmissionEvidence,
   verifyValidatorAdmissionOmissionTransactionEnvelope,
 } from "./validator-admission-omission.mjs";
+import {
+  createValidatorRecoveryVote,
+  verifyValidatorRecoveryCheckpoint,
+  verifyValidatorRecoveryEnvelope,
+  verifyValidatorRecoveryPlan,
+  verifyValidatorRecoveryPlanTransaction,
+  verifyValidatorRecoveryVotes,
+} from "./validator-recovery.mjs";
 import {
   appendAccountHistory,
   emptyAccountHistory,
@@ -405,6 +415,14 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "validator-admission-omission": [[
     "algorithm", "evidence", "fee", "networkId", "nonce", "publicKey", "sender",
     "signature", "type",
+  ]],
+  "validator-recovery-plan": [[
+    "algorithm", "fee", "networkId", "nonce", "plan", "publicKey", "sender",
+    "signature", "type",
+  ]],
+  "validator-recovery": [[
+    "checkpoint", "checkpointCertificate", "evidenceTransaction", "format", "generation",
+    "planHash", "type",
   ]],
   "validator-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -1120,6 +1138,19 @@ export function finalizeBlock(block, validatorWallets) {
   return { ...block, hash: blockHash(block), prepareCertificate, certificate };
 }
 
+export function finalizeValidatorRecoveryBlock(block, reserveWallets, plan, {
+  checkpointHash, evidenceHash,
+}) {
+  const context = { blockHash: blockHash(block), checkpointHash, evidenceHash,
+    generation: plan.generation, height: block.height, networkId: block.networkId,
+    planHash: plan.planHash, reserveSetId: plan.reserveSetId };
+  const prepareCertificate = reserveWallets.map((wallet) =>
+    createValidatorRecoveryVote(context, wallet, "prepare"));
+  const certificate = reserveWallets.map((wallet) =>
+    createValidatorRecoveryVote(context, wallet, "commit"));
+  return { ...block, certificate, hash: context.blockHash, prepareCertificate };
+}
+
 export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) {
   if (!Array.isArray(claims) || claims.length === 0) return [];
   if (claims.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
@@ -1248,6 +1279,8 @@ export class NirChain {
   #validatorBonds;
   #validatorAdmissionOmissionEvidence;
   #validatorEquivocationEvidence;
+  #validatorRecoveryGeneration;
+  #validatorRecoveryPlan;
   #registeredValidators;
   #pendingEvaluatorRegistrations;
   #pendingValidatorRotation;
@@ -1393,6 +1426,8 @@ export class NirChain {
     this.#validatorBonds = new Map();
     this.#validatorAdmissionOmissionEvidence = new Set();
     this.#validatorEquivocationEvidence = new Set();
+    this.#validatorRecoveryGeneration = 0;
+    this.#validatorRecoveryPlan = null;
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingEvaluatorRegistrations = new Map();
     this.#pendingValidatorRotation = null;
@@ -1700,6 +1735,9 @@ export class NirChain {
       state.validatorAdmissionOmissionEvidence,
     );
     const validatorEquivocationEvidence = new Set(state.validatorEquivocationEvidence);
+    const validatorRecoveryGeneration = snapshotInteger(
+      state.validatorRecoveryGeneration, "validator recovery generation",
+    );
     const evaluatorEntries = snapshotEntries(state.evaluators, "evaluators");
     const evaluators = operatorRegistry([...evaluatorEntries.values()], "evaluator snapshot");
     for (const [address, member] of chain.#evaluators) {
@@ -1916,6 +1954,19 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    const validatorRecoveryPlan = state.validatorRecoveryPlan === null ? null :
+      verifyValidatorRecoveryPlan(state.validatorRecoveryPlan, {
+        activeValidators: [...validatorMembers.values()],
+        bonds: validatorBonds,
+        currentHeight: state.validatorRecoveryPlan.scheduledHeight,
+        expectedGeneration: validatorRecoveryGeneration + 1,
+        networkId: chain.#networkId,
+        peerRegistryRequired: state.peerRegistry !== null,
+        registeredValidators: registeredMembers,
+      });
+    if (validatorRecoveryPlan && validatorRecoveryPlan.activationHeight > snapshot.height) {
+      // A plan may be pending eligibility; activationHeight is a lower bound, not an expiry.
+    }
     if ([...registeredMembers.values()].some(({ address, operatorId, publicKey }) =>
       retiredBeaconAuthorities.has(address) || retiredOperators.has(operatorId) ||
       retiredPublicKeys.has(publicKey) || pendingBeaconAdmissions.has(address) ||
@@ -2107,6 +2158,8 @@ export class NirChain {
     chain.#validatorBonds = validatorBonds;
     chain.#validatorAdmissionOmissionEvidence = validatorAdmissionOmissionEvidence;
     chain.#validatorEquivocationEvidence = validatorEquivocationEvidence;
+    chain.#validatorRecoveryGeneration = validatorRecoveryGeneration;
+    chain.#validatorRecoveryPlan = validatorRecoveryPlan;
     chain.#validatorFaults = validatorFaults;
     chain.#validators = validatorMembers;
     chain.#validatorOrder = [...validatorMembers.keys()].sort();
@@ -2331,6 +2384,10 @@ export class NirChain {
         overrides.validatorAdmissionOmissionEvidence ?? this.#validatorAdmissionOmissionEvidence,
       validatorEquivocationEvidence:
         overrides.validatorEquivocationEvidence ?? this.#validatorEquivocationEvidence,
+      validatorRecoveryGeneration:
+        overrides.validatorRecoveryGeneration ?? this.#validatorRecoveryGeneration,
+      validatorRecoveryPlan: overrides.validatorRecoveryPlan === undefined
+        ? this.#validatorRecoveryPlan : overrides.validatorRecoveryPlan,
       validatorFaults: overrides.validatorFaults ?? this.#validatorFaults,
       validators: overrides.validators ?? this.#validators,
     });
@@ -2387,6 +2444,8 @@ export class NirChain {
         validatorBonds: this.#validatorBonds,
         validatorAdmissionOmissionEvidence: this.#validatorAdmissionOmissionEvidence,
         validatorEquivocationEvidence: this.#validatorEquivocationEvidence,
+        validatorRecoveryGeneration: this.#validatorRecoveryGeneration,
+        validatorRecoveryPlan: this.#validatorRecoveryPlan,
         validatorFaults: this.#validatorFaults,
         validators: this.#validators,
         evaluators: this.#evaluators,
@@ -2441,6 +2500,10 @@ export class NirChain {
   }
   validatorEquivocationEvidenceUsed(evidenceHash) {
     return this.#validatorEquivocationEvidence.has(evidenceHash);
+  }
+  get validatorRecoveryGeneration() { return this.#validatorRecoveryGeneration; }
+  get validatorRecoveryPlan() {
+    return this.#validatorRecoveryPlan ? structuredClone(this.#validatorRecoveryPlan) : null;
   }
   beaconBond(address) { return this.#beaconBonds.get(address) ?? 0n; }
   beaconFaultCount(address) { return this.#beaconFaults.get(address) ?? 0; }
@@ -2540,6 +2603,12 @@ export class NirChain {
       throw new Error("consensus round is outside protocol limits");
     }
     return order[(height + round) % order.length];
+  }
+
+  #expectedRecoveryProposer(height) {
+    if (!this.#validatorRecoveryPlan) throw new Error("validator recovery plan is unavailable");
+    const order = this.#validatorRecoveryPlan.reserves.map(({ address }) => address).sort();
+    return order[height % order.length];
   }
 
   #validatorsForHeight(height) {
@@ -2763,6 +2832,16 @@ export class NirChain {
     protocolUpgrade = null,
     timestamp = Date.now(), round = 0, roundCertificate = null,
   }) {
+    const recovery = transactions.length === 1 && transactions[0]?.type === "validator-recovery";
+    if (recovery && (rewardClaims.length > 0 || safetyClaims.length > 0 ||
+        randomnessCommits.length > 0 || randomnessReveals.length > 0 ||
+        fallbackBeacons.length > 0 || epochRandomnessCommits.length > 0 ||
+        epochRandomnessReveals.length > 0 || progressBeacons.length > 0 ||
+        progressFraudProofs.length > 0 || beaconRotation !== null || validatorRotation !== null ||
+        peerRegistryUpdate !== null || protocolUpgrade !== null || round !== 0 ||
+        roundCertificate !== null)) {
+      throw new Error("validator recovery block cannot contain ordinary consensus work");
+    }
     if (validatorRotation !== null &&
         transactions.some(({ type }) => type === "validator-equivocation")) {
       throw new Error("validator equivocation and rotation require separate blocks");
@@ -2783,6 +2862,9 @@ export class NirChain {
       supportedVersions: this.#supportedProtocolVersions,
     });
     consensusEncodingVersionForProtocol(protocolState.protocolVersion);
+    if (recovery && protocolState.protocolVersion !== this.#protocolVersion) {
+      throw new Error("validator recovery cannot share a protocol activation boundary");
+    }
     const scheduledProtocolUpgrade = protocolUpgrade === null
       ? null : protocolState.pendingUpgrade;
     const remaining = MINING_POOL - this.#mined;
@@ -2872,16 +2954,28 @@ export class NirChain {
     }
     const activatingOnboarding = this.#pendingValidatorRotation?.activationHeight === height
       ? this.#pendingValidatorRotation.onboarding ?? null : null;
-    const nextPeerRegistry = activatingOnboarding ?? (peerRegistryUpdate === null ? this.#peerRegistry :
+    let nextPeerRegistry = activatingOnboarding ?? (peerRegistryUpdate === null ? this.#peerRegistry :
       verifyPeerRegistry(peerRegistryUpdate, {
         currentHeight: height,
         networkId: this.#networkId,
         previousRegistry: this.#peerRegistry,
         validators: [...this.#validators.values()],
       }));
+    if (recovery && this.#peerRegistry) {
+      nextPeerRegistry = createValidatorRecoveryPeerRegistry({
+        activationHeight: height,
+        generation: this.#validatorRecoveryPlan.generation,
+        networkId: this.#networkId,
+        peers: this.#validatorRecoveryPlan.peers,
+        planHash: this.#validatorRecoveryPlan.planHash,
+        previousRegistry: this.#peerRegistry,
+      });
+    }
     if (peerRegistryUpdate !== null && nextPeerRegistry.activationHeight !== height) {
       throw new Error("peer registry must activate at its containing block height");
     }
+    const proposer = recovery ? this.#expectedRecoveryProposer(height) :
+      this.expectedProposer(height, round);
     const proposal = {
       accountStateRoot: "0".repeat(64),
       beaconRotation: scheduledBeaconRotation,
@@ -2903,8 +2997,8 @@ export class NirChain {
       safetySettlements,
       validatorRotation: scheduledRotation,
       issuanceEpoch: progressRewards.length > 0 ? this.#rewardEpoch : null,
-      feeRecipient: this.expectedProposer(height, 0),
-      proposer: this.expectedProposer(height, round),
+      feeRecipient: recovery ? proposer : this.expectedProposer(height, 0),
+      proposer,
       protocolUpgrade: scheduledProtocolUpgrade,
       protocolVersion: nextProtocolVersion,
       round,
@@ -2920,7 +3014,7 @@ export class NirChain {
       certificate: [],
       hash: blockHash(provisional),
       prepareCertificate: [],
-      proposer: this.expectedProposer(height, 0),
+      proposer,
       round: 0,
       roundCertificate: null,
     };
@@ -3639,6 +3733,30 @@ export class NirChain {
     return penalty.bond;
   }
 
+  #applyValidatorRecoveryPlan(
+    transaction, balances, nonces, validatorBonds, registeredValidators, proposer, height,
+  ) {
+    verifyValidatorRecoveryPlanTransaction(transaction, this.#networkId);
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    const fee = parseAtomic(transaction.fee, "fee");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (balance < fee) throw new Error("insufficient balance");
+    const plan = verifyValidatorRecoveryPlan(transaction.plan, {
+      activeValidators: [...this.#validators.values()],
+      bonds: validatorBonds,
+      currentHeight: height,
+      expectedGeneration: this.#validatorRecoveryGeneration + 1,
+      networkId: this.#networkId,
+      peerRegistryRequired: this.#peerRegistry !== null,
+      registeredValidators,
+    });
+    balances.set(transaction.sender, balance - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    return plan;
+  }
+
   #applyValidatorAdmissionOmission(
     transaction, balances, nonces, validatorBonds, validatorFaults,
     disabledValidators, usedEvidence, proposer, finalizedBlock, currentHeight,
@@ -4145,6 +4263,8 @@ export class NirChain {
       this.#validatorAdmissionOmissionEvidence,
     );
     fork.#validatorEquivocationEvidence = new Set(this.#validatorEquivocationEvidence);
+    fork.#validatorRecoveryGeneration = this.#validatorRecoveryGeneration;
+    fork.#validatorRecoveryPlan = structuredClone(this.#validatorRecoveryPlan);
     fork.#validatorFaults = new Map(this.#validatorFaults);
     fork.#validators = new Map(this.#validators);
     fork.#validatorOrder = [...this.#validatorOrder];
@@ -4186,6 +4306,11 @@ export class NirChain {
       supportedVersions: this.#supportedProtocolVersions,
     });
     consensusEncodingVersionForProtocol(protocolState.protocolVersion);
+    if (block.transactions?.length === 1 &&
+        block.transactions[0]?.type === "validator-recovery" &&
+        protocolState.protocolVersion !== this.#protocolVersion) {
+      throw new Error("validator recovery cannot share a protocol activation boundary");
+    }
     if (block.previousHash !== previous.hash) throw new Error("broken hash chain");
     if (!Number.isSafeInteger(block.timestamp) || block.timestamp < previous.timestamp) {
       throw new Error("invalid block timestamp");
@@ -4201,6 +4326,25 @@ export class NirChain {
         !Array.isArray(block.epochRandomnessReveals)) {
       throw new Error("block collections are invalid");
     }
+    const recoveryTransition = block.transactions.length === 1 &&
+      block.transactions[0]?.type === "validator-recovery" ? block.transactions[0] : null;
+    if (block.transactions.some(({ type }) => type === "validator-recovery") && !recoveryTransition) {
+      throw new Error("validator recovery must be the only block transaction");
+    }
+    if (recoveryTransition && (block.progressRewards.length > 0 ||
+        block.progressFraudProofs.length > 0 || block.safetySettlements.length > 0 ||
+        block.randomnessCommits.length > 0 || block.randomnessReveals.length > 0 ||
+        block.fallbackBeacons.length > 0 || block.progressBeacons.length > 0 ||
+        block.epochRandomnessCommits.length > 0 || block.epochRandomnessReveals.length > 0 ||
+        block.beaconRotation !== null || block.validatorRotation !== null ||
+        block.peerRegistryUpdate !== null || block.protocolUpgrade !== null || block.round !== 0 ||
+        block.roundCertificate !== null)) {
+      throw new Error("validator recovery block contains ordinary consensus work");
+    }
+    const recoveryContext = recoveryTransition ? verifyValidatorRecoveryEnvelope(
+      recoveryTransition, { currentHeight: block.height, networkId: this.#networkId,
+        plan: this.#validatorRecoveryPlan, previousBlock: previous },
+    ) : null;
     const blockValidatorMembers = this.#validatorsForHeight(block.height);
     const blockValidators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
     const blockQuorum = Math.floor((blockValidators.size * 2) / 3) + 1;
@@ -4279,10 +4423,14 @@ export class NirChain {
     if (Buffer.byteLength(canonicalJson(unsignedBlock(block))) > MAX_BLOCK_BYTES) {
       throw new Error("block exceeds the byte-size limit");
     }
-    if (block.proposer !== this.expectedProposer(block.height, block.round)) {
+    const expectedBlockProposer = recoveryTransition
+      ? this.#expectedRecoveryProposer(block.height)
+      : this.expectedProposer(block.height, block.round);
+    if (block.proposer !== expectedBlockProposer) {
       throw new Error("unexpected block proposer");
     }
-    if (block.feeRecipient !== this.expectedProposer(block.height, 0)) {
+    if (block.feeRecipient !== (recoveryTransition
+      ? expectedBlockProposer : this.expectedProposer(block.height, 0))) {
       throw new Error("unexpected block fee recipient");
     }
     const transitionValidators = this.#pendingValidatorRotation &&
@@ -4290,7 +4438,21 @@ export class NirChain {
       ? this.#validators
       : null;
     if (verifyCertificate) {
-      this.#verifyCertificate(block, blockValidators, transitionValidators);
+      if (recoveryTransition) {
+        verifyValidatorRecoveryVotes({ commits: block.certificate,
+          prepares: block.prepareCertificate }, {
+          blockHash: block.hash,
+          checkpointHash: recoveryContext.checkpointHash,
+          evidenceHash: recoveryContext.evidenceHash,
+          generation: recoveryTransition.generation,
+          height: block.height,
+          networkId: block.networkId,
+          planHash: recoveryTransition.planHash,
+          reserveSetId: this.#validatorRecoveryPlan.reserveSetId,
+        }, this.#validatorRecoveryPlan);
+      } else {
+        this.#verifyCertificate(block, blockValidators, transitionValidators);
+      }
     } else if (block.hash !== blockHash(block)) {
       throw new Error("block hash mismatch");
     }
@@ -4312,6 +4474,16 @@ export class NirChain {
       if (nextPeerRegistry.activationHeight !== block.height) {
         throw new Error("peer registry must activate at its containing block height");
       }
+    }
+    if (recoveryTransition && this.#peerRegistry) {
+      nextPeerRegistry = createValidatorRecoveryPeerRegistry({
+        activationHeight: block.height,
+        generation: this.#validatorRecoveryPlan.generation,
+        networkId: this.#networkId,
+        peers: this.#validatorRecoveryPlan.peers,
+        planHash: this.#validatorRecoveryPlan.planHash,
+        previousRegistry: this.#peerRegistry,
+      });
     }
     const expectedPeerRegistryHash = nextPeerRegistry
       ? peerRegistryHash(nextPeerRegistry) : "0".repeat(64);
@@ -4443,6 +4615,9 @@ export class NirChain {
       this.#validatorAdmissionOmissionEvidence,
     );
     const validatorEquivocationEvidence = new Set(this.#validatorEquivocationEvidence);
+    let validatorRecoveryGeneration = this.#validatorRecoveryGeneration;
+    let validatorRecoveryPlan = structuredClone(this.#validatorRecoveryPlan);
+    let validatorRecoveryOccurred = false;
     const registeredValidators = new Map(this.#registeredValidators);
     const progressCommitments = new Map(this.#progressCommitments);
     const progressEscrows = new Map([...this.#progressEscrows]
@@ -4702,6 +4877,26 @@ export class NirChain {
           disabledValidators, validatorAdmissionOmissionEvidence,
           block.feeRecipient, previous, block.height,
         );
+      } else if (transaction.type === "validator-recovery-plan") {
+        if (validatorRecoveryPlan || this.#pendingValidatorRotation || block.validatorRotation) {
+          throw new Error("validator recovery plan conflicts with pending membership state");
+        }
+        validatorRecoveryPlan = this.#applyValidatorRecoveryPlan(
+          transaction, balances, nonces, validatorBonds, registeredValidators,
+          block.feeRecipient, block.height,
+        );
+      } else if (transaction.type === "validator-recovery") {
+        newlyBurned += this.#applyValidatorAdmissionOmission(
+          transaction.evidenceTransaction, balances, nonces, validatorBonds,
+          validatorFaults, disabledValidators, validatorAdmissionOmissionEvidence,
+          block.feeRecipient, previous, block.height,
+        );
+        const remaining = [...this.#validators.keys()]
+          .filter((address) => !disabledValidators.has(address)).length;
+        if (remaining >= this.#quorum) {
+          throw new Error("validator recovery trigger does not destroy the active quorum");
+        }
+        validatorRecoveryOccurred = true;
       } else if (transaction.type === "beacon-bond") {
         this.#applyBeaconBond(
           transaction, balances, nonces, beaconBonds, block.feeRecipient, epochRandomness,
@@ -5051,13 +5246,29 @@ export class NirChain {
     let validatorsAfter = this.#validators;
     let validatorOrderAfter = this.#validatorOrder;
     let pendingValidatorRotationAfter = this.#pendingValidatorRotation;
-    if (pendingValidatorRotationAfter &&
+    if (validatorRecoveryOccurred) {
+      for (const [candidateId, candidate] of candidateBonds) {
+        if (candidate.purpose !== "safety" || candidate.committee !== null) continue;
+        balances.set(candidate.submitter,
+          (balances.get(candidate.submitter) ?? 0n) + candidate.bond);
+        candidateBonds.delete(candidateId);
+      }
+      validatorsAfter = new Map(validatorRecoveryPlan.reserves
+        .map((member) => [member.address, member]));
+      validatorOrderAfter = [...validatorsAfter.keys()].sort();
+      pendingValidatorRotationAfter = null;
+      validatorRecoveryGeneration = validatorRecoveryPlan.generation;
+      validatorRecoveryPlan = null;
+    } else if (pendingValidatorRotationAfter &&
         block.height >= pendingValidatorRotationAfter.activationHeight) {
       validatorsAfter = new Map(blockValidatorMembers.map((member) => [member.address, member]));
       validatorOrderAfter = blockValidatorMembers.map(({ address }) => address);
       pendingValidatorRotationAfter = null;
     }
-    if (scheduledRotation) pendingValidatorRotationAfter = scheduledRotation;
+    if (scheduledRotation) {
+      pendingValidatorRotationAfter = scheduledRotation;
+      validatorRecoveryPlan = null;
+    }
     if (pendingValidatorRotationAfter?.validators.some(({ address }) =>
       disabledValidators.has(address))) {
       pendingValidatorRotationAfter = null;
@@ -5113,6 +5324,8 @@ export class NirChain {
       validatorBonds,
       validatorAdmissionOmissionEvidence,
       validatorEquivocationEvidence,
+      validatorRecoveryGeneration,
+      validatorRecoveryPlan,
       validatorFaults,
       validators: validatorsAfter,
     });
@@ -5168,6 +5381,8 @@ export class NirChain {
     this.#validatorBonds = validatorBonds;
     this.#validatorAdmissionOmissionEvidence = validatorAdmissionOmissionEvidence;
     this.#validatorEquivocationEvidence = validatorEquivocationEvidence;
+    this.#validatorRecoveryGeneration = validatorRecoveryGeneration;
+    this.#validatorRecoveryPlan = validatorRecoveryPlan;
     this.#registeredValidators = registeredValidators;
     this.#registeredBeaconAuthorities = registeredBeaconAuthorities;
     this.#retiredBeaconAuthorities = retiredBeaconAuthorities;
