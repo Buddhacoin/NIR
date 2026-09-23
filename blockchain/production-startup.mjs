@@ -45,7 +45,7 @@ function assertSameReleaseLineage(wallet, tool) {
 }
 
 export function createProductionStartupGuard({
-  externalAnchorPath, headStore, installationTarget, kind, moduleUrl,
+  externalAnchorPath, headStore, includeArtifact = false, installationTarget, kind, moduleUrl,
   requireExternalAnchor = true, requireInstalledEntrypoint = kind === "node",
   signedReleasePath, trustedAddress,
 } = {}) {
@@ -60,7 +60,7 @@ export function createProductionStartupGuard({
   const verify = () => {
     if (requireInstalledEntrypoint) assertEntrypointIsInstalled(installationTarget, moduleUrl);
     const result = verifyProductionStartupFromHead(headStore, installationTarget, {
-      externalAnchor, signedRelease, trustedAddress,
+      externalAnchor, includeArtifact, signedRelease, trustedAddress,
     });
     if (result.kind !== kind) throw new Error("production startup anchor kind is mixed");
     if (requireInstalledEntrypoint) assertEntrypointIsInstalled(installationTarget, moduleUrl);
@@ -70,7 +70,8 @@ export function createProductionStartupGuard({
   return { initial: verify(), verifyBeforeOpen: verify };
 }
 
-export function createWalletBridgeProductionGuard({
+export function createWalletToolProductionGuard({
+  includeWalletArtifact = false,
   moduleUrl, signedReleasePath, toolExternalAnchorPath, toolHeadStore,
   toolInstallationTarget, trustedAddress, walletExternalAnchorPath, walletHeadStore,
   walletInstallationTarget,
@@ -82,15 +83,24 @@ export function createWalletBridgeProductionGuard({
   });
   const wallet = createProductionStartupGuard({
     externalAnchorPath: walletExternalAnchorPath, headStore: walletHeadStore,
-    installationTarget: walletInstallationTarget, kind: "wallet",
+    includeArtifact: includeWalletArtifact, installationTarget: walletInstallationTarget,
+    kind: "wallet",
     requireInstalledEntrypoint: false, signedReleasePath, trustedAddress,
   });
   const verify = () => {
     const toolResult = tool.verifyBeforeOpen();
     const walletResult = wallet.verifyBeforeOpen();
     assertSameReleaseLineage(walletResult, toolResult);
+    if (toolResult.packageHash !== tool.initial.packageHash ||
+        toolResult.anchorHead !== tool.initial.anchorHead ||
+        walletResult.packageHash !== wallet.initial.packageHash ||
+        walletResult.anchorHead !== wallet.initial.anchorHead) {
+      throw new Error("production wallet or tool generation changed during startup");
+    }
     return { tool: toolResult, wallet: walletResult };
   };
   assertSameReleaseLineage(wallet.initial, tool.initial);
   return { initial: { tool: tool.initial, wallet: wallet.initial }, verifyBeforeOpen: verify };
 }
+
+export const createWalletBridgeProductionGuard = createWalletToolProductionGuard;

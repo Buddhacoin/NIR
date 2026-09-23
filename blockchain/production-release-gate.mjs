@@ -224,7 +224,7 @@ function validateProductionProvenance(value, kind) {
 }
 
 export function verifyProductionInstallation(targetPath, {
-  expectedPackageHash, kind, signedRelease, trustedAddress,
+  expectedPackageHash, includeArtifact = false, kind, signedRelease, trustedAddress,
 } = {}) {
   if (!new Set(["node", "wallet"]).has(kind) ||
       !/^[0-9a-f]{64}$/.test(expectedPackageHash ?? "")) {
@@ -256,7 +256,8 @@ export function verifyProductionInstallation(targetPath, {
   if (packageValue.artifact.artifactHash !== productionProvenance.artifactHash) {
     throw new Error("production installation artifact does not match its provenance");
   }
-  return { artifactHash: packageValue.artifact.artifactHash, files: installed.files,
+  return { ...(includeArtifact ? { artifact: packageValue.artifact } : {}),
+    artifactHash: packageValue.artifact.artifactHash, files: installed.files,
     kind, packageHash: packageValue.packageHash,
     productionReportHash: packageValue.productionReport.reportHash,
     productionTarget: packageValue.productionTarget, verified: true };

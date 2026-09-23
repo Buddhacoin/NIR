@@ -340,13 +340,14 @@ export function repairProductionHeadCopies(pathValue, { externalAnchor, _beforeC
 }
 
 export function verifyProductionStartupFromHead(pathValue, installationTarget, {
-  externalAnchor, signedRelease, trustedAddress,
+  externalAnchor, includeArtifact = false, signedRelease, trustedAddress,
 } = {}) {
   const store = loadProductionHeadStore(pathValue, { externalAnchor });
   const head = store.records.at(-1)?.record;
   if (!head) throw new Error("production startup head is empty");
   const verified = verifyProductionInstallation(installationTarget, {
-    expectedPackageHash: head.packageHash, kind: head.kind, signedRelease, trustedAddress,
+    expectedPackageHash: head.packageHash, includeArtifact, kind: head.kind,
+    signedRelease, trustedAddress,
   });
   return { anchorHead: store.headHash, copiesSynchronized: store.copiesSynchronized,
     copiesValid: store.copiesValid,

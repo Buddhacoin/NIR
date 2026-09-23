@@ -354,6 +354,32 @@ an operational trust boundary; this repository does not bundle or attest the OS.
 Neither entrypoint automatically switches generations, updates an anchor, or performs
 deployment.
 
+Serve the production browser UI with its dedicated launcher, using the same wallet
+and tool trust inputs as the bridge:
+
+```bash
+npm --prefix /absolute/path/to/active-tool run wallet:serve-production -- \
+  /absolute/path/to/active-wallet /secure/operator/wallet-production-head \
+  wallet-signed-release.json nir1TRUSTED_RELEASE_ADDRESS \
+  /separate/offline/location/wallet-head-anchor.json \
+  /absolute/path/to/active-tool /secure/operator/tool-production-head \
+  /separate/offline/location/tool-head-anchor.json 8765 127.0.0.1
+```
+
+The launcher snapshots the exact signed wallet artifact bytes into bounded memory,
+reverifies both active generations immediately before `listen()`, and serves only
+the artifact's allowlisted files. It binds only `127.0.0.1` or `::1`, disables
+directory listing, ranges, request bodies, encoded/traversal paths and unknown query
+parameters, and applies bounded admission, connection and timeout limits. CSP,
+frame denial, MIME sniffing protection, no-referrer and restrictive permissions
+headers are sent on every asset response. Mutable shell entrypoints (`index.html`,
+`sw.js`, manifests and node configuration) are always `no-store`; another asset is
+immutable only when its `v` query exactly equals that signed artifact entry's
+64-hex digest. Numeric or missing cache versions remain `no-store`.
+
+`npm run wallet:preview` remains a developer-only convenience server. It does not
+perform production provenance checks and must not be used as a production launcher.
+
 ## Build the browser extension ZIP
 
 The extension recipe uses the same signed source release and produces an
