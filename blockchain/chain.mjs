@@ -4,6 +4,7 @@ import {
   ATOMIC_UNITS,
   BEACON_NON_REVEAL_SLASH_BPS,
   CREDIT_UNSTAKE_DELAY_BLOCKS,
+  CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   EVALUATOR_ACTIVATION_DELAY_BLOCKS,
   EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS,
@@ -1083,11 +1084,19 @@ const ASSIGNMENT_ROOT_BLOCK_FIELDS = Object.freeze([
   "evaluationAssignmentRoot",
 ].sort());
 
+const CHECKPOINT_BLOCK_FIELDS = Object.freeze([
+  ...ASSIGNMENT_ROOT_BLOCK_FIELDS,
+  "chainIdentityGenesisHash",
+  "validatorSetId",
+].sort());
+
 export function blockFieldsForProtocol(protocolVersion) {
   if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     throw new Error("block protocol version is unsupported");
   }
-  return protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+  return protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+    ? CHECKPOINT_BLOCK_FIELDS
+    : protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
     ? ASSIGNMENT_ROOT_BLOCK_FIELDS
     : protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
       ? RECOVERY_BLOCK_FIELDS : LEGACY_BLOCK_FIELDS;
@@ -1114,6 +1123,10 @@ export function validateIntrinsicBlock(block, {
   if (block.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
     hashes.push(block.evaluationAssignmentRoot);
   }
+  if (block.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION) {
+    hashes.push(block.chainIdentityGenesisHash);
+    hashes.push(block.validatorSetId);
+  }
   if (block.networkId !== expectedNetworkId ||
       block.protocolVersion !== expectedProtocolVersion ||
       !previousBlock || block.height !== previousBlock.height + 1 ||
@@ -1130,7 +1143,9 @@ export function finalityHeaderFormat(protocolVersion) {
   if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     throw new Error("finality header protocol version is unsupported");
   }
-  return protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+  return protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+    ? "nir-finality-header-v4"
+    : protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
     ? "nir-finality-header-v3"
     : protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
       ? "nir-finality-header-v2" : "nir-finality-header-v1";
@@ -1141,6 +1156,7 @@ export function blockHeader(block) {
   const {
     accountStateRoot,
     capabilityMemoryRoot,
+    chainIdentityGenesisHash,
     evaluationAssignmentRoot,
     height,
     networkId,
@@ -1153,6 +1169,7 @@ export function blockHeader(block) {
     timestamp,
     transactionCount,
     transactionsRoot,
+    validatorSetId: headerValidatorSetId,
     ...body
   } = unsigned;
   return {
@@ -1170,6 +1187,8 @@ export function blockHeader(block) {
       ? { recoveryStateCommitment } : {}),
     ...(protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
       ? { evaluationAssignmentRoot } : {}),
+    ...(protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+      ? { chainIdentityGenesisHash, validatorSetId: headerValidatorSetId } : {}),
     stateRoot,
     timestamp,
     transactionCount,
@@ -1348,6 +1367,7 @@ export class NirChain {
   #blocks;
   #burned;
   #candidateBonds;
+  #chainIdentityGenesisHash;
   #capabilityMemory;
   #creditDelegations;
   #creditStakes;
@@ -1441,6 +1461,9 @@ export class NirChain {
     );
     if (!this.#supportedProtocolVersions.includes(genesisProtocolVersion)) {
       throw new Error("genesis protocol version is unsupported");
+    }
+    if (genesisProtocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION) {
+      throw new Error("chain identity checkpoint protocol must activate after genesis");
     }
     const normalizedEvaluationEnvironment = evaluationEnvironment === null
       ? null : normalizeEvaluationEnvironment(evaluationEnvironment);
@@ -1643,6 +1666,7 @@ export class NirChain {
         transactionsRoot,
       },
     ];
+    this.#chainIdentityGenesisHash = this.#blocks[0].hash;
   }
 
   static fromVerifiedSnapshot(genesisConfig, snapshot, options = {}) {
@@ -1651,9 +1675,14 @@ export class NirChain {
       snapshot?.state?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
     const snapshotHasAssignmentRoot =
       snapshot?.state?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
+    const snapshotHasChainIdentity =
+      snapshot?.state?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
+        (snapshotHasChainIdentity && (
+          snapshot.checkpoint?.chainIdentityGenesisHash !== chain.#chainIdentityGenesisHash ||
+          snapshot.checkpoint?.validatorSetId !== snapshot.validatorSetId)) ||
         (snapshotHasRecoveryCommitment && (
           snapshot.checkpoint?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
           snapshot.state?.recoveryStateCommitment !== snapshot.recoveryStateCommitment ||
@@ -3257,6 +3286,11 @@ export class NirChain {
         ? { recoveryStateCommitment: "0".repeat(64) } : {}),
       ...(nextProtocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
         ? { evaluationAssignmentRoot: "0".repeat(64) } : {}),
+      ...(nextProtocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+        ? {
+          chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
+          validatorSetId: validatorSetId(this.#validatorsForHeight(height)),
+        } : {}),
       round,
       roundCertificate,
       timestamp,
@@ -4621,6 +4655,10 @@ export class NirChain {
     const blockValidatorMembers = this.#validatorsForHeight(block.height);
     const blockValidators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
     const blockQuorum = Math.floor((blockValidators.size * 2) / 3) + 1;
+    if (block.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+        block.validatorSetId !== validatorSetId(blockValidatorMembers)) {
+      throw new Error("block validator set commitment is invalid");
+    }
     this.#verifyRoundCertificate(block, blockValidators);
     if (block.randomnessCommits.length > blockValidators.size ||
         block.randomnessReveals.length > blockValidators.size ||
@@ -5689,6 +5727,10 @@ export class NirChain {
     }
     const expectedEvaluationAssignmentRoot =
       computeEvaluationAssignmentRoot(evaluationAssignments);
+    if (protocolState.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+        block.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+      throw new Error("block chain identity genesis hash is invalid");
+    }
     if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
       assertActiveEvaluationAssignmentRegistry(progressCommitments, evaluationAssignments);
       this.#assertExtendedEvaluationAssignmentPolicy(

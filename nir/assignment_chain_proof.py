@@ -28,6 +28,7 @@ MAX_VALIDATORS = 256
 LEGACY_PROOF_FORMAT = "nir-assignment-chain-anchor-v1-experimental"
 PROOF_FORMAT = "nir-assignment-chain-anchor-v2-experimental"
 PROOF_V3_FORMAT = "nir-assignment-chain-anchor-v3"
+PROOF_V4_FORMAT = "nir-assignment-chain-anchor-v4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +145,51 @@ class AssignmentChainProofV3:
                                  sort_keys=True).encode("utf-8")
         except (TypeError, ValueError, RecursionError) as error:
             raise ProtocolError("assignment chain proof v3 is not bounded JSON") from error
+        if len(encoded) > MAX_PROOF_BYTES:
+            raise ProtocolError("assignment chain proof exceeds the size limit")
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class AssignmentChainProofV4(AssignmentChainProofV3):
+    checkpoint_finality_proof: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, value: object) -> "AssignmentChainProofV4":
+        if not isinstance(value, dict) or value.get("format") != PROOF_V4_FORMAT or (
+            set(value) != {
+                "assignmentProof", "checkpointFinalityProof", "commitmentTransaction",
+                "consensusAssignment", "decisionAnchor", "finalityProofs", "format",
+                "inclusionAnchor", "sourceAnchor", "transactionBlockHeight", "transactionProof",
+            }
+        ) or not isinstance(value.get("checkpointFinalityProof"), dict):
+            raise ProtocolError("assignment chain proof v4 schema is invalid")
+        legacy = dict(value)
+        checkpoint = legacy.pop("checkpointFinalityProof")
+        legacy["format"] = PROOF_V3_FORMAT
+        base = AssignmentChainProofV3.from_dict(legacy)
+        result = cls(
+            finality_proofs=base.finality_proofs,
+            commitment_transaction=base.commitment_transaction,
+            transaction_proof=base.transaction_proof,
+            transaction_block_height=base.transaction_block_height,
+            consensus_assignment=base.consensus_assignment,
+            assignment_proof=base.assignment_proof,
+            source_anchor=base.source_anchor, decision_anchor=base.decision_anchor,
+            inclusion_anchor=base.inclusion_anchor,
+            checkpoint_finality_proof=checkpoint,
+        )
+        result.as_dict()
+        return result
+
+    def as_dict(self) -> dict[str, object]:
+        if not isinstance(self.checkpoint_finality_proof, dict):
+            raise ProtocolError("assignment checkpoint finality proof is invalid")
+        value = super().as_dict()
+        value["format"] = PROOF_V4_FORMAT
+        value["checkpointFinalityProof"] = self.checkpoint_finality_proof
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
+                             sort_keys=True).encode("utf-8")
         if len(encoded) > MAX_PROOF_BYTES:
             raise ProtocolError("assignment chain proof exceeds the size limit")
         return value
@@ -372,7 +418,7 @@ def verify_assignment_chain_anchor(
 def verify_assignment_chain_anchor_v3(
     *,
     assignment: FinalizedEvaluationAssignmentV2,
-    proof: AssignmentChainProofV3,
+    proof: AssignmentChainProofV3 | AssignmentChainProofV4,
     checkpoint: dict[str, Any],
     trusted_validators: Sequence[dict[str, Any]],
     handoffs: Sequence[dict[str, Any]] = (),
@@ -415,6 +461,8 @@ def verify_assignment_chain_anchor_v3(
         "transactionProof": proof.transaction_proof,
         "trustedValidators": list(trusted_validators),
     }
+    if isinstance(proof, AssignmentChainProofV4):
+        request["checkpointFinalityProof"] = proof.checkpoint_finality_proof
     try:
         encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":"),
                              sort_keys=True).encode("utf-8")

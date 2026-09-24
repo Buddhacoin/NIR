@@ -4,21 +4,31 @@ import test from "node:test";
 
 import {
   NirChain, blockHash, computeChainStateRoot, createCandidateBond,
-  createProgressClaim, createProgressCommitment, finalizeBlock,
+  createProgressClaim, createProgressCommitment, createTransfer,
+  createValidatorBond, finalizeBlock,
 } from "../blockchain/chain.mjs";
 import {
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
-  INITIAL_EPOCH_REWARD, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
+  INITIAL_EPOCH_REWARD, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS, MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
-import { hashObject, generateWallet, publicWallet, signObject } from "../blockchain/crypto.mjs";
+import {
+  canonicalJson, hashObject, generateWallet, publicWallet, signObject,
+} from "../blockchain/crypto.mjs";
 import { evaluationAssignmentRoot } from "../blockchain/evaluation-assignment-tree.mjs";
+import { verifyAssignmentChainAnchor } from "../blockchain/assignment-chain-anchor.mjs";
+import {
+  createFinalityProof, verifyFinalizedEvaluationAssignmentProof,
+} from "../blockchain/light-client.mjs";
 import {
   createEpochRandomnessCommit, createEpochRandomnessReveal,
   createProgressBeacon, createProgressBeaconShare,
 } from "../blockchain/operators.mjs";
 import { createStateSnapshot, verifyStateSnapshot } from "../blockchain/state-snapshot.mjs";
+import { createTransactionProof } from "../blockchain/transaction-tree.mjs";
+import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
+import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const members = (wallets, prefix) => wallets.map((wallet, index) => ({
@@ -165,6 +175,23 @@ function rewardClaim(value, chain, epoch) {
   });
 }
 
+function candidateCommitmentHash(transaction, committedEpoch) {
+  const value = {
+    artifact_hash: transaction.artifactHash,
+    baseline_content_hash: transaction.baselineContentHash,
+    baseline_hash: transaction.baselineHash,
+    candidate_id: transaction.candidateId,
+    committed_epoch: committedEpoch,
+    content_hash: transaction.contentHash,
+    network_id: transaction.networkId,
+    parents: transaction.parents,
+    recipient: transaction.recipient,
+    suite_commitment: transaction.suiteCommitment,
+  };
+  return createHash("sha256").update("NIR_CANDIDATE_COMMITMENT\0", "ascii")
+    .update(canonicalJson(value), "utf8").digest("hex");
+}
+
 test("v27 reward is valid at expiry, rejected after expiry, and stale state is cleaned", () => {
   const value = fixture();
   const candidateId = value.admissions[0].candidateId;
@@ -261,4 +288,168 @@ test("restore rejects a quorum-signed v27 snapshot containing a legacy assignmen
   }));
   assert.throws(() => NirChain.fromVerifiedSnapshot(value.genesisConfig, forged),
     /legacy evaluation assignment survived the v27 cutover/);
+});
+
+test("exact v27 assignment crosses a validator activation with a dual-quorum handoff", () => {
+  const value = fixture({ challenged: [] });
+  const oldWallets = value.validators;
+  const oldMembers = value.validatorMembers;
+  const newcomers = Array.from({ length: 2 }, generateWallet);
+  const newcomerMembers = newcomers.map((wallet, index) => ({
+    ...publicWallet(wallet), operatorId: `rotated-${index}`,
+  }));
+  const nextWallets = [oldWallets[0], oldWallets[1], ...newcomers];
+  const nextMembers = [oldMembers[0], oldMembers[1], ...newcomerMembers]
+    .sort((left, right) => left.address.localeCompare(right.address));
+  const allValidatorWallets = [...oldWallets, ...newcomers];
+
+  const treasuryNonce = value.chain.nextNonce(value.treasury.address);
+  append(value.chain, oldWallets, {
+    transactions: allValidatorWallets.map((wallet, index) => createTransfer({
+      wallet: value.treasury, networkId: value.chain.networkId, recipient: wallet.address,
+      amount: (MIN_VALIDATOR_BOND + MIN_TRANSFER_FEE).toString(),
+      nonce: treasuryNonce + index,
+    })),
+  });
+  append(value.chain, oldWallets, {
+    transactions: allValidatorWallets.map((wallet, index) => createValidatorBond({
+      wallet, networkId: value.chain.networkId, amount: MIN_VALIDATOR_BOND.toString(),
+      nonce: 0,
+      ...(index < oldWallets.length ? {} : { operatorId: `rotated-${index - oldWallets.length}` }),
+    })),
+  });
+
+  const activationHeight = value.chain.height + 5;
+  append(value.chain, oldWallets, {
+    validatorRotation: { activationHeight, validators: nextMembers },
+  });
+  while (value.chain.height < activationHeight - 1) append(value.chain, oldWallets);
+  const sourceBlock = value.chain.blocks().at(-1);
+  const admission = value.admissions[0];
+  const assignedBeacons = value.chain.progressBeaconCommittee(admission.candidateId)
+    .map((address) => value.beacons.find((wallet) => wallet.address === address));
+  const round = value.chain.height + 1;
+  const proposal = value.chain.buildBlock({
+    progressBeacons: [createProgressBeacon({
+      networkId: value.chain.networkId, candidateId: admission.candidateId, round,
+      shares: assignedBeacons.map((wallet, index) => createProgressBeaconShare({
+        wallet, networkId: value.chain.networkId, candidateId: admission.candidateId, round,
+        value: digest(`rotation-boundary-share-${index}`),
+      })),
+    })],
+    timestamp: value.chain.blocks().at(-1).timestamp + 1,
+  });
+  const nextProposer = nextWallets.find(({ address }) => address === proposal.proposer);
+  const newQuorum = [nextProposer,
+    ...nextWallets.filter((wallet) => wallet.address !== proposal.proposer).slice(0, 2)];
+  const transitionSigners = [...new Map([
+    ...oldWallets.slice(0, 3), ...newQuorum,
+  ].map((wallet) => [wallet.address, wallet])).values()];
+  const decisionBlock = finalizeBlock(proposal, transitionSigners);
+  value.chain.appendBlock(decisionBlock);
+  assert.equal(decisionBlock.height, activationHeight);
+
+  const handoff = createValidatorHandoff({
+    activationBlockHash: decisionBlock.hash,
+    activationHeight,
+    activationStateRoot: decisionBlock.stateRoot,
+    networkId: value.chain.networkId,
+    nextValidators: nextMembers,
+    previousValidators: oldMembers,
+  }, oldWallets.slice(0, 3), nextWallets.slice(0, 3));
+  const genesis = value.chain.blocks()[0];
+  const checkpoint = {
+    height: 0,
+    protocolVersion: EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+    stateRoot: genesis.stateRoot,
+    tipHash: genesis.hash,
+  };
+  const finalityProofs = value.chain.blocks().slice(1).map(createFinalityProof);
+  const witness = value.chain.evaluationAssignmentProof(admission.candidateId);
+  const lightResult = verifyFinalizedEvaluationAssignmentProof({
+    assignment: witness.assignment,
+    checkpoint,
+    finalityProofs,
+    handoffs: [handoff],
+    inclusionProof: witness.inclusionProof,
+    expectedNetworkId: value.chain.networkId,
+    trustedValidators: oldMembers,
+  });
+  assert.equal(lightResult.assignment.sourceFinalityHeight, sourceBlock.height);
+  assert.equal(lightResult.finalizedHeight, decisionBlock.height);
+
+  const leaf = witness.assignment;
+  const evaluatorKeys = new Map(value.evaluators.map((wallet) =>
+    [wallet.address, wallet.publicKey]));
+  const commitmentBlock = value.chain.blocks().find((block) =>
+    block.transactions.some((transaction) => transaction.type === "progress-commitment" &&
+      transaction.candidateId === admission.candidateId));
+  const transactionIndex = commitmentBlock.transactions.findIndex((transaction) =>
+    transaction.type === "progress-commitment" && transaction.candidateId === admission.candidateId);
+  const assignment = {
+    adapterProtocol: leaf.adapterProtocol,
+    authorityMode: leaf.authorityMode,
+    authoritySetHash: leaf.authoritySetHash,
+    baselineArtifactHash: leaf.baselineHash,
+    baselineContentHash: leaf.baselineContentHash,
+    candidateArtifactHash: leaf.artifactHash,
+    candidateCommitmentHash: candidateCommitmentHash(admission, commitmentBlock.height),
+    candidateContentHash: leaf.contentHash,
+    candidateId: leaf.candidateId,
+    challengeEpoch: leaf.challengeEpoch,
+    challengeSeed: leaf.challengeSeed,
+    committedHeight: leaf.committedHeight,
+    decisionHeight: leaf.challengeHeight,
+    environmentCommitment: leaf.environmentCommitment,
+    evaluators: leaf.committee.map((evaluatorId) => ({
+      evaluatorId, publicKey: evaluatorKeys.get(evaluatorId),
+    })),
+    expiresAtHeight: leaf.expiresAtHeight,
+    format: "nir-finalized-evaluation-assignment-v2",
+    genesisHash: genesis.hash,
+    networkId: value.chain.networkId,
+    parents: leaf.parents,
+    recipient: leaf.recipient,
+    safetyPolicyHash: leaf.safetyPolicyHash,
+    sourceFinalityHeight: leaf.sourceFinalityHeight,
+    sourceFinalityStateRoot: leaf.sourceFinalityStateRoot,
+    suiteCommitment: leaf.suiteCommitment,
+  };
+  const exact = verifyAssignmentChainAnchor({
+    assignment,
+    assignmentProof: witness.inclusionProof,
+    checkpoint,
+    commitmentTransaction: admission,
+    consensusAssignment: leaf,
+    decisionAnchor: {
+      blockHash: decisionBlock.hash, height: decisionBlock.height,
+      stateRoot: decisionBlock.stateRoot,
+    },
+    expectedGenesisHash: genesis.hash,
+    expectedNetworkId: value.chain.networkId,
+    finalityProofs,
+    handoffs: [handoff],
+    inclusionAnchor: {
+      blockHash: decisionBlock.hash,
+      evaluationAssignmentRoot: decisionBlock.evaluationAssignmentRoot,
+      height: decisionBlock.height,
+      stateRoot: decisionBlock.stateRoot,
+    },
+    sourceAnchor: {
+      blockHash: sourceBlock.hash, height: sourceBlock.height, stateRoot: sourceBlock.stateRoot,
+    },
+    transactionBlockHeight: commitmentBlock.height,
+    transactionProof: createTransactionProof(commitmentBlock.transactions, transactionIndex),
+    trustedValidators: oldMembers,
+  });
+  assert.equal(exact.exactAssignmentIncluded, true);
+  assert.throws(() => verifyFinalizedEvaluationAssignmentProof({
+    assignment: witness.assignment,
+    checkpoint,
+    finalityProofs,
+    handoffs: [],
+    inclusionProof: witness.inclusionProof,
+    expectedNetworkId: value.chain.networkId,
+    trustedValidators: oldMembers,
+  }), /validator|quorum|handoff|vote/);
 });

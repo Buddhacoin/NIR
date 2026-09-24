@@ -6,14 +6,15 @@ import test from "node:test";
 import { verifyAssignmentChainAnchor } from "../blockchain/assignment-chain-anchor.mjs";
 import { canonicalJson } from "../blockchain/crypto.mjs";
 
-function fixture() {
+function fixture(version = 3) {
   return JSON.parse(execFileSync(process.execPath, [
     new URL("./assignment_chain_fixture.mjs", import.meta.url).pathname,
-  ], { env: { ...process.env, NIR_ASSIGNMENT_FIXTURE_V3: "1" } }));
+  ], { env: { ...process.env,
+    [version === 4 ? "NIR_ASSIGNMENT_FIXTURE_V4" : "NIR_ASSIGNMENT_FIXTURE_V3"]: "1" } }));
 }
 
-function request() {
-  const value = fixture();
+function request(version = 3) {
+  const value = fixture(version);
   const leaf = value.consensusAssignment;
   const keys = new Map(value.evaluators.map(({ address, publicKey }) => [address, publicKey]));
   const candidate = {
@@ -61,6 +62,7 @@ function request() {
   };
   return { value, input: {
     assignment, assignmentProof: value.assignmentProof, checkpoint: value.checkpoint,
+    checkpointFinalityProof: value.checkpointFinalityProof ?? null,
     commitmentTransaction: value.commitmentTransaction,
     consensusAssignment: value.consensusAssignment,
     decisionAnchor: value.decisionAnchor, expectedGenesisHash: value.genesisHash,
@@ -85,6 +87,22 @@ test("v3 exact assignment authenticates semantic preimage and separate anchors",
   assert.equal(verifyAssignmentChainAnchor({
     ...input, sourceAnchor: reordered,
   }).exactAssignmentIncluded, true);
+});
+
+test("v4 exact assignment uses a bounded v28 checkpoint after a long history", () => {
+  const { input, value } = request(4);
+  assert.ok(input.checkpoint.height > 512);
+  assert.ok(input.finalityProofs.length < 10);
+  const result = verifyAssignmentChainAnchor(input);
+  assert.equal(result.exactAssignmentIncluded, true);
+  assert.equal(result.assignmentHash.length, 64);
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, checkpoint: { ...input.checkpoint, chainIdentityGenesisHash: "0".repeat(64) },
+  }), /checkpoint envelope is invalid/);
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, transactionBlockHeight: input.checkpoint.height,
+  }), /must precede the commitment transaction/);
+  assert.equal(value.checkpointFinalityProof.format, "nir-finality-proof-v5");
 });
 
 test("v3 exact assignment rejects replay, non-genesis trust and semantic substitution", () => {

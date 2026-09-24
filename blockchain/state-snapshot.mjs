@@ -5,6 +5,7 @@ import { validatorSetId } from "./validator-rotation.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
 import { validatorRecoveryStateCommitment } from "./validator-recovery.mjs";
 import {
+  CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
 } from "./constants.mjs";
@@ -65,6 +66,9 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
       (snapshot.state?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
         ? !/^[0-9a-f]{64}$/.test(snapshot.evaluationAssignmentRoot ?? "")
         : snapshot.evaluationAssignmentRoot !== undefined) ||
+      (snapshot.state?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+        (!/^[0-9a-f]{64}$/.test(snapshot.checkpoint?.chainIdentityGenesisHash ?? "") ||
+          snapshot.checkpoint?.validatorSetId !== snapshot.validatorSetId)) ||
       !/^[0-9a-f]{64}$/.test(snapshot.snapshotHash ?? "") ||
       Buffer.byteLength(canonicalJson(snapshot)) > MAX_SNAPSHOT_BYTES) {
     throw new Error("state snapshot header is invalid");

@@ -7,6 +7,7 @@ import unittest
 
 from nir.assignment_chain_proof import (
     AssignmentChainProofV3,
+    AssignmentChainProofV4,
     FinalityAnchor,
     PROOF_V3_FORMAT,
     verify_assignment_chain_anchor_v3,
@@ -92,6 +93,18 @@ class AssignmentChainProofV3Tests(unittest.TestCase):
             FinalizedEvaluationAssignmentV2.from_dict(self.assignment.as_dict()), self.assignment,
         )
         self.assertRegex(self.assignment.assignment_hash, r"^[0-9a-f]{64}$")
+        v4 = AssignmentChainProofV4(
+            finality_proofs=self.proof.finality_proofs,
+            commitment_transaction=self.proof.commitment_transaction,
+            transaction_proof=self.proof.transaction_proof,
+            transaction_block_height=self.proof.transaction_block_height,
+            consensus_assignment=self.proof.consensus_assignment,
+            assignment_proof=self.proof.assignment_proof,
+            source_anchor=self.proof.source_anchor, decision_anchor=self.proof.decision_anchor,
+            inclusion_anchor=self.proof.inclusion_anchor,
+            checkpoint_finality_proof=self.proof.finality_proofs[0],
+        )
+        self.assertEqual(AssignmentChainProofV4.from_dict(v4.as_dict()), v4)
 
     def test_semantic_field_and_public_key_substitution_fail_closed(self):
         with self.assertRaises(ProtocolError):

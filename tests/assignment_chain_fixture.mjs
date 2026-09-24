@@ -4,7 +4,9 @@ import {
   NirChain, createCandidateBond, createProgressCommitment, finalizeBlock,
 } from "../blockchain/chain.mjs";
 import {
-  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION, EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+  CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION, EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+  EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+  MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   MIN_PROGRESS_CANDIDATE_BOND,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_VESTING_MS,
@@ -27,7 +29,8 @@ const beacons = Array.from({ length: 4 }, generateWallet);
 const treasury = generateWallet();
 const submitter = generateWallet();
 const validatorMembers = members(validators, "validator");
-const v3 = process.env.NIR_ASSIGNMENT_FIXTURE_V3 === "1";
+const v4 = process.env.NIR_ASSIGNMENT_FIXTURE_V4 === "1";
+const v3 = v4 || process.env.NIR_ASSIGNMENT_FIXTURE_V3 === "1";
 const protocolVersion = v3 ? EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION
   : EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
 const evaluationEnvironment = {
@@ -57,6 +60,26 @@ const chain = new NirChain({
   validators: validatorMembers,
 });
 const genesis = chain.blocks()[0];
+const sign = (proposal) => finalizeBlock(proposal, [
+  validators.find((wallet) => wallet.address === proposal.proposer),
+  ...validators.filter((wallet) => wallet.address !== proposal.proposer).slice(0, 2),
+]);
+let compactCheckpointBlock = null;
+if (v4) {
+  const activationHeight = 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  chain.appendBlock(sign(chain.buildBlock({
+    protocolUpgrade: { activationHeight, format: "nir-protocol-upgrade-v1",
+      version: CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION },
+    timestamp: 1,
+  })));
+  while (chain.height < activationHeight) {
+    chain.appendBlock(sign(chain.buildBlock({ timestamp: chain.height + 1 })));
+  }
+  for (let index = 0; index < 513; index += 1) {
+    chain.appendBlock(sign(chain.buildBlock({ timestamp: chain.height + 1 })));
+  }
+  compactCheckpointBlock = chain.blocks().at(-1);
+}
 const artifactHash = `sha256:${fingerprint("candidate")}`;
 const contentHash = `sha256:${fingerprint("candidate-content")}`;
 const baselineHash = `sha256:${fingerprint("baseline")}`;
@@ -72,10 +95,6 @@ const bond = createCandidateBond({
   candidateOwner: submitter.address, purpose: "progress",
   amount: MIN_PROGRESS_CANDIDATE_BOND.toString(), fee: "0", nonce: 0,
 });
-const sign = (proposal) => finalizeBlock(proposal, [
-  validators.find((wallet) => wallet.address === proposal.proposer),
-  ...validators.filter((wallet) => wallet.address !== proposal.proposer).slice(0, 2),
-]);
 const bondBlock = sign(chain.buildBlock({ transactions: [bond], timestamp: TREASURY_VESTING_MS }));
 chain.appendBlock(bondBlock);
 const admissionBlock = sign(chain.buildBlock({
@@ -121,9 +140,16 @@ const assignmentWitness = chain.evaluationAssignmentProof(admission.candidateId)
 
 process.stdout.write(JSON.stringify({
   checkpoint: {
-    height: 0, protocolVersion,
-    stateRoot: genesis.stateRoot, tipHash: genesis.hash,
+    height: compactCheckpointBlock?.height ?? 0,
+    protocolVersion: compactCheckpointBlock?.protocolVersion ?? protocolVersion,
+    stateRoot: compactCheckpointBlock?.stateRoot ?? genesis.stateRoot,
+    tipHash: compactCheckpointBlock?.hash ?? genesis.hash,
+    ...(v4 ? {
+      chainIdentityGenesisHash: genesis.hash,
+      validatorSetId: compactCheckpointBlock.validatorSetId,
+    } : {}),
   },
+  checkpointFinalityProof: v4 ? createFinalityProof(compactCheckpointBlock) : undefined,
   commitmentTransaction: admission,
   evaluators: challenge.committee.map((address) =>
     publicWallet(evaluators.find((wallet) => wallet.address === address))),

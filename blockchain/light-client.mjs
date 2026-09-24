@@ -4,6 +4,7 @@ import {
   validateIntrinsicBlock,
 } from "./chain.mjs";
 import {
+  CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   MAX_VALIDATORS,
   PROTOCOL_VERSION,
@@ -39,7 +40,9 @@ export const MAX_FINALITY_CHAIN_BYTES = 32 * 1024 * 1024;
 export function createFinalityProof(block) {
   return {
     certificate: structuredClone(block.certificate ?? []),
-    format: block.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+    format: block.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+      ? "nir-finality-proof-v5"
+      : block.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
       ? "nir-finality-proof-v4"
       : block.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
         ? "nir-finality-proof-v3" : "nir-finality-proof-v2",
@@ -120,6 +123,8 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
       ? ["recoveryStateCommitment"] : []),
     ...(header?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
       ? ["evaluationAssignmentRoot"] : []),
+    ...(header?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+      ? ["chainIdentityGenesisHash", "validatorSetId"] : []),
     "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
   ];
   if (header?.format !== finalityHeaderFormat(header?.protocolVersion) ||
@@ -137,7 +142,10 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
       (header.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION &&
         !HASH.test(header.recoveryStateCommitment ?? "")) ||
       (header.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&
-        !HASH.test(header.evaluationAssignmentRoot ?? ""))) {
+        !HASH.test(header.evaluationAssignmentRoot ?? "")) ||
+      (header.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+        (!HASH.test(header.chainIdentityGenesisHash ?? "") ||
+          !HASH.test(header.validatorSetId ?? "")))) {
     throw new Error("light client finality header is invalid");
   }
   if (header.protocolUpgrade !== null) {
@@ -153,6 +161,9 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
 
 function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
   const expectedFormat = proof?.header?.protocolVersion >=
+    CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+    ? "nir-finality-proof-v5"
+    : proof?.header?.protocolVersion >=
     EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
     ? "nir-finality-proof-v4"
     : proof?.header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
@@ -170,6 +181,7 @@ function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
 
 export function verifyFinalityProofChain(proofs, {
   checkpoint,
+  expectedChainIdentityGenesisHash = null,
   expectedNetworkId,
   handoffs = [],
   supportedProtocolVersions = SUPPORTED_PROTOCOL_VERSIONS,
@@ -205,6 +217,10 @@ export function verifyFinalityProofChain(proofs, {
   }
   for (const proof of proofs) {
     const header = validateProof(proof, expectedNetworkId, supportedProtocolVersions);
+    if (expectedChainIdentityGenesisHash !== null &&
+        header.chainIdentityGenesisHash !== expectedChainIdentityGenesisHash) {
+      throw new Error("light client proof belongs to another chain identity");
+    }
     if (header.height !== previousHeight + 1 || header.previousHash !== previousHash ||
         (previousTimestamp !== null && header.timestamp < previousTimestamp)) {
       throw new Error("light client finality chain is discontinuous");
@@ -248,6 +264,8 @@ export function verifyFinalityProofChain(proofs, {
     accountStateRoot: last.header.accountStateRoot,
     ...(last.header.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
       ? { evaluationAssignmentRoot: last.header.evaluationAssignmentRoot } : {}),
+    ...(last.header.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+      ? { chainIdentityGenesisHash: last.header.chainIdentityGenesisHash } : {}),
     networkId: expectedNetworkId,
     pendingProtocolUpgrade,
     protocolVersion,
@@ -257,6 +275,30 @@ export function verifyFinalityProofChain(proofs, {
     transactionCount: last.header.transactionCount,
     transactionsRoot: last.header.transactionsRoot,
     validatorSetId: validatorSetId(current),
+  };
+}
+
+export function verifyRecentFinalityCheckpoint(proof, {
+  expectedGenesisHash, expectedNetworkId, trustedValidators,
+} = {}) {
+  if (!HASH.test(expectedGenesisHash ?? "")) {
+    throw new Error("recent checkpoint genesis identity is invalid");
+  }
+  const header = validateProof(proof, expectedNetworkId, SUPPORTED_PROTOCOL_VERSIONS);
+  if (header.protocolVersion < CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION ||
+      header.chainIdentityGenesisHash !== expectedGenesisHash) {
+    throw new Error("recent checkpoint belongs to another chain identity");
+  }
+  const validators = normalizeValidators(trustedValidators);
+  if (header.validatorSetId !== validatorSetId(validators)) {
+    throw new Error("recent checkpoint validator set is not trusted");
+  }
+  verifyVotes(proof, validators);
+  return {
+    chainIdentityGenesisHash: header.chainIdentityGenesisHash,
+    height: header.height, protocolVersion: header.protocolVersion,
+    stateRoot: header.stateRoot, tipHash: proof.hash,
+    validatorSetId: validatorSetId(validators),
   };
 }
 

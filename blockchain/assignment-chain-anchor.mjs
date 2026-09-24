@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { addressFromPublicKey, canonicalJson, hashObject } from "./crypto.mjs";
-import { verifyFinalityProofChain } from "./light-client.mjs";
+import { verifyFinalityProofChain, verifyRecentFinalityCheckpoint } from "./light-client.mjs";
 import { verifyTransactionProof } from "./transaction-tree.mjs";
 import { verifyEvaluationAssignmentProof } from "./evaluation-assignment-tree.mjs";
 
@@ -13,7 +13,7 @@ export function verifyAssignmentChainAnchor({
   consensusAssignment = null, expectedGenesisHash,
   expectedNetworkId, finalityProofs, handoffs = [], transactionBlockHeight,
   transactionProof, trustedValidators, sourceAnchor = null, decisionAnchor = null,
-  inclusionAnchor = null,
+  inclusionAnchor = null, checkpointFinalityProof = null,
 }) {
   const exactV2 = assignment?.format === "nir-finalized-evaluation-assignment-v2";
   const exactV2Fields = [
@@ -43,8 +43,28 @@ export function verifyAssignmentChainAnchor({
       assignment.parents.length > 32)) {
     throw new Error("assignment v2 schema is invalid");
   }
+  const compactCheckpoint = checkpointFinalityProof === null ? null
+    : verifyRecentFinalityCheckpoint(checkpointFinalityProof, {
+      expectedGenesisHash, expectedNetworkId, trustedValidators,
+    });
+  if (compactCheckpoint && !exactV2) {
+    throw new Error("recent assignment checkpoint requires assignment v2");
+  }
+  if (compactCheckpoint && (!checkpoint ||
+      checkpoint.height !== compactCheckpoint.height ||
+      checkpoint.tipHash !== compactCheckpoint.tipHash ||
+      checkpoint.stateRoot !== compactCheckpoint.stateRoot ||
+      checkpoint.protocolVersion !== compactCheckpoint.protocolVersion ||
+      checkpoint.validatorSetId !== compactCheckpoint.validatorSetId ||
+      checkpoint.chainIdentityGenesisHash !== expectedGenesisHash)) {
+    throw new Error("recent assignment checkpoint envelope is invalid");
+  }
+  if (compactCheckpoint && checkpoint.height >= transactionBlockHeight) {
+    throw new Error("recent assignment checkpoint must precede the commitment transaction");
+  }
   const tip = verifyFinalityProofChain(finalityProofs, {
     checkpoint, expectedNetworkId, handoffs, trustedValidators,
+    expectedChainIdentityGenesisHash: compactCheckpoint ? expectedGenesisHash : null,
   });
   const headerAnchor = (height) => {
     if (height === checkpoint?.height) {
@@ -66,7 +86,8 @@ export function verifyAssignmentChainAnchor({
       actual.stateRoot === expected.stateRoot;
     if (!anchorKeys(sourceAnchor) || !anchorKeys(decisionAnchor) ||
         !anchorKeys(inclusionAnchor, true) ||
-        checkpoint?.height !== 0 || checkpoint.tipHash !== expectedGenesisHash ||
+        (!compactCheckpoint && (checkpoint?.height !== 0 ||
+          checkpoint.tipHash !== expectedGenesisHash)) ||
         !anchorMatches(headerAnchor(sourceAnchor.height), sourceAnchor) ||
         !anchorMatches(headerAnchor(decisionAnchor.height), decisionAnchor) ||
         inclusionAnchor.height !== tip.height || inclusionAnchor.blockHash !== tip.tipHash ||

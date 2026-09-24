@@ -1,4 +1,5 @@
 import {
+  CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION, MIN_TRANSFER_FEE,
   RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION, SIGNATURE_ALGORITHM,
 } from "./constants.mjs";
@@ -46,10 +47,13 @@ function unsignedTransaction(transaction) {
 function assertHeader(header) {
   const recoveryFormat = header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
   const assignmentFormat = header?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
+  const checkpointFormat = header?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION;
   exact(header, recoveryFormat ? [...LEGACY_HEADER_FIELDS, "recoveryStateCommitment",
-    ...(assignmentFormat ? ["evaluationAssignmentRoot"] : [])] : LEGACY_HEADER_FIELDS,
+    ...(assignmentFormat ? ["evaluationAssignmentRoot"] : []),
+    ...(checkpointFormat ? ["chainIdentityGenesisHash", "validatorSetId"] : [])] : LEGACY_HEADER_FIELDS,
   "validator equivocation block header");
-  if (header.format !== (assignmentFormat ? "nir-finality-header-v3" :
+  if (header.format !== (checkpointFormat ? "nir-finality-header-v4" :
+    assignmentFormat ? "nir-finality-header-v3" :
     recoveryFormat ? "nir-finality-header-v2" : "nir-finality-header-v1") ||
       typeof header.networkId !== "string" || header.networkId.length < 1 ||
       header.networkId.length > 128 || !Number.isSafeInteger(header.height) ||
@@ -60,6 +64,7 @@ function assertHeader(header) {
         header.peerRegistryHash, header.previousHash,
         ...(recoveryFormat ? [header.recoveryStateCommitment] : []), header.stateRoot,
         ...(assignmentFormat ? [header.evaluationAssignmentRoot] : []),
+        ...(checkpointFormat ? [header.chainIdentityGenesisHash, header.validatorSetId] : []),
         header.transactionsRoot].some((value) => !HASH.test(value ?? ""))) {
     throw new Error("validator equivocation block header is invalid");
   }

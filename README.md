@@ -476,6 +476,7 @@ candidate runs are committed.
 - `docs/rust-consensus-core.md` — current scope, shared vectors and expansion rules for the independent Rust consensus profile.
 - `docs/quantum-security.md` — exact post-quantum guarantees, attack surfaces, and migration plan.
 - `docs/finalized-assignment-v2.md` — exact protocol-v27 assignment proof, genesis ancestry and receipt boundary.
+- `docs/protocol-v28-exact-checkpoints.md` — bounded exact proofs for long histories and their explicit weak-subjectivity boundary.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `CONTRIBUTING.md` — contribution, testing, disclosure, and secret-handling rules.
 - `tests/test_model.py` — invariant tests.

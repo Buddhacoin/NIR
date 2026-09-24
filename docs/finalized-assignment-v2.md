@@ -28,11 +28,12 @@ currently requires a height-zero checkpoint whose hash is the expected genesis
 hash, closing replay into a different history with a caller-supplied label.
 
 This v27 profile is deliberately bounded to 512 finality proofs and therefore is
-not a scalable long-lived-mainnet synchronization format. Before production, a
-new protocol version must commit an immutable chain identity in every finality
-header and authenticate recent checkpoints plus validator-set handoffs without
-replaying every intervening block. Raising the proof-size limit is not an
-acceptable substitute.
+not a scalable long-lived-mainnet synchronization format. Protocol v28 supplies
+the additive `nir-assignment-chain-anchor-v4` profile: a quorum-certified recent
+checkpoint commits the real genesis hash and active validator-set identity, and
+only the bounded suffix containing the candidate transaction and assignment is
+replayed. This is an explicit weak-subjectivity checkpoint, not trust-free
+validator discovery; see [`protocol-v28-exact-checkpoints.md`](protocol-v28-exact-checkpoints.md).
 
 A quorum-signed state snapshot alone is not an exact assignment proof. It does not
 intrinsically reconstruct the historical source header or the genesis-to-inclusion

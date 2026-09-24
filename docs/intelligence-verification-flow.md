@@ -83,7 +83,7 @@ NIR не платит за запущенный вентилятор, колич
 | `nir-static-eval-adapter-v1` | Реализован только как fixture | Читает неисполняемый JSON `answers`; не запускает модель, приложение или сеть. |
 | Candidate commitment | Реализовано | Связывает сеть, отправителя/получателя, artifact/baseline/content hashes, родителей и suite commitment в `candidateId`. |
 | Challenge и назначение committee | Реализовано в модели chain | Challenge появляется после финализированного commitment из beacon entropy; назначенный evaluator committee нельзя заменить произвольным quorum. |
-| Light-client anchor assignment | Реализован exact path для protocol v27 | v26 добавляет `evaluationAssignmentRoot` и bounded Merkle proof. v27 фиксирует genesis-bound runner environment, adapter, safety choice, expiry, исторические ключи и состав финализаторов. Формат assignment v2 вместе с chain-proof v3 проверяет genesis→source→decision/inclusion, транзакцию и Merkle-включение и только после этого возвращает `exactAssignmentIncluded=true`. Legacy-форматы остаются non-exact и не изменены. |
+| Light-client anchor assignment | Реализован exact path v27 и bounded checkpoint v28 | v26 добавляет `evaluationAssignmentRoot`; v27 фиксирует runner environment, safety, expiry, ключи и состав финализаторов. Assignment v2 + chain-proof v3 проверяет genesis→source→decision/inclusion. V28 добавляет подписанный свежий checkpoint с genesis hash и validator-set ID, поэтому длинная цепь проверяет только bounded suffix и всё равно возвращает `exactAssignmentIncluded=true`. Legacy-форматы не изменены. |
 | Оценка | Реализована для точных текстовых ответов | Не менее трёх разных verifier IDs; один и тот же набор оценщиков для baseline/candidate; majority, family regression, reproducibility, safety и median energy. |
 | Execution bundle | Реализовано | Связывает challenge, environment manifest, suite reveal, все ответы, content/entrypoint bindings, отчёт и `bundle_hash`. |
 | Capability memory/frontier | Реализовано | Запрещает известный artifact/content/behavior, требует известных родителей и минимум 100 bps нового frontier gain. |
@@ -333,7 +333,7 @@ bundle или chain. Но такая запись всё равно доказы
 
 ### Experimental finalized assignment и подписи transcript
 
-`nir.execution_receipt` добавляет отдельный, пока не consensus-активный слой.
+`nir.execution_receipt` поддерживает два versioned assignment. Legacy
 `FinalizedEvaluationAssignment` связывает network/genesis, candidate commitment
 hash и ID, finalized height/state root, challenge, environment, suite, expiry и
 точный отсортированный список evaluator IDs с ML-DSA-65 public keys. Явно
@@ -370,11 +370,11 @@ suite commitments. Из включённой транзакции Python пов�
 Checkpoint, validator history, ожидаемые network/genesis не берутся из proof и
 не становятся доверенными потому, что submitter положил их рядом: verifier
 получает их из своей конфигурации/light-client store. Для checkpoint на genesis
-проверяется точный genesis hash; более поздний checkpoint по определению уже
-должен быть закреплён доверенным каналом. Проверку chain anchor необходимо
-комбинировать с `verify_finalized_assignment()`/`verify_execution_receipts()`:
-первая не заменяет проверку authority/evaluator signatures, вторая не заменяет
-light-client finality.
+проверяется точный genesis hash. Для `FinalizedEvaluationAssignmentV2` внешние
+authority attestations удалены: его поля точно совпадают с protocol-v27 leaf, а
+финальность даёт сама проверенная цепочка. `verify_execution_receipts()` принимает
+v2 только вместе с matching exact-chain result и в диапазоне
+`decisionHeight..expiresAtHeight`.
 
 ### Точная граница chain inclusion
 
@@ -382,11 +382,11 @@ light-client finality.
 
 - `candidate_commitment_included=true`: точные байты admission-транзакции
   доказаны относительно `transactionsRoot` финализированного header;
-- `chain_assignment_included=true` возможно только для v26/v27 membership proof
+- `chain_assignment_included=true` возможно только для v26+ membership proof
   consensus-native assignment к `evaluationAssignmentRoot`;
-- `exact_assignment_included=false`: точный `FinalizedEvaluationAssignment` —
-  включая challenge seed/epoch, environment, safety policy, expiry и список
-  evaluator keys — текущими chain roots не доказан.
+- `exact_assignment_included=true` возможно только для assignment v2 после
+  проверки всех полей, evaluator-key witnesses, candidate transaction, трёх
+  anchors, Merkle path и непрерывной finality; legacy assignment всегда non-exact.
 
 Начиная с protocol v26 consensus канонически строит отдельное значение
 `nir-evaluation-assignment-v1`: candidate/admission hashes, recipient, parents,
@@ -426,13 +426,15 @@ stateRoot`, v27 разделяет исходную финальность и в
 более позднего блока. Light client обязан проверить обе точки одной непрерывной
 цепочкой finality proofs.
 
-Даже v27 намеренно не означает `exact_assignment_included=true` для старого
-Python-объекта `FinalizedEvaluationAssignment`: его внешние authority
-attestations не являются полями consensus leaf. Их по-прежнему отдельно
-проверяет receipt verifier. Поэтому интерфейсы обязаны различать
-`chainAssignmentIncluded` и inclusion полного внешнего assignment. Для точного
-флага нужен новый versioned assignment, который заменит двойную authority-модель
-финальностью самой цепи; подменять это дополнительным trust root нельзя.
+Старый Python-объект `FinalizedEvaluationAssignment` остаётся non-exact: его
+внешние authority attestations не являются полями consensus leaf. Новый
+`nir-finalized-evaluation-assignment-v2` заменяет двойную authority-модель
+финальностью цепи и проверяется через chain-proof v3. Для длинной истории
+protocol v28 и chain-proof v4 используют свежий quorum-certified checkpoint,
+который фиксирует настоящий genesis hash и активный validator-set ID. Checkpoint
+и набор валидаторов должны быть независимо получены и закреплены оператором;
+это честная weak-subjectivity граница, а не данные, которым доверяют потому, что
+их приложил submitter.
 
 `nir.replay_store` сохраняет доменно-разделённый ключ для каждой пары
 assignment/evaluator/role. Полный набор receipt отмечается использованным одной
