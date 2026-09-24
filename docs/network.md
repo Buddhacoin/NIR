@@ -72,6 +72,11 @@ changes the committed hash and is rejected. After an on-chain registry rotation,
 a joining node uses the separately verified handoff/topology history described
 below; discovery cannot safely invent a new trust root.
 
+The local genesis is also treated as an operator artifact rather than an
+ordinary configuration file. Discovery rejects symbolic links, hard links,
+group/world-writable files, oversized input, duplicate JSON keys, and a file
+whose identity or metadata changes while it is being read.
+
 One seed remains supported for local development and emergency availability,
 but it provides no operational redundancy. Production seeds must be hosted by
 different organizations, networks, and failure domains; running three processes
@@ -370,6 +375,9 @@ npm run node:snapshot-install -- /srv/nir-node /secure/incoming/STATE-SNAPSHOT.j
 If the snapshot crosses validator rotations, pass the ordered handoff array as
 the final argument. The file is rooted in the validators from the node's local
 `genesis.json`; the downloaded snapshot cannot choose its own trust anchor.
+The node CLI applies the same bounded, link-resistant and race-resistant read to
+the local genesis, incoming snapshot, and optional handoff list. Ambiguous JSON
+or a file changed during the read stops the command before installation.
 The same path is tested across two consecutive validator generations. A
 snapshot taken on an activation block must match that handoff's exact block
 hash and state root, after which only the post-snapshot journal tail is replayed.

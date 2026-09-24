@@ -26,7 +26,7 @@ function rehash(value) {
 
 function copyInventoryRoot() {
   const root = mkdtempSync(join(tmpdir(), "nir-conformance-"));
-  for (const directory of ["blockchain", "formal", "docs"]) {
+  for (const directory of ["blockchain", "formal", "docs", "rust"]) {
     cpSync(new URL(`../${directory}`, import.meta.url), join(root, directory), { recursive: true });
   }
   mkdirSync(join(root, "protocol"));

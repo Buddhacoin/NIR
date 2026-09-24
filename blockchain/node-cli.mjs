@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import process from "node:process";
-import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -18,12 +17,12 @@ import { createNodeHttpServer } from "./node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "./node-store.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
 import { createProductionStartupGuard } from "./production-startup.mjs";
+import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 
 const [command, directory, parameter = "", extra = "", ...remaining] = process.argv.slice(2);
 
 function readBoundedJson(path, maximumBytes = MAX_SNAPSHOT_BYTES) {
-  if (statSync(path).size > maximumBytes) throw new Error("input JSON is too large");
-  return JSON.parse(readFileSync(path, "utf8"));
+  return readBoundedPublicJsonFile(path, { label: "node JSON input", maximumBytes });
 }
 
 function recoveryContext(directory, handoffsPath = "") {
@@ -92,10 +91,10 @@ try {
       releaseLock(); throw error;
     }
   } else if (command === "backup" && directory && parameter) {
-    const genesis = JSON.parse(readFileSync(join(directory, "genesis.json"), "utf8"));
+    const genesis = readBoundedJson(join(directory, "genesis.json"));
     console.log(JSON.stringify(exportBlockStoreBackup(directory, parameter, genesis), null, 2));
   } else if (command === "verify-backup" && directory) {
-    const genesis = JSON.parse(readFileSync(join(directory, "genesis.json"), "utf8"));
+    const genesis = readBoundedJson(join(directory, "genesis.json"));
     const { chain, recoveredCopies } = loadBlockStore(directory, genesis);
     console.log(JSON.stringify({
       directory,

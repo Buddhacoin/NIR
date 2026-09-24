@@ -95,3 +95,11 @@ contains value bytes, complete domain-separated envelopes and SHA3-256 digests.
 Independent JavaScript and Python implementations execute the same vectors.
 Negative and property tests cover order permutation, type separation, hostile
 runtime objects, duplicate JSON keys, number edge cases and Unicode ambiguity.
+
+An initial Rust compatibility crate lives at
+[`rust/nir-consensus-codec`](../rust/nir-consensus-codec). It independently
+reproduces the value bytes, envelope bytes and SHA3-256 digest in every
+normative vector. It is not yet a node or a production consensus library.
+Map keys receive the same fail-closed NFC validation as the normative
+implementation. Run its checks separately with `cargo test --offline --manifest-path
+rust/nir-consensus-codec/Cargo.toml`.

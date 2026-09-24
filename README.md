@@ -7,6 +7,10 @@ This repository contains the executable protocol, local network, command-line
 tools, and wallet preview. It does not represent a launched public mainnet or a
 tradable asset.
 
+The source code and documentation are available under the
+[Apache License 2.0](LICENSE). Private keys, passwords, recovery material, and
+operator secrets are never part of the licensed public repository.
+
 NIR is an independent layer-one blockchain, not a token issued by another
 network. It requires a native wallet for its addresses, ML-DSA-65 signatures,
 network rules, encrypted vaults, and multisignature recovery. The repository

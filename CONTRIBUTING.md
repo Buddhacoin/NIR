@@ -6,6 +6,10 @@ value. Public claims must remain consistent with the implementation, tests,
 [`SECURITY.md`](SECURITY.md), and the
 [public testnet gates](docs/public-testnet-gates.md).
 
+Unless explicitly marked otherwise before submission, contributions accepted
+into this repository are provided under the [Apache License 2.0](LICENSE), as
+described by section 5 of that license.
+
 ## Before opening a change
 
 1. Search existing issues and pull requests for overlapping work.

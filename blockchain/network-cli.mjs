@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 
@@ -19,6 +19,7 @@ import {
 } from "./certificate-runtime.mjs";
 import { loadValidatorRuntimeFromCeremony } from "./ceremony-validator-init.mjs";
 import { readCeremonyPasswordBuffers } from "./operator-secret-input.mjs";
+import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 
 const [command, directory, parameter = "", portText = ""] = process.argv.slice(2);
 
@@ -101,7 +102,9 @@ try {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);
     });
   } else if (command === "discover" && directory && parameter) {
-    const genesis = JSON.parse(readFileSync(directory, "utf8"));
+    const genesis = readBoundedPublicJsonFile(directory, {
+      label: "discovery genesis", maximumBytes: 2 * 1024 * 1024,
+    });
     const requestedOrigins = parameter.split(",").filter(Boolean).map((value) =>
       new URL(value).origin);
     const registrySeeds = new Map(genesis.peerRegistry?.peers?.map((peer) =>

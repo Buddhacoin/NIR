@@ -11,7 +11,8 @@ const PARAMETER_NAME = /(?:^|_)(?:MAX|MIN|LIMIT|TIMEOUT|DELAY|INTERVAL|EPOCH|CAP
 const GATE_TOKEN = /\b(?:PROTOCOL_VERSION|SUPPORTED_PROTOCOL_VERSIONS|protocolVersion|activationHeight)\b/;
 const DOC_SIGNAL = /\b(?:protocol|consensus|security|release|wallet|genesis|certificate|validator|network|asset|backup|archive|beacon)\b/i;
 const SOURCE_DIRECTORIES = ["blockchain", "formal"];
-const TEXT_EXTENSIONS = new Set([".md", ".mjs", ".js", ".json", ".html", ".css"]);
+const TEXT_EXTENSIONS = new Set([".md", ".mjs", ".js", ".json", ".html", ".css", ".rs", ".toml"]);
+const STATIC_PROTOCOL_SOURCES = ["rust/nir-consensus-codec/src/lib.rs"];
 const FORBIDDEN_NAMES = [
   "Yml0Y29pbg==", "RXRoZXJldW0=", "U29sYW5h", "RG9nZWNvaW4=", "TGl0ZWNvaW4=",
   "TW9uZXJv", "Q2FyZGFubw==", "UmlwcGxl", "VGV0aGVy", "WFJQ", "Qk5C", "VVNEVA==",
@@ -168,7 +169,7 @@ function checkForbiddenMentions(root) {
   for (const name of ["README.md", "package.json"]) {
     try { inspect(join(root, name)); } catch (error) { if (error?.code !== "ENOENT") throw error; }
   }
-  for (const directory of ["blockchain", "formal", "docs", "wallet-ui"]) {
+  for (const directory of ["blockchain", "formal", "docs", "rust", "wallet-ui"]) {
     for (const extension of TEXT_EXTENSIONS) {
       let paths = [];
       try { paths = filesBelow(root, directory, extension); } catch { continue; }
@@ -202,6 +203,10 @@ export function buildProtocolConformanceManifest(rootValue) {
         parametersBefore !== securityParameters.length || bindings.length > 0 || gates.length > 0;
       if (relevant) sourceFiles.push({ file: relativePath, sha3_256: digest(Buffer.from(text)) });
     }
+  }
+  for (const relativePath of STATIC_PROTOCOL_SOURCES) {
+    const text = readFileSync(join(root, relativePath), "utf8");
+    sourceFiles.push({ file: relativePath, sha3_256: digest(Buffer.from(text)) });
   }
   const docs = [];
   for (const path of filesBelow(root, "docs", ".md")) {

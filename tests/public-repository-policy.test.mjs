@@ -8,6 +8,20 @@ const contributing = read("CONTRIBUTING.md");
 const contributingText = contributing.replace(/\s+/gu, " ");
 const readme = read("README.md");
 const security = read("SECURITY.md");
+const license = read("LICENSE");
+const notice = read("NOTICE");
+const packageJson = JSON.parse(read("package.json"));
+
+test("public repository declares the complete Apache-2.0 license", () => {
+  assert.equal(packageJson.license, "Apache-2.0");
+  assert.match(readme, /\[Apache License 2\.0\]\(LICENSE\)/u);
+  assert.match(contributing, /section 5 of that license/u);
+  assert.match(license, /Apache License\s+Version 2\.0, January 2004/u);
+  assert.match(license, /3\. Grant of Patent License/u);
+  assert.match(license, /9\. Accepting Warranty or Additional Liability/u);
+  assert.match(license, /END OF TERMS AND CONDITIONS/u);
+  assert.match(notice, /Copyright 2026 NIR contributors/u);
+});
 
 test("public contribution policy is discoverable and names the canonical checks", () => {
   assert.match(readme, /\[`CONTRIBUTING\.md`\]\(CONTRIBUTING\.md\)/u);
