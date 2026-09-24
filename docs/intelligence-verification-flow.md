@@ -83,6 +83,7 @@ NIR не платит за запущенный вентилятор, колич
 | `nir-static-eval-adapter-v1` | Реализован только как fixture | Читает неисполняемый JSON `answers`; не запускает модель, приложение или сеть. |
 | Candidate commitment | Реализовано | Связывает сеть, отправителя/получателя, artifact/baseline/content hashes, родителей и suite commitment в `candidateId`. |
 | Challenge и назначение committee | Реализовано в модели chain | Challenge появляется после финализированного commitment из beacon entropy; назначенный evaluator committee нельзя заменить произвольным quorum. |
+| Light-client anchor assignment | Экспериментально, частично | `nir.assignment_chain_proof` через существующие finality и transaction Merkle proofs доказывает, что точный `progress-commitment` вошёл в финализированную цепь, и закрепляет заявленный `stateRoot`. Exact assignment inclusion пока **не** доказан: для derived challenge/committee нет state membership proof. |
 | Оценка | Реализована для точных текстовых ответов | Не менее трёх разных verifier IDs; один и тот же набор оценщиков для baseline/candidate; majority, family regression, reproducibility, safety и median energy. |
 | Execution bundle | Реализовано | Связывает challenge, environment manifest, suite reveal, все ответы, content/entrypoint bindings, отчёт и `bundle_hash`. |
 | Capability memory/frontier | Реализовано | Запрещает известный artifact/content/behavior, требует известных родителей и минимум 100 bps нового frontier gain. |
@@ -356,9 +357,49 @@ environment, suite, candidate и итоговый execution bundle hash. Про�
 
 Подписи используют существующие `ML-DSA-65`, consensus envelope codec и отдельные
 домены `NIR_EVAL_ASSIGN_V1`/`NIR_EXEC_TRANSCRIPT_V1` через bounded verifier bridge.
-Это доказывает ключ и точные подписанные байты, но пока не доказывает inclusion
-state root в реальную finalized chain: trusted authority set/checkpoint всё ещё
-должен прийти из независимо проверенного light client.
+Это доказывает ключ и точные подписанные байты. Отдельный
+`nir.assignment_chain_proof` принимает извне доверенный light-client checkpoint,
+исходный validator set и проверяемую историю handoff, затем использует
+существующие `verifyFinalityProofChain()` и `verifyTransactionProof()`. Он
+проверяет непрерывную цепочку подписанных finality headers до
+`assignment.finalizedHeight`, совпадение `finalizedStateRoot` и Merkle inclusion
+точного `progress-commitment` с теми же candidate/baseline artifact/content и
+suite commitments. Из включённой транзакции Python повторно строит
+`CandidateCommitment` и требует точного совпадения его hash с assignment.
+
+Checkpoint, validator history, ожидаемые network/genesis не берутся из proof и
+не становятся доверенными потому, что submitter положил их рядом: verifier
+получает их из своей конфигурации/light-client store. Для checkpoint на genesis
+проверяется точный genesis hash; более поздний checkpoint по определению уже
+должен быть закреплён доверенным каналом. Проверку chain anchor необходимо
+комбинировать с `verify_finalized_assignment()`/`verify_execution_receipts()`:
+первая не заменяет проверку authority/evaluator signatures, вторая не заменяет
+light-client finality.
+
+### Точная граница chain inclusion
+
+Текущий результат намеренно содержит две разные величины:
+
+- `candidate_commitment_included=true`: точные байты admission-транзакции
+  доказаны относительно `transactionsRoot` финализированного header;
+- `exact_assignment_included=false`: точный `FinalizedEvaluationAssignment` —
+  включая challenge seed/epoch, environment, safety policy, expiry и список
+  evaluator keys — текущими chain roots не доказан.
+
+Причина не в отсутствии ещё одной подписи. Consensus вычисляет challenge и
+committee в состоянии, однако публикует монолитный `stateRoot` без membership
+proof для `progressCommitments`/derived committee. Assignment hash также не
+включён отдельной транзакцией или event root. Поэтому совпадение одного
+`finalizedStateRoot` не позволяет verifier доказать значение конкретной записи,
+и код не повышает его до `exact_assignment_included=true`.
+
+Минимальная consensus-интеграция в будущем: канонически вычислять assignment
+commitment после randomness/committee selection, включать его в уже
+аутентифицированное Merkleized state subtree (либо версионированную consensus
+transaction/event root) и выдавать membership proof к root из finality header.
+Verifier затем должен проверить эту membership path и равенство commitment
+точному assignment payload. До этого experimental chain anchor — доказательство
+финализированного admission и state anchor, а не доказательство exact assignment.
 
 `nir.replay_store` сохраняет доменно-разделённый ключ для каждой пары
 assignment/evaluator/role. Полный набор receipt отмечается использованным одной
