@@ -188,9 +188,12 @@ does not handle secret keys. Local bridge signing and valueless-node submission
 are active; real-value operation, independent synchronization and audited
 distribution remain disabled.
 
-Run `npm run wallet:preview` and open `http://localhost:8765` to inspect it. A
-packaged desktop download will wrap the same reviewed interface. During
-development, Chromium browsers can load `wallet-ui/` as an unpacked extension.
+Run `npm run wallet:preview` and open `http://127.0.0.1:8765` to inspect it. The
+preview command explicitly binds to `127.0.0.1`; it does not expose the
+repository UI on Wi-Fi, Ethernet, or a public interface by default. It remains
+a developer server without production provenance or TLS. A packaged desktop
+download will wrap the same reviewed interface. During development, Chromium
+browsers can load `wallet-ui/` as an unpacked extension.
 A deterministic ZIP can be built and independently checked with the commands in
 [`releases.md`](releases.md); publishing it in a browser store must wait until
 key isolation and the node

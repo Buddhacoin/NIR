@@ -391,6 +391,8 @@ immutable only when its `v` query exactly equals that signed artifact entry's
 
 `npm run wallet:preview` remains a developer-only convenience server. It does not
 perform production provenance checks and must not be used as a production launcher.
+Its default command is pinned to `127.0.0.1`; this prevents an accidental
+all-interface bind but does not add TLS, authentication, or release verification.
 
 ### Anchored browser extension
 

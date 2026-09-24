@@ -6,12 +6,13 @@ not a second node and not a production client.
 
 ## Implemented profile
 
-The crate currently implements two layers:
+The crate currently implements three layers:
 
 1. `nir-consensus-bytes-v1` value bytes, purpose-separated envelopes and
    SHA3-256 hashing;
-2. the monetary state transition of an ordinary, non-sponsored, fee-paying NIR
-   transfer.
+2. the monetary state transition of an ordinary fee-paying NIR transfer;
+3. the monetary state transition of a sponsored transfer whose distinct fee
+   payer authorizes and pays the fee.
 
 The transfer profile accepts canonical addresses, unsigned decimal amounts up
 to 32 digits, a safe advancing nonce, balances and a fee recipient. A valid
@@ -28,9 +29,23 @@ transition:
 - rejects replay, nonce exhaustion, malformed decimals, insufficient funds and
   bounded-balance overflow.
 
-Signature, multisignature, sponsorship, Transfer Credits, network identifiers,
+Signature verification, multisignature, Transfer Credits, network identifiers,
 transaction schemas, account history, treasury vesting, block validation and
 state-root calculation remain outside this profile.
+
+For a sponsored transfer, the sender must independently hold the full amount
+and the distinct fee payer must independently hold the full fee before any
+credits are applied. Both current nonces must match and safely advance by one.
+The sender pays only the amount, the fee payer pays only the fee, and the
+proposer receives the fee. Recipient, proposer, sender and fee payer may share
+addresses except that sender and fee payer must remain distinct. Alias cases do
+not weaken the independent-funds checks. The transition computes all balance
+and nonce results before mutation, conserves affected balances and leaves
+burned supply unchanged.
+
+Cryptographic sponsor authorization is checked by the full node before this
+monetary transition. Transfer Credits and multisignature remain outside the
+Rust profile.
 
 ## Normative evidence
 
@@ -38,11 +53,15 @@ The Rust tests consume the same repository-owned language-neutral vectors as
 the JavaScript implementation:
 
 - `tests/vectors/consensus-codec-v1.json`;
-- `tests/vectors/transfer-state-v1.json`.
+- `tests/vectors/transfer-state-v1.json`;
+- `tests/vectors/sponsored-transfer-state-v1.json`.
 
 The transfer suite contains successful role-alias cases and negative replay,
 fee-floor, zero-value, insufficient-balance, nonce-overflow, decimal-encoding
 and balance-overflow cases. Negative cases also assert that state is unchanged.
+The sponsored suite additionally covers both nonces, replay of either nonce,
+independent sender and fee-payer funding, all permitted participant aliases,
+nonce exhaustion and overflow.
 Expected output is never copied into the transition: both implementations
 execute the input and independently compare the resulting state or rejection
 code.

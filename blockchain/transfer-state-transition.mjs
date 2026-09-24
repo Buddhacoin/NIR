@@ -97,3 +97,85 @@ export function applyOrdinaryTransferState({
   nonces.set(sender, transactionNonce + 1);
   return Object.freeze({ amount, fee, nextNonce: transactionNonce + 1 });
 }
+
+/**
+ * Applies the monetary state change of a sponsored, fee-paying transfer.
+ * The sender pays only the amount and a distinct fee payer pays the fee.
+ * Both nonces advance atomically. Transfer Credits and multisignature
+ * authorization are deliberately outside this transition.
+ */
+export function applySponsoredTransferState({
+  amount: amountValue,
+  balances,
+  fee: feeValue,
+  feePayer: feePayerValue,
+  feePayerNonce: feePayerNonceValue,
+  feeRecipient: feeRecipientValue,
+  nonce: nonceValue,
+  nonces,
+  recipient: recipientValue,
+  sender: senderValue,
+}) {
+  if (!(balances instanceof Map) || !(nonces instanceof Map)) {
+    throw new Error("transfer state maps are invalid");
+  }
+  const sender = address(senderValue, "sender");
+  const recipient = address(recipientValue, "recipient");
+  const feePayer = address(feePayerValue, "fee payer");
+  const feeRecipient = address(feeRecipientValue, "fee recipient");
+  if (feePayer === sender) throw new Error("fee payer must be distinct from sender");
+  const amount = atomic(amountValue, "amount");
+  const fee = atomic(feeValue, "fee");
+  const transactionNonce = nonce(nonceValue, "transaction nonce");
+  const sponsorNonce = nonce(feePayerNonceValue, "fee payer nonce");
+  if (amount === 0n) throw new Error("transfer amount must be positive");
+  if (fee < MIN_TRANSFER_FEE) throw new Error("transfer fee is below the protocol minimum");
+  const expectedNonce = nonces.get(sender) ?? 0;
+  if (!Number.isSafeInteger(expectedNonce) || expectedNonce < 0 ||
+      transactionNonce !== expectedNonce) {
+    throw new Error("unexpected nonce");
+  }
+  const expectedFeePayerNonce = nonces.get(feePayer) ?? 0;
+  if (!Number.isSafeInteger(expectedFeePayerNonce) || expectedFeePayerNonce < 0 ||
+      sponsorNonce !== expectedFeePayerNonce) {
+    throw new Error("unexpected fee payer nonce");
+  }
+  if (currentBalance(balances, sender) < amount) {
+    throw new Error("sender has insufficient balance");
+  }
+  if (currentBalance(balances, feePayer) < fee) {
+    throw new Error("fee payer has insufficient balance");
+  }
+
+  const accounts = new Set([sender, recipient, feePayer, feeRecipient]);
+  const before = totalFor(balances, accounts);
+  const deltas = new Map();
+  const addDelta = (account, delta) => deltas.set(account, (deltas.get(account) ?? 0n) + delta);
+  addDelta(sender, -amount);
+  addDelta(recipient, amount);
+  addDelta(feePayer, -fee);
+  addDelta(feeRecipient, fee);
+
+  const next = new Map();
+  for (const account of accounts) {
+    const balance = currentBalance(balances, account);
+    const updated = balance + (deltas.get(account) ?? 0n);
+    if (updated < 0n) throw new Error("sponsored transfer balance underflow");
+    if (updated > MAX_ATOMIC_VALUE) throw new Error("account balance is out of range");
+    next.set(account, updated);
+  }
+  const after = [...next.values()].reduce((total, balance) => total + balance, 0n);
+  if (after !== before || [...deltas.values()].reduce((total, delta) => total + delta, 0n) !== 0n) {
+    throw new Error("sponsored transfer conservation invariant failed");
+  }
+
+  for (const [account, balance] of next) balances.set(account, balance);
+  nonces.set(sender, transactionNonce + 1);
+  nonces.set(feePayer, sponsorNonce + 1);
+  return Object.freeze({
+    amount,
+    fee,
+    nextFeePayerNonce: sponsorNonce + 1,
+    nextNonce: transactionNonce + 1,
+  });
+}

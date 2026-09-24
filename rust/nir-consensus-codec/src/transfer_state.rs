@@ -41,6 +41,26 @@ pub struct Transition {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SponsoredTransfer<'a> {
+    pub sender: &'a str,
+    pub recipient: &'a str,
+    pub fee_payer: &'a str,
+    pub fee_recipient: &'a str,
+    pub amount: &'a str,
+    pub fee: &'a str,
+    pub nonce: u64,
+    pub fee_payer_nonce: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SponsoredTransition {
+    pub amount: u128,
+    pub fee: u128,
+    pub next_nonce: u64,
+    pub next_fee_payer_nonce: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransferError(&'static str);
 
 impl TransferError {
@@ -205,5 +225,132 @@ pub fn apply_ordinary_transfer(
         amount,
         fee,
         next_nonce: transfer.nonce + 1,
+    })
+}
+
+pub fn apply_sponsored_transfer(
+    state: &mut State,
+    transfer: SponsoredTransfer<'_>,
+) -> Result<SponsoredTransition, TransferError> {
+    if !valid_address(transfer.sender)
+        || !valid_address(transfer.recipient)
+        || !valid_address(transfer.fee_payer)
+        || !valid_address(transfer.fee_recipient)
+    {
+        return Err(TransferError("invalid address"));
+    }
+    if transfer.fee_payer == transfer.sender {
+        return Err(TransferError("fee payer must be distinct"));
+    }
+    let amount = parse_atomic(transfer.amount)?;
+    let fee = parse_atomic(transfer.fee)?;
+    if amount == 0 {
+        return Err(TransferError("amount must be positive"));
+    }
+    if fee < MINIMUM_FEE {
+        return Err(TransferError("fee below minimum"));
+    }
+    if transfer.nonce >= MAXIMUM_SAFE_NONCE {
+        return Err(TransferError("nonce cannot advance"));
+    }
+    if transfer.fee_payer_nonce >= MAXIMUM_SAFE_NONCE {
+        return Err(TransferError("fee payer nonce cannot advance"));
+    }
+    let expected_nonce = state
+        .accounts
+        .get(transfer.sender)
+        .map(|account| account.nonce)
+        .unwrap_or(0);
+    if transfer.nonce != expected_nonce {
+        return Err(TransferError("unexpected nonce"));
+    }
+    let expected_fee_payer_nonce = state
+        .accounts
+        .get(transfer.fee_payer)
+        .map(|account| account.nonce)
+        .unwrap_or(0);
+    if transfer.fee_payer_nonce != expected_fee_payer_nonce {
+        return Err(TransferError("unexpected fee payer nonce"));
+    }
+    if balance(state, transfer.sender)? < amount {
+        return Err(TransferError("sender insufficient balance"));
+    }
+    if balance(state, transfer.fee_payer)? < fee {
+        return Err(TransferError("fee payer insufficient balance"));
+    }
+
+    let amount_delta = i128::try_from(amount).map_err(|_| TransferError("balance overflow"))?;
+    let fee_delta = i128::try_from(fee).map_err(|_| TransferError("balance overflow"))?;
+    let mut deltas = BTreeMap::<&str, i128>::new();
+    for (address, delta) in [
+        (transfer.sender, -amount_delta),
+        (transfer.recipient, amount_delta),
+        (transfer.fee_payer, -fee_delta),
+        (transfer.fee_recipient, fee_delta),
+    ] {
+        let combined = deltas
+            .get(address)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(delta)
+            .ok_or(TransferError("balance overflow"))?;
+        deltas.insert(address, combined);
+    }
+    if deltas
+        .values()
+        .try_fold(0_i128, |total, delta| total.checked_add(*delta))
+        != Some(0)
+    {
+        return Err(TransferError("conservation failure"));
+    }
+
+    let before = deltas.keys().try_fold(0_u128, |total, address| {
+        total
+            .checked_add(balance(state, address)?)
+            .ok_or(TransferError("balance overflow"))
+    })?;
+    let mut updated = BTreeMap::new();
+    for (address, delta) in &deltas {
+        updated.insert(*address, apply_delta(balance(state, address)?, *delta)?);
+    }
+    let after = updated
+        .values()
+        .try_fold(0_u128, |total, value| total.checked_add(*value))
+        .ok_or(TransferError("balance overflow"))?;
+    if before != after {
+        return Err(TransferError("conservation failure"));
+    }
+
+    for (address, next_balance) in updated {
+        state
+            .accounts
+            .entry(address.to_owned())
+            .or_insert(Account {
+                balance: 0,
+                nonce: 0,
+            })
+            .balance = next_balance;
+    }
+    state
+        .accounts
+        .entry(transfer.sender.to_owned())
+        .or_insert(Account {
+            balance: 0,
+            nonce: 0,
+        })
+        .nonce = transfer.nonce + 1;
+    state
+        .accounts
+        .entry(transfer.fee_payer.to_owned())
+        .or_insert(Account {
+            balance: 0,
+            nonce: 0,
+        })
+        .nonce = transfer.fee_payer_nonce + 1;
+    Ok(SponsoredTransition {
+        amount,
+        fee,
+        next_nonce: transfer.nonce + 1,
+        next_fee_payer_nonce: transfer.fee_payer_nonce + 1,
     })
 }

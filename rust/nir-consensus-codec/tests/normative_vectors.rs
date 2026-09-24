@@ -1,6 +1,6 @@
 use nir_consensus_codec::transfer_state::{
-    apply_ordinary_transfer, parse_atomic, Account, State, Transfer, MAXIMUM_ATOMIC_DIGITS,
-    MINIMUM_FEE,
+    apply_ordinary_transfer, apply_sponsored_transfer, parse_atomic, Account, SponsoredTransfer,
+    State, Transfer, MAXIMUM_ATOMIC_DIGITS, MINIMUM_FEE,
 };
 use nir_consensus_codec::{consensus_envelope_bytes, consensus_hash, consensus_value_bytes, Value};
 use std::collections::BTreeMap;
@@ -367,6 +367,21 @@ fn transfer_input(value: &Json) -> Transfer<'_> {
     }
 }
 
+fn sponsored_transfer_input(value: &Json) -> SponsoredTransfer<'_> {
+    let fields = object(value);
+    SponsoredTransfer {
+        sender: string(member(fields, "sender")),
+        recipient: string(member(fields, "recipient")),
+        fee_payer: string(member(fields, "feePayer")),
+        fee_recipient: string(member(fields, "feeRecipient")),
+        amount: string(member(fields, "amount")),
+        fee: string(member(fields, "fee")),
+        nonce: u64::try_from(integer(member(fields, "nonce"))).expect("vector nonce"),
+        fee_payer_nonce: u64::try_from(integer(member(fields, "feePayerNonce")))
+            .expect("vector fee payer nonce"),
+    }
+}
+
 #[test]
 fn reproduces_normative_transfer_state_vectors_atomically() {
     let source = include_str!("../../../tests/vectors/transfer-state-v1.json");
@@ -398,6 +413,62 @@ fn reproduces_normative_transfer_state_vectors_atomically() {
         let before = state.clone();
         let result =
             apply_ordinary_transfer(&mut state, transfer_input(member(fields, "transaction")));
+        if let Some(error) = optional_member(fields, "error") {
+            assert_eq!(
+                result.expect_err("negative vector must fail").code(),
+                string(error),
+                "error vector {name}"
+            );
+            assert_eq!(state, before, "negative vector {name} must be atomic");
+        } else {
+            result.unwrap_or_else(|error| panic!("success vector {name}: {error}"));
+            let expected = transfer_state(member(fields, "expected"));
+            assert_eq!(state, expected, "state vector {name}");
+            let before_total: u128 = before
+                .accounts
+                .values()
+                .map(|account| account.balance)
+                .sum();
+            let after_total: u128 = state.accounts.values().map(|account| account.balance).sum();
+            assert_eq!(after_total, before_total, "conservation vector {name}");
+            assert_eq!(state.burned, before.burned, "burn vector {name}");
+        }
+    }
+}
+
+#[test]
+fn reproduces_normative_sponsored_transfer_vectors_atomically() {
+    let source = include_str!("../../../tests/vectors/sponsored-transfer-state-v1.json");
+    let document = Parser::new(source)
+        .parse()
+        .expect("sponsored transfer vectors must be strict JSON");
+    let root = object(&document);
+    assert_eq!(
+        string(member(root, "format")),
+        "nir-sponsored-transfer-state-vectors-v1"
+    );
+    assert_eq!(
+        parse_atomic(string(member(root, "minimumFee"))).expect("minimum fee"),
+        MINIMUM_FEE
+    );
+    assert_eq!(
+        usize::try_from(integer(member(root, "maximumAtomicDigits"))).expect("maximum digits"),
+        MAXIMUM_ATOMIC_DIGITS
+    );
+    let vectors = match member(root, "vectors") {
+        Json::Array(values) => values,
+        _ => panic!("vectors must be an array"),
+    };
+
+    for vector in vectors {
+        let fields = object(vector);
+        let name = string(member(fields, "name"));
+        let mut state = transfer_state(member(fields, "state"));
+        let before = state.clone();
+        let result = apply_sponsored_transfer(
+            &mut state,
+            sponsored_transfer_input(member(fields, "transaction")),
+        );
         if let Some(error) = optional_member(fields, "error") {
             assert_eq!(
                 result.expect_err("negative vector must fail").code(),
