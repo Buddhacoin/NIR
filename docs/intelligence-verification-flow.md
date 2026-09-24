@@ -330,6 +330,44 @@ bundle или chain. Но такая запись всё равно доказы
 не доказывает, что физический Mac/GPU действительно выполнил модель. Это должен
 закрыть production attestation layer, которого сейчас нет.
 
+### Experimental finalized assignment и подписи transcript
+
+`nir.execution_receipt` добавляет отдельный, пока не consensus-активный слой.
+`FinalizedEvaluationAssignment` связывает network/genesis, candidate commitment
+hash и ID, finalized height/state root, challenge, environment, suite, expiry и
+точный отсортированный список evaluator IDs с ML-DSA-65 public keys. Явно
+фиксируются baseline/candidate artifact и content hashes, adapter protocol,
+safety-policy hash и commitment полного trusted authority set. Объект
+принимается только с подписями более двух третей этого заранее доверенного
+finality authority set и только внутри срока действия; вызывающий код не может
+ослабить quorum параметром. Проверяющий также передаёт ожидаемые adapter protocol
+и safety-policy hash из своей доверенной сетевой конфигурации: подпись quorum не
+может сама назначить произвольную policy доверенной.
+
+Каждый назначенный evaluator подписывает `SignedExecutionTranscript`, который
+связывает assignment hash, собственный transcript hash, role, challenge,
+environment, suite, candidate и итоговый execution bundle hash. Проверка требует
+ровно две подписи — baseline и candidate — от каждого назначенного evaluator;
+неназначенный, повторный или отсутствующий signer, подмена role/transcript/bundle
+или истёкший assignment отклоняются.
+Перед проверкой подписей bundle полностью пересобирается через `verify_bundle()`:
+переданный вручную dataclass с несогласованным report/transcripts не считается
+доказательством даже при самосогласованном новом `bundle_hash`.
+
+Подписи используют существующие `ML-DSA-65`, consensus envelope codec и отдельные
+домены `NIR_EVAL_ASSIGN_V1`/`NIR_EXEC_TRANSCRIPT_V1` через bounded verifier bridge.
+Это доказывает ключ и точные подписанные байты, но пока не доказывает inclusion
+state root в реальную finalized chain: trusted authority set/checkpoint всё ещё
+должен прийти из независимо проверенного light client.
+
+`nir.replay_store` сохраняет доменно-разделённый ключ для каждой пары
+assignment/evaluator/role. Полный набор receipt отмечается использованным одной
+атомарной операцией под межпроцессной блокировкой; повреждение, расхождение копий,
+подмена каталога, symlink и hardlink приводят к отказу. Гарантия относится только
+к процессам с общим локальным store. Полный откат обеих локальных копий можно
+обнаружить лишь при сравнении с checkpoint, закреплённым во внешнем доверенном
+канале; распределённый exactly-once этим модулем не заявляется.
+
 ## Как считается проверка
 
 Текущий evaluator нормализует текст через case-folding и пробелы, после чего:
