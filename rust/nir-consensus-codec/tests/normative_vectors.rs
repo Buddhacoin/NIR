@@ -1,6 +1,7 @@
 use nir_consensus_codec::transfer_state::{
     apply_credit_transfer, apply_multisig_transfer, apply_ordinary_transfer,
-    apply_sponsored_transfer, parse_atomic, Account, CreditDelegation, CreditState, CreditTransfer,
+    apply_sponsored_transfer, parse_atomic, validate_transfer_authorization, Account,
+    AuthorizationApproval, AuthorizationEnvelope, CreditDelegation, CreditState, CreditTransfer,
     CreditUsage, MultisigTransfer, SponsoredTransfer, State, Transfer, MAXIMUM_ATOMIC_DIGITS,
     MAXIMUM_MULTISIG_MEMBERS, MINIMUM_FEE, TRANSFER_CREDITS_PER_STAKE_UNIT,
     TRANSFER_CREDIT_EPOCH_BLOCKS, TRANSFER_CREDIT_STAKE_UNIT,
@@ -16,6 +17,47 @@ enum Json {
     String(String),
     Array(Vec<Json>),
     Object(Vec<(String, Json)>),
+}
+
+#[test]
+fn reproduces_normative_transfer_authorization_vectors() {
+    let source = include_str!("../../../tests/vectors/transfer-authorization-v1.json");
+    let document = Parser::new(source)
+        .parse()
+        .expect("authorization vectors must be strict JSON");
+    let root = object(&document);
+    assert_eq!(
+        string(member(root, "format")),
+        "nir-transfer-authorization-vectors-v1"
+    );
+    let vectors = match member(root, "vectors") {
+        Json::Array(values) => values,
+        _ => panic!("vectors must be an array"),
+    };
+    for vector in vectors {
+        let fields = object(vector);
+        let name = string(member(fields, "name"));
+        let unsigned = into_codec(member(fields, "unsignedTransaction"));
+        let result = validate_transfer_authorization(
+            &unsigned,
+            string(member(fields, "expectedAlgorithm")),
+            authorization_envelope(member(fields, "envelope")),
+        );
+        if let Some(error) = optional_member(fields, "error") {
+            assert_eq!(
+                result.expect_err("negative vector must fail").code(),
+                string(error),
+                "error vector {name}"
+            );
+        } else {
+            let validated = result.unwrap_or_else(|error| panic!("success vector {name}: {error}"));
+            let expected = string_array(member(fields, "expectedSigners"))
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            assert_eq!(validated.preverified_signers, expected, "signers {name}");
+        }
+    }
 }
 
 struct Parser<'a> {
@@ -471,7 +513,29 @@ fn multisig_transfer_input(value: &Json) -> MultisigTransfer<'_> {
         nonce: u64::try_from(integer(member(fields, "nonce"))).expect("vector nonce"),
         member_public_keys: string_array(member(fields, "memberPublicKeys")),
         threshold: usize::try_from(integer(member(fields, "threshold"))).expect("vector threshold"),
-        verified_signers: string_array(member(fields, "verifiedSigners")),
+        preverified_signers: string_array(member(fields, "verifiedSigners")),
+    }
+}
+
+fn authorization_envelope(value: &Json) -> AuthorizationEnvelope<'_> {
+    let fields = object(value);
+    let approvals = match member(fields, "approvals") {
+        Json::Array(values) => values
+            .iter()
+            .map(|approval| {
+                let approval = object(approval);
+                AuthorizationApproval {
+                    public_key: string(member(approval, "publicKey")),
+                    signature: string(member(approval, "signature")),
+                }
+            })
+            .collect(),
+        _ => panic!("approvals must be an array"),
+    };
+    AuthorizationEnvelope {
+        algorithm: string(member(fields, "algorithm")),
+        approvals,
+        transaction_digest: string(member(fields, "transactionDigest")),
     }
 }
 

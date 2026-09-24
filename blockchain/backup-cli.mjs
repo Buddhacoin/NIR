@@ -3,10 +3,8 @@ import {
   closeSync,
   constants as fsConstants,
   fchmodSync,
-  fstatSync,
   fsyncSync,
   openSync,
-  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
@@ -18,24 +16,13 @@ import {
   runRemoteBackupRestoreDrill,
 } from "./backup-recovery.mjs";
 import { listenOnLoopback, validateLoopbackListener } from "./loopback-listener.mjs";
+import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { signWalletBackupReceipt } from "./wallet-files.mjs";
 
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 
 function readJson(path, maximumBytes) {
-  let descriptor;
-  try {
-    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const metadata = fstatSync(descriptor);
-    if (!metadata.isFile() || metadata.size > maximumBytes) {
-      throw new Error(`${path} is not a bounded regular file`);
-    }
-    const contents = readFileSync(descriptor);
-    if (contents.length !== metadata.size) throw new Error(`${path} changed while it was read`);
-    return JSON.parse(contents.toString("utf8"));
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
+  return readBoundedPublicJsonFile(path, { label: "backup JSON input", maximumBytes });
 }
 
 function writeExclusive(path, value) {

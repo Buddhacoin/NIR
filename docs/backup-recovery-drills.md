@@ -66,6 +66,11 @@ security boundary. Public TLS, rate limiting and operational access control
 belong at the reverse proxy. A listener collision is handled as a normal
 fail-closed startup error rather than an uncaught runtime exception.
 
+Genesis, trusted-operator and signed-receipt inputs are opened as bounded public
+artifacts. The CLI rejects symbolic links, multiply linked or group/world-writable
+files, duplicate JSON keys, oversized content, and a path whose identity or
+metadata changes during the read before it opens backup data or starts a service.
+
 Create `trusted-backup-operators.json` containing at least two entries with
 distinct `operatorId`, address, algorithm and public key. Then run an isolated
 remote drill against at least two HTTPS sources:

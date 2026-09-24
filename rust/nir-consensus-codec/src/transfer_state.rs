@@ -121,7 +121,27 @@ pub struct MultisigTransfer<'a> {
     pub nonce: u64,
     pub member_public_keys: Vec<&'a str>,
     pub threshold: usize,
-    pub verified_signers: Vec<&'a str>,
+    pub preverified_signers: Vec<&'a str>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthorizationApproval<'a> {
+    pub public_key: &'a str,
+    pub signature: &'a str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizationEnvelope<'a> {
+    pub algorithm: &'a str,
+    pub approvals: Vec<AuthorizationApproval<'a>>,
+    pub transaction_digest: &'a str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedAuthorization {
+    pub algorithm: String,
+    pub transaction_digest: String,
+    pub preverified_signers: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -641,6 +661,50 @@ fn hex(bytes: &[u8]) -> String {
     output
 }
 
+pub fn validate_transfer_authorization(
+    unsigned_transaction: &Value,
+    expected_algorithm: &str,
+    envelope: AuthorizationEnvelope<'_>,
+) -> Result<ValidatedAuthorization, TransferError> {
+    if envelope.algorithm != expected_algorithm {
+        return Err(TransferError("algorithm mismatch"));
+    }
+    if envelope.approvals.is_empty() || envelope.approvals.len() > MAXIMUM_MULTISIG_MEMBERS {
+        return Err(TransferError("invalid authorization envelope"));
+    }
+    let digest = hex(&consensus_hash("TRANSFER", unsigned_transaction)
+        .map_err(|_| TransferError("invalid unsigned transaction"))?);
+    if envelope.transaction_digest.len() != 64
+        || !envelope
+            .transaction_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || envelope.transaction_digest != digest
+    {
+        return Err(TransferError("digest mismatch"));
+    }
+    let mut signers = std::collections::BTreeSet::new();
+    let mut preverified_signers = Vec::with_capacity(envelope.approvals.len());
+    for approval in envelope.approvals {
+        if approval.public_key.is_empty()
+            || approval.public_key.encode_utf16().count() > 4_000
+            || approval.signature.is_empty()
+            || approval.signature.encode_utf16().count() > 7_000
+        {
+            return Err(TransferError("invalid approval"));
+        }
+        if !signers.insert(approval.public_key) {
+            return Err(TransferError("duplicate approval"));
+        }
+        preverified_signers.push(approval.public_key.to_owned());
+    }
+    Ok(ValidatedAuthorization {
+        algorithm: envelope.algorithm.to_owned(),
+        transaction_digest: digest,
+        preverified_signers,
+    })
+}
+
 pub fn multisig_state_address(
     member_public_keys: &[&str],
     threshold: usize,
@@ -695,7 +759,7 @@ pub fn apply_multisig_transfer(
     if expected_address != transfer.sender {
         return Err(TransferError("descriptor address mismatch"));
     }
-    if transfer.verified_signers.len() > transfer.member_public_keys.len() {
+    if transfer.preverified_signers.len() > transfer.member_public_keys.len() {
         return Err(TransferError("invalid signer collection"));
     }
     let allowed = transfer
@@ -704,7 +768,7 @@ pub fn apply_multisig_transfer(
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
     let mut signers = std::collections::BTreeSet::new();
-    for signer in &transfer.verified_signers {
+    for signer in &transfer.preverified_signers {
         if !allowed.contains(signer) {
             return Err(TransferError("unknown signer"));
         }

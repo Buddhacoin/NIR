@@ -85,11 +85,13 @@ import {
 } from "./consensus-codec.mjs";
 import {
   applyCreditTransferState,
-  applyMultisigTransferState,
+  applyAuthorizedMultisigTransferState,
+  applyAuthorizedOrdinaryTransferState,
   applyOrdinaryTransferState,
   applySponsoredTransferState,
   transferCreditAllowance,
   transferCreditEpoch,
+  transferAuthorizationDigest,
 } from "./transfer-state-transition.mjs";
 import {
   activeValidatorSet,
@@ -3307,7 +3309,7 @@ export class NirChain {
     }
     assertAddress(transaction.recipient, "transfer recipient");
     const unsigned = unsignedTransaction(transaction);
-    let verifiedMultisigSigners = null;
+    let authorizationEnvelope = null;
     if (transaction.algorithm === SIGNATURE_ALGORITHM) {
       if (
         typeof transaction.publicKey !== "string" || transaction.publicKey.length > 4_000 ||
@@ -3319,6 +3321,14 @@ export class NirChain {
       if (!verifyObject(unsigned, transaction.signature, transaction.publicKey, "TRANSFER")) {
         throw new Error("invalid transaction signature");
       }
+      authorizationEnvelope = Object.freeze({
+        algorithm: transaction.algorithm,
+        approvals: Object.freeze([Object.freeze({
+          publicKey: transaction.publicKey,
+          signature: transaction.signature,
+        })]),
+        transactionDigest: transferAuthorizationDigest(unsigned),
+      });
     } else {
       const descriptor = multisigDescriptor(transaction.memberPublicKeys, transaction.threshold);
       if (multisigAddress(descriptor.memberPublicKeys, descriptor.threshold) !== transaction.sender) {
@@ -3338,7 +3348,12 @@ export class NirChain {
         signers.add(approval.publicKey);
       }
       if (signers.size < descriptor.threshold) throw new Error("multisignature threshold not reached");
-      verifiedMultisigSigners = [...signers];
+      authorizationEnvelope = Object.freeze({
+        algorithm: transaction.algorithm,
+        approvals: Object.freeze(transaction.signatures.map(({ publicKey, signature }) =>
+          Object.freeze({ publicKey, signature }))),
+        transactionDigest: transferAuthorizationDigest(unsigned),
+      });
     }
     if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce < 0) {
       throw new Error("invalid transaction nonce");
@@ -3432,21 +3447,13 @@ export class NirChain {
     }
     if (!sponsored) {
       const transition = transaction.algorithm === MULTISIG_ALGORITHM ?
-        applyMultisigTransferState : applyOrdinaryTransferState;
+        applyAuthorizedMultisigTransferState : applyAuthorizedOrdinaryTransferState;
       transition({
-        amount,
+        authorizationEnvelope,
         balances,
-        fee,
         feeRecipient: proposer,
-        ...(verifiedMultisigSigners === null ? {} : {
-          memberPublicKeys: transaction.memberPublicKeys,
-          threshold: transaction.threshold,
-          verifiedSigners: verifiedMultisigSigners,
-        }),
-        nonce: transaction.nonce,
         nonces,
-        recipient: transaction.recipient,
-        sender: transaction.sender,
+        unsignedTransaction: unsigned,
       });
       return;
     }

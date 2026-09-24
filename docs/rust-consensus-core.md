@@ -6,7 +6,7 @@ not a second node and not a production client.
 
 ## Implemented profile
 
-The crate currently implements five layers:
+The crate currently implements six layers:
 
 1. `nir-consensus-bytes-v1` value bytes, purpose-separated envelopes and
    SHA3-256 hashing;
@@ -16,7 +16,9 @@ The crate currently implements five layers:
 4. a zero-fee transfer paid from renewable Transfer Credits, either directly
    by the sender or through an owner-to-sender delegation;
 5. the deterministic authorization and monetary transition of a multisignature
-   account after individual signatures have been verified.
+   account after individual signatures have been verified;
+6. a canonical authorization envelope binding the exact unsigned transaction
+   digest, algorithm, public keys and signature bytes passed by the full node.
 
 The transfer profile accepts canonical addresses, unsigned decimal amounts up
 to 32 digits, a safe advancing nonce, balances and a fee recipient. A valid
@@ -74,6 +76,19 @@ state mutation. The full node still verifies each individual signature over
 the transaction before passing only verified signer identities into this
 transition; the Rust profile does not implement signature verification.
 
+The authorization profile independently reproduces the SHA3-256 digest of the
+exact `TRANSFER` consensus envelope and rejects algorithm substitution,
+transaction-field mutation, duplicate approvals and malformed key/signature
+envelopes. Authorized ordinary and multisignature wrappers derive every signed
+state-transition field directly from that digest-bound unsigned transaction;
+only the block fee recipient remains external. This prevents a checked amount,
+recipient, nonce or descriptor from being replaced before state mutation.
+
+This is not independent ML-DSA-65 verification. The Rust API deliberately calls
+the returned identities `preverified_signers`: the full node remains responsible
+for verifying every signature against the canonical bytes. No new cryptographic
+dependency was introduced without compatibility evidence and audit.
+
 ## Normative evidence
 
 The Rust tests consume the same repository-owned language-neutral vectors as
@@ -82,6 +97,7 @@ the JavaScript implementation:
 - `tests/vectors/consensus-codec-v1.json`;
 - `tests/vectors/credit-transfer-state-v1.json`;
 - `tests/vectors/multisig-transfer-state-v1.json`;
+- `tests/vectors/transfer-authorization-v1.json`;
 - `tests/vectors/transfer-state-v1.json`;
 - `tests/vectors/sponsored-transfer-state-v1.json`.
 
@@ -98,6 +114,9 @@ and atomic rejection.
 The multisignature suite covers descriptor binding, threshold success and
 failure, duplicate and unknown signers, member bounds, replay, role aliases,
 overflow, conservation and atomic rejection.
+The authorization suite covers ordinary and multisignature envelopes plus
+amount, recipient and nonce substitution, algorithm substitution, duplicate
+approvals and malformed signature fields.
 Expected output is never copied into the transition: both implementations
 execute the input and independently compare the resulting state or rejection
 code.

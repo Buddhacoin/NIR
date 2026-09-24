@@ -2,6 +2,7 @@ import {
   MAX_DECIMAL_DIGITS,
   MAX_MULTISIG_MEMBERS,
   MIN_TRANSFER_FEE,
+  MULTISIG_ALGORITHM,
   SIGNATURE_ALGORITHM,
   TRANSFER_CREDIT_EPOCH_BLOCKS,
   TRANSFER_CREDIT_STAKE_UNIT,
@@ -81,6 +82,113 @@ function multisigDescriptor(memberPublicKeys, threshold) {
 
 export function multisigStateAddress(memberPublicKeys, threshold) {
   return `nir1${hashObject(multisigDescriptor(memberPublicKeys, threshold), "MULTISIG_ADDRESS")}`;
+}
+
+export function transferAuthorizationDigest(unsignedTransaction) {
+  if (!unsignedTransaction || Object.getPrototypeOf(unsignedTransaction) !== Object.prototype) {
+    throw new Error("unsigned transaction is invalid");
+  }
+  return hashObject(unsignedTransaction, "TRANSFER");
+}
+
+export function validateTransferAuthorizationEnvelope({
+  envelope,
+  expectedAlgorithm,
+  unsignedTransaction,
+}) {
+  if (!envelope || Object.getPrototypeOf(envelope) !== Object.prototype ||
+      Object.keys(envelope).sort().join("\0") !==
+        ["algorithm", "approvals", "transactionDigest"].sort().join("\0") ||
+      !Array.isArray(envelope.approvals) || envelope.approvals.length === 0 ||
+      envelope.approvals.length > MAX_MULTISIG_MEMBERS) {
+    throw new Error("transfer authorization envelope is invalid");
+  }
+  if (envelope.algorithm !== expectedAlgorithm) {
+    throw new Error("transfer authorization algorithm mismatch");
+  }
+  if (!/^[0-9a-f]{64}$/.test(envelope.transactionDigest ?? "") ||
+      envelope.transactionDigest !== transferAuthorizationDigest(unsignedTransaction)) {
+    throw new Error("transfer authorization digest mismatch");
+  }
+  const signers = new Set();
+  for (const approval of envelope.approvals) {
+    if (!approval || Object.getPrototypeOf(approval) !== Object.prototype ||
+        Object.keys(approval).sort().join("\0") !== ["publicKey", "signature"].sort().join("\0") ||
+        typeof approval.publicKey !== "string" || approval.publicKey.length === 0 ||
+        approval.publicKey.length > 4_000 ||
+        typeof approval.signature !== "string" || approval.signature.length === 0 ||
+        approval.signature.length > 7_000) {
+      throw new Error("transfer authorization approval is invalid");
+    }
+    if (signers.has(approval.publicKey)) {
+      throw new Error("transfer authorization approval is duplicated");
+    }
+    signers.add(approval.publicKey);
+  }
+  return Object.freeze({
+    algorithm: envelope.algorithm,
+    transactionDigest: envelope.transactionDigest,
+    preverifiedSigners: Object.freeze([...signers]),
+  });
+}
+
+export function applyAuthorizedOrdinaryTransferState({
+  authorizationEnvelope,
+  balances,
+  feeRecipient,
+  nonces,
+  unsignedTransaction,
+}) {
+  const authorization = validateTransferAuthorizationEnvelope({
+    envelope: authorizationEnvelope,
+    expectedAlgorithm: SIGNATURE_ALGORITHM,
+    unsignedTransaction,
+  });
+  if (authorization.preverifiedSigners.length !== 1 ||
+      authorization.preverifiedSigners[0] !== unsignedTransaction.publicKey ||
+      unsignedTransaction.algorithm !== SIGNATURE_ALGORITHM) {
+    throw new Error("ordinary transfer authorization signer is invalid");
+  }
+  return applyOrdinaryTransferState({
+    amount: unsignedTransaction.amount,
+    balances,
+    fee: unsignedTransaction.fee,
+    feeRecipient,
+    nonce: unsignedTransaction.nonce,
+    nonces,
+    recipient: unsignedTransaction.recipient,
+    sender: unsignedTransaction.sender,
+  });
+}
+
+export function applyAuthorizedMultisigTransferState({
+  authorizationEnvelope,
+  balances,
+  feeRecipient,
+  nonces,
+  unsignedTransaction,
+}) {
+  const authorization = validateTransferAuthorizationEnvelope({
+    envelope: authorizationEnvelope,
+    expectedAlgorithm: MULTISIG_ALGORITHM,
+    unsignedTransaction,
+  });
+  if (unsignedTransaction.algorithm !== MULTISIG_ALGORITHM) {
+    throw new Error("multisignature authorization algorithm is invalid");
+  }
+  return applyMultisigTransferState({
+    amount: unsignedTransaction.amount,
+    balances,
+    fee: unsignedTransaction.fee,
+    feeRecipient,
+    memberPublicKeys: unsignedTransaction.memberPublicKeys,
+    nonce: unsignedTransaction.nonce,
+    nonces,
+    recipient: unsignedTransaction.recipient,
+    sender: unsignedTransaction.sender,
+    threshold: unsignedTransaction.threshold,
+    verifiedSigners: authorization.preverifiedSigners,
+  });
 }
 
 export function applyMultisigTransferState({

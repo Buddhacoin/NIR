@@ -19,6 +19,7 @@ const STATIC_PROTOCOL_SOURCES = [
   "tests/vectors/credit-transfer-state-v1.json",
   "tests/vectors/multisig-transfer-state-v1.json",
   "tests/vectors/sponsored-transfer-state-v1.json",
+  "tests/vectors/transfer-authorization-v1.json",
   "tests/vectors/transfer-state-v1.json",
 ];
 const FORBIDDEN_NAMES = [

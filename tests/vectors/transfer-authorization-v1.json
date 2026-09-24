@@ -1,0 +1,61 @@
+{
+  "format": "nir-transfer-authorization-vectors-v1",
+  "vectors": [
+    {
+      "name": "ordinary authorization binds signed bytes",
+      "expectedAlgorithm": "ml-dsa-65",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65", "amount": "10", "fee": "1000", "networkId": "nir-testnet", "nonce": 0, "publicKey": "cHViLWE=", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }], "transactionDigest": "a57e81bb770c68ef5955fb65d54a1273616806c013cbf3d15a51633ebcbccd7a" },
+      "expectedSigners": ["cHViLWE="]
+    },
+    {
+      "name": "multisig authorization binds both verified approvals",
+      "expectedAlgorithm": "ml-dsa-65-multisig",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65-multisig", "amount": "10", "fee": "1000", "memberPublicKeys": ["cHViLWE=", "cHViLWI="], "networkId": "nir-testnet", "nonce": 0, "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1dfb0aa07cb04295b509c2d2ce5f121cc581e523aa878e568ff786073dbae41a9", "threshold": 2, "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65-multisig", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }, { "publicKey": "cHViLWI=", "signature": "c2lnLWI=" }], "transactionDigest": "eb4f0971fb30bb360ca0db2ea7a58a0871a82d89757b623f7cc129f73e2f6245" },
+      "expectedSigners": ["cHViLWE=", "cHViLWI="]
+    },
+    {
+      "name": "transaction mutation invalidates authorization",
+      "expectedAlgorithm": "ml-dsa-65",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65", "amount": "11", "fee": "1000", "networkId": "nir-testnet", "nonce": 0, "publicKey": "cHViLWE=", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }], "transactionDigest": "a57e81bb770c68ef5955fb65d54a1273616806c013cbf3d15a51633ebcbccd7a" },
+      "error": "digest mismatch"
+    },
+    {
+      "name": "algorithm substitution rejected",
+      "expectedAlgorithm": "ml-dsa-65-multisig",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65-multisig", "amount": "10", "fee": "1000", "memberPublicKeys": ["cHViLWE=", "cHViLWI="], "networkId": "nir-testnet", "nonce": 0, "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1dfb0aa07cb04295b509c2d2ce5f121cc581e523aa878e568ff786073dbae41a9", "threshold": 2, "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }], "transactionDigest": "eb4f0971fb30bb360ca0db2ea7a58a0871a82d89757b623f7cc129f73e2f6245" },
+      "error": "algorithm mismatch"
+    },
+    {
+      "name": "recipient substitution invalidates authorization",
+      "expectedAlgorithm": "ml-dsa-65",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65", "amount": "10", "fee": "1000", "networkId": "nir-testnet", "nonce": 0, "publicKey": "cHViLWE=", "recipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }], "transactionDigest": "a57e81bb770c68ef5955fb65d54a1273616806c013cbf3d15a51633ebcbccd7a" },
+      "error": "digest mismatch"
+    },
+    {
+      "name": "nonce substitution invalidates authorization",
+      "expectedAlgorithm": "ml-dsa-65",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65", "amount": "10", "fee": "1000", "networkId": "nir-testnet", "nonce": 1, "publicKey": "cHViLWE=", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }], "transactionDigest": "a57e81bb770c68ef5955fb65d54a1273616806c013cbf3d15a51633ebcbccd7a" },
+      "error": "digest mismatch"
+    },
+    {
+      "name": "duplicate approval rejected",
+      "expectedAlgorithm": "ml-dsa-65-multisig",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65-multisig", "amount": "10", "fee": "1000", "memberPublicKeys": ["cHViLWE=", "cHViLWI="], "networkId": "nir-testnet", "nonce": 0, "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1dfb0aa07cb04295b509c2d2ce5f121cc581e523aa878e568ff786073dbae41a9", "threshold": 2, "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65-multisig", "approvals": [{ "publicKey": "cHViLWE=", "signature": "c2lnLWE=" }, { "publicKey": "cHViLWE=", "signature": "c2lnLWI=" }], "transactionDigest": "eb4f0971fb30bb360ca0db2ea7a58a0871a82d89757b623f7cc129f73e2f6245" },
+      "error": "duplicate approval"
+    },
+    {
+      "name": "empty signature rejected",
+      "expectedAlgorithm": "ml-dsa-65",
+      "unsignedTransaction": { "algorithm": "ml-dsa-65", "amount": "10", "fee": "1000", "networkId": "nir-testnet", "nonce": 0, "publicKey": "cHViLWE=", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "transfer" },
+      "envelope": { "algorithm": "ml-dsa-65", "approvals": [{ "publicKey": "cHViLWE=", "signature": "" }], "transactionDigest": "a57e81bb770c68ef5955fb65d54a1273616806c013cbf3d15a51633ebcbccd7a" },
+      "error": "invalid approval"
+    }
+  ]
+}

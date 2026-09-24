@@ -4,9 +4,11 @@ import test from "node:test";
 
 import {
   applyCreditTransferState,
+  applyAuthorizedOrdinaryTransferState,
   applyMultisigTransferState,
   applyOrdinaryTransferState,
   applySponsoredTransferState,
+  validateTransferAuthorizationEnvelope,
 } from "../blockchain/transfer-state-transition.mjs";
 import {
   MAX_DECIMAL_DIGITS,
@@ -27,6 +29,9 @@ const creditSuite = JSON.parse(readFileSync(
 ));
 const multisigSuite = JSON.parse(readFileSync(
   new URL("./vectors/multisig-transfer-state-v1.json", import.meta.url), "utf8",
+));
+const authorizationSuite = JSON.parse(readFileSync(
+  new URL("./vectors/transfer-authorization-v1.json", import.meta.url), "utf8",
 ));
 
 function state(value) {
@@ -231,4 +236,44 @@ test("multisignature transfer vectors are reproduced by the normative JS transit
       .reduce((total, balance) => total + balance, 0n);
     assert.equal(afterTotal, beforeTotal, `${vector.name} must conserve balances`);
   }
+});
+
+test("authorization envelopes bind preverified identities to exact unsigned bytes", () => {
+  assert.equal(authorizationSuite.format, "nir-transfer-authorization-vectors-v1");
+  for (const vector of authorizationSuite.vectors) {
+    const validate = () => validateTransferAuthorizationEnvelope({
+      envelope: vector.envelope,
+      expectedAlgorithm: vector.expectedAlgorithm,
+      unsignedTransaction: vector.unsignedTransaction,
+    });
+    if (vector.error) {
+      assert.throws(validate, (error) => {
+        const message = String(error?.message ?? error);
+        if (vector.error === "duplicate approval") return message.includes("duplicated");
+        if (vector.error === "invalid approval") {
+          return message.includes("approval") && message.includes("invalid");
+        }
+        return message.includes(vector.error);
+      }, vector.name);
+    } else {
+      assert.deepEqual(validate().preverifiedSigners, vector.expectedSigners, vector.name);
+    }
+  }
+  const current = state({
+    balances: {
+      nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: "2000",
+      nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: "0",
+    },
+    burned: "0",
+    nonces: { nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 0 },
+  });
+  const before = snapshot(current);
+  assert.throws(() => applyAuthorizedOrdinaryTransferState({
+    authorizationEnvelope: authorizationSuite.vectors[0].envelope,
+    balances: current.balances,
+    feeRecipient: "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    nonces: current.nonces,
+    unsignedTransaction: authorizationSuite.vectors[2].unsignedTransaction,
+  }), /digest mismatch/);
+  assert.deepEqual(snapshot(current), before, "authorization mismatch must be atomic");
 });
