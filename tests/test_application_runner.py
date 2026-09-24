@@ -6,6 +6,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest.mock import patch
 
 from nir.application_adapter import AdapterTimeout, ApplicationAdapter, FORMAT
 from nir.evaluator import BenchmarkSuite
@@ -53,28 +54,6 @@ class ApplicationRunnerTests(unittest.TestCase):
         })
         self.baseline_hash = artifact("baseline artifact")
         self.candidate_hash = artifact("candidate artifact")
-        self.baseline_entrypoint = artifact("baseline entrypoint")
-        self.candidate_entrypoint = artifact("candidate entrypoint")
-        self.baseline_content = application_content_hash(
-            role="baseline", entrypoint_path="bin/application",
-            entrypoint_digest=self.baseline_entrypoint,
-        )
-        self.candidate_content = application_content_hash(
-            role="candidate", entrypoint_path="bin/application",
-            entrypoint_digest=self.candidate_entrypoint,
-        )
-        self.commitment = CandidateCommitment(
-            network_id="nir-test",
-            recipient="nir1recipient",
-            candidate_id="c" * 64,
-            artifact_hash=self.candidate_hash,
-            baseline_hash=self.baseline_hash,
-            baseline_content_hash=self.baseline_content,
-            content_hash=self.candidate_content,
-            parents=(self.baseline_hash,),
-            suite_commitment=self.suite.commitment(self.salt),
-            committed_epoch=10,
-        )
         self.inputs = {
             case.case_id: ApplicationCaseInput(
                 media_type="application/json", value={"prompt": case.case_id},
@@ -117,6 +96,29 @@ class ApplicationRunnerTests(unittest.TestCase):
                     "result": result,
                 }), flush=True)
             '''), encoding="utf-8")
+        measured = f"sha256:{sha256(self.script.read_bytes()).hexdigest()}"
+        self.baseline_entrypoint = measured
+        self.candidate_entrypoint = measured
+        self.baseline_content = application_content_hash(
+            role="baseline", entrypoint_path="bin/application",
+            entrypoint_digest=self.baseline_entrypoint,
+        )
+        self.candidate_content = application_content_hash(
+            role="candidate", entrypoint_path="bin/application",
+            entrypoint_digest=self.candidate_entrypoint,
+        )
+        self.commitment = CandidateCommitment(
+            network_id="nir-test",
+            recipient="nir1recipient",
+            candidate_id="c" * 64,
+            artifact_hash=self.candidate_hash,
+            baseline_hash=self.baseline_hash,
+            baseline_content_hash=self.baseline_content,
+            content_hash=self.candidate_content,
+            parents=(self.baseline_hash,),
+            suite_commitment=self.suite.commitment(self.salt),
+            committed_epoch=10,
+        )
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -127,7 +129,7 @@ class ApplicationRunnerTests(unittest.TestCase):
         selected_mode = mode or role
         application = ApplicationAdapter([
             sys.executable, "-I", str(self.script), model_identity, selected_mode,
-        ])
+        ], measured_entrypoint=self.script)
         try:
             return run_application_adapter(
                 application=application,
@@ -182,7 +184,7 @@ class ApplicationRunnerTests(unittest.TestCase):
             self.transcript("candidate", "verifier-a", environment=wrong_environment)
         application = ApplicationAdapter([
             sys.executable, "-I", str(self.script), self.candidate_entrypoint, "candidate",
-        ])
+        ], measured_entrypoint=self.script)
         with self.assertRaisesRegex(ProtocolError, "pre-challenge"):
             run_application_adapter(
                 application=application, artifact_hash=self.candidate_hash,
@@ -195,12 +197,49 @@ class ApplicationRunnerTests(unittest.TestCase):
             )
         application.close()
 
+    def test_self_declared_identity_without_a_measured_launch_file_is_rejected(self):
+        application = ApplicationAdapter([
+            sys.executable, "-I", str(self.script), self.candidate_entrypoint, "candidate",
+        ])
+        with self.assertRaisesRegex(ProtocolError, "lacks a measured entrypoint"):
+            run_application_adapter(
+                application=application, artifact_hash=self.candidate_hash,
+                expected_content_hash=self.candidate_content,
+                entrypoint_digest=self.candidate_entrypoint, entrypoint_path="bin/application",
+                suite=self.suite, case_inputs=self.inputs, role="candidate",
+                verifier_id="verifier-a", run_id="run-a",
+                challenge_seed=self.challenge_seed, challenge_epoch=11,
+                environment=self.environment, energy_wh=80, energy_attested=False,
+            )
+        self.assertIsNotNone(application._process.poll())
+
+    def test_swap_and_restore_in_spawn_window_cannot_change_executed_bytes(self):
+        original = self.script.read_bytes()
+        marker = self.root / "substitute-executed"
+        substitute = (
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n"
+        ).encode()
+        real_popen = __import__("subprocess").Popen
+
+        def swap_during_spawn(*args, **kwargs):
+            self.script.write_bytes(substitute)
+            try:
+                return real_popen(*args, **kwargs)
+            finally:
+                self.script.write_bytes(original)
+
+        with patch("nir.application_adapter.subprocess.Popen", side_effect=swap_during_spawn):
+            transcript = self.transcript("candidate", "verifier-a")
+        self.assertEqual(transcript.run.answers["math"], "42")
+        self.assertFalse(marker.exists())
+
     def test_case_inputs_must_be_complete_and_timeout_fails_closed(self):
         missing = dict(self.inputs)
         del missing["logic"]
         application = ApplicationAdapter([
             sys.executable, "-I", str(self.script), self.candidate_entrypoint, "candidate",
-        ])
+        ], measured_entrypoint=self.script)
         with self.assertRaisesRegex(ProtocolError, "every suite case"):
             run_application_adapter(
                 application=application, artifact_hash=self.candidate_hash,
@@ -218,7 +257,7 @@ class ApplicationRunnerTests(unittest.TestCase):
     def test_application_path_cannot_claim_energy_attestation(self):
         application = ApplicationAdapter([
             sys.executable, "-I", str(self.script), self.candidate_entrypoint, "candidate",
-        ])
+        ], measured_entrypoint=self.script)
         with self.assertRaisesRegex(ProtocolError, "cannot claim hardware"):
             run_application_adapter(
                 application=application, artifact_hash=self.candidate_hash,

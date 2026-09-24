@@ -206,6 +206,17 @@ does not prove intelligence, model identity ownership, safety, reproducibility,
 mining eligibility, a valid execution receipt, or a NIR reward. The checker
 does not open a wallet, mutate chain state, or connect to a public NIR network.
 
+The checker intentionally performs no mining run. The experimental execution
+API separately requires an absolute `measured_entrypoint`, hashes that exact
+regular file, then launches a private unlinked read-only snapshot through an
+inherited descriptor and rejects a claimed identity that differs. The current
+portable profile needs a separate launcher plus one unique measured entrypoint
+argument; it rejects measuring `argv[0]` directly. A swap-and-restore of the
+source pathname cannot change the snapshot. This prevents a local adapter from
+earning a transcript merely by naming an allowed digest, but it is still not a
+sandbox or a complete measurement of weights and dynamically loaded
+dependencies.
+
 ## 6. Create a separate practice wallet (optional)
 
 The mining demo does not use or fund your wallet. A wallet is useful only for

@@ -475,7 +475,8 @@ def run_application_adapter(
     """Run an experimental local application and bind every output to a transcript.
 
     This function supplies deterministic transport and commitment bindings.  It
-    does not attest the host, meter, application binary, or physical execution;
+    descriptor-binds one measured local entrypoint, but does not attest the
+    host, meter, dynamically loaded dependencies, or physical execution;
     production callers must invoke it inside the isolated runner named by the
     committed environment.
     """
@@ -514,6 +515,7 @@ def run_application_adapter(
         raise ProtocolError(
             "application entrypoint identity was not bound by the pre-challenge content commitment"
         )
+    application.verify_entrypoint_measurement(entrypoint_digest)
     expected_case_ids = {case.case_id for case in suite.cases}
     if not isinstance(case_inputs, dict) or set(case_inputs) != expected_case_ids:
         raise ProtocolError("application inputs must cover every suite case exactly once")
@@ -550,6 +552,11 @@ def run_application_adapter(
             application.close(force=True)
             raise ProtocolError("application evaluation output must be plain text")
         answers[case.case_id] = result.value
+
+    # Stop the untrusted process before issuing a transcript. The child executed
+    # the already measured, unlinked descriptor snapshot rather than the source
+    # pathname, so later pathname changes cannot alter these answers.
+    application.close()
 
     run = RunRecord.from_dict(
         {

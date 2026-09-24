@@ -284,7 +284,14 @@ bundle binds role-specific allowlisted entrypoints and their digests to the chal
 an exact runtime manifest, every independent output, measured resources, and
 the derived report. Artifact substitution, environment substitution, a task
 revealed before commitment, and reuse of the same finalized challenge all fail
-closed. The included data-only adapter parses only committed JSON answers; it
+closed. The local application runner also hashes one explicitly named
+regular-file entrypoint and launches the measured bytes from a private,
+read-only, unlinked descriptor snapshot; a pathname swap between measurement
+and `Popen`, missing measurement, self-declared identity mismatch, or symlink
+cannot substitute the executed file. The current profile requires a separate
+launcher and measured entrypoint argument. This is one local file binding, not
+OS isolation or complete measurement of weights and runtime dependencies. The
+included data-only adapter parses only committed JSON answers; it
 has no shell, arbitrary command or network path and does not execute model code. A public network still requires isolated
 remote runners and hardware-backed execution and energy attestations.
 Before admission, the candidate id needs a separately finalized progress bond

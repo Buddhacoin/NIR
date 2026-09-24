@@ -9,6 +9,7 @@ sandbox; a production evaluator must still place it inside an isolated runner.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import re
 import selectors
 import select
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -36,6 +38,7 @@ MAX_ENVIRONMENT_VARIABLES = 32
 MAX_ENVIRONMENT_BYTES = 32 * 1024
 MAX_ID_CHARS = 128
 MAX_DIAGNOSTIC_CHARS = 1_024
+MAX_MEASURED_ENTRYPOINT_BYTES = 1 << 30
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -177,6 +180,73 @@ def _identifier(value: Any, field: str) -> str:
     return value
 
 
+def _snapshot_regular_file(path: str | Path, snapshot: str | Path) -> tuple[int, str]:
+    """Stream one measured file into an unlinked read-only snapshot."""
+    entrypoint = os.fspath(path)
+    try:
+        if stat.S_ISLNK(os.stat(entrypoint, follow_symlinks=False).st_mode):
+            raise AdapterError("measured adapter entrypoint cannot be a symbolic link")
+    except AdapterError:
+        raise
+    except OSError as error:
+        raise AdapterError("measured adapter entrypoint cannot be opened") from error
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(entrypoint, flags)
+    except OSError as error:
+        raise AdapterError("measured adapter entrypoint cannot be opened") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise AdapterError("measured adapter entrypoint must be a regular file")
+        if metadata.st_size <= 0 or metadata.st_size > MAX_MEASURED_ENTRYPOINT_BYTES:
+            raise AdapterError("measured adapter entrypoint size is outside runner limits")
+        digest = sha256()
+        total = 0
+        snapshot_path = os.fspath(snapshot)
+        output = os.open(
+            snapshot_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            0o400,
+        )
+        try:
+            while True:
+                chunk = os.read(
+                    descriptor,
+                    min(1 << 20, MAX_MEASURED_ENTRYPOINT_BYTES + 1 - total),
+                )
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_MEASURED_ENTRYPOINT_BYTES:
+                    raise AdapterError("measured adapter entrypoint size is outside runner limits")
+                digest.update(chunk)
+                written = 0
+                while written < len(chunk):
+                    count = os.write(output, chunk[written:])
+                    if count <= 0:
+                        raise AdapterError("measured entrypoint snapshot write made no progress")
+                    written += count
+            if total != metadata.st_size:
+                raise AdapterError("measured adapter entrypoint changed while being read")
+            os.fsync(output)
+        finally:
+            os.close(output)
+        snapshot_descriptor = os.open(
+            snapshot_path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        os.unlink(snapshot_path)
+        return snapshot_descriptor, f"sha256:{digest.hexdigest()}"
+    except Exception:
+        try:
+            os.unlink(os.fspath(snapshot))
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(descriptor)
+
+
 class ApplicationAdapter:
     """Own one local adapter child and exchange strict request/response frames."""
 
@@ -186,6 +256,7 @@ class ApplicationAdapter:
         *,
         startup_timeout_ms: int = 30_000,
         environment: Mapping[str, str] | None = None,
+        measured_entrypoint: str | Path | None = None,
     ) -> None:
         if (
             not isinstance(argv, (list, tuple))
@@ -205,6 +276,39 @@ class ApplicationAdapter:
         self._buffer = bytearray()
         self._counter = 0
         self._description: AdapterDescription | None = None
+        self._measured_entrypoint: str | None = None
+        self._measured_entrypoint_digest: str | None = None
+        launch_argv = list(argv)
+        measured_descriptor: int | None = None
+        if measured_entrypoint is not None:
+            entrypoint = os.fspath(measured_entrypoint)
+            if not isinstance(entrypoint, str) or not entrypoint or not os.path.isabs(entrypoint):
+                self._temporary.cleanup()
+                raise AdapterError("measured adapter entrypoint must be an absolute path")
+            positions = [index for index, argument in enumerate(argv) if argument == entrypoint]
+            if not positions:
+                self._temporary.cleanup()
+                raise AdapterError("measured adapter entrypoint is not present in exact argv")
+            if len(positions) != 1 or positions[0] == 0:
+                self._temporary.cleanup()
+                raise AdapterError(
+                    "descriptor-bound entrypoint must be one unique argv argument after the launcher"
+                )
+            try:
+                snapshot = os.path.join(self._temporary.name, "measured-entrypoint")
+                measured_descriptor, self._measured_entrypoint_digest = _snapshot_regular_file(
+                    entrypoint, snapshot,
+                )
+                descriptor_path = f"/dev/fd/{measured_descriptor}"
+                if not os.path.exists("/dev/fd"):
+                    raise AdapterError("descriptor-bound adapter launch is unsupported on this host")
+                launch_argv[positions[0]] = descriptor_path
+            except Exception:
+                if measured_descriptor is not None:
+                    os.close(measured_descriptor)
+                self._temporary.cleanup()
+                raise
+            self._measured_entrypoint = entrypoint
         child_environment = {
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
@@ -232,7 +336,7 @@ class ApplicationAdapter:
                 child_environment[key] = value
         try:
             self._process = subprocess.Popen(
-                list(argv),
+                launch_argv,
                 cwd=self._temporary.name,
                 env=child_environment,
                 stdin=subprocess.PIPE,
@@ -241,11 +345,15 @@ class ApplicationAdapter:
                 shell=False,
                 start_new_session=True,
                 close_fds=True,
+                pass_fds=(() if measured_descriptor is None else (measured_descriptor,)),
                 bufsize=0,
             )
         except (OSError, ValueError) as error:
             self._temporary.cleanup()
             raise AdapterError("adapter child process could not be started") from error
+        finally:
+            if measured_descriptor is not None:
+                os.close(measured_descriptor)
         # start_new_session makes the child PID the process-group ID.
         self._process_group = self._process.pid
         if self._process.stdin is None or self._process.stdout is None:
@@ -287,6 +395,22 @@ class ApplicationAdapter:
     @property
     def working_directory(self) -> Path:
         return Path(self._temporary.name)
+
+    @property
+    def measured_entrypoint_digest(self) -> str | None:
+        return self._measured_entrypoint_digest
+
+    def verify_entrypoint_measurement(self, expected_digest: str) -> None:
+        """Fail unless the descriptor-bound launch snapshot matches its commitment."""
+        if not isinstance(expected_digest, str) or not _DIGEST.fullmatch(expected_digest):
+            self.close(force=True)
+            raise AdapterError("expected adapter entrypoint digest is invalid")
+        if self._measured_entrypoint is None or self._measured_entrypoint_digest is None:
+            self.close(force=True)
+            raise AdapterError("adapter execution lacks a measured entrypoint")
+        if self._measured_entrypoint_digest != expected_digest:
+            self.close(force=True)
+            raise AdapterError("measured adapter entrypoint does not match its commitment")
 
     def _request_id(self) -> str:
         self._counter += 1

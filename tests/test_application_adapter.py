@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 import os
 from pathlib import Path
 import sys
@@ -293,6 +294,35 @@ class ApplicationAdapterTests(unittest.TestCase):
         with ApplicationAdapter([sys.executable, "-I", str(script), argument]):
             pass
         self.assertFalse(marker.exists())
+
+    def test_measured_entrypoint_must_be_exact_regular_argv_file(self):
+        script = Path(self.command()[-1])
+        with self.assertRaisesRegex(AdapterError, "absolute path"):
+            ApplicationAdapter(self.command(), measured_entrypoint="relative.py")
+        other = Path(self.temp.name) / "other.py"
+        other.write_text("print('not launched')\n", encoding="utf-8")
+        with self.assertRaisesRegex(AdapterError, "not present in exact argv"):
+            ApplicationAdapter(self.command(), measured_entrypoint=other)
+        with self.assertRaisesRegex(AdapterError, "after the launcher"):
+            ApplicationAdapter([str(script)], measured_entrypoint=script)
+        link = Path(self.temp.name) / "adapter-link.py"
+        link.symlink_to(script)
+        with self.assertRaisesRegex(AdapterError, "symbolic link"):
+            ApplicationAdapter(
+                [sys.executable, "-I", str(link)], measured_entrypoint=link,
+            )
+
+    def test_measured_entrypoint_uses_private_descriptor_snapshot(self):
+        command = self.command()
+        script = Path(command[-1])
+        expected = "sha256:" + sha256(script.read_bytes()).hexdigest()
+        with ApplicationAdapter(command, measured_entrypoint=script) as adapter:
+            self.assertEqual(adapter.measured_entrypoint_digest, expected)
+            adapter.verify_entrypoint_measurement(expected)
+            script.write_text("# changed\n", encoding="utf-8")
+            # The already launched child reads an unlinked, read-only snapshot;
+            # later changes to the source pathname cannot alter that execution.
+            adapter.verify_entrypoint_measurement(expected)
 
     @unittest.skipUnless(hasattr(os, "fork"), "requires POSIX process groups")
     def test_close_signals_descendants_after_the_leader_exits(self):

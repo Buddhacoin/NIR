@@ -96,6 +96,20 @@ format supplies reproducibility and replay protection, not proof of physical
 execution by itself; production acceptance additionally requires signatures
 from independently operated isolated runners and genuine hardware attestation.
 
+The local application path does not accept a self-declared `modelIdentity` as
+evidence by itself. Its caller must explicitly name an absolute regular-file
+entrypoint that occurs in the exact process argv. The runner hashes that file
+without following a final symlink, copies those measured bytes into a private
+file, opens it read-only, unlinks it, and replaces the entrypoint argument with
+the inherited `/dev/fd` descriptor. The child therefore cannot reopen a swapped
+source pathname between measurement and execution. The measured digest must
+match both the pre-challenge commitment and handshake identity. Missing
+measurement, substitution and symlink indirection fail closed. This profile
+requires a separate launcher followed by one unique entrypoint argument; direct
+execution of a measured `argv[0]` is rejected until a portable native fd-launcher
+exists. It binds one launch file, not every dependency the program may load,
+and does not isolate the OS or replace hardware-backed attestation.
+
 The chain resolves the bundle against a signed admission in finalized state.
 It independently checks commit-before-challenge ordering and exact equality of
 the candidate artifact/content, baseline artifact/content, parent lineage,

@@ -24,3 +24,10 @@ not sufficient. A foreign history with the same network name, an arbitrary
 self-signed validator set, a changed genesis identity, or a missing rotation is
 rejected. Retaining recent checkpoint proofs makes verification cost depend on the
 bounded suffix rather than total chain age.
+
+The optional offline trust package described in
+`checkpoint-trust-packages.md` reduces that manual trust input to one pinned
+M-of-N witness-policy ID. It binds an exact v5 proof and validator set to the
+network, genesis, checkpoint view, monotonic sequence, and post-quantum witness
+quorum, with canonical bounded parsing and portable equivocation evidence. It
+does not prove that configured operators are independent or remain uncompromised.

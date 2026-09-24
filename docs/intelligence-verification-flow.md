@@ -178,7 +178,10 @@ HTTPS требуют отдельного профиля политики, вз�
 ```python
 from nir.application_adapter import ApplicationAdapter
 
-with ApplicationAdapter(["/absolute/path/to/adapter", "--stdio"]) as app:
+with ApplicationAdapter(
+    ["/usr/bin/python3", "-I", "/absolute/path/to/adapter.py", "--stdio"],
+    measured_entrypoint="/absolute/path/to/adapter.py",
+) as app:
     description = app.describe(challenge_seed)
     if description.model_identity != expected_model_identity:
         raise ValueError("committed model identity does not match")
@@ -191,7 +194,15 @@ with ApplicationAdapter(["/absolute/path/to/adapter", "--stdio"]) as app:
     )
 ```
 
-`model_identity` не считается самодоказательством. До challenge функция
+`model_identity` не считается самодоказательством. Production-oriented local
+run требует явный `measured_entrypoint`: абсолютный regular file, который точно
+один раз присутствует в argv после отдельного launcher. Он читается с запретом
+final symlink, измеренные байты копируются в private file, открываются read-only,
+pathname удаляется, а child получает вместо исходного пути только inherited
+`/dev/fd` descriptor. Поэтому swap-and-restore исходного pathname между hash и
+`Popen` не меняет исполняемые байты. Фактический SHA-256 должен совпасть с
+pre-challenge `entrypoint_digest`; отсутствие measurement, подмена или попытка
+передать measured file как `argv[0]` не создаёт transcript. До challenge функция
 `application_content_hash()` связывает role, adapter, entrypoint path и
 entrypoint digest в experimental `contentHash`, который входит в
 `CandidateCommitment`. После reveal `run_application_adapter()` сверяет
@@ -203,9 +214,11 @@ remote error, missing/extra case или неверный output завершае
 `RunRecord`. `maxInputBytes` относится к канонической JSON-кодировке
 `input.value`, а не ко всему request frame.
 
-Текущий application bundle по-прежнему не доказывает физическое исполнение:
-`entrypoint_digest` и `content_hash` передаёт внешний изолированный runner, а
-локальный transport сверяет только заявленный handshake. Поэтому этот путь
+Текущий application bundle по-прежнему не доказывает физическое исполнение.
+Локальный transport теперь descriptor-bound запускает snapshot одного
+измеренного entrypoint, но не
+все динамически загружаемые веса/библиотеки, состояние ОС или оборудование.
+Поэтому этот путь
 явно отделён от static fixture именем `nir-application-adapter-v1` и не должен
 использоваться для production rewards до подписанной hardware attestation.
 Переданное или подделанное `energy_attested=true` отклоняется при запуске,
@@ -295,6 +308,10 @@ commitment.
 - получить finalized `candidateId`, challenge seed, suite commitment и policy
   hash непосредственно из собственного full node/light-client proof;
 - проверить artifact/content hashes **внутри** изоляции до запуска;
+- измерить весь разрешённый launch closure (entrypoint, веса, runtime и
+  библиотеки), а не полагаться на self-declared model identity; локальная
+  реализация пока fail-closed descriptor-bound связывает только один explicit
+  entrypoint file после отдельного launcher;
 - создать одноразовую чистую среду, read-only пакет, лимиты CPU/RAM/time/disk,
   новый профиль приложения и отдельное состояние на case;
 - по умолчанию запретить сеть, host filesystem, буфер обмена, камеру, микрофон,
