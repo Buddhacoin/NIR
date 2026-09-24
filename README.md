@@ -39,6 +39,7 @@ that independence.
 | Understand intelligence mining | [`docs/mining.md`](docs/mining.md) |
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
+| Propose code or documentation safely | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Review launch requirements and limitations | [`docs/launch-readiness.md`](docs/launch-readiness.md) and [`docs/public-testnet-gates.md`](docs/public-testnet-gates.md) |
 | Inspect the ordered roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
 
@@ -452,6 +453,7 @@ candidate runs are committed.
 - `docs/network.md` — multi-process devnet startup and remaining consensus boundary.
 - `docs/quantum-security.md` — exact post-quantum guarantees, attack surfaces, and migration plan.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
+- `CONTRIBUTING.md` — contribution, testing, disclosure, and secret-handling rules.
 - `tests/test_model.py` — invariant tests.
 - `tests/network-partition.test.mjs` — real HTTP `2+2` and `3+1` partition recovery tests.
 - `tests/adversarial-consensus.test.mjs` — seeded delay, loss, reorder, replay, and equivocation schedules.

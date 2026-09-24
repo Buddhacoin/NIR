@@ -50,6 +50,13 @@ npm run beacon:aggregate -- nir-testnet CANDIDATE_HASH ROUND a.json b.json c.jso
 npm run progress-beacon:aggregate -- nir-testnet CANDIDATE_HASH ROUND a.json b.json c.json
 ```
 
+Each share file must be a private, canonical JSON regular file produced by one
+unique authority. Aggregation rejects symbolic or multiply linked files,
+group/world-writable files, repeated file identities, duplicate authorities,
+oversized inputs, mismatched context, and files changed while they are read.
+The aggregate is emitted as canonical JSON so independent operators can compare
+the exact same bytes before using it as launch evidence.
+
 The aggregate itself is not trusted: every full node verifies every authority
 signature, recomputes the aggregate and enforces the on-chain quorum. For
 `progress`, request shares only from the addresses returned by the admission's
