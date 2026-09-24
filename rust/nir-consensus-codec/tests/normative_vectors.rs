@@ -1,6 +1,8 @@
 use nir_consensus_codec::transfer_state::{
-    apply_ordinary_transfer, apply_sponsored_transfer, parse_atomic, Account, SponsoredTransfer,
-    State, Transfer, MAXIMUM_ATOMIC_DIGITS, MINIMUM_FEE,
+    apply_credit_transfer, apply_ordinary_transfer, apply_sponsored_transfer, parse_atomic,
+    Account, CreditDelegation, CreditState, CreditTransfer, CreditUsage, SponsoredTransfer, State,
+    Transfer, MAXIMUM_ATOMIC_DIGITS, MINIMUM_FEE, TRANSFER_CREDITS_PER_STAKE_UNIT,
+    TRANSFER_CREDIT_EPOCH_BLOCKS, TRANSFER_CREDIT_STAKE_UNIT,
 };
 use nir_consensus_codec::{consensus_envelope_bytes, consensus_hash, consensus_value_bytes, Value};
 use std::collections::BTreeMap;
@@ -382,6 +384,74 @@ fn sponsored_transfer_input(value: &Json) -> SponsoredTransfer<'_> {
     }
 }
 
+fn credit_state(value: &Json) -> CreditState {
+    let fields = object(value);
+    let credit_stakes = object(member(fields, "creditStakes"))
+        .iter()
+        .map(|(address, stake)| {
+            (
+                address.clone(),
+                parse_atomic(string(stake)).expect("vector credit stake"),
+            )
+        })
+        .collect();
+    let credit_usage = object(member(fields, "creditUsage"))
+        .iter()
+        .map(|(address, usage)| {
+            let usage = object(usage);
+            (
+                address.clone(),
+                CreditUsage {
+                    epoch: u64::try_from(integer(member(usage, "epoch"))).expect("usage epoch"),
+                    spent: u64::try_from(integer(member(usage, "spent"))).expect("usage spent"),
+                },
+            )
+        })
+        .collect();
+    let credit_delegations = object(member(fields, "creditDelegations"))
+        .iter()
+        .map(|(key, delegation)| {
+            let delegation = object(delegation);
+            (
+                key.clone(),
+                CreditDelegation {
+                    owner: string(member(delegation, "owner")).to_owned(),
+                    delegate: string(member(delegation, "delegate")).to_owned(),
+                    limit: u64::try_from(integer(member(delegation, "limit")))
+                        .expect("delegation limit"),
+                    epoch: u64::try_from(integer(member(delegation, "epoch")))
+                        .expect("delegation epoch"),
+                    spent: u64::try_from(integer(member(delegation, "spent")))
+                        .expect("delegation spent"),
+                },
+            )
+        })
+        .collect();
+    CreditState {
+        monetary: transfer_state(value),
+        credit_stakes,
+        credit_usage,
+        credit_delegations,
+    }
+}
+
+fn credit_transfer_input(value: &Json) -> CreditTransfer<'_> {
+    let fields = object(value);
+    CreditTransfer {
+        sender: string(member(fields, "sender")),
+        recipient: string(member(fields, "recipient")),
+        credit_owner: optional_member(fields, "creditOwner").map(string),
+        fee_payer: optional_member(fields, "feePayer").map(string),
+        fee_payer_nonce: optional_member(fields, "feePayerNonce")
+            .map(integer)
+            .map(|value| u64::try_from(value).expect("vector fee payer nonce")),
+        amount: string(member(fields, "amount")),
+        fee: string(member(fields, "fee")),
+        nonce: u64::try_from(integer(member(fields, "nonce"))).expect("vector nonce"),
+        height: u64::try_from(integer(member(fields, "height"))).expect("vector height"),
+    }
+}
+
 #[test]
 fn reproduces_normative_transfer_state_vectors_atomically() {
     let source = include_str!("../../../tests/vectors/transfer-state-v1.json");
@@ -488,6 +558,75 @@ fn reproduces_normative_sponsored_transfer_vectors_atomically() {
             let after_total: u128 = state.accounts.values().map(|account| account.balance).sum();
             assert_eq!(after_total, before_total, "conservation vector {name}");
             assert_eq!(state.burned, before.burned, "burn vector {name}");
+        }
+    }
+}
+
+#[test]
+fn reproduces_normative_credit_transfer_vectors_atomically() {
+    let source = include_str!("../../../tests/vectors/credit-transfer-state-v1.json");
+    let document = Parser::new(source)
+        .parse()
+        .expect("credit transfer vectors must be strict JSON");
+    let root = object(&document);
+    assert_eq!(
+        string(member(root, "format")),
+        "nir-credit-transfer-state-vectors-v1"
+    );
+    assert_eq!(
+        parse_atomic(string(member(root, "stakeUnit"))).expect("stake unit"),
+        TRANSFER_CREDIT_STAKE_UNIT
+    );
+    assert_eq!(
+        u128::try_from(integer(member(root, "creditsPerStakeUnit"))).expect("credits per unit"),
+        TRANSFER_CREDITS_PER_STAKE_UNIT
+    );
+    assert_eq!(
+        u64::try_from(integer(member(root, "epochBlocks"))).expect("epoch blocks"),
+        TRANSFER_CREDIT_EPOCH_BLOCKS
+    );
+    let vectors = match member(root, "vectors") {
+        Json::Array(values) => values,
+        _ => panic!("vectors must be an array"),
+    };
+
+    for vector in vectors {
+        let fields = object(vector);
+        let name = string(member(fields, "name"));
+        let mut state = credit_state(member(fields, "state"));
+        let before = state.clone();
+        let result = apply_credit_transfer(
+            &mut state,
+            credit_transfer_input(member(fields, "transaction")),
+        );
+        if let Some(error) = optional_member(fields, "error") {
+            assert_eq!(
+                result.expect_err("negative vector must fail").code(),
+                string(error),
+                "error vector {name}"
+            );
+            assert_eq!(state, before, "negative vector {name} must be atomic");
+        } else {
+            result.unwrap_or_else(|error| panic!("success vector {name}: {error}"));
+            let expected = credit_state(member(fields, "expected"));
+            assert_eq!(state, expected, "state vector {name}");
+            let before_total: u128 = before
+                .monetary
+                .accounts
+                .values()
+                .map(|account| account.balance)
+                .sum();
+            let after_total: u128 = state
+                .monetary
+                .accounts
+                .values()
+                .map(|account| account.balance)
+                .sum();
+            assert_eq!(after_total, before_total, "conservation vector {name}");
+            assert_eq!(
+                state.monetary.burned, before.monetary.burned,
+                "burn vector {name}"
+            );
         }
     }
 }

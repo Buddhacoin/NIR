@@ -33,9 +33,7 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
-  TRANSFER_CREDIT_EPOCH_BLOCKS,
   TRANSFER_CREDIT_STAKE_UNIT,
-  TRANSFER_CREDITS_PER_STAKE_UNIT,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
 } from "./constants.mjs";
@@ -86,8 +84,11 @@ import {
   consensusValueBytes,
 } from "./consensus-codec.mjs";
 import {
+  applyCreditTransferState,
   applyOrdinaryTransferState,
   applySponsoredTransferState,
+  transferCreditAllowance,
+  transferCreditEpoch,
 } from "./transfer-state-transition.mjs";
 import {
   activeValidatorSet,
@@ -147,21 +148,7 @@ function creditDelegationKey(owner, delegate) {
   return `${owner}:${delegate}`;
 }
 
-export function transferCreditAllowance(stake) {
-  if (typeof stake !== "bigint" || stake < 0n) {
-    throw new Error("credit stake must be a non-negative bigint");
-  }
-  return (stake * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
-    TRANSFER_CREDIT_STAKE_UNIT;
-}
-
-export function transferCreditEpoch(height) {
-  if (!Number.isSafeInteger(height) || height < 0) {
-    throw new Error("credit height is invalid");
-  }
-  if (height === 0) return 0;
-  return Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
-}
+export { transferCreditAllowance, transferCreditEpoch };
 
 export const SYSTEM_NIR_ASSET_ID = "0".repeat(64);
 
@@ -3306,30 +3293,6 @@ export class NirChain {
     return claim.value;
   }
 
-  #consumeTransferCredit(
-    address, height, creditStakes, creditUsage, creditDelegations, delegate = null,
-  ) {
-    const stake = creditStakes.get(address) ?? 0n;
-    const allowance = transferCreditAllowance(stake);
-    const epoch = transferCreditEpoch(height);
-    const previous = creditUsage.get(address);
-    const spent = previous?.epoch === epoch ? previous.spent : 0;
-    if (allowance <= BigInt(spent)) throw new Error("transfer credit quota is exhausted");
-    let delegation = null;
-    let delegationSpent = 0;
-    if (delegate !== null) {
-      const key = creditDelegationKey(address, delegate);
-      delegation = creditDelegations.get(key);
-      if (!delegation) throw new Error("transfer credit delegation is missing");
-      delegationSpent = delegation.epoch === epoch ? delegation.spent : 0;
-      if (delegationSpent >= delegation.limit) {
-        throw new Error("transfer credit delegation is exhausted");
-      }
-      creditDelegations.set(key, { ...delegation, epoch, spent: delegationSpent + 1 });
-    }
-    creditUsage.set(address, { epoch, spent: spent + 1 });
-  }
-
   #applyTransfer(
     transaction, balances, nonces, proposer, timestamp, height,
     creditStakes, creditUsage, creditDelegations,
@@ -3446,16 +3409,25 @@ export class NirChain {
       if (feePayerBalance - fee < locked) throw new Error("treasury funds are still vesting");
     }
     if (creditPaid) {
-      this.#consumeTransferCredit(
-        sponsored ? transaction.feePayer : delegated ? transaction.creditOwner : transaction.sender,
-        height,
+      applyCreditTransferState({
+        amount,
+        balances,
+        creditDelegations,
+        creditOwner: delegated ? transaction.creditOwner : undefined,
         creditStakes,
         creditUsage,
-        creditDelegations,
-        delegated ? transaction.sender : null,
-      );
+        fee,
+        feePayer: sponsored ? transaction.feePayer : undefined,
+        feePayerNonce: sponsored ? transaction.feePayerNonce : undefined,
+        height,
+        nonce: transaction.nonce,
+        nonces,
+        recipient: transaction.recipient,
+        sender: transaction.sender,
+      });
+      return;
     }
-    if (!sponsored && !creditPaid) {
+    if (!sponsored) {
       applyOrdinaryTransferState({
         amount,
         balances,
@@ -3468,31 +3440,18 @@ export class NirChain {
       });
       return;
     }
-    if (sponsored && !creditPaid) {
-      applySponsoredTransferState({
-        amount,
-        balances,
-        fee,
-        feePayer: transaction.feePayer,
-        feePayerNonce: transaction.feePayerNonce,
-        feeRecipient: proposer,
-        nonce: transaction.nonce,
-        nonces,
-        recipient: transaction.recipient,
-        sender: transaction.sender,
-      });
-      return;
-    }
-    balances.set(transaction.sender, senderBalance - amount - (sponsored ? 0n : fee));
-    balances.set(transaction.recipient, (balances.get(transaction.recipient) ?? 0n) + amount);
-    if (sponsored) {
-      if (!creditPaid) {
-        balances.set(transaction.feePayer, (balances.get(transaction.feePayer) ?? 0n) - fee);
-      }
-      nonces.set(transaction.feePayer, expectedFeePayerNonce + 1);
-    }
-    if (!creditPaid) balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
-    nonces.set(transaction.sender, expectedNonce + 1);
+    applySponsoredTransferState({
+      amount,
+      balances,
+      fee,
+      feePayer: transaction.feePayer,
+      feePayerNonce: transaction.feePayerNonce,
+      feeRecipient: proposer,
+      nonce: transaction.nonce,
+      nonces,
+      recipient: transaction.recipient,
+      sender: transaction.sender,
+    });
   }
 
   #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp, height) {

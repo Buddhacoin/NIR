@@ -3,16 +3,26 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  applyCreditTransferState,
   applyOrdinaryTransferState,
   applySponsoredTransferState,
 } from "../blockchain/transfer-state-transition.mjs";
-import { MAX_DECIMAL_DIGITS, MIN_TRANSFER_FEE } from "../blockchain/constants.mjs";
+import {
+  MAX_DECIMAL_DIGITS,
+  MIN_TRANSFER_FEE,
+  TRANSFER_CREDIT_EPOCH_BLOCKS,
+  TRANSFER_CREDIT_STAKE_UNIT,
+  TRANSFER_CREDITS_PER_STAKE_UNIT,
+} from "../blockchain/constants.mjs";
 
 const suite = JSON.parse(readFileSync(
   new URL("./vectors/transfer-state-v1.json", import.meta.url), "utf8",
 ));
 const sponsoredSuite = JSON.parse(readFileSync(
   new URL("./vectors/sponsored-transfer-state-v1.json", import.meta.url), "utf8",
+));
+const creditSuite = JSON.parse(readFileSync(
+  new URL("./vectors/credit-transfer-state-v1.json", import.meta.url), "utf8",
 ));
 
 function state(value) {
@@ -35,6 +45,31 @@ function snapshot(value) {
   };
 }
 
+function creditState(value) {
+  return {
+    ...state(value),
+    creditDelegations: new Map(Object.entries(value.creditDelegations)
+      .map(([key, delegation]) => [key, structuredClone(delegation)])),
+    creditStakes: new Map(Object.entries(value.creditStakes)
+      .map(([account, stake]) => [account, BigInt(stake)])),
+    creditUsage: new Map(Object.entries(value.creditUsage)
+      .map(([account, usage]) => [account, structuredClone(usage)])),
+  };
+}
+
+function snapshotCredit(value) {
+  return {
+    ...snapshot(value),
+    creditDelegations: Object.fromEntries([...value.creditDelegations.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))),
+    creditStakes: Object.fromEntries([...value.creditStakes.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([account, stake]) => [account, stake.toString()])),
+    creditUsage: Object.fromEntries([...value.creditUsage.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))),
+  };
+}
+
 function classify(error) {
   const message = String(error?.message ?? error);
   if (message.includes("fee payer must be distinct")) return "fee payer must be distinct";
@@ -51,6 +86,9 @@ function classify(error) {
   if (message.includes("cannot advance safely")) return "nonce cannot advance";
   if (message.includes("unsigned decimal string")) return "invalid atomic decimal";
   if (message.includes("balance is out of range")) return "balance overflow";
+  if (message.includes("quota is exhausted")) return "credit quota exhausted";
+  if (message.includes("delegation is exhausted")) return "delegation exhausted";
+  if (message.includes("credit-paid transfer fee must be zero")) return "credit fee must be zero";
   return `unclassified: ${message}`;
 }
 
@@ -123,5 +161,39 @@ test("sponsored transfer state vectors are reproduced by the normative JS transi
     assert.equal(afterTotal, beforeTotal, `${vector.name} must conserve balances`);
     assert.equal(current.burned, BigInt(vector.state.burned),
       `${vector.name} must not burn the fee`);
+  }
+});
+
+test("credit-paid transfer vectors are reproduced by the normative JS transition", () => {
+  assert.equal(creditSuite.format, "nir-credit-transfer-state-vectors-v1");
+  assert.equal(creditSuite.stakeUnit, TRANSFER_CREDIT_STAKE_UNIT.toString());
+  assert.equal(creditSuite.creditsPerStakeUnit, TRANSFER_CREDITS_PER_STAKE_UNIT);
+  assert.equal(creditSuite.epochBlocks, TRANSFER_CREDIT_EPOCH_BLOCKS);
+
+  for (const vector of creditSuite.vectors) {
+    const current = creditState(vector.state);
+    const before = snapshotCredit(current);
+    const beforeTotal = [...current.balances.values()]
+      .reduce((total, balance) => total + balance, 0n);
+    const transition = () => applyCreditTransferState({
+      ...vector.transaction,
+      balances: current.balances,
+      creditDelegations: current.creditDelegations,
+      creditStakes: current.creditStakes,
+      creditUsage: current.creditUsage,
+      nonces: current.nonces,
+    });
+    if (vector.error) {
+      assert.throws(transition, (error) => classify(error) === vector.error, vector.name);
+      assert.deepEqual(snapshotCredit(current), before, `${vector.name} must be atomic`);
+      continue;
+    }
+    transition();
+    assert.deepEqual(snapshotCredit(current), vector.expected, vector.name);
+    const afterTotal = [...current.balances.values()]
+      .reduce((total, balance) => total + balance, 0n);
+    assert.equal(afterTotal, beforeTotal, `${vector.name} must conserve balances`);
+    assert.equal(current.burned, BigInt(vector.state.burned),
+      `${vector.name} must not burn NIR`);
   }
 });

@@ -16,6 +16,7 @@ const STATIC_PROTOCOL_SOURCES = [
   "rust/nir-consensus-codec/src/lib.rs",
   "rust/nir-consensus-codec/src/transfer_state.rs",
   "tests/vectors/consensus-codec-v1.json",
+  "tests/vectors/credit-transfer-state-v1.json",
   "tests/vectors/sponsored-transfer-state-v1.json",
   "tests/vectors/transfer-state-v1.json",
 ];

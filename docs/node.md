@@ -132,7 +132,9 @@ npm run archive:serve -- /export/path/history.json 8790
 ```
 
 For a public deployment, place that service behind an independently configured
-HTTPS reverse proxy; the built-in command deliberately refuses a public bind.
+HTTPS reverse proxy; the built-in command deliberately refuses a public bind
+and accepts only the numeric loopback addresses `127.0.0.1` and `::1`, not a
+hostname resolved at runtime.
 The recovering node accepts remote URLs only over HTTPS:
 
 ```bash

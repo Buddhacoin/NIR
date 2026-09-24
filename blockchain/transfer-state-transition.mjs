@@ -1,4 +1,10 @@
-import { MAX_DECIMAL_DIGITS, MIN_TRANSFER_FEE } from "./constants.mjs";
+import {
+  MAX_DECIMAL_DIGITS,
+  MIN_TRANSFER_FEE,
+  TRANSFER_CREDIT_EPOCH_BLOCKS,
+  TRANSFER_CREDIT_STAKE_UNIT,
+  TRANSFER_CREDITS_PER_STAKE_UNIT,
+} from "./constants.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
@@ -37,6 +43,22 @@ function currentBalance(balances, account) {
 
 function totalFor(balances, accounts) {
   return [...accounts].reduce((total, account) => total + currentBalance(balances, account), 0n);
+}
+
+export function transferCreditAllowance(stake) {
+  if (typeof stake !== "bigint" || stake < 0n || stake > MAX_ATOMIC_VALUE) {
+    throw new Error("credit stake must be a bounded non-negative bigint");
+  }
+  return (stake * BigInt(TRANSFER_CREDITS_PER_STAKE_UNIT)) /
+    TRANSFER_CREDIT_STAKE_UNIT;
+}
+
+export function transferCreditEpoch(height) {
+  if (!Number.isSafeInteger(height) || height < 0) {
+    throw new Error("credit height is invalid");
+  }
+  if (height === 0) return 0;
+  return Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
 }
 
 /**
@@ -177,5 +199,127 @@ export function applySponsoredTransferState({
     fee,
     nextFeePayerNonce: sponsorNonce + 1,
     nextNonce: transactionNonce + 1,
+  });
+}
+
+/**
+ * Applies a zero-fee transfer paid from the owner's renewable Transfer Credit
+ * allowance. A delegated transfer additionally consumes one unit of the
+ * owner-to-sender delegation. All monetary and resource changes are atomic.
+ */
+export function applyCreditTransferState({
+  amount: amountValue,
+  balances,
+  creditDelegations,
+  creditOwner: creditOwnerValue,
+  creditStakes,
+  creditUsage,
+  fee: feeValue,
+  feePayer: feePayerValue,
+  feePayerNonce: feePayerNonceValue,
+  height: heightValue,
+  nonce: nonceValue,
+  nonces,
+  recipient: recipientValue,
+  sender: senderValue,
+}) {
+  if (!(balances instanceof Map) || !(nonces instanceof Map) ||
+      !(creditStakes instanceof Map) || !(creditUsage instanceof Map) ||
+      !(creditDelegations instanceof Map)) {
+    throw new Error("credit transfer state maps are invalid");
+  }
+  const sender = address(senderValue, "sender");
+  const recipient = address(recipientValue, "recipient");
+  const sponsored = feePayerValue !== undefined || feePayerNonceValue !== undefined;
+  if (sponsored && (feePayerValue === undefined || feePayerNonceValue === undefined)) {
+    throw new Error("sponsored credit fields are incomplete");
+  }
+  if (sponsored && creditOwnerValue !== undefined) {
+    throw new Error("sponsored credit cannot be delegated");
+  }
+  const feePayer = sponsored ? address(feePayerValue, "fee payer") : null;
+  if (feePayer === sender) throw new Error("fee payer must be distinct from sender");
+  const owner = sponsored ? feePayer :
+    creditOwnerValue === undefined ? sender : address(creditOwnerValue, "credit owner");
+  const delegated = !sponsored && owner !== sender;
+  if (creditOwnerValue !== undefined && !delegated) {
+    throw new Error("delegated credit owner must be distinct from sender");
+  }
+  const amount = atomic(amountValue, "amount");
+  const fee = atomic(feeValue, "fee");
+  const transactionNonce = nonce(nonceValue, "transaction nonce");
+  const sponsorNonce = sponsored ? nonce(feePayerNonceValue, "fee payer nonce") : null;
+  const epoch = transferCreditEpoch(heightValue);
+  if (amount === 0n) throw new Error("transfer amount must be positive");
+  if (fee !== 0n) throw new Error("credit-paid transfer fee must be zero");
+  const expectedNonce = nonces.get(sender) ?? 0;
+  if (!Number.isSafeInteger(expectedNonce) || expectedNonce < 0 ||
+      transactionNonce !== expectedNonce) {
+    throw new Error("unexpected nonce");
+  }
+  if (sponsored) {
+    const expectedFeePayerNonce = nonces.get(feePayer) ?? 0;
+    if (!Number.isSafeInteger(expectedFeePayerNonce) || expectedFeePayerNonce < 0 ||
+        sponsorNonce !== expectedFeePayerNonce) {
+      throw new Error("unexpected fee payer nonce");
+    }
+  }
+  if (currentBalance(balances, sender) < amount) {
+    throw new Error("sender has insufficient balance");
+  }
+
+  const allowance = transferCreditAllowance(creditStakes.get(owner) ?? 0n);
+  const previous = creditUsage.get(owner);
+  const spent = previous?.epoch === epoch ? previous.spent : 0;
+  if (!Number.isSafeInteger(spent) || spent < 0) throw new Error("credit usage is invalid");
+  if (allowance <= BigInt(spent)) throw new Error("transfer credit quota is exhausted");
+  const nextUsage = Object.freeze({ epoch, spent: spent + 1 });
+
+  let delegationKey = null;
+  let nextDelegation = null;
+  if (delegated) {
+    delegationKey = `${owner}:${sender}`;
+    const delegation = creditDelegations.get(delegationKey);
+    if (!delegation) throw new Error("transfer credit delegation is missing");
+    const delegationSpent = delegation.epoch === epoch ? delegation.spent : 0;
+    if (!Number.isSafeInteger(delegationSpent) || delegationSpent < 0 ||
+        !Number.isSafeInteger(delegation.limit) || delegation.limit < 0) {
+      throw new Error("transfer credit delegation is invalid");
+    }
+    if (delegationSpent >= delegation.limit) {
+      throw new Error("transfer credit delegation is exhausted");
+    }
+    nextDelegation = Object.freeze({ ...delegation, epoch, spent: delegationSpent + 1 });
+  }
+
+  const accounts = new Set([sender, recipient]);
+  const before = totalFor(balances, accounts);
+  const deltas = new Map();
+  const addDelta = (account, delta) => deltas.set(account, (deltas.get(account) ?? 0n) + delta);
+  addDelta(sender, -amount);
+  addDelta(recipient, amount);
+  const nextBalances = new Map();
+  for (const account of accounts) {
+    const updated = currentBalance(balances, account) + (deltas.get(account) ?? 0n);
+    if (updated < 0n) throw new Error("credit transfer balance underflow");
+    if (updated > MAX_ATOMIC_VALUE) throw new Error("account balance is out of range");
+    nextBalances.set(account, updated);
+  }
+  const after = [...nextBalances.values()].reduce((total, balance) => total + balance, 0n);
+  if (after !== before || [...deltas.values()].reduce((total, delta) => total + delta, 0n) !== 0n) {
+    throw new Error("credit transfer conservation invariant failed");
+  }
+
+  for (const [account, balance] of nextBalances) balances.set(account, balance);
+  nonces.set(sender, transactionNonce + 1);
+  if (sponsored) nonces.set(feePayer, sponsorNonce + 1);
+  creditUsage.set(owner, nextUsage);
+  if (delegationKey !== null) creditDelegations.set(delegationKey, nextDelegation);
+  return Object.freeze({
+    amount,
+    epoch,
+    ...(sponsored ? { nextFeePayerNonce: sponsorNonce + 1 } : {}),
+    nextNonce: transactionNonce + 1,
+    owner,
   });
 }

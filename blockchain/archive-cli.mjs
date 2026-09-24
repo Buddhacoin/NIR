@@ -17,6 +17,7 @@ import {
   restoreHistoryArchiveFromSources,
 } from "./archive-service.mjs";
 import { loadBlockStore } from "./block-store.mjs";
+import { validateLoopbackListener } from "./loopback-listener.mjs";
 import { signWalletHistoryArchive } from "./wallet-files.mjs";
 
 const MAX_ARCHIVE_FILE_BYTES = 512 * 1024 * 1024;
@@ -119,10 +120,7 @@ try {
   } else if (command === "serve" && directory && parameters.length <= 2) {
     const port = Number(parameters[0] || 8790);
     const host = parameters[1] || "127.0.0.1";
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535 ||
-        !["127.0.0.1", "::1", "localhost"].includes(host)) {
-      throw new Error("archive service must use a valid port and a loopback host");
-    }
+    validateLoopbackListener({ host, label: "archive service", port });
     const archive = readBoundedJson(directory, MAX_ARCHIVE_FILE_BYTES);
     const server = createHistoryArchiveHttpServer(archive);
     const shutdown = async () => {

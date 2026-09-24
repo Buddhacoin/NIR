@@ -10,6 +10,9 @@ pub const MINIMUM_FEE: u128 = 1_000;
 pub const MAXIMUM_ATOMIC_DIGITS: usize = 32;
 pub const MAXIMUM_SAFE_NONCE: u64 = 9_007_199_254_740_991;
 pub const MAXIMUM_ATOMIC_VALUE: u128 = 99_999_999_999_999_999_999_999_999_999_999;
+pub const TRANSFER_CREDIT_STAKE_UNIT: u128 = 10_000_000_000;
+pub const TRANSFER_CREDITS_PER_STAKE_UNIT: u128 = 10;
+pub const TRANSFER_CREDIT_EPOCH_BLOCKS: u64 = 720;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
@@ -58,6 +61,51 @@ pub struct SponsoredTransition {
     pub fee: u128,
     pub next_nonce: u64,
     pub next_fee_payer_nonce: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CreditUsage {
+    pub epoch: u64,
+    pub spent: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreditDelegation {
+    pub owner: String,
+    pub delegate: String,
+    pub limit: u64,
+    pub epoch: u64,
+    pub spent: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreditState {
+    pub monetary: State,
+    pub credit_stakes: BTreeMap<String, u128>,
+    pub credit_usage: BTreeMap<String, CreditUsage>,
+    pub credit_delegations: BTreeMap<String, CreditDelegation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CreditTransfer<'a> {
+    pub sender: &'a str,
+    pub recipient: &'a str,
+    pub credit_owner: Option<&'a str>,
+    pub fee_payer: Option<&'a str>,
+    pub fee_payer_nonce: Option<u64>,
+    pub amount: &'a str,
+    pub fee: &'a str,
+    pub nonce: u64,
+    pub height: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreditTransition {
+    pub amount: u128,
+    pub epoch: u64,
+    pub next_nonce: u64,
+    pub next_fee_payer_nonce: Option<u64>,
+    pub owner: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,5 +400,217 @@ pub fn apply_sponsored_transfer(
         fee,
         next_nonce: transfer.nonce + 1,
         next_fee_payer_nonce: transfer.fee_payer_nonce + 1,
+    })
+}
+
+pub fn transfer_credit_allowance(stake: u128) -> Result<u128, TransferError> {
+    if stake > MAXIMUM_ATOMIC_VALUE {
+        return Err(TransferError("credit stake overflow"));
+    }
+    stake
+        .checked_mul(TRANSFER_CREDITS_PER_STAKE_UNIT)
+        .map(|value| value / TRANSFER_CREDIT_STAKE_UNIT)
+        .ok_or(TransferError("credit allowance overflow"))
+}
+
+pub fn transfer_credit_epoch(height: u64) -> Result<u64, TransferError> {
+    if height > MAXIMUM_SAFE_NONCE {
+        return Err(TransferError("credit height invalid"));
+    }
+    Ok(if height == 0 {
+        0
+    } else {
+        (height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS
+    })
+}
+
+pub fn apply_credit_transfer(
+    state: &mut CreditState,
+    transfer: CreditTransfer<'_>,
+) -> Result<CreditTransition, TransferError> {
+    if !valid_address(transfer.sender) || !valid_address(transfer.recipient) {
+        return Err(TransferError("invalid address"));
+    }
+    let sponsored = transfer.fee_payer.is_some() || transfer.fee_payer_nonce.is_some();
+    if sponsored && (transfer.fee_payer.is_none() || transfer.fee_payer_nonce.is_none()) {
+        return Err(TransferError("sponsored credit fields incomplete"));
+    }
+    if sponsored && transfer.credit_owner.is_some() {
+        return Err(TransferError("sponsored credit cannot be delegated"));
+    }
+    let fee_payer = transfer.fee_payer;
+    if fee_payer == Some(transfer.sender) {
+        return Err(TransferError("fee payer must be distinct"));
+    }
+    let owner = fee_payer
+        .or(transfer.credit_owner)
+        .unwrap_or(transfer.sender);
+    if !valid_address(owner) {
+        return Err(TransferError("invalid address"));
+    }
+    let delegated = !sponsored && owner != transfer.sender;
+    if transfer.credit_owner.is_some() && !delegated {
+        return Err(TransferError("delegated owner must be distinct"));
+    }
+    let amount = parse_atomic(transfer.amount)?;
+    let fee = parse_atomic(transfer.fee)?;
+    if amount == 0 {
+        return Err(TransferError("amount must be positive"));
+    }
+    if fee != 0 {
+        return Err(TransferError("credit fee must be zero"));
+    }
+    if transfer.nonce >= MAXIMUM_SAFE_NONCE {
+        return Err(TransferError("nonce cannot advance"));
+    }
+    let epoch = transfer_credit_epoch(transfer.height)?;
+    let expected_nonce = state
+        .monetary
+        .accounts
+        .get(transfer.sender)
+        .map(|account| account.nonce)
+        .unwrap_or(0);
+    if transfer.nonce != expected_nonce {
+        return Err(TransferError("unexpected nonce"));
+    }
+    if let (Some(fee_payer), Some(fee_payer_nonce)) = (fee_payer, transfer.fee_payer_nonce) {
+        if fee_payer_nonce >= MAXIMUM_SAFE_NONCE {
+            return Err(TransferError("fee payer nonce cannot advance"));
+        }
+        let expected_fee_payer_nonce = state
+            .monetary
+            .accounts
+            .get(fee_payer)
+            .map(|account| account.nonce)
+            .unwrap_or(0);
+        if fee_payer_nonce != expected_fee_payer_nonce {
+            return Err(TransferError("unexpected fee payer nonce"));
+        }
+    }
+    if balance(&state.monetary, transfer.sender)? < amount {
+        return Err(TransferError("sender insufficient balance"));
+    }
+
+    let stake = state.credit_stakes.get(owner).copied().unwrap_or(0);
+    let allowance = transfer_credit_allowance(stake)?;
+    let spent = state
+        .credit_usage
+        .get(owner)
+        .filter(|usage| usage.epoch == epoch)
+        .map(|usage| usage.spent)
+        .unwrap_or(0);
+    if allowance <= u128::from(spent) {
+        return Err(TransferError("credit quota exhausted"));
+    }
+    let next_usage = CreditUsage {
+        epoch,
+        spent: spent
+            .checked_add(1)
+            .ok_or(TransferError("credit usage overflow"))?,
+    };
+
+    let mut next_delegation = None;
+    if delegated {
+        let key = format!("{owner}:{}", transfer.sender);
+        let delegation = state
+            .credit_delegations
+            .get(&key)
+            .ok_or(TransferError("delegation missing"))?;
+        let delegation_spent = if delegation.epoch == epoch {
+            delegation.spent
+        } else {
+            0
+        };
+        if delegation_spent >= delegation.limit {
+            return Err(TransferError("delegation exhausted"));
+        }
+        let mut updated = delegation.clone();
+        updated.epoch = epoch;
+        updated.spent = delegation_spent
+            .checked_add(1)
+            .ok_or(TransferError("delegation usage overflow"))?;
+        next_delegation = Some((key, updated));
+    }
+
+    let amount_delta = i128::try_from(amount).map_err(|_| TransferError("balance overflow"))?;
+    let mut deltas = BTreeMap::<&str, i128>::new();
+    for (address, delta) in [
+        (transfer.sender, -amount_delta),
+        (transfer.recipient, amount_delta),
+    ] {
+        let combined = deltas
+            .get(address)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(delta)
+            .ok_or(TransferError("balance overflow"))?;
+        deltas.insert(address, combined);
+    }
+    let before = deltas.keys().try_fold(0_u128, |total, address| {
+        total
+            .checked_add(balance(&state.monetary, address)?)
+            .ok_or(TransferError("balance overflow"))
+    })?;
+    let mut updated_balances = BTreeMap::new();
+    for (address, delta) in &deltas {
+        updated_balances.insert(
+            *address,
+            apply_delta(balance(&state.monetary, address)?, *delta)?,
+        );
+    }
+    let after = updated_balances
+        .values()
+        .try_fold(0_u128, |total, value| total.checked_add(*value))
+        .ok_or(TransferError("balance overflow"))?;
+    if before != after
+        || deltas
+            .values()
+            .try_fold(0_i128, |total, delta| total.checked_add(*delta))
+            != Some(0)
+    {
+        return Err(TransferError("conservation failure"));
+    }
+
+    for (address, next_balance) in updated_balances {
+        state
+            .monetary
+            .accounts
+            .entry(address.to_owned())
+            .or_insert(Account {
+                balance: 0,
+                nonce: 0,
+            })
+            .balance = next_balance;
+    }
+    state
+        .monetary
+        .accounts
+        .entry(transfer.sender.to_owned())
+        .or_insert(Account {
+            balance: 0,
+            nonce: 0,
+        })
+        .nonce = transfer.nonce + 1;
+    if let (Some(fee_payer), Some(fee_payer_nonce)) = (fee_payer, transfer.fee_payer_nonce) {
+        state
+            .monetary
+            .accounts
+            .entry(fee_payer.to_owned())
+            .or_insert(Account {
+                balance: 0,
+                nonce: 0,
+            })
+            .nonce = fee_payer_nonce + 1;
+    }
+    state.credit_usage.insert(owner.to_owned(), next_usage);
+    if let Some((key, delegation)) = next_delegation {
+        state.credit_delegations.insert(key, delegation);
+    }
+    Ok(CreditTransition {
+        amount,
+        epoch,
+        next_nonce: transfer.nonce + 1,
+        next_fee_payer_nonce: transfer.fee_payer_nonce.map(|nonce| nonce + 1),
+        owner: owner.to_owned(),
     })
 }

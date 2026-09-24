@@ -60,8 +60,10 @@ npm run backup:serve -- \
   8791 127.0.0.1
 ```
 
-The built-in service deliberately binds only to a loopback address. Public TLS,
-rate limiting and operational access control belong at the reverse proxy.
+The built-in service deliberately binds only to the numeric loopback addresses
+`127.0.0.1` and `::1`; resolvable hostnames are not accepted as a bind-address
+security boundary. Public TLS, rate limiting and operational access control
+belong at the reverse proxy.
 
 Create `trusted-backup-operators.json` containing at least two entries with
 distinct `operatorId`, address, algorithm and public key. Then run an isolated

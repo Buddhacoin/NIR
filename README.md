@@ -92,7 +92,7 @@ The intended advantages are:
 | Capability | Current repository status |
 |---|---|
 | Independent NIR ledger and 8-decimal balances | Implemented and tested |
-| Independently compiled consensus cross-check | Rust reproduces canonical encoding plus ordinary and separately sponsored fee-paying transfers from shared language-neutral vectors; Transfer Credit and multisignature transitions remain to be added |
+| Independently compiled consensus cross-check | Rust reproduces canonical encoding plus ordinary, sponsored and Transfer Credit monetary/resource transitions from shared language-neutral vectors; cryptographic authorization and full-node execution remain outside this profile |
 | 21 million cap and ten-year treasury vesting | Enforced by consensus |
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
 | Sponsored transfer fees | Two-party post-quantum authorization and independent replay protection implemented |

@@ -9,6 +9,7 @@ import { openBeaconStateStore } from "./beacon-state-store.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { decryptWallet } from "./vault.mjs";
 import { readRestrictedPasswordFd } from "./operator-secret-input.mjs";
+import { validateLoopbackListener } from "./loopback-listener.mjs";
 
 function readBoundedFile(path, { privateFile = true } = {}) {
   if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW === 0) {
@@ -85,10 +86,7 @@ try {
     throw new Error("usage: beacon:serve <wallet-vault> <network-id> <requester-policy.json> [port] [loopback-host] [tls-cert tls-key]");
   }
   const port = Number(portText);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535 ||
-      !["127.0.0.1", "::1", "localhost"].includes(host)) {
-    throw new Error("beacon service requires a valid port and loopback host");
-  }
+  validateLoopbackListener({ host, label: "beacon service", port });
   const resolvedVaultPath = resolve(vaultPath);
   const password = await readSecret("Beacon vault password: ");
   const wallet = decryptWallet(readPrivateJson(resolvedVaultPath), password);

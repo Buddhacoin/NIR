@@ -6,13 +6,15 @@ not a second node and not a production client.
 
 ## Implemented profile
 
-The crate currently implements three layers:
+The crate currently implements four layers:
 
 1. `nir-consensus-bytes-v1` value bytes, purpose-separated envelopes and
    SHA3-256 hashing;
 2. the monetary state transition of an ordinary fee-paying NIR transfer;
 3. the monetary state transition of a sponsored transfer whose distinct fee
-   payer authorizes and pays the fee.
+   payer authorizes and pays the fee;
+4. a zero-fee transfer paid from renewable Transfer Credits, either directly
+   by the sender or through an owner-to-sender delegation.
 
 The transfer profile accepts canonical addresses, unsigned decimal amounts up
 to 32 digits, a safe advancing nonce, balances and a fee recipient. A valid
@@ -44,8 +46,22 @@ and nonce results before mutation, conserves affected balances and leaves
 burned supply unchanged.
 
 Cryptographic sponsor authorization is checked by the full node before this
-monetary transition. Transfer Credits and multisignature remain outside the
-Rust profile.
+monetary transition. Multisignature remains outside the Rust profile.
+
+The Transfer Credit transition derives the epoch from block height, derives
+the allowance from locked stake, resets effective usage only when the epoch
+changes, and increments owner usage by exactly one. Delegated use also requires
+an existing owner-to-sender record and increments its current-epoch usage
+without exceeding its limit. The NIR fee must be zero. Amount movement, sender
+nonce, owner usage and optional delegation usage are calculated before any
+mutation and commit atomically. A sender may transfer to itself, but a delegated
+owner must be distinct from the sender.
+
+Sponsored-credit uses the distinct fee payer as the credit owner, forbids a
+delegation, and advances both sender and fee-payer nonces. It is handled by the
+same atomic transition as direct and delegated credits, so recipient overflow,
+replay or exhausted sponsor allowance cannot partially consume a credit or a
+nonce. Signature, treasury and schema checks remain outside the helper.
 
 ## Normative evidence
 
@@ -53,6 +69,7 @@ The Rust tests consume the same repository-owned language-neutral vectors as
 the JavaScript implementation:
 
 - `tests/vectors/consensus-codec-v1.json`;
+- `tests/vectors/credit-transfer-state-v1.json`;
 - `tests/vectors/transfer-state-v1.json`;
 - `tests/vectors/sponsored-transfer-state-v1.json`.
 
@@ -62,6 +79,10 @@ and balance-overflow cases. Negative cases also assert that state is unchanged.
 The sponsored suite additionally covers both nonces, replay of either nonce,
 independent sender and fee-payer funding, all permitted participant aliases,
 nonce exhaustion and overflow.
+The credit suite covers direct, delegated and sponsored ownership, epoch
+renewal, owner and delegation usage, quota exhaustion, delegation limits,
+replay of either sponsored nonce, role aliases, balance overflow, conservation
+and atomic rejection.
 Expected output is never copied into the transition: both implementations
 execute the input and independently compare the resulting state or rejection
 code.

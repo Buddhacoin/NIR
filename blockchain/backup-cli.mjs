@@ -17,6 +17,7 @@ import {
   MAX_BACKUP_RECEIPT_BYTES,
   runRemoteBackupRestoreDrill,
 } from "./backup-recovery.mjs";
+import { validateLoopbackListener } from "./loopback-listener.mjs";
 import { signWalletBackupReceipt } from "./wallet-files.mjs";
 
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
@@ -96,10 +97,7 @@ try {
   } else if (command === "serve" && parameters.length >= 2 && parameters.length <= 4) {
     const [backupDirectory, receiptPath, portText = "8791", host = "127.0.0.1"] = parameters;
     const port = Number(portText);
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535 ||
-        !["127.0.0.1", "::1", "localhost"].includes(host)) {
-      throw new Error("backup service must use a valid port and loopback host");
-    }
+    validateLoopbackListener({ host, label: "backup service", port });
     const receipt = readJson(receiptPath, MAX_BACKUP_RECEIPT_BYTES);
     const server = createBackupHttpServer(backupDirectory, receipt);
     server.listen(port, host, () => console.log(
