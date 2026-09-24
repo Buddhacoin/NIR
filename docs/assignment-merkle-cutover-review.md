@@ -2,8 +2,10 @@
 
 ## Current boundary
 
-The implemented chain supports protocol versions 24, 25 and 26. Versions 24
-and 25 retain their exact prior block/header encodings. Version 26 adds a
+The implemented chain supports protocol versions 24 through 27. This review
+describes the v26 Merkle cutover; the compact v27 extension is specified in
+`protocol-v27-assignment-binding.md`. Versions 24 and 25 retain their exact
+prior block/header encodings. Version 26 adds a
 consensus-native `evaluationAssignmentRoot`, finality header v3 and finality
 proof v4. This proves the smaller consensus assignment projection; it does not
 prove the complete external Python `FinalizedEvaluationAssignment`, so

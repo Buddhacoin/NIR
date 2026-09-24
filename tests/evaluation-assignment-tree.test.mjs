@@ -7,9 +7,10 @@ import {
 } from "../blockchain/chain.mjs";
 import {
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+  EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
   INITIAL_EPOCH_REWARD, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import {
   createEpochRandomnessCommit, createEpochRandomnessReveal,
   createProgressBeacon, createProgressBeaconShare,
@@ -29,8 +30,17 @@ const members = (wallets, prefix) => wallets.map((wallet, index) => ({
   ...publicWallet(wallet), operatorId: `${prefix}-${index}`,
 }));
 const quorum = (block, validators) => finalizeBlock(block, validators.slice(0, 3));
+const evaluationEnvironment = {
+  adapter_protocol: "nir-application-adapter-v1",
+  cpu_limit: 2,
+  format: "nir-evaluation-environment-v1",
+  image_digest: `sha256:${digest("evaluation-image")}`,
+  memory_limit_bytes: 1 << 30,
+  runner_digest: `sha256:${digest("evaluation-runner")}`,
+  timeout_seconds: 60,
+};
 
-function fixture() {
+function fixture(protocolVersion = EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
   const validators = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
@@ -46,9 +56,11 @@ function fixture() {
       capabilitiesBps: { "reasoning-v1": 100 },
     }],
     evaluators: members(evaluators, "evaluator"),
-    genesisProtocolVersion: EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+    ...(protocolVersion >= EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION
+      ? { evaluationEnvironment } : {}),
+    genesisProtocolVersion: protocolVersion,
     genesisTimestamp: 0,
-    networkId: "nir-evaluation-assignment-test",
+    networkId: `nir-evaluation-assignment-test-${protocolVersion}`,
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: treasury.address,
     validators: validatorMembers,
@@ -114,6 +126,76 @@ function fixture() {
     validatorMembers, validators,
   };
 }
+
+test("v27 assignment binds runner policy, public keys, expiry and prior finalized state", () => {
+  const value = fixture(EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION);
+  const witness = value.chain.evaluationAssignmentProof(value.admission.candidateId);
+  const assignment = witness.assignment;
+  assert.equal(assignment.format, "nir-evaluation-assignment-v2");
+  assert.equal(assignment.sourceFinalityHeight, value.checkpointBlock.height);
+  assert.equal(assignment.sourceFinalityStateRoot, value.checkpointBlock.stateRoot);
+  assert.equal(assignment.adapterProtocol, "nir-application-adapter-v1");
+  assert.equal(assignment.environmentCommitment,
+    hashObject(evaluationEnvironment, "NIR_EVALUATION_ENVIRONMENT"));
+  assert.equal(assignment.safetyPolicyHash, SAFETY_POLICY_V1_COMMITMENT);
+  assert.equal(assignment.authorityMode, "consensus-finality-certificate-v1");
+  assert.equal(assignment.evaluators.length, assignment.committee.length);
+  assert.equal("authorities" in assignment, false);
+  assert.ok(assignment.evaluators.every((member) =>
+    Object.keys(member).sort().join(",") === "evaluatorId,publicKeyHash"));
+  assert.match(assignment.authoritySetHash, /^[0-9a-f]{64}$/);
+  assert.ok(assignment.expiresAtHeight > assignment.challengeHeight);
+  assert.deepEqual(verifyEvaluationAssignmentProof(
+    assignment, witness.inclusionProof, witness.evaluationAssignmentRoot,
+  ), assignment);
+  const checkpoint = {
+    height: value.checkpointBlock.height,
+    protocolVersion: EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+    stateRoot: value.checkpointBlock.stateRoot,
+    tipHash: value.checkpointBlock.hash,
+  };
+  const finalized = verifyFinalizedEvaluationAssignmentProof({
+    assignment,
+    checkpoint,
+    finalityProofs: [createFinalityProof(value.challengeBlock)],
+    inclusionProof: witness.inclusionProof,
+    expectedNetworkId: value.chain.networkId,
+    trustedValidators: value.validatorMembers,
+  });
+  assert.equal(finalized.assignment.sourceFinalityStateRoot, checkpoint.stateRoot);
+  assert.throws(() => verifyFinalizedEvaluationAssignmentProof({
+    assignment,
+    checkpoint: { ...checkpoint, stateRoot: "f".repeat(64) },
+    finalityProofs: [createFinalityProof(value.challengeBlock)],
+    inclusionProof: witness.inclusionProof,
+    expectedNetworkId: value.chain.networkId,
+    trustedValidators: value.validatorMembers,
+  }), /source finality is not authenticated/);
+
+  const forged = structuredClone(assignment);
+  forged.evaluators[0].publicKeyHash = "0".repeat(64);
+  assert.throws(() => verifyEvaluationAssignmentProof(
+    forged, witness.inclusionProof, witness.evaluationAssignmentRoot,
+  ), /root does not match/);
+  assert.throws(() => verifyEvaluationAssignmentProof(
+    { ...assignment, authoritySetHash: "0".repeat(64) },
+    witness.inclusionProof, witness.evaluationAssignmentRoot,
+  ), /root does not match/);
+
+  const snapshot = createStateSnapshot(value.chain, value.validators.slice(0, 3));
+  const restored = NirChain.fromVerifiedSnapshot(value.genesisConfig, snapshot);
+  assert.deepEqual(restored.evaluationAssignmentProof(value.admission.candidateId), witness);
+
+  const replayed = new NirChain(value.genesisConfig);
+  for (const block of value.chain.blocks().slice(1)) replayed.appendBlock(block);
+  assert.equal(replayed.tipHash, value.chain.tipHash);
+  assert.deepEqual(replayed.evaluationAssignmentProof(value.admission.candidateId), witness);
+
+  const missingEnvironment = structuredClone(value.genesisConfig);
+  delete missingEnvironment.evaluationEnvironment;
+  assert.throws(() => new NirChain(missingEnvironment),
+    /requires a genesis evaluation environment/);
+});
 
 test("v26 finality header proves the immutable consensus assignment", () => {
   const value = fixture();

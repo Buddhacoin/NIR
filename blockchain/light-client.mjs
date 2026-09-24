@@ -270,10 +270,21 @@ export function verifyFinalizedEvaluationAssignmentProof({
   if (!tip.evaluationAssignmentRoot) {
     throw new Error("finalized header predates evaluation assignment proofs");
   }
+  const verifiedAssignment = verifyEvaluationAssignmentProof(
+    assignment, inclusionProof, tip.evaluationAssignmentRoot,
+  );
+  if (verifiedAssignment.format === "nir-evaluation-assignment-v2") {
+    const sourceHeader = verifiedAssignment.sourceFinalityHeight === checkpoint?.height
+      ? checkpoint
+      : finalityProofs.find(({ header }) =>
+        header?.height === verifiedAssignment.sourceFinalityHeight)?.header;
+    if (!sourceHeader || sourceHeader.stateRoot !== verifiedAssignment.sourceFinalityStateRoot ||
+        verifiedAssignment.sourceFinalityHeight >= tip.height) {
+      throw new Error("extended evaluation assignment source finality is not authenticated");
+    }
+  }
   return {
-    assignment: verifyEvaluationAssignmentProof(
-      assignment, inclusionProof, tip.evaluationAssignmentRoot,
-    ),
+    assignment: verifiedAssignment,
     chainAssignmentIncluded: true,
     finalizedHeight: tip.height,
     stateRoot: tip.stateRoot,

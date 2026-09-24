@@ -6,6 +6,8 @@ import {
   EVALUATOR_ACTIVATION_DELAY_BLOCKS,
   EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS,
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+  EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+  EVALUATION_ASSIGNMENT_LIFETIME_BLOCKS,
   MAX_BLOCK_BYTES,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_CREDIT_DELEGATIONS_PER_OWNER,
@@ -111,6 +113,7 @@ import {
   assertActiveEvaluationAssignmentRegistry,
   createEvaluationAssignmentWitness,
   evaluationAssignmentFromCommitment,
+  extendedEvaluationAssignmentFromCommitment,
   evaluationAssignmentRoot as computeEvaluationAssignmentRoot,
 } from "./evaluation-assignment-tree.mjs";
 import {
@@ -147,6 +150,28 @@ function parseAtomic(value, field) {
     throw new Error(`${field} must be an unsigned decimal string`);
   }
   return BigInt(value);
+}
+
+function normalizeEvaluationEnvironment(value) {
+  const fields = [
+    "adapter_protocol", "cpu_limit", "format", "image_digest",
+    "memory_limit_bytes", "runner_digest", "timeout_seconds",
+  ];
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).sort().join("\0") !== fields.sort().join("\0") ||
+      value.format !== "nir-evaluation-environment-v1" ||
+      !/^sha256:[0-9a-f]{64}$/.test(value.image_digest ?? "") ||
+      !/^sha256:[0-9a-f]{64}$/.test(value.runner_digest ?? "") ||
+      typeof value.adapter_protocol !== "string" ||
+      !/^[a-z][a-z0-9._-]{0,63}$/.test(value.adapter_protocol) ||
+      !Number.isSafeInteger(value.cpu_limit) || value.cpu_limit < 1 || value.cpu_limit > 4096 ||
+      !Number.isSafeInteger(value.memory_limit_bytes) ||
+      value.memory_limit_bytes < 2 ** 20 || value.memory_limit_bytes > 2 ** 50 ||
+      !Number.isSafeInteger(value.timeout_seconds) ||
+      value.timeout_seconds < 1 || value.timeout_seconds > 7 * 24 * 60 * 60) {
+    throw new Error("genesis evaluation environment is invalid");
+  }
+  return structuredClone(value);
 }
 
 function assertAddress(address, field) {
@@ -1336,6 +1361,8 @@ export class NirChain {
   #evaluatorBonds;
   #evaluatorFaults;
   #evaluationAssignments;
+  #evaluationAdapterProtocol;
+  #evaluationEnvironmentCommitment;
   #mined;
   #lastRewardTimestamp;
   #networkId;
@@ -1378,6 +1405,7 @@ export class NirChain {
     capabilityReferences,
     safetyPolicyCommitments,
     beaconAuthorities,
+    evaluationEnvironment = null,
     peerRegistry = null,
     evaluatorBondAmount = MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp = Date.now(),
@@ -1405,11 +1433,22 @@ export class NirChain {
     if (!this.#supportedProtocolVersions.includes(genesisProtocolVersion)) {
       throw new Error("genesis protocol version is unsupported");
     }
+    const normalizedEvaluationEnvironment = evaluationEnvironment === null
+      ? null : normalizeEvaluationEnvironment(evaluationEnvironment);
+    if (genesisProtocolVersion >= EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION &&
+        normalizedEvaluationEnvironment === null) {
+      throw new Error("extended assignment protocol requires a genesis evaluation environment");
+    }
+    this.#evaluationAdapterProtocol = normalizedEvaluationEnvironment?.adapter_protocol ?? null;
+    this.#evaluationEnvironmentCommitment = normalizedEvaluationEnvironment === null ? null
+      : hashObject(normalizedEvaluationEnvironment, "NIR_EVALUATION_ENVIRONMENT");
     this.#genesisConfig = structuredClone({
       beaconAuthorities,
       capabilityReferences,
       evaluatorBondAmount,
       evaluators,
+      ...(normalizedEvaluationEnvironment === null
+        ? {} : { evaluationEnvironment: normalizedEvaluationEnvironment }),
       genesisTimestamp,
       genesisProtocolVersion,
       networkId,
@@ -1550,6 +1589,10 @@ export class NirChain {
         bond: genesisEvaluatorBond.toString(),
         operatorId: this.#evaluators.get(address).operatorId,
       })),
+      ...(this.#evaluationEnvironmentCommitment === null ? {} : {
+        evaluationAdapterProtocol: this.#evaluationAdapterProtocol,
+        evaluationEnvironmentCommitment: this.#evaluationEnvironmentCommitment,
+      }),
       ...(this.#protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
         ? { evaluationAssignmentRoot } : {}),
       genesisTimestamp,
@@ -2068,6 +2111,7 @@ export class NirChain {
     }
     if (snapshotHasAssignmentRoot) {
       assertActiveEvaluationAssignmentRegistry(progressCommitments, evaluationAssignments);
+      chain.#assertExtendedEvaluationAssignmentPolicy(evaluationAssignments, evaluators);
       if (computeEvaluationAssignmentRoot(evaluationAssignments) !==
           snapshot.evaluationAssignmentRoot) {
         throw new Error("snapshot evaluation assignment root is invalid");
@@ -2544,6 +2588,25 @@ export class NirChain {
       validatorFaults: overrides.validatorFaults ?? this.#validatorFaults,
       validators: overrides.validators ?? this.#validators,
     });
+  }
+
+  #assertExtendedEvaluationAssignmentPolicy(assignments, evaluators = this.#evaluators) {
+    for (const assignment of assignments.values()) {
+      if (assignment.format !== "nir-evaluation-assignment-v2") continue;
+      if (this.#evaluationEnvironmentCommitment === null ||
+          assignment.environmentCommitment !== this.#evaluationEnvironmentCommitment ||
+          assignment.adapterProtocol !== this.#evaluationAdapterProtocol ||
+          assignment.safetyPolicyHash !== [...this.#safetyPolicies].sort()[0] ||
+          assignment.expiresAtHeight !==
+            assignment.challengeHeight + EVALUATION_ASSIGNMENT_LIFETIME_BLOCKS ||
+          assignment.evaluators.some(({ evaluatorId, publicKeyHash }) => {
+            const member = evaluators.get(evaluatorId);
+            return !member || publicKeyHash !== hashObject(
+              member.publicKey, "EVALUATION_ASSIGNMENT_PUBLIC_KEY_V1");
+          })) {
+        throw new Error("extended evaluation assignment policy is inconsistent");
+      }
+    }
   }
 
   consensusSnapshot() {
@@ -4828,6 +4891,13 @@ export class NirChain {
         throw new Error("evaluation assignment registry capacity is exceeded");
       }
     }
+    if (protocolState.protocolVersion >= EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION &&
+        this.#protocolVersion < EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION) {
+      if (this.#evaluationEnvironmentCommitment === null ||
+          this.#evaluationAdapterProtocol === null) {
+        throw new Error("extended assignment protocol lacks a genesis evaluation environment");
+      }
+    }
     const progressEscrows = new Map([...this.#progressEscrows]
       .map(([candidateId, escrow]) => [candidateId, structuredClone(escrow)]));
     const progressFraudEvidence = new Map(this.#progressFraudEvidence);
@@ -5348,7 +5418,18 @@ export class NirChain {
           throw new Error("evaluation assignment registry capacity or uniqueness is invalid");
         }
         evaluationAssignments.set(claim.candidateId,
-          evaluationAssignmentFromCommitment(claim.candidateId, assignedCommitment));
+          protocolState.protocolVersion >= EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION
+            ? extendedEvaluationAssignmentFromCommitment(claim.candidateId, assignedCommitment, {
+              authorities: blockValidators,
+              evaluators: evaluatorsAfter,
+              expiresAtHeight: block.height + EVALUATION_ASSIGNMENT_LIFETIME_BLOCKS,
+              environmentCommitment: this.#evaluationEnvironmentCommitment,
+              adapterProtocol: this.#evaluationAdapterProtocol,
+              safetyPolicyHash: [...this.#safetyPolicies].sort()[0],
+              sourceFinalityHeight: previous.height,
+              sourceFinalityStateRoot: previous.stateRoot,
+            })
+            : evaluationAssignmentFromCommitment(claim.candidateId, assignedCommitment));
       }
       progressedBeacons.add(claim.candidateId);
     }
@@ -5568,6 +5649,7 @@ export class NirChain {
       computeEvaluationAssignmentRoot(evaluationAssignments);
     if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
       assertActiveEvaluationAssignmentRegistry(progressCommitments, evaluationAssignments);
+      this.#assertExtendedEvaluationAssignmentPolicy(evaluationAssignments, evaluatorsAfter);
     }
     if (verifyStateRoot && protocolState.protocolVersion >=
         EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&

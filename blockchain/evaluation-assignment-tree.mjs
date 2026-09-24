@@ -6,7 +6,9 @@ const HASH = /^[0-9a-f]{64}$/;
 const DEPTH = 256;
 const FORMAT = "nir-evaluation-assignment-proof-v1";
 const VALUE_FORMAT = "nir-evaluation-assignment-v1";
+const EXTENDED_VALUE_FORMAT = "nir-evaluation-assignment-v2";
 export const MAX_EVALUATION_ASSIGNMENT_PROOF_BYTES = 32 * 1024;
+export const MAX_EVALUATION_ASSIGNMENT_VALUE_BYTES = 64 * 1024;
 export const MAX_EVALUATION_ASSIGNMENTS = 4_096;
 
 const emptyHashes = Array(DEPTH + 1);
@@ -24,13 +26,21 @@ function candidateBits(candidateId) {
 }
 
 export function normalizeEvaluationAssignment(value) {
-  const expected = [
+  const baseFields = [
     "artifactHash", "baselineContentHash", "baselineHash", "candidateId",
     "challengeEpoch", "challengeHeight", "challengeSeed", "committedHeight",
     "committee", "contentHash", "format", "parents", "recipient", "suiteCommitment",
-  ].sort().join("\0");
+  ];
+  const extendedFields = [
+    "adapterProtocol", "authorityMode", "authoritySetHash",
+    "environmentCommitment", "evaluators", "expiresAtHeight", "safetyPolicyHash",
+    "sourceFinalityHeight", "sourceFinalityStateRoot",
+  ];
+  const extended = value?.format === EXTENDED_VALUE_FORMAT;
+  const expected = [...baseFields, ...(extended ? extendedFields : [])].sort().join("\0");
   if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
-      Object.keys(value).sort().join("\0") !== expected || value.format !== VALUE_FORMAT ||
+      Object.keys(value).sort().join("\0") !== expected ||
+      ![VALUE_FORMAT, EXTENDED_VALUE_FORMAT].includes(value.format) ||
       !HASH.test(value.candidateId ?? "") || !HASH.test(value.challengeSeed ?? "") ||
       !HASH.test(value.suiteCommitment ?? "") || !ARTIFACT.test(value.artifactHash ?? "") ||
       !ARTIFACT.test(value.baselineContentHash ?? "") || !ARTIFACT.test(value.baselineHash ?? "") ||
@@ -46,7 +56,25 @@ export function normalizeEvaluationAssignment(value) {
       !Array.isArray(value.committee) || value.committee.length < 1 ||
       value.committee.length > 256 || value.committee.some((member) => !ADDRESS.test(member)) ||
       new Set(value.committee).size !== value.committee.length ||
-      value.committee.some((member, index) => index > 0 && member <= value.committee[index - 1])) {
+      value.committee.some((member, index) => index > 0 && member <= value.committee[index - 1]) ||
+      Buffer.byteLength(canonicalJson(value)) > MAX_EVALUATION_ASSIGNMENT_VALUE_BYTES ||
+      (extended && (!HASH.test(value.environmentCommitment ?? "") ||
+        typeof value.adapterProtocol !== "string" ||
+        !/^[a-z][a-z0-9._-]{0,63}$/.test(value.adapterProtocol) ||
+        !HASH.test(value.safetyPolicyHash ?? "") ||
+        !HASH.test(value.authoritySetHash ?? "") ||
+        value.authorityMode !== "consensus-finality-certificate-v1" ||
+        !Number.isSafeInteger(value.sourceFinalityHeight) || value.sourceFinalityHeight < 0 ||
+        value.sourceFinalityHeight >= value.challengeHeight ||
+        !HASH.test(value.sourceFinalityStateRoot ?? "") ||
+        !Number.isSafeInteger(value.expiresAtHeight) ||
+        value.expiresAtHeight <= value.challengeHeight ||
+        !Array.isArray(value.evaluators) || value.evaluators.length !== value.committee.length ||
+        value.evaluators.some((member, index) =>
+          !member || Object.getPrototypeOf(member) !== Object.prototype ||
+          Object.keys(member).sort().join("\0") !== "evaluatorId\0publicKeyHash" ||
+          member.evaluatorId !== value.committee[index] ||
+          !HASH.test(member.publicKeyHash ?? ""))))) {
     throw new Error("evaluation assignment value is invalid");
   }
   return structuredClone(value);
@@ -76,6 +104,38 @@ export function evaluationAssignmentFromCommitment(candidateId, commitment) {
   });
 }
 
+export function extendedEvaluationAssignmentFromCommitment(candidateId, commitment, {
+  evaluators, authorities, sourceFinalityHeight, sourceFinalityStateRoot,
+  safetyPolicyHash, expiresAtHeight, environmentCommitment, adapterProtocol,
+}) {
+  const base = evaluationAssignmentFromCommitment(candidateId, commitment);
+  if (!base) return null;
+  const assigned = base.committee.map((evaluatorId) => {
+    const member = evaluators.get(evaluatorId);
+    if (!member) throw new Error("evaluation assignment evaluator is not registered");
+    return {
+      evaluatorId,
+      publicKeyHash: hashObject(member.publicKey, "EVALUATION_ASSIGNMENT_PUBLIC_KEY_V1"),
+    };
+  });
+  const authorityMembers = [...authorities.values()]
+    .map(({ address, publicKey }) => ({ authorityId: address, publicKey }))
+    .sort((left, right) => left.authorityId.localeCompare(right.authorityId));
+  return normalizeEvaluationAssignment({
+    ...base,
+    adapterProtocol,
+    authorityMode: "consensus-finality-certificate-v1",
+    authoritySetHash: hashObject(authorityMembers, "NIR_ASSIGN_AUTH_SET_V1"),
+    environmentCommitment,
+    evaluators: assigned,
+    expiresAtHeight,
+    format: EXTENDED_VALUE_FORMAT,
+    safetyPolicyHash,
+    sourceFinalityHeight,
+    sourceFinalityStateRoot,
+  });
+}
+
 export function evaluationAssignments(progressCommitments) {
   const entries = progressCommitments instanceof Map
     ? [...progressCommitments.entries()] : progressCommitments;
@@ -89,7 +149,7 @@ export function evaluationAssignments(progressCommitments) {
       throw new Error("evaluation assignment entries are invalid");
     }
     seen.add(entry[0]);
-    const assignment = entry[1]?.format === VALUE_FORMAT
+    const assignment = [VALUE_FORMAT, EXTENDED_VALUE_FORMAT].includes(entry[1]?.format)
       ? normalizeEvaluationAssignment(entry[1])
       : evaluationAssignmentFromCommitment(entry[0], entry[1]);
     if (assignment && assignment.candidateId !== entry[0]) {
@@ -108,7 +168,10 @@ export function assertActiveEvaluationAssignmentRegistry(progressCommitments, en
     throw new Error("active evaluation assignment registry is inconsistent");
   }
   for (let index = 0; index < expected.length; index += 1) {
-    if (canonicalJson(actual[index]) !== canonicalJson(expected[index])) {
+    const projection = Object.fromEntries(Object.keys(expected[index])
+      .map((key) => [key, actual[index][key]]));
+    projection.format = expected[index].format;
+    if (canonicalJson(projection) !== canonicalJson(expected[index])) {
       throw new Error("active evaluation assignment registry is inconsistent");
     }
   }

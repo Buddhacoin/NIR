@@ -1,3 +1,4 @@
+import { addressFromPublicKey, hashObject } from "./crypto.mjs";
 import { verifyFinalityProofChain } from "./light-client.mjs";
 import { verifyTransactionProof } from "./transaction-tree.mjs";
 import { verifyEvaluationAssignmentProof } from "./evaluation-assignment-tree.mjs";
@@ -21,8 +22,9 @@ export function verifyAssignmentChainAnchor({
   const tip = verifyFinalityProofChain(finalityProofs, {
     checkpoint, expectedNetworkId, handoffs, trustedValidators,
   });
-  if (tip.height !== assignment.finalizedHeight ||
-      tip.stateRoot !== assignment.finalizedStateRoot) {
+  const extendedAssignment = consensusAssignment?.format === "nir-evaluation-assignment-v2";
+  if (!extendedAssignment && (tip.height !== assignment.finalizedHeight ||
+      tip.stateRoot !== assignment.finalizedStateRoot)) {
     throw new Error("assignment finalized state anchor does not match the light-client tip");
   }
   if ((assignmentProof === null) !== (consensusAssignment === null)) {
@@ -51,6 +53,36 @@ export function verifyAssignmentChainAnchor({
         JSON.stringify(verified.committee) !== JSON.stringify(evaluatorIds)) {
       throw new Error("consensus assignment does not match the external assignment bindings");
     }
+    if (verified.format === "nir-evaluation-assignment-v2") {
+      const externalEvaluators = assignment.evaluators?.map(
+        ({ evaluatorId, publicKey }) => ({
+          evaluatorId,
+          publicKeyHash: hashObject(publicKey, "EVALUATION_ASSIGNMENT_PUBLIC_KEY_V1"),
+        }),
+      );
+      if (assignment.evaluators?.some(({ evaluatorId, publicKey }) =>
+        addressFromPublicKey(publicKey) !== evaluatorId)) {
+        throw new Error("external assignment evaluator key is invalid");
+      }
+      if (verified.sourceFinalityHeight !== assignment.finalizedHeight ||
+          verified.sourceFinalityStateRoot !== assignment.finalizedStateRoot ||
+          verified.environmentCommitment !== assignment.environmentCommitment ||
+          verified.adapterProtocol !== assignment.adapterProtocol ||
+          verified.safetyPolicyHash !== assignment.safetyPolicyHash ||
+          verified.authoritySetHash !== assignment.authoritySetHash ||
+          verified.expiresAtHeight !== assignment.expiresAtHeight ||
+          JSON.stringify(verified.evaluators) !== JSON.stringify(externalEvaluators)) {
+        throw new Error("extended consensus assignment does not match the external assignment");
+      }
+      const sourceHeader = verified.sourceFinalityHeight === checkpoint?.height
+        ? checkpoint
+        : finalityProofs.find(({ header }) =>
+          header?.height === verified.sourceFinalityHeight)?.header;
+      if (!sourceHeader || sourceHeader.stateRoot !== verified.sourceFinalityStateRoot ||
+          verified.sourceFinalityHeight >= tip.height) {
+        throw new Error("extended assignment source finality is not authenticated");
+      }
+    }
     chainAssignmentIncluded = true;
   }
   const transactionHeader = finalityProofs.find(
@@ -74,8 +106,10 @@ export function verifyAssignmentChainAnchor({
     candidateCommitmentIncluded: true,
     chainAssignmentIncluded,
     exactAssignmentIncluded: false,
-    finalizedHeight: tip.height,
-    finalizedStateRoot: tip.stateRoot,
+    finalizedHeight: extendedAssignment
+      ? consensusAssignment.sourceFinalityHeight : tip.height,
+    finalizedStateRoot: extendedAssignment
+      ? consensusAssignment.sourceFinalityStateRoot : tip.stateRoot,
     transactionBlockHeight,
   };
 }

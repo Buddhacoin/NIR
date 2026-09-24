@@ -241,8 +241,8 @@ def verify_assignment_chain_anchor(
         finalized_state_root=result["finalizedStateRoot"],
         transaction_block_height=result["transactionBlockHeight"],
         consensus_gap=(
-            "the v26 consensus assignment excludes runner environment, adapter, selected safety "
-            "policy, expiry, authority attestations, and evaluator public-key payloads; exact "
-            "external assignment inclusion is not proven"
+            "the consensus proof authenticates the available assignment projection; external "
+            "authority attestations are not consensus leaf data, so exact external assignment "
+            "inclusion is not proven"
         ),
     )

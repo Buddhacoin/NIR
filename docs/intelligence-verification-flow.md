@@ -83,7 +83,7 @@ NIR не платит за запущенный вентилятор, колич
 | `nir-static-eval-adapter-v1` | Реализован только как fixture | Читает неисполняемый JSON `answers`; не запускает модель, приложение или сеть. |
 | Candidate commitment | Реализовано | Связывает сеть, отправителя/получателя, artifact/baseline/content hashes, родителей и suite commitment в `candidateId`. |
 | Challenge и назначение committee | Реализовано в модели chain | Challenge появляется после финализированного commitment из beacon entropy; назначенный evaluator committee нельзя заменить произвольным quorum. |
-| Light-client anchor assignment | Consensus-native в protocol v26; внешний receipt частично | v26 добавляет `evaluationAssignmentRoot` в state и finality header и bounded Merkle proof для неизменяемого реестра назначений. Он доказывает consensus assignment, но не весь внешний `FinalizedEvaluationAssignment`: environment/adapter/safety choice/expiry/authority signatures сеть при назначении ещё не знает. Старые v24/v25 headers не изменены. |
+| Light-client anchor assignment | Consensus-native в protocol v26/v27; внешний receipt частично | v26 добавляет `evaluationAssignmentRoot` и bounded Merkle proof. v27 дополнительно фиксирует genesis-bound runner environment, adapter, safety choice, expiry и commitments исторических ключей. Внешние authority attestations старого Python-формата всё ещё проверяются отдельно, поэтому `exactAssignmentIncluded` остаётся false. Старые v24/v25 encodings не изменены. |
 | Оценка | Реализована для точных текстовых ответов | Не менее трёх разных verifier IDs; один и тот же набор оценщиков для baseline/candidate; majority, family regression, reproducibility, safety и median energy. |
 | Execution bundle | Реализовано | Связывает challenge, environment manifest, suite reveal, все ответы, content/entrypoint bindings, отчёт и `bundle_hash`. |
 | Capability memory/frontier | Реализовано | Запрещает известный artifact/content/behavior, требует известных родителей и минимум 100 bps нового frontier gain. |
@@ -382,7 +382,7 @@ light-client finality.
 
 - `candidate_commitment_included=true`: точные байты admission-транзакции
   доказаны относительно `transactionsRoot` финализированного header;
-- `chain_assignment_included=true` возможно только для v26 membership proof
+- `chain_assignment_included=true` возможно только для v26/v27 membership proof
   consensus-native assignment к `evaluationAssignmentRoot`;
 - `exact_assignment_included=false`: точный `FinalizedEvaluationAssignment` —
   включая challenge seed/epoch, environment, safety policy, expiry и список
@@ -412,17 +412,27 @@ chain от внешнего trusted checkpoint/validator history, а затем 
 к root из финализированного header. Protocol v24/v25 не получают нового поля и
 сохраняют прежние block/header encodings.
 
-Это всё ещё намеренно не означает `exact_assignment_included=true` для
-Python-объекта `FinalizedEvaluationAssignment`. В consensus assignment нет
-`environmentCommitment`, `adapterProtocol`, выбранного `safetyPolicyHash`,
-expiry, authority-set signatures и evaluator public keys как самостоятельных
-полей: эти данные либо появляются позже, либо принадлежат внешнему runner/receipt
-слою. Committee addresses криптографически идентифицируют ключи, но конкретный
-public-key payload всё равно проверяется отдельно. Поэтому интерфейсы обязаны
-различать `chainAssignmentIncluded` и inclusion полного внешнего assignment.
-Для последнего потребуется новая consensus-версия, которая сначала делает
-отсутствующие поля consensus-known; подменять это дополнительным trust root
-нельзя.
+Protocol v27 расширяет лист полями, необходимыми реальному runner: commitment
+точного environment manifest, adapter protocol, выбранная safety policy, срок
+действия, commitments исторических ключей оценщиков и hash состава
+финализаторов. Environment manifest задаётся в genesis-конфигурации заранее;
+без него v27 не активируется. Публичные ML-DSA-ключи не размножаются в каждом
+листе: verifier получает их как witness, проверяет адрес и сравнивает компактный
+key commitment. Размер одного assignment ограничен 64 KiB.
+
+Чтобы не создавать невозможную самоссылку `stateRoot -> assignment ->
+stateRoot`, v27 разделяет исходную финальность и включение: assignment называет
+уже финализированные `sourceFinalityHeight/root`, а затем включается в Merkle-root
+более позднего блока. Light client обязан проверить обе точки одной непрерывной
+цепочкой finality proofs.
+
+Даже v27 намеренно не означает `exact_assignment_included=true` для старого
+Python-объекта `FinalizedEvaluationAssignment`: его внешние authority
+attestations не являются полями consensus leaf. Их по-прежнему отдельно
+проверяет receipt verifier. Поэтому интерфейсы обязаны различать
+`chainAssignmentIncluded` и inclusion полного внешнего assignment. Для точного
+флага нужен новый versioned assignment, который заменит двойную authority-модель
+финальностью самой цепи; подменять это дополнительным trust root нельзя.
 
 `nir.replay_store` сохраняет доменно-разделённый ключ для каждой пары
 assignment/evaluator/role. Полный набор receipt отмечается использованным одной
