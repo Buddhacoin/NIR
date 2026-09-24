@@ -32,8 +32,11 @@ not a scalable long-lived-mainnet synchronization format. Protocol v28 supplies
 the additive `nir-assignment-chain-anchor-v4` profile: a quorum-certified recent
 checkpoint commits the real genesis hash and active validator-set identity, and
 only the bounded suffix containing the candidate transaction and assignment is
-replayed. This is an explicit weak-subjectivity checkpoint, not trust-free
-validator discovery; see [`protocol-v28-exact-checkpoints.md`](protocol-v28-exact-checkpoints.md).
+replayed. The exact v4 path requires a witness-quorum trust package, an externally
+pinned policy ID, and durable minimum sequence/height floors; it does not accept a
+validator list supplied beside the proof. This is an explicit weak-subjectivity
+checkpoint, not trust-free validator discovery; see
+[`protocol-v28-exact-checkpoints.md`](protocol-v28-exact-checkpoints.md).
 
 A quorum-signed state snapshot alone is not an exact assignment proof. It does not
 intrinsically reconstruct the historical source header or the genesis-to-inclusion

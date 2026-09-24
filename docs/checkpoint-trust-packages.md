@@ -70,8 +70,10 @@ const verified = parseAndVerifyCheckpointTrustPackage(bytes, {
 ```
 
 On success, `verified.checkpoint` and `verified.trustedValidators` can seed the
-bounded v28 suffix verifier. The caller must atomically persist the accepted
-height, sequence, package hash, and policy ID before using a later package.
+bounded v28 suffix verifier. The production persistence API and bounded CLI are
+documented in [`checkpoint-trust-store.md`](checkpoint-trust-store.md). They
+verify before writing, atomically retain redundant hash-linked copies, and use
+the accepted height and sequence as the next package's anti-replay floors.
 
 ## Residual boundary
 
@@ -79,5 +81,5 @@ This package removes the need to trust a checkpoint and validator list obtained
 from one server. It does not create independence by itself, guarantee witness
 availability, or survive compromise of the configured witness threshold. A
 production deployment still needs separately controlled witness services,
-out-of-band policy-ID distribution, durable rollback-protected verifier state,
-and external audit.
+out-of-band policy-ID distribution, a hardware or external monotonic anchor for
+the whole-filesystem rollback threat, and external audit.

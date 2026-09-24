@@ -62,14 +62,18 @@ function request(version = 3) {
   };
   return { value, input: {
     assignment, assignmentProof: value.assignmentProof, checkpoint: value.checkpoint,
-    checkpointFinalityProof: value.checkpointFinalityProof ?? null,
+    checkpointTrustPackage: value.checkpointTrustPackage ?? null,
+    expectedCheckpointPolicyId: value.checkpointTrustPolicyId ?? null,
+    minimumCheckpointHeight: value.minimumCheckpointHeight ?? null,
+    minimumCheckpointSequence: value.minimumCheckpointSequence ?? null,
     commitmentTransaction: value.commitmentTransaction,
     consensusAssignment: value.consensusAssignment,
     decisionAnchor: value.decisionAnchor, expectedGenesisHash: value.genesisHash,
     expectedNetworkId: value.networkId, finalityProofs: value.finalityProofs, handoffs: [],
     inclusionAnchor: value.inclusionAnchor, sourceAnchor: value.sourceAnchor,
     transactionBlockHeight: value.transactionBlockHeight,
-    transactionProof: value.transactionProof, trustedValidators: value.trustedValidators,
+    transactionProof: value.transactionProof,
+    trustedValidators: version === 4 ? [] : value.trustedValidators,
   } };
 }
 
@@ -102,7 +106,23 @@ test("v4 exact assignment uses a bounded v28 checkpoint after a long history", (
   assert.throws(() => verifyAssignmentChainAnchor({
     ...input, transactionBlockHeight: input.checkpoint.height,
   }), /must precede the commitment transaction/);
-  assert.equal(value.checkpointFinalityProof.format, "nir-finality-proof-v5");
+  assert.equal(value.checkpointTrustPackage.format, "nir-checkpoint-trust-package-v1");
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, expectedCheckpointPolicyId: `sha3-256:${"0".repeat(64)}`,
+  }), /pinned trust policy/);
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, minimumCheckpointSequence: input.minimumCheckpointSequence + 1,
+  }), /anti-replay floor|replayed/);
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, minimumCheckpointHeight: input.minimumCheckpointHeight + 1,
+  }), /replayed/);
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, trustedValidators: value.trustedValidators,
+  }), /validators must come from the trust package/);
+  assert.throws(() => verifyAssignmentChainAnchor({
+    ...input, checkpointTrustPackage: null,
+    checkpointFinalityProof: value.checkpointTrustPackage.finalityProof,
+  }), /unwitnessed assignment checkpoint is disabled/);
 });
 
 test("v3 exact assignment rejects replay, non-genesis trust and semantic substitution", () => {

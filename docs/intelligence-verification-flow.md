@@ -449,9 +449,10 @@ stateRoot`, v27 разделяет исходную финальность и в
 финальностью цепи и проверяется через chain-proof v3. Для длинной истории
 protocol v28 и chain-proof v4 используют свежий quorum-certified checkpoint,
 который фиксирует настоящий genesis hash и активный validator-set ID. Checkpoint
-и набор валидаторов должны быть независимо получены и закреплены оператором;
-это честная weak-subjectivity граница, а не данные, которым доверяют потому, что
-их приложил submitter.
+и набор валидаторов извлекаются только из подписанного witness-quorum trust
+package. Оператор независимо закрепляет policy ID и хранит монотонные минимумы
+sequence/height; произвольная пара checkpoint/validators от submitter в exact
+path не принимается. Это честная weak-subjectivity граница.
 
 `nir.replay_store` сохраняет доменно-разделённый ключ для каждой пары
 assignment/evaluator/role. Полный набор receipt отмечается использованным одной

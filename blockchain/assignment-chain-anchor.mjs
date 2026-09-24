@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { addressFromPublicKey, canonicalJson, hashObject } from "./crypto.mjs";
-import { verifyFinalityProofChain, verifyRecentFinalityCheckpoint } from "./light-client.mjs";
+import { verifyFinalityProofChain } from "./light-client.mjs";
 import { verifyTransactionProof } from "./transaction-tree.mjs";
 import { verifyEvaluationAssignmentProof } from "./evaluation-assignment-tree.mjs";
+import { verifyCheckpointTrustPackage } from "./checkpoint-trust-package.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const ARTIFACT = /^sha256:[0-9a-f]{64}$/;
@@ -13,7 +14,9 @@ export function verifyAssignmentChainAnchor({
   consensusAssignment = null, expectedGenesisHash,
   expectedNetworkId, finalityProofs, handoffs = [], transactionBlockHeight,
   transactionProof, trustedValidators, sourceAnchor = null, decisionAnchor = null,
-  inclusionAnchor = null, checkpointFinalityProof = null,
+  inclusionAnchor = null, checkpointFinalityProof = null, checkpointTrustPackage = null,
+  expectedCheckpointPolicyId = null, minimumCheckpointHeight = null,
+  minimumCheckpointSequence = null,
 }) {
   const exactV2 = assignment?.format === "nir-finalized-evaluation-assignment-v2";
   const exactV2Fields = [
@@ -43,10 +46,25 @@ export function verifyAssignmentChainAnchor({
       assignment.parents.length > 32)) {
     throw new Error("assignment v2 schema is invalid");
   }
-  const compactCheckpoint = checkpointFinalityProof === null ? null
-    : verifyRecentFinalityCheckpoint(checkpointFinalityProof, {
-      expectedGenesisHash, expectedNetworkId, trustedValidators,
+  if (checkpointFinalityProof !== null) {
+    throw new Error("unwitnessed assignment checkpoint is disabled");
+  }
+  let checkpointValidators = trustedValidators;
+  let compactCheckpoint = null;
+  if (checkpointTrustPackage !== null) {
+    if (!Array.isArray(trustedValidators) || trustedValidators.length !== 0) {
+      throw new Error("assignment checkpoint validators must come from the trust package");
+    }
+    const verifiedPackage = verifyCheckpointTrustPackage(checkpointTrustPackage, {
+      expectedChainIdentityGenesisHash: expectedGenesisHash,
+      expectedNetworkId,
+      expectedPolicyId: expectedCheckpointPolicyId,
+      minimumCheckpointHeight,
+      minimumSequence: minimumCheckpointSequence,
     });
+    compactCheckpoint = verifiedPackage.checkpoint;
+    checkpointValidators = verifiedPackage.trustedValidators;
+  }
   if (compactCheckpoint && !exactV2) {
     throw new Error("recent assignment checkpoint requires assignment v2");
   }
@@ -63,7 +81,7 @@ export function verifyAssignmentChainAnchor({
     throw new Error("recent assignment checkpoint must precede the commitment transaction");
   }
   const tip = verifyFinalityProofChain(finalityProofs, {
-    checkpoint, expectedNetworkId, handoffs, trustedValidators,
+    checkpoint, expectedNetworkId, handoffs, trustedValidators: checkpointValidators,
     expectedChainIdentityGenesisHash: compactCheckpoint ? expectedGenesisHash : null,
   });
   const headerAnchor = (height) => {

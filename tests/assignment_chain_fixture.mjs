@@ -13,6 +13,10 @@ import {
 } from "../blockchain/constants.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
+import {
+  assembleCheckpointTrustPackage, createCheckpointWitnessAttestation,
+  createCheckpointWitnessPolicy,
+} from "../blockchain/checkpoint-trust-package.mjs";
 import { createTransactionProof } from "../blockchain/transaction-tree.mjs";
 import {
   createEpochRandomnessCommit, createEpochRandomnessReveal,
@@ -26,6 +30,7 @@ const members = (wallets, prefix) => wallets.map((wallet, index) => ({
 const validators = Array.from({ length: 4 }, generateWallet);
 const evaluators = Array.from({ length: 4 }, generateWallet);
 const beacons = Array.from({ length: 4 }, generateWallet);
+const checkpointWitnesses = Array.from({ length: 4 }, generateWallet);
 const treasury = generateWallet();
 const submitter = generateWallet();
 const validatorMembers = members(validators, "validator");
@@ -65,6 +70,8 @@ const sign = (proposal) => finalizeBlock(proposal, [
   ...validators.filter((wallet) => wallet.address !== proposal.proposer).slice(0, 2),
 ]);
 let compactCheckpointBlock = null;
+let checkpointTrustPackage = null;
+let checkpointTrustPolicyId = null;
 if (v4) {
   const activationHeight = 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
   chain.appendBlock(sign(chain.buildBlock({
@@ -79,6 +86,23 @@ if (v4) {
     chain.appendBlock(sign(chain.buildBlock({ timestamp: chain.height + 1 })));
   }
   compactCheckpointBlock = chain.blocks().at(-1);
+  const checkpointProof = createFinalityProof(compactCheckpointBlock);
+  const policy = createCheckpointWitnessPolicy({
+    chainIdentityGenesisHash: genesis.hash, generation: 1, networkId: chain.networkId,
+    threshold: 3, witnesses: members(checkpointWitnesses, "checkpoint-witness"),
+  });
+  const sequence = 1;
+  const attestations = checkpointWitnesses.slice(0, 3).map((wallet, index) =>
+    createCheckpointWitnessAttestation({
+      finalityProof: checkpointProof, observedAt: 10_000 + index,
+      operatorId: `checkpoint-witness-${index}`, policy, sequence,
+      validators: validatorMembers, wallet,
+    }));
+  checkpointTrustPackage = assembleCheckpointTrustPackage({
+    attestations, finalityProof: checkpointProof, policy, sequence,
+    validators: validatorMembers,
+  });
+  checkpointTrustPolicyId = policy.policyId;
 }
 const artifactHash = `sha256:${fingerprint("candidate")}`;
 const contentHash = `sha256:${fingerprint("candidate-content")}`;
@@ -149,7 +173,10 @@ process.stdout.write(JSON.stringify({
       validatorSetId: compactCheckpointBlock.validatorSetId,
     } : {}),
   },
-  checkpointFinalityProof: v4 ? createFinalityProof(compactCheckpointBlock) : undefined,
+  checkpointTrustPackage: v4 ? checkpointTrustPackage : undefined,
+  checkpointTrustPolicyId: v4 ? checkpointTrustPolicyId : undefined,
+  minimumCheckpointHeight: v4 ? compactCheckpointBlock.height : undefined,
+  minimumCheckpointSequence: v4 ? checkpointTrustPackage.sequence : undefined,
   commitmentTransaction: admission,
   evaluators: challenge.committee.map((address) =>
     publicWallet(evaluators.find((wallet) => wallet.address === address))),

@@ -4,7 +4,9 @@ Legacy proofs authenticate the progress-admission transaction and finalized
 state anchor. Protocol-v26 V2 proofs additionally authenticate a consensus
 assignment projection. Protocol-v27 V3 proofs bind the complete v2 semantic
 assignment, separate source/decision/inclusion anchors, and genesis-continuous
-finality; legacy formats remain byte-for-byte unchanged and non-exact.
+finality. Protocol-v28 V4 proofs start at a witness-quorum checkpoint trust
+package whose policy ID and replay floors are pinned outside the proof; legacy
+formats remain byte-for-byte unchanged and non-exact.
 """
 
 from __future__ import annotations
@@ -152,20 +154,20 @@ class AssignmentChainProofV3:
 
 @dataclass(frozen=True, slots=True)
 class AssignmentChainProofV4(AssignmentChainProofV3):
-    checkpoint_finality_proof: dict[str, Any]
+    checkpoint_trust_package: dict[str, Any]
 
     @classmethod
     def from_dict(cls, value: object) -> "AssignmentChainProofV4":
         if not isinstance(value, dict) or value.get("format") != PROOF_V4_FORMAT or (
             set(value) != {
-                "assignmentProof", "checkpointFinalityProof", "commitmentTransaction",
+                "assignmentProof", "checkpointTrustPackage", "commitmentTransaction",
                 "consensusAssignment", "decisionAnchor", "finalityProofs", "format",
                 "inclusionAnchor", "sourceAnchor", "transactionBlockHeight", "transactionProof",
             }
-        ) or not isinstance(value.get("checkpointFinalityProof"), dict):
+        ) or not isinstance(value.get("checkpointTrustPackage"), dict):
             raise ProtocolError("assignment chain proof v4 schema is invalid")
         legacy = dict(value)
-        checkpoint = legacy.pop("checkpointFinalityProof")
+        checkpoint = legacy.pop("checkpointTrustPackage")
         legacy["format"] = PROOF_V3_FORMAT
         base = AssignmentChainProofV3.from_dict(legacy)
         result = cls(
@@ -177,17 +179,17 @@ class AssignmentChainProofV4(AssignmentChainProofV3):
             assignment_proof=base.assignment_proof,
             source_anchor=base.source_anchor, decision_anchor=base.decision_anchor,
             inclusion_anchor=base.inclusion_anchor,
-            checkpoint_finality_proof=checkpoint,
+            checkpoint_trust_package=checkpoint,
         )
         result.as_dict()
         return result
 
     def as_dict(self) -> dict[str, object]:
-        if not isinstance(self.checkpoint_finality_proof, dict):
-            raise ProtocolError("assignment checkpoint finality proof is invalid")
+        if not isinstance(self.checkpoint_trust_package, dict):
+            raise ProtocolError("assignment checkpoint trust package is invalid")
         value = super().as_dict()
         value["format"] = PROOF_V4_FORMAT
-        value["checkpointFinalityProof"] = self.checkpoint_finality_proof
+        value["checkpointTrustPackage"] = self.checkpoint_trust_package
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
                              sort_keys=True).encode("utf-8")
         if len(encoded) > MAX_PROOF_BYTES:
@@ -424,6 +426,9 @@ def verify_assignment_chain_anchor_v3(
     handoffs: Sequence[dict[str, Any]] = (),
     expected_network_id: str,
     expected_genesis_hash: str,
+    expected_checkpoint_policy_id: str | None = None,
+    minimum_checkpoint_height: int | None = None,
+    minimum_checkpoint_sequence: int | None = None,
 ) -> AssignmentChainAnchorResult:
     """Verify a v27 assignment whose complete semantic preimage is consensus-derived."""
     if (
@@ -431,7 +436,9 @@ def verify_assignment_chain_anchor_v3(
         or not isinstance(proof, AssignmentChainProofV3)
         or not isinstance(checkpoint, dict)
         or not isinstance(trusted_validators, (list, tuple))
-        or not 4 <= len(trusted_validators) <= MAX_VALIDATORS
+        or (not isinstance(proof, AssignmentChainProofV4)
+            and not 4 <= len(trusted_validators) <= MAX_VALIDATORS)
+        or (isinstance(proof, AssignmentChainProofV4) and len(trusted_validators) != 0)
         or not isinstance(handoffs, (list, tuple))
         or len(handoffs) > MAX_VALIDATORS
         or assignment.network_id != expected_network_id
@@ -462,7 +469,24 @@ def verify_assignment_chain_anchor_v3(
         "trustedValidators": list(trusted_validators),
     }
     if isinstance(proof, AssignmentChainProofV4):
-        request["checkpointFinalityProof"] = proof.checkpoint_finality_proof
+        if (
+            not isinstance(expected_checkpoint_policy_id, str)
+            or not expected_checkpoint_policy_id.startswith("sha3-256:")
+            or len(expected_checkpoint_policy_id) != 73
+            or any(character not in "0123456789abcdef"
+                   for character in expected_checkpoint_policy_id[9:])
+            or not isinstance(minimum_checkpoint_height, int)
+            or isinstance(minimum_checkpoint_height, bool)
+            or not 1 <= minimum_checkpoint_height <= 2**53 - 1
+            or not isinstance(minimum_checkpoint_sequence, int)
+            or isinstance(minimum_checkpoint_sequence, bool)
+            or not 0 <= minimum_checkpoint_sequence <= 2**53 - 1
+        ):
+            raise ProtocolError("assignment v4 checkpoint trust policy is required")
+        request["checkpointTrustPackage"] = proof.checkpoint_trust_package
+        request["expectedCheckpointPolicyId"] = expected_checkpoint_policy_id
+        request["minimumCheckpointHeight"] = minimum_checkpoint_height
+        request["minimumCheckpointSequence"] = minimum_checkpoint_sequence
     try:
         encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":"),
                              sort_keys=True).encode("utf-8")

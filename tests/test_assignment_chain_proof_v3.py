@@ -26,9 +26,16 @@ class AssignmentChainProofV3Tests(unittest.TestCase):
             ["node", str(helper)], check=True, stdout=subprocess.PIPE, env=environment,
         )
         cls.fixture = json.loads(completed.stdout)
+        completed_v4 = subprocess.run(
+            ["node", str(helper)], check=True, stdout=subprocess.PIPE,
+            env={**os.environ, "NIR_ASSIGNMENT_FIXTURE_V4": "1"},
+        )
+        cls.fixture_v4 = json.loads(completed_v4.stdout)
 
     def setUp(self):
-        value = self.fixture
+        self._build(self.fixture)
+
+    def _build(self, value, *, v4=False):
         transaction = value["commitmentTransaction"]
         leaf = value["consensusAssignment"]
         keys = {item["address"]: item["publicKey"] for item in value["evaluators"]}
@@ -63,7 +70,8 @@ class AssignmentChainProofV3Tests(unittest.TestCase):
             recipient=leaf["recipient"], parents=tuple(leaf["parents"]),
             evaluators=evaluators, expires_at_height=leaf["expiresAtHeight"],
         )
-        self.proof = AssignmentChainProofV3(
+        proof_type = AssignmentChainProofV4 if v4 else AssignmentChainProofV3
+        proof_arguments = dict(
             finality_proofs=tuple(value["finalityProofs"]),
             commitment_transaction=transaction, transaction_proof=value["transactionProof"],
             transaction_block_height=value["transactionBlockHeight"],
@@ -72,6 +80,9 @@ class AssignmentChainProofV3Tests(unittest.TestCase):
             decision_anchor=FinalityAnchor.from_dict(value["decisionAnchor"]),
             inclusion_anchor=FinalityAnchor.from_dict(value["inclusionAnchor"], inclusion=True),
         )
+        if v4:
+            proof_arguments["checkpoint_trust_package"] = value["checkpointTrustPackage"]
+        self.proof = proof_type(**proof_arguments)
 
     def verify(self, assignment=None, proof=None, checkpoint=None, handoffs=()):
         return verify_assignment_chain_anchor_v3(
@@ -102,9 +113,39 @@ class AssignmentChainProofV3Tests(unittest.TestCase):
             assignment_proof=self.proof.assignment_proof,
             source_anchor=self.proof.source_anchor, decision_anchor=self.proof.decision_anchor,
             inclusion_anchor=self.proof.inclusion_anchor,
-            checkpoint_finality_proof=self.proof.finality_proofs[0],
+            checkpoint_trust_package={"format": "nir-checkpoint-trust-package-v1"},
         )
         self.assertEqual(AssignmentChainProofV4.from_dict(v4.as_dict()), v4)
+        with self.assertRaisesRegex(ProtocolError, "checkpoint trust policy is required"):
+            verify_assignment_chain_anchor_v3(
+                assignment=self.assignment, proof=v4,
+                checkpoint=self.fixture["checkpoint"], trusted_validators=(), handoffs=(),
+                expected_network_id=self.fixture["networkId"],
+                expected_genesis_hash=self.fixture["genesisHash"],
+            )
+
+    def test_v4_python_gate_uses_only_pinned_package_and_replay_floors(self):
+        self._build(self.fixture_v4, v4=True)
+        value = self.fixture_v4
+        options = dict(
+            assignment=self.assignment, proof=self.proof, checkpoint=value["checkpoint"],
+            trusted_validators=(), handoffs=(), expected_network_id=value["networkId"],
+            expected_genesis_hash=value["genesisHash"],
+            expected_checkpoint_policy_id=value["checkpointTrustPolicyId"],
+            minimum_checkpoint_height=value["minimumCheckpointHeight"],
+            minimum_checkpoint_sequence=value["minimumCheckpointSequence"],
+        )
+        result = verify_assignment_chain_anchor_v3(**options)
+        self.assertTrue(result.exact_assignment_included)
+        with self.assertRaises(ProtocolError):
+            verify_assignment_chain_anchor_v3(
+                **{**options, "minimum_checkpoint_sequence":
+                   value["minimumCheckpointSequence"] + 1},
+            )
+        with self.assertRaises(ProtocolError):
+            verify_assignment_chain_anchor_v3(
+                **{**options, "trusted_validators": value["trustedValidators"]},
+            )
 
     def test_semantic_field_and_public_key_substitution_fail_closed(self):
         with self.assertRaises(ProtocolError):
