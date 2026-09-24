@@ -41,7 +41,10 @@ that independence.
 | Run the valueless local network | [Start using the local prototype](#start-using-the-local-prototype) |
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
-| Understand intelligence mining | [`docs/mining.md`](docs/mining.md) |
+| Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:preflight` |
+| Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
+| Follow every user feature step by step | [`docs/user-journeys.md`](docs/user-journeys.md) |
+| Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
 | Propose code or documentation safely | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
@@ -228,8 +231,18 @@ dependency order and measurable exit conditions are defined by the
 
 4. For four independent validator processes, follow
    [`docs/network.md`](docs/network.md).
-5. For contribution roles and the intended mining workflow, read
-   [`docs/mining.md`](docs/mining.md). For wallet and transfer commands, read
+5. On macOS, run the read-only miner check and then the corrected local demo:
+
+   ```bash
+   npm run mine:preflight
+   npm run mine:demo
+   ```
+
+   This is a valueless local simulation, not a public mining connection.
+6. For contribution roles and the intended mining workflow, read
+   [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
+   [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),
+   and [`docs/mining.md`](docs/mining.md). For wallet and transfer commands, read
    [`docs/wallet.md`](docs/wallet.md) and [`docs/node.md`](docs/node.md).
 
 ## Core idea
@@ -509,12 +522,14 @@ in a mempool, independently executes proposals, and requires a remote
 To try the current local mining flow:
 
 ```bash
+npm run mine:preflight
 npm run mine:demo
 ```
 
 This command uses valueless local units. It does not mine tradeable NIR or join
 a public network. The seven production roles and their intended one-screen user
-flow are explained in `docs/mining.md`.
+flow is explained in `docs/miner-quickstart-macos.md`; the model/application
+adapter boundary is documented in `docs/intelligence-verification-flow.md`.
 
 ## Offline vault prototype
 

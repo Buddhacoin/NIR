@@ -5,13 +5,12 @@ import {
   createCandidateBond,
   createProgressCommitment,
   createProgressClaim,
-  createTransfer,
   finalizeBlock,
   formatNir,
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import {
-  MIN_PROGRESS_CANDIDATE_BOND, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
+  INITIAL_EPOCH_REWARD, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "./constants.mjs";
 import {
   createEpochRandomnessCommit,
@@ -25,7 +24,6 @@ const evaluators = Array.from({ length: 4 }, generateWallet);
 const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
 const founder = generateWallet();
 const alice = generateWallet();
-const bob = generateWallet();
 const genesisTimestamp = Date.now() - TREASURY_VESTING_MS;
 const baselineArtifact = `sha256:${createHash("sha256")
   .update("baseline")
@@ -87,7 +85,7 @@ const progressBond = createCandidateBond({
   candidateId: admission.candidateId,
   candidateOwner: alice.address,
   purpose: "progress",
-  amount: MIN_PROGRESS_CANDIDATE_BOND.toString(),
+  amount: INITIAL_EPOCH_REWARD.toString(),
   fee: "0",
   nonce: chain.nextNonce(founder.address),
 });
@@ -154,7 +152,7 @@ const evaluation = chain.prepareProgressEvaluation({
     .update("candidate-behavior")
     .digest("hex"),
   capabilitiesBps: { "code-v1": 8_400, "reasoning-v1": 8_200 },
-  gainPpm: 396_112,
+  gainPpm: 90_000,
   generalityBps: 10_000,
   reproducibilityBps: 10_000,
   safetyBps: 10_000,
@@ -177,24 +175,12 @@ const rewardBlock = chain.buildBlock({
   timestamp: admissionTimestamp + 1,
 });
 chain.appendBlock(finalizeBlock(rewardBlock, quorumFor(rewardBlock)));
-
-const payment = createTransfer({
-  wallet: alice,
-  networkId: chain.networkId,
-  recipient: bob.address,
-  amount: "200000000",
-  nonce: chain.nextNonce(alice.address),
-  fee: "1000",
-});
-const paymentBlock = chain.buildBlock({
-  transactions: [payment],
-  timestamp: admissionTimestamp + 2,
-});
-chain.appendBlock(finalizeBlock(paymentBlock, quorumFor(paymentBlock)));
+const pendingReward = chain.accountState(alice.address).resources.pendingProgressReward;
 
 console.log(`height: ${chain.height}`);
 console.log(`issued: ${formatNir(chain.issued)}`);
-console.log(`alice: ${formatNir(chain.balance(alice.address))}`);
-console.log(`bob: ${formatNir(chain.balance(bob.address))}`);
+console.log(`alice available: ${formatNir(chain.balance(alice.address))}`);
+console.log(`alice pending: ${formatNir(BigInt(pendingReward.amount))}`);
+console.log(`reward unlock height: ${pendingReward.nextUnlockHeight}`);
 console.log(`final block: ${chain.tipHash}`);
 console.log("signature suite: ML-DSA-65");
