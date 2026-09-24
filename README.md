@@ -13,6 +13,40 @@ network rules, encrypted vaults, and multisignature recovery. The repository
 already contains the cryptographic vault core; a reviewed desktop/mobile wallet
 and hardware-key integration are still future work.
 
+## Current status
+
+NIR is an open-source, valueless local developer network preparing for a public
+developer testnet. The ledger, consensus, post-quantum accounts, encrypted
+vaults, wallet preview, validator processes, protocol upgrades, recovery tools,
+release verification and launch-evidence workflow are implemented and tested in
+this repository. There is no public NIR network, sale, exchange market or
+monetary promise today.
+
+The next milestone is operational rather than promotional: independent
+operators must run the existing validator, beacon and archive roles on separate
+machines, execute the published failure and recovery drills, and retain signed
+evidence for external review. A local multi-process rehearsal cannot establish
+that independence.
+
+## Start here
+
+| You want to… | Read or run |
+|---|---|
+| Understand the idea in five minutes | [Why NIR exists](#why-nir-exists) and [Core idea](#core-idea) |
+| See what is actually implemented | [What is implemented now](#what-is-implemented-now) |
+| Run the valueless local network | [Start using the local prototype](#start-using-the-local-prototype) |
+| Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
+| Understand intelligence mining | [`docs/mining.md`](docs/mining.md) |
+| Operate a test validator | [`docs/network.md`](docs/network.md) |
+| Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
+| Review launch requirements and limitations | [`docs/launch-readiness.md`](docs/launch-readiness.md) and [`docs/public-testnet-gates.md`](docs/public-testnet-gates.md) |
+| Inspect the ordered roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
+
+Every public claim should be checked against the repository state and the
+launch-gate evidence. Passing local tests means the documented implementation
+behaves reproducibly in the tested environment; it is not a substitute for an
+independent audit or a sustained public network.
+
 ## Why NIR exists
 
 Ordinary AI markets pay for usage whether an answer is correct, novel, or safe.

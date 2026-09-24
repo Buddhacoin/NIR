@@ -1,5 +1,48 @@
 # Participation and incentives
 
+## Public developer-testnet operator pilot
+
+NIR is preparing a closed, valueless multi-host rehearsal before any public
+developer-testnet endpoint is announced. Expressing interest does not require
+buying NIR, sending funds, exposing a private key or operating a real-value
+service. Test units have no monetary value.
+
+The initial cohort needs independently administered roles:
+
+- four validator operators, each controlling its own machine, finality vault,
+  transport key and TLS private key;
+- at least four beacon operators with separate keys and failure domains;
+- at least two archive operators retaining independently administered backup
+  copies and performing isolated restore drills;
+- at least two security reviewers who do not share administration with the
+  validator quorum.
+
+One person may volunteer for the rehearsal, but identities controlled by one
+person or organization do not count as independent operators. The protocol can
+prove that keys and signatures are distinct; it cannot prove who controls them.
+
+An operator should be able to provide a dedicated or safely isolated computer,
+stable connectivity, current system updates, Node.js 26+, several hours for a
+scheduled rehearsal, encrypted offline backup media, and a public contact for
+incident coordination. No participant should ever send a vault file, password,
+seed, private key or remote-administration credential to another participant.
+
+The cohort proceeds only in this order:
+
+1. review the valueless/resettable scope and the canonical
+   [gate matrix](public-testnet-gates.md);
+2. independently verify a signed release and create keys locally;
+3. exchange only public identities, endpoints and certificate fingerprints;
+4. complete host preflight before exposing a service;
+5. run the private multi-host rehearsal and failure drills;
+6. publish signed evidence hashes and limitations for independent review;
+7. open a public developer testnet only after every required gate passes.
+
+The detailed validator procedure is in
+[validator-ceremony-onboarding.md](validator-ceremony-onboarding.md). Network
+operations are documented in [network.md](network.md), and the current launch
+boundary is maintained in [launch-readiness.md](launch-readiness.md).
+
 Frontier-model training will often require organizations with substantial
 compute. NIR therefore separates invention from the other work needed to prove
 and secure it. A production reward can compensate several roles:
