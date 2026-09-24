@@ -88,7 +88,8 @@ NIR не платит за запущенный вентилятор, колич
 | Capability memory/frontier | Реализовано | Запрещает известный artifact/content/behavior, требует известных родителей и минимум 100 bps нового frontier gain. |
 | Chain reward и escrow | Реализовано в прототипе | Проверяет admission, approved safety policy, frontier transition, committee signatures, score, supply cap, collateral ceiling и 64-блочный escrow. |
 | Реальное исполнение модели | Не реализовано | Нет sandbox/TEE runner и криптографической подписи execution transcript оператором. |
-| Подключение локального приложения/API | Не реализовано | Нет daemon, macOS UI, submission gateway или production adapter transport. Контракт ниже — проектируемая граница. |
+| Подключение локального приложения | Экспериментальный transport реализован | `nir.application_adapter` запускает argv без shell, обменивается строгим framed NDJSON, ограничивает schema/размер/время и завершает process group. Это не sandbox и пока не связано с execution bundle или chain. |
+| Подключение удалённого API | Не реализовано | Нет submission gateway, mTLS/одноразовых credentials или production egress policy. Контракт ниже — проектируемая граница. |
 | Измерение энергии | Не реализовано как доверенное измерение | Поле и обязательный chain gate есть, но источник `energy_attested` пока утверждается оценщиками. |
 | Независимость компаний | Не доказуема кодом | Уникальные ключи и operator IDs не доказывают разных владельцев, хостинг или отсутствие сговора. |
 | Публичный майнинг и реальные NIR | Недоступно | Нет production/mainnet допуска; тестовые локальные сценарии не обещают доход. |
@@ -136,23 +137,59 @@ entrypoint. Импорт `nir.runner` не исполняет код канди�
 
 ## Планируемый контракт адаптера для моделей и приложений
 
-Этот раздел — **draft API**, а не активный consensus format. Он нужен, чтобы
-локальная модель, desktop-приложение и удалённый inference service выглядели
-одинаково для изолированного runner. Любая будущая реализация должна получить
-новое версионированное имя, тестовые векторы и аудит до допуска в сеть.
+Этот раздел — **экспериментальный API**, а не активный consensus format.
+Локальный child-process transport реализован в `nir.application_adapter`;
+remote transport, привязка его результатов к `ExecutionTranscript` и production
+изоляция ещё не реализованы. Любой допуск в сеть требует тестовых векторов,
+версии consensus policy и независимого аудита.
 
 ### Транспорт
 
-Предпочтительный локальный транспорт — дочерний процесс и framed NDJSON через
+Реализованный локальный транспорт — дочерний процесс и framed NDJSON через
 `stdin/stdout`: приложение не открывает порт, а sandbox контролирует процесс.
 Каждая строка — один UTF-8 JSON object, не более 16 MiB; неизвестные поля и
 дублированные JSON-ключи отклоняются. `stderr` считается диагностикой и не
-входит в ответ. Runner задаёт deadline и после него завершает всю process group.
+входит в ответ (текущая реализация отбрасывает его). Runner задаёт deadline и
+после него завершает process group, сначала `SIGTERM`, затем `SIGKILL`, и удаляет
+одноразовый рабочий каталог. Процесс запускается как argv с `shell=False`, в
+новой session, с закрытыми лишними descriptors и минимальным environment.
+Один deadline охватывает и неблокирующую запись request, и чтение response:
+приложение, которое перестало читать `stdin`, не может подвесить runner.
+Дополнительный environment ограничен 32 переменными/32 KiB и отклоняет имена,
+похожие на password, passphrase, private, secret, token, key, mnemonic или seed;
+credentials через этот API передавать нельзя.
+
+Важно: process group и временный каталог — это очистка жизненного цикла, а не
+изоляция. Вредоносный процесс на обычном пользовательском Mac всё ещё может
+попытаться выйти из своей session или обратиться к доступным ОС-ресурсам.
+Непроверенный adapter следует запускать только внутри отдельного sandbox/VM.
 
 Для приложения, которое нельзя запустить дочерним процессом, будущий bridge
 может использовать Unix domain socket внутри sandbox. Loopback TCP и удалённый
 HTTPS требуют отдельного профиля политики, взаимной аутентификации и
 одноразового credential. Они не получают доступ к кошельку NIR.
+
+Минимальный вызов текущего transport из runner:
+
+```python
+from nir.application_adapter import ApplicationAdapter
+
+with ApplicationAdapter(["/absolute/path/to/adapter", "--stdio"]) as app:
+    description = app.describe(challenge_seed)
+    if description.model_identity != expected_model_identity:
+        raise ValueError("committed model identity does not match")
+    result = app.evaluate(
+        case_id="opaque-7f3a",
+        input_media_type="application/json",
+        input_value={"messages": [{"role": "user", "content": "..."}]},
+        seed=case_seed,
+        timeout_ms=30_000,
+    )
+```
+
+`model_identity` пока сверяет вызывающий runner: transport не знает chain
+admission и не создаёт `ExecutionTranscript`. `maxInputBytes` относится к
+канонической JSON-кодировке `input.value`, а не ко всему request frame.
 
 ### Handshake
 

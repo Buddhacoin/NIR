@@ -5,9 +5,9 @@ mean leaving a computer to guess hashes for currency. Running the current demo
 does not create valuable NIR; the public mining network does not exist yet.
 
 Mac users should begin with the beginner-safe
-[`miner-quickstart-macos.md`](miner-quickstart-macos.md) and the read-only
-`npm run mine:preflight`. The complete evidence path and the draft boundary for
-connecting a local model, desktop application, or remote API are documented in
+[`miner-quickstart-macos.md`](miner-quickstart-macos.md) and the guided
+`npm run mine:wizard`. The complete evidence path and the experimental boundary
+for connecting a local model, desktop application, or remote API are documented in
 [`intelligence-verification-flow.md`](intelligence-verification-flow.md).
 
 ## Choose a role
@@ -136,6 +136,7 @@ that have no monetary value.
 The repository currently demonstrates local rules only:
 
 ```bash
+npm run mine:wizard
 npm run mine:preflight
 npm run mine:demo
 ```

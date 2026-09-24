@@ -52,26 +52,44 @@ cd NIR
 
 No `npm install` is required for the current local demo.
 
-## 2. Run the Mac preflight
+## 2. Use the beginner setup wizard
+
+From the repository root, run:
+
+```bash
+npm run mine:wizard
+```
+
+The wizard lists all seven roles and labels each one either `local demo
+available` or `planned only`. Enter its number. It then runs the read-only Mac
+preflight and, only when that role and computer have a real local path, prints
+one next command for you to review. It does **not** execute that command, create
+a wallet, connect to a network, or ask for a password, seed phrase, API key, or
+other secret. Selecting a planned role ends with no runnable command.
+
+The wizard never offers public-testnet mining. Its scope is always local,
+valueless practice.
+
+### Direct preflight for troubleshooting or automation
 
 The preflight is read-only. It recognizes the checkout, checks macOS, the CPU
 architecture, Node version, required entrypoints, selected role, and—most
 importantly—refuses to label anything as a public-testnet connection.
 
 ```bash
-node blockchain/miner-macos-preflight-cli.mjs
+npm run mine:preflight
 ```
 
 Continue only if the first line says `READY`. For a local payment node instead:
 
 ```bash
-node blockchain/miner-macos-preflight-cli.mjs --role payment-node
+npm run mine:preflight -- --role payment-node
 ```
 
 Machine-readable output is available with `--json`. This deliberately fails:
 
 ```bash
-node blockchain/miner-macos-preflight-cli.mjs --mode public-testnet
+npm run mine:preflight -- --mode public-testnet
 ```
 
 The refusal is expected until the project publishes and supports a signed
