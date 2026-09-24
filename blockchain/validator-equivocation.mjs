@@ -1,5 +1,6 @@
 import {
-  MIN_TRANSFER_FEE, RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION, SIGNATURE_ALGORITHM,
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION, MIN_TRANSFER_FEE,
+  RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION, SIGNATURE_ALGORITHM,
 } from "./constants.mjs";
 import {
   addressFromPublicKey,
@@ -44,9 +45,12 @@ function unsignedTransaction(transaction) {
 
 function assertHeader(header) {
   const recoveryFormat = header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
-  exact(header, recoveryFormat ? [...LEGACY_HEADER_FIELDS, "recoveryStateCommitment"] :
-    LEGACY_HEADER_FIELDS, "validator equivocation block header");
-  if (header.format !== (recoveryFormat ? "nir-finality-header-v2" : "nir-finality-header-v1") ||
+  const assignmentFormat = header?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
+  exact(header, recoveryFormat ? [...LEGACY_HEADER_FIELDS, "recoveryStateCommitment",
+    ...(assignmentFormat ? ["evaluationAssignmentRoot"] : [])] : LEGACY_HEADER_FIELDS,
+  "validator equivocation block header");
+  if (header.format !== (assignmentFormat ? "nir-finality-header-v3" :
+    recoveryFormat ? "nir-finality-header-v2" : "nir-finality-header-v1") ||
       typeof header.networkId !== "string" || header.networkId.length < 1 ||
       header.networkId.length > 128 || !Number.isSafeInteger(header.height) ||
       header.height < 1 || !Number.isSafeInteger(header.timestamp) || header.timestamp < 0 ||
@@ -55,6 +59,7 @@ function assertHeader(header) {
       [header.accountStateRoot, header.bodyHash, header.capabilityMemoryRoot,
         header.peerRegistryHash, header.previousHash,
         ...(recoveryFormat ? [header.recoveryStateCommitment] : []), header.stateRoot,
+        ...(assignmentFormat ? [header.evaluationAssignmentRoot] : []),
         header.transactionsRoot].some((value) => !HASH.test(value ?? ""))) {
     throw new Error("validator equivocation block header is invalid");
   }

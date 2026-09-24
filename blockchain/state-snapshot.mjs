@@ -4,7 +4,14 @@ import { capabilityMemorySnapshotRoot } from "./memory.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
 import { validatorRecoveryStateCommitment } from "./validator-recovery.mjs";
-import { RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION } from "./constants.mjs";
+import {
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+  RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
+} from "./constants.mjs";
+import {
+  assertActiveEvaluationAssignmentRegistry,
+  evaluationAssignmentRoot,
+} from "./evaluation-assignment-tree.mjs";
 
 const FORMAT = "nir-state-snapshot-v1";
 export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -23,6 +30,8 @@ function snapshotPayload(chain) {
     networkId: chain.networkId,
     ...(chain.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
       ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
+    ...(chain.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? { evaluationAssignmentRoot: chain.evaluationAssignmentRoot } : {}),
     state: exported.state,
     stateRoot: chain.stateRoot,
     tipHash: chain.tipHash,
@@ -53,6 +62,9 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
       (snapshot.state?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
         ? !/^[0-9a-f]{64}$/.test(snapshot.recoveryStateCommitment ?? "")
         : snapshot.recoveryStateCommitment !== undefined) ||
+      (snapshot.state?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+        ? !/^[0-9a-f]{64}$/.test(snapshot.evaluationAssignmentRoot ?? "")
+        : snapshot.evaluationAssignmentRoot !== undefined) ||
       !/^[0-9a-f]{64}$/.test(snapshot.snapshotHash ?? "") ||
       Buffer.byteLength(canonicalJson(snapshot)) > MAX_SNAPSHOT_BYTES) {
     throw new Error("state snapshot header is invalid");
@@ -80,6 +92,23 @@ function verifySnapshotContent(snapshot, { expectedNetworkId, trustedValidators 
       (!recoveryCommitmentActive && (snapshot.state?.recoveryStateCommitment !== undefined ||
         snapshot.checkpoint?.recoveryStateCommitment !== undefined))) {
     throw new Error("state snapshot recovery commitment is invalid");
+  }
+  const assignmentRootActive = snapshot.state?.protocolVersion >=
+    EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
+  const derivedAssignmentRoot = assignmentRootActive
+    ? evaluationAssignmentRoot(snapshot.state?.evaluationAssignments) : undefined;
+  if (assignmentRootActive) {
+    assertActiveEvaluationAssignmentRegistry(
+      snapshot.state?.progressCommitments, snapshot.state?.evaluationAssignments,
+    );
+  }
+  if ((assignmentRootActive && (
+    snapshot.evaluationAssignmentRoot !== derivedAssignmentRoot ||
+    snapshot.state?.evaluationAssignmentRoot !== derivedAssignmentRoot ||
+    snapshot.checkpoint?.evaluationAssignmentRoot !== derivedAssignmentRoot)) ||
+      (!assignmentRootActive && (snapshot.state?.evaluationAssignmentRoot !== undefined ||
+        snapshot.checkpoint?.evaluationAssignmentRoot !== undefined))) {
+    throw new Error("state snapshot evaluation assignment commitment is invalid");
   }
   if (!snapshot.checkpoint || snapshot.checkpoint.height !== snapshot.height ||
       snapshot.checkpoint.networkId !== snapshot.networkId ||

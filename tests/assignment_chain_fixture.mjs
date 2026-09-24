@@ -4,12 +4,17 @@ import {
   NirChain, createCandidateBond, createProgressCommitment, finalizeBlock,
 } from "../blockchain/chain.mjs";
 import {
-  MIN_PROGRESS_CANDIDATE_BOND, PROTOCOL_VERSION, SAFETY_POLICY_V1_COMMITMENT,
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION, MIN_PROGRESS_CANDIDATE_BOND,
+  SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { createTransactionProof } from "../blockchain/transaction-tree.mjs";
+import {
+  createEpochRandomnessCommit, createEpochRandomnessReveal,
+  createProgressBeacon, createProgressBeaconShare,
+} from "../blockchain/operators.mjs";
 
 const fingerprint = (label) => createHash("sha256").update(label).digest("hex");
 const members = (wallets, prefix) => wallets.map((wallet, index) => ({
@@ -30,7 +35,7 @@ const chain = new NirChain({
     capabilitiesBps: { "reasoning-v1": 100 },
   }],
   evaluators: members(evaluators, "evaluator"),
-  genesisProtocolVersion: PROTOCOL_VERSION + 1,
+  genesisProtocolVersion: EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   genesisTimestamp: 0,
   networkId: "nir-assignment-anchor-test",
   safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
@@ -63,26 +68,64 @@ const admissionBlock = sign(chain.buildBlock({
   transactions: [admission], timestamp: TREASURY_VESTING_MS,
 }));
 chain.appendBlock(admissionBlock);
-const anchorBlock = sign(chain.buildBlock({
-  transactions: [], timestamp: TREASURY_VESTING_MS + 1,
+const status = chain.epochRandomnessStatus();
+const epochMembers = status.committee.map((address) =>
+  beacons.find((wallet) => wallet.address === address));
+const secrets = epochMembers.map((_, index) => fingerprint(`epoch-secret-${index}`));
+const epochCommitBlock = sign(chain.buildBlock({
+  epochRandomnessCommits: epochMembers.map((wallet, index) =>
+    createEpochRandomnessCommit({
+      wallet, networkId: chain.networkId, round: status.round, secret: secrets[index],
+    })),
+  timestamp: TREASURY_VESTING_MS,
 }));
-chain.appendBlock(anchorBlock);
+chain.appendBlock(epochCommitBlock);
+const epochRevealBlock = sign(chain.buildBlock({
+  epochRandomnessReveals: epochMembers.map((wallet, index) =>
+    createEpochRandomnessReveal({
+      wallet, networkId: chain.networkId, round: status.round, secret: secrets[index],
+    })),
+  timestamp: TREASURY_VESTING_MS,
+}));
+chain.appendBlock(epochRevealBlock);
+const assignedBeacons = chain.progressBeaconCommittee(admission.candidateId)
+  .map((address) => beacons.find((wallet) => wallet.address === address));
+const round = chain.height + 1;
+const challengeBlock = sign(chain.buildBlock({
+  progressBeacons: [createProgressBeacon({
+    networkId: chain.networkId, candidateId: admission.candidateId, round,
+    shares: assignedBeacons.map((wallet, index) => createProgressBeaconShare({
+      wallet, networkId: chain.networkId, candidateId: admission.candidateId, round,
+      value: fingerprint(`progress-share-${index}`),
+    })),
+  })],
+  timestamp: TREASURY_VESTING_MS + 1,
+}));
+chain.appendBlock(challengeBlock);
+const challenge = chain.progressChallenge(admission.candidateId);
+const assignmentWitness = chain.evaluationAssignmentProof(admission.candidateId);
 
 process.stdout.write(JSON.stringify({
   checkpoint: {
-    height: 0, protocolVersion: PROTOCOL_VERSION + 1,
+    height: 0, protocolVersion: EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
     stateRoot: genesis.stateRoot, tipHash: genesis.hash,
   },
   commitmentTransaction: admission,
-  evaluator: publicWallet(evaluators[0]),
+  evaluators: challenge.committee.map((address) =>
+    publicWallet(evaluators.find((wallet) => wallet.address === address))),
   finalityProofs: [
     createFinalityProof(bondBlock), createFinalityProof(admissionBlock),
-    createFinalityProof(anchorBlock),
+    createFinalityProof(epochCommitBlock), createFinalityProof(epochRevealBlock),
+    createFinalityProof(challengeBlock),
   ],
-  finalizedHeight: anchorBlock.height,
+  finalizedHeight: challengeBlock.height,
   genesisHash: genesis.hash,
   networkId: chain.networkId,
-  stateRoot: anchorBlock.stateRoot,
+  stateRoot: challengeBlock.stateRoot,
+  challengeEpoch: challenge.challengeEpoch,
+  challengeSeed: challenge.challengeSeed,
+  consensusAssignment: assignmentWitness.assignment,
+  assignmentProof: assignmentWitness.inclusionProof,
   transactionBlockHeight: admissionBlock.height,
   transactionProof: createTransactionProof(admissionBlock.transactions, 0),
   trustedValidators: validatorMembers,

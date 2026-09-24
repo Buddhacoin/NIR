@@ -1,9 +1,10 @@
-"""Honest light-client anchor for an experimental evaluation assignment.
+"""Honest light-client anchor for a finalized evaluation assignment.
 
-Current consensus commits the progress admission transaction and a monolithic
-state root, but exposes no Merkle proof for the derived challenge/evaluator
-assignment.  Consequently this verifier proves the former and anchors the
-claimed finalized state root; it deliberately returns ``exact_assignment_included=False``.
+Legacy proofs authenticate the progress-admission transaction and finalized
+state anchor. Protocol-v26 V2 proofs additionally authenticate the consensus
+assignment projection with a sparse Merkle witness. That projection omits fields
+created outside consensus, so this verifier deliberately keeps
+``exact_assignment_included=False`` for every currently supported format.
 """
 
 from __future__ import annotations
@@ -22,7 +23,10 @@ from .runner import CandidateCommitment
 
 
 MAX_PROOF_BYTES = 32 * 1024 * 1024
-PROOF_FORMAT = "nir-assignment-chain-anchor-v1-experimental"
+MAX_FINALITY_PROOFS = 512
+MAX_VALIDATORS = 256
+LEGACY_PROOF_FORMAT = "nir-assignment-chain-anchor-v1-experimental"
+PROOF_FORMAT = "nir-assignment-chain-anchor-v2-experimental"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,20 +35,33 @@ class AssignmentChainProof:
     commitment_transaction: dict[str, Any]
     transaction_proof: dict[str, Any]
     transaction_block_height: int
+    consensus_assignment: dict[str, Any] | None = None
+    assignment_proof: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, value: object) -> "AssignmentChainProof":
-        expected = {
+        current_expected = {
+            "assignmentProof", "commitmentTransaction", "consensusAssignment",
+            "finalityProofs", "format",
+            "transactionBlockHeight", "transactionProof",
+        }
+        legacy_expected = {
             "commitmentTransaction", "finalityProofs", "format",
             "transactionBlockHeight", "transactionProof",
         }
         if (
             not isinstance(value, dict)
-            or set(value) != expected
-            or value.get("format") != PROOF_FORMAT
+            or value.get("format") not in {PROOF_FORMAT, LEGACY_PROOF_FORMAT}
+            or set(value) != (current_expected if value.get("format") == PROOF_FORMAT
+                              else legacy_expected)
             or not isinstance(value.get("finalityProofs"), list)
             or not isinstance(value.get("commitmentTransaction"), dict)
             or not isinstance(value.get("transactionProof"), dict)
+            or ((value.get("assignmentProof") is None) !=
+                (value.get("consensusAssignment") is None))
+            or (value.get("assignmentProof") is not None and
+                (not isinstance(value.get("assignmentProof"), dict) or
+                 not isinstance(value.get("consensusAssignment"), dict)))
             or not isinstance(value.get("transactionBlockHeight"), int)
             or isinstance(value.get("transactionBlockHeight"), bool)
         ):
@@ -54,6 +71,8 @@ class AssignmentChainProof:
             commitment_transaction=value["commitmentTransaction"],
             transaction_proof=value["transactionProof"],
             transaction_block_height=value["transactionBlockHeight"],
+            consensus_assignment=value.get("consensusAssignment"),
+            assignment_proof=value.get("assignmentProof"),
         )
         result.as_dict()
         return result
@@ -62,18 +81,25 @@ class AssignmentChainProof:
         if (
             not isinstance(self.finality_proofs, tuple)
             or not self.finality_proofs
+            or len(self.finality_proofs) > MAX_FINALITY_PROOFS
             or any(not isinstance(item, dict) for item in self.finality_proofs)
             or not isinstance(self.commitment_transaction, dict)
             or not isinstance(self.transaction_proof, dict)
             or not isinstance(self.transaction_block_height, int)
             or isinstance(self.transaction_block_height, bool)
             or self.transaction_block_height < 1
+            or ((self.assignment_proof is None) != (self.consensus_assignment is None))
+            or (self.assignment_proof is not None and
+                (not isinstance(self.assignment_proof, dict) or
+                 not isinstance(self.consensus_assignment, dict)))
         ):
             raise ProtocolError("assignment chain proof fields are invalid")
         value = {
+            "assignmentProof": self.assignment_proof,
             "commitmentTransaction": self.commitment_transaction,
             "finalityProofs": list(self.finality_proofs),
             "format": PROOF_FORMAT,
+            "consensusAssignment": self.consensus_assignment,
             "transactionBlockHeight": self.transaction_block_height,
             "transactionProof": self.transaction_proof,
         }
@@ -91,6 +117,7 @@ class AssignmentChainProof:
 @dataclass(frozen=True, slots=True)
 class AssignmentChainAnchorResult:
     candidate_commitment_included: bool
+    chain_assignment_included: bool
     exact_assignment_included: bool
     finalized_height: int
     finalized_state_root: str
@@ -114,7 +141,9 @@ def verify_assignment_chain_anchor(
         or not isinstance(proof, AssignmentChainProof)
         or not isinstance(checkpoint, dict)
         or not isinstance(trusted_validators, (list, tuple))
+        or not 4 <= len(trusted_validators) <= MAX_VALIDATORS
         or not isinstance(handoffs, (list, tuple))
+        or len(handoffs) > MAX_VALIDATORS
         or assignment.network_id != expected_network_id
         or assignment.genesis_hash != expected_genesis_hash
     ):
@@ -123,8 +152,10 @@ def verify_assignment_chain_anchor(
     proof.as_dict()
     request = {
         "assignment": assignment.as_dict(),
+        "assignmentProof": proof.assignment_proof,
         "checkpoint": checkpoint,
         "commitmentTransaction": proof.commitment_transaction,
+        "consensusAssignment": proof.consensus_assignment,
         "expectedGenesisHash": expected_genesis_hash,
         "expectedNetworkId": expected_network_id,
         "finalityProofs": list(proof.finality_proofs),
@@ -160,16 +191,27 @@ def verify_assignment_chain_anchor(
     if (
         not isinstance(result, dict)
         or set(result) != {
-            "candidateCommitmentIncluded", "exactAssignmentIncluded", "finalizedHeight",
+            "candidateCommitmentIncluded", "chainAssignmentIncluded",
+            "exactAssignmentIncluded", "finalizedHeight",
             "finalizedStateRoot", "transactionBlockHeight",
         }
         or result.get("candidateCommitmentIncluded") is not True
+        or not isinstance(result.get("chainAssignmentIncluded"), bool)
+        or result.get("chainAssignmentIncluded") is not
+            (proof.consensus_assignment is not None)
         or result.get("exactAssignmentIncluded") is not False
         or not isinstance(result.get("finalizedHeight"), int)
         or isinstance(result.get("finalizedHeight"), bool)
         or not isinstance(result.get("finalizedStateRoot"), str)
+        or len(result.get("finalizedStateRoot")) != 64
+        or any(character not in "0123456789abcdef" for character in result["finalizedStateRoot"])
         or not isinstance(result.get("transactionBlockHeight"), int)
         or isinstance(result.get("transactionBlockHeight"), bool)
+        or result["finalizedHeight"] < 1
+        or result["transactionBlockHeight"] < 1
+        or result["finalizedHeight"] != assignment.finalized_height
+        or result["finalizedStateRoot"] != assignment.finalized_state_root
+        or result["transactionBlockHeight"] != proof.transaction_block_height
     ):
         raise ProtocolError("assignment light-client verifier returned an invalid result")
 
@@ -193,12 +235,14 @@ def verify_assignment_chain_anchor(
         raise ProtocolError("finalized transaction does not match the assignment commitment hash")
     return AssignmentChainAnchorResult(
         candidate_commitment_included=True,
+        chain_assignment_included=result["chainAssignmentIncluded"],
         exact_assignment_included=False,
         finalized_height=result["finalizedHeight"],
         finalized_state_root=result["finalizedStateRoot"],
         transaction_block_height=result["transactionBlockHeight"],
         consensus_gap=(
-            "current stateRoot has no membership proof for progressCommitments/challenge committee; "
-            "exact assignment inclusion is not proven"
+            "the v26 consensus assignment excludes runner environment, adapter, selected safety "
+            "policy, expiry, authority attestations, and evaluator public-key payloads; exact "
+            "external assignment inclusion is not proven"
         ),
     )

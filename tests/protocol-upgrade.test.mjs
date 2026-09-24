@@ -215,16 +215,22 @@ test("pending upgrade survives a quorum snapshot and unknown activation halts", 
 
   while (chain.height < activationHeight) append(chain, validators);
   assert.equal(chain.protocolVersion, PROTOCOL_VERSION + 1);
+  const assignmentRootActivation = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  append(chain, validators, {
+    protocolUpgrade: schedule(PROTOCOL_VERSION + 2, assignmentRootActivation),
+  });
+  while (chain.height < assignmentRootActivation) append(chain, validators);
+  assert.equal(chain.protocolVersion, PROTOCOL_VERSION + 2);
   const unknownActivation = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
   append(chain, validators, {
-    protocolUpgrade: schedule(PROTOCOL_VERSION + 2, unknownActivation),
+    protocolUpgrade: schedule(PROTOCOL_VERSION + 3, unknownActivation),
   });
   while (chain.height < unknownActivation - 1) append(chain, validators);
   assert.throws(() => chain.buildBlock({
     timestamp: chain.blocks().at(-1).timestamp + 1,
   }), /unsupported protocol version/);
   assert.equal(chain.height, unknownActivation - 1);
-  assert.equal(chain.protocolVersion, PROTOCOL_VERSION + 1);
+  assert.equal(chain.protocolVersion, PROTOCOL_VERSION + 2);
 });
 
 test("durable replay preserves the exact activation schedule", () => {

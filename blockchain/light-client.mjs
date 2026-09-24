@@ -4,6 +4,7 @@ import {
   validateIntrinsicBlock,
 } from "./chain.mjs";
 import {
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   MAX_VALIDATORS,
   PROTOCOL_VERSION,
   RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
@@ -17,6 +18,7 @@ import {
 import { verifyValidatorHandoff } from "./validator-handoff.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
+import { verifyEvaluationAssignmentProof } from "./evaluation-assignment-tree.mjs";
 import {
   verifyValidatorRecoveryEnvelope, verifyValidatorRecoveryPlanAcceptance,
   validatorRecoveryStateCommitment, verifyValidatorRecoveryVotes,
@@ -37,8 +39,10 @@ export const MAX_FINALITY_CHAIN_BYTES = 32 * 1024 * 1024;
 export function createFinalityProof(block) {
   return {
     certificate: structuredClone(block.certificate ?? []),
-    format: block.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
-      ? "nir-finality-proof-v3" : "nir-finality-proof-v2",
+    format: block.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? "nir-finality-proof-v4"
+      : block.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+        ? "nir-finality-proof-v3" : "nir-finality-proof-v2",
     hash: block.hash,
     header: blockHeader(block),
     prepareCertificate: structuredClone(block.prepareCertificate ?? []),
@@ -114,6 +118,8 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
     "peerRegistryHash", "previousHash", "protocolUpgrade", "protocolVersion",
     ...(header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
       ? ["recoveryStateCommitment"] : []),
+    ...(header?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? ["evaluationAssignmentRoot"] : []),
     "stateRoot", "timestamp", "transactionCount", "transactionsRoot",
   ];
   if (header?.format !== finalityHeaderFormat(header?.protocolVersion) ||
@@ -129,7 +135,9 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
       !HASH.test(header.bodyHash ?? "") || !HASH.test(header.capabilityMemoryRoot ?? "") ||
       !HASH.test(header.peerRegistryHash ?? "") ||
       (header.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION &&
-        !HASH.test(header.recoveryStateCommitment ?? ""))) {
+        !HASH.test(header.recoveryStateCommitment ?? "")) ||
+      (header.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&
+        !HASH.test(header.evaluationAssignmentRoot ?? ""))) {
     throw new Error("light client finality header is invalid");
   }
   if (header.protocolUpgrade !== null) {
@@ -145,8 +153,10 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
 
 function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
   const expectedFormat = proof?.header?.protocolVersion >=
-    RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
-    ? "nir-finality-proof-v3" : "nir-finality-proof-v2";
+    EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+    ? "nir-finality-proof-v4"
+    : proof?.header?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? "nir-finality-proof-v3" : "nir-finality-proof-v2";
   if (!proof || proof.format !== expectedFormat ||
       Object.keys(proof).sort().join(",") !==
         "certificate,format,hash,header,prepareCertificate,round" ||
@@ -236,6 +246,8 @@ export function verifyFinalityProofChain(proofs, {
   return {
     height: last.header.height,
     accountStateRoot: last.header.accountStateRoot,
+    ...(last.header.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? { evaluationAssignmentRoot: last.header.evaluationAssignmentRoot } : {}),
     networkId: expectedNetworkId,
     pendingProtocolUpgrade,
     protocolVersion,
@@ -245,6 +257,27 @@ export function verifyFinalityProofChain(proofs, {
     transactionCount: last.header.transactionCount,
     transactionsRoot: last.header.transactionsRoot,
     validatorSetId: validatorSetId(current),
+  };
+}
+
+export function verifyFinalizedEvaluationAssignmentProof({
+  assignment, checkpoint, finalityProofs, handoffs = [], inclusionProof,
+  expectedNetworkId, trustedValidators,
+} = {}) {
+  const tip = verifyFinalityProofChain(finalityProofs, {
+    checkpoint, expectedNetworkId, handoffs, trustedValidators,
+  });
+  if (!tip.evaluationAssignmentRoot) {
+    throw new Error("finalized header predates evaluation assignment proofs");
+  }
+  return {
+    assignment: verifyEvaluationAssignmentProof(
+      assignment, inclusionProof, tip.evaluationAssignmentRoot,
+    ),
+    chainAssignmentIncluded: true,
+    finalizedHeight: tip.height,
+    stateRoot: tip.stateRoot,
+    evaluationAssignmentRoot: tip.evaluationAssignmentRoot,
   };
 }
 

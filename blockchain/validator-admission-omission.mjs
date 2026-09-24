@@ -6,6 +6,7 @@ import {
 } from "./crypto.mjs";
 import {
   MAX_TRANSACTIONS_PER_BLOCK, MAX_VALIDATORS, MIN_TRANSFER_FEE,
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION, SIGNATURE_ALGORITHM,
 } from "./constants.mjs";
 import { transactionRootFromIds } from "./transaction-tree.mjs";
@@ -47,16 +48,21 @@ function evidencePayload(evidence) {
 function assertEvidenceShape(evidence) {
   const recoveryFormat = evidence?.finalizedHeader?.protocolVersion >=
     RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
+  const assignmentFormat = evidence?.finalizedHeader?.protocolVersion >=
+    EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
   exact(evidence, EVIDENCE_FIELDS, "validator admission omission evidence");
   exact(evidence.finalizedHeader, recoveryFormat
-    ? [...LEGACY_HEADER_FIELDS, "recoveryStateCommitment"] : LEGACY_HEADER_FIELDS,
+    ? [...LEGACY_HEADER_FIELDS, "recoveryStateCommitment",
+      ...(assignmentFormat ? ["evaluationAssignmentRoot"] : [])] : LEGACY_HEADER_FIELDS,
   "validator admission omission header");
   if (evidence.format !== "nir-validator-admission-omission-v1" ||
       evidence.finalizedHeader.format !==
-        (recoveryFormat ? "nir-finality-header-v2" : "nir-finality-header-v1") ||
+        (assignmentFormat ? "nir-finality-header-v3" :
+          recoveryFormat ? "nir-finality-header-v2" : "nir-finality-header-v1") ||
       !HASH.test(evidence.blockHash ?? "") || !HASH.test(evidence.evidenceHash ?? "") ||
       !HASH.test(evidence.prepareCertificateHash ?? "") ||
       (recoveryFormat && !HASH.test(evidence.finalizedHeader.recoveryStateCommitment ?? "")) ||
+      (assignmentFormat && !HASH.test(evidence.finalizedHeader.evaluationAssignmentRoot ?? "")) ||
       !HASH.test(evidence.validatorSetId ?? "") ||
       !Number.isSafeInteger(evidence.round) || evidence.round < 0 ||
       !Array.isArray(evidence.receipts) || evidence.receipts.length > MAX_VALIDATORS ||

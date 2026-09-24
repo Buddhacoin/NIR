@@ -83,7 +83,7 @@ NIR не платит за запущенный вентилятор, колич
 | `nir-static-eval-adapter-v1` | Реализован только как fixture | Читает неисполняемый JSON `answers`; не запускает модель, приложение или сеть. |
 | Candidate commitment | Реализовано | Связывает сеть, отправителя/получателя, artifact/baseline/content hashes, родителей и suite commitment в `candidateId`. |
 | Challenge и назначение committee | Реализовано в модели chain | Challenge появляется после финализированного commitment из beacon entropy; назначенный evaluator committee нельзя заменить произвольным quorum. |
-| Light-client anchor assignment | Экспериментально, частично | `nir.assignment_chain_proof` через существующие finality и transaction Merkle proofs доказывает, что точный `progress-commitment` вошёл в финализированную цепь, и закрепляет заявленный `stateRoot`. Exact assignment inclusion пока **не** доказан: для derived challenge/committee нет state membership proof. |
+| Light-client anchor assignment | Consensus-native в protocol v26; внешний receipt частично | v26 добавляет `evaluationAssignmentRoot` в state и finality header и bounded Merkle proof для неизменяемого реестра назначений. Он доказывает consensus assignment, но не весь внешний `FinalizedEvaluationAssignment`: environment/adapter/safety choice/expiry/authority signatures сеть при назначении ещё не знает. Старые v24/v25 headers не изменены. |
 | Оценка | Реализована для точных текстовых ответов | Не менее трёх разных verifier IDs; один и тот же набор оценщиков для baseline/candidate; majority, family regression, reproducibility, safety и median energy. |
 | Execution bundle | Реализовано | Связывает challenge, environment manifest, suite reveal, все ответы, content/entrypoint bindings, отчёт и `bundle_hash`. |
 | Capability memory/frontier | Реализовано | Запрещает известный artifact/content/behavior, требует известных родителей и минимум 100 bps нового frontier gain. |
@@ -378,28 +378,51 @@ light-client finality.
 
 ### Точная граница chain inclusion
 
-Текущий результат намеренно содержит две разные величины:
+Проверяющий должен различать три разные величины:
 
 - `candidate_commitment_included=true`: точные байты admission-транзакции
   доказаны относительно `transactionsRoot` финализированного header;
+- `chain_assignment_included=true` возможно только для v26 membership proof
+  consensus-native assignment к `evaluationAssignmentRoot`;
 - `exact_assignment_included=false`: точный `FinalizedEvaluationAssignment` —
   включая challenge seed/epoch, environment, safety policy, expiry и список
   evaluator keys — текущими chain roots не доказан.
 
-Причина не в отсутствии ещё одной подписи. Consensus вычисляет challenge и
-committee в состоянии, однако публикует монолитный `stateRoot` без membership
-proof для `progressCommitments`/derived committee. Assignment hash также не
-включён отдельной транзакцией или event root. Поэтому совпадение одного
-`finalizedStateRoot` не позволяет verifier доказать значение конкретной записи,
-и код не повышает его до `exact_assignment_included=true`.
+Начиная с protocol v26 consensus канонически строит отдельное значение
+`nir-evaluation-assignment-v1`: candidate/admission hashes, recipient, parents,
+committed height, challenge seed и source height (`challengeEpoch` равен этому
+height), а также точный ordered evaluator committee. Значения хранятся в
+отдельном реестре активных назначений (до 4096 одновременных записей).
+Запись добавляется при назначении challenge и атомарно удаляется вместе с
+`progressCommitment` при принятии reward, expiry, fraud-cleanup назначенного
+evaluator или cleanup после смены beacon committee. Это лимит одновременной
+нагрузки, а не lifetime-лимит сети; при заполнении новые назначения fail closed
+до завершения одного из активных.
 
-Минимальная consensus-интеграция в будущем: канонически вычислять assignment
-commitment после randomness/committee selection, включать его в уже
-аутентифицированное Merkleized state subtree (либо версионированную consensus
-transaction/event root) и выдавать membership proof к root из finality header.
-Verifier затем должен проверить эту membership path и равенство commitment
-точному assignment payload. До этого experimental chain anchor — доказательство
-финализированного admission и state anchor, а не доказательство exact assignment.
+Witness нужно получить и сохранить, пока assignment активен. После удаления
+обычный full node не обязан уметь сгенерировать его заново, но уже сохранённый
+proof остаётся проверяемым без срока давности против исторического
+финализированного header. Поэтому клиент/оператор или архивный сервис обязан
+хранить proof и header chain до конца своего dispute/archive срока; такой архив
+не является новым trust root.
+Sparse Merkle root реестра входит и в chain state, и в
+`nir-finality-header-v3`; proof имеет фиксированную глубину 256 и лимит 32 KiB.
+`verifyFinalizedEvaluationAssignmentProof()` сначала проверяет обычную finality
+chain от внешнего trusted checkpoint/validator history, а затем membership path
+к root из финализированного header. Protocol v24/v25 не получают нового поля и
+сохраняют прежние block/header encodings.
+
+Это всё ещё намеренно не означает `exact_assignment_included=true` для
+Python-объекта `FinalizedEvaluationAssignment`. В consensus assignment нет
+`environmentCommitment`, `adapterProtocol`, выбранного `safetyPolicyHash`,
+expiry, authority-set signatures и evaluator public keys как самостоятельных
+полей: эти данные либо появляются позже, либо принадлежат внешнему runner/receipt
+слою. Committee addresses криптографически идентифицируют ключи, но конкретный
+public-key payload всё равно проверяется отдельно. Поэтому интерфейсы обязаны
+различать `chainAssignmentIncluded` и inclusion полного внешнего assignment.
+Для последнего потребуется новая consensus-версия, которая сначала делает
+отсутствующие поля consensus-known; подменять это дополнительным trust root
+нельзя.
 
 `nir.replay_store` сохраняет доменно-разделённый ключ для каждой пары
 assignment/evaluator/role. Полный набор receipt отмечается использованным одной

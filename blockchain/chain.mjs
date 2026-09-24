@@ -5,6 +5,7 @@ import {
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   EVALUATOR_ACTIVATION_DELAY_BLOCKS,
   EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS,
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   MAX_BLOCK_BYTES,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_CREDIT_DELEGATIONS_PER_OWNER,
@@ -105,6 +106,13 @@ import {
   normalizeAccountState,
 } from "./account-tree.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
+import {
+  MAX_EVALUATION_ASSIGNMENTS,
+  assertActiveEvaluationAssignmentRegistry,
+  createEvaluationAssignmentWitness,
+  evaluationAssignmentFromCommitment,
+  evaluationAssignmentRoot as computeEvaluationAssignmentRoot,
+} from "./evaluation-assignment-tree.mjs";
 import {
   verifyFinalizedValidatorEquivocationEvidence,
   verifyValidatorEquivocationTransactionEnvelope,
@@ -1036,12 +1044,19 @@ const RECOVERY_BLOCK_FIELDS = Object.freeze([
   "recoveryStateCommitment",
 ].sort());
 
+const ASSIGNMENT_ROOT_BLOCK_FIELDS = Object.freeze([
+  ...RECOVERY_BLOCK_FIELDS,
+  "evaluationAssignmentRoot",
+].sort());
+
 export function blockFieldsForProtocol(protocolVersion) {
   if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     throw new Error("block protocol version is unsupported");
   }
-  return protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
-    ? RECOVERY_BLOCK_FIELDS : LEGACY_BLOCK_FIELDS;
+  return protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+    ? ASSIGNMENT_ROOT_BLOCK_FIELDS
+    : protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? RECOVERY_BLOCK_FIELDS : LEGACY_BLOCK_FIELDS;
 }
 
 function requireExactBlockSchema(block) {
@@ -1062,6 +1077,9 @@ export function validateIntrinsicBlock(block, {
   if (block.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION) {
     hashes.push(block.recoveryStateCommitment);
   }
+  if (block.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
+    hashes.push(block.evaluationAssignmentRoot);
+  }
   if (block.networkId !== expectedNetworkId ||
       block.protocolVersion !== expectedProtocolVersion ||
       !previousBlock || block.height !== previousBlock.height + 1 ||
@@ -1078,8 +1096,10 @@ export function finalityHeaderFormat(protocolVersion) {
   if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     throw new Error("finality header protocol version is unsupported");
   }
-  return protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
-    ? "nir-finality-header-v2" : "nir-finality-header-v1";
+  return protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+    ? "nir-finality-header-v3"
+    : protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
+      ? "nir-finality-header-v2" : "nir-finality-header-v1";
 }
 
 export function blockHeader(block) {
@@ -1087,6 +1107,7 @@ export function blockHeader(block) {
   const {
     accountStateRoot,
     capabilityMemoryRoot,
+    evaluationAssignmentRoot,
     height,
     networkId,
     peerRegistryHash,
@@ -1113,6 +1134,8 @@ export function blockHeader(block) {
     protocolVersion,
     ...(protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
       ? { recoveryStateCommitment } : {}),
+    ...(protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? { evaluationAssignmentRoot } : {}),
     stateRoot,
     timestamp,
     transactionCount,
@@ -1312,6 +1335,7 @@ export class NirChain {
   #evaluators;
   #evaluatorBonds;
   #evaluatorFaults;
+  #evaluationAssignments;
   #mined;
   #lastRewardTimestamp;
   #networkId;
@@ -1469,6 +1493,7 @@ export class NirChain {
       this.#evaluatorOrder.map((address) => [address, genesisEvaluatorBond]),
     );
     this.#evaluatorFaults = new Map();
+    this.#evaluationAssignments = new Map();
     this.#nonces = new Map();
     this.#rewardedProofs = new Set();
     this.#randomnessFaults = new Map();
@@ -1510,6 +1535,7 @@ export class NirChain {
     this.#safetyPolicies = new Set(safetyPolicyCommitments);
     const stateRoot = this.#stateRoot();
     const accountStateRoot = computeAccountStateRoot(this.#accountStates({ height: 0 }));
+    const evaluationAssignmentRoot = computeEvaluationAssignmentRoot(this.#evaluationAssignments);
     const transactionsRoot = transactionRoot([]);
     const recoveryStateCommitment = validatorRecoveryStateCommitment({
       activePlanHash: null, generation: 0, networkId,
@@ -1524,6 +1550,8 @@ export class NirChain {
         bond: genesisEvaluatorBond.toString(),
         operatorId: this.#evaluators.get(address).operatorId,
       })),
+      ...(this.#protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+        ? { evaluationAssignmentRoot } : {}),
       genesisTimestamp,
       networkId,
       peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
@@ -1547,6 +1575,8 @@ export class NirChain {
         hash: hashObject(genesis, "GENESIS"),
         height: 0,
         networkId,
+        ...(this.#protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+          ? { evaluationAssignmentRoot } : {}),
         peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
         previousHash: "0".repeat(64),
         progressRewards: [],
@@ -1567,6 +1597,8 @@ export class NirChain {
     const chain = new NirChain(genesisConfig, options);
     const snapshotHasRecoveryCommitment =
       snapshot?.state?.protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION;
+    const snapshotHasAssignmentRoot =
+      snapshot?.state?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
@@ -1582,6 +1614,14 @@ export class NirChain {
           snapshot.recoveryStateCommitment !== undefined ||
           snapshot.state?.recoveryStateCommitment !== undefined ||
           snapshot.checkpoint?.recoveryStateCommitment !== undefined)) ||
+        (snapshotHasAssignmentRoot && (
+          !/^[0-9a-f]{64}$/.test(snapshot.evaluationAssignmentRoot ?? "") ||
+          snapshot.checkpoint?.evaluationAssignmentRoot !== snapshot.evaluationAssignmentRoot ||
+          snapshot.state?.evaluationAssignmentRoot !== snapshot.evaluationAssignmentRoot)) ||
+        (!snapshotHasAssignmentRoot && (
+          snapshot.evaluationAssignmentRoot !== undefined ||
+          snapshot.state?.evaluationAssignmentRoot !== undefined ||
+          snapshot.checkpoint?.evaluationAssignmentRoot !== undefined)) ||
         computeChainStateRoot(snapshot.state) !== snapshot.stateRoot) {
       throw new Error("verified snapshot does not match the target chain");
     }
@@ -1949,6 +1989,11 @@ export class NirChain {
       state.progressCommitments,
       "progress commitments",
     );
+    const evaluationAssignments = snapshotHasAssignmentRoot
+      ? snapshotEntries(state.evaluationAssignments, "evaluation assignments") : new Map();
+    if (!snapshotHasAssignmentRoot && state.evaluationAssignments !== undefined) {
+      throw new Error("evaluation assignment snapshot state predates protocol support");
+    }
     const progressSubmitters = new Set();
     for (const [candidateId, commitment] of progressCommitments) {
       if (
@@ -2020,6 +2065,13 @@ export class NirChain {
         throw new Error("progress challenge snapshot is invalid");
       }
       progressSubmitters.add(commitment.sender);
+    }
+    if (snapshotHasAssignmentRoot) {
+      assertActiveEvaluationAssignmentRegistry(progressCommitments, evaluationAssignments);
+      if (computeEvaluationAssignmentRoot(evaluationAssignments) !==
+          snapshot.evaluationAssignmentRoot) {
+        throw new Error("snapshot evaluation assignment root is invalid");
+      }
     }
     const validators = snapshotEntries(state.validators, "validators");
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
@@ -2195,6 +2247,7 @@ export class NirChain {
     chain.#evaluatorBonds = evaluatorBonds;
     chain.#evaluatorFaults = evaluatorFaults;
     chain.#evaluators = evaluators;
+    chain.#evaluationAssignments = evaluationAssignments;
     chain.#mined = snapshotAtomic(state.mined, "mined supply");
     chain.#nonces = nonces;
     chain.#protocolVersion = snapshotInteger(state.protocolVersion, "protocol version");
@@ -2296,6 +2349,20 @@ export class NirChain {
 
   get capabilityMemoryRoot() {
     return this.#capabilityMemory.stateRoot;
+  }
+
+  get evaluationAssignmentRoot() {
+    if (this.#protocolVersion < EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
+      throw new Error("evaluation assignment root is not active");
+    }
+    return computeEvaluationAssignmentRoot(this.#evaluationAssignments);
+  }
+
+  evaluationAssignmentProof(candidateId) {
+    if (this.#protocolVersion < EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
+      throw new Error("evaluation assignment proofs are not active");
+    }
+    return createEvaluationAssignmentWitness(this.#evaluationAssignments, candidateId);
   }
 
   get stateRoot() { return this.#stateRoot(); }
@@ -2422,6 +2489,12 @@ export class NirChain {
       evaluatorBonds: overrides.evaluatorBonds ?? this.#evaluatorBonds,
       evaluatorFaults: overrides.evaluatorFaults ?? this.#evaluatorFaults,
       evaluators: overrides.evaluators ?? this.#evaluators,
+      ...(protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION ? {
+        evaluationAssignmentRoot: computeEvaluationAssignmentRoot(
+          overrides.evaluationAssignments ?? this.#evaluationAssignments,
+        ),
+        evaluationAssignments: overrides.evaluationAssignments ?? this.#evaluationAssignments,
+      } : {}),
       lastRewardTimestamp: overrides.lastRewardTimestamp ?? this.#lastRewardTimestamp,
       mined: overrides.mined ?? this.#mined,
       nonces: overrides.nonces ?? this.#nonces,
@@ -2500,6 +2573,11 @@ export class NirChain {
         epochRandomness: this.#epochRandomness.snapshot(),
         evaluatorBonds: this.#evaluatorBonds,
         evaluatorFaults: this.#evaluatorFaults,
+        ...(this.#protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+          ? {
+            evaluationAssignmentRoot: this.evaluationAssignmentRoot,
+            evaluationAssignments: this.#evaluationAssignments,
+          } : {}),
         lastRewardTimestamp: this.#lastRewardTimestamp,
         mined: this.#mined,
         nonces: this.#nonces,
@@ -2555,6 +2633,7 @@ export class NirChain {
     }
     return {
       beaconValue: commitment.beaconValue,
+      challengeEpoch: commitment.challengeHeight,
       challengeSeed: commitment.challengeSeed,
       committee: [...commitment.committee],
       committedHeight: commitment.committedHeight,
@@ -2708,11 +2787,14 @@ export class NirChain {
     });
   }
 
-  #verifyProgressClaim(claim, epoch, capabilityMemory, progressCommitments) {
+  #verifyProgressClaim(claim, epoch, capabilityMemory, progressCommitments, protocolVersion) {
     if (claim.networkId !== this.#networkId || claim.epoch !== epoch) {
       throw new Error("progress receipt belongs to another network or epoch");
     }
-    if (claim.evaluation.challengeEpoch !== epoch) {
+    const expectedChallengeEpoch = protocolVersion >=
+      EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? progressCommitments.get(claim.evaluation.candidateId)?.challengeHeight : epoch;
+    if (claim.evaluation.challengeEpoch !== expectedChallengeEpoch) {
       throw new Error("progress challenge belongs to another epoch");
     }
     const candidateId = claim.evaluation.candidateId;
@@ -2977,6 +3059,7 @@ export class NirChain {
         height,
         stagedMemory,
         this.#progressCommitments,
+        protocolState.protocolVersion,
       );
       assertProgressReservationAvailable(
         claim.evaluation, Object.keys(novelty.marginalGainsBps), reservations,
@@ -3092,6 +3175,8 @@ export class NirChain {
       protocolVersion: nextProtocolVersion,
       ...(nextProtocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
         ? { recoveryStateCommitment: "0".repeat(64) } : {}),
+      ...(nextProtocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+        ? { evaluationAssignmentRoot: "0".repeat(64) } : {}),
       round,
       roundCertificate,
       timestamp,
@@ -3118,6 +3203,8 @@ export class NirChain {
         capabilityMemoryRoot: trial.capabilityMemoryRoot,
         ...(nextProtocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
           ? { recoveryStateCommitment: trial.recoveryStateCommitment } : {}),
+        ...(nextProtocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+          ? { evaluationAssignmentRoot: trial.evaluationAssignmentRoot } : {}),
         stateRoot: trial.stateRoot,
       };
     } catch {
@@ -4336,6 +4423,8 @@ export class NirChain {
     });
     fork.#evaluatorBonds = new Map(this.#evaluatorBonds);
     fork.#evaluatorFaults = new Map(this.#evaluatorFaults);
+    fork.#evaluationAssignments = new Map([...this.#evaluationAssignments]
+      .map(([candidateId, assignment]) => [candidateId, structuredClone(assignment)]));
     fork.#evaluators = new Map(this.#evaluators);
     fork.#lastRewardTimestamp = this.#lastRewardTimestamp;
     fork.#mined = this.#mined;
@@ -4626,6 +4715,7 @@ export class NirChain {
         block.height,
         capabilityMemory,
         this.#progressCommitments,
+        protocolState.protocolVersion,
       );
       assertProgressReservationAvailable(
         claim.evaluation, Object.keys(novelty.marginalGainsBps), capabilityReservations,
@@ -4724,6 +4814,20 @@ export class NirChain {
     let validatorRecoveryOccurred = false;
     const registeredValidators = new Map(this.#registeredValidators);
     const progressCommitments = new Map(this.#progressCommitments);
+    const evaluationAssignments = protocolState.protocolVersion >=
+      EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
+      ? new Map(this.#evaluationAssignments)
+      : new Map();
+    if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&
+        this.#protocolVersion < EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
+      for (const [candidateId, commitment] of progressCommitments) {
+        const assignment = evaluationAssignmentFromCommitment(candidateId, commitment);
+        if (assignment) evaluationAssignments.set(candidateId, assignment);
+      }
+      if (evaluationAssignments.size > MAX_EVALUATION_ASSIGNMENTS) {
+        throw new Error("evaluation assignment registry capacity is exceeded");
+      }
+    }
     const progressEscrows = new Map([...this.#progressEscrows]
       .map(([candidateId, escrow]) => [candidateId, structuredClone(escrow)]));
     const progressFraudEvidence = new Map(this.#progressFraudEvidence);
@@ -4829,6 +4933,7 @@ export class NirChain {
         balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
         candidateBonds.delete(candidateId);
         progressCommitments.delete(candidateId);
+        evaluationAssignments.delete(candidateId);
       }
     }
     // An objective proof included at unlockHeight wins over maturity in the same transition.
@@ -4913,6 +5018,7 @@ export class NirChain {
         unlockHeight: block.height + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
       });
       progressCommitments.delete(reward.evaluation.candidateId);
+      evaluationAssignments.delete(reward.evaluation.candidateId);
     }
     if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
       throw new Error("hard supply cap exceeded");
@@ -5105,6 +5211,7 @@ export class NirChain {
         balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
         candidateBonds.delete(candidateId);
         progressCommitments.delete(candidateId);
+        evaluationAssignments.delete(candidateId);
       }
     }
 
@@ -5161,6 +5268,7 @@ export class NirChain {
         newlyBurned += bond.bond;
         candidateBonds.delete(candidateId);
         progressCommitments.delete(candidateId);
+        evaluationAssignments.delete(candidateId);
       }
     }
 
@@ -5219,7 +5327,7 @@ export class NirChain {
         { beaconValue, candidateId: claim.candidateId },
         "PROGRESS_CHALLENGE",
       );
-      progressCommitments.set(claim.candidateId, {
+      const assignedCommitment = {
         ...commitment,
         beaconValue,
         challengeHeight: block.height,
@@ -5232,7 +5340,16 @@ export class NirChain {
           context: { candidateId: claim.candidateId, challengeHeight: block.height },
           size: this.#evaluationQuorum,
         }).map(({ address }) => address),
-      });
+      };
+      progressCommitments.set(claim.candidateId, assignedCommitment);
+      if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
+        if (evaluationAssignments.size >= MAX_EVALUATION_ASSIGNMENTS ||
+            evaluationAssignments.has(claim.candidateId)) {
+          throw new Error("evaluation assignment registry capacity or uniqueness is invalid");
+        }
+        evaluationAssignments.set(claim.candidateId,
+          evaluationAssignmentFromCommitment(claim.candidateId, assignedCommitment));
+      }
       progressedBeacons.add(claim.candidateId);
     }
 
@@ -5407,6 +5524,7 @@ export class NirChain {
       evaluatorBonds,
       evaluatorFaults,
       evaluators: evaluatorsAfter,
+      evaluationAssignments,
       lastRewardTimestamp: lastRewardTimestampAfter,
       mined: this.#mined + newlyMined,
       nonces,
@@ -5445,6 +5563,16 @@ export class NirChain {
         RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION &&
         block.recoveryStateCommitment !== expectedRecoveryStateCommitment) {
       throw new Error("block recovery state commitment is invalid");
+    }
+    const expectedEvaluationAssignmentRoot =
+      computeEvaluationAssignmentRoot(evaluationAssignments);
+    if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
+      assertActiveEvaluationAssignmentRegistry(progressCommitments, evaluationAssignments);
+    }
+    if (verifyStateRoot && protocolState.protocolVersion >=
+        EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&
+        block.evaluationAssignmentRoot !== expectedEvaluationAssignmentRoot) {
+      throw new Error("block evaluation assignment root is invalid");
     }
     if (verifyStateRoot && block.stateRoot !== expectedStateRoot) {
       throw new Error("block state root is invalid");
@@ -5486,6 +5614,7 @@ export class NirChain {
     this.#evaluatorBonds = evaluatorBonds;
     this.#evaluatorFaults = evaluatorFaults;
     this.#evaluators = evaluatorsAfter;
+    this.#evaluationAssignments = evaluationAssignments;
     this.#nonces = nonces;
     this.#pendingEvaluatorRegistrations = pendingEvaluatorRegistrations;
     this.#pendingBeaconRotation = pendingBeaconRotationAfter;
