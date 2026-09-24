@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  adapterCheckCommand,
   parseRoleChoice,
   roleMenuLines,
   runMacMinerWizard,
@@ -15,10 +16,13 @@ function fixture() {
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "nir-protocol", private: true }));
   mkdirSync(join(root, "blockchain"));
   mkdirSync(join(root, "wallet-ui"));
+  mkdirSync(join(root, "nir"));
   for (const path of ["demo.mjs", "node-cli.mjs", "wallet-cli.mjs"]) {
     writeFileSync(join(root, "blockchain", path), "");
   }
   writeFileSync(join(root, "wallet-ui", "index.html"), "");
+  writeFileSync(join(root, "nir", "application_adapter.py"), "");
+  writeFileSync(join(root, "nir", "adapter_check.py"), "");
   return root;
 }
 
@@ -78,4 +82,26 @@ test("invalid input retries deterministically and stops after the limit", async 
   assert.equal(stopped.result.ready, false);
   assert.equal(stopped.result.reason, "invalid-role");
   assert.equal(stopped.result.nextCommand, null);
+});
+
+test("developer adapter path prints an exact quoted command but runs nothing", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-adapter-executable-"));
+  const executable = join(directory, "adapter's tool");
+  const marker = join(directory, "wizard-ran-adapter");
+  writeFileSync(executable, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
+  chmodSync(executable, 0o700);
+  const { output, result } = await scriptedWizard(["8", executable]);
+  assert.equal(result.ready, true);
+  assert.equal(result.reason, "adapter-check");
+  assert.equal(result.nextCommand, adapterCheckCommand(executable));
+  assert.match(result.nextCommand, /mine:adapter-check -- --/);
+  assert.ok(output.includes("The wizard did not run this command."));
+  assert.equal(existsSync(marker), false);
+});
+
+test("adapter path must be absolute, executable, and not a link", async () => {
+  const { output, result } = await scriptedWizard(["adapter-check", "relative-adapter"]);
+  assert.equal(result.ready, false);
+  assert.equal(result.nextCommand, null);
+  assert.ok(output.some((line) => /must be absolute/.test(line)));
 });

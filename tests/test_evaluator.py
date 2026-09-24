@@ -76,6 +76,29 @@ class CommitmentTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_run_record_schema_does_not_coerce_types_or_unknown_fields(self):
+        valid = {
+            "run_id": "run-a",
+            "verifier_id": "verifier-a",
+            "artifact_hash": f"sha256:{'a' * 64}",
+            "energy_wh": 10,
+            "energy_attested": False,
+            "answers": {"case-a": "answer"},
+        }
+        RunRecord.from_dict(valid)
+        mutations = [
+            {**valid, "unknown": True},
+            {**valid, "energy_wh": "10"},
+            {**valid, "energy_wh": True},
+            {**valid, "energy_attested": "false"},
+            {**valid, "answers": {"case-a": 42}},
+            {**valid, "run_id": 7},
+        ]
+        for value in mutations:
+            with self.subTest(value=value):
+                with self.assertRaises(ProtocolError):
+                    RunRecord.from_dict(value)
+
     def test_verified_improvement_becomes_proof(self):
         benchmark = suite()
         baseline = independent_runs(

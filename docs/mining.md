@@ -145,6 +145,10 @@ It constructs signed local blocks and evaluation receipts. It does not connect
 to peers, perform real model training, earn exchangeable currency, or register
 the computer as a production operator.
 
+The wizard also exposes a separate developer-only adapter handshake check.
+That option is not a mining role and does not establish intelligence, safety,
+energy attestation, chain admission, or reward eligibility.
+
 The local consensus rejects reuse of an already accepted canonical content
 commitment even when the submitter key, package hash, metadata and evaluation
 transcript change. This is not a claim that NIR can identify semantically copied

@@ -532,6 +532,8 @@ These commands use valueless local units. They do not mine tradeable NIR or join
 a public network. The seven production roles and their intended one-screen user
 flow are explained in `docs/miner-quickstart-macos.md`; the model/application
 adapter boundary is documented in `docs/intelligence-verification-flow.md`.
+The wizard's separate adapter check validates only a local transport handshake;
+it is not evidence of intelligence, safety, mining eligibility, or a reward.
 
 ## Offline vault prototype
 

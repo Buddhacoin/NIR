@@ -88,9 +88,9 @@ NIR не платит за запущенный вентилятор, колич
 | Capability memory/frontier | Реализовано | Запрещает известный artifact/content/behavior, требует известных родителей и минимум 100 bps нового frontier gain. |
 | Chain reward и escrow | Реализовано в прототипе | Проверяет admission, approved safety policy, frontier transition, committee signatures, score, supply cap, collateral ceiling и 64-блочный escrow. |
 | Реальное исполнение модели | Не реализовано | Нет sandbox/TEE runner и криптографической подписи execution transcript оператором. |
-| Подключение локального приложения | Экспериментальный transport реализован | `nir.application_adapter` запускает argv без shell, обменивается строгим framed NDJSON, ограничивает schema/размер/время и завершает process group. Это не sandbox и пока не связано с execution bundle или chain. |
+| Подключение локального приложения | Экспериментальный runner path реализован | `nir.application_adapter` запускает argv без shell, а `run_application_adapter()` связывает complete outputs с artifact/content/entrypoint, challenge, environment и создаёт `ExecutionTranscript`. `create_application_bundle()` принимает только такие transcripts. Это не sandbox/attestation и не активный chain adapter. |
 | Подключение удалённого API | Не реализовано | Нет submission gateway, mTLS/одноразовых credentials или production egress policy. Контракт ниже — проектируемая граница. |
-| Измерение энергии | Не реализовано как доверенное измерение | Поле и обязательный chain gate есть, но источник `energy_attested` пока утверждается оценщиками. |
+| Измерение энергии | Не реализовано как доверенное измерение | Experimental application runner принудительно записывает `energy_attested=false`, в том числе при повторной загрузке bundle. Поэтому его bundle заведомо не проходит production chain reward gate. |
 | Независимость компаний | Не доказуема кодом | Уникальные ключи и operator IDs не доказывают разных владельцев, хостинг или отсутствие сговора. |
 | Публичный майнинг и реальные NIR | Недоступно | Нет production/mainnet допуска; тестовые локальные сценарии не обещают доход. |
 
@@ -139,9 +139,12 @@ entrypoint. Импорт `nir.runner` не исполняет код канди�
 
 Этот раздел — **экспериментальный API**, а не активный consensus format.
 Локальный child-process transport реализован в `nir.application_adapter`;
-remote transport, привязка его результатов к `ExecutionTranscript` и production
-изоляция ещё не реализованы. Любой допуск в сеть требует тестовых векторов,
-версии consensus policy и независимого аудита.
+`nir.runner.run_application_adapter()` детерминированно переводит его plain-text
+outputs в `RunRecord`/`ExecutionTranscript`, а `create_application_bundle()` — в
+существующий execution bundle. Это отдельный experimental adapter format:
+remote transport, hardware attestation и production-изоляция ещё не реализованы.
+Любой допуск в сеть требует тестовых векторов, версии consensus policy и
+независимого аудита.
 
 ### Транспорт
 
@@ -187,9 +190,25 @@ with ApplicationAdapter(["/absolute/path/to/adapter", "--stdio"]) as app:
     )
 ```
 
-`model_identity` пока сверяет вызывающий runner: transport не знает chain
-admission и не создаёт `ExecutionTranscript`. `maxInputBytes` относится к
-канонической JSON-кодировке `input.value`, а не ко всему request frame.
+`model_identity` не считается самодоказательством. До challenge функция
+`application_content_hash()` связывает role, adapter, entrypoint path и
+entrypoint digest в experimental `contentHash`, который входит в
+`CandidateCommitment`. После reveal `run_application_adapter()` сверяет
+handshake с этим заранее committed entrypoint digest. Он также требует exact
+case set, `reset-per-case`, environment с
+`adapter_protocol == nir-application-adapter-v1`, plain-text output и выводит
+case seed из challenge, epoch, role, artifact/content и case ID. Любой timeout,
+remote error, missing/extra case или неверный output завершает run без
+`RunRecord`. `maxInputBytes` относится к канонической JSON-кодировке
+`input.value`, а не ко всему request frame.
+
+Текущий application bundle по-прежнему не доказывает физическое исполнение:
+`entrypoint_digest` и `content_hash` передаёт внешний изолированный runner, а
+локальный transport сверяет только заявленный handshake. Поэтому этот путь
+явно отделён от static fixture именем `nir-application-adapter-v1` и не должен
+использоваться для production rewards до подписанной hardware attestation.
+Переданное или подделанное `energy_attested=true` отклоняется при запуске,
+сборке и загрузке application bundle.
 
 ### Handshake
 

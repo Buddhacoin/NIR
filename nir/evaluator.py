@@ -60,15 +60,27 @@ class EvalCase:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EvalCase":
+        if not isinstance(data, dict):
+            raise ProtocolError("benchmark case must be an object")
+        required = {"expected", "family", "id"}
+        if not required.issubset(data) or not set(data).issubset(required | {"safety_critical"}):
+            raise ProtocolError("benchmark case schema contains missing or unknown fields")
         try:
             case = cls(
-                case_id=str(data["id"]),
-                family=str(data["family"]),
-                expected=str(data["expected"]),
-                safety_critical=bool(data.get("safety_critical", False)),
+                case_id=data["id"],
+                family=data["family"],
+                expected=data["expected"],
+                safety_critical=data.get("safety_critical", False),
             )
         except KeyError as error:
             raise ProtocolError(f"benchmark case lacks {error.args[0]}") from error
+        if (
+            not isinstance(case.case_id, str)
+            or not isinstance(case.family, str)
+            or not isinstance(case.expected, str)
+            or not isinstance(case.safety_critical, bool)
+        ):
+            raise ProtocolError("benchmark case field types are invalid")
         _require_identifier(case.case_id, "case id")
         _require_identifier(case.family, "case family")
         if len(case.expected) > MAX_TEXT_CHARS:
@@ -91,9 +103,13 @@ class BenchmarkSuite:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BenchmarkSuite":
+        if not isinstance(data, dict) or set(data) != {"cases", "name"}:
+            raise ProtocolError("benchmark schema contains missing or unknown fields")
+        if not isinstance(data.get("name"), str) or not isinstance(data.get("cases"), list):
+            raise ProtocolError("benchmark field types are invalid")
         try:
             suite = cls(
-                name=str(data["name"]),
+                name=data["name"],
                 cases=tuple(EvalCase.from_dict(item) for item in data["cases"]),
             )
         except KeyError as error:
@@ -137,17 +153,37 @@ class RunRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RunRecord":
+        if not isinstance(data, dict):
+            raise ProtocolError("run record must be an object")
+        required = {"answers", "artifact_hash", "energy_wh", "run_id", "verifier_id"}
+        allowed = required | {"energy_attested"}
+        if not required.issubset(data) or not set(data).issubset(allowed):
+            raise ProtocolError("run record schema contains missing or unknown fields")
         try:
             record = cls(
-                run_id=str(data["run_id"]),
-                verifier_id=str(data["verifier_id"]),
-                artifact_hash=str(data["artifact_hash"]),
-                energy_wh=int(data["energy_wh"]),
-                answers={str(k): str(v) for k, v in data["answers"].items()},
-                energy_attested=bool(data.get("energy_attested", False)),
+                run_id=data["run_id"],
+                verifier_id=data["verifier_id"],
+                artifact_hash=data["artifact_hash"],
+                energy_wh=data["energy_wh"],
+                answers=data["answers"],
+                energy_attested=data.get("energy_attested", False),
             )
         except KeyError as error:
             raise ProtocolError(f"run record lacks {error.args[0]}") from error
+        if (
+            not isinstance(record.run_id, str)
+            or not isinstance(record.verifier_id, str)
+            or not isinstance(record.artifact_hash, str)
+            or not isinstance(record.energy_wh, int)
+            or isinstance(record.energy_wh, bool)
+            or not isinstance(record.energy_attested, bool)
+            or not isinstance(record.answers, dict)
+            or any(
+                not isinstance(case_id, str) or not isinstance(answer, str)
+                for case_id, answer in record.answers.items()
+            )
+        ):
+            raise ProtocolError("run record field types are invalid")
         _require_identifier(record.run_id, "run id")
         _require_identifier(record.verifier_id, "verifier id")
         _require_hash(record.artifact_hash, "artifact hash")

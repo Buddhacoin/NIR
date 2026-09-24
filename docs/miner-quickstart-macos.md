@@ -61,7 +61,9 @@ npm run mine:wizard
 ```
 
 The wizard lists all seven roles and labels each one either `local demo
-available` or `planned only`. Enter its number. It then runs the read-only Mac
+available` or `planned only`. An eighth, clearly separate developer option
+prepares a local adapter transport check; it is not a mining role. Enter a
+number. The wizard then runs the read-only Mac
 preflight and, only when that role and computer have a real local path, prints
 one next command for you to review. It does **not** execute that command, create
 a wallet, connect to a network, or ask for a password, seed phrase, API key, or
@@ -152,8 +154,12 @@ certificate.
 
 ## 5. Connecting a model or AI application
 
-There is no general "Connect app" button or supported connector today. The
-safe future boundary should look like this:
+There is no general "Connect app" button or production connector today. An
+experimental local child-process transport and developer-only conformance check
+now exist. The experimental runner can bind application outputs into an
+execution bundle, but the conformance check below performs only the handshake;
+neither path is an active chain submission or production sandbox. The safe
+future boundary should look like this:
 
 1. The desktop miner lists supported local adapters and their exact permissions.
 2. The user selects an artifact folder or a localhost-only adapter; the miner
@@ -173,6 +179,32 @@ safe future boundary should look like this:
 
 Until such adapters, containers, permissions, and signed releases exist, do not
 give an unofficial NIR website access to a local model server or cloud API key.
+
+### Developer-only local adapter handshake
+
+Option 8 in `npm run mine:wizard` asks only for the absolute path of an existing
+executable and prints a reviewable command. The wizard does not start it. For an
+adapter that needs arguments, invoke the checker directly and place its exact
+argv only after the final `--`:
+
+```bash
+npm run --silent mine:adapter-check -- --timeout-ms 5000 --json -- \
+  /absolute/path/to/adapter --stdio
+```
+
+`--silent` keeps npm's own banner out of machine-readable stdout. The first
+`--` belongs to npm; `--timeout-ms` and `--json` configure the checker;
+the second `--` separates the exact adapter argv. The checker uses no shell and
+does not echo the argv in its report. It passes a minimal environment, refuses
+secret-looking arguments, performs only the versioned `describe` handshake,
+enforces a timeout, then terminates the process group. Do not put a password,
+token, API key, seed, mnemonic, or private-key path in any argument.
+
+The warning is intentional: the child process is **not sandboxed**. Run this
+only for an adapter you trust. `PASS` means its transport handshake conforms; it
+does not prove intelligence, model identity ownership, safety, reproducibility,
+mining eligibility, a valid execution receipt, or a NIR reward. The checker
+does not open a wallet, mutate chain state, or connect to a public NIR network.
 
 ## 6. Create a separate practice wallet (optional)
 

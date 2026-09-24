@@ -18,6 +18,11 @@ import re
 import stat
 from typing import Any, Iterable
 
+from .application_adapter import (
+    FORMAT as APPLICATION_ADAPTER_FORMAT,
+    AdapterResult,
+    ApplicationAdapter,
+)
 from .evaluator import BenchmarkSuite, EvaluationReport, RunRecord, evaluate_progress
 from .model import ProtocolError
 from .model_content import inspect_model_content
@@ -42,6 +47,19 @@ def _canonical(value: object) -> bytes:
 
 def _hash_object(value: object, domain: str) -> str:
     return sha256(domain.encode("ascii") + b"\x00" + _canonical(value)).hexdigest()
+
+
+def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ProtocolError("evaluation bundle contains a duplicate JSON field")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ProtocolError(f"evaluation bundle contains forbidden JSON constant {value}")
 
 
 def _require_digest(value: str, field: str, *, artifact: bool = False) -> None:
@@ -92,28 +110,36 @@ class EnvironmentManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EnvironmentManifest":
+        if not isinstance(data, dict) or set(data) != {
+            "adapter_protocol", "cpu_limit", "format", "image_digest",
+            "memory_limit_bytes", "runner_digest", "timeout_seconds",
+        }:
+            raise ProtocolError("evaluation environment schema contains missing or unknown fields")
         if data.get("format") != ENVIRONMENT_FORMAT:
             raise ProtocolError("evaluation environment format is unsupported")
         try:
             manifest = cls(
-                image_digest=str(data["image_digest"]),
-                runner_digest=str(data["runner_digest"]),
-                adapter_protocol=str(data["adapter_protocol"]),
-                cpu_limit=int(data["cpu_limit"]),
-                memory_limit_bytes=int(data["memory_limit_bytes"]),
-                timeout_seconds=int(data["timeout_seconds"]),
+                image_digest=data["image_digest"],
+                runner_digest=data["runner_digest"],
+                adapter_protocol=data["adapter_protocol"],
+                cpu_limit=data["cpu_limit"],
+                memory_limit_bytes=data["memory_limit_bytes"],
+                timeout_seconds=data["timeout_seconds"],
             )
         except KeyError as error:
             raise ProtocolError(f"environment lacks {error.args[0]}") from error
         _require_digest(manifest.image_digest, "image digest", artifact=True)
         _require_digest(manifest.runner_digest, "runner digest", artifact=True)
-        if not re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", manifest.adapter_protocol):
+        if (
+            not isinstance(manifest.adapter_protocol, str)
+            or not re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", manifest.adapter_protocol)
+        ):
             raise ProtocolError("adapter protocol is invalid")
-        if not 1 <= manifest.cpu_limit <= 4096:
+        if not isinstance(manifest.cpu_limit, int) or isinstance(manifest.cpu_limit, bool) or not 1 <= manifest.cpu_limit <= 4096:
             raise ProtocolError("CPU limit is outside runner limits")
-        if not 1 << 20 <= manifest.memory_limit_bytes <= 1 << 50:
+        if not isinstance(manifest.memory_limit_bytes, int) or isinstance(manifest.memory_limit_bytes, bool) or not 1 << 20 <= manifest.memory_limit_bytes <= 1 << 50:
             raise ProtocolError("memory limit is outside runner limits")
-        if not 1 <= manifest.timeout_seconds <= 7 * 24 * 60 * 60:
+        if not isinstance(manifest.timeout_seconds, int) or isinstance(manifest.timeout_seconds, bool) or not 1 <= manifest.timeout_seconds <= 7 * 24 * 60 * 60:
             raise ProtocolError("timeout is outside runner limits")
         return manifest
 
@@ -148,18 +174,29 @@ class CandidateCommitment:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CandidateCommitment":
+        expected = {
+            "artifact_hash", "baseline_hash", "baseline_content_hash", "candidate_id",
+            "committed_epoch", "content_hash", "network_id", "parents", "recipient",
+            "suite_commitment",
+        }
+        if not isinstance(data, dict) or set(data) != expected:
+            raise ProtocolError("candidate commitment schema contains missing or unknown fields")
+        if not isinstance(data.get("parents"), list) or any(
+            not isinstance(parent, str) for parent in data.get("parents", [])
+        ):
+            raise ProtocolError("candidate commitment parents are invalid")
         try:
             commitment = cls(
-                network_id=str(data["network_id"]),
-                recipient=str(data["recipient"]),
-                candidate_id=str(data["candidate_id"]),
-                artifact_hash=str(data["artifact_hash"]),
-                baseline_hash=str(data["baseline_hash"]),
-                baseline_content_hash=str(data["baseline_content_hash"]),
-                content_hash=str(data["content_hash"]),
-                parents=tuple(str(parent) for parent in data["parents"]),
-                suite_commitment=str(data["suite_commitment"]),
-                committed_epoch=int(data["committed_epoch"]),
+                network_id=data["network_id"],
+                recipient=data["recipient"],
+                candidate_id=data["candidate_id"],
+                artifact_hash=data["artifact_hash"],
+                baseline_hash=data["baseline_hash"],
+                baseline_content_hash=data["baseline_content_hash"],
+                content_hash=data["content_hash"],
+                parents=tuple(data["parents"]),
+                suite_commitment=data["suite_commitment"],
+                committed_epoch=data["committed_epoch"],
             )
         except KeyError as error:
             raise ProtocolError(f"candidate commitment lacks {error.args[0]}") from error
@@ -167,9 +204,9 @@ class CandidateCommitment:
         return commitment
 
     def validate(self) -> None:
-        if not self.network_id or len(self.network_id) > 128:
+        if not isinstance(self.network_id, str) or not self.network_id or len(self.network_id) > 128:
             raise ProtocolError("network id is invalid")
-        if not self.recipient or len(self.recipient) > 256:
+        if not isinstance(self.recipient, str) or not self.recipient or len(self.recipient) > 256:
             raise ProtocolError("reward recipient is invalid")
         _require_digest(self.candidate_id, "candidate id")
         _require_digest(self.artifact_hash, "candidate artifact hash", artifact=True)
@@ -228,16 +265,24 @@ class ExecutionTranscript:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionTranscript":
+        expected = {
+            "adapter", "challenge_epoch", "challenge_seed", "content_hash",
+            "entrypoint_digest", "entrypoint_path", "environment_hash", "role", "run",
+        }
+        if not isinstance(data, dict) or set(data) != expected:
+            raise ProtocolError("execution transcript schema contains missing or unknown fields")
+        if not isinstance(data.get("run"), dict):
+            raise ProtocolError("execution transcript run must be an object")
         try:
             transcript = cls(
-                role=str(data["role"]),
-                challenge_seed=str(data["challenge_seed"]),
-                challenge_epoch=int(data["challenge_epoch"]),
-                environment_hash=str(data["environment_hash"]),
-                content_hash=str(data["content_hash"]),
-                entrypoint_digest=str(data["entrypoint_digest"]),
-                entrypoint_path=str(data["entrypoint_path"]),
-                adapter=str(data["adapter"]),
+                role=data["role"],
+                challenge_seed=data["challenge_seed"],
+                challenge_epoch=data["challenge_epoch"],
+                environment_hash=data["environment_hash"],
+                content_hash=data["content_hash"],
+                entrypoint_digest=data["entrypoint_digest"],
+                entrypoint_path=data["entrypoint_path"],
+                adapter=data["adapter"],
                 run=RunRecord.from_dict(data["run"]),
             )
         except KeyError as error:
@@ -252,7 +297,12 @@ class ExecutionTranscript:
         _require_digest(self.environment_hash, "environment hash")
         _require_digest(self.content_hash, "canonical content hash", artifact=True)
         _require_digest(self.entrypoint_digest, "entrypoint digest", artifact=True)
-        if self.adapter != STATIC_ADAPTER_FORMAT or not self.entrypoint_path:
+        if (
+            not isinstance(self.adapter, str)
+            or self.adapter not in {STATIC_ADAPTER_FORMAT, APPLICATION_ADAPTER_FORMAT}
+            or not isinstance(self.entrypoint_path, str)
+            or not self.entrypoint_path
+        ):
             raise ProtocolError("execution entrypoint binding is invalid")
         if (
             not isinstance(self.challenge_epoch, int)
@@ -351,6 +401,181 @@ def read_static_model_content_receipt(
     return transcript
 
 
+@dataclass(frozen=True, slots=True)
+class ApplicationCaseInput:
+    """One hidden case payload supplied by an evaluator, never its expected answer."""
+
+    media_type: str
+    value: Any
+
+
+def application_content_hash(
+    *, role: str, entrypoint_path: str, entrypoint_digest: str,
+) -> str:
+    """Commit an experimental application identity before challenge reveal."""
+    if role not in {"baseline", "candidate"}:
+        raise ProtocolError("application content role is invalid")
+    _require_digest(entrypoint_digest, "entrypoint digest", artifact=True)
+    if (
+        not isinstance(entrypoint_path, str)
+        or not entrypoint_path
+        or len(entrypoint_path.encode("utf-8")) > 4_096
+        or "\x00" in entrypoint_path
+    ):
+        raise ProtocolError("application entrypoint path is invalid")
+    return f"sha256:{_hash_object({
+        'adapter': APPLICATION_ADAPTER_FORMAT,
+        'entrypoint_digest': entrypoint_digest,
+        'entrypoint_path': entrypoint_path,
+        'role': role,
+    }, 'NIR_APPLICATION_CONTENT_V1')}"
+
+
+def _application_case_seed(
+    *,
+    artifact_hash: str,
+    content_hash: str,
+    challenge_seed: str,
+    challenge_epoch: int,
+    role: str,
+    case_id: str,
+) -> str:
+    return _hash_object(
+        {
+            "artifact_hash": artifact_hash,
+            "case_id": case_id,
+            "challenge_epoch": challenge_epoch,
+            "challenge_seed": challenge_seed,
+            "content_hash": content_hash,
+            "role": role,
+        },
+        "NIR_APPLICATION_CASE_SEED_V1",
+    )
+
+
+def run_application_adapter(
+    *,
+    application: ApplicationAdapter,
+    artifact_hash: str,
+    expected_content_hash: str,
+    entrypoint_digest: str,
+    entrypoint_path: str,
+    suite: BenchmarkSuite,
+    case_inputs: dict[str, ApplicationCaseInput],
+    role: str,
+    verifier_id: str,
+    run_id: str,
+    challenge_seed: str,
+    challenge_epoch: int,
+    environment: EnvironmentManifest,
+    energy_wh: int,
+    energy_attested: bool = False,
+    case_timeout_ms: int = 30_000,
+) -> ExecutionTranscript:
+    """Run an experimental local application and bind every output to a transcript.
+
+    This function supplies deterministic transport and commitment bindings.  It
+    does not attest the host, meter, application binary, or physical execution;
+    production callers must invoke it inside the isolated runner named by the
+    committed environment.
+    """
+    _require_digest(artifact_hash, "artifact hash", artifact=True)
+    _require_digest(expected_content_hash, "canonical content hash", artifact=True)
+    _require_digest(entrypoint_digest, "entrypoint digest", artifact=True)
+    _require_digest(challenge_seed, "challenge seed")
+    if role not in {"baseline", "candidate"}:
+        raise ProtocolError("application execution role is invalid")
+    if (
+        not isinstance(entrypoint_path, str)
+        or not entrypoint_path
+        or len(entrypoint_path.encode("utf-8")) > 4_096
+        or "\x00" in entrypoint_path
+    ):
+        raise ProtocolError("application entrypoint path is invalid")
+    if (
+        not isinstance(challenge_epoch, int)
+        or isinstance(challenge_epoch, bool)
+        or challenge_epoch < 1
+    ):
+        raise ProtocolError("application challenge epoch is invalid")
+    if environment.adapter_protocol != APPLICATION_ADAPTER_FORMAT:
+        raise ProtocolError("environment does not commit to the application adapter protocol")
+    if not isinstance(energy_attested, bool) or energy_attested:
+        application.close(force=True)
+        raise ProtocolError(
+            "experimental application execution cannot claim hardware energy attestation"
+        )
+    committed_content = application_content_hash(
+        role=role,
+        entrypoint_path=entrypoint_path,
+        entrypoint_digest=entrypoint_digest,
+    )
+    if expected_content_hash != committed_content:
+        raise ProtocolError(
+            "application entrypoint identity was not bound by the pre-challenge content commitment"
+        )
+    expected_case_ids = {case.case_id for case in suite.cases}
+    if not isinstance(case_inputs, dict) or set(case_inputs) != expected_case_ids:
+        raise ProtocolError("application inputs must cover every suite case exactly once")
+    if any(not isinstance(item, ApplicationCaseInput) for item in case_inputs.values()):
+        raise ProtocolError("application case input type is invalid")
+
+    description = application.describe(challenge_seed)
+    if description.model_identity != entrypoint_digest:
+        application.close(force=True)
+        raise ProtocolError("application model identity does not match the committed entrypoint")
+    if description.state_policy != "reset-per-case":
+        application.close(force=True)
+        raise ProtocolError("application must reset state for every evaluation case")
+
+    answers: dict[str, str] = {}
+    for case in suite.cases:
+        supplied = case_inputs[case.case_id]
+        result: AdapterResult = application.evaluate(
+            case_id=case.case_id,
+            input_media_type=supplied.media_type,
+            input_value=supplied.value,
+            seed=_application_case_seed(
+                artifact_hash=artifact_hash,
+                content_hash=expected_content_hash,
+                challenge_seed=challenge_seed,
+                challenge_epoch=challenge_epoch,
+                role=role,
+                case_id=case.case_id,
+            ),
+            timeout_ms=case_timeout_ms,
+            tool_policy="none",
+        )
+        if result.media_type != "text/plain" or not isinstance(result.value, str):
+            application.close(force=True)
+            raise ProtocolError("application evaluation output must be plain text")
+        answers[case.case_id] = result.value
+
+    run = RunRecord.from_dict(
+        {
+            "answers": answers,
+            "artifact_hash": artifact_hash,
+            "energy_attested": energy_attested,
+            "energy_wh": energy_wh,
+            "run_id": run_id,
+            "verifier_id": verifier_id,
+        }
+    )
+    transcript = ExecutionTranscript(
+        role=role,
+        challenge_seed=challenge_seed,
+        challenge_epoch=challenge_epoch,
+        environment_hash=environment.commitment,
+        content_hash=expected_content_hash,
+        entrypoint_digest=entrypoint_digest,
+        entrypoint_path=entrypoint_path,
+        adapter=APPLICATION_ADAPTER_FORMAT,
+        run=run,
+    )
+    transcript.validate()
+    return transcript
+
+
 def _verify_local_execution_binding(
     inspected: object,
     items: tuple[ExecutionTranscript, ...],
@@ -397,8 +622,28 @@ class EvaluationBundle:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EvaluationBundle":
+        expected = {
+            "baseline", "bundle_hash", "candidate", "challenge_epoch", "challenge_seed",
+            "commitment", "environment", "format", "report", "suite", "suite_salt",
+        }
+        if not isinstance(data, dict) or set(data) != expected:
+            raise ProtocolError("evaluation bundle schema contains missing or unknown fields")
         if data.get("format") != FORMAT:
             raise ProtocolError("evaluation bundle format is unsupported")
+        if (
+            not isinstance(data.get("commitment"), dict)
+            or not isinstance(data.get("environment"), dict)
+            or not isinstance(data.get("suite"), dict)
+            or not isinstance(data.get("baseline"), list)
+            or not isinstance(data.get("candidate"), list)
+            or not isinstance(data.get("challenge_seed"), str)
+            or not isinstance(data.get("challenge_epoch"), int)
+            or isinstance(data.get("challenge_epoch"), bool)
+            or not isinstance(data.get("suite_salt"), str)
+            or not isinstance(data.get("report"), dict)
+            or not isinstance(data.get("bundle_hash"), str)
+        ):
+            raise ProtocolError("evaluation bundle field types are invalid")
         try:
             commitment = CandidateCommitment.from_dict(data["commitment"])
             environment = EnvironmentManifest.from_dict(data["environment"])
@@ -407,16 +652,16 @@ class EvaluationBundle:
             candidate = tuple(ExecutionTranscript.from_dict(item) for item in data["candidate"])
             bundle = _create_bundle(
                 commitment=commitment,
-                challenge_seed=str(data["challenge_seed"]),
-                challenge_epoch=int(data["challenge_epoch"]),
+                challenge_seed=data["challenge_seed"],
+                challenge_epoch=data["challenge_epoch"],
                 environment=environment,
                 suite=suite,
-                suite_salt=str(data["suite_salt"]),
+                suite_salt=data["suite_salt"],
                 baseline=baseline,
                 candidate=candidate,
             )
             claimed_report = data["report"]
-            claimed_hash = str(data["bundle_hash"])
+            claimed_hash = data["bundle_hash"]
         except KeyError as error:
             raise ProtocolError(f"evaluation bundle lacks {error.args[0]}") from error
         if claimed_report != bundle._report_payload():
@@ -513,6 +758,30 @@ def _create_bundle(
             or item.environment_hash != environment.commitment
         ):
             raise ProtocolError("execution transcript is bound to another challenge")
+    adapters = {item.adapter for item in all_items}
+    if len(adapters) != 1:
+        raise ProtocolError("execution bundle cannot mix adapter protocols")
+    if APPLICATION_ADAPTER_FORMAT in adapters:
+        if environment.adapter_protocol != APPLICATION_ADAPTER_FORMAT:
+            raise ProtocolError("application execution uses another environment protocol")
+        if any(item.run.energy_attested for item in all_items):
+            raise ProtocolError(
+                "experimental application execution cannot claim hardware energy attestation"
+            )
+        for expected_role, items in (
+            ("baseline", baseline_items), ("candidate", candidate_items),
+        ):
+            if any(
+                item.content_hash != application_content_hash(
+                    role=expected_role,
+                    entrypoint_path=item.entrypoint_path,
+                    entrypoint_digest=item.entrypoint_digest,
+                )
+                for item in items
+            ):
+                raise ProtocolError(
+                    "application execution is not bound to pre-challenge content"
+                )
     if any(item.role != "baseline" for item in baseline_items) or any(
         item.role != "candidate" for item in candidate_items
     ):
@@ -576,6 +845,61 @@ def create_bundle(
         suite_salt=suite_salt,
         baseline=baseline,
         candidate=candidate,
+    )
+
+
+def create_application_bundle(
+    *,
+    commitment: CandidateCommitment,
+    challenge_seed: str,
+    challenge_epoch: int,
+    environment: EnvironmentManifest,
+    suite: BenchmarkSuite,
+    suite_salt: str,
+    baseline: Iterable[ExecutionTranscript],
+    candidate: Iterable[ExecutionTranscript],
+) -> EvaluationBundle:
+    """Create an experimental bundle from strict application-adapter transcripts.
+
+    Unlike ``create_bundle``, this cannot recompute local model-content paths.
+    The transcripts must therefore be produced inside a separately attested
+    runner before this format can be used outside a local test environment.
+    """
+    baseline_items = tuple(baseline)
+    candidate_items = tuple(candidate)
+    if environment.adapter_protocol != APPLICATION_ADAPTER_FORMAT:
+        raise ProtocolError("application bundle environment uses another adapter protocol")
+    if not baseline_items or not candidate_items or any(
+        item.adapter != APPLICATION_ADAPTER_FORMAT
+        for item in baseline_items + candidate_items
+    ):
+        raise ProtocolError("application bundle requires only application-adapter transcripts")
+    if any(item.run.energy_attested for item in baseline_items + candidate_items):
+        raise ProtocolError(
+            "experimental application bundle cannot claim hardware energy attestation"
+        )
+    for expected_role, items in (
+        ("baseline", baseline_items), ("candidate", candidate_items),
+    ):
+        for item in items:
+            expected_content = application_content_hash(
+                role=expected_role,
+                entrypoint_path=item.entrypoint_path,
+                entrypoint_digest=item.entrypoint_digest,
+            )
+            if item.role != expected_role or item.content_hash != expected_content:
+                raise ProtocolError(
+                    "application transcript is not bound to its pre-challenge content commitment"
+                )
+    return _create_bundle(
+        commitment=commitment,
+        challenge_seed=challenge_seed,
+        challenge_epoch=challenge_epoch,
+        environment=environment,
+        suite=suite,
+        suite_salt=suite_salt,
+        baseline=baseline_items,
+        candidate=candidate_items,
     )
 
 
@@ -645,7 +969,13 @@ class ChallengeReplayGuard:
 def load_bundle(path: str | Path) -> EvaluationBundle:
     """Load and fully verify a serialized evaluation bundle."""
     try:
-        data = json.loads(_read_artifact(path))
+        data = json.loads(
+            _read_artifact(path),
+            object_pairs_hook=_strict_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except ProtocolError:
+        raise
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ProtocolError("evaluation bundle is not valid JSON") from error
     if not isinstance(data, dict):
