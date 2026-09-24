@@ -1,10 +1,13 @@
 import {
   MAX_DECIMAL_DIGITS,
+  MAX_MULTISIG_MEMBERS,
   MIN_TRANSFER_FEE,
+  SIGNATURE_ALGORITHM,
   TRANSFER_CREDIT_EPOCH_BLOCKS,
   TRANSFER_CREDIT_STAKE_UNIT,
   TRANSFER_CREDITS_PER_STAKE_UNIT,
 } from "./constants.mjs";
+import { hashObject } from "./crypto.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const DECIMAL = /^(0|[1-9][0-9]*)$/;
@@ -59,6 +62,69 @@ export function transferCreditEpoch(height) {
   }
   if (height === 0) return 0;
   return Math.floor((height - 1) / TRANSFER_CREDIT_EPOCH_BLOCKS);
+}
+
+function multisigDescriptor(memberPublicKeys, threshold) {
+  if (!Array.isArray(memberPublicKeys) || memberPublicKeys.length < 2 ||
+      memberPublicKeys.length > MAX_MULTISIG_MEMBERS ||
+      !Number.isSafeInteger(threshold) || threshold < 2 || threshold > memberPublicKeys.length ||
+      memberPublicKeys.some((key) => typeof key !== "string" || key.length > 4_000) ||
+      new Set(memberPublicKeys).size !== memberPublicKeys.length) {
+    throw new Error("multisignature descriptor is invalid");
+  }
+  return Object.freeze({
+    algorithm: SIGNATURE_ALGORITHM,
+    memberPublicKeys: Object.freeze([...memberPublicKeys].sort()),
+    threshold,
+  });
+}
+
+export function multisigStateAddress(memberPublicKeys, threshold) {
+  return `nir1${hashObject(multisigDescriptor(memberPublicKeys, threshold), "MULTISIG_ADDRESS")}`;
+}
+
+export function applyMultisigTransferState({
+  amount,
+  balances,
+  fee,
+  feeRecipient,
+  memberPublicKeys,
+  nonce: transactionNonce,
+  nonces,
+  recipient,
+  sender,
+  threshold,
+  verifiedSigners,
+}) {
+  const descriptor = multisigDescriptor(memberPublicKeys, threshold);
+  if (multisigStateAddress(descriptor.memberPublicKeys, descriptor.threshold) !== sender) {
+    throw new Error("sender address does not match multisignature descriptor");
+  }
+  if (!Array.isArray(verifiedSigners) || verifiedSigners.length > descriptor.memberPublicKeys.length) {
+    throw new Error("multisignature signer collection is invalid");
+  }
+  const allowed = new Set(descriptor.memberPublicKeys);
+  const signers = new Set();
+  for (const signer of verifiedSigners) {
+    if (typeof signer !== "string" || !allowed.has(signer)) {
+      throw new Error("multisignature signer is unknown");
+    }
+    if (signers.has(signer)) throw new Error("multisignature signer is duplicated");
+    signers.add(signer);
+  }
+  if (signers.size < descriptor.threshold) {
+    throw new Error("multisignature threshold not reached");
+  }
+  return applyOrdinaryTransferState({
+    amount,
+    balances,
+    fee,
+    feeRecipient,
+    nonce: transactionNonce,
+    nonces,
+    recipient,
+    sender,
+  });
 }
 
 /**

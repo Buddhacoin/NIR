@@ -17,7 +17,7 @@ import {
   MAX_BACKUP_RECEIPT_BYTES,
   runRemoteBackupRestoreDrill,
 } from "./backup-recovery.mjs";
-import { validateLoopbackListener } from "./loopback-listener.mjs";
+import { listenOnLoopback, validateLoopbackListener } from "./loopback-listener.mjs";
 import { signWalletBackupReceipt } from "./wallet-files.mjs";
 
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
@@ -100,9 +100,8 @@ try {
     validateLoopbackListener({ host, label: "backup service", port });
     const receipt = readJson(receiptPath, MAX_BACKUP_RECEIPT_BYTES);
     const server = createBackupHttpServer(backupDirectory, receipt);
-    server.listen(port, host, () => console.log(
-      `NIR backup service listening on http://${host}:${port}`,
-    ));
+    await listenOnLoopback(server, { host, label: "backup service listener", port });
+    console.log(`NIR backup service listening on http://${host}:${port}`);
   } else if (command === "drill-remote" && parameters.length >= 5) {
     const [workspaceParent, operatorsPath, genesisPath, ...sources] = parameters;
     const result = await runRemoteBackupRestoreDrill(

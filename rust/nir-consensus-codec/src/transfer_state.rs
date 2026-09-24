@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::{consensus_hash, Value};
+
 pub const MINIMUM_FEE: u128 = 1_000;
 pub const MAXIMUM_ATOMIC_DIGITS: usize = 32;
 pub const MAXIMUM_SAFE_NONCE: u64 = 9_007_199_254_740_991;
@@ -13,6 +15,7 @@ pub const MAXIMUM_ATOMIC_VALUE: u128 = 99_999_999_999_999_999_999_999_999_999_99
 pub const TRANSFER_CREDIT_STAKE_UNIT: u128 = 10_000_000_000;
 pub const TRANSFER_CREDITS_PER_STAKE_UNIT: u128 = 10;
 pub const TRANSFER_CREDIT_EPOCH_BLOCKS: u64 = 720;
+pub const MAXIMUM_MULTISIG_MEMBERS: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
@@ -106,6 +109,19 @@ pub struct CreditTransition {
     pub next_nonce: u64,
     pub next_fee_payer_nonce: Option<u64>,
     pub owner: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultisigTransfer<'a> {
+    pub sender: &'a str,
+    pub recipient: &'a str,
+    pub fee_recipient: &'a str,
+    pub amount: &'a str,
+    pub fee: &'a str,
+    pub nonce: u64,
+    pub member_public_keys: Vec<&'a str>,
+    pub threshold: usize,
+    pub verified_signers: Vec<&'a str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -613,4 +629,101 @@ pub fn apply_credit_transfer(
         next_fee_payer_nonce: transfer.fee_payer_nonce.map(|nonce| nonce + 1),
         owner: owner.to_owned(),
     })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(DIGITS[(byte >> 4) as usize] as char);
+        output.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+pub fn multisig_state_address(
+    member_public_keys: &[&str],
+    threshold: usize,
+) -> Result<String, TransferError> {
+    if member_public_keys.len() < 2
+        || member_public_keys.len() > MAXIMUM_MULTISIG_MEMBERS
+        || threshold < 2
+        || threshold > member_public_keys.len()
+        || member_public_keys
+            .iter()
+            .any(|key| key.encode_utf16().count() > 4_000)
+    {
+        return Err(TransferError("invalid descriptor"));
+    }
+    let mut members = member_public_keys.to_vec();
+    members.sort_unstable();
+    if members.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(TransferError("invalid descriptor"));
+    }
+    let descriptor = Value::Map(vec![
+        (
+            "algorithm".to_owned(),
+            Value::String("ml-dsa-65".to_owned()),
+        ),
+        (
+            "memberPublicKeys".to_owned(),
+            Value::Array(
+                members
+                    .into_iter()
+                    .map(|member| Value::String(member.to_owned()))
+                    .collect(),
+            ),
+        ),
+        (
+            "threshold".to_owned(),
+            Value::Integer(
+                i64::try_from(threshold).map_err(|_| TransferError("invalid descriptor"))?,
+            ),
+        ),
+    ]);
+    let digest = consensus_hash("MULTISIG_ADDRESS", &descriptor)
+        .map_err(|_| TransferError("invalid descriptor"))?;
+    Ok(format!("nir1{}", hex(&digest)))
+}
+
+pub fn apply_multisig_transfer(
+    state: &mut State,
+    transfer: MultisigTransfer<'_>,
+) -> Result<Transition, TransferError> {
+    let expected_address =
+        multisig_state_address(&transfer.member_public_keys, transfer.threshold)?;
+    if expected_address != transfer.sender {
+        return Err(TransferError("descriptor address mismatch"));
+    }
+    if transfer.verified_signers.len() > transfer.member_public_keys.len() {
+        return Err(TransferError("invalid signer collection"));
+    }
+    let allowed = transfer
+        .member_public_keys
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut signers = std::collections::BTreeSet::new();
+    for signer in &transfer.verified_signers {
+        if !allowed.contains(signer) {
+            return Err(TransferError("unknown signer"));
+        }
+        if !signers.insert(*signer) {
+            return Err(TransferError("duplicate signer"));
+        }
+    }
+    if signers.len() < transfer.threshold {
+        return Err(TransferError("threshold not reached"));
+    }
+    apply_ordinary_transfer(
+        state,
+        Transfer {
+            sender: transfer.sender,
+            recipient: transfer.recipient,
+            fee_recipient: transfer.fee_recipient,
+            amount: transfer.amount,
+            fee: transfer.fee,
+            nonce: transfer.nonce,
+        },
+    )
 }

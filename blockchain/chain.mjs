@@ -85,6 +85,7 @@ import {
 } from "./consensus-codec.mjs";
 import {
   applyCreditTransferState,
+  applyMultisigTransferState,
   applyOrdinaryTransferState,
   applySponsoredTransferState,
   transferCreditAllowance,
@@ -3306,6 +3307,7 @@ export class NirChain {
     }
     assertAddress(transaction.recipient, "transfer recipient");
     const unsigned = unsignedTransaction(transaction);
+    let verifiedMultisigSigners = null;
     if (transaction.algorithm === SIGNATURE_ALGORITHM) {
       if (
         typeof transaction.publicKey !== "string" || transaction.publicKey.length > 4_000 ||
@@ -3336,6 +3338,7 @@ export class NirChain {
         signers.add(approval.publicKey);
       }
       if (signers.size < descriptor.threshold) throw new Error("multisignature threshold not reached");
+      verifiedMultisigSigners = [...signers];
     }
     if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce < 0) {
       throw new Error("invalid transaction nonce");
@@ -3428,11 +3431,18 @@ export class NirChain {
       return;
     }
     if (!sponsored) {
-      applyOrdinaryTransferState({
+      const transition = transaction.algorithm === MULTISIG_ALGORITHM ?
+        applyMultisigTransferState : applyOrdinaryTransferState;
+      transition({
         amount,
         balances,
         fee,
         feeRecipient: proposer,
+        ...(verifiedMultisigSigners === null ? {} : {
+          memberPublicKeys: transaction.memberPublicKeys,
+          threshold: transaction.threshold,
+          verifiedSigners: verifiedMultisigSigners,
+        }),
         nonce: transaction.nonce,
         nonces,
         recipient: transaction.recipient,

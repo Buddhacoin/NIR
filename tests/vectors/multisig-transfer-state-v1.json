@@ -1,0 +1,66 @@
+{
+  "format": "nir-multisig-transfer-state-vectors-v1",
+  "maximumMembers": 16,
+  "vectors": [
+    {
+      "name": "two of three spends atomically",
+      "state": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "5000", "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0", "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 0 }, "burned": "9" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "2000", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-c", "key-a", "key-b"], "threshold": 2, "verifiedSigners": ["key-a", "key-c"] },
+      "expected": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "2000", "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "2000", "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 1 }, "burned": "9" }
+    },
+    {
+      "name": "vault may be recipient and fee recipient",
+      "state": { "balances": { "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c": "3000" }, "nonces": { "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c": 4 }, "burned": "0" },
+      "transaction": { "sender": "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c", "recipient": "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c", "feeRecipient": "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c", "amount": "2000", "fee": "1000", "nonce": 4, "memberPublicKeys": ["key-b", "key-a"], "threshold": 2, "verifiedSigners": ["key-b", "key-a"] },
+      "expected": { "balances": { "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c": "3000" }, "nonces": { "nir16ad54c27538e3e51b494b874844741e072efee8c7005ebf9b94496b876d1a88c": 5 }, "burned": "0" }
+    },
+    {
+      "name": "threshold not reached",
+      "state": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "3000" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 0 }, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-b", "key-c"], "threshold": 2, "verifiedSigners": ["key-a"] },
+      "error": "threshold not reached"
+    },
+    {
+      "name": "duplicate signer rejected",
+      "state": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "3000" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 0 }, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-b", "key-c"], "threshold": 2, "verifiedSigners": ["key-a", "key-a"] },
+      "error": "duplicate signer"
+    },
+    {
+      "name": "unknown signer rejected",
+      "state": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "3000" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 0 }, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-b", "key-c"], "threshold": 2, "verifiedSigners": ["key-a", "key-x"] },
+      "error": "unknown signer"
+    },
+    {
+      "name": "duplicate member rejected",
+      "state": { "balances": {}, "nonces": {}, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-a"], "threshold": 2, "verifiedSigners": ["key-a"] },
+      "error": "invalid descriptor"
+    },
+    {
+      "name": "member count bound enforced",
+      "state": { "balances": {}, "nonces": {}, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08", "k09", "k10", "k11", "k12", "k13", "k14", "k15", "k16", "k17"], "threshold": 2, "verifiedSigners": ["k01", "k02"] },
+      "error": "invalid descriptor"
+    },
+    {
+      "name": "sender descriptor mismatch rejected",
+      "state": { "balances": {}, "nonces": {}, "burned": "0" },
+      "transaction": { "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-b", "key-c"], "threshold": 2, "verifiedSigners": ["key-a", "key-b"] },
+      "error": "descriptor address mismatch"
+    },
+    {
+      "name": "nonce replay rejected atomically",
+      "state": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "3000" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 1 }, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-b", "key-c"], "threshold": 2, "verifiedSigners": ["key-a", "key-b"] },
+      "error": "unexpected nonce"
+    },
+    {
+      "name": "recipient overflow rejected atomically",
+      "state": { "balances": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": "1001", "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "99999999999999999999999999999999", "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0" }, "nonces": { "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd": 0 }, "burned": "0" },
+      "transaction": { "sender": "nir12c9a5d9302ba045aa73a9a2724910726f36d5d339f7959ba1c99e2bebed155dd", "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "amount": "1", "fee": "1000", "nonce": 0, "memberPublicKeys": ["key-a", "key-b", "key-c"], "threshold": 2, "verifiedSigners": ["key-a", "key-b"] },
+      "error": "balance overflow"
+    }
+  ]
+}

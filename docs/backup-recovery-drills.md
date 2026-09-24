@@ -63,7 +63,8 @@ npm run backup:serve -- \
 The built-in service deliberately binds only to the numeric loopback addresses
 `127.0.0.1` and `::1`; resolvable hostnames are not accepted as a bind-address
 security boundary. Public TLS, rate limiting and operational access control
-belong at the reverse proxy.
+belong at the reverse proxy. A listener collision is handled as a normal
+fail-closed startup error rather than an uncaught runtime exception.
 
 Create `trusted-backup-operators.json` containing at least two entries with
 distinct `operatorId`, address, algorithm and public key. Then run an isolated

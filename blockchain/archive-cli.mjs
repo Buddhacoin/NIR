@@ -17,7 +17,7 @@ import {
   restoreHistoryArchiveFromSources,
 } from "./archive-service.mjs";
 import { loadBlockStore } from "./block-store.mjs";
-import { validateLoopbackListener } from "./loopback-listener.mjs";
+import { listenOnLoopback, validateLoopbackListener } from "./loopback-listener.mjs";
 import { signWalletHistoryArchive } from "./wallet-files.mjs";
 
 const MAX_ARCHIVE_FILE_BYTES = 512 * 1024 * 1024;
@@ -132,9 +132,8 @@ try {
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
-    server.listen(port, host, () => {
-      console.log(`NIR history archive listening on http://${host}:${port}`);
-    });
+    await listenOnLoopback(server, { host, label: "archive service listener", port });
+    console.log(`NIR history archive listening on http://${host}:${port}`);
   } else {
     throw new Error("usage: archive:create <node-directory> <operator-wallet> <new-archive.json> | archive:restore <node-directory> <trusted-operators.json> <archive-a.json> <archive-b.json> [...] | archive:restore-remote <node-directory> <trusted-operators.json> <https-source-a> <https-source-b> [...] | archive:serve <archive.json> [port] [loopback-host]");
   }

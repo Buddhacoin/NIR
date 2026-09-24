@@ -43,7 +43,9 @@ behind mutually authenticated TLS, request limits and monitoring; never expose
 the development HTTP listener directly to the Internet.
 The CLI accepts only the numeric loopback addresses `127.0.0.1` and `::1`.
 Hostnames such as `localhost` are rejected because local name resolution is not
-a sufficient bind-address security boundary.
+a sufficient bind-address security boundary. If the selected port is already
+occupied, startup emits a bounded error, closes the beacon state descriptor and
+releases its lock instead of leaving private operator state open.
 
 After collecting at least three shares in separate files, an untrusted
 aggregator can construct the claim:

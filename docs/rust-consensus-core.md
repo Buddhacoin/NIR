@@ -6,7 +6,7 @@ not a second node and not a production client.
 
 ## Implemented profile
 
-The crate currently implements four layers:
+The crate currently implements five layers:
 
 1. `nir-consensus-bytes-v1` value bytes, purpose-separated envelopes and
    SHA3-256 hashing;
@@ -14,7 +14,9 @@ The crate currently implements four layers:
 3. the monetary state transition of a sponsored transfer whose distinct fee
    payer authorizes and pays the fee;
 4. a zero-fee transfer paid from renewable Transfer Credits, either directly
-   by the sender or through an owner-to-sender delegation.
+   by the sender or through an owner-to-sender delegation;
+5. the deterministic authorization and monetary transition of a multisignature
+   account after individual signatures have been verified.
 
 The transfer profile accepts canonical addresses, unsigned decimal amounts up
 to 32 digits, a safe advancing nonce, balances and a fee recipient. A valid
@@ -31,7 +33,7 @@ transition:
 - rejects replay, nonce exhaustion, malformed decimals, insufficient funds and
   bounded-balance overflow.
 
-Signature verification, multisignature, Transfer Credits, network identifiers,
+Signature verification, network identifiers,
 transaction schemas, account history, treasury vesting, block validation and
 state-root calculation remain outside this profile.
 
@@ -46,7 +48,7 @@ and nonce results before mutation, conserves affected balances and leaves
 burned supply unchanged.
 
 Cryptographic sponsor authorization is checked by the full node before this
-monetary transition. Multisignature remains outside the Rust profile.
+monetary transition.
 
 The Transfer Credit transition derives the epoch from block height, derives
 the allowance from locked stake, resets effective usage only when the epoch
@@ -63,6 +65,15 @@ same atomic transition as direct and delegated credits, so recipient overflow,
 replay or exhausted sponsor allowance cannot partially consume a credit or a
 nonce. Signature, treasury and schema checks remain outside the helper.
 
+The multisignature transition canonicalizes a bounded member set, derives the
+account address from the exact descriptor, requires a threshold of distinct
+verified members, and then applies the same bounded fee-paying monetary rules.
+Unknown or duplicate signers, duplicate members, invalid thresholds, descriptor
+address mismatch, replay, insufficient funds and balance overflow fail before
+state mutation. The full node still verifies each individual signature over
+the transaction before passing only verified signer identities into this
+transition; the Rust profile does not implement signature verification.
+
 ## Normative evidence
 
 The Rust tests consume the same repository-owned language-neutral vectors as
@@ -70,6 +81,7 @@ the JavaScript implementation:
 
 - `tests/vectors/consensus-codec-v1.json`;
 - `tests/vectors/credit-transfer-state-v1.json`;
+- `tests/vectors/multisig-transfer-state-v1.json`;
 - `tests/vectors/transfer-state-v1.json`;
 - `tests/vectors/sponsored-transfer-state-v1.json`.
 
@@ -83,6 +95,9 @@ The credit suite covers direct, delegated and sponsored ownership, epoch
 renewal, owner and delegation usage, quota exhaustion, delegation limits,
 replay of either sponsored nonce, role aliases, balance overflow, conservation
 and atomic rejection.
+The multisignature suite covers descriptor binding, threshold success and
+failure, duplicate and unknown signers, member bounds, replay, role aliases,
+overflow, conservation and atomic rejection.
 Expected output is never copied into the transition: both implementations
 execute the input and independently compare the resulting state or rejection
 code.

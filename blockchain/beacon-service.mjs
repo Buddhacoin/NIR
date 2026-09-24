@@ -9,7 +9,7 @@ import { openBeaconStateStore } from "./beacon-state-store.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { decryptWallet } from "./vault.mjs";
 import { readRestrictedPasswordFd } from "./operator-secret-input.mjs";
-import { validateLoopbackListener } from "./loopback-listener.mjs";
+import { listenOnLoopback, validateLoopbackListener } from "./loopback-listener.mjs";
 
 function readBoundedFile(path, { privateFile = true } = {}) {
   if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW === 0) {
@@ -129,9 +129,8 @@ try {
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  server.listen(port, host, () => {
-    console.log(`NIR beacon ${wallet.address} listening on ${tls ? "https" : "http"}://${host}:${port}`);
-  });
+  await listenOnLoopback(server, { host, label: "beacon service listener", port });
+  console.log(`NIR beacon ${wallet.address} listening on ${tls ? "https" : "http"}://${host}:${port}`);
 } catch (error) {
   stateStore?.close();
   console.error(`Beacon service failed: ${error.message}`);

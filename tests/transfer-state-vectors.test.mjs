@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   applyCreditTransferState,
+  applyMultisigTransferState,
   applyOrdinaryTransferState,
   applySponsoredTransferState,
 } from "../blockchain/transfer-state-transition.mjs";
@@ -23,6 +24,9 @@ const sponsoredSuite = JSON.parse(readFileSync(
 ));
 const creditSuite = JSON.parse(readFileSync(
   new URL("./vectors/credit-transfer-state-v1.json", import.meta.url), "utf8",
+));
+const multisigSuite = JSON.parse(readFileSync(
+  new URL("./vectors/multisig-transfer-state-v1.json", import.meta.url), "utf8",
 ));
 
 function state(value) {
@@ -89,6 +93,11 @@ function classify(error) {
   if (message.includes("quota is exhausted")) return "credit quota exhausted";
   if (message.includes("delegation is exhausted")) return "delegation exhausted";
   if (message.includes("credit-paid transfer fee must be zero")) return "credit fee must be zero";
+  if (message.includes("descriptor is invalid")) return "invalid descriptor";
+  if (message.includes("address does not match multisignature")) return "descriptor address mismatch";
+  if (message.includes("threshold not reached")) return "threshold not reached";
+  if (message.includes("duplicated")) return "duplicate signer";
+  if (message.includes("unknown")) return "unknown signer";
   return `unclassified: ${message}`;
 }
 
@@ -195,5 +204,31 @@ test("credit-paid transfer vectors are reproduced by the normative JS transition
     assert.equal(afterTotal, beforeTotal, `${vector.name} must conserve balances`);
     assert.equal(current.burned, BigInt(vector.state.burned),
       `${vector.name} must not burn NIR`);
+  }
+});
+
+test("multisignature transfer vectors are reproduced by the normative JS transition", () => {
+  assert.equal(multisigSuite.format, "nir-multisig-transfer-state-vectors-v1");
+  assert.equal(multisigSuite.maximumMembers, 16);
+  for (const vector of multisigSuite.vectors) {
+    const current = state(vector.state);
+    const before = snapshot(current);
+    const beforeTotal = [...current.balances.values()]
+      .reduce((total, balance) => total + balance, 0n);
+    const transition = () => applyMultisigTransferState({
+      ...vector.transaction,
+      balances: current.balances,
+      nonces: current.nonces,
+    });
+    if (vector.error) {
+      assert.throws(transition, (error) => classify(error) === vector.error, vector.name);
+      assert.deepEqual(snapshot(current), before, `${vector.name} must be atomic`);
+      continue;
+    }
+    transition();
+    assert.deepEqual(snapshot(current), vector.expected, vector.name);
+    const afterTotal = [...current.balances.values()]
+      .reduce((total, balance) => total + balance, 0n);
+    assert.equal(afterTotal, beforeTotal, `${vector.name} must conserve balances`);
   }
 });
