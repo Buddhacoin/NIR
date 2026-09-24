@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
+pub mod agent_mandate;
 pub mod transfer_state;
 use unicode_normalization::UnicodeNormalization;
 

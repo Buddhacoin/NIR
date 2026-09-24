@@ -84,6 +84,26 @@ offender's bond under a rule validators can recompute.
 Store and verify the chain, relay blocks and transactions, and optionally
 propose blocks. This role does not require training a large model.
 
+## AI agents do not inherit mining authority
+
+The planned payment mandate for a software agent cannot submit a candidate,
+author a hidden challenge, evaluate work or collect a mining reward. Mining
+requires a separate future contributor mandate, key, bond, role and assignment
+lifecycle. Direct reuse of a payment delegate, controller set or candidate key
+as its evaluator must fail where the relationship is objectively visible.
+
+An agent-signed claim is not evidence of useful work. Fresh post-commit
+assignment, reproducible execution receipts, independent evaluation, safety
+results, a dispute window and reward escrow remain required. Hidden common
+ownership and organizational collusion cannot be inferred reliably from keys
+alone and remain operator-disclosure and independent-review responsibilities.
+The broader fail-closed account model is specified in
+[`agent-mandates.md`](agent-mandates.md). Its isolated Stage 2 JavaScript and
+Rust model covers only escrowed payments to allowed payees under transfer,
+total, fee and expiry limits, with owner revoke/expiry close and preverified
+authorization. It grants no mining authority. Protocol-v26 chain rules, signed
+schemas, proofs, simulation and wallet/signer support are not implemented.
+
 ## Intended user flow
 
 The future desktop miner must reduce participation to these steps:
@@ -140,9 +160,9 @@ npm run test:chain
 npm run mine:demo
 ```
 
-The repository is currently private, so cloning also requires explicit GitHub
-access. Non-technical participation begins only with a signed desktop release
-and public testnet.
+Public source availability does not make the local demo a public network or a
+mining service. Non-technical participation begins only with a signed desktop
+release and public testnet.
 
 ## Connecting after testnet launch
 

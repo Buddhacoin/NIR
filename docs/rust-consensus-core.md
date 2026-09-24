@@ -95,6 +95,7 @@ The Rust tests consume the same repository-owned language-neutral vectors as
 the JavaScript implementation:
 
 - `tests/vectors/consensus-codec-v1.json`;
+- `tests/vectors/agent-mandate-state-v1.json`;
 - `tests/vectors/credit-transfer-state-v1.json`;
 - `tests/vectors/multisig-transfer-state-v1.json`;
 - `tests/vectors/transfer-authorization-v1.json`;
@@ -120,6 +121,42 @@ approvals and malformed signature fields.
 Expected output is never copied into the transition: both implementations
 execute the input and independently compare the resulting state or rejection
 code.
+
+The Stage 2 agent-mandate profile is an isolated transition family, not yet a
+full-node feature. An owner can atomically lock bounded NIR escrow under an
+agent identity, expiry, per-transfer ceiling, cumulative ceiling and canonical
+payee allowlist. An immutable maximum fee prevents an agent from draining the
+escrow through fees. The immutable initial escrow, cumulative fee limit and
+persisted fee counter require `balance + totalSpent + totalFees == initialEscrow`;
+the spending and fee budgets together cannot exceed that escrow. The agent can
+spend only from that escrow while its independent
+nonce advances; the owner keeps a separate nonce and can revoke or close an
+expired mandate. A close fee is paid from the combined owner balance and escrow,
+so emergency revocation does not depend on separate liquid funds. Creation
+count per owner, allowlist size and lifetime are bounded. One owner's stale
+records therefore cannot exhaust another owner's per-owner capacity. A global
+cap bounds total state. Permissionless cleanup examines at most 64 expired
+records in deterministic `(expiresHeight, mandateId)` order and returns the
+entire remaining escrow to its owner without a caller reward or fee. Rent and
+broader pruning policy remain explicitly deferred to Stage 3.
+Every successful transition conserves balances plus mandate escrow, and every
+rejection leaves balances, nonces and mandates unchanged.
+
+`preverifiedOwnerAuthorization` and `preverifiedAgentAuthorization` are a strict
+transition boundary: the caller must authenticate the actor and bind the exact
+transaction digest before invoking this profile. The Rust and JavaScript state
+machines recompute network-bound, domain-separated canonical create, transfer
+and close digests from signed intent fields and require
+the preverified envelope to match. They do not verify signatures.
+The trusted execution context carries the authoritative network identifier,
+inclusion height and fee recipient. The network identifier is signed and must
+equal the authoritative one. Height and fee recipient are intentionally not
+signed, so delayed inclusion and a different block proposer cannot invalidate
+an otherwise valid authorization. Height still controls creation lifetime,
+expiry and pruning.
+The profile must not be integrated into block processing until canonical signed
+transaction schemas and compatible cryptographic verification cover that
+boundary.
 
 Run the profile with the pinned toolchain:
 

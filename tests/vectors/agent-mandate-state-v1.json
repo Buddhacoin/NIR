@@ -1,0 +1,3597 @@
+{
+  "format": "nir-agent-mandate-state-vectors-v1",
+  "maximumPayees": 64,
+  "maximumLifetime": 1000000,
+  "vectors": [
+    {
+      "name": "create locks bounded escrow",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "a0a04c93ecf4fc15f96a869866062cfba90ed19ed138e0427fe0a0592ee2d0b2"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "4000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      }
+    },
+    {
+      "name": "agent transfer consumes escrow and independent nonce",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "1600",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 3
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      }
+    },
+    {
+      "name": "owner revokes and recovers escrow",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "revoke",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "42a6d9b60ef56952e17b926f5cdf6ffcbca6def9cd41e618646ba6005fd43cbf"
+        },
+        "executionContext": {
+          "currentHeight": 3,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "3500",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 2
+        },
+        "mandates": {},
+        "burned": "0"
+      }
+    },
+    {
+      "name": "owner recovers expired mandate",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "expiry",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "3a7946be262539ec040ee541ef2b3ee53e4d63733d4805e51a03208960140afe"
+        },
+        "executionContext": {
+          "currentHeight": 100,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "1500",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 2
+        },
+        "mandates": {},
+        "burned": "0"
+      }
+    },
+    {
+      "name": "agent nonce replay is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "0",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "5eb80350a67fbe350d501ab52352d9ceeed24bb222947e6b18738b334841914a"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent nonce is unexpected"
+    },
+    {
+      "name": "disallowed payee is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {},
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 0
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "a55f84d6b60709d9470c8a8421a4c637658ffaa6a165b7a15a0f7d2cac53a35d"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "payee is not allowed"
+    },
+    {
+      "name": "expired mandate cannot spend",
+      "action": "transfer",
+      "state": {
+        "balances": {},
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 0
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "de1c0042dde0b84a266dfd9fa31fd5bb81afba293cf0545347ed0c0233314c12"
+        },
+        "executionContext": {
+          "currentHeight": 100,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate expired"
+    },
+    {
+      "name": "recipient overflow cannot consume escrow",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "99999999999999999999999999999999"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 0
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "de1c0042dde0b84a266dfd9fa31fd5bb81afba293cf0545347ed0c0233314c12"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "account balance overflow"
+    },
+    {
+      "name": "agent cannot spend above immutable maximum fee",
+      "action": "transfer",
+      "state": {
+        "balances": {},
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 0
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1001",
+        "nonce": 0,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "cf8afcd3958487020b4ebb99031999eca47da83dac6452bc321e70cd335c8189"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "fee exceeds agent mandate maximum"
+    },
+    {
+      "name": "combined owner and escrow close funds are insufficient atomically",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalSpent": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1500",
+            "initialEscrow": "2001",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "revoke",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "42a6d9b60ef56952e17b926f5cdf6ffcbca6def9cd41e618646ba6005fd43cbf"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "owner and escrow cannot cover close fee"
+    },
+    {
+      "name": "active mandate capacity is bounded",
+      "action": "create",
+      "fillMandates": 64,
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "a0a04c93ecf4fc15f96a869866062cfba90ed19ed138e0427fe0a0592ee2d0b2"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "owner agent mandate capacity reached"
+    },
+    {
+      "name": "another owner capacity does not block creation",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "a0a04c93ecf4fc15f96a869866062cfba90ed19ed138e0427fe0a0592ee2d0b2"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "4000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000001": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000003": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000004": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000005": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000006": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000007": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000008": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000009": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000000a": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000000b": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000000c": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000000d": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000000e": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000000f": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000010": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000011": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000012": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000013": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000014": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000015": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000016": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000017": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000018": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000019": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000001a": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000001b": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000001c": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000001d": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000001e": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000001f": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000020": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000021": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000022": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000023": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000024": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000025": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000026": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000027": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000028": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000029": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000002a": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000002b": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000002c": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000002d": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000002e": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000002f": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000030": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000031": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000032": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000033": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000034": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000035": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000036": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000037": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000038": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000039": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000003a": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000003b": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000003c": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000003d": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000003e": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "000000000000000000000000000000000000000000000000000000000000003f": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000040": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "0",
+            "initialEscrow": "1001",
+            "createdHeight": 0,
+            "expiresHeight": 1,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      },
+      "fillMandates": 64,
+      "fillOwner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "name": "owner or agent cannot be an allowed payee",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "b10b03c94849e0ef88517695bcd2badcb0599c206b7a045c1fe7a3b04116d255"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate self-dealing payee is invalid"
+    },
+    {
+      "name": "authorization digest mutation is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent preverified authorization is invalid"
+    },
+    {
+      "name": "signed amount substitution is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1499",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent preverified authorization is invalid"
+    },
+    {
+      "name": "repeated transfers cannot exceed total fee budget",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "4000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate fee budget exceeded"
+    },
+    {
+      "name": "stored accounting invariant mismatch is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "1",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate state is invalid"
+    },
+    {
+      "name": "owner is close fee recipient alias",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "revoke",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "42a6d9b60ef56952e17b926f5cdf6ffcbca6def9cd41e618646ba6005fd43cbf"
+        },
+        "executionContext": {
+          "currentHeight": 3,
+          "feeRecipient": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "4500",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 2
+        },
+        "mandates": {},
+        "burned": "0"
+      }
+    },
+    {
+      "name": "wrong network replay is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-othernet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "network id mismatch"
+    },
+    {
+      "name": "delayed inclusion and proposer change preserve signature",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 50,
+          "feeRecipient": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "1600",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "1000"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 3
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      }
+    },
+    {
+      "name": "bounded prune uses expiry then mandate id and leaves active entries",
+      "action": "prune",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "0"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "500",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 10,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1500",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000001": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "1000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 5,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "0",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "limit": 1,
+        "executionContext": {
+          "currentHeight": 10,
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "1000"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "500",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 10,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1500",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "0",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      }
+    },
+    {
+      "name": "global mandate capacity is bounded",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "a0a04c93ecf4fc15f96a869866062cfba90ed19ed138e0427fe0a0592ee2d0b2"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "fillGlobalMandates": 4096,
+      "error": "global agent mandate capacity reached"
+    },
+    {
+      "name": "per-transfer limit exact succeeds",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "2000",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "ae3ae4daf0acbfcc5801dc805e5ce2296492dbca79f1d591871e5cd45c0cb4ef"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "2100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "1000"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 3
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "2000",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      }
+    },
+    {
+      "name": "per-transfer limit exceed is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "2001",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "a216397d005020d5aad57c5d120aa886183088a2c77563c7c87990462ec659e2"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate spending limit exceeded"
+    },
+    {
+      "name": "fee below minimum is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "999",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "423dd2b09d322d00fcfcaa15ad20569b935a9ac232476de5cec0c2d9e48c50d1"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "fee below minimum"
+    },
+    {
+      "name": "lifetime bound is enforced",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 1000002,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "08b41ddb7cb157fc049ad7237ab1168c96cd63e2859274b881b7e1ad8b406931"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate expiry is invalid"
+    },
+    {
+      "name": "payee capacity is enforced",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir10000000000000000000000000000000000000000000000000000000000000100",
+          "nir10000000000000000000000000000000000000000000000000000000000000101",
+          "nir10000000000000000000000000000000000000000000000000000000000000102",
+          "nir10000000000000000000000000000000000000000000000000000000000000103",
+          "nir10000000000000000000000000000000000000000000000000000000000000104",
+          "nir10000000000000000000000000000000000000000000000000000000000000105",
+          "nir10000000000000000000000000000000000000000000000000000000000000106",
+          "nir10000000000000000000000000000000000000000000000000000000000000107",
+          "nir10000000000000000000000000000000000000000000000000000000000000108",
+          "nir10000000000000000000000000000000000000000000000000000000000000109",
+          "nir1000000000000000000000000000000000000000000000000000000000000010a",
+          "nir1000000000000000000000000000000000000000000000000000000000000010b",
+          "nir1000000000000000000000000000000000000000000000000000000000000010c",
+          "nir1000000000000000000000000000000000000000000000000000000000000010d",
+          "nir1000000000000000000000000000000000000000000000000000000000000010e",
+          "nir1000000000000000000000000000000000000000000000000000000000000010f",
+          "nir10000000000000000000000000000000000000000000000000000000000000110",
+          "nir10000000000000000000000000000000000000000000000000000000000000111",
+          "nir10000000000000000000000000000000000000000000000000000000000000112",
+          "nir10000000000000000000000000000000000000000000000000000000000000113",
+          "nir10000000000000000000000000000000000000000000000000000000000000114",
+          "nir10000000000000000000000000000000000000000000000000000000000000115",
+          "nir10000000000000000000000000000000000000000000000000000000000000116",
+          "nir10000000000000000000000000000000000000000000000000000000000000117",
+          "nir10000000000000000000000000000000000000000000000000000000000000118",
+          "nir10000000000000000000000000000000000000000000000000000000000000119",
+          "nir1000000000000000000000000000000000000000000000000000000000000011a",
+          "nir1000000000000000000000000000000000000000000000000000000000000011b",
+          "nir1000000000000000000000000000000000000000000000000000000000000011c",
+          "nir1000000000000000000000000000000000000000000000000000000000000011d",
+          "nir1000000000000000000000000000000000000000000000000000000000000011e",
+          "nir1000000000000000000000000000000000000000000000000000000000000011f",
+          "nir10000000000000000000000000000000000000000000000000000000000000120",
+          "nir10000000000000000000000000000000000000000000000000000000000000121",
+          "nir10000000000000000000000000000000000000000000000000000000000000122",
+          "nir10000000000000000000000000000000000000000000000000000000000000123",
+          "nir10000000000000000000000000000000000000000000000000000000000000124",
+          "nir10000000000000000000000000000000000000000000000000000000000000125",
+          "nir10000000000000000000000000000000000000000000000000000000000000126",
+          "nir10000000000000000000000000000000000000000000000000000000000000127",
+          "nir10000000000000000000000000000000000000000000000000000000000000128",
+          "nir10000000000000000000000000000000000000000000000000000000000000129",
+          "nir1000000000000000000000000000000000000000000000000000000000000012a",
+          "nir1000000000000000000000000000000000000000000000000000000000000012b",
+          "nir1000000000000000000000000000000000000000000000000000000000000012c",
+          "nir1000000000000000000000000000000000000000000000000000000000000012d",
+          "nir1000000000000000000000000000000000000000000000000000000000000012e",
+          "nir1000000000000000000000000000000000000000000000000000000000000012f",
+          "nir10000000000000000000000000000000000000000000000000000000000000130",
+          "nir10000000000000000000000000000000000000000000000000000000000000131",
+          "nir10000000000000000000000000000000000000000000000000000000000000132",
+          "nir10000000000000000000000000000000000000000000000000000000000000133",
+          "nir10000000000000000000000000000000000000000000000000000000000000134",
+          "nir10000000000000000000000000000000000000000000000000000000000000135",
+          "nir10000000000000000000000000000000000000000000000000000000000000136",
+          "nir10000000000000000000000000000000000000000000000000000000000000137",
+          "nir10000000000000000000000000000000000000000000000000000000000000138",
+          "nir10000000000000000000000000000000000000000000000000000000000000139",
+          "nir1000000000000000000000000000000000000000000000000000000000000013a",
+          "nir1000000000000000000000000000000000000000000000000000000000000013b",
+          "nir1000000000000000000000000000000000000000000000000000000000000013c",
+          "nir1000000000000000000000000000000000000000000000000000000000000013d",
+          "nir1000000000000000000000000000000000000000000000000000000000000013e",
+          "nir1000000000000000000000000000000000000000000000000000000000000013f",
+          "nir10000000000000000000000000000000000000000000000000000000000000140"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "4a5f4443d7557c85895ac78bb530cdabcc054bb263ad32038cb762a9904bb073"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate payee capacity is invalid"
+    },
+    {
+      "name": "mandate id collision is atomic",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "10000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "a0a04c93ecf4fc15f96a869866062cfba90ed19ed138e0427fe0a0592ee2d0b2"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate already exists"
+    },
+    {
+      "name": "create insufficient funds is atomic",
+      "action": "create",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5999",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "mandates": {},
+        "burned": "0"
+      },
+      "input": {
+        "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "allowedPayees": [
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        "escrow": "5000",
+        "maxFee": "1000",
+        "maxPerTransfer": "2000",
+        "totalLimit": "4000",
+        "expiresHeight": 100,
+        "fee": "1000",
+        "nonce": 0,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "a0a04c93ecf4fc15f96a869866062cfba90ed19ed138e0427fe0a0592ee2d0b2"
+        },
+        "totalFeeLimit": "1000",
+        "networkId": "nir-testnet",
+        "executionContext": {
+          "currentHeight": 1,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "owner has insufficient balance"
+    },
+    {
+      "name": "expiry close before authoritative height is atomic",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "expiry",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "3a7946be262539ec040ee541ef2b3ee53e4d63733d4805e51a03208960140afe"
+        },
+        "executionContext": {
+          "currentHeight": 99,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "agent mandate has not expired"
+    },
+    {
+      "name": "unknown close mode is rejected",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "invalid",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "fe383da5512de3669c98336b8b5f9c71f5b701509b0e9a6b2806eb546bf34a7a"
+        },
+        "executionContext": {
+          "currentHeight": 100,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "mandate close mode is invalid"
+    },
+    {
+      "name": "transfer before mandate creation height is atomic",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 0,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "current height precedes mandate creation"
+    },
+    {
+      "name": "close before mandate creation height is atomic",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "revoke",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "42a6d9b60ef56952e17b926f5cdf6ffcbca6def9cd41e618646ba6005fd43cbf"
+        },
+        "executionContext": {
+          "currentHeight": 0,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "current height precedes mandate creation"
+    },
+    {
+      "name": "prune wrong network is atomic",
+      "action": "prune",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "0"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "500",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 10,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1500",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000001": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "1000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 5,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "0",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "limit": 1,
+        "executionContext": {
+          "currentHeight": 10,
+          "networkId": "nir-othernet"
+        }
+      },
+      "error": "network id mismatch"
+    },
+    {
+      "name": "prune limit above bound is atomic",
+      "action": "prune",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "0"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "500",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 10,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1500",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000001": {
+            "owner": "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "1000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 5,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "0",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "limit": 65,
+        "executionContext": {
+          "currentHeight": 10,
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "prune limit is invalid"
+    },
+    {
+      "name": "prune aggregates refunds for same owner",
+      "action": "prune",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "0"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "500",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 10,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1500",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000001": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "1000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 5,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          },
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "0",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "limit": 2,
+        "executionContext": {
+          "currentHeight": 10,
+          "networkId": "nir-testnet"
+        }
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "1500",
+          "nir1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "0"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000002": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2000",
+            "initialEscrow": "2001",
+            "createdHeight": 0,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "2000",
+            "totalFees": "0",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      }
+    },
+    {
+      "name": "prune refund overflow is atomic",
+      "action": "prune",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "99999999999999999999999999999999"
+        },
+        "nonces": {},
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "1",
+            "initialEscrow": "1002",
+            "createdHeight": 0,
+            "expiresHeight": 10,
+            "maxFee": "1000",
+            "maxPerTransfer": "1",
+            "networkId": "nir-testnet",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "1",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "totalSpent": "1"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "limit": 1,
+        "executionContext": {
+          "currentHeight": 10,
+          "networkId": "nir-testnet"
+        }
+      },
+      "error": "account balance overflow"
+    },
+    {
+      "name": "transfer rejects over-cap registry",
+      "action": "transfer",
+      "state": {
+        "balances": {
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "100",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 2
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "5000",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "0",
+            "totalFeeLimit": "1000",
+            "totalFees": "0",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "3"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "payee": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1500",
+        "fee": "1000",
+        "nonce": 2,
+        "preverifiedAgentAuthorization": {
+          "actor": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "digest": "0763f1a0de25aa10e37bc4b76578429c0a8e53ed0548aea8df7cf729ecb64a51"
+        },
+        "executionContext": {
+          "currentHeight": 2,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "fillMandates": 64,
+      "fillOwner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "error": "owner agent mandate capacity exceeded"
+    },
+    {
+      "name": "close rejects over-cap registry",
+      "action": "close",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+          "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "0"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "mandates": {
+          "0000000000000000000000000000000000000000000000000000000000000000": {
+            "owner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "agent": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "allowedPayees": [
+              "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "balance": "2500",
+            "createdHeight": 1,
+            "expiresHeight": 100,
+            "maxFee": "1000",
+            "maxPerTransfer": "2000",
+            "policyHash": "1111111111111111111111111111111111111111111111111111111111111111",
+            "totalLimit": "4000",
+            "totalSpent": "1500",
+            "totalFeeLimit": "1000",
+            "totalFees": "1000",
+            "initialEscrow": "5000",
+            "networkId": "nir-testnet"
+          }
+        },
+        "burned": "0"
+      },
+      "input": {
+        "mandateId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mode": "revoke",
+        "fee": "1000",
+        "nonce": 1,
+        "preverifiedOwnerAuthorization": {
+          "actor": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "42a6d9b60ef56952e17b926f5cdf6ffcbca6def9cd41e618646ba6005fd43cbf"
+        },
+        "executionContext": {
+          "currentHeight": 3,
+          "feeRecipient": "nir1dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "networkId": "nir-testnet"
+        }
+      },
+      "fillMandates": 64,
+      "fillOwner": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "error": "owner agent mandate capacity exceeded"
+    }
+  ],
+  "maximumActiveMandatesPerOwner": 64,
+  "maximumGlobalMandates": 4096,
+  "maximumPruneBatch": 64
+}

@@ -1,3 +1,9 @@
+use nir_consensus_codec::agent_mandate::{
+    close as close_mandate, create as create_mandate, prune_expired, transfer as transfer_mandate,
+    Close as MandateClose, CloseMode, Create as MandateCreate, ExecutionContext, Mandate,
+    PreverifiedAuthorization, PruneContext, State as MandateState, Transfer as MandateTransfer,
+    MAX_ACTIVE_MANDATES_PER_OWNER, MAX_GLOBAL_MANDATES, MAX_LIFETIME, MAX_PAYEES, MAX_PRUNE_BATCH,
+};
 use nir_consensus_codec::transfer_state::{
     apply_credit_transfer, apply_multisig_transfer, apply_ordinary_transfer,
     apply_sponsored_transfer, parse_atomic, validate_transfer_authorization, Account,
@@ -293,6 +299,17 @@ fn optional_member<'a>(value: &'a [(String, Json)], key: &str) -> Option<&'a Jso
         .find_map(|(name, value)| (name == key).then_some(value))
 }
 
+fn exact_fields(value: &[(String, Json)], expected: &[&str]) {
+    let mut actual = value
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .collect::<Vec<_>>();
+    actual.sort();
+    let mut wanted = expected.to_vec();
+    wanted.sort();
+    assert_eq!(actual, wanted, "unexpected JSON fields");
+}
+
 fn string(value: &Json) -> &str {
     match value {
         Json::String(value) => value,
@@ -514,6 +531,383 @@ fn multisig_transfer_input(value: &Json) -> MultisigTransfer<'_> {
         member_public_keys: string_array(member(fields, "memberPublicKeys")),
         threshold: usize::try_from(integer(member(fields, "threshold"))).expect("vector threshold"),
         preverified_signers: string_array(member(fields, "verifiedSigners")),
+    }
+}
+
+fn mandate_auth(value: &Json) -> PreverifiedAuthorization {
+    let fields = object(value);
+    exact_fields(fields, &["actor", "digest"]);
+    PreverifiedAuthorization {
+        actor: string(member(fields, "actor")).to_owned(),
+        digest: string(member(fields, "digest")).to_owned(),
+    }
+}
+
+fn execution_context(value: &Json) -> ExecutionContext<'_> {
+    let fields = object(value);
+    exact_fields(fields, &["currentHeight", "feeRecipient", "networkId"]);
+    ExecutionContext {
+        current_height: u64::try_from(integer(member(fields, "currentHeight")))
+            .expect("current height"),
+        fee_recipient: string(member(fields, "feeRecipient")),
+        network_id: string(member(fields, "networkId")),
+    }
+}
+
+fn prune_context(value: &Json) -> PruneContext<'_> {
+    let fields = object(value);
+    exact_fields(fields, &["currentHeight", "networkId"]);
+    PruneContext {
+        current_height: u64::try_from(integer(member(fields, "currentHeight")))
+            .expect("current height"),
+        network_id: string(member(fields, "networkId")),
+    }
+}
+
+fn mandate(value: &Json) -> Mandate {
+    let fields = object(value);
+    exact_fields(
+        fields,
+        &[
+            "owner",
+            "agent",
+            "allowedPayees",
+            "balance",
+            "initialEscrow",
+            "createdHeight",
+            "expiresHeight",
+            "maxFee",
+            "maxPerTransfer",
+            "networkId",
+            "policyHash",
+            "totalLimit",
+            "totalFeeLimit",
+            "totalFees",
+            "totalSpent",
+        ],
+    );
+    Mandate {
+        owner: string(member(fields, "owner")).to_owned(),
+        agent: string(member(fields, "agent")).to_owned(),
+        allowed_payees: string_array(member(fields, "allowedPayees"))
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        balance: parse_atomic(string(member(fields, "balance"))).expect("mandate balance"),
+        initial_escrow: parse_atomic(string(member(fields, "initialEscrow")))
+            .expect("initial escrow"),
+        created_height: u64::try_from(integer(member(fields, "createdHeight")))
+            .expect("created height"),
+        expires_height: u64::try_from(integer(member(fields, "expiresHeight")))
+            .expect("expiry height"),
+        max_fee: parse_atomic(string(member(fields, "maxFee"))).expect("maximum fee"),
+        max_per_transfer: parse_atomic(string(member(fields, "maxPerTransfer")))
+            .expect("maximum per transfer"),
+        network_id: string(member(fields, "networkId")).to_owned(),
+        policy_hash: string(member(fields, "policyHash")).to_owned(),
+        total_limit: parse_atomic(string(member(fields, "totalLimit"))).expect("total limit"),
+        total_fee_limit: parse_atomic(string(member(fields, "totalFeeLimit")))
+            .expect("total fee limit"),
+        total_fees: parse_atomic(string(member(fields, "totalFees"))).expect("total fees"),
+        total_spent: parse_atomic(string(member(fields, "totalSpent"))).expect("total spent"),
+    }
+}
+
+fn mandate_state(value: &Json) -> MandateState {
+    let fields = object(value);
+    MandateState {
+        balances: object(member(fields, "balances"))
+            .iter()
+            .map(|(key, value)| (key.clone(), parse_atomic(string(value)).expect("balance")))
+            .collect(),
+        nonces: object(member(fields, "nonces"))
+            .iter()
+            .map(|(key, value)| (key.clone(), u64::try_from(integer(value)).expect("nonce")))
+            .collect(),
+        mandates: object(member(fields, "mandates"))
+            .iter()
+            .map(|(key, value)| (key.clone(), mandate(value)))
+            .collect(),
+        burned: parse_atomic(string(member(fields, "burned"))).expect("burned"),
+    }
+}
+
+fn mandate_total(state: &MandateState) -> u128 {
+    state.balances.values().sum::<u128>()
+        + state
+            .mandates
+            .values()
+            .map(|entry| entry.balance)
+            .sum::<u128>()
+        + state.burned
+}
+
+#[test]
+fn reproduces_agent_mandate_state_vectors_atomically() {
+    let source = include_str!("../../../tests/vectors/agent-mandate-state-v1.json");
+    let document = Parser::new(source)
+        .parse()
+        .expect("agent mandate vectors must be strict JSON");
+    let root = object(&document);
+    exact_fields(
+        root,
+        &[
+            "format",
+            "maximumActiveMandatesPerOwner",
+            "maximumGlobalMandates",
+            "maximumLifetime",
+            "maximumPayees",
+            "maximumPruneBatch",
+            "vectors",
+        ],
+    );
+    assert_eq!(
+        string(member(root, "format")),
+        "nir-agent-mandate-state-vectors-v1"
+    );
+    assert_eq!(
+        usize::try_from(integer(member(root, "maximumActiveMandatesPerOwner"))).unwrap(),
+        MAX_ACTIVE_MANDATES_PER_OWNER
+    );
+    assert_eq!(
+        usize::try_from(integer(member(root, "maximumGlobalMandates"))).unwrap(),
+        MAX_GLOBAL_MANDATES
+    );
+    assert_eq!(
+        usize::try_from(integer(member(root, "maximumPruneBatch"))).unwrap(),
+        MAX_PRUNE_BATCH
+    );
+    assert_eq!(
+        usize::try_from(integer(member(root, "maximumPayees"))).unwrap(),
+        MAX_PAYEES
+    );
+    assert_eq!(
+        u64::try_from(integer(member(root, "maximumLifetime"))).unwrap(),
+        MAX_LIFETIME
+    );
+    let vectors = match member(root, "vectors") {
+        Json::Array(values) => values,
+        _ => panic!("vectors must be an array"),
+    };
+    for vector in vectors {
+        let fields = object(vector);
+        let name = string(member(fields, "name"));
+        let allowed = [
+            "name",
+            "action",
+            "state",
+            "input",
+            "expected",
+            "error",
+            "fillMandates",
+            "fillOwner",
+            "fillGlobalMandates",
+        ];
+        assert!(
+            fields
+                .iter()
+                .all(|(key, _)| allowed.contains(&key.as_str())),
+            "unexpected vector field {name}"
+        );
+        let mut state = mandate_state(member(fields, "state"));
+        if let Some(fill) = optional_member(fields, "fillMandates") {
+            for index in 1..=usize::try_from(integer(fill)).unwrap() {
+                state.mandates.insert(
+                    format!("{index:064x}"),
+                    Mandate {
+                        owner: optional_member(fields, "fillOwner")
+                            .map(string)
+                            .unwrap_or_else(|| {
+                                string(member(object(member(fields, "input")), "owner"))
+                            })
+                            .to_owned(),
+                        agent:
+                            "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                                .to_owned(),
+                        allowed_payees: vec![
+                            "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                                .to_owned(),
+                        ],
+                        balance: 0,
+                        initial_escrow: 1001,
+                        created_height: 0,
+                        expires_height: 1,
+                        max_fee: 1000,
+                        max_per_transfer: 1,
+                        network_id: "nir-testnet".to_owned(),
+                        policy_hash:
+                            "1111111111111111111111111111111111111111111111111111111111111111"
+                                .to_owned(),
+                        total_limit: 1,
+                        total_fee_limit: 1000,
+                        total_fees: 1000,
+                        total_spent: 1,
+                    },
+                );
+            }
+        }
+        if let Some(fill) = optional_member(fields, "fillGlobalMandates") {
+            for index in 1..=usize::try_from(integer(fill)).unwrap() {
+                state.mandates.insert(
+                    format!("{index:064x}"),
+                    Mandate {
+                        owner: format!("nir1{:064x}", index + 4095),
+                        agent:
+                            "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                                .to_owned(),
+                        allowed_payees: vec![
+                            "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                                .to_owned(),
+                        ],
+                        balance: 0,
+                        initial_escrow: 1001,
+                        created_height: 0,
+                        expires_height: 1,
+                        max_fee: 1000,
+                        max_per_transfer: 1,
+                        network_id: "nir-testnet".to_owned(),
+                        policy_hash:
+                            "1111111111111111111111111111111111111111111111111111111111111111"
+                                .to_owned(),
+                        total_limit: 1,
+                        total_fee_limit: 1000,
+                        total_fees: 1000,
+                        total_spent: 1,
+                    },
+                );
+            }
+        }
+        let before = state.clone();
+        let input = object(member(fields, "input"));
+        match string(member(fields, "action")) {
+            "create" => exact_fields(
+                input,
+                &[
+                    "owner",
+                    "agent",
+                    "mandateId",
+                    "policyHash",
+                    "allowedPayees",
+                    "escrow",
+                    "maxFee",
+                    "maxPerTransfer",
+                    "totalLimit",
+                    "totalFeeLimit",
+                    "networkId",
+                    "expiresHeight",
+                    "fee",
+                    "executionContext",
+                    "nonce",
+                    "preverifiedOwnerAuthorization",
+                ],
+            ),
+            "transfer" => exact_fields(
+                input,
+                &[
+                    "mandateId",
+                    "payee",
+                    "amount",
+                    "fee",
+                    "executionContext",
+                    "nonce",
+                    "preverifiedAgentAuthorization",
+                ],
+            ),
+            "close" => exact_fields(
+                input,
+                &[
+                    "mandateId",
+                    "mode",
+                    "fee",
+                    "executionContext",
+                    "nonce",
+                    "preverifiedOwnerAuthorization",
+                ],
+            ),
+            "prune" => exact_fields(input, &["executionContext", "limit"]),
+            _ => panic!("unknown action"),
+        }
+        let result = match string(member(fields, "action")) {
+            "create" => create_mandate(
+                &mut state,
+                MandateCreate {
+                    owner: string(member(input, "owner")),
+                    agent: string(member(input, "agent")),
+                    mandate_id: string(member(input, "mandateId")),
+                    policy_hash: string(member(input, "policyHash")),
+                    allowed_payees: string_array(member(input, "allowedPayees")),
+                    escrow: parse_atomic(string(member(input, "escrow"))).unwrap(),
+                    max_fee: parse_atomic(string(member(input, "maxFee"))).unwrap(),
+                    max_per_transfer: parse_atomic(string(member(input, "maxPerTransfer")))
+                        .unwrap(),
+                    total_limit: parse_atomic(string(member(input, "totalLimit"))).unwrap(),
+                    total_fee_limit: parse_atomic(string(member(input, "totalFeeLimit"))).unwrap(),
+                    network_id: string(member(input, "networkId")),
+                    expires_height: u64::try_from(integer(member(input, "expiresHeight"))).unwrap(),
+                    fee: parse_atomic(string(member(input, "fee"))).unwrap(),
+                    context: execution_context(member(input, "executionContext")),
+                    nonce: u64::try_from(integer(member(input, "nonce"))).unwrap(),
+                    authorization: mandate_auth(member(input, "preverifiedOwnerAuthorization")),
+                },
+            ),
+            "transfer" => transfer_mandate(
+                &mut state,
+                MandateTransfer {
+                    mandate_id: string(member(input, "mandateId")),
+                    payee: string(member(input, "payee")),
+                    amount: parse_atomic(string(member(input, "amount"))).unwrap(),
+                    fee: parse_atomic(string(member(input, "fee"))).unwrap(),
+                    context: execution_context(member(input, "executionContext")),
+                    nonce: u64::try_from(integer(member(input, "nonce"))).unwrap(),
+                    authorization: mandate_auth(member(input, "preverifiedAgentAuthorization")),
+                },
+            ),
+            "close" => close_mandate(
+                &mut state,
+                MandateClose {
+                    mandate_id: string(member(input, "mandateId")),
+                    mode: match string(member(input, "mode")) {
+                        "expiry" => CloseMode::Expiry,
+                        "revoke" => CloseMode::Revoke,
+                        _ => CloseMode::Unknown,
+                    },
+                    fee: parse_atomic(string(member(input, "fee"))).unwrap(),
+                    context: execution_context(member(input, "executionContext")),
+                    nonce: u64::try_from(integer(member(input, "nonce"))).unwrap(),
+                    authorization: mandate_auth(member(input, "preverifiedOwnerAuthorization")),
+                },
+            ),
+            "prune" => prune_expired(
+                &mut state,
+                prune_context(member(input, "executionContext")),
+                usize::try_from(integer(member(input, "limit"))).unwrap(),
+            )
+            .map(|_| ()),
+            action => panic!("unknown action {action}"),
+        };
+        if let Some(error) = optional_member(fields, "error") {
+            assert_eq!(
+                result.expect_err("negative vector must fail").code(),
+                string(error),
+                "error {name}"
+            );
+            assert_eq!(state, before, "negative vector {name} must be atomic");
+        } else {
+            result.unwrap_or_else(|error| panic!("success vector {name}: {error}"));
+            state
+                .mandates
+                .retain(|_, mandate| !mandate.agent.is_empty());
+            assert_eq!(
+                state,
+                mandate_state(member(fields, "expected")),
+                "state vector {name}"
+            );
+            assert_eq!(
+                mandate_total(&state),
+                mandate_total(&before),
+                "conservation {name}"
+            );
+        }
     }
 }
 

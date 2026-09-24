@@ -40,6 +40,7 @@ that independence.
 | See what is actually implemented | [What is implemented now](#what-is-implemented-now) |
 | Run the valueless local network | [Start using the local prototype](#start-using-the-local-prototype) |
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
+| Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Understand intelligence mining | [`docs/mining.md`](docs/mining.md) |
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
@@ -121,6 +122,7 @@ The intended advantages are:
 | Post-quantum signed releases | Clean Git revision and complete tracked file set are bound; deterministic wallet/node `.nirpkg` artifacts are locally verified; native installers remain |
 | Partition and adversarial message testing | `2+2`, `3+1`, split-prepare recovery, 512 message schedules, multi-height fuzzing, and live validator rotation |
 | Installable browser/PWA wallet interface | Permission-free Manifest V3 preview plus deterministic verifiable ZIP; real-value signing remains disabled |
+| Bounded AI-agent payment mandates | Stage 2 normative non-consensus JavaScript and Rust state machines plus shared vectors implement network-bound escrowed transfers with allowed payees, per-transfer/total/per-operation/cumulative-fee limits, expiry, bounded registry cleanup and owner revoke/expiry close behind a preverified-authorization boundary; protocol-v26, signed schemas, proofs/snapshots, simulation, controller sets, trading, freeze/recovery and wallet/signer support are not active |
 | Public mainnet or exchange-listed NIR | Not launched |
 
 Nothing in the local faucet, demo mining flow, or wallet preview has monetary
@@ -444,6 +446,7 @@ candidate runs are committed.
 - `docs/safety.md` — safety veto, threat domains, and certification limits.
 - `docs/participation.md` — roles available to individuals and organizations.
 - `docs/mining.md` — plain-language mining roles and intended user flow.
+- `docs/agent-mandates.md` — completed isolated Stage 2 payment subset and the broader planned fail-closed authority model; not enabled in chain or wallet.
 - `docs/privacy.md` — selective disclosure goals and regulatory constraints.
 - `docs/value.md` — properties required for durable monetary value.
 - `docs/governance.md` — where the ledger lives and how rules can safely evolve.
