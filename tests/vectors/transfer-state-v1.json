@@ -1,0 +1,296 @@
+{
+  "format": "nir-transfer-state-vectors-v1",
+  "minimumFee": "1000",
+  "maximumAtomicDigits": 32,
+  "vectors": [
+    {
+      "name": "ordinary-transfer",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "10",
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "25"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 7
+        },
+        "burned": "55"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "2000",
+        "fee": "1000",
+        "nonce": 7
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "2010",
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "1025"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 8
+        },
+        "burned": "55"
+      }
+    },
+    {
+      "name": "sender-is-recipient",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000",
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "25"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 0
+        },
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "2000",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "4000",
+          "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "1025"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "burned": "0"
+      }
+    },
+    {
+      "name": "sender-is-fee-recipient",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "10"
+        },
+        "nonces": {},
+        "burned": "9"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "amount": "2000",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "3000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "2010"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "burned": "9"
+      }
+    },
+    {
+      "name": "recipient-is-fee-recipient",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "10"
+        },
+        "nonces": {},
+        "burned": "12"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "amount": "2000",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "3010"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+        },
+        "burned": "12"
+      }
+    },
+    {
+      "name": "all-roles-share-one-address",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 3
+        },
+        "burned": "4"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "feeRecipient": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "amount": "2000",
+        "fee": "1000",
+        "nonce": 3
+      },
+      "expected": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 4
+        },
+        "burned": "4"
+      }
+    },
+    {
+      "name": "reject-replay-nonce",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 8
+        },
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 7
+      },
+      "error": "unexpected nonce"
+    },
+    {
+      "name": "reject-fee-below-minimum",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {},
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "999",
+        "nonce": 0
+      },
+      "error": "fee below minimum"
+    },
+    {
+      "name": "reject-zero-amount",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {},
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "0",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "error": "amount must be positive"
+    },
+    {
+      "name": "reject-insufficient-balance",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "1000"
+        },
+        "nonces": {},
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "error": "insufficient balance"
+    },
+    {
+      "name": "reject-nonce-overflow",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 9007199254740991
+        },
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 9007199254740991
+      },
+      "error": "nonce cannot advance"
+    },
+    {
+      "name": "reject-noncanonical-amount",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000"
+        },
+        "nonces": {},
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "01",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "error": "invalid atomic decimal"
+    },
+    {
+      "name": "reject-balance-overflow",
+      "state": {
+        "balances": {
+          "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "5000",
+          "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "99999999999999999999999999999999"
+        },
+        "nonces": {},
+        "burned": "0"
+      },
+      "transaction": {
+        "sender": "nir1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recipient": "nir1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "feeRecipient": "nir1cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "amount": "1",
+        "fee": "1000",
+        "nonce": 0
+      },
+      "error": "balance overflow"
+    }
+  ]
+}

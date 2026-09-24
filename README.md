@@ -92,6 +92,7 @@ The intended advantages are:
 | Capability | Current repository status |
 |---|---|
 | Independent NIR ledger and 8-decimal balances | Implemented and tested |
+| Independently compiled consensus cross-check | Rust reproduces the canonical encoding and ordinary monetary transfer from shared language-neutral vectors; sponsored, credit and multisignature transitions remain to be added |
 | 21 million cap and ten-year treasury vesting | Enforced by consensus |
 | Minimum transfer fee and wallet fee quote | Enforced by consensus |
 | Sponsored transfer fees | Two-party post-quantum authorization and independent replay protection implemented |
@@ -455,6 +456,7 @@ candidate runs are committed.
 - `docs/releases.md` — offline release signing, trust-anchor publication, and source verification.
 - `docs/node.md` — local node startup, RPC, and wallet-to-wallet flow.
 - `docs/network.md` — multi-process devnet startup and remaining consensus boundary.
+- `docs/rust-consensus-core.md` — current scope, shared vectors and expansion rules for the independent Rust consensus profile.
 - `docs/quantum-security.md` — exact post-quantum guarantees, attack surfaces, and migration plan.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `CONTRIBUTING.md` — contribution, testing, disclosure, and secret-handling rules.

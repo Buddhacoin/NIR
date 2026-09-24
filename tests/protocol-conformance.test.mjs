@@ -29,6 +29,8 @@ function copyInventoryRoot() {
   for (const directory of ["blockchain", "formal", "docs", "rust"]) {
     cpSync(new URL(`../${directory}`, import.meta.url), join(root, directory), { recursive: true });
   }
+  mkdirSync(join(root, "tests"));
+  cpSync(new URL("./vectors", import.meta.url), join(root, "tests", "vectors"), { recursive: true });
   mkdirSync(join(root, "protocol"));
   writeFileSync(join(root, "protocol", "conformance-manifest.json"),
     `${canonicalJson(committed())}\n`);

@@ -25,7 +25,16 @@ described by section 5 of that license.
    npm run verify
    ```
 
-6. If a tracked protocol surface changed, regenerate and verify the conformance
+6. Changes that touch the independent Rust consensus implementation must also
+   pass its locked checks:
+
+   ```bash
+   cargo fmt --all --manifest-path rust/nir-consensus-codec/Cargo.toml -- --check
+   cargo clippy --locked --all-targets --manifest-path rust/nir-consensus-codec/Cargo.toml -- -D warnings
+   cargo test --locked --manifest-path rust/nir-consensus-codec/Cargo.toml
+   ```
+
+7. If a tracked protocol surface changed, regenerate and verify the conformance
    inventory:
 
    ```bash

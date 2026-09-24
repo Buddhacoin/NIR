@@ -1,4 +1,9 @@
+use nir_consensus_codec::transfer_state::{
+    apply_ordinary_transfer, parse_atomic, Account, State, Transfer, MAXIMUM_ATOMIC_DIGITS,
+    MINIMUM_FEE,
+};
 use nir_consensus_codec::{consensus_envelope_bytes, consensus_hash, consensus_value_bytes, Value};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
 enum Json {
@@ -237,10 +242,23 @@ fn member<'a>(value: &'a [(String, Json)], key: &str) -> &'a Json {
         .unwrap_or_else(|| panic!("missing field {key}"))
 }
 
+fn optional_member<'a>(value: &'a [(String, Json)], key: &str) -> Option<&'a Json> {
+    value
+        .iter()
+        .find_map(|(name, value)| (name == key).then_some(value))
+}
+
 fn string(value: &Json) -> &str {
     match value {
         Json::String(value) => value,
         _ => panic!("expected string"),
+    }
+}
+
+fn integer(value: &Json) -> i64 {
+    match value {
+        Json::Integer(value) => *value,
+        _ => panic!("expected integer"),
     }
 }
 
@@ -307,5 +325,98 @@ fn reproduces_normative_consensus_vectors() {
             string(member(fields, "hash")),
             "hash vector {name}"
         );
+    }
+}
+
+fn transfer_state(value: &Json) -> State {
+    let fields = object(value);
+    let mut accounts = BTreeMap::<String, Account>::new();
+    for (address, balance) in object(member(fields, "balances")) {
+        accounts.insert(
+            address.clone(),
+            Account {
+                balance: parse_atomic(string(balance)).expect("vector balance"),
+                nonce: 0,
+            },
+        );
+    }
+    for (address, nonce) in object(member(fields, "nonces")) {
+        accounts
+            .entry(address.clone())
+            .or_insert(Account {
+                balance: 0,
+                nonce: 0,
+            })
+            .nonce = u64::try_from(integer(nonce)).expect("vector nonce");
+    }
+    State {
+        accounts,
+        burned: parse_atomic(string(member(fields, "burned"))).expect("vector burned"),
+    }
+}
+
+fn transfer_input(value: &Json) -> Transfer<'_> {
+    let fields = object(value);
+    Transfer {
+        sender: string(member(fields, "sender")),
+        recipient: string(member(fields, "recipient")),
+        fee_recipient: string(member(fields, "feeRecipient")),
+        amount: string(member(fields, "amount")),
+        fee: string(member(fields, "fee")),
+        nonce: u64::try_from(integer(member(fields, "nonce"))).expect("vector nonce"),
+    }
+}
+
+#[test]
+fn reproduces_normative_transfer_state_vectors_atomically() {
+    let source = include_str!("../../../tests/vectors/transfer-state-v1.json");
+    let document = Parser::new(source)
+        .parse()
+        .expect("transfer vectors must be strict JSON");
+    let root = object(&document);
+    assert_eq!(
+        string(member(root, "format")),
+        "nir-transfer-state-vectors-v1"
+    );
+    assert_eq!(
+        parse_atomic(string(member(root, "minimumFee"))).expect("minimum fee"),
+        MINIMUM_FEE
+    );
+    assert_eq!(
+        usize::try_from(integer(member(root, "maximumAtomicDigits"))).expect("maximum digits"),
+        MAXIMUM_ATOMIC_DIGITS
+    );
+    let vectors = match member(root, "vectors") {
+        Json::Array(values) => values,
+        _ => panic!("vectors must be an array"),
+    };
+
+    for vector in vectors {
+        let fields = object(vector);
+        let name = string(member(fields, "name"));
+        let mut state = transfer_state(member(fields, "state"));
+        let before = state.clone();
+        let result =
+            apply_ordinary_transfer(&mut state, transfer_input(member(fields, "transaction")));
+        if let Some(error) = optional_member(fields, "error") {
+            assert_eq!(
+                result.expect_err("negative vector must fail").code(),
+                string(error),
+                "error vector {name}"
+            );
+            assert_eq!(state, before, "negative vector {name} must be atomic");
+        } else {
+            result.unwrap_or_else(|error| panic!("success vector {name}: {error}"));
+            let expected = transfer_state(member(fields, "expected"));
+            assert_eq!(state, expected, "state vector {name}");
+            let before_total: u128 = before
+                .accounts
+                .values()
+                .map(|account| account.balance)
+                .sum();
+            let after_total: u128 = state.accounts.values().map(|account| account.balance).sum();
+            assert_eq!(after_total, before_total, "conservation vector {name}");
+            assert_eq!(state.burned, before.burned, "burn vector {name}");
+        }
     }
 }

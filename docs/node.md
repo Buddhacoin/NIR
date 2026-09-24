@@ -19,6 +19,12 @@ writes `DEVNET-KEYS.json` with unencrypted, valueless test keys and mode `0600`.
 Never reuse these keys, fund their addresses, publish this server, or treat its
 balances as real NIR.
 
+Both development and production node entrypoints accept only the explicit
+loopback addresses `127.0.0.1` and `::1`. A wildcard, hostname, or public bind is
+rejected before chain state or the production installation is opened. Public
+access therefore requires a separately configured authenticated TLS edge. A
+listener collision exits with a bounded error and releases the writer lock.
+
 ## RPC
 
 - `GET /health`

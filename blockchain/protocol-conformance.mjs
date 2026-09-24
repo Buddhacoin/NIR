@@ -12,7 +12,12 @@ const GATE_TOKEN = /\b(?:PROTOCOL_VERSION|SUPPORTED_PROTOCOL_VERSIONS|protocolVe
 const DOC_SIGNAL = /\b(?:protocol|consensus|security|release|wallet|genesis|certificate|validator|network|asset|backup|archive|beacon)\b/i;
 const SOURCE_DIRECTORIES = ["blockchain", "formal"];
 const TEXT_EXTENSIONS = new Set([".md", ".mjs", ".js", ".json", ".html", ".css", ".rs", ".toml"]);
-const STATIC_PROTOCOL_SOURCES = ["rust/nir-consensus-codec/src/lib.rs"];
+const STATIC_PROTOCOL_SOURCES = [
+  "rust/nir-consensus-codec/src/lib.rs",
+  "rust/nir-consensus-codec/src/transfer_state.rs",
+  "tests/vectors/consensus-codec-v1.json",
+  "tests/vectors/transfer-state-v1.json",
+];
 const FORBIDDEN_NAMES = [
   "Yml0Y29pbg==", "RXRoZXJldW0=", "U29sYW5h", "RG9nZWNvaW4=", "TGl0ZWNvaW4=",
   "TW9uZXJv", "Q2FyZGFubw==", "UmlwcGxl", "VGV0aGVy", "WFJQ", "Qk5C", "VVNEVA==",

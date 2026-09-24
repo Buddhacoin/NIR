@@ -1,5 +1,10 @@
 # Protocol conformance manifest
 
+The independently compiled Rust compatibility profile and its current scope are
+documented in [`rust-consensus-core.md`](rust-consensus-core.md). Its normative
+codec and monetary-transition vectors are part of the reviewed protocol
+surface.
+
 `protocol/conformance-manifest.json` is a deterministic, canonical inventory of
 the repository's consensus and security-sensitive protocol surface. It is a
 drift detector, not a replacement for review, tests, or a formal specification.

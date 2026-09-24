@@ -85,6 +85,7 @@ import {
   consensusEncodingVersionForProtocol,
   consensusValueBytes,
 } from "./consensus-codec.mjs";
+import { applyOrdinaryTransferState } from "./transfer-state-transition.mjs";
 import {
   activeValidatorSet,
   scheduleValidatorRotation,
@@ -3450,6 +3451,19 @@ export class NirChain {
         creditDelegations,
         delegated ? transaction.sender : null,
       );
+    }
+    if (!sponsored && !creditPaid) {
+      applyOrdinaryTransferState({
+        amount,
+        balances,
+        fee,
+        feeRecipient: proposer,
+        nonce: transaction.nonce,
+        nonces,
+        recipient: transaction.recipient,
+        sender: transaction.sender,
+      });
+      return;
     }
     balances.set(transaction.sender, senderBalance - amount - (sponsored ? 0n : fee));
     balances.set(transaction.recipient, (balances.get(transaction.recipient) ?? 0n) + amount);

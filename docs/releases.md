@@ -326,6 +326,10 @@ A second verification runs immediately before `listen()`, closing the activation
 head swap window. Missing or rolled-back heads, a stale external anchor, mixed
 network/genesis/kind, modified installed bytes, replaced activation links, and an
 entrypoint outside the active generation all exit nonzero before binding the port.
+The built-in node server additionally refuses every non-loopback bind because it
+does not terminate public TLS. Operators must place an independently configured,
+authenticated TLS edge in front of the loopback listener; a wildcard address is
+never an implicit production shortcut.
 
 The wallet bridge requires two independently anchored active generations: the
 wallet/UI package and the node/tool package containing the bridge executable. Both

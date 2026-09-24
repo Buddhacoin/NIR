@@ -19,3 +19,11 @@ jobs:
         with:
           node-version: "26"
       - run: npm run verify
+      - name: Install Rust verification toolchain
+        run: rustup show active-toolchain
+      - name: Verify independent Rust consensus codec
+        working-directory: rust/nir-consensus-codec
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked

@@ -18,6 +18,7 @@ import { initializeDevnet, PersistentDevNode } from "./node-store.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
 import { createProductionStartupGuard } from "./production-startup.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
+import { validateLoopbackListener } from "./loopback-listener.mjs";
 
 const [command, directory, parameter = "", extra = "", ...remaining] = process.argv.slice(2);
 
@@ -36,13 +37,21 @@ function withDirectoryLock(directory, operation) {
   const release = acquireDataDirectoryLock(directory);
   try { return operation(); } finally { release(); }
 }
+
+function installListenerFailureHandler(server, releaseLock) {
+  server.once("error", () => {
+    releaseLock();
+    console.error("Node operation failed: loopback listener is unavailable");
+    process.exitCode = 1;
+  });
+}
 try {
   if (command === "init-dev" && directory) {
     console.log(JSON.stringify(initializeDevnet(directory), null, 2));
   } else if (command === "serve" && directory) {
     const port = Number(parameter || 8787);
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("invalid port");
     const host = extra || "127.0.0.1";
+    validateLoopbackListener({ host, port });
     const releaseLock = acquireDataDirectoryLock(directory);
     let node;
     let server;
@@ -60,6 +69,7 @@ try {
     });
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+    installListenerFailureHandler(server, releaseLock);
     server.listen(port, host, () => {
       console.log(`NIR ${node.networkId} node listening on http://${host}:${port} at height ${node.height}`);
     });
@@ -69,9 +79,7 @@ try {
     const signedReleasePath = extra;
     const [trustedAddress, runtimeDirectory, portText, host, externalAnchorPath] = remaining;
     const port = Number(portText);
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || !host) {
-      throw new Error("invalid production node listener");
-    }
+    validateLoopbackListener({ host, port });
     const guard = createProductionStartupGuard({ externalAnchorPath, headStore,
       installationTarget, kind: "node", moduleUrl: import.meta.url, signedReleasePath,
       trustedAddress });
@@ -83,6 +91,7 @@ try {
       process.once("exit", releaseLock);
       const shutdown = () => server.close(() => { releaseLock(); process.exit(0); });
       process.once("SIGINT", shutdown); process.once("SIGTERM", shutdown);
+      installListenerFailureHandler(server, releaseLock);
       server.listen(port, host, () => {
         console.log(`NIR production package ${guard.initial.packageHash} listening on http://${host}:${port}`);
       });

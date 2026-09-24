@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 use std::fmt;
+
+pub mod transfer_state;
 use unicode_normalization::UnicodeNormalization;
 
 pub const ENCODING_VERSION: u16 = 1;
