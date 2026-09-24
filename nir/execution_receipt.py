@@ -24,8 +24,10 @@ from .runner import FORMAT as BUNDLE_FORMAT, EvaluationBundle, ExecutionTranscri
 
 
 ASSIGNMENT_FORMAT = "nir-finalized-evaluation-assignment-v1-experimental"
+ASSIGNMENT_V2_FORMAT = "nir-finalized-evaluation-assignment-v2"
 RECEIPT_FORMAT = "nir-signed-execution-transcript-v1-experimental"
 ASSIGNMENT_DOMAIN = "NIR_EVAL_ASSIGN_V1"
+ASSIGNMENT_V2_DOMAIN = "NIR_EVAL_ASSIGN_V2"
 TRANSCRIPT_DOMAIN = "NIR_EXEC_TRANSCRIPT_V1"
 MAX_SIGNATURE_CHARS = 7_000
 MAX_PUBLIC_KEY_CHARS = 8_000
@@ -279,6 +281,170 @@ class FinalizedEvaluationAssignment:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class FinalizedEvaluationAssignmentV2:
+    """Consensus-derived assignment semantics for protocol v27.
+
+    Public keys are witnesses for the compact key commitments in the v27 leaf;
+    authority signatures deliberately are not part of this format.
+    """
+
+    network_id: str
+    genesis_hash: str
+    candidate_commitment_hash: str
+    candidate_id: str
+    source_finality_height: int
+    source_finality_state_root: str
+    committed_height: int
+    decision_height: int
+    challenge_seed: str
+    challenge_epoch: int
+    environment_commitment: str
+    suite_commitment: str
+    baseline_artifact_hash: str
+    baseline_content_hash: str
+    candidate_artifact_hash: str
+    candidate_content_hash: str
+    adapter_protocol: str
+    safety_policy_hash: str
+    authority_set_hash: str
+    authority_mode: str
+    recipient: str
+    parents: tuple[str, ...]
+    evaluators: tuple[AssignedEvaluator, ...]
+    expires_at_height: int
+
+    @classmethod
+    def from_dict(cls, value: object) -> "FinalizedEvaluationAssignmentV2":
+        expected = {
+            "adapterProtocol", "authorityMode", "authoritySetHash",
+            "baselineArtifactHash", "baselineContentHash", "candidateArtifactHash",
+            "candidateCommitmentHash", "candidateContentHash", "candidateId",
+            "challengeEpoch", "challengeSeed", "committedHeight", "decisionHeight",
+            "environmentCommitment", "evaluators", "expiresAtHeight", "format",
+            "genesisHash", "networkId", "parents", "recipient", "safetyPolicyHash",
+            "sourceFinalityHeight", "sourceFinalityStateRoot", "suiteCommitment",
+        }
+        if not isinstance(value, dict) or set(value) != expected or (
+            value.get("format") != ASSIGNMENT_V2_FORMAT
+        ) or not isinstance(value.get("evaluators"), list) or not isinstance(
+            value.get("parents"), list
+        ):
+            raise ProtocolError("finalized assignment v2 schema or format is invalid")
+        try:
+            result = cls(
+                network_id=value["networkId"], genesis_hash=value["genesisHash"],
+                candidate_commitment_hash=value["candidateCommitmentHash"],
+                candidate_id=value["candidateId"],
+                source_finality_height=value["sourceFinalityHeight"],
+                source_finality_state_root=value["sourceFinalityStateRoot"],
+                committed_height=value["committedHeight"],
+                decision_height=value["decisionHeight"],
+                challenge_seed=value["challengeSeed"], challenge_epoch=value["challengeEpoch"],
+                environment_commitment=value["environmentCommitment"],
+                suite_commitment=value["suiteCommitment"],
+                baseline_artifact_hash=value["baselineArtifactHash"],
+                baseline_content_hash=value["baselineContentHash"],
+                candidate_artifact_hash=value["candidateArtifactHash"],
+                candidate_content_hash=value["candidateContentHash"],
+                adapter_protocol=value["adapterProtocol"],
+                safety_policy_hash=value["safetyPolicyHash"],
+                authority_set_hash=value["authoritySetHash"],
+                authority_mode=value["authorityMode"], recipient=value["recipient"],
+                parents=tuple(value["parents"]),
+                evaluators=tuple(AssignedEvaluator.from_dict(item) for item in value["evaluators"]),
+                expires_at_height=value["expiresAtHeight"],
+            )
+        except (KeyError, TypeError) as error:
+            raise ProtocolError("finalized assignment v2 fields are invalid") from error
+        result.payload()
+        return result
+
+    def payload(self) -> dict[str, object]:
+        if not isinstance(self.network_id, str) or not self.network_id or len(self.network_id) > 128:
+            raise ProtocolError("assignment v2 network id is invalid")
+        for value, field in (
+            (self.genesis_hash, "genesis hash"),
+            (self.candidate_commitment_hash, "candidate commitment hash"),
+            (self.candidate_id, "candidate id"),
+            (self.source_finality_state_root, "source finality state root"),
+            (self.challenge_seed, "challenge seed"),
+            (self.environment_commitment, "environment commitment"),
+            (self.suite_commitment, "suite commitment"),
+            (self.safety_policy_hash, "safety policy hash"),
+            (self.authority_set_hash, "authority set hash"),
+        ):
+            _hash(value, field)
+        for value, field in (
+            (self.baseline_artifact_hash, "baseline artifact hash"),
+            (self.baseline_content_hash, "baseline content hash"),
+            (self.candidate_artifact_hash, "candidate artifact hash"),
+            (self.candidate_content_hash, "candidate content hash"),
+        ):
+            _hash(value, field, artifact=True)
+        heights = (
+            self.source_finality_height, self.committed_height, self.decision_height,
+            self.challenge_epoch, self.expires_at_height,
+        )
+        if any(not isinstance(item, int) or isinstance(item, bool) or item < 0 for item in heights):
+            raise ProtocolError("assignment v2 height is invalid")
+        if not (self.committed_height < self.decision_height < self.expires_at_height) or (
+            self.source_finality_height >= self.decision_height or
+            self.challenge_epoch != self.decision_height
+        ):
+            raise ProtocolError("assignment v2 chronology is invalid")
+        if not _ADDRESS.fullmatch(self.recipient) or not isinstance(self.parents, tuple) or (
+            not 1 <= len(self.parents) <= 32
+        ) or any(not isinstance(item, str) or not _ARTIFACT.fullmatch(item) for item in self.parents) or (
+            list(self.parents) != sorted(set(self.parents))
+        ):
+            raise ProtocolError("assignment v2 commitment membership is invalid")
+        if not _PROTOCOL.fullmatch(self.adapter_protocol) or (
+            self.authority_mode != "consensus-finality-certificate-v1"
+        ):
+            raise ProtocolError("assignment v2 policy is invalid")
+        evaluator_values = [item.as_dict() for item in self.evaluators]
+        evaluator_ids = [item["evaluatorId"] for item in evaluator_values]
+        if not evaluator_values or len(evaluator_values) > MAX_ASSIGNED_EVALUATORS or (
+            evaluator_ids != sorted(set(evaluator_ids))
+        ):
+            raise ProtocolError("assignment v2 evaluators must be sorted and unique")
+        return {
+            "adapterProtocol": self.adapter_protocol,
+            "authorityMode": self.authority_mode,
+            "authoritySetHash": self.authority_set_hash,
+            "baselineArtifactHash": self.baseline_artifact_hash,
+            "baselineContentHash": self.baseline_content_hash,
+            "candidateArtifactHash": self.candidate_artifact_hash,
+            "candidateCommitmentHash": self.candidate_commitment_hash,
+            "candidateContentHash": self.candidate_content_hash,
+            "candidateId": self.candidate_id,
+            "challengeEpoch": self.challenge_epoch,
+            "challengeSeed": self.challenge_seed,
+            "committedHeight": self.committed_height,
+            "decisionHeight": self.decision_height,
+            "environmentCommitment": self.environment_commitment,
+            "evaluators": evaluator_values,
+            "expiresAtHeight": self.expires_at_height,
+            "format": ASSIGNMENT_V2_FORMAT,
+            "genesisHash": self.genesis_hash,
+            "networkId": self.network_id,
+            "parents": list(self.parents),
+            "recipient": self.recipient,
+            "safetyPolicyHash": self.safety_policy_hash,
+            "sourceFinalityHeight": self.source_finality_height,
+            "sourceFinalityStateRoot": self.source_finality_state_root,
+            "suiteCommitment": self.suite_commitment,
+        }
+
+    @property
+    def assignment_hash(self) -> str:
+        return consensus_hash(ASSIGNMENT_V2_DOMAIN, self.payload())
+
+    def as_dict(self) -> dict[str, object]:
+        return self.payload()
+
+
 def _validate_signature(signature: str) -> None:
     if not isinstance(signature, str) or not signature or len(signature) > MAX_SIGNATURE_CHARS:
         raise ProtocolError("ML-DSA signature is invalid")
@@ -316,16 +482,39 @@ def verify_pq_signature(payload: object, signature: str, public_key: str, domain
 
 
 def verify_finalized_assignment(
-    assignment: FinalizedEvaluationAssignment,
+    assignment: FinalizedEvaluationAssignment | FinalizedEvaluationAssignmentV2,
     *,
-    trusted_authorities: Mapping[str, str],
+    trusted_authorities: Mapping[str, str] | None,
     expected_network_id: str,
     expected_genesis_hash: str,
     observed_height: int,
+    exact_chain_anchor: object | None = None,
 ) -> None:
     payload = assignment.payload()
     if assignment.network_id != expected_network_id or assignment.genesis_hash != expected_genesis_hash:
         raise ProtocolError("assignment belongs to another network or genesis")
+    if isinstance(assignment, FinalizedEvaluationAssignmentV2):
+        if trusted_authorities not in (None, {}) or (
+            not isinstance(observed_height, int) or isinstance(observed_height, bool) or
+            observed_height < assignment.decision_height or
+            observed_height > assignment.expires_at_height
+        ):
+            raise ProtocolError("assignment v2 is not finalized or has expired")
+        if (
+            exact_chain_anchor is None
+            or getattr(exact_chain_anchor, "exact_assignment_included", None) is not True
+            or getattr(exact_chain_anchor, "chain_assignment_included", None) is not True
+            or getattr(exact_chain_anchor, "candidate_commitment_included", None) is not True
+            or getattr(exact_chain_anchor, "assignment_hash", None) != assignment.assignment_hash
+            or getattr(exact_chain_anchor, "finalized_height", None) !=
+                assignment.source_finality_height
+            or getattr(exact_chain_anchor, "finalized_state_root", None) !=
+                assignment.source_finality_state_root
+        ):
+            raise ProtocolError("assignment v2 lacks a matching exact chain anchor")
+        return
+    if not isinstance(assignment, FinalizedEvaluationAssignment) or trusted_authorities is None:
+        raise ProtocolError("legacy assignment trust inputs are invalid")
     if not isinstance(observed_height, int) or isinstance(observed_height, bool) or (
         observed_height < assignment.finalized_height or observed_height > assignment.expires_at_height
     ):
@@ -428,8 +617,8 @@ class SignedExecutionTranscript:
 
 
 def create_signed_execution_transcript(
-    *, assignment: FinalizedEvaluationAssignment, bundle: EvaluationBundle,
-    transcript: ExecutionTranscript, evaluator_id: str,
+    *, assignment: FinalizedEvaluationAssignment | FinalizedEvaluationAssignmentV2,
+    bundle: EvaluationBundle, transcript: ExecutionTranscript, evaluator_id: str,
     signer: Callable[[str, dict[str, object]], str],
 ) -> SignedExecutionTranscript:
     verify_bundle(bundle, expected_hash=bundle.bundle_hash)
@@ -476,16 +665,17 @@ def create_signed_execution_transcript(
 
 
 def verify_execution_receipts(
-    *, assignment: FinalizedEvaluationAssignment, bundle: EvaluationBundle,
-    receipts: tuple[SignedExecutionTranscript, ...], observed_height: int,
-    trusted_authorities: Mapping[str, str], expected_network_id: str,
+    *, assignment: FinalizedEvaluationAssignment | FinalizedEvaluationAssignmentV2,
+    bundle: EvaluationBundle, receipts: tuple[SignedExecutionTranscript, ...], observed_height: int,
+    trusted_authorities: Mapping[str, str] | None, expected_network_id: str,
     expected_genesis_hash: str, expected_adapter_protocol: str,
-    expected_safety_policy_hash: str,
+    expected_safety_policy_hash: str, exact_chain_anchor: object | None = None,
 ) -> None:
     verify_finalized_assignment(
         assignment, trusted_authorities=trusted_authorities,
         expected_network_id=expected_network_id, expected_genesis_hash=expected_genesis_hash,
         observed_height=observed_height,
+        exact_chain_anchor=exact_chain_anchor,
     )
     verify_bundle(bundle, expected_hash=bundle.bundle_hash)
     if (
@@ -496,7 +686,8 @@ def verify_execution_receipts(
     if (
         not isinstance(observed_height, int)
         or isinstance(observed_height, bool)
-        or observed_height < assignment.finalized_height
+        or observed_height < (assignment.decision_height if isinstance(
+            assignment, FinalizedEvaluationAssignmentV2) else assignment.finalized_height)
         or observed_height > assignment.expires_at_height
     ):
         raise ProtocolError("execution receipts use an expired assignment")

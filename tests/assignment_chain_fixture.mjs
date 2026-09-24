@@ -4,7 +4,8 @@ import {
   NirChain, createCandidateBond, createProgressCommitment, finalizeBlock,
 } from "../blockchain/chain.mjs";
 import {
-  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION, MIN_PROGRESS_CANDIDATE_BOND,
+  EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION, EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+  MIN_PROGRESS_CANDIDATE_BOND,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
@@ -26,6 +27,18 @@ const beacons = Array.from({ length: 4 }, generateWallet);
 const treasury = generateWallet();
 const submitter = generateWallet();
 const validatorMembers = members(validators, "validator");
+const v3 = process.env.NIR_ASSIGNMENT_FIXTURE_V3 === "1";
+const protocolVersion = v3 ? EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION
+  : EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
+const evaluationEnvironment = {
+  adapter_protocol: "nir-application-adapter-v1",
+  cpu_limit: 2,
+  format: "nir-evaluation-environment-v1",
+  image_digest: `sha256:${fingerprint("evaluation-image")}`,
+  memory_limit_bytes: 1 << 30,
+  runner_digest: `sha256:${fingerprint("evaluation-runner")}`,
+  timeout_seconds: 60,
+};
 const chain = new NirChain({
   beaconAuthorities: members(beacons, "beacon"),
   capabilityReferences: [{
@@ -35,7 +48,8 @@ const chain = new NirChain({
     capabilitiesBps: { "reasoning-v1": 100 },
   }],
   evaluators: members(evaluators, "evaluator"),
-  genesisProtocolVersion: EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+  ...(v3 ? { evaluationEnvironment } : {}),
+  genesisProtocolVersion: protocolVersion,
   genesisTimestamp: 0,
   networkId: "nir-assignment-anchor-test",
   safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
@@ -107,7 +121,7 @@ const assignmentWitness = chain.evaluationAssignmentProof(admission.candidateId)
 
 process.stdout.write(JSON.stringify({
   checkpoint: {
-    height: 0, protocolVersion: EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
+    height: 0, protocolVersion,
     stateRoot: genesis.stateRoot, tipHash: genesis.hash,
   },
   commitmentTransaction: admission,
@@ -126,6 +140,19 @@ process.stdout.write(JSON.stringify({
   challengeSeed: challenge.challengeSeed,
   consensusAssignment: assignmentWitness.assignment,
   assignmentProof: assignmentWitness.inclusionProof,
+  sourceAnchor: v3 ? {
+    blockHash: epochRevealBlock.hash, height: epochRevealBlock.height,
+    stateRoot: epochRevealBlock.stateRoot,
+  } : undefined,
+  decisionAnchor: v3 ? {
+    blockHash: challengeBlock.hash, height: challengeBlock.height,
+    stateRoot: challengeBlock.stateRoot,
+  } : undefined,
+  inclusionAnchor: v3 ? {
+    blockHash: challengeBlock.hash, height: challengeBlock.height,
+    stateRoot: challengeBlock.stateRoot,
+    evaluationAssignmentRoot: challengeBlock.evaluationAssignmentRoot,
+  } : undefined,
   transactionBlockHeight: admissionBlock.height,
   transactionProof: createTransactionProof(admissionBlock.transactions, 0),
   trustedValidators: validatorMembers,

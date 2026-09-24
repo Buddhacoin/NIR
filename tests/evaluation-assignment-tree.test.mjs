@@ -10,7 +10,7 @@ import {
   EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
   INITIAL_EPOCH_REWARD, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
-import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
+import { canonicalJson, generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
   createEpochRandomnessCommit, createEpochRandomnessReveal,
   createProgressBeacon, createProgressBeaconShare,
@@ -136,7 +136,10 @@ test("v27 assignment binds runner policy, public keys, expiry and prior finalize
   assert.equal(assignment.sourceFinalityStateRoot, value.checkpointBlock.stateRoot);
   assert.equal(assignment.adapterProtocol, "nir-application-adapter-v1");
   assert.equal(assignment.environmentCommitment,
-    hashObject(evaluationEnvironment, "NIR_EVALUATION_ENVIRONMENT"));
+    createHash("sha256").update("NIR_EVALUATION_ENVIRONMENT\0", "ascii")
+      .update(canonicalJson(evaluationEnvironment), "utf8").digest("hex"));
+  assert.equal(assignment.environmentCommitment,
+    "fcf698098faa4b16512820cd721920e49b79129f98e5fa10e1a3db14d7f6d8a4");
   assert.equal(assignment.safetyPolicyHash, SAFETY_POLICY_V1_COMMITMENT);
   assert.equal(assignment.authorityMode, "consensus-finality-certificate-v1");
   assert.equal(assignment.evaluators.length, assignment.committee.length);

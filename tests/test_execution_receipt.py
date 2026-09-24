@@ -6,6 +6,7 @@ import subprocess
 import unittest
 
 from nir.application_adapter import FORMAT as APPLICATION_FORMAT
+from nir.assignment_chain_proof import AssignmentChainAnchorResult
 from nir.consensus_codec import consensus_hash
 from nir.evaluator import DEFAULT_SAFETY_POLICY_HASH, BenchmarkSuite, RunRecord
 from nir.execution_receipt import (
@@ -15,6 +16,7 @@ from nir.execution_receipt import (
     AssignedEvaluator,
     AuthorityAttestation,
     FinalizedEvaluationAssignment,
+    FinalizedEvaluationAssignmentV2,
     SignedExecutionTranscript,
     create_signed_execution_transcript,
     authority_set_hash,
@@ -100,7 +102,8 @@ class ExecutionReceiptTests(unittest.TestCase):
             role="candidate", entrypoint_path="bin/app", entrypoint_digest=self.candidate_entrypoint,
         )
         self.commitment = CandidateCommitment(
-            network_id="nir-test", recipient="nir1recipient", candidate_id=digest("candidate-id"),
+            network_id="nir-test", recipient=self.evaluator_wallets[0]["address"],
+            candidate_id=digest("candidate-id"),
             artifact_hash=self.candidate_artifact, baseline_hash=self.baseline_artifact,
             baseline_content_hash=self.baseline_content, content_hash=self.candidate_content,
             parents=(self.baseline_artifact,), suite_commitment=self.suite.commitment(self.salt),
@@ -205,6 +208,62 @@ class ExecutionReceiptTests(unittest.TestCase):
             expected_adapter_protocol=APPLICATION_FORMAT,
             expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
         )
+
+    def test_v2_exact_chain_anchor_and_receipts_verify_without_external_attestations(self):
+        assignment = FinalizedEvaluationAssignmentV2(
+            network_id=self.assignment.network_id, genesis_hash=self.assignment.genesis_hash,
+            candidate_commitment_hash=self.assignment.candidate_commitment_hash,
+            candidate_id=self.assignment.candidate_id, source_finality_height=9,
+            source_finality_state_root=digest("v2-source"), committed_height=9,
+            decision_height=10, challenge_seed=self.assignment.challenge_seed,
+            challenge_epoch=10, environment_commitment=self.assignment.environment_commitment,
+            suite_commitment=self.assignment.suite_commitment,
+            baseline_artifact_hash=self.assignment.baseline_artifact_hash,
+            baseline_content_hash=self.assignment.baseline_content_hash,
+            candidate_artifact_hash=self.assignment.candidate_artifact_hash,
+            candidate_content_hash=self.assignment.candidate_content_hash,
+            adapter_protocol=self.assignment.adapter_protocol,
+            safety_policy_hash=self.assignment.safety_policy_hash,
+            authority_set_hash=self.assignment.authority_set_hash,
+            authority_mode="consensus-finality-certificate-v1",
+            recipient=self.commitment.recipient, parents=self.commitment.parents,
+            evaluators=self.assignment.evaluators, expires_at_height=20,
+        )
+        anchor = AssignmentChainAnchorResult(
+            candidate_commitment_included=True, chain_assignment_included=True,
+            exact_assignment_included=True, finalized_height=9,
+            finalized_state_root=digest("v2-source"), transaction_block_height=9,
+            consensus_gap="", assignment_hash=assignment.assignment_hash,
+        )
+        receipts = tuple(create_signed_execution_transcript(
+            assignment=assignment, bundle=self.bundle, transcript=transcript,
+            evaluator_id=transcript.run.verifier_id,
+            signer=lambda domain, payload, wallet=self.wallet_by_id[transcript.run.verifier_id]:
+                sign(wallet, domain, payload),
+        ) for transcript in self.bundle.baseline + self.bundle.candidate)
+        verify_execution_receipts(
+            assignment=assignment, bundle=self.bundle, receipts=receipts, observed_height=10,
+            trusted_authorities=None, exact_chain_anchor=anchor,
+            expected_network_id="nir-test", expected_genesis_hash=digest("genesis"),
+            expected_adapter_protocol=APPLICATION_FORMAT,
+            expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
+        )
+        with self.assertRaisesRegex(ProtocolError, "exact chain anchor"):
+            verify_execution_receipts(
+                assignment=assignment, bundle=self.bundle, receipts=receipts,
+                observed_height=10, trusted_authorities=None, exact_chain_anchor=None,
+                expected_network_id="nir-test", expected_genesis_hash=digest("genesis"),
+                expected_adapter_protocol=APPLICATION_FORMAT,
+                expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
+            )
+        with self.assertRaisesRegex(ProtocolError, "expired"):
+            verify_execution_receipts(
+                assignment=assignment, bundle=self.bundle, receipts=receipts,
+                observed_height=21, trusted_authorities=None, exact_chain_anchor=anchor,
+                expected_network_id="nir-test", expected_genesis_hash=digest("genesis"),
+                expected_adapter_protocol=APPLICATION_FORMAT,
+                expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
+            )
 
     def test_assignment_wrong_network_expiry_and_signature_fail_closed(self):
         with self.assertRaisesRegex(ProtocolError, "network"):

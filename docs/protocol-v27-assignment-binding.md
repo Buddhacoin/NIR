@@ -26,12 +26,27 @@ every active state leaf. Assignment values are bounded to 64 KiB, preventing a
 large validator set from multiplying megabytes of key material across thousands
 of active candidates.
 
-## Honest security boundary
+## Exact external assignment proof
 
-The v27 leaf proves substantially more than v26, but it deliberately does not set
-`exactAssignmentIncluded=true`. `FinalizedEvaluationAssignment` v1 carries separate
-authority attestations that are not fields of the consensus leaf. Those signatures
-must still be checked by the receipt verifier. A future assignment format can replace
-that split authority model with data derived entirely from the finalized certificate;
-until then, callers must treat `chainAssignmentIncluded` and
-`exactAssignmentIncluded` as different guarantees.
+`nir-finalized-evaluation-assignment-v2` removes the separate authority
+attestations used by the legacy format. Its complete semantic payload is matched
+field-for-field to the v27 consensus leaf, while evaluator public keys are checked
+against the compact key commitments stored in that leaf.
+
+`nir-assignment-chain-anchor-v3` authenticates three distinct points: the finalized
+source state, the decision block, and the block whose assignment root contains the
+leaf. For v27 the verifier requires `source + 1 == decision == inclusion`, a
+height-zero checkpoint matching the expected genesis hash, an uninterrupted
+finality proof chain, transaction membership, assignment membership, and matching
+network/genesis identities. Only this complete path returns
+`exactAssignmentIncluded=true`.
+
+Execution receipts for a v2 assignment are accepted only with the matching result
+of that exact-chain verification and only from the decision height through the
+assignment expiry height, inclusive. The v1 assignment and v1/v2 proof packages
+remain supported without changing their encodings, but remain non-exact.
+
+A signed state snapshot by itself is not an exact historical assignment proof: it
+does not reconstruct the source header or the genesis-to-inclusion certificate
+chain. Operators must retain the bounded v3 proof package. See
+[`finalized-assignment-v2.md`](finalized-assignment-v2.md) for the complete boundary.
