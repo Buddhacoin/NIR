@@ -7,7 +7,10 @@ import test from "node:test";
 
 import {
   NirChain,
+  blockHeader,
+  blockHeaderHash,
   blockHash,
+  computeChainStateRoot,
   commitVoteForBlock,
   createTransfer,
   createValidatorBond,
@@ -18,6 +21,8 @@ import {
 import {
   MIN_TRANSFER_FEE,
   MAX_BLOCK_BYTES,
+  HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION,
+  MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
@@ -35,6 +40,13 @@ import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
 import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
 import {
+  createReleaseAuthoritySet, createReleaseTransparencyAnchor,
+} from "../blockchain/offline-release-governance.mjs";
+import {
+  approveProtocolUpgradeAuthorization, assembleProtocolUpgradeAuthorization,
+  createProtocolUpgradeAuthorizationPayload,
+} from "../blockchain/protocol-upgrade-authorization.mjs";
+import {
   initializeDistributedDevnet,
   ValidatorReplica,
 } from "../blockchain/distributed-node.mjs";
@@ -47,6 +59,83 @@ function members(wallets, prefix) {
   return wallets.map((wallet, index) => ({
     ...publicWallet(wallet), operatorId: `${prefix}-${index}`,
   }));
+}
+
+function authorizedUpgrade(chain, authoritySet, releaseWallets, activationHeight) {
+  const payload = {
+    bundleHash: `sha3-256:${"a".repeat(64)}`,
+    manifestHash: `sha3-256:${"b".repeat(64)}`,
+    networkId: chain.networkId,
+    previousBundleHash: null,
+    protocolVersion: HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION,
+    releaseVersion: "0.3.0",
+    sourceRevision: "c".repeat(40),
+  };
+  const proposal = {
+    activeSetId: authoritySet.setId,
+    format: "nir-release-log-proposal-v1",
+    logId: "nir-protocol-releases",
+    networkId: chain.networkId,
+    payload,
+    previousEntryHash: chain.protocolReleaseHead.entryHash,
+    sequence: chain.protocolReleaseHead.sequence + 1,
+    type: "release",
+    version: 1,
+  };
+  proposal.proposalHash = `sha3-256:${hashObject(proposal, "RELEASE_LOG_PROPOSAL_V1")}`;
+  const entryApprovals = releaseWallets.slice(0, authoritySet.threshold).map((wallet, index) => ({
+    address: wallet.address,
+    format: "nir-release-governance-approval-v1",
+    operatorId: `release-${index}`,
+    proposalHash: proposal.proposalHash,
+    role: "active",
+    setId: authoritySet.setId,
+    signature: signObject({ proposalHash: proposal.proposalHash, sequence: proposal.sequence,
+      role: "active", setId: authoritySet.setId }, wallet, "RELEASE_GOVERNANCE_APPROVAL_V1"),
+    version: 1,
+  }));
+  const unsignedEntry = {
+    activeSetId: authoritySet.setId,
+    activationApprovals: [],
+    approvals: entryApprovals,
+    format: "nir-release-transparency-entry-v1",
+    logId: proposal.logId,
+    networkId: chain.networkId,
+    nextSetAcceptances: [],
+    payload,
+    previousEntryHash: proposal.previousEntryHash,
+    proposalHash: proposal.proposalHash,
+    sequence: proposal.sequence,
+    type: "release",
+    version: 1,
+  };
+  const entry = { ...unsignedEntry,
+    entryHash: `sha3-256:${hashObject(unsignedEntry, "RELEASE_TRANSPARENCY_ENTRY_V1")}` };
+  const authorizationPayload = createProtocolUpgradeAuthorizationPayload({
+    activationHeight,
+    authoritySetId: authoritySet.setId,
+    baseHeight: chain.height,
+    baseTipHash: chain.tipHash,
+    bundleHash: payload.bundleHash,
+    chainIdentityGenesisHash: chain.blocks()[0].hash,
+    currentVersion: chain.protocolVersion,
+    entryHash: entry.entryHash,
+    manifestHash: payload.manifestHash,
+    networkId: chain.networkId,
+    releaseVersion: payload.releaseVersion,
+    sourceRevision: payload.sourceRevision,
+    targetVersion: HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION,
+  });
+  const approvals = releaseWallets.slice(0, authoritySet.threshold).map((wallet, index) =>
+    approveProtocolUpgradeAuthorization(authorizationPayload, authoritySet, {
+      operatorId: `release-${index}`, wallet,
+    })).sort((left, right) => left.operatorId.localeCompare(right.operatorId));
+  return {
+    activationHeight,
+    authorization: assembleProtocolUpgradeAuthorization(authorizationPayload, entry, approvals),
+    format: "nir-protocol-upgrade-v2",
+    version: HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION,
+  };
 }
 
 function fixture() {
@@ -90,8 +179,15 @@ function restoreAtHead(chain, genesisConfig) {
   return NirChain.fromVerifiedSnapshot(genesisConfig, {
     capabilityMemory: snapshot.capabilityMemory,
     checkpoint: chain.blocks().at(-1),
+    ...(chain.protocolVersion >= 28 ? {
+      chainIdentityGenesisHash: chain.blocks()[0].hash,
+      validatorSetId: chain.validatorSetId,
+    } : {}),
     height: chain.height,
     networkId: chain.networkId,
+    ...(chain.protocolVersion >= 26 ? {
+      evaluationAssignmentRoot: chain.evaluationAssignmentRoot,
+    } : {}),
     ...(chain.protocolVersion >= 25 ? { recoveryStateCommitment: chain.recoveryStateCommitment } : {}),
     state: snapshot.state,
     stateRoot: chain.stateRoot,
@@ -109,6 +205,25 @@ function prepareEvidence(chain, validators, offender, timestamp) {
     second: { proposal: second, vote: voteForBlock(second, offender) },
   });
   return { evidence, first, second };
+}
+
+function evidenceForProposals(chain, first, second, offender) {
+  return assembleValidatorPrepareEquivocationEvidence({
+    first: {
+      blockHash: blockHash(first),
+      header: chain.finalityHeaderForProposal(first),
+      signature: voteForBlock(first, offender).signature,
+    },
+    second: {
+      blockHash: blockHash(second),
+      header: chain.finalityHeaderForProposal(second),
+      signature: voteForBlock(second, offender).signature,
+    },
+    height: first.height,
+    networkId: chain.networkId,
+    round: first.round,
+    validator: offender.address,
+  });
 }
 
 function fundAndBond(chain, treasury, validators, extra = []) {
@@ -376,6 +491,135 @@ test("native prepare equivocation burns the bond and survives fork snapshot and 
   const lightTip = verifyFinalityProofChain(proofs, proofOptions);
   assert.equal(lightTip.tipHash, chain.tipHash);
   assert.equal(lightTip.validatorSetId, chain.validatorSetId);
+});
+
+test("activation evidence uses the exact recent dual-quorum membership across restart", () => {
+  const values = fixture();
+  const releaseWallets = Array.from({ length: 4 }, generateWallet);
+  const authoritySet = createReleaseAuthoritySet({
+    authorities: members(releaseWallets, "release"),
+    generation: 1,
+    rotationDelayEntries: 2,
+    threshold: 3,
+  });
+  const releaseAnchor = createReleaseTransparencyAnchor({
+    initialSet: authoritySet,
+    logId: "nir-protocol-releases",
+    networkId: values.genesisConfig.networkId,
+  });
+  const genesisConfig = {
+    ...values.genesisConfig,
+    evaluationEnvironment: {
+      adapter_protocol: "nir-application-adapter-v1",
+      cpu_limit: 2,
+      format: "nir-evaluation-environment-v1",
+      image_digest: `sha256:${"3".repeat(64)}`,
+      memory_limit_bytes: 1 << 30,
+      runner_digest: `sha256:${"4".repeat(64)}`,
+      timeout_seconds: 60,
+    },
+    genesisProtocolVersion: 27,
+    protocolUpgradeReleaseAnchor: releaseAnchor,
+  };
+  const chain = new NirChain(genesisConfig);
+  const { treasury, validators } = values;
+  append(chain, chain.buildBlock({ timestamp: 1 }), validators);
+  let protocolActivationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  append(chain, chain.buildBlock({
+    protocolUpgrade: { activationHeight: protocolActivationHeight,
+      format: "nir-protocol-upgrade-v1", version: 28 },
+    timestamp: chain.blocks().at(-1).timestamp + 1,
+  }), validators);
+  while (chain.height < protocolActivationHeight) {
+    append(chain, chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 }), validators);
+  }
+  protocolActivationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  append(chain, chain.buildBlock({
+    protocolUpgrade: authorizedUpgrade(
+      chain, authoritySet, releaseWallets, protocolActivationHeight,
+    ),
+    timestamp: chain.blocks().at(-1).timestamp + 1,
+  }), validators);
+  while (chain.height < protocolActivationHeight) {
+    append(chain, chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 }), validators);
+  }
+  const newcomer = generateWallet();
+  const outsider = generateWallet();
+  fundAndBond(chain, treasury, validators, [newcomer, outsider]);
+  const nextWallets = [...validators.slice(1), newcomer];
+  const nextMembers = [
+    ...genesisConfig.validators.slice(1),
+    { ...publicWallet(newcomer), operatorId: "recovery-4" },
+  ];
+  const activationHeight = chain.height + 5;
+  append(chain, chain.buildBlock({
+    timestamp: TREASURY_VESTING_MS + 2,
+    validatorRotation: { activationHeight, validators: nextMembers },
+  }), validators);
+  while (chain.height + 1 < activationHeight) {
+    append(chain, chain.buildBlock({
+      timestamp: chain.blocks().at(-1).timestamp + 1,
+    }), validators);
+  }
+
+  const first = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+  const second = chain.buildBlock({ timestamp: first.timestamp + 1 });
+  const oldOnlyEvidence = evidenceForProposals(chain, first, second, validators[0]);
+  const newOnlyEvidence = evidenceForProposals(chain, first, second, newcomer);
+  const outsiderEvidence = evidenceForProposals(chain, first, second, outsider);
+  const activation = finalizeBlock(first, [...validators, newcomer]);
+  chain.appendBlock(activation);
+  assert.equal(chain.consensusSnapshot().state.recentValidatorTransition.activationHeight,
+    activationHeight);
+  const missingContext = chain.consensusSnapshot();
+  delete missingContext.state.recentValidatorTransition;
+  missingContext.stateRoot = computeChainStateRoot(missingContext.state);
+  const missingCheckpoint = structuredClone(activation);
+  missingCheckpoint.stateRoot = missingContext.stateRoot;
+  missingCheckpoint.hash = blockHeaderHash(blockHeader(missingCheckpoint));
+  assert.throws(() => NirChain.fromVerifiedSnapshot(genesisConfig, {
+    capabilityMemory: missingContext.capabilityMemory,
+    chainIdentityGenesisHash: chain.blocks()[0].hash,
+    checkpoint: missingCheckpoint,
+    evaluationAssignmentRoot: chain.evaluationAssignmentRoot,
+    height: chain.height,
+    networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment,
+    state: missingContext.state,
+    stateRoot: missingContext.stateRoot,
+    tipHash: missingCheckpoint.hash,
+    validatorSetId: chain.validatorSetId,
+  }), /historical validator evidence snapshot schema/);
+
+  for (const [offender, evidence] of [
+    [validators[0], oldOnlyEvidence],
+    [newcomer, newOnlyEvidence],
+  ]) {
+    const restarted = restoreAtHead(chain, genesisConfig);
+    const transaction = createValidatorEquivocationTransaction({
+      evidence,
+      networkId: restarted.networkId,
+      nonce: restarted.nextNonce(treasury.address),
+      wallet: treasury,
+    });
+    append(restarted, restarted.buildBlock({
+      timestamp: activation.timestamp + 1,
+      transactions: [transaction],
+    }), nextWallets);
+    assert.equal(restarted.validatorDisabled(offender.address), true);
+    assert.equal(restarted.consensusSnapshot().state.recentValidatorTransition, null);
+  }
+
+  const outsiderFork = restoreAtHead(chain, genesisConfig);
+  const outsiderTransaction = createValidatorEquivocationTransaction({
+    evidence: outsiderEvidence,
+    networkId: outsiderFork.networkId,
+    nonce: outsiderFork.nextNonce(treasury.address),
+    wallet: treasury,
+  });
+  assertRejectedAtomically(
+    outsiderFork, outsiderTransaction, nextWallets, /not active and bonded/,
+  );
 });
 
 test("unbonded genesis equivocation and malformed or stale evidence are atomic rejections", () => {

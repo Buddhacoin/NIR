@@ -134,9 +134,12 @@ export function createValidatorAdmissionOmissionEvidence({
 export function verifyValidatorAdmissionOmissionEvidence(evidence, {
   canonicalBlockHash, canonicalCertificate, canonicalHeader,
   canonicalPrepareCertificateHash, canonicalRound, canonicalTransactionIds,
-  currentHeight, networkId, validators,
+  currentHeight, networkId, rotationBoundary = false, validators,
 } = {}) {
   assertEvidenceShape(evidence);
+  if (rotationBoundary !== false) {
+    throw new Error("validator admission omission evidence cannot cross a rotation boundary");
+  }
   if (!Array.isArray(validators) || !Array.isArray(canonicalCertificate) ||
       !Array.isArray(canonicalTransactionIds) || currentHeight !== evidence.finalizedHeader.height + 1 ||
       evidence.finalizedHeader.networkId !== networkId ||

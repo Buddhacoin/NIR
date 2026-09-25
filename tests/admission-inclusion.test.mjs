@@ -156,6 +156,14 @@ test("a quorum receipt and finalized omitting block identify the exact signer in
     canonicalBlockHash: finalized.hash, canonicalCertificate: finalized.certificate,
     canonicalHeader: blockHeader(finalized),
     canonicalPrepareCertificateHash: prepareCertificateHash(finalized.prepareCertificate),
+    canonicalRound: finalized.round,
+    canonicalTransactionIds: finalized.transactions.map(transactionId), currentHeight: 2,
+    networkId: values.networkId, rotationBoundary: true, validators: values.validatorMembers,
+  }), /cannot cross a rotation boundary/);
+  assert.throws(() => verifyValidatorAdmissionOmissionEvidence(evidence, {
+    canonicalBlockHash: finalized.hash, canonicalCertificate: finalized.certificate,
+    canonicalHeader: blockHeader(finalized),
+    canonicalPrepareCertificateHash: prepareCertificateHash(finalized.prepareCertificate),
     canonicalRound: finalized.round, canonicalTransactionIds: [], currentHeight: 3,
     networkId: values.networkId, validators: values.validatorMembers,
   }), /stale or not canonical/);
