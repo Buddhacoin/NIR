@@ -450,6 +450,13 @@ export function createValidatorHttpServer(validator, options = {}) {
         return await verificationScheduler.run(identity, () =>
           send(response, 200, validator.peerAnnouncement()));
       }
+      if (request.method === "GET" && url.pathname === "/v1/public/validator-candidate-context") {
+        identity = "public:validator-candidate-context";
+        consumeIngress(identity); peerReputation.assertAllowed(identity);
+        const address = url.searchParams.get("address");
+        return await verificationScheduler.run(identity, () =>
+          send(response, 200, validator.validatorCandidateContext(address)));
+      }
       if (request.method === "GET" && url.pathname === "/metrics") {
         identity = "public:metrics";
         consumeIngress(identity);

@@ -6,10 +6,16 @@ import {
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalJson } from "./crypto.mjs";
 import {
+  MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES, MAX_VALIDATOR_CANDIDATE_SYNC_INPUT_BYTES,
+  synchronizeValidatorCandidateContext, validateValidatorCandidateContext,
+  validateValidatorCandidateSyncInput,
+} from "./validator-candidate-context.mjs";
+import {
   createVerifiedWalletBackup, createWalletFile, verifyWalletFile, walletPublicInfo,
 } from "./wallet-files.mjs";
 
-const FORMAT = "nir-validator-join-plan-v1";
+const FORMAT_V1 = "nir-validator-join-plan-v1";
+const FORMAT = "nir-validator-join-plan-v2";
 const HASH = /^[0-9a-f]{64}$/;
 const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
 const NETWORK = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
@@ -60,7 +66,7 @@ function pinDirectory(path) {
     }
   } };
 }
-function readJson(path, label, privateFile = false) {
+function readJson(path, label, privateFile = false, maximumBytes = MAX_JSON_BYTES) {
   const requested = resolve(path); const parent = pinDirectory(dirname(requested));
   const target = join(parent.path, basename(requested)); let descriptor;
   try {
@@ -68,7 +74,7 @@ function readJson(path, label, privateFile = false) {
     descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = fstatSync(descriptor);
     if (!before.isFile() || before.nlink !== 1 || !sameIdentity(before, linked) ||
-        before.size < 2 || before.size > MAX_JSON_BYTES ||
+        before.size < 2 || before.size > maximumBytes ||
         (privateFile && ((before.mode & 0o077) ||
           (typeof process.getuid === "function" && before.uid !== process.getuid())))) {
       throw new Error(`${label} is unsafe`);
@@ -134,11 +140,33 @@ function readPlan(directory) {
   }
   finally { closeSync(root.descriptor); }
 }
+export function validatorJoinPublicPlan(directory) { return readPlan(directory); }
 export function validateValidatorJoinConfig(value) {
-  exact(value, ["endpoint", "expectedChainIdentityGenesisHash", "expectedCheckpointPolicyId", "expectedTlsCertificateSha256", "format", "networkId", "operatorId", "tlsCertificate", "tlsPrivateKey", "version"], "validator join config");
-  if (value.format !== "nir-validator-join-config-v1" || value.version !== 1 || !NETWORK.test(value.networkId ?? "") ||
+  if (value?.format === "nir-validator-join-config-v1" && value?.version === 1) {
+    exact(value, ["endpoint", "expectedChainIdentityGenesisHash", "expectedCheckpointPolicyId",
+      "expectedTlsCertificateSha256", "format", "networkId", "operatorId", "tlsCertificate",
+      "tlsPrivateKey", "version"], "validator join config");
+    if (!NETWORK.test(value.networkId ?? "") || !OPERATOR.test(value.operatorId ?? "") ||
+        !HASH.test(value.expectedChainIdentityGenesisHash ?? "") ||
+        !TAGGED_HASH.test(value.expectedCheckpointPolicyId ?? "") ||
+        !HASH.test(value.expectedTlsCertificateSha256 ?? "") ||
+        !isAbsolute(value.tlsCertificate ?? "") || !isAbsolute(value.tlsPrivateKey ?? "") ||
+        value.tlsCertificate === value.tlsPrivateKey) throw new Error("validator join config is invalid");
+    return { ...structuredClone(value), endpoint: normalizeEndpoint(value.endpoint) };
+  }
+  exact(value, ["candidateContextMaxWitnessAgeMs", "candidateContextMinimumCheckpointHeight",
+    "candidateContextMinimumSequence", "endpoint", "expectedChainIdentityGenesisHash",
+    "expectedCheckpointPolicyId", "expectedTlsCertificateSha256", "format", "networkId",
+    "operatorId", "tlsCertificate", "tlsPrivateKey", "version"], "validator join config");
+  if (value.format !== "nir-validator-join-config-v2" || value.version !== 2 || !NETWORK.test(value.networkId ?? "") ||
       !OPERATOR.test(value.operatorId ?? "") || !HASH.test(value.expectedChainIdentityGenesisHash ?? "") ||
       !TAGGED_HASH.test(value.expectedCheckpointPolicyId ?? "") || !HASH.test(value.expectedTlsCertificateSha256 ?? "") ||
+      !Number.isSafeInteger(value.candidateContextMinimumCheckpointHeight) ||
+      value.candidateContextMinimumCheckpointHeight < 1 ||
+      !Number.isSafeInteger(value.candidateContextMinimumSequence) ||
+      value.candidateContextMinimumSequence < 0 ||
+      !Number.isSafeInteger(value.candidateContextMaxWitnessAgeMs) ||
+      value.candidateContextMaxWitnessAgeMs < 1 || value.candidateContextMaxWitnessAgeMs > 86_400_000 ||
       !isAbsolute(value.tlsCertificate ?? "") || !isAbsolute(value.tlsPrivateKey ?? "") || value.tlsCertificate === value.tlsPrivateKey) throw new Error("validator join config is invalid");
   return { ...structuredClone(value), endpoint: normalizeEndpoint(value.endpoint) };
 }
@@ -147,13 +175,45 @@ export function loadValidatorJoinInputs(configPath) {
   return { config, tlsCertificatePem: readText(config.tlsCertificate, "validator TLS certificate", false),
     tlsPrivateKeyPem: readText(config.tlsPrivateKey, "validator TLS private key", true) };
 }
+export function loadValidatorCandidateSyncInput(path) {
+  return validateValidatorCandidateSyncInput(readJson(path, "validator candidate sync input", false,
+    MAX_VALIDATOR_CANDIDATE_SYNC_INPUT_BYTES));
+}
 export function validateValidatorJoinPlan(value, root) {
-  exact(value, ["broadcast", "consensus", "endpoint", "expectedChainIdentityGenesisHash", "expectedCheckpointPolicyId", "format", "networkId", "operatorId", "paths", "status", "tlsCertificateSha256", "transport", "version"], "validator join plan");
+  if (value?.format === FORMAT_V1 && value?.version === 1) {
+    exact(value, ["broadcast", "consensus", "endpoint", "expectedChainIdentityGenesisHash",
+      "expectedCheckpointPolicyId", "format", "networkId", "operatorId", "paths", "status",
+      "tlsCertificateSha256", "transport", "version"], "validator join plan");
+    exact(value.paths, ["consensusVault", "transportVault"], "validator join paths");
+    const paths = { consensusVault: join(root, "consensus.nirvault.json"),
+      transportVault: join(root, "transport.nirvault.json") };
+    if (value.broadcast !== false || value.status !== "awaiting-external-v31-candidate-service" ||
+        !NETWORK.test(value.networkId ?? "") || !OPERATOR.test(value.operatorId ?? "") ||
+        !HASH.test(value.tlsCertificateSha256 ?? "") ||
+        !HASH.test(value.expectedChainIdentityGenesisHash ?? "") ||
+        !TAGGED_HASH.test(value.expectedCheckpointPolicyId ?? "") ||
+        normalizeEndpoint(value.endpoint) !== value.endpoint ||
+        canonicalJson(value.paths) !== canonicalJson(paths) ||
+        canonicalJson(walletPublicInfo(paths.consensusVault)) !== canonicalJson(value.consensus) ||
+        canonicalJson(walletPublicInfo(paths.transportVault)) !== canonicalJson(value.transport) ||
+        value.consensus.address === value.transport.address) throw new Error("validator join plan is invalid");
+    return structuredClone(value);
+  }
+  exact(value, ["broadcast", "candidateContextMaxWitnessAgeMs",
+    "candidateContextMinimumCheckpointHeight", "candidateContextMinimumSequence", "consensus",
+    "endpoint", "expectedChainIdentityGenesisHash", "expectedCheckpointPolicyId", "format",
+    "networkId", "operatorId", "paths", "status", "tlsCertificateSha256", "transport", "version"],
+  "validator join plan");
   exact(value.paths, ["consensusVault", "transportVault"], "validator join paths");
   const paths = { consensusVault: join(root, "consensus.nirvault.json"), transportVault: join(root, "transport.nirvault.json") };
-  if (value.format !== FORMAT || value.version !== 1 || value.broadcast !== false || value.status !== "awaiting-external-v31-candidate-service" ||
+  if (value.format !== FORMAT || value.version !== 2 || value.broadcast !== false || value.status !== "awaiting-external-v31-candidate-service" ||
       !NETWORK.test(value.networkId ?? "") || !OPERATOR.test(value.operatorId ?? "") || !HASH.test(value.tlsCertificateSha256 ?? "") ||
       !HASH.test(value.expectedChainIdentityGenesisHash ?? "") || !TAGGED_HASH.test(value.expectedCheckpointPolicyId ?? "") ||
+      !Number.isSafeInteger(value.candidateContextMinimumCheckpointHeight) ||
+      value.candidateContextMinimumCheckpointHeight < 1 ||
+      !Number.isSafeInteger(value.candidateContextMinimumSequence) || value.candidateContextMinimumSequence < 0 ||
+      !Number.isSafeInteger(value.candidateContextMaxWitnessAgeMs) ||
+      value.candidateContextMaxWitnessAgeMs < 1 || value.candidateContextMaxWitnessAgeMs > 86_400_000 ||
       normalizeEndpoint(value.endpoint) !== value.endpoint || canonicalJson(value.paths) !== canonicalJson(paths) ||
       canonicalJson(walletPublicInfo(paths.consensusVault)) !== canonicalJson(value.consensus) ||
       canonicalJson(walletPublicInfo(paths.transportVault)) !== canonicalJson(value.transport) || value.consensus.address === value.transport.address) throw new Error("validator join plan is invalid");
@@ -196,7 +256,20 @@ export function createValidatorJoinWorkspace({ directory, config: input, tlsCert
     createWalletFile({ path: join(staging, "consensus.nirvault.json"), password: consensusPassword, label: "NIR validator consensus identity" });
     createWalletFile({ path: join(staging, "transport.nirvault.json"), password: transportPassword, label: "NIR validator transport identity" });
     const consensus = walletPublicInfo(join(staging, "consensus.nirvault.json")); const transport = walletPublicInfo(join(staging, "transport.nirvault.json"));
-    const plan = { broadcast: false, consensus, endpoint: config.endpoint, expectedChainIdentityGenesisHash: config.expectedChainIdentityGenesisHash, expectedCheckpointPolicyId: config.expectedCheckpointPolicyId, format: FORMAT, networkId: config.networkId, operatorId: config.operatorId, paths: { consensusVault: join(staging, "consensus.nirvault.json"), transportVault: join(staging, "transport.nirvault.json") }, status: "awaiting-external-v31-candidate-service", tlsCertificateSha256: fingerprint, transport, version: 1 };
+    const plan = { broadcast: false,
+      ...(config.version === 2 ? {
+        candidateContextMaxWitnessAgeMs: config.candidateContextMaxWitnessAgeMs,
+        candidateContextMinimumCheckpointHeight: config.candidateContextMinimumCheckpointHeight,
+        candidateContextMinimumSequence: config.candidateContextMinimumSequence,
+      } : {}), consensus, endpoint: config.endpoint,
+      expectedChainIdentityGenesisHash: config.expectedChainIdentityGenesisHash,
+      expectedCheckpointPolicyId: config.expectedCheckpointPolicyId,
+      format: config.version === 2 ? FORMAT : FORMAT_V1,
+      networkId: config.networkId, operatorId: config.operatorId,
+      paths: { consensusVault: join(staging, "consensus.nirvault.json"),
+        transportVault: join(staging, "transport.nirvault.json") },
+      status: "awaiting-external-v31-candidate-service", tlsCertificateSha256: fingerprint,
+      transport, version: config.version };
     const fd = openSync(join(staging, "join-plan.json"), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try { writeFileSync(fd, `${canonicalJson(plan)}\n`); fsyncSync(fd); } finally { closeSync(fd); }
     verifyWalletFile({ path: join(staging, "consensus.nirvault.json"), password: consensusPassword }); verifyWalletFile({ path: join(staging, "transport.nirvault.json"), password: transportPassword });
@@ -215,12 +288,48 @@ export function createValidatorJoinWorkspace({ directory, config: input, tlsCert
 }
 export function validatorJoinStatus(directory) {
   const plan = readPlan(directory);
+  const context = latestValidatorCandidateContext(directory, plan);
   return { address: plan.consensus.address, broadcast: false, endpoint: plan.endpoint, networkId: plan.networkId,
-    status: "awaiting external v31 candidate service / quorum observation",
-    next: ["create and verify encrypted backups",
-      "wait for the separately reviewed external v31 candidate service (not implemented)",
-      "through that service obtain proof-backed balance, nonce, finalized inclusion, and endpoint observation",
-      "after quorum-observed admission wait for a non-skipping authorized rotation"] };
+    ...(context ? { candidateContext: { atomicBalance: context.account.atomicBalance,
+      checkpointHeight: context.checkpoint.height, contextHash: context.contextHash,
+      nextNonce: context.account.nextNonce, protocolVersion: context.protocolVersion,
+      queuePosition: context.queuePosition, queueSize: context.queueSize,
+      status: context.status } } : {}),
+    status: context ? "proof-backed candidate context synchronized" :
+      "awaiting external v31 candidate service / quorum observation",
+    next: context ? ["keep encrypted identity backups separate and verified",
+      "use a separately reviewed future flow to build and sign admission (not implemented)",
+      "obtain finalized admission and fresh endpoint readiness proofs before selection",
+      "after quorum-observed admission wait for a non-skipping authorized rotation"] :
+      ["create and verify encrypted backups",
+        "synchronize a proof-backed read-only v31 candidate context",
+        "do not fabricate admission, readiness, selection, or activation state"] };
+}
+function latestValidatorCandidateContext(directory, plan = readPlan(directory)) {
+  const root = dirname(plan.paths.consensusVault);
+  const contexts = readdirSync(root).filter((name) =>
+    /^candidate-context-[0-9a-f]{64}\.json$/.test(name)).map((name) => {
+    try { return validateValidatorCandidateContext(readJson(join(root, name),
+      "validator candidate context", true, MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES), plan); } catch { return null; }
+  }).filter(Boolean).sort((a, b) => b.checkpoint.height - a.checkpoint.height ||
+    b.contextHash.localeCompare(a.contextHash));
+  return contexts[0] ?? null;
+}
+export async function syncValidatorJoinCandidateContext({ directory, syncInput, request }) {
+  const plan = readPlan(directory);
+  if (plan.format !== FORMAT || plan.version !== 2) {
+    throw new Error("candidate context sync requires explicit migration to a v2 join plan with pinned floors");
+  }
+  const context = await synchronizeValidatorCandidateContext({ plan, syncInput, request });
+  const path = join(dirname(plan.paths.consensusVault), `candidate-context-${context.contextHash}.json`);
+  try { writeValidatorJoinArtifact(path, context); }
+  catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const existing = validateValidatorCandidateContext(readJson(path,
+      "validator candidate context", true, MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES), plan);
+    if (canonicalJson(existing) !== canonicalJson(context)) throw error;
+  }
+  return { context, path };
 }
 export function verifyValidatorJoinWorkspace({ directory, consensusPassword, transportPassword }) {
   const plan = readPlan(directory);
