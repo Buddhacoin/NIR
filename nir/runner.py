@@ -423,12 +423,13 @@ def application_content_hash(
         or "\x00" in entrypoint_path
     ):
         raise ProtocolError("application entrypoint path is invalid")
-    return f"sha256:{_hash_object({
+    identity = {
         'adapter': APPLICATION_ADAPTER_FORMAT,
         'entrypoint_digest': entrypoint_digest,
         'entrypoint_path': entrypoint_path,
         'role': role,
-    }, 'NIR_APPLICATION_CONTENT_V1')}"
+    }
+    return f"sha256:{_hash_object(identity, 'NIR_APPLICATION_CONTENT_V1')}"
 
 
 def _application_case_seed(
