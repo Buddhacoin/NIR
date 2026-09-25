@@ -10,6 +10,7 @@ import {
   EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS,
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+  HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION,
   EVALUATION_ASSIGNMENT_LIFETIME_BLOCKS,
   MAX_BLOCK_BYTES,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
@@ -284,6 +285,33 @@ function operatorRegistry(entries, role) {
     operatorIds.add(member.operatorId);
   }
   return registry;
+}
+
+function normalizeRecentValidatorTransition(value, expectedHeight = null) {
+  if (value === null) return null;
+  if (!value || Object.keys(value).sort().join("\0") !==
+      "activationHeight\0nextSetId\0nextValidators\0previousSetId\0previousValidators" ||
+      !Number.isSafeInteger(value.activationHeight) || value.activationHeight < 1 ||
+      (expectedHeight !== null && value.activationHeight !== expectedHeight)) {
+    throw new Error("recent validator transition is invalid");
+  }
+  const previous = [...operatorRegistry(
+    value.previousValidators, "recent previous validator",
+  ).values()].sort((left, right) => left.address.localeCompare(right.address));
+  const next = [...operatorRegistry(
+    value.nextValidators, "recent next validator",
+  ).values()].sort((left, right) => left.address.localeCompare(right.address));
+  if (value.previousSetId !== validatorSetId(previous) ||
+      value.nextSetId !== validatorSetId(next) || value.previousSetId === value.nextSetId) {
+    throw new Error("recent validator transition set commitment is invalid");
+  }
+  return {
+    activationHeight: value.activationHeight,
+    nextSetId: value.nextSetId,
+    nextValidators: next,
+    previousSetId: value.previousSetId,
+    previousValidators: previous,
+  };
 }
 
 function normalizedStateValue(value) {
@@ -1410,6 +1438,7 @@ export class NirChain {
   #validatorRecoveryGeneration;
   #validatorRecoveryPlan;
   #registeredValidators;
+  #recentValidatorTransition;
   #pendingEvaluatorRegistrations;
   #pendingValidatorRotation;
   #pendingProtocolUpgrade;
@@ -1582,6 +1611,7 @@ export class NirChain {
     this.#validatorRecoveryGeneration = 0;
     this.#validatorRecoveryPlan = null;
     this.#registeredValidators = new Map(this.#validators);
+    this.#recentValidatorTransition = null;
     this.#pendingEvaluatorRegistrations = new Map();
     this.#pendingValidatorRotation = null;
     this.#pendingProtocolUpgrade = null;
@@ -1691,6 +1721,8 @@ export class NirChain {
       snapshot?.state?.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
     const snapshotHasChainIdentity =
       snapshot?.state?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION;
+    const snapshotHasHistoricalValidatorEvidence =
+      snapshot?.state?.protocolVersion >= HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
@@ -2175,6 +2207,17 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    if (snapshotHasHistoricalValidatorEvidence !==
+        Object.hasOwn(state, "recentValidatorTransition")) {
+      throw new Error("historical validator evidence snapshot schema is invalid");
+    }
+    const recentValidatorTransition = snapshotHasHistoricalValidatorEvidence
+      ? normalizeRecentValidatorTransition(state.recentValidatorTransition, snapshot.height)
+      : null;
+    if (recentValidatorTransition &&
+        recentValidatorTransition.nextSetId !== validatorSetId([...validatorMembers.values()])) {
+      throw new Error("recent validator transition does not end at the active set");
+    }
     const validatorRecoveryPlan = state.validatorRecoveryPlan === null ? null :
       verifyValidatorRecoveryPlan(state.validatorRecoveryPlan, {
         activeValidators: [...validatorMembers.values()],
@@ -2370,6 +2413,7 @@ export class NirChain {
     chain.#peerRegistry = structuredClone(state.peerRegistry);
     chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
     chain.#registeredValidators = registeredMembers;
+    chain.#recentValidatorTransition = recentValidatorTransition;
     chain.#rewardEpoch = snapshotInteger(state.rewardEpoch, "reward epoch");
     if (!Array.isArray(state.rewardedProofs) || !Array.isArray(state.safetyEvidence)) {
       throw new Error("snapshot replay-protection sets are invalid");
@@ -2636,6 +2680,10 @@ export class NirChain {
       retiredBeaconAuthorities:
         overrides.retiredBeaconAuthorities ?? this.#retiredBeaconAuthorities,
       registeredValidators: overrides.registeredValidators ?? this.#registeredValidators,
+      ...(protocolVersion >= HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION ? {
+        recentValidatorTransition: overrides.recentValidatorTransition === undefined
+          ? this.#recentValidatorTransition : overrides.recentValidatorTransition,
+      } : {}),
       rewardEpoch: overrides.rewardEpoch ?? this.#rewardEpoch,
       rewardedProofs: overrides.rewardedProofs ?? this.#rewardedProofs,
       safetyEvidence: overrides.safetyEvidence ?? this.#safetyEvidence,
@@ -2731,6 +2779,9 @@ export class NirChain {
         registeredBeaconAuthorities: this.#registeredBeaconAuthorities,
         retiredBeaconAuthorities: this.#retiredBeaconAuthorities,
         registeredValidators: this.#registeredValidators,
+        ...(this.#protocolVersion >= HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION ? {
+          recentValidatorTransition: this.#recentValidatorTransition,
+        } : {}),
         rewardEpoch: this.#rewardEpoch,
         rewardedProofs: this.#rewardedProofs,
         safetyEvidence: this.#safetyEvidence,
@@ -4060,12 +4111,22 @@ export class NirChain {
     const fee = parseAtomic(transaction.fee, "fee");
     const balance = balances.get(transaction.sender) ?? 0n;
     if (balance < fee) throw new Error("insufficient balance");
+    const evidenceValidators = this.#protocolVersion >=
+      HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION &&
+      this.#recentValidatorTransition?.activationHeight ===
+      finalizedBlock.height
+      ? [...this.#recentValidatorTransition.previousValidators,
+        ...this.#recentValidatorTransition.nextValidators]
+        .sort((left, right) => left.address.localeCompare(right.address))
+        .filter((member, index, members) =>
+          index === 0 || members[index - 1].address !== member.address)
+      : [...this.#validators.values()];
     const penalty = verifyFinalizedValidatorEquivocationEvidence(transaction.evidence, {
       finalizedHeader: blockHeader(finalizedBlock),
       finalizedRound: finalizedBlock.prepareCertificate[0]?.round,
       headerHash: blockHeaderHash,
       validatorBonds,
-      validators: [...this.#validators.values()],
+      validators: evidenceValidators,
     });
     balances.set(transaction.sender, balance - fee);
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
@@ -4117,6 +4178,7 @@ export class NirChain {
     const fee = parseAtomic(transaction.fee, "fee");
     const balance = balances.get(transaction.sender) ?? 0n;
     if (balance < fee) throw new Error("insufficient balance");
+    const evidenceValidators = [...this.#validators.values()];
     const proof = verifyValidatorAdmissionOmissionEvidence(transaction.evidence, {
       canonicalBlockHash: finalizedBlock.hash,
       canonicalCertificate: finalizedBlock.certificate,
@@ -4126,7 +4188,10 @@ export class NirChain {
       canonicalTransactionIds: finalizedBlock.transactions.map(transactionId),
       currentHeight,
       networkId: this.#networkId,
-      validators: [...this.#validators.values()],
+      rotationBoundary: this.#protocolVersion >=
+        HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION &&
+        this.#recentValidatorTransition?.activationHeight === finalizedBlock.height,
+      validators: evidenceValidators,
     });
     if (proof.offenders.includes(transaction.sender)) {
       throw new Error("an omission offender cannot report its own evidence");
@@ -4600,6 +4665,7 @@ export class NirChain {
     fork.#protocolVersion = this.#protocolVersion;
     fork.#randomnessFaults = new Map(this.#randomnessFaults);
     fork.#registeredValidators = new Map(this.#registeredValidators);
+    fork.#recentValidatorTransition = structuredClone(this.#recentValidatorTransition);
     fork.#registeredBeaconAuthorities = new Map(this.#registeredBeaconAuthorities);
     fork.#retiredBeaconAuthorities = new Map([...this.#retiredBeaconAuthorities]
       .map(([address, retired]) => [address, { ...retired }]));
@@ -5677,6 +5743,15 @@ export class NirChain {
     let validatorsAfter = this.#validators;
     let validatorOrderAfter = this.#validatorOrder;
     let pendingValidatorRotationAfter = this.#pendingValidatorRotation;
+    const recentValidatorTransitionAfter = protocolState.protocolVersion <
+      HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION || transitionValidators === null ? null
+      : normalizeRecentValidatorTransition({
+        activationHeight: block.height,
+        nextSetId: validatorSetId(blockValidatorMembers),
+        nextValidators: blockValidatorMembers,
+        previousSetId: validatorSetId([...transitionValidators.values()]),
+        previousValidators: [...transitionValidators.values()],
+      }, block.height);
     if (validatorRecoveryOccurred) {
       for (const [candidateId, candidate] of candidateBonds) {
         if (candidate.purpose !== "safety" || candidate.committee !== null) continue;
@@ -5753,6 +5828,7 @@ export class NirChain {
       registeredBeaconAuthorities,
       retiredBeaconAuthorities,
       registeredValidators,
+      recentValidatorTransition: recentValidatorTransitionAfter,
       rewardEpoch: rewardEpochAfter,
       rewardedProofs,
       safetyEvidence,
@@ -5848,6 +5924,7 @@ export class NirChain {
     this.#validatorRecoveryGeneration = validatorRecoveryGeneration;
     this.#validatorRecoveryPlan = validatorRecoveryPlan;
     this.#registeredValidators = registeredValidators;
+    this.#recentValidatorTransition = recentValidatorTransitionAfter;
     this.#registeredBeaconAuthorities = registeredBeaconAuthorities;
     this.#retiredBeaconAuthorities = retiredBeaconAuthorities;
     this.#peerRegistry = nextPeerRegistry;
