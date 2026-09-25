@@ -187,7 +187,9 @@ class AssignmentChainProofV4(AssignmentChainProofV3):
     def as_dict(self) -> dict[str, object]:
         if not isinstance(self.checkpoint_trust_package, dict):
             raise ProtocolError("assignment checkpoint trust package is invalid")
-        value = super().as_dict()
+        # Python 3.11 rebuilds dataclasses that use slots=True. An explicit base
+        # call avoids the stale __class__ cell used by zero-argument super().
+        value = AssignmentChainProofV3.as_dict(self)
         value["format"] = PROOF_V4_FORMAT
         value["checkpointTrustPackage"] = self.checkpoint_trust_package
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
