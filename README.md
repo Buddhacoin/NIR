@@ -47,6 +47,7 @@ that independence.
 | Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
 | Deploy a ceremony-approved validator on Mac/Linux | [`docs/validator-deployment.md`](docs/validator-deployment.md) |
+| Join the protocol-v31 validator candidate queue | [`docs/validator-admission.md`](docs/validator-admission.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
 | Propose code or documentation safely | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Understand contributor, merge, release, and chain authority | [`docs/governance.md`](docs/governance.md) |
@@ -120,6 +121,7 @@ The intended advantages are:
 | Two-phase P2P finality, leader replacement, durable pacemaker, highest-certificate recovery, and catch-up | Implemented for the local devnet |
 | Multi-seed signed peer discovery, on-chain registry anchoring, rotatable transport identities, and pinned TLS 1.3 | Implemented and tested locally; independent hosting remains |
 | Pre-activation validator onboarding | A six-process `4 → 4` rehearsal proves dual quorums with one old and one new node offline, paired key/topology history recovery, restart, and retirement |
+| Open validator candidate queue | Protocol v31 locks the exact minimum bond, requires current-quorum live endpoint/TLS/transport observation, delays eligibility, and prevents rotations from skipping the FIFO head; active-set size/timing remain quorum-governed and automatic churn is not yet implemented |
 | Bounded public ingress, request sizes, connections, headers, and timeouts | Implemented locally; production DDoS edge protection remains |
 | Fsync-backed block journal, checksummed checkpoints, redundant copies, and public chain backups | Implemented and recovery-tested locally |
 | Full consensus-state root covering balances, nonces, issuance, bonds, faults, validators, onboarding, and AI memory | Committed in genesis and every protocol-v7 block |
@@ -448,6 +450,7 @@ candidate runs are committed.
 - `blockchain/wallet-files.mjs` — native encrypted wallet file and transaction signing.
 - `blockchain/validator-staking.mjs` — bonded eligibility and replay-protected non-reveal penalties.
 - `blockchain/validator-rotation.mjs` — delayed, bonded finality-set rotation safety rules.
+- `blockchain/validator-admission.mjs` — protocol-v31 admission/readiness envelopes and deterministic queue records.
 - `blockchain/validator-handoff.mjs` — old/new quorum trust handoffs for verifying snapshots across rotations.
 - `blockchain/validator-topology-history.mjs` — genesis-rooted pairing of each handoff with its mutually signed endpoints, TLS pins, and transport identities.
 - `blockchain/release-manifest.mjs` — deterministic source manifests and ML-DSA-65 release verification.
@@ -488,6 +491,7 @@ candidate runs are committed.
 - `docs/protocol-v28-exact-checkpoints.md` — bounded exact proofs for long histories and their explicit weak-subjectivity boundary.
 - `docs/protocol-v29-historical-validator-evidence.md` — bounded historical validator membership for slashing at dual-quorum activation boundaries.
 - `docs/protocol-v30-validator-exit-lifecycle.md` — finalized validator exits, slashable cooldowns, withdrawals, and permanent identity retirement.
+- `docs/validator-admission.md` — bounded v31 candidate queue, live-readiness certificate, migration, and honest remaining limits.
 - `docs/checkpoint-trust-packages.md` and `docs/checkpoint-trust-store.md` — independently witnessed checkpoint packages plus durable anti-rollback acceptance state.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `CONTRIBUTING.md` — contribution, testing, disclosure, and secret-handling rules.

@@ -42,6 +42,7 @@ import {
   TREASURY_ALLOCATION,
   TRANSFER_CREDIT_STAKE_UNIT,
   VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION,
+  VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -66,6 +67,19 @@ import {
   safetyFailurePayload,
 } from "./safety-bounty.mjs";
 import { MIN_VALIDATOR_BOND, NON_REVEAL_SLASH_BPS } from "./validator-staking.mjs";
+import {
+  MAX_PENDING_VALIDATOR_ADMISSIONS,
+  MAX_VALIDATOR_ADMISSIONS_PER_BLOCK,
+  MAX_RETIRED_VALIDATOR_TOMBSTONES,
+  assertValidatorIdentityCapacity,
+  VALIDATOR_ADMISSION_DELAY_BLOCKS,
+  VALIDATOR_ADMISSION_EXPIRY_BLOCKS,
+  compareValidatorAdmissions,
+  createValidatorAdmissionRecord,
+  validatorAdmissionObservationPayload,
+  verifyValidatorAdmission,
+  verifyValidatorAdmissionReadiness,
+} from "./validator-admission.mjs";
 import {
   createValidatorRecoveryPeerRegistry, peerRegistryHash, verifyPeerRegistry,
 } from "./peer-registry.mjs";
@@ -488,6 +502,17 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "validator-admission-omission": [[
     "algorithm", "evidence", "fee", "networkId", "nonce", "publicKey", "sender",
     "signature", "type",
+  ]],
+  "validator-admission": [[
+    "algorithm", "amount", "endpoint", "fee", "networkId", "nonce", "operatorId",
+    "publicKey", "sender", "signature", "tlsCertificateSha256", "transportAlgorithm",
+    "transportPublicKey", "transportSignature", "type",
+  ]],
+  "validator-admission-readiness": [[
+    "admissionId", "algorithm", "endpoint", "fee", "networkId", "nonce", "publicKey",
+    "sender", "signature", "tlsCertificateSha256", "transportAlgorithm", "transportPublicKey",
+    "transportSignature", "type", "validatorSetId", "observedHeight", "expiresAtHeight",
+    "readinessAttestations",
   ]],
   "validator-recovery-plan": [[
     "algorithm", "fee", "networkId", "nonce", "plan", "publicKey", "sender",
@@ -1417,6 +1442,47 @@ function snapshotSignedInteger(value, field) {
   return value;
 }
 
+function assertValidatorAdmissionSelection({
+  activationHeight, admissions, bonds, currentValidators, disabledValidators, selectionHeight,
+  pendingExits, proposedValidators, recoveryPlan,
+}) {
+  const current = new Set(currentValidators.map(({ address }) => address));
+  const newcomers = proposedValidators.filter(({ address }) => !current.has(address));
+  if (newcomers.length === 0) return;
+  const reserves = new Set((recoveryPlan?.reserves ?? []).map(({ address }) => address));
+  const eligible = [...admissions.values()].filter((entry) =>
+    entry.readiness && entry.eligibleHeight <= selectionHeight &&
+    entry.expiryHeight > activationHeight && entry.readinessExpiresHeight > activationHeight &&
+    !disabledValidators.has(entry.address) &&
+    !pendingExits.has(entry.address) && !reserves.has(entry.address) &&
+    (bonds.get(entry.address) ?? 0n) >= MIN_VALIDATOR_BOND)
+    .sort(compareValidatorAdmissions).slice(0, newcomers.length)
+    .map(({ address }) => address).sort();
+  const selected = newcomers.map(({ address }) => address).sort();
+  if (eligible.length !== newcomers.length || canonicalJson(eligible) !== canonicalJson(selected)) {
+    throw new Error("validator rotation skips deterministic admission priority");
+  }
+}
+
+function assertValidatorAdmissionOnboarding({ admissions, currentValidators, rotation }) {
+  const current = new Set(currentValidators.map(({ address }) => address));
+  const newcomers = rotation.validators.filter(({ address }) => !current.has(address));
+  if (newcomers.length === 0) return;
+  if (!rotation.onboarding) {
+    throw new Error("validator admission activation requires authenticated onboarding");
+  }
+  const peers = new Map(rotation.onboarding.peers.map((peer) => [peer.validatorAddress, peer]));
+  for (const newcomer of newcomers) {
+    const admission = admissions.get(newcomer.address);
+    const peer = peers.get(newcomer.address);
+    if (!admission || !peer || peer.url !== admission.endpoint ||
+        peer.tlsCertificateSha256 !== admission.tlsCertificateSha256 ||
+        canonicalJson(peer.transport) !== canonicalJson(admission.transport)) {
+      throw new Error("validator onboarding does not match the selected admission binding");
+    }
+  }
+}
+
 export class NirChain {
   #accountHistories;
   #assetBalances;
@@ -1468,6 +1534,7 @@ export class NirChain {
   #validatorRecoveryGeneration;
   #validatorRecoveryPlan;
   #registeredValidators;
+  #pendingValidatorAdmissions;
   #recentValidatorTransition;
   #pendingValidatorExits;
   #retiredValidators;
@@ -1643,6 +1710,7 @@ export class NirChain {
     this.#validatorRecoveryGeneration = 0;
     this.#validatorRecoveryPlan = null;
     this.#registeredValidators = new Map(this.#validators);
+    this.#pendingValidatorAdmissions = new Map();
     this.#recentValidatorTransition = null;
     this.#pendingValidatorExits = new Map();
     this.#retiredValidators = new Map();
@@ -1759,6 +1827,8 @@ export class NirChain {
       snapshot?.state?.protocolVersion >= HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION;
     const snapshotHasValidatorExitLifecycle =
       snapshot?.state?.protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION;
+    const snapshotHasValidatorAdmissionQueue =
+      snapshot?.state?.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
@@ -2243,6 +2313,105 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    if (registeredMembers.size > MAX_VALIDATORS) {
+      throw new Error("registered validator snapshot capacity is exceeded");
+    }
+    if (snapshotHasValidatorAdmissionQueue !==
+        Object.hasOwn(state, "pendingValidatorAdmissions")) {
+      throw new Error("validator admission queue snapshot schema is invalid");
+    }
+    const pendingValidatorAdmissions = snapshotHasValidatorAdmissionQueue
+      ? snapshotEntries(state.pendingValidatorAdmissions, "pending validator admissions")
+      : new Map();
+    if (pendingValidatorAdmissions.size > MAX_PENDING_VALIDATOR_ADMISSIONS) {
+      throw new Error("validator admission queue capacity is exceeded");
+    }
+    const admissionRanks = new Set();
+    const admissionEndpoints = new Set();
+    const admissionTransports = new Set();
+    for (const [address, admission] of pendingValidatorAdmissions) {
+      const member = registeredMembers.get(address);
+      const fields = ["address", "admissionId", "algorithm", "eligibleHeight", "endpoint",
+        "expiryHeight", "legacy", "operatorId", "publicKey", "rank", "readiness",
+        "readinessCertificateHash", "readinessExpiresHeight", "readinessValidatorSetId",
+        "observedHeight", "submittedHeight", "tlsCertificateSha256", "transport"];
+      if (!member || !admission || admission.address !== address ||
+          Object.keys(admission).sort().join("\0") !== fields.sort().join("\0") ||
+          canonicalJson(member) !== canonicalJson({ address: admission.address,
+            algorithm: admission.algorithm, operatorId: admission.operatorId,
+            publicKey: admission.publicKey }) ||
+          typeof admission.legacy !== "boolean" || typeof admission.readiness !== "boolean" ||
+          !/^[0-9a-f]{64}$/.test(admission.admissionId ?? "") ||
+          !/^[0-9a-f]{64}$/.test(admission.rank ?? "") ||
+          !Number.isSafeInteger(admission.submittedHeight) || admission.submittedHeight < 1 ||
+          admission.submittedHeight > snapshot.height ||
+          admission.eligibleHeight !== admission.submittedHeight + VALIDATOR_ADMISSION_DELAY_BLOCKS ||
+          admission.expiryHeight !== admission.eligibleHeight + VALIDATOR_ADMISSION_EXPIRY_BLOCKS ||
+          admissionRanks.has(admission.rank) || validatorMembers.has(address) ||
+          (validatorBonds.get(address) ?? 0n) < MIN_VALIDATOR_BOND) {
+        throw new Error("pending validator admission snapshot is invalid");
+      }
+      if (admission.readiness) {
+        let endpoint;
+        try { endpoint = new URL(admission.endpoint); } catch {
+          throw new Error("pending validator admission endpoint is invalid");
+        }
+        if (endpoint.protocol !== "https:" || endpoint.origin !== admission.endpoint ||
+            endpoint.pathname !== "/" || !/^[0-9a-f]{64}$/.test(
+              admission.tlsCertificateSha256 ?? "") || !admission.transport ||
+            admission.transport.algorithm !== SIGNATURE_ALGORITHM ||
+            addressFromPublicKey(admission.transport.publicKey) !== admission.transport.address ||
+            admission.transport.address === address || admissionEndpoints.has(admission.endpoint) ||
+            !Number.isSafeInteger(admission.observedHeight) ||
+            !Number.isSafeInteger(admission.readinessExpiresHeight) ||
+            admission.observedHeight > snapshot.height ||
+            admission.readinessExpiresHeight > admission.observedHeight + 16 ||
+            admission.readinessExpiresHeight <= admission.observedHeight ||
+            !/^[0-9a-f]{64}$/.test(admission.readinessValidatorSetId ?? "") ||
+            !/^[0-9a-f]{64}$/.test(admission.readinessCertificateHash ?? "") ||
+            admissionTransports.has(admission.transport.address)) {
+          throw new Error("pending validator admission readiness is invalid");
+        }
+        admissionEndpoints.add(admission.endpoint);
+        admissionTransports.add(admission.transport.address);
+      } else if (admission.observedHeight !== null || admission.readinessExpiresHeight !== null ||
+          admission.readinessValidatorSetId !== null || admission.readinessCertificateHash !== null ||
+          (admission.legacy && (admission.endpoint !== null ||
+          admission.tlsCertificateSha256 !== null || admission.transport !== null)) ||
+          (!admission.legacy && (typeof admission.endpoint !== "string" ||
+            !/^[0-9a-f]{64}$/.test(admission.tlsCertificateSha256 ?? "") ||
+            !admission.transport))) {
+        throw new Error("unready validator admission snapshot is invalid");
+      } else if (!admission.legacy) {
+        let endpoint;
+        try { endpoint = new URL(admission.endpoint); } catch {
+          throw new Error("unready validator admission endpoint is invalid");
+        }
+        if (endpoint.protocol !== "https:" || endpoint.origin !== admission.endpoint ||
+            endpoint.pathname !== "/" || admission.transport.algorithm !== SIGNATURE_ALGORITHM ||
+            addressFromPublicKey(admission.transport.publicKey) !== admission.transport.address ||
+            admission.transport.address === address || admissionEndpoints.has(admission.endpoint) ||
+            admissionTransports.has(admission.transport.address)) {
+          throw new Error("unready validator admission binding is invalid");
+        }
+        admissionEndpoints.add(admission.endpoint);
+        admissionTransports.add(admission.transport.address);
+      }
+      const expected = createValidatorAdmissionRecord({ admissionId: admission.admissionId,
+        endpoint: admission.endpoint, legacy: admission.legacy, member, networkId: chain.#networkId,
+        submittedHeight: admission.submittedHeight,
+        readiness: admission.readiness,
+        observedHeight: admission.observedHeight,
+        readinessCertificateHash: admission.readinessCertificateHash,
+        readinessExpiresHeight: admission.readinessExpiresHeight,
+        readinessValidatorSetId: admission.readinessValidatorSetId,
+        tlsCertificateSha256: admission.tlsCertificateSha256,
+        transport: admission.transport });
+      if (canonicalJson(expected) !== canonicalJson(admission)) {
+        throw new Error("pending validator admission commitment is invalid");
+      }
+      admissionRanks.add(admission.rank);
+    }
     if (snapshotHasValidatorExitLifecycle !==
         (Object.hasOwn(state, "pendingValidatorExits") &&
          Object.hasOwn(state, "retiredValidators")) ||
@@ -2255,6 +2424,9 @@ export class NirChain {
       ? snapshotEntries(state.pendingValidatorExits, "pending validator exits") : new Map();
     const retiredValidators = snapshotHasValidatorExitLifecycle
       ? snapshotEntries(state.retiredValidators, "retired validators") : new Map();
+    if (snapshotHasValidatorAdmissionQueue) {
+      assertValidatorIdentityCapacity(registeredMembers.size, retiredValidators.size);
+    }
     for (const [address, pending] of pendingValidatorExits) {
       if (!registeredMembers.has(address) || !pending || pending.address !== address ||
           Object.keys(pending).sort().join("\0") !==
@@ -2305,6 +2477,12 @@ export class NirChain {
       ...registeredBeaconAuthorities.values(), ...retiredBeaconAuthorities.values(),
       ...pendingBeaconAdmissions.values(), ...pendingEvaluatorRegistrations.values(),
     ];
+    if ([...pendingValidatorAdmissions.values()].some((entry) => entry.transport &&
+      liveProtocolIdentities.some((member) => member.address !== entry.address &&
+        (member.address === entry.transport.address ||
+         member.publicKey === entry.transport.publicKey)))) {
+      throw new Error("validator admission transport overlaps a protocol identity");
+    }
     if ([...retiredValidators.values()].some((retired) =>
       liveProtocolIdentities.some((member) => member.address === retired.address ||
         member.operatorId === retired.operatorId || member.publicKey === retired.publicKey))) {
@@ -2338,6 +2516,24 @@ export class NirChain {
     if (state.pendingValidatorRotation?.validators?.some(({ address }) =>
       pendingValidatorExits.has(address) || retiredValidators.has(address))) {
       throw new Error("validator rotation contains an exiting or retired validator");
+    }
+    const rotationAddresses = new Set((state.pendingValidatorRotation?.validators ?? [])
+      .map(({ address }) => address));
+    if ([...pendingValidatorAdmissions.keys()].some((address) =>
+      pendingValidatorExits.has(address) || retiredValidators.has(address) ||
+      disabledValidators.has(address) || validatorRecoveryPlan?.reserves.some(
+        ({ address: reserve }) => reserve === address))) {
+      throw new Error("validator admission has a conflicting membership role");
+    }
+    if ([...pendingValidatorAdmissions.values()].some((entry) =>
+      entry.expiryHeight <= snapshot.height && !rotationAddresses.has(entry.address))) {
+      throw new Error("expired validator admission survived without a pending selection");
+    }
+    if ([...pendingValidatorAdmissions.values()].some((entry) =>
+      (state.peerRegistry?.peers ?? []).some((peer) => peer.url === entry.endpoint ||
+        peer.transport?.address === entry.transport?.address ||
+        peer.transport?.publicKey === entry.transport?.publicKey))) {
+      throw new Error("validator admission duplicates the active peer registry");
     }
     if (validatorRecoveryPlan && validatorRecoveryPlan.activationHeight > snapshot.height) {
       // A plan may be pending eligibility; activationHeight is a lower bound, not an expiry.
@@ -2524,6 +2720,7 @@ export class NirChain {
     chain.#peerRegistry = structuredClone(state.peerRegistry);
     chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
     chain.#registeredValidators = registeredMembers;
+    chain.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     chain.#recentValidatorTransition = recentValidatorTransition;
     chain.#pendingValidatorExits = pendingValidatorExits;
     chain.#retiredValidators = retiredValidators;
@@ -2768,6 +2965,10 @@ export class NirChain {
       pendingValidatorRotation:
         overrides.pendingValidatorRotation === undefined
           ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
+      ...(protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION ? {
+        pendingValidatorAdmissions:
+          overrides.pendingValidatorAdmissions ?? this.#pendingValidatorAdmissions,
+      } : {}),
       ...(protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
         pendingValidatorExits:
           overrides.pendingValidatorExits ?? this.#pendingValidatorExits,
@@ -2886,6 +3087,9 @@ export class NirChain {
           protocolReleaseHead: this.#protocolReleaseHead,
         }),
         pendingValidatorRotation: this.#pendingValidatorRotation,
+        ...(this.#protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION ? {
+          pendingValidatorAdmissions: this.#pendingValidatorAdmissions,
+        } : {}),
         ...(this.#protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
           pendingValidatorExits: this.#pendingValidatorExits,
           retiredValidators: this.#retiredValidators,
@@ -3027,6 +3231,16 @@ export class NirChain {
 
   get pendingValidatorRotation() {
     return this.#pendingValidatorRotation ? structuredClone(this.#pendingValidatorRotation) : null;
+  }
+
+  validatorAdmission(address) {
+    const admission = this.#pendingValidatorAdmissions.get(address);
+    return admission ? structuredClone(admission) : null;
+  }
+
+  validatorAdmissionQueue() {
+    return [...this.#pendingValidatorAdmissions.values()]
+      .map((entry) => structuredClone(entry)).sort(compareValidatorAdmissions);
   }
 
   get protocolVersion() { return this.#protocolVersion; }
@@ -3430,6 +3644,19 @@ export class NirChain {
         disabled: this.#disabledValidators,
         currentHeight: this.height, activationHeight: validatorRotation.activationHeight,
       });
+      if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+        assertValidatorAdmissionSelection({
+          activationHeight: scheduledRotation.activationHeight,
+          admissions: this.#pendingValidatorAdmissions,
+          bonds: this.#validatorBonds,
+          currentValidators: [...this.#validators.values()],
+          disabledValidators: this.#disabledValidators,
+          pendingExits: this.#pendingValidatorExits,
+          proposedValidators: scheduledRotation.validators,
+          recoveryPlan: this.#validatorRecoveryPlan,
+          selectionHeight: this.height,
+        });
+      }
       if (this.#peerRegistry) {
         const onboarding = verifyValidatorOnboarding(validatorRotation.onboarding, {
           activationHeight: scheduledRotation.activationHeight,
@@ -3441,6 +3668,10 @@ export class NirChain {
         scheduledRotation = { ...scheduledRotation, onboarding };
       } else if (validatorRotation.onboarding != null) {
         throw new Error("validator onboarding requires an active peer registry");
+      }
+      if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+        assertValidatorAdmissionOnboarding({ admissions: this.#pendingValidatorAdmissions,
+          currentValidators: [...this.#validators.values()], rotation: scheduledRotation });
       }
     }
     if (beaconRotation !== null && (validatorRotation !== null || peerRegistryUpdate !== null)) {
@@ -4060,13 +4291,16 @@ export class NirChain {
     transaction, balances, nonces, validatorBonds, registeredValidators,
     disabledValidators, progressCommitments, evaluators, pendingEvaluatorRegistrations,
     registeredBeaconAuthorities, pendingBeaconAdmissions, retiredBeaconAuthorities,
-    pendingValidatorExits, retiredValidators, proposer,
+    pendingValidatorExits, retiredValidators, pendingValidatorAdmissions, protocolVersion, proposer,
   ) {
     if ([...progressCommitments.values()].some(({ sender, recipient }) =>
       transaction.sender === sender || transaction.sender === recipient)) {
       throw new Error("validator key cannot have a pending progress commitment");
     }
     let validator = registeredValidators.get(transaction.sender);
+    if (pendingValidatorAdmissions.has(transaction.sender)) {
+      throw new Error("pending validator admission cannot be topped up");
+    }
     if (transaction.type !== "validator-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM ||
         transaction.networkId !== this.#networkId ||
         addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
@@ -4083,6 +4317,9 @@ export class NirChain {
       throw new Error("exiting or retired validator identity cannot bond");
     }
     if (!validator) {
+      if (protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+        throw new Error("new validators must use the admission queue");
+      }
       if (typeof transaction.operatorId !== "string" ||
           !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(transaction.operatorId) ||
           registeredValidators.size >= MAX_VALIDATORS ||
@@ -4120,6 +4357,171 @@ export class NirChain {
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
     validatorBonds.set(transaction.sender, (validatorBonds.get(transaction.sender) ?? 0n) + amount);
+  }
+
+  #applyValidatorAdmission(transaction, state, height, timestamp, proposer) {
+    if (state.pendingValidatorAdmissions.size >= MAX_PENDING_VALIDATOR_ADMISSIONS ||
+        (!state.registeredValidators.has(transaction.sender) &&
+         (state.registeredValidators.size >= MAX_VALIDATORS ||
+          state.registeredValidators.size + state.retiredValidators.size >=
+            MAX_RETIRED_VALIDATOR_TOMBSTONES))) {
+      throw new Error("validator admission queue capacity is exhausted");
+    }
+    const { payload, transport } = verifyValidatorAdmission(transaction, this.#networkId);
+    const existing = state.registeredValidators.get(payload.sender);
+    if ((existing && (state.activeValidators.has(payload.sender) ||
+        existing.publicKey !== payload.publicKey || existing.operatorId !== payload.operatorId ||
+        (state.validatorBonds.get(payload.sender) ?? 0n) !== 0n)) ||
+        state.retiredValidators.has(payload.sender) ||
+        state.disabledValidators.has(payload.sender) || state.pendingValidatorExits.has(payload.sender) ||
+        state.evaluators.has(payload.sender) || state.pendingEvaluators.has(payload.sender) ||
+        state.registeredBeacons.has(payload.sender) || state.pendingBeacons.has(payload.sender)) {
+      throw new Error("validator admission address already has a protocol role");
+    }
+    const identities = [
+      ...[...state.registeredValidators.values()].filter(({ address }) => address !== payload.sender),
+      ...state.retiredValidators.values(),
+      ...state.evaluators.values(), ...state.pendingEvaluators.values(),
+      ...state.registeredBeacons.values(), ...state.pendingBeacons.values(),
+      ...state.retiredBeacons.values(),
+    ];
+    if (identities.some((member) => member.publicKey === payload.publicKey ||
+        member.publicKey === transport.publicKey || member.address === transport.address ||
+        member.operatorId === payload.operatorId) ||
+        [...state.pendingValidatorAdmissions.values()].some((entry) =>
+          entry.publicKey === payload.publicKey || entry.operatorId === payload.operatorId ||
+          entry.endpoint === payload.endpoint || entry.address === transport.address ||
+          entry.publicKey === transport.publicKey ||
+          entry.transport?.address === transport.address)) {
+      throw new Error("validator admission identity, endpoint, or transport key is duplicated");
+    }
+    if ((state.peerRegistry?.peers ?? []).some((peer) =>
+      peer.url === payload.endpoint || peer.transport?.address === transport.address ||
+      peer.transport?.publicKey === transport.publicKey)) {
+      throw new Error("validator admission duplicates an active peer binding");
+    }
+    const expectedNonce = state.nonces.get(payload.sender) ?? 0;
+    if (payload.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    const amount = parseAtomic(payload.amount, "validator admission bond");
+    const fee = parseAtomic(payload.fee, "validator admission fee");
+    if (amount !== MIN_VALIDATOR_BOND || fee < MIN_TRANSFER_FEE) {
+      throw new Error("validator admission must lock the exact minimum bond");
+    }
+    const balance = state.balances.get(payload.sender) ?? 0n;
+    if (balance < amount + fee) throw new Error("insufficient balance");
+    if (payload.sender === this.#treasuryAddress &&
+        balance - amount - fee < this.#treasuryLockedFloor(timestamp)) {
+      throw new Error("treasury funds are still vesting");
+    }
+    const member = { address: payload.sender, algorithm: payload.algorithm,
+      operatorId: payload.operatorId, publicKey: payload.publicKey };
+    const admissionId = hashObject(payload, "VALIDATOR_ADMISSION_ID_V1");
+    state.balances.set(payload.sender, balance - amount - fee);
+    state.balances.set(proposer, (state.balances.get(proposer) ?? 0n) + fee);
+    state.nonces.set(payload.sender, expectedNonce + 1);
+    if (!existing) state.registeredValidators.set(payload.sender, member);
+    state.validatorBonds.set(payload.sender, amount);
+    state.pendingValidatorAdmissions.set(payload.sender, createValidatorAdmissionRecord({
+      admissionId, endpoint: payload.endpoint, member, networkId: this.#networkId,
+      submittedHeight: height, tlsCertificateSha256: payload.tlsCertificateSha256, transport,
+    }));
+  }
+
+  #applyValidatorAdmissionReadiness(transaction, state, proposer, height) {
+    const { payload, transport } = verifyValidatorAdmissionReadiness(transaction, this.#networkId);
+    const pending = state.pendingValidatorAdmissions.get(payload.sender);
+    if (!pending || pending.admissionId !== payload.admissionId ||
+        pending.publicKey !== payload.publicKey) {
+      throw new Error("validator admission readiness has no matching legacy candidate");
+    }
+    if (pending.endpoint !== null && (pending.endpoint !== payload.endpoint ||
+        pending.tlsCertificateSha256 !== payload.tlsCertificateSha256 ||
+        pending.transport?.address !== transport.address ||
+        pending.transport?.publicKey !== transport.publicKey)) {
+      throw new Error("validator readiness changes the committed endpoint binding");
+    }
+    const protocolIdentities = [
+      ...this.#registeredValidators.values(), ...this.#retiredValidators.values(),
+      ...this.#evaluators.values(), ...this.#pendingEvaluatorRegistrations.values(),
+      ...this.#registeredBeaconAuthorities.values(), ...this.#pendingBeaconAdmissions.values(),
+      ...this.#retiredBeaconAuthorities.values(),
+    ].filter(({ address }) => address !== payload.sender);
+    if (protocolIdentities.some((member) => member.address === transport.address ||
+        member.publicKey === transport.publicKey)) {
+      throw new Error("validator readiness transport key overlaps a protocol identity");
+    }
+    if (state.disabledValidators?.has(payload.sender) ||
+        state.pendingValidatorExits?.has(payload.sender) ||
+        state.pendingValidatorRotation?.validators?.some(({ address }) => address === payload.sender) ||
+        state.validatorRecoveryPlan?.reserves?.some(({ address }) => address === payload.sender)) {
+      throw new Error("validator admission readiness conflicts with membership state");
+    }
+    if (!Number.isSafeInteger(payload.observedHeight) ||
+        !Number.isSafeInteger(payload.expiresAtHeight) || payload.observedHeight > height - 1 ||
+        payload.observedHeight < height - 16 || payload.expiresAtHeight <= height ||
+        payload.expiresAtHeight > payload.observedHeight + 16 ||
+        payload.validatorSetId !== this.validatorSetId ||
+        !Array.isArray(payload.readinessAttestations) ||
+        payload.readinessAttestations.length !== this.#quorum) {
+      throw new Error("validator readiness certificate context is invalid");
+    }
+    const observation = validatorAdmissionObservationPayload({
+      admissionId: payload.admissionId,
+      chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
+      endpoint: payload.endpoint,
+      expiresAtHeight: payload.expiresAtHeight,
+      networkId: this.#networkId,
+      nonce: payload.nonce,
+      observedHeight: payload.observedHeight,
+      tlsCertificateSha256: payload.tlsCertificateSha256,
+      transportAddress: transport.address,
+      validatorSetId: payload.validatorSetId,
+    });
+    const signers = new Set();
+    let previousSigner = null;
+    for (const attestation of payload.readinessAttestations) {
+      const validator = this.#validators.get(attestation?.validator);
+      if (!validator) throw new Error("validator readiness signer is not active");
+      if (Object.keys(attestation ?? {}).sort().join("\0") !== "signature\0validator" ||
+          (previousSigner !== null && attestation.validator <= previousSigner) ||
+          signers.has(attestation.validator)) {
+        throw new Error("validator readiness certificate ordering is invalid");
+      }
+      if (!verifyObject(observation, attestation.signature, validator.publicKey,
+        "VALIDATOR_ADMISSION_LIVE_OBSERVATION_V1")) {
+        throw new Error("validator readiness certificate signature is invalid");
+      }
+      signers.add(attestation.validator);
+      previousSigner = attestation.validator;
+    }
+    if ([...state.pendingValidatorAdmissions.values()].some((entry) => entry.address !== payload.sender &&
+        (entry.endpoint === payload.endpoint || entry.address === transport.address ||
+         entry.publicKey === transport.publicKey ||
+         entry.transport?.address === transport.address))) {
+      throw new Error("validator admission endpoint or transport key is duplicated");
+    }
+    if ((state.peerRegistry?.peers ?? []).some((peer) =>
+      peer.url === payload.endpoint || peer.transport?.address === transport.address ||
+      peer.transport?.publicKey === transport.publicKey)) {
+      throw new Error("validator readiness duplicates an active peer binding");
+    }
+    const expectedNonce = state.nonces.get(payload.sender) ?? 0;
+    if (payload.nonce !== expectedNonce) throw new Error("unexpected nonce");
+    const fee = parseAtomic(payload.fee, "validator admission readiness fee");
+    const balance = state.balances.get(payload.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee) throw new Error("validator readiness fee is invalid");
+    state.balances.set(payload.sender, balance - fee);
+    state.balances.set(proposer, (state.balances.get(proposer) ?? 0n) + fee);
+    state.nonces.set(payload.sender, expectedNonce + 1);
+    state.pendingValidatorAdmissions.set(payload.sender, {
+      ...pending, endpoint: payload.endpoint, readiness: true,
+      observedHeight: payload.observedHeight,
+      readinessCertificateHash: hashObject(payload.readinessAttestations,
+        "VALIDATOR_READY_CERT_V1"),
+      readinessExpiresHeight: payload.expiresAtHeight,
+      readinessValidatorSetId: payload.validatorSetId,
+      tlsCertificateSha256: payload.tlsCertificateSha256, transport,
+    });
   }
 
   #verifyValidatorLifecycleEnvelope(transaction, domain) {
@@ -4888,6 +5290,8 @@ export class NirChain {
     fork.#protocolReleaseAnchor = structuredClone(this.#protocolReleaseAnchor);
     fork.#protocolReleaseHead = structuredClone(this.#protocolReleaseHead);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
+    fork.#pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
+      .map(([address, admission]) => [address, structuredClone(admission)]));
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#retiredValidators = new Map([...this.#retiredValidators]
@@ -5278,10 +5682,64 @@ export class NirChain {
     let validatorRecoveryPlan = structuredClone(this.#validatorRecoveryPlan);
     let validatorRecoveryOccurred = false;
     const registeredValidators = new Map(this.#registeredValidators);
+    const pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
+      .map(([address, admission]) => [address, structuredClone(admission)]));
     const pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     const retiredValidators = new Map([...this.#retiredValidators]
       .map(([address, retired]) => [address, { ...retired }]));
+    if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION &&
+        this.#protocolVersion < VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+      // v30 allowed an unbounded tombstone registry. Refuse activation before
+      // any migration refund or queue mutation if that legacy state cannot be
+      // represented by the bounded v31 schema.
+      assertValidatorIdentityCapacity(registeredValidators.size, retiredValidators.size);
+      if (this.#pendingValidatorRotation || validatorRecoveryPlan) {
+        throw new Error("validator admission migration conflicts with pending membership state");
+      }
+      for (const [address, member] of [...registeredValidators].sort(([a], [b]) => a.localeCompare(b))) {
+        if (this.#validators.has(address) || disabledValidators.has(address) ||
+            pendingValidatorExits.has(address) || retiredValidators.has(address)) continue;
+        const bond = validatorBonds.get(address) ?? 0n;
+        if (bond < MIN_VALIDATOR_BOND) {
+          if (bond > 0n) balances.set(address, (balances.get(address) ?? 0n) + bond);
+          validatorBonds.delete(address);
+          registeredValidators.delete(address);
+          continue;
+        }
+        const admissionId = hashObject({ address, member, networkId: this.#networkId,
+          submittedHeight: block.height }, "VALIDATOR_ADMISSION_LEGACY_V1");
+        pendingValidatorAdmissions.set(address, createValidatorAdmissionRecord({
+          admissionId, legacy: true, member, networkId: this.#networkId,
+          submittedHeight: block.height,
+        }));
+      }
+    }
+    if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+      const selected = new Set((this.#pendingValidatorRotation?.validators ?? [])
+        .map(({ address }) => address));
+      for (const [address, admission] of pendingValidatorAdmissions) {
+        if (admission.expiryHeight > block.height || selected.has(address)) continue;
+        const bond = validatorBonds.get(address) ?? 0n;
+        if (bond > 0n) balances.set(address, (balances.get(address) ?? 0n) + bond);
+        validatorBonds.delete(address);
+        registeredValidators.delete(address);
+        pendingValidatorAdmissions.delete(address);
+        retiredValidators.set(address, {
+          address: admission.address, algorithm: admission.algorithm,
+          operatorId: admission.operatorId, publicKey: admission.publicKey,
+          retiredHeight: block.height,
+        });
+      }
+      const activating = new Set(this.#pendingValidatorRotation?.activationHeight === block.height
+        ? this.#pendingValidatorRotation.validators.map(({ address }) => address) : []);
+      if ([...pendingValidatorAdmissions.values()].some((entry) => !activating.has(entry.address) &&
+        (nextPeerRegistry?.peers ?? []).some((peer) => peer.url === entry.endpoint ||
+          peer.transport?.address === entry.transport?.address ||
+          peer.transport?.publicKey === entry.transport?.publicKey))) {
+        throw new Error("validator admission conflicts with the next peer registry");
+      }
+    }
     const progressCommitments = new Map(this.#progressCommitments);
     const evaluationAssignments = protocolState.protocolVersion >=
       EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
@@ -5351,6 +5809,19 @@ export class NirChain {
         currentHeight: previous.height,
         activationHeight: block.validatorRotation.activationHeight,
       });
+      if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+        assertValidatorAdmissionSelection({
+          activationHeight: scheduledRotation.activationHeight,
+          admissions: pendingValidatorAdmissions,
+          bonds: validatorBonds,
+          currentValidators: [...this.#validators.values()],
+          disabledValidators,
+          pendingExits: pendingValidatorExits,
+          proposedValidators: scheduledRotation.validators,
+          recoveryPlan: validatorRecoveryPlan,
+          selectionHeight: previous.height,
+        });
+      }
       if (this.#peerRegistry) {
         const onboarding = verifyValidatorOnboarding(block.validatorRotation.onboarding, {
           activationHeight: scheduledRotation.activationHeight,
@@ -5362,6 +5833,10 @@ export class NirChain {
         scheduledRotation = { ...scheduledRotation, onboarding };
       } else if (block.validatorRotation.onboarding != null) {
         throw new Error("validator onboarding requires an active peer registry");
+      }
+      if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+        assertValidatorAdmissionOnboarding({ admissions: pendingValidatorAdmissions,
+          currentValidators: [...this.#validators.values()], rotation: scheduledRotation });
       }
       if (hashObject(scheduledRotation, "VALIDATOR_ROTATION") !==
           hashObject(block.validatorRotation, "VALIDATOR_ROTATION")) {
@@ -5529,8 +6004,21 @@ export class NirChain {
     const transactionIds = new Set();
     const validatorLifecycleTransactions = block.transactions.filter(({ type }) =>
       type === "validator-exit-request" || type === "validator-withdrawal-claim");
+    const validatorAdmissionTransactions = block.transactions.filter(({ type }) =>
+      type === "validator-admission" || type === "validator-admission-readiness");
+    if (validatorAdmissionTransactions.length > MAX_VALIDATOR_ADMISSIONS_PER_BLOCK) {
+      throw new Error("too many validator admissions in one block");
+    }
+    if (validatorAdmissionTransactions.length > 0 &&
+        (protocolState.protocolVersion < VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION ||
+         block.validatorRotation !== null || recoveryTransition ||
+         this.#pendingValidatorRotation?.activationHeight === block.height ||
+         block.transactions.some(({ type }) => type === "validator-recovery-plan"))) {
+      throw new Error("validator admission conflicts with membership transition");
+    }
     if (validatorLifecycleTransactions.length > 0 &&
-        (protocolState.protocolVersion < VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ||
+        (validatorAdmissionTransactions.length > 0 ||
+         protocolState.protocolVersion < VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ||
          block.validatorRotation !== null || recoveryTransition ||
          this.#pendingValidatorRotation?.activationHeight === block.height ||
          block.transactions.some(({ type }) => type === "validator-recovery-plan"))) {
@@ -5549,6 +6037,11 @@ export class NirChain {
         "validator-bond",
       ].includes(transaction.type)) {
         throw new Error("exiting validator identity cannot create a protocol obligation");
+      }
+      if (pendingValidatorAdmissions.has(transaction.sender) && [
+        "validator-exit-request", "validator-withdrawal-claim", "evaluator-bond", "beacon-bond",
+      ].includes(transaction.type)) {
+        throw new Error("pending validator admission conflicts with requested protocol role");
       }
       const id = transactionId(transaction);
       if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
@@ -5587,8 +6080,26 @@ export class NirChain {
           disabledValidators, progressCommitments, evaluatorsAfter,
           pendingEvaluatorRegistrations, registeredBeaconAuthorities,
           pendingBeaconAdmissions, retiredBeaconAuthorities,
-          pendingValidatorExits, retiredValidators, block.feeRecipient,
+          pendingValidatorExits, retiredValidators, pendingValidatorAdmissions,
+          protocolState.protocolVersion, block.feeRecipient,
         );
+      } else if (transaction.type === "validator-admission") {
+        this.#applyValidatorAdmission(transaction, {
+          activeValidators: this.#validators, balances, disabledValidators,
+          evaluators: evaluatorsAfter, nonces,
+          pendingBeacons: pendingBeaconAdmissions,
+          pendingEvaluators: pendingEvaluatorRegistrations,
+          pendingValidatorAdmissions, pendingValidatorExits,
+          peerRegistry: nextPeerRegistry,
+          registeredBeacons: registeredBeaconAuthorities, registeredValidators,
+          retiredBeacons: retiredBeaconAuthorities, retiredValidators, validatorBonds,
+        }, block.height, block.timestamp, block.feeRecipient);
+      } else if (transaction.type === "validator-admission-readiness") {
+        this.#applyValidatorAdmissionReadiness(transaction, {
+          balances, disabledValidators, nonces, pendingValidatorAdmissions,
+          pendingValidatorExits, pendingValidatorRotation: this.#pendingValidatorRotation,
+          peerRegistry: nextPeerRegistry, validatorRecoveryPlan,
+        }, block.feeRecipient, block.height);
       } else if (transaction.type === "validator-exit-request") {
         this.#applyValidatorExitRequest(
           transaction, balances, nonces, validatorBonds, registeredValidators,
@@ -5634,8 +6145,9 @@ export class NirChain {
           throw new Error("validator recovery plan conflicts with pending membership state");
         }
         if (transaction.plan?.reserves?.some(({ address }) =>
-          pendingValidatorExits.has(address) || retiredValidators.has(address))) {
-          throw new Error("exiting or retired validator cannot be a recovery reserve");
+          pendingValidatorExits.has(address) || retiredValidators.has(address) ||
+          pendingValidatorAdmissions.has(address))) {
+          throw new Error("exiting, retired, or pending validator cannot be a recovery reserve");
         }
         validatorRecoveryPlan = this.#applyValidatorRecoveryPlan(
           transaction, balances, nonces, validatorBonds, registeredValidators,
@@ -6060,6 +6572,24 @@ export class NirChain {
         block.height >= pendingValidatorRotationAfter.activationHeight) {
       validatorsAfter = new Map(blockValidatorMembers.map((member) => [member.address, member]));
       validatorOrderAfter = blockValidatorMembers.map(({ address }) => address);
+      if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+        for (const { address } of pendingValidatorRotationAfter.validators) {
+          pendingValidatorAdmissions.delete(address);
+        }
+        for (const [address, member] of this.#validators) {
+          if (validatorsAfter.has(address) || pendingValidatorExits.has(address) ||
+              disabledValidators.has(address) || retiredValidators.has(address) ||
+              (validatorBonds.get(address) ?? 0n) < MIN_VALIDATOR_BOND) continue;
+          const admissionId = hashObject({ address, activationHeight: block.height,
+            networkId: this.#networkId,
+            previousSetId: validatorSetId([...this.#validators.values()]) },
+          "VALIDATOR_READMISSION_V1");
+          pendingValidatorAdmissions.set(address, createValidatorAdmissionRecord({
+            admissionId, legacy: true, member, networkId: this.#networkId,
+            submittedHeight: block.height,
+          }));
+        }
+      }
       pendingValidatorRotationAfter = null;
     }
     if (scheduledRotation) {
@@ -6118,6 +6648,7 @@ export class NirChain {
         protocolReleaseHead: protocolState.protocolReleaseHead,
       }),
       pendingValidatorRotation: pendingValidatorRotationAfter,
+      pendingValidatorAdmissions,
       pendingValidatorExits,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
@@ -6225,6 +6756,7 @@ export class NirChain {
     this.#validatorRecoveryGeneration = validatorRecoveryGeneration;
     this.#validatorRecoveryPlan = validatorRecoveryPlan;
     this.#registeredValidators = registeredValidators;
+    this.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     this.#pendingValidatorExits = pendingValidatorExits;
     this.#retiredValidators = retiredValidators;
     this.#recentValidatorTransition = recentValidatorTransitionAfter;

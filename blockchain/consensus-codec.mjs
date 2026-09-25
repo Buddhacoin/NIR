@@ -10,6 +10,7 @@ const PROTOCOL_ENCODINGS = Object.freeze(new Map([
   [28, 1],
   [29, 1],
   [30, 1],
+  [31, 1],
 ]));
 
 const PREFIX = Buffer.from("NIR-CONSENSUS", "ascii");
