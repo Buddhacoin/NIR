@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import { X509Certificate } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  createValidatorJoinBackups, createValidatorJoinWorkspace, loadValidatorJoinInputs,
+  validatorJoinStatus, verifyValidatorJoinWorkspace, writeValidatorJoinArtifact,
+} from "../blockchain/validator-join.mjs";
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), "nir-validator-join-")); chmodSync(root, 0o700);
+  const cert = join(root, "tls-cert.pem"); const key = join(root, "tls-key.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key,
+    "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+  chmodSync(cert, 0o600); chmodSync(key, 0o600);
+  const fingerprint = new X509Certificate(readFileSync(cert)).fingerprint256.replaceAll(":", "").toLowerCase();
+  const config = { endpoint: "https://localhost", expectedChainIdentityGenesisHash: "a".repeat(64),
+    expectedCheckpointPolicyId: `sha3-256:${"b".repeat(64)}`,
+    expectedTlsCertificateSha256: fingerprint, format: "nir-validator-join-config-v1",
+    networkId: "nir-testnet", operatorId: "operator-one", tlsCertificate: cert,
+    tlsPrivateKey: key, version: 1 };
+  const configPath = join(root, "config.json"); writeFileSync(configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  return { cert, config, configPath, key, root, workspace: join(root, "workspace") };
+}
+
+test("validator join creates two encrypted identities and remains restart-verifiable", () => {
+  const f = fixture();
+  try {
+    const inputs = loadValidatorJoinInputs(f.configPath);
+    const plan = createValidatorJoinWorkspace({ directory: f.workspace, ...inputs,
+      consensusPassword: "correct horse consensus", transportPassword: "correct horse transport" });
+    assert.notEqual(plan.consensus.address, plan.transport.address);
+    assert.equal(plan.broadcast, false);
+    assert.equal(plan.status, "awaiting-external-v31-candidate-service");
+    assert.equal(lstatSync(realpathSync(f.workspace)).mode & 0o777, 0o700);
+    assert.equal(lstatSync(join(f.workspace, "join-plan.json")).mode & 0o777, 0o600);
+    assert.deepEqual(verifyValidatorJoinWorkspace({ directory: f.workspace,
+      consensusPassword: "correct horse consensus", transportPassword: "correct horse transport" }), {
+      broadcast: false, consensusAddress: plan.consensus.address, networkId: "nir-testnet",
+      status: "awaiting external v31 candidate service / quorum observation",
+      transportAddress: plan.transport.address, verified: true,
+    });
+    assert.match(validatorJoinStatus(f.workspace).status, /awaiting external/);
+    assert.throws(() => verifyValidatorJoinWorkspace({ directory: f.workspace,
+      consensusPassword: "wrong", transportPassword: "correct horse transport" }), /decrypt|password|vault/i);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("validator join validates TLS identity and fails atomically", () => {
+  const f = fixture(); const otherKey = join(f.root, "other-key.pem"); const otherCert = join(f.root, "other-cert.pem");
+  try {
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", otherKey,
+      "-out", otherCert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
+    assert.throws(() => createValidatorJoinWorkspace({ directory: f.workspace, config: f.config,
+      tlsCertificatePem: readFileSync(f.cert), tlsPrivateKeyPem: readFileSync(otherKey),
+      consensusPassword: "one strong password", transportPassword: "another strong password" }), /do not match/);
+    assert.throws(() => createValidatorJoinWorkspace({ directory: f.workspace,
+      config: { ...f.config, expectedTlsCertificateSha256: "0".repeat(64) },
+      tlsCertificatePem: readFileSync(f.cert), tlsPrivateKeyPem: readFileSync(f.key),
+      consensusPassword: "one strong password", transportPassword: "another strong password" }), /fingerprint/);
+    assert.throws(() => createValidatorJoinWorkspace({ directory: f.workspace, config: f.config,
+      tlsCertificatePem: readFileSync(f.cert), tlsPrivateKeyPem: readFileSync(f.key),
+      consensusPassword: "same password", transportPassword: "same password" }), /distinct/);
+    assert.throws(() => lstatSync(f.workspace), /ENOENT/);
+    mkdirSync(f.workspace, { mode: 0o700 });
+    assert.throws(() => createValidatorJoinWorkspace({ directory: f.workspace, config: f.config,
+      tlsCertificatePem: readFileSync(f.cert), tlsPrivateKeyPem: readFileSync(f.key),
+      consensusPassword: "one strong password", transportPassword: "another strong password" }), /EEXIST/);
+    assert.equal(lstatSync(f.workspace).isDirectory(), true);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("validator join backups are encrypted and public artifacts are atomic", () => {
+  const f = fixture();
+  try {
+    createValidatorJoinWorkspace({ directory: f.workspace, ...loadValidatorJoinInputs(f.configPath),
+      consensusPassword: "consensus password", transportPassword: "transport password" });
+    const backup = createValidatorJoinBackups({ directory: f.workspace,
+      backupDirectory: join(f.root, "backups"), consensusPassword: "consensus password",
+      transportPassword: "transport password", generation: 1 });
+    assert.equal(backup.consensus.verified, true); assert.equal(backup.transport.verified, true);
+    const artifact = join(f.root, "public.json"); writeValidatorJoinArtifact(artifact, { ok: true });
+    assert.equal(readFileSync(artifact, "utf8"), '{"ok":true}\n');
+    assert.throws(() => writeValidatorJoinArtifact(artifact, { replaced: true }), /EEXIST/);
+    const target = join(f.root, "symlink.json"); symlinkSync(artifact, target);
+    assert.throws(() => writeValidatorJoinArtifact(target, { bad: true }), /EEXIST/);
+    const actual = join(f.root, "actual"); mkdirSync(actual, { mode: 0o700 });
+    const alias = join(f.root, "alias"); symlinkSync(actual, alias, "dir");
+    writeValidatorJoinArtifact(join(alias, "bound.json"), { bound: true });
+    assert.equal(readFileSync(join(actual, "bound.json"), "utf8"), '{"bound":true}\n');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("validator join CLI refuses secrets from a non-interactive stdin", () => {
+  const f = fixture();
+  try {
+    const result = spawnSync(process.execPath, ["blockchain/validator-join-cli.mjs", "init",
+      f.workspace, f.configPath], { cwd: process.cwd(), encoding: "utf8", input: "password\n" });
+    assert.equal(result.status, 1); assert.match(result.stderr, /interactive terminal/);
+    assert.throws(() => lstatSync(f.workspace), /ENOENT/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
