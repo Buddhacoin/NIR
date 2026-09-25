@@ -2,7 +2,8 @@ import {
   canonicalJson, hashObject, signObject, verifyObject,
 } from "./crypto.mjs";
 import {
-  validateReleaseAuthorizationEntry,
+  advanceReleaseGovernanceHead, createReleaseGovernanceHead,
+  validateReleaseGovernanceHead,
   validateReleaseTransparencyAnchor,
 } from "./offline-release-governance.mjs";
 
@@ -10,6 +11,7 @@ const FORMAT = "nir-protocol-upgrade-authorization-v1";
 const HASH = /^sha3-256:[0-9a-f]{64}$/;
 const RAW_HASH = /^[0-9a-f]{64}$/;
 const REVISION = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+export const MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS = 64;
 
 function canonicalBase64(value, maximum, label) {
   if (typeof value !== "string" || value.length > maximum * 2 ||
@@ -37,14 +39,12 @@ export function validateProtocolUpgradeReleaseAnchor(value, networkId) {
 
 export function validateProtocolReleaseHead(value, anchorValue) {
   const anchor = validateReleaseTransparencyAnchor(anchorValue);
-  exact(value, ["activeSetId", "entryHash", "lastBundleHash", "sequence"], "protocol release head");
-  if (value.activeSetId !== anchor.initialSet.setId || !HASH.test(value.entryHash ?? "") ||
-      !(value.lastBundleHash === null || HASH.test(value.lastBundleHash ?? "")) ||
-      !Number.isSafeInteger(value.sequence) || value.sequence < 0 ||
-      (value.sequence === 0 && (value.entryHash !== anchor.anchorHash || value.lastBundleHash !== null))) {
-    throw new Error("protocol release head is invalid");
-  }
-  return structuredClone(value);
+  try { return validateReleaseGovernanceHead(value, anchor); }
+  catch { throw new Error("protocol release head is invalid"); }
+}
+
+export function createProtocolReleaseHead(anchorValue) {
+  return createReleaseGovernanceHead(validateReleaseTransparencyAnchor(anchorValue));
 }
 
 function payload(value) {
@@ -108,9 +108,14 @@ export function approveProtocolUpgradeAuthorization(payloadValue, authoritySet, 
   };
 }
 
-export function assembleProtocolUpgradeAuthorization(payloadValue, releaseEntry, approvals) {
+export function assembleProtocolUpgradeAuthorization(payloadValue, releaseEntryOrEntries, approvals) {
   const normalized = normalizedAuthorizationPayload(payloadValue);
-  return { ...normalized, approvals: structuredClone(approvals), releaseEntry: structuredClone(releaseEntry) };
+  if (Array.isArray(releaseEntryOrEntries)) {
+    return { ...normalized, approvals: structuredClone(approvals),
+      releaseEntries: structuredClone(releaseEntryOrEntries) };
+  }
+  return { ...normalized, approvals: structuredClone(approvals),
+    releaseEntry: structuredClone(releaseEntryOrEntries) };
 }
 
 export function validateProtocolUpgradeAuthorization(value, {
@@ -124,13 +129,15 @@ export function validateProtocolUpgradeAuthorization(value, {
   networkId,
   targetVersion,
 } = {}) {
+  const usesEntryChain = Object.hasOwn(value ?? {}, "releaseEntries");
   exact(value, [
     "activationHeight", "approvals", "authoritySetId", "authorizationHash", "baseHeight",
     "baseTipHash", "bundleHash", "chainIdentityGenesisHash", "currentVersion", "entryHash",
-    "format", "manifestHash", "networkId", "releaseEntry", "releaseVersion", "sourceRevision",
+    "format", "manifestHash", "networkId", usesEntryChain ? "releaseEntries" : "releaseEntry",
+    "releaseVersion", "sourceRevision",
     "targetVersion", "version",
   ], "protocol upgrade authorization");
-  const { approvals, authorizationHash, releaseEntry, ...unsigned } = value;
+  const { approvals, authorizationHash, releaseEntry, releaseEntries, ...unsigned } = value;
   const normalized = payload(unsigned);
   const expectedHash = `sha3-256:${hashObject(normalized, "PROTOCOL_UPGRADE_AUTHORIZATION_V1")}`;
   if (authorizationHash !== expectedHash || normalized.activationHeight !== activationHeight ||
@@ -142,28 +149,24 @@ export function validateProtocolUpgradeAuthorization(value, {
   }
   const anchor = validateProtocolUpgradeReleaseAnchor(anchorValue, networkId);
   const trustedHead = validateProtocolReleaseHead(head, anchor);
-  if (
-      normalized.authoritySetId !== anchor.initialSet.setId) {
-    throw new Error("protocol upgrade release governance head is invalid");
-  }
-  const release = validateReleaseAuthorizationEntry(releaseEntry, {
-    authoritySet: anchor.initialSet,
-    entryHash: trustedHead.entryHash,
-    lastBundleHash: trustedHead.lastBundleHash,
-    logId: anchor.logId,
-    networkId,
-    sequence: trustedHead.sequence,
+  const entryChain = usesEntryChain ? releaseEntries : [releaseEntry];
+  const advanced = advanceReleaseGovernanceHead(entryChain, trustedHead, anchor, {
+    currentHeight: baseHeight,
+    minimumRotationDelayBlocks: MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS,
   });
-  if (release.head.entryHash !== normalized.entryHash ||
-      release.release.bundleHash !== normalized.bundleHash ||
-      release.release.manifestHash !== normalized.manifestHash ||
-      release.release.sourceRevision !== normalized.sourceRevision ||
-      release.release.releaseVersion !== normalized.releaseVersion ||
-      release.release.protocolVersion !== targetVersion) {
+  const finalEntry = advanced.entries.at(-1);
+  if (finalEntry.type !== "release" || normalized.authoritySetId !== advanced.head.activeSetId ||
+      advanced.head.entryHash !== normalized.entryHash ||
+      finalEntry.payload.bundleHash !== normalized.bundleHash ||
+      finalEntry.payload.manifestHash !== normalized.manifestHash ||
+      finalEntry.payload.sourceRevision !== normalized.sourceRevision ||
+      finalEntry.payload.releaseVersion !== normalized.releaseVersion ||
+      finalEntry.payload.protocolVersion !== targetVersion) {
     throw new Error("protocol upgrade authorization does not match its authorized release");
   }
-  if (!Array.isArray(approvals) || approvals.length < anchor.initialSet.threshold ||
-      approvals.length > anchor.initialSet.authorities.length) {
+  const approvalSet = advanced.head.activeSet;
+  if (!Array.isArray(approvals) || approvals.length < approvalSet.threshold ||
+      approvals.length > approvalSet.authorities.length) {
     throw new Error("protocol upgrade authorization quorum is missing");
   }
   const seen = new Set();
@@ -171,7 +174,7 @@ export function validateProtocolUpgradeAuthorization(value, {
     exact(approval, ["address", "operatorId", "signature"], "protocol upgrade approval");
     canonicalBase64(approval.signature, 16 * 1024,
       "protocol upgrade authorization approval signature");
-    const member = anchor.initialSet.authorities.find(({ operatorId }) => operatorId === approval.operatorId);
+    const member = approvalSet.authorities.find(({ operatorId }) => operatorId === approval.operatorId);
     if (!member || member.address !== approval.address || seen.has(approval.operatorId) ||
         !verifyObject(approvalPayload({ authorizationHash }), approval.signature, member.publicKey,
           "PROTOCOL_UPGRADE_APPROVAL_V1")) {
@@ -184,7 +187,8 @@ export function validateProtocolUpgradeAuthorization(value, {
     throw new Error("protocol upgrade authorization approvals are not canonically ordered");
   }
   return {
-    authorization: { ...normalized, approvals: ordered, authorizationHash, releaseEntry: release.entry },
-    nextHead: release.head,
+    authorization: { ...normalized, approvals: ordered, authorizationHash,
+      ...(usesEntryChain ? { releaseEntries: advanced.entries } : { releaseEntry: advanced.entries[0] }) },
+    nextHead: advanced.head,
   };
 }

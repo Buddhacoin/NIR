@@ -86,7 +86,7 @@ import {
   protocolVersionAtNextHeight,
 } from "./protocol-upgrade.mjs";
 import {
-  validateProtocolReleaseHead, validateProtocolUpgradeReleaseAnchor,
+  createProtocolReleaseHead, validateProtocolReleaseHead, validateProtocolUpgradeReleaseAnchor,
 } from "./protocol-upgrade-authorization.mjs";
 import {
   consensusEncodingVersionForProtocol,
@@ -1587,12 +1587,8 @@ export class NirChain {
     this.#pendingProtocolUpgrade = null;
     this.#protocolReleaseAnchor = protocolUpgradeReleaseAnchor === null ? null
       : validateProtocolUpgradeReleaseAnchor(protocolUpgradeReleaseAnchor, networkId);
-    this.#protocolReleaseHead = this.#protocolReleaseAnchor === null ? null : {
-      activeSetId: this.#protocolReleaseAnchor.initialSet.setId,
-      entryHash: this.#protocolReleaseAnchor.anchorHash,
-      lastBundleHash: null,
-      sequence: 0,
-    };
+    this.#protocolReleaseHead = this.#protocolReleaseAnchor === null ? null
+      : createProtocolReleaseHead(this.#protocolReleaseAnchor);
     this.#progressCommitments = new Map();
     this.#progressEscrows = new Map();
     this.#progressFraudEvidence = new Map();

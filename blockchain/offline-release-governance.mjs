@@ -270,6 +270,102 @@ function initialState(anchor) {
     sequence: 0 };
 }
 
+function headFromState(state) {
+  return {
+    activationSet: state.activationSet === null ? null : structuredClone(state.activationSet),
+    activeSet: structuredClone(state.activeSet),
+    activeSetId: state.activeSet.setId,
+    entryHash: state.entryHash,
+    lastBundleHash: state.lastBundleHash,
+    pendingChange: state.pendingChange === null ? null : structuredClone(state.pendingChange),
+    pendingChangeHeight: state.pendingChangeHeight ?? null,
+    sequence: state.sequence,
+  };
+}
+
+export function createReleaseGovernanceHead(anchorValue) {
+  const anchor = validateReleaseTransparencyAnchor(anchorValue);
+  return headFromState(initialState(anchor));
+}
+
+export function validateReleaseGovernanceHead(value, anchorValue) {
+  const anchor = validateReleaseTransparencyAnchor(anchorValue);
+  exact(value, ["activationSet", "activeSet", "activeSetId", "entryHash", "lastBundleHash",
+    "pendingChange", "pendingChangeHeight", "sequence"], "release governance head");
+  const activeSet = validateReleaseAuthoritySet(value.activeSet);
+  const activationSet = value.activationSet === null ? null
+    : validateReleaseAuthoritySet(value.activationSet);
+  let pendingChange = null;
+  if (value.pendingChange !== null) {
+    exact(value.pendingChange, ["activationSequence", "nextSet", "reason"],
+      "release governance pending change");
+    const nextSet = validateReleaseAuthoritySet(value.pendingChange.nextSet);
+    if (!Number.isSafeInteger(value.pendingChange.activationSequence) ||
+        value.pendingChange.activationSequence <= value.sequence ||
+        !["rotation", "revocation"].includes(value.pendingChange.reason) ||
+        nextSet.generation !== activeSet.generation + 1) {
+      throw new Error("release governance pending change is invalid");
+    }
+    pendingChange = { activationSequence: value.pendingChange.activationSequence,
+      nextSet, reason: value.pendingChange.reason };
+  }
+  if (value.activeSetId !== activeSet.setId || !HASH.test(value.entryHash ?? "") ||
+      !(value.lastBundleHash === null || HASH.test(value.lastBundleHash ?? "")) ||
+      !Number.isSafeInteger(value.sequence) || value.sequence < 0 ||
+      (value.sequence === 0 && (activeSet.setId !== anchor.initialSet.setId ||
+        value.entryHash !== anchor.anchorHash || value.lastBundleHash !== null ||
+        activationSet !== null || pendingChange !== null || value.pendingChangeHeight !== null)) ||
+      (pendingChange === null) !== (value.pendingChangeHeight === null) ||
+      !(value.pendingChangeHeight === null ||
+        (Number.isSafeInteger(value.pendingChangeHeight) && value.pendingChangeHeight >= 0)) ||
+      (activationSet !== null && activationSet.generation + 1 !== activeSet.generation)) {
+    throw new Error("release governance head is invalid");
+  }
+  return { activationSet, activeSet, activeSetId: activeSet.setId, entryHash: value.entryHash,
+    lastBundleHash: value.lastBundleHash, pendingChange,
+    pendingChangeHeight: value.pendingChangeHeight, sequence: value.sequence };
+}
+
+export function advanceReleaseGovernanceHead(entries, headValue, anchorValue, {
+  currentHeight = null, minimumRotationDelayBlocks = 0,
+} = {}) {
+  const anchor = validateReleaseTransparencyAnchor(anchorValue);
+  if (!Array.isArray(entries) || entries.length < 1 || entries.length > 1024) {
+    throw new Error("release governance entry chain is invalid");
+  }
+  const head = validateReleaseGovernanceHead(headValue, anchor);
+  let state = {
+    activationSet: head.activationSet,
+    activeSet: head.activeSet,
+    anchorHash: anchor.anchorHash,
+    entryHash: head.entryHash,
+    lastBundleHash: head.lastBundleHash,
+    logId: anchor.logId,
+    networkId: anchor.networkId,
+    pendingChange: head.pendingChange,
+    pendingChangeHeight: head.pendingChangeHeight,
+    sequence: head.sequence,
+  };
+  for (const entry of entries) {
+    const activates = state.pendingChange !== null &&
+      state.pendingChange.activationSequence === state.sequence + 1;
+    if (activates && (!Number.isSafeInteger(currentHeight) ||
+        currentHeight < state.pendingChangeHeight + minimumRotationDelayBlocks)) {
+      throw new Error("release authority rotation block delay is not met");
+    }
+    const schedules = entry?.type === "authority-change";
+    state = applyEntry(state, entry);
+    if (activates) state.pendingChangeHeight = null;
+    if (schedules) {
+      if (!Number.isSafeInteger(currentHeight) || currentHeight < 0) {
+        throw new Error("release authority rotation height is missing");
+      }
+      state.pendingChangeHeight = currentHeight;
+    }
+  }
+  return { entries: structuredClone(entries), head: headFromState(state), state };
+}
+
 function applyPending(state, nextSequence) {
   if (state.pendingChange !== null && state.pendingChange.activationSequence === nextSequence) {
     return { ...state, activationSet: state.activeSet, activeSet: state.pendingChange.nextSet,

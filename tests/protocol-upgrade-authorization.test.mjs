@@ -16,7 +16,8 @@ import {
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
 import {
   approveProtocolUpgradeAuthorization, assembleProtocolUpgradeAuthorization,
-  createProtocolUpgradeAuthorizationPayload,
+  createProtocolUpgradeAuthorizationPayload, MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS,
+  validateProtocolUpgradeAuthorization,
 } from "../blockchain/protocol-upgrade-authorization.mjs";
 import { normalizeProtocolUpgrade } from "../blockchain/protocol-upgrade.mjs";
 
@@ -24,12 +25,13 @@ function members(wallets, prefix) {
   return wallets.map((wallet, index) => ({ ...publicWallet(wallet), operatorId: `${prefix}-${index}` }));
 }
 
-function releaseEntry({ authoritySet, networkId, previousEntryHash, sequence, targetVersion, wallets }) {
+function releaseEntry({ activationSet = null, activationWallets = [], authoritySet, networkId,
+  previousBundleHash = null, previousEntryHash, sequence, targetVersion, wallets }) {
   const payload = {
     bundleHash: `sha3-256:${"a".repeat(64)}`,
     manifestHash: `sha3-256:${"b".repeat(64)}`,
     networkId,
-    previousBundleHash: null,
+    previousBundleHash,
     protocolVersion: targetVersion,
     releaseVersion: "0.3.0",
     sourceRevision: "c".repeat(40),
@@ -57,9 +59,22 @@ function releaseEntry({ authoritySet, networkId, previousEntryHash, sequence, ta
       role: "active", setId: authoritySet.setId }, wallet, "RELEASE_GOVERNANCE_APPROVAL_V1"),
     version: 1,
   }));
+  const activationApprovals = activationSet === null ? []
+    : activationWallets.slice(0, activationSet.threshold).map((wallet, index) => ({
+      address: wallet.address,
+      format: "nir-release-governance-approval-v1",
+      operatorId: `release-${index}`,
+      proposalHash: proposal.proposalHash,
+      role: "activation",
+      setId: activationSet.setId,
+      signature: signObject({ proposalHash: proposal.proposalHash, sequence,
+        role: "activation", setId: activationSet.setId }, wallet,
+      "RELEASE_GOVERNANCE_APPROVAL_V1"),
+      version: 1,
+    }));
   const unsigned = {
     activeSetId: proposal.activeSetId,
-    activationApprovals: [],
+    activationApprovals,
     approvals,
     format: "nir-release-transparency-entry-v1",
     logId: proposal.logId,
@@ -73,6 +88,30 @@ function releaseEntry({ authoritySet, networkId, previousEntryHash, sequence, ta
     version: 1,
   };
   return { ...unsigned, entryHash: `sha3-256:${hashObject(unsigned, "RELEASE_TRANSPARENCY_ENTRY_V1")}` };
+}
+
+function authorityChangeEntry({ authoritySet, networkId, nextSet, previousEntryHash, sequence,
+  wallets, nextWallets }) {
+  const payload = { activationSequence: sequence + authoritySet.rotationDelayEntries,
+    nextSet, reason: "rotation" };
+  const proposal = { activeSetId: authoritySet.setId, format: "nir-release-log-proposal-v1",
+    logId: "nir-protocol-releases", networkId, payload, previousEntryHash, sequence,
+    type: "authority-change", version: 1 };
+  proposal.proposalHash = `sha3-256:${hashObject(proposal, "RELEASE_LOG_PROPOSAL_V1")}`;
+  const approvalsFor = (set, signers, role) => signers.slice(0, set.threshold)
+    .map((wallet, index) => ({ address: wallet.address,
+      format: "nir-release-governance-approval-v1", operatorId: `release-${index}`,
+      proposalHash: proposal.proposalHash, role, setId: set.setId,
+      signature: signObject({ proposalHash: proposal.proposalHash, sequence, role,
+        setId: set.setId }, wallet, "RELEASE_GOVERNANCE_APPROVAL_V1"), version: 1 }));
+  const unsigned = { activeSetId: authoritySet.setId, activationApprovals: [],
+    approvals: approvalsFor(authoritySet, wallets, "active"),
+    format: "nir-release-transparency-entry-v1", logId: proposal.logId, networkId,
+    nextSetAcceptances: approvalsFor(nextSet, nextWallets, "next-set-acceptance"), payload,
+    previousEntryHash, proposalHash: proposal.proposalHash, sequence,
+    type: "authority-change", version: 1 };
+  return { ...unsigned,
+    entryHash: `sha3-256:${hashObject(unsigned, "RELEASE_TRANSPARENCY_ENTRY_V1")}` };
 }
 
 function fixture() {
@@ -269,4 +308,73 @@ test("tamper, replay, foreign context, and unsigned release evidence fail closed
 
   append(values.chain, values.validators, { protocolUpgrade: good });
   assert.throws(() => values.chain.buildBlock({ protocolUpgrade: good }), /already pending/);
+});
+
+test("release authority rotation is dual-accepted, height-delayed, restartable, and fail-closed", () => {
+  const values = fixture();
+  const replacement = generateWallet();
+  const nextWallets = [...values.releaseWallets.slice(0, 3), replacement];
+  const nextSet = createReleaseAuthoritySet({ authorities: members(nextWallets, "release"),
+    generation: 2, rotationDelayEntries: 2, threshold: 4 });
+  const change = authorityChangeEntry({ authoritySet: values.authoritySet,
+    networkId: values.chain.networkId, nextSet,
+    previousEntryHash: values.chain.protocolReleaseHead.entryHash, sequence: 1,
+    wallets: values.releaseWallets, nextWallets });
+  const oldRelease = releaseEntry({ authoritySet: values.authoritySet,
+    networkId: values.chain.networkId, previousEntryHash: change.entryHash, sequence: 2,
+    targetVersion: 29, wallets: values.releaseWallets });
+
+  const authorize = ({ activeSet, activationHeight, baseHeight, currentVersion, entries,
+    head, signers, targetVersion }) => {
+    const final = entries.at(-1);
+    const payload = createProtocolUpgradeAuthorizationPayload({ activationHeight,
+      authoritySetId: activeSet.setId, baseHeight, baseTipHash: "1".repeat(64),
+      bundleHash: final.payload.bundleHash, chainIdentityGenesisHash: "2".repeat(64),
+      currentVersion, entryHash: final.entryHash, manifestHash: final.payload.manifestHash,
+      networkId: values.chain.networkId, releaseVersion: final.payload.releaseVersion,
+      sourceRevision: final.payload.sourceRevision, targetVersion });
+    const approvals = signers.slice(0, activeSet.threshold).map((wallet, index) =>
+      approveProtocolUpgradeAuthorization(payload, activeSet,
+        { operatorId: `release-${index}`, wallet }));
+    return validateProtocolUpgradeAuthorization(
+      assembleProtocolUpgradeAuthorization(payload, entries, approvals), {
+        activationHeight, anchor: values.anchor, baseHeight, baseTipHash: "1".repeat(64),
+        chainIdentityGenesisHash: "2".repeat(64), currentVersion, head,
+        networkId: values.chain.networkId, targetVersion,
+      });
+  };
+
+  const scheduled = authorize({ activeSet: values.authoritySet, activationHeight: 100,
+    baseHeight: 10, currentVersion: 28, entries: [change, oldRelease],
+    head: values.chain.protocolReleaseHead, signers: values.releaseWallets, targetVersion: 29 });
+  assert.equal(scheduled.nextHead.activeSetId, values.authoritySet.setId);
+  assert.equal(scheduled.nextHead.pendingChange.nextSet.setId, nextSet.setId);
+  assert.equal(scheduled.nextHead.pendingChangeHeight, 10);
+
+  const newRelease = releaseEntry({ activationSet: values.authoritySet,
+    activationWallets: values.releaseWallets, authoritySet: nextSet,
+    networkId: values.chain.networkId, previousBundleHash: oldRelease.payload.bundleHash,
+    previousEntryHash: oldRelease.entryHash, sequence: 3, targetVersion: 30,
+    wallets: nextWallets });
+  assert.throws(() => authorize({ activeSet: nextSet, activationHeight: 110,
+    baseHeight: 10 + MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS - 1,
+    currentVersion: 29, entries: [newRelease], head: scheduled.nextHead,
+    signers: nextWallets, targetVersion: 30 }), /block delay/);
+  const activated = authorize({ activeSet: nextSet, activationHeight: 200,
+    baseHeight: 10 + MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS,
+    currentVersion: 29, entries: [newRelease], head: structuredClone(scheduled.nextHead),
+    signers: nextWallets, targetVersion: 30 });
+  assert.equal(activated.nextHead.activeSetId, nextSet.setId);
+  assert.equal(activated.nextHead.activeSet.generation, 2);
+  assert.equal(activated.nextHead.pendingChange, null);
+  assert.equal(activated.nextHead.pendingChangeHeight, null);
+
+  assert.throws(() => authorize({ activeSet: nextSet, activationHeight: 200,
+    baseHeight: 10 + MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS,
+    currentVersion: 29, entries: [newRelease], head: scheduled.nextHead,
+    signers: values.releaseWallets, targetVersion: 30 }), /signer|quorum|approval/);
+  assert.throws(() => authorize({ activeSet: nextSet, activationHeight: 201,
+    baseHeight: 10 + MIN_RELEASE_AUTHORITY_ROTATION_DELAY_BLOCKS + 1,
+    currentVersion: 29, entries: [newRelease], head: activated.nextHead,
+    signers: nextWallets, targetVersion: 30 }), /stale|trusted head|proposal/);
 });

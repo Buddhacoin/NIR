@@ -33,7 +33,7 @@ import {
 } from "./peer-registry.mjs";
 import { advanceValidatorRecoveryTrustStore } from "./validator-recovery-trust-store.mjs";
 import {
-  validateProtocolReleaseHead, validateProtocolUpgradeReleaseAnchor,
+  createProtocolReleaseHead, validateProtocolReleaseHead, validateProtocolUpgradeReleaseAnchor,
 } from "./protocol-upgrade-authorization.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
@@ -221,12 +221,7 @@ export function verifyFinalityProofChain(proofs, {
     protocolReleaseHead = null;
   } else {
     protocolReleaseHead = checkpoint.protocolReleaseHead === undefined
-      ? {
-        activeSetId: releaseAnchor.initialSet.setId,
-        entryHash: releaseAnchor.anchorHash,
-        lastBundleHash: null,
-        sequence: 0,
-      }
+      ? createProtocolReleaseHead(releaseAnchor)
       : validateProtocolReleaseHead(checkpoint.protocolReleaseHead, releaseAnchor);
   }
   let handoffIndex = 0;
