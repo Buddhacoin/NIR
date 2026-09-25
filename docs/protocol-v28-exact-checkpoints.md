@@ -38,3 +38,9 @@ does not prove that configured operators are independent or remain uncompromised
 Accepted package floors are persisted by the redundant, hash-linked local trust
 store in `checkpoint-trust-store.md`; it rejects replay, divergence, concurrent
 mutation, and unsafe filesystem indirection before a newer package becomes trusted.
+
+Exact-assignment consumers must use the stored verification gate described in
+`checkpoint-trust-store.md`, not pass trust floors from the assignment itself.
+That gate advances a checkpoint floor only after the complete exact V4
+assignment has verified successfully under the pinned identity and witness
+policy.

@@ -37,6 +37,7 @@
     "beacon:aggregate": "node blockchain/beacon-aggregate.mjs",
     "progress-beacon:aggregate": "node blockchain/beacon-aggregate.mjs progress",
     "checkpoint-trust-store": "node blockchain/checkpoint-trust-store-cli.mjs",
+    "assignment:verify-stored": "node blockchain/assignment-checkpoint-store-cli.mjs verify",
     "node:init-dev": "node blockchain/node-cli.mjs init-dev",
     "node:serve": "node blockchain/node-cli.mjs serve",
     "node:serve-production": "node blockchain/node-cli.mjs serve-production",

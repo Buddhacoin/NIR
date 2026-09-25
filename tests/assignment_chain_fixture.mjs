@@ -71,6 +71,7 @@ const sign = (proposal) => finalizeBlock(proposal, [
 ]);
 let compactCheckpointBlock = null;
 let checkpointTrustPackage = null;
+let previousCheckpointTrustPackage = null;
 let checkpointTrustPolicyId = null;
 if (v4) {
   const activationHeight = 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
@@ -82,26 +83,28 @@ if (v4) {
   while (chain.height < activationHeight) {
     chain.appendBlock(sign(chain.buildBlock({ timestamp: chain.height + 1 })));
   }
-  for (let index = 0; index < 513; index += 1) {
-    chain.appendBlock(sign(chain.buildBlock({ timestamp: chain.height + 1 })));
-  }
-  compactCheckpointBlock = chain.blocks().at(-1);
-  const checkpointProof = createFinalityProof(compactCheckpointBlock);
   const policy = createCheckpointWitnessPolicy({
     chainIdentityGenesisHash: genesis.hash, generation: 1, networkId: chain.networkId,
     threshold: 3, witnesses: members(checkpointWitnesses, "checkpoint-witness"),
   });
-  const sequence = 1;
-  const attestations = checkpointWitnesses.slice(0, 3).map((wallet, index) =>
-    createCheckpointWitnessAttestation({
-      finalityProof: checkpointProof, observedAt: 10_000 + index,
-      operatorId: `checkpoint-witness-${index}`, policy, sequence,
-      validators: validatorMembers, wallet,
-    }));
-  checkpointTrustPackage = assembleCheckpointTrustPackage({
-    attestations, finalityProof: checkpointProof, policy, sequence,
-    validators: validatorMembers,
-  });
+  const packageFor = (block, sequence) => {
+    const finalityProof = createFinalityProof(block);
+    const attestations = checkpointWitnesses.slice(0, 3).map((wallet, index) =>
+      createCheckpointWitnessAttestation({
+        finalityProof, observedAt: 10_000 + sequence * 10 + index,
+        operatorId: `checkpoint-witness-${index}`, policy, sequence,
+        validators: validatorMembers, wallet,
+      }));
+    return assembleCheckpointTrustPackage({
+      attestations, finalityProof, policy, sequence, validators: validatorMembers,
+    });
+  };
+  previousCheckpointTrustPackage = packageFor(chain.blocks().at(-1), 1);
+  for (let index = 0; index < 513; index += 1) {
+    chain.appendBlock(sign(chain.buildBlock({ timestamp: chain.height + 1 })));
+  }
+  compactCheckpointBlock = chain.blocks().at(-1);
+  checkpointTrustPackage = packageFor(compactCheckpointBlock, 2);
   checkpointTrustPolicyId = policy.policyId;
 }
 const artifactHash = `sha256:${fingerprint("candidate")}`;
@@ -174,6 +177,7 @@ process.stdout.write(JSON.stringify({
     } : {}),
   },
   checkpointTrustPackage: v4 ? checkpointTrustPackage : undefined,
+  previousCheckpointTrustPackage: v4 ? previousCheckpointTrustPackage : undefined,
   checkpointTrustPolicyId: v4 ? checkpointTrustPolicyId : undefined,
   minimumCheckpointHeight: v4 ? compactCheckpointBlock.height : undefined,
   minimumCheckpointSequence: v4 ? checkpointTrustPackage.sequence : undefined,

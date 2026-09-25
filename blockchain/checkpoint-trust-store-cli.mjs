@@ -2,7 +2,9 @@
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 
 import {
-  acceptCheckpointTrustPackage, createCheckpointTrustStore, loadCheckpointTrustStore,
+  acceptCheckpointTrustPackage, activateCheckpointWitnessPolicyTransition,
+  createCheckpointTrustStore, loadCheckpointTrustStore,
+  scheduleCheckpointWitnessPolicyTransition,
 } from "./checkpoint-trust-store.mjs";
 import {
   MAX_CHECKPOINT_TRUST_PACKAGE_BYTES,
@@ -13,7 +15,10 @@ import { canonicalJson } from "./crypto.mjs";
 function usage() {
   throw new Error(
     "usage: checkpoint-trust-store init <store> <package> <network> <genesis-hash> <policy-id> " +
-    "[minimum-sequence] [minimum-height] | accept <store> <package> | show <store>",
+    "[minimum-sequence] [minimum-height] | accept <store> <package> | " +
+    "rotate-schedule <store> <transition> <old-policy> <new-policy> | " +
+    "rotate-activate <store> <transition> <activation-package> <old-policy> <new-policy> | " +
+    "show <store>",
   );
 }
 
@@ -64,6 +69,15 @@ try {
   } else if (command === "accept") {
     if (args.length !== 2) usage();
     value = acceptCheckpointTrustPackage(args[0], readPackage(args[1]));
+  } else if (command === "rotate-schedule") {
+    if (args.length !== 4) usage();
+    value = scheduleCheckpointWitnessPolicyTransition(args[0], readPackage(args[1]), {
+      oldPolicy: readPackage(args[2]), newPolicy: readPackage(args[3]),
+    });
+  } else if (command === "rotate-activate") {
+    if (args.length !== 5) usage();
+    value = activateCheckpointWitnessPolicyTransition(args[0], readPackage(args[1]),
+      readPackage(args[2]), { oldPolicy: readPackage(args[3]), newPolicy: readPackage(args[4]) });
   } else if (command === "show") {
     if (args.length !== 1) usage();
     value = loadCheckpointTrustStore(args[0]);

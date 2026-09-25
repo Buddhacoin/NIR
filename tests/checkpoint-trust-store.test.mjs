@@ -9,8 +9,15 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import {
-  acceptCheckpointTrustPackage, createCheckpointTrustStore, loadCheckpointTrustStore,
+  acceptCheckpointTrustPackage, activateCheckpointWitnessPolicyTransition,
+  createCheckpointTrustStore, loadCheckpointTrustStore,
+  scheduleCheckpointWitnessPolicyTransition,
 } from "../blockchain/checkpoint-trust-store.mjs";
+import {
+  createCheckpointWitnessPolicyTransition,
+  MIN_CHECKPOINT_POLICY_ROTATION_HEIGHT_DELAY,
+  MIN_CHECKPOINT_POLICY_ROTATION_SEQUENCE_DELAY,
+} from "../blockchain/checkpoint-witness-policy-transition.mjs";
 import {
   assembleCheckpointTrustPackage, createCheckpointWitnessAttestation,
   createCheckpointWitnessPolicy, serializeCheckpointTrustPackage,
@@ -20,7 +27,7 @@ import {
   CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION, EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
   MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS, SAFETY_POLICY_V1_COMMITMENT,
 } from "../blockchain/constants.mjs";
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 
 function members(wallets, prefix) {
@@ -59,17 +66,22 @@ function fixture() {
   const policy = createCheckpointWitnessPolicy({ chainIdentityGenesisHash: genesisHash,
     generation: 1, networkId, threshold: 3, witnesses: members(witnesses, "witness") });
   const validatorMembers = members(validators, "validator");
-  const buildPackage = (sequence, block = chain.blocks().at(-1)) => {
+  const buildPackageFor = (selectedPolicy, selectedWitnesses, sequence,
+    block = chain.blocks().at(-1)) => {
     const finalityProof = createFinalityProof(block);
-    const attestations = witnesses.slice(0, 3).map((wallet, index) =>
+    const attestations = selectedWitnesses.slice(0, selectedPolicy.threshold).map((wallet, index) =>
       createCheckpointWitnessAttestation({ finalityProof, observedAt: 10_000 + sequence + index,
-        operatorId: `witness-${index}`, policy, sequence, validators: validatorMembers, wallet }));
-    return assembleCheckpointTrustPackage({ attestations, finalityProof, policy, sequence,
+        operatorId: selectedPolicy.witnesses.find((member) => member.address === wallet.address).operatorId,
+        policy: selectedPolicy, sequence, validators: validatorMembers, wallet }));
+    return assembleCheckpointTrustPackage({ attestations, finalityProof, policy: selectedPolicy, sequence,
       validators: validatorMembers });
   };
+  const buildPackage = (sequence, block = chain.blocks().at(-1)) =>
+    buildPackageFor(policy, witnesses, sequence, block);
   const options = { expectedChainIdentityGenesisHash: genesisHash, expectedNetworkId: networkId,
     expectedPolicyId: policy.policyId };
-  return { append, buildPackage, chain, options };
+  return { append, buildPackage, buildPackageFor, chain, genesisHash, networkId, options,
+    policy, validators, witnesses };
 }
 
 function location(name) {
@@ -245,4 +257,209 @@ test("bounded CLI initializes, displays and advances the verified store", () => 
     assert.equal(accept.status, 0, accept.stderr);
     assert.equal(JSON.parse(accept.stdout).revision, 1);
   } finally { rmSync(target.root, { recursive: true, force: true }); }
+});
+
+function rotationFixture(value, created) {
+  const replacementWallets = Array.from({ length: 2 }, generateWallet);
+  const nextWitnesses = [value.witnesses[0], value.witnesses[1], ...replacementWallets];
+  const publicWitnesses = [
+    { ...publicWallet(value.witnesses[0]), operatorId: "witness-0" },
+    { ...publicWallet(value.witnesses[1]), operatorId: "witness-1" },
+    ...replacementWallets.map((wallet, index) =>
+      ({ ...publicWallet(wallet), operatorId: `witness-next-${index}` })),
+  ];
+  const nextPolicy = createCheckpointWitnessPolicy({
+    chainIdentityGenesisHash: value.genesisHash, generation: value.policy.generation + 1,
+    networkId: value.networkId, threshold: 3, witnesses: publicWitnesses,
+  });
+  const transition = createCheckpointWitnessPolicyTransition({
+    activationHeight: created.record.height + MIN_CHECKPOINT_POLICY_ROTATION_HEIGHT_DELAY,
+    activationSequence: created.record.sequence + MIN_CHECKPOINT_POLICY_ROTATION_SEQUENCE_DELAY,
+    createdHeight: created.record.height, createdPackageHash: created.record.packageHash,
+    createdSequence: created.record.sequence, newPolicy: nextPolicy,
+    newSignerWallets: nextWitnesses, oldPolicy: value.policy,
+    oldSignerWallets: value.witnesses.slice(0, 3),
+  });
+  return { nextPolicy, nextWitnesses, transition };
+}
+
+test("old quorum schedules delayed rotation and the old policy activates it atomically", () => {
+  const value = fixture(); const target = location("trust-policy-rotation");
+  try {
+    const created = createCheckpointTrustStore(target.path, value.buildPackage(20), value.options);
+    const rotation = rotationFixture(value, created);
+    const scheduled = scheduleCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+      { newPolicy: rotation.nextPolicy, oldPolicy: value.policy });
+    const scheduledBytes = readFileSync(`${target.path}.primary`);
+    assert.equal(scheduled.record.policyId, value.policy.policyId);
+    assert.equal(scheduled.record.pendingTransition.newPolicyId, rotation.nextPolicy.policyId);
+    assert.equal(scheduleCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+      { newPolicy: rotation.nextPolicy, oldPolicy: value.policy }).record.recordHash,
+    scheduled.record.recordHash);
+
+    while (value.chain.height < rotation.transition.activationHeight) value.append();
+    const activationPackage = value.buildPackage(rotation.transition.activationSequence);
+    const activated = activateCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+      activationPackage, { newPolicy: rotation.nextPolicy, oldPolicy: value.policy });
+    assert.equal(activated.record.policyId, rotation.nextPolicy.policyId);
+    assert.equal(activated.record.policyGeneration, rotation.nextPolicy.generation);
+    assert.equal(activated.record.pendingTransition, null);
+    assert.equal(activated.record.lastTransitionHash, rotation.transition.transitionHash);
+    unlinkSync(`${target.path}.secondary`);
+    writeFileSync(`${target.path}.secondary`, scheduledBytes, { mode: 0o600 });
+    assert.equal(loadCheckpointTrustStore(target.path).record.recordHash, activated.record.recordHash);
+
+    const nextPackage = value.buildPackageFor(rotation.nextPolicy, rotation.nextWitnesses,
+      rotation.transition.activationSequence + 1, value.append());
+    const advanced = acceptCheckpointTrustPackage(target.path, nextPackage);
+    assert.equal(advanced.record.policyId, rotation.nextPolicy.policyId);
+  } finally { rmSync(target.root, { recursive: true, force: true }); }
+});
+
+test("rotation rejects self-authorization, weak possession, no continuity, replay and early activation", () => {
+  const value = fixture();
+  const initialPackage = value.buildPackage(30);
+  let rotation = null;
+  const attacks = ["self", "possession", "continuity", "early", "replay"];
+  for (const attack of attacks) {
+    const target = location(`trust-policy-${attack}`);
+    try {
+      const created = createCheckpointTrustStore(target.path, initialPackage, value.options);
+      rotation ??= rotationFixture(value, created);
+      if (attack === "self") {
+        const forged = structuredClone(rotation.transition);
+        forged.oldApprovals = forged.newPossessionProofs.slice(0, 3);
+        assert.throws(() => scheduleCheckpointWitnessPolicyTransition(target.path, forged,
+          { newPolicy: rotation.nextPolicy, oldPolicy: value.policy }), /signature|quorum/);
+      } else if (attack === "possession") {
+        const forged = structuredClone(rotation.transition); forged.newPossessionProofs.pop();
+        assert.throws(() => scheduleCheckpointWitnessPolicyTransition(target.path, forged,
+          { newPolicy: rotation.nextPolicy, oldPolicy: value.policy }), /possession/);
+      } else if (attack === "continuity") {
+        const wallets = value.validators;
+        const policy = createCheckpointWitnessPolicy({ chainIdentityGenesisHash: value.genesisHash,
+          generation: 2, networkId: value.networkId, threshold: 3,
+          witnesses: members(wallets, "unrelated") });
+        assert.throws(() => createCheckpointWitnessPolicyTransition({
+          activationHeight: created.record.height + 10, activationSequence: 32,
+          createdHeight: created.record.height, createdPackageHash: created.record.packageHash,
+          createdSequence: 30, newPolicy: policy, newSignerWallets: wallets,
+          oldPolicy: value.policy, oldSignerWallets: value.witnesses.slice(0, 3),
+        }), /continuity/);
+      } else {
+        scheduleCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+          { newPolicy: rotation.nextPolicy, oldPolicy: value.policy });
+        if (attack === "early") {
+          assert.throws(() => activateCheckpointWitnessPolicyTransition(target.path,
+            rotation.transition, value.buildPackage(rotation.transition.activationSequence),
+          { newPolicy: rotation.nextPolicy, oldPolicy: value.policy }), /replayed|height|floor/);
+        } else {
+          while (value.chain.height < rotation.transition.activationHeight) value.append();
+          activateCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+            value.buildPackage(rotation.transition.activationSequence),
+          { newPolicy: rotation.nextPolicy, oldPolicy: value.policy });
+          assert.throws(() => scheduleCheckpointWitnessPolicyTransition(target.path,
+            rotation.transition, { newPolicy: rotation.nextPolicy, oldPolicy: value.policy }),
+          /current trust head|context|generation/);
+        }
+      }
+    } finally { rmSync(target.root, { recursive: true, force: true }); }
+  }
+});
+
+test("rotation binds chain identity, consecutive generation and minimum dual delay", () => {
+  const value = fixture(); const initial = value.buildPackage(50);
+  const target = location("trust-policy-context");
+  try {
+    const created = createCheckpointTrustStore(target.path, initial, value.options);
+    const policyFor = (generation, networkId = value.networkId) =>
+      createCheckpointWitnessPolicy({ chainIdentityGenesisHash: value.genesisHash, generation,
+        networkId, threshold: 3, witnesses: members(value.witnesses, "witness") });
+    const input = (newPolicy, overrides = {}) => ({
+      activationHeight: created.record.height + MIN_CHECKPOINT_POLICY_ROTATION_HEIGHT_DELAY,
+      activationSequence: 50 + MIN_CHECKPOINT_POLICY_ROTATION_SEQUENCE_DELAY,
+      createdHeight: created.record.height, createdPackageHash: created.record.packageHash,
+      createdSequence: 50, newPolicy, newSignerWallets: value.witnesses,
+      oldPolicy: value.policy, oldSignerWallets: value.witnesses.slice(0, 3), ...overrides,
+    });
+    assert.throws(() => createCheckpointWitnessPolicyTransition(input(policyFor(3))),
+      /transition is invalid/);
+    assert.throws(() => createCheckpointWitnessPolicyTransition(input(policyFor(2, "foreign-net"))),
+      /chain identity/);
+    assert.throws(() => createCheckpointWitnessPolicyTransition(input(policyFor(2),
+      { activationSequence: 51 })), /transition is invalid/);
+    assert.throws(() => createCheckpointWitnessPolicyTransition(input(policyFor(2),
+      { activationHeight: created.record.height + 9 })), /transition is invalid/);
+  } finally { rmSync(target.root, { recursive: true, force: true }); }
+});
+
+test("conflicting transition and interrupted old/new copies fail closed or recover only valid successor", () => {
+  const value = fixture(); const target = location("trust-policy-divergence");
+  try {
+    const created = createCheckpointTrustStore(target.path, value.buildPackage(40), value.options);
+    const rotation = rotationFixture(value, created);
+    const oldBytes = readFileSync(`${target.path}.primary`);
+    const scheduled = scheduleCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+      { newPolicy: rotation.nextPolicy, oldPolicy: value.policy });
+    unlinkSync(`${target.path}.secondary`);
+    writeFileSync(`${target.path}.secondary`, oldBytes, { mode: 0o600 });
+    assert.equal(loadCheckpointTrustStore(target.path).record.recordHash, scheduled.record.recordHash);
+
+    const conflicting = structuredClone(rotation.transition);
+    conflicting.activationHeight += 1;
+    assert.throws(() => scheduleCheckpointWitnessPolicyTransition(target.path, conflicting,
+      { newPolicy: rotation.nextPolicy, oldPolicy: value.policy }),
+    /context|hash|divergence|signature/);
+  } finally { rmSync(target.root, { recursive: true, force: true }); }
+});
+
+function forgedSuccessor(record, changes) {
+  const { recordHash: _recordHash, ...payload } = record;
+  const forged = { ...payload, ...changes, previousRecordHash: record.recordHash,
+    revision: record.revision + 1 };
+  return { ...forged, recordHash:
+    `sha3-256:${hashObject(forged, "CHECKPOINT_TRUST_STORE_RECORD_V2")}` };
+}
+
+function replaceSecondary(path, record) {
+  unlinkSync(`${path}.secondary`);
+  writeFileSync(`${path}.secondary`, `${canonicalJson({
+    format: "nir-checkpoint-trust-store-v2", record, version: 2,
+  })}\n`, { mode: 0o600 });
+}
+
+test("copy reconciliation rejects forged rollback, combined scheduling, and premature activation", () => {
+  const value = fixture();
+  for (const attack of ["rollback", "combined-schedule", "premature-activation"]) {
+    const target = location(`trust-reconcile-${attack}`);
+    try {
+      const created = createCheckpointTrustStore(target.path, value.buildPackage(60), value.options);
+      const rotation = rotationFixture(value, created);
+      if (attack === "premature-activation") {
+        const scheduled = scheduleCheckpointWitnessPolicyTransition(target.path, rotation.transition,
+          { newPolicy: rotation.nextPolicy, oldPolicy: value.policy });
+        replaceSecondary(target.path, forgedSuccessor(scheduled.record, {
+          lastTransitionHash: rotation.transition.transitionHash,
+          pendingTransition: null, policyGeneration: rotation.nextPolicy.generation,
+          policyId: rotation.nextPolicy.policyId,
+        }));
+      } else if (attack === "combined-schedule") {
+        replaceSecondary(target.path, forgedSuccessor(created.record, {
+          pendingTransition: {
+            activationHeight: rotation.transition.activationHeight,
+            activationSequence: rotation.transition.activationSequence,
+            newGeneration: rotation.transition.newGeneration,
+            newPolicyId: rotation.transition.newPolicyId,
+            transitionHash: rotation.transition.transitionHash,
+          },
+          sequence: created.record.sequence + 1,
+        }));
+      } else {
+        replaceSecondary(target.path, forgedSuccessor(created.record, {
+          height: created.record.height - 1, sequence: created.record.sequence - 1,
+        }));
+      }
+      assert.throws(() => loadCheckpointTrustStore(target.path), /copies diverged/);
+    } finally { rmSync(target.root, { recursive: true, force: true }); }
+  }
 });

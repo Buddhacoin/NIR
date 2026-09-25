@@ -8,9 +8,12 @@ import { randomBytes } from "node:crypto";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { verifyCheckpointTrustPackage } from "./checkpoint-trust-package.mjs";
+import {
+  checkpointWitnessPolicyTransitionSummary, validateCheckpointWitnessPolicyTransition,
+} from "./checkpoint-witness-policy-transition.mjs";
 
-const FORMAT = "nir-checkpoint-trust-store-v1";
-const RECORD_FORMAT = "nir-checkpoint-trust-record-v1";
+const FORMAT = "nir-checkpoint-trust-store-v2";
+const RECORD_FORMAT = "nir-checkpoint-trust-record-v2";
 const HASH = /^[0-9a-f]{64}$/;
 const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
 const NETWORK = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,63}$/;
@@ -26,14 +29,31 @@ function exact(value, fields, label) {
   }
 }
 
+function pendingTransitionPayload(value) {
+  if (value === null) return null;
+  exact(value, ["activationHeight", "activationSequence", "newGeneration", "newPolicyId",
+    "transitionHash"], "pending checkpoint policy transition");
+  if (!Number.isSafeInteger(value.activationHeight) || value.activationHeight < 1 ||
+      !Number.isSafeInteger(value.activationSequence) || value.activationSequence < 0 ||
+      !Number.isSafeInteger(value.newGeneration) || value.newGeneration < 1 ||
+      !TAGGED_HASH.test(value.newPolicyId ?? "") ||
+      !TAGGED_HASH.test(value.transitionHash ?? "")) {
+    throw new Error("pending checkpoint policy transition is invalid");
+  }
+  return structuredClone(value);
+}
+
 function recordPayload(value) {
-  exact(value, ["chainIdentityGenesisHash", "format", "height", "networkId", "packageHash",
-    "policyId", "previousRecordHash", "revision", "sequence", "version"],
+  exact(value, ["chainIdentityGenesisHash", "format", "height", "lastTransitionHash", "networkId",
+    "packageHash", "pendingTransition", "policyGeneration", "policyId", "previousRecordHash",
+    "revision", "sequence", "version"],
   "checkpoint trust record");
-  if (value.format !== RECORD_FORMAT || value.version !== 1 ||
+  if (value.format !== RECORD_FORMAT || value.version !== 2 ||
       !NETWORK.test(value.networkId ?? "") || !HASH.test(value.chainIdentityGenesisHash ?? "") ||
       !TAGGED_HASH.test(value.policyId ?? "") || !TAGGED_HASH.test(value.packageHash ?? "") ||
+      (value.lastTransitionHash !== null && !TAGGED_HASH.test(value.lastTransitionHash ?? "")) ||
       (value.previousRecordHash !== null && !TAGGED_HASH.test(value.previousRecordHash ?? "")) ||
+      !Number.isSafeInteger(value.policyGeneration) || value.policyGeneration < 0 ||
       !Number.isSafeInteger(value.revision) || value.revision < 0 ||
       !Number.isSafeInteger(value.sequence) || value.sequence < 0 ||
       !Number.isSafeInteger(value.height) || value.height < 1) {
@@ -42,34 +62,40 @@ function recordPayload(value) {
   if ((value.revision === 0) !== (value.previousRecordHash === null)) {
     throw new Error("checkpoint trust record chain is invalid");
   }
-  return structuredClone(value);
+  const pendingTransition = pendingTransitionPayload(value.pendingTransition);
+  if (pendingTransition && (pendingTransition.newGeneration !== value.policyGeneration + 1 ||
+      pendingTransition.newPolicyId === value.policyId)) {
+    throw new Error("pending checkpoint policy transition does not follow active policy");
+  }
+  return { ...structuredClone(value), pendingTransition };
 }
 
 function sealRecord(payload) {
   const normalized = recordPayload(payload);
   return { ...normalized, recordHash:
-    `sha3-256:${hashObject(normalized, "CHECKPOINT_TRUST_STORE_RECORD_V1")}` };
+    `sha3-256:${hashObject(normalized, "CHECKPOINT_TRUST_STORE_RECORD_V2")}` };
 }
 
 function validateRecord(value) {
-  exact(value, ["chainIdentityGenesisHash", "format", "height", "networkId", "packageHash",
-    "policyId", "previousRecordHash", "recordHash", "revision", "sequence", "version"],
+  exact(value, ["chainIdentityGenesisHash", "format", "height", "lastTransitionHash", "networkId",
+    "packageHash", "pendingTransition", "policyGeneration", "policyId", "previousRecordHash",
+    "recordHash", "revision", "sequence", "version"],
   "checkpoint trust record envelope");
   const { recordHash, ...payload } = value;
   const normalized = recordPayload(payload);
-  if (recordHash !== `sha3-256:${hashObject(normalized, "CHECKPOINT_TRUST_STORE_RECORD_V1")}`) {
+  if (recordHash !== `sha3-256:${hashObject(normalized, "CHECKPOINT_TRUST_STORE_RECORD_V2")}`) {
     throw new Error("checkpoint trust record hash is invalid");
   }
   return { ...normalized, recordHash };
 }
 
 function storeFor(record) {
-  return { format: FORMAT, record, version: 1 };
+  return { format: FORMAT, record, version: 2 };
 }
 
 function validateStore(value) {
   exact(value, ["format", "record", "version"], "checkpoint trust store");
-  if (value.format !== FORMAT || value.version !== 1) {
+  if (value.format !== FORMAT || value.version !== 2) {
     throw new Error("checkpoint trust store is invalid");
   }
   return storeFor(validateRecord(value.record));
@@ -181,10 +207,26 @@ function reconcileCopies(first, second) {
   const left = first.record; const right = second.record;
   if (left.recordHash === right.recordHash) return first;
   const [older, newer] = left.revision < right.revision ? [left, right] : [right, left];
-  if (newer.revision === older.revision + 1 && newer.previousRecordHash === older.recordHash &&
-      newer.networkId === older.networkId &&
-      newer.chainIdentityGenesisHash === older.chainIdentityGenesisHash &&
-      newer.policyId === older.policyId) {
+  const commonChain = newer.revision === older.revision + 1 &&
+    newer.previousRecordHash === older.recordHash && newer.networkId === older.networkId &&
+    newer.chainIdentityGenesisHash === older.chainIdentityGenesisHash;
+  const unchangedPolicyIdentity = newer.policyId === older.policyId &&
+    newer.policyGeneration === older.policyGeneration &&
+    newer.lastTransitionHash === older.lastTransitionHash;
+  const advancedCheckpoint = unchangedPolicyIdentity &&
+    canonicalJson(newer.pendingTransition) === canonicalJson(older.pendingTransition) &&
+    newer.sequence > older.sequence && newer.height >= older.height;
+  const scheduledPolicy = unchangedPolicyIdentity && older.pendingTransition === null &&
+    newer.pendingTransition !== null && newer.sequence === older.sequence &&
+    newer.height === older.height && newer.packageHash === older.packageHash;
+  const activatedPolicy = older.pendingTransition !== null && newer.pendingTransition === null &&
+    newer.policyId === older.pendingTransition.newPolicyId &&
+    newer.policyGeneration === older.pendingTransition.newGeneration &&
+    newer.lastTransitionHash === older.pendingTransition.transitionHash &&
+    newer.sequence > older.sequence &&
+    newer.sequence >= older.pendingTransition.activationSequence &&
+    newer.height >= older.height && newer.height >= older.pendingTransition.activationHeight;
+  if (commonChain && (advancedCheckpoint || scheduledPolicy || activatedPolicy)) {
     return storeFor(newer);
   }
   throw new Error("checkpoint trust store copies diverged");
@@ -404,9 +446,12 @@ function verificationOptions(record, options = {}) {
 
 function recordFromVerified(verified, identity, revision, previousRecordHash) {
   return sealRecord({ chainIdentityGenesisHash: identity.chainIdentityGenesisHash,
-    format: RECORD_FORMAT, height: verified.checkpoint.height, networkId: identity.networkId,
-    packageHash: verified.packageHash, policyId: identity.policyId, previousRecordHash,
-    revision, sequence: verified.sequence, version: 1 });
+    format: RECORD_FORMAT, height: verified.checkpoint.height,
+    lastTransitionHash: identity.lastTransitionHash ?? null, networkId: identity.networkId,
+    packageHash: verified.packageHash, pendingTransition: identity.pendingTransition ?? null,
+    policyGeneration: identity.policyGeneration ?? verified.policyGeneration,
+    policyId: identity.policyId, previousRecordHash, revision, sequence: verified.sequence,
+    version: 2 });
 }
 
 export function createCheckpointTrustStore(path, packageValue, {
@@ -422,7 +467,8 @@ export function createCheckpointTrustStore(path, packageValue, {
   const root = pinnedRoot(target);
   const record = recordFromVerified(verified, {
     chainIdentityGenesisHash: expectedChainIdentityGenesisHash,
-    networkId: expectedNetworkId, policyId: expectedPolicyId,
+    lastTransitionHash: null, networkId: expectedNetworkId, pendingTransition: null,
+    policyGeneration: verified.policyGeneration, policyId: expectedPolicyId,
   }, 0, null);
   const value = storeFor(record);
   return withExclusiveLock(target, root, () => {
@@ -442,6 +488,7 @@ export function createCheckpointTrustStore(path, packageValue, {
 
 export function loadCheckpointTrustStore(path, {
   expectedChainIdentityGenesisHash = null, expectedNetworkId = null, expectedPolicyId = null,
+  expectedPolicyGeneration = null,
 } = {}) {
   const target = canonicalTarget(path);
   const root = pinnedRoot(target);
@@ -450,13 +497,25 @@ export function loadCheckpointTrustStore(path, {
   if ((expectedChainIdentityGenesisHash !== null &&
        record.chainIdentityGenesisHash !== expectedChainIdentityGenesisHash) ||
       (expectedNetworkId !== null && record.networkId !== expectedNetworkId) ||
-      (expectedPolicyId !== null && record.policyId !== expectedPolicyId)) {
+      (expectedPolicyId !== null && record.policyId !== expectedPolicyId) ||
+      (expectedPolicyGeneration !== null && record.policyGeneration !== expectedPolicyGeneration)) {
     throw new Error("checkpoint trust store does not match pinned identity");
   }
   return structuredClone(value);
 }
 
 export function acceptCheckpointTrustPackage(path, packageValue, options = {}) {
+  return verifyAndAdvanceCheckpointTrustStore(path, packageValue, () => null, options).store;
+}
+
+// Run a complete, synchronous verification while the anti-rollback floor is locked.
+// The callback receives only verified data and the pinned record.  Its return value is
+// deliberately not persisted; any exception (or an accidental async callback) leaves both
+// redundant store copies unchanged.
+export function verifyAndAdvanceCheckpointTrustStore(path, packageValue, verify, options = {}) {
+  if (typeof verify !== "function") {
+    throw new Error("checkpoint trust store verification callback is required");
+  }
   const target = canonicalTarget(path);
   const root = pinnedRoot(target);
   return withExclusiveLock(target, root, () => {
@@ -464,14 +523,28 @@ export function acceptCheckpointTrustPackage(path, packageValue, options = {}) {
     const old = current.record;
     const verified = verifyCheckpointTrustPackage(packageValue,
       verificationOptions(old, options));
+    const result = verify({
+      currentRecord: structuredClone(old),
+      verifiedPackage: structuredClone(verified),
+    });
+    if (result && typeof result.then === "function") {
+      throw new Error("checkpoint trust store verification callback must be synchronous");
+    }
+    // Clone before any durable write. Otherwise an uncloneable callback result could throw only
+    // after the floor was advanced, making the transaction report failure despite mutation.
+    const clonedResult = structuredClone(result);
     if (verified.sequence === old.sequence) {
       if (verified.checkpoint.height === old.height && verified.packageHash === old.packageHash) {
-        return structuredClone(current);
+        return { result: clonedResult, store: structuredClone(current) };
       }
       throw new Error("checkpoint trust package sequence divergence is rejected");
     }
     if (verified.sequence <= old.sequence || verified.checkpoint.height < old.height) {
       throw new Error("checkpoint trust package rollback is rejected");
+    }
+    if (old.pendingTransition && verified.sequence >= old.pendingTransition.activationSequence &&
+        verified.checkpoint.height >= old.pendingTransition.activationHeight) {
+      throw new Error("checkpoint witness policy transition must activate at its reached floor");
     }
     const next = storeFor(recordFromVerified(verified, old, old.revision + 1, old.recordHash));
     const [primary, secondary] = copyPaths(target);
@@ -479,7 +552,85 @@ export function acceptCheckpointTrustPackage(path, packageValue, options = {}) {
     writeAtomic(secondary, next, root);
     observedHeads.set(target,
       { recordHash: next.record.recordHash, revision: next.record.revision });
-    return structuredClone(next);
+    return { result: clonedResult, store: structuredClone(next) };
+  });
+}
+
+function writeNextRecord(target, root, record) {
+  const next = storeFor(record);
+  const [primary, secondary] = copyPaths(target);
+  writeAtomic(primary, next, root);
+  writeAtomic(secondary, next, root);
+  observedHeads.set(target, { recordHash: record.recordHash, revision: record.revision });
+  return structuredClone(next);
+}
+
+export function scheduleCheckpointWitnessPolicyTransition(path, transitionValue,
+  { newPolicy, oldPolicy } = {}) {
+  const target = canonicalTarget(path);
+  const root = pinnedRoot(target);
+  return withExclusiveLock(target, root, () => {
+    const current = loadAtTarget(target, root);
+    const old = current.record;
+    const transition = validateCheckpointWitnessPolicyTransition(transitionValue,
+      { newPolicy, oldPolicy });
+    if (transition.networkId !== old.networkId ||
+        transition.chainIdentityGenesisHash !== old.chainIdentityGenesisHash ||
+        transition.oldPolicyId !== old.policyId ||
+        transition.oldGeneration !== old.policyGeneration ||
+        transition.createdSequence !== old.sequence || transition.createdHeight !== old.height ||
+        transition.createdPackageHash !== old.packageHash) {
+      throw new Error("checkpoint witness policy transition does not authorize current trust head");
+    }
+    const pendingTransition = checkpointWitnessPolicyTransitionSummary(transition);
+    if (old.pendingTransition) {
+      if (canonicalJson(old.pendingTransition) === canonicalJson(pendingTransition)) {
+        return structuredClone(current);
+      }
+      throw new Error("checkpoint witness policy transition divergence is rejected");
+    }
+    const { recordHash: _recordHash, ...oldPayload } = old;
+    const record = sealRecord({ ...oldPayload, pendingTransition,
+      previousRecordHash: old.recordHash, revision: old.revision + 1 });
+    return writeNextRecord(target, root, record);
+  });
+}
+
+export function activateCheckpointWitnessPolicyTransition(path, transitionValue,
+  activationPackage, { maxAgeMs = null, maxFutureSkewMs = 0, newPolicy, now = null,
+    oldPolicy } = {}) {
+  const target = canonicalTarget(path);
+  const root = pinnedRoot(target);
+  return withExclusiveLock(target, root, () => {
+    const current = loadAtTarget(target, root);
+    const old = current.record;
+    const transition = validateCheckpointWitnessPolicyTransition(transitionValue,
+      { newPolicy, oldPolicy });
+    const summary = checkpointWitnessPolicyTransitionSummary(transition);
+    if (!old.pendingTransition || canonicalJson(old.pendingTransition) !== canonicalJson(summary) ||
+        transition.oldPolicyId !== old.policyId ||
+        transition.oldGeneration !== old.policyGeneration ||
+        transition.networkId !== old.networkId ||
+        transition.chainIdentityGenesisHash !== old.chainIdentityGenesisHash) {
+      throw new Error("checkpoint witness policy transition is not the scheduled transition");
+    }
+    const verified = verifyCheckpointTrustPackage(activationPackage, {
+      expectedChainIdentityGenesisHash: old.chainIdentityGenesisHash,
+      expectedNetworkId: old.networkId, expectedPolicyId: old.policyId,
+      maxAgeMs, maxFutureSkewMs,
+      minimumCheckpointHeight: Math.max(old.height, transition.activationHeight),
+      minimumSequence: Math.max(old.sequence + 1, transition.activationSequence), now,
+    });
+    if (verified.policyGeneration !== old.policyGeneration) {
+      throw new Error("checkpoint policy activation package has wrong old generation");
+    }
+    const record = recordFromVerified(verified, {
+      chainIdentityGenesisHash: old.chainIdentityGenesisHash,
+      lastTransitionHash: transition.transitionHash, networkId: old.networkId,
+      pendingTransition: null, policyGeneration: transition.newGeneration,
+      policyId: transition.newPolicyId,
+    }, old.revision + 1, old.recordHash);
+    return writeNextRecord(target, root, record);
   });
 }
 

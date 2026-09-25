@@ -343,7 +343,8 @@ export function verifyCheckpointTrustPackage(value, {
   if (packageHash !== `sha3-256:${hashObject(payload, "CHECKPOINT_TRUST_PACKAGE_V1")}`) {
     throw new Error("checkpoint trust package hash is invalid");
   }
-  return { checkpoint, packageHash, policyId: policy.policyId, sequence: value.sequence,
+  return { checkpoint, packageHash, policyGeneration: policy.generation,
+    policyId: policy.policyId, sequence: value.sequence,
     trustedValidators: validators, viewHash, witnessOperators: attestations.map(({ operatorId }) => operatorId) };
 }
 
