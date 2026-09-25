@@ -86,6 +86,9 @@ import {
   protocolVersionAtNextHeight,
 } from "./protocol-upgrade.mjs";
 import {
+  validateProtocolReleaseHead, validateProtocolUpgradeReleaseAnchor,
+} from "./protocol-upgrade-authorization.mjs";
+import {
   consensusEncodingVersionForProtocol,
   consensusValueBytes,
 } from "./consensus-codec.mjs";
@@ -1410,6 +1413,8 @@ export class NirChain {
   #pendingEvaluatorRegistrations;
   #pendingValidatorRotation;
   #pendingProtocolUpgrade;
+  #protocolReleaseAnchor;
+  #protocolReleaseHead;
   #peerRegistry;
   #progressCommitments;
   #progressEscrows;
@@ -1439,6 +1444,7 @@ export class NirChain {
     evaluatorBondAmount = MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp = Date.now(),
     genesisProtocolVersion = PROTOCOL_VERSION,
+    protocolUpgradeReleaseAnchor = null,
   }, { supportedProtocolVersions } = {}) {
     if (
       typeof networkId !== "string" ||
@@ -1485,6 +1491,7 @@ export class NirChain {
       genesisProtocolVersion,
       networkId,
       peerRegistry,
+      protocolUpgradeReleaseAnchor,
       safetyPolicyCommitments,
       treasuryAddress,
       validators,
@@ -1578,6 +1585,14 @@ export class NirChain {
     this.#pendingEvaluatorRegistrations = new Map();
     this.#pendingValidatorRotation = null;
     this.#pendingProtocolUpgrade = null;
+    this.#protocolReleaseAnchor = protocolUpgradeReleaseAnchor === null ? null
+      : validateProtocolUpgradeReleaseAnchor(protocolUpgradeReleaseAnchor, networkId);
+    this.#protocolReleaseHead = this.#protocolReleaseAnchor === null ? null : {
+      activeSetId: this.#protocolReleaseAnchor.initialSet.setId,
+      entryHash: this.#protocolReleaseAnchor.anchorHash,
+      lastBundleHash: null,
+      sequence: 0,
+    };
     this.#progressCommitments = new Map();
     this.#progressEscrows = new Map();
     this.#progressFraudEvidence = new Map();
@@ -1631,6 +1646,9 @@ export class NirChain {
       networkId,
       peerRegistryHash: this.#peerRegistry ? peerRegistryHash(this.#peerRegistry) : "0".repeat(64),
       protocolVersion: this.#protocolVersion,
+      ...(this.#protocolReleaseAnchor === null ? {} : {
+        protocolUpgradeReleaseAnchorHash: this.#protocolReleaseAnchor.anchorHash,
+      }),
       ...(this.#protocolVersion >= RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION
         ? { recoveryStateCommitment } : {}),
       safetyPolicyCommitments: [...this.#safetyPolicies].sort(),
@@ -2345,6 +2363,9 @@ export class NirChain {
         currentVersion: chain.#protocolVersion,
       },
     );
+    chain.#protocolReleaseHead = state.protocolReleaseHead === undefined
+      ? chain.#protocolReleaseHead
+      : validateProtocolReleaseHead(state.protocolReleaseHead, chain.#protocolReleaseAnchor);
     chain.#pendingEvaluatorRegistrations = pendingEvaluatorRegistrations;
     chain.#pendingValidatorRotation = structuredClone(state.pendingValidatorRotation);
     chain.#progressCommitments = progressCommitments;
@@ -2597,6 +2618,10 @@ export class NirChain {
       pendingProtocolUpgrade:
         overrides.pendingProtocolUpgrade === undefined
           ? this.#pendingProtocolUpgrade : overrides.pendingProtocolUpgrade,
+      ...(this.#protocolReleaseHead === null && overrides.protocolReleaseHead === undefined ? {} : {
+        protocolReleaseHead: overrides.protocolReleaseHead === undefined
+          ? this.#protocolReleaseHead : overrides.protocolReleaseHead,
+      }),
       peerRegistry: overrides.peerRegistry === undefined ? this.#peerRegistry : overrides.peerRegistry,
       progressCommitments: overrides.progressCommitments ?? this.#progressCommitments,
       progressEscrows: overrides.progressEscrows ?? this.#progressEscrows,
@@ -2695,6 +2720,9 @@ export class NirChain {
         pendingBeaconRetirements: this.#pendingBeaconRetirements,
         pendingBeaconAdmissions: this.#pendingBeaconAdmissions,
         pendingProtocolUpgrade: this.#pendingProtocolUpgrade,
+        ...(this.#protocolReleaseHead === null ? {} : {
+          protocolReleaseHead: this.#protocolReleaseHead,
+        }),
         pendingValidatorRotation: this.#pendingValidatorRotation,
         peerRegistry: this.#peerRegistry,
         progressCommitments: this.#progressCommitments,
@@ -2832,6 +2860,10 @@ export class NirChain {
 
   get pendingProtocolUpgrade() {
     return this.#pendingProtocolUpgrade ? structuredClone(this.#pendingProtocolUpgrade) : null;
+  }
+
+  get protocolReleaseHead() {
+    return this.#protocolReleaseHead ? structuredClone(this.#protocolReleaseHead) : null;
   }
 
   get peerRegistryHash() {
@@ -3134,6 +3166,14 @@ export class NirChain {
       supportedVersions: this.#supportedProtocolVersions,
     });
     const protocolState = protocolTransition({
+      authorizationContext: this.#protocolReleaseAnchor === null ? null : {
+        anchor: this.#protocolReleaseAnchor,
+        baseHeight: this.height,
+        baseTipHash: this.tipHash,
+        chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
+        head: this.#protocolReleaseHead,
+        networkId: this.#networkId,
+      },
       blockVersion: nextProtocolVersion,
       currentHeight: height,
       currentVersion: this.#protocolVersion,
@@ -4553,6 +4593,8 @@ export class NirChain {
     fork.#pendingBeaconAdmissions = new Map([...this.#pendingBeaconAdmissions]
       .map(([address, admission]) => [address, { ...admission }]));
     fork.#pendingProtocolUpgrade = structuredClone(this.#pendingProtocolUpgrade);
+    fork.#protocolReleaseAnchor = structuredClone(this.#protocolReleaseAnchor);
+    fork.#protocolReleaseHead = structuredClone(this.#protocolReleaseHead);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
     fork.#progressCommitments = new Map(this.#progressCommitments);
@@ -4607,6 +4649,14 @@ export class NirChain {
     requireExactBlockSchema(block);
     if (block.height !== previous.height + 1) throw new Error("unexpected block height");
     const protocolState = protocolTransition({
+      authorizationContext: this.#protocolReleaseAnchor === null ? null : {
+        anchor: this.#protocolReleaseAnchor,
+        baseHeight: previous.height,
+        baseTipHash: previous.hash,
+        chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
+        head: this.#protocolReleaseHead,
+        networkId: this.#networkId,
+      },
       blockVersion: block.protocolVersion,
       currentHeight: block.height,
       currentVersion: this.#protocolVersion,
@@ -5694,6 +5744,9 @@ export class NirChain {
       pendingBeaconRetirements,
       pendingBeaconAdmissions,
       pendingProtocolUpgrade: protocolState.pendingUpgrade,
+      ...(protocolState.protocolReleaseHead === null ? {} : {
+        protocolReleaseHead: protocolState.protocolReleaseHead,
+      }),
       pendingValidatorRotation: pendingValidatorRotationAfter,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
@@ -5789,6 +5842,7 @@ export class NirChain {
     this.#pendingBeaconRetirements = pendingBeaconRetirements;
     this.#pendingBeaconAdmissions = pendingBeaconAdmissions;
     this.#pendingProtocolUpgrade = protocolState.pendingUpgrade;
+    this.#protocolReleaseHead = protocolState.protocolReleaseHead;
     this.#rewardedProofs = rewardedProofs;
     this.#randomnessFaults = randomnessFaults;
     this.#validatorFaults = validatorFaults;

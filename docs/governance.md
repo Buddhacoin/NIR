@@ -1,5 +1,31 @@
 # NIR ledger permanence and protocol evolution
 
+## Four different kinds of authority
+
+Repository participation, repository merge, software release, and network rule
+acceptance are deliberately separate:
+
+- **Contributors** may propose code, tests, documentation, and review evidence.
+  Opening a pull request grants no authority over the repository or a running
+  network.
+- **Maintainers** may review and merge changes under repository branch
+  protection. `CODEOWNERS` identifies sensitive paths that require designated
+  review when that protection is enabled; it is not a cryptographic permission.
+- **Release authorities** sign a specific reproducible source/artifact manifest
+  using the separately governed offline release process. A merge is not a
+  release, and a GitHub account is not a release key.
+- **Validators and node operators** independently choose which signed software
+  and protocol activation to accept. Repository owners and release signers
+  cannot by themselves rewrite finalized history, move funds, mint currency,
+  or force nodes to follow new rules.
+
+One person may temporarily hold several roles during local development, but
+that does not collapse their security boundaries. A public network requires
+independent operators, externally retained trust anchors, protected release
+keys, and repository rules that require review. GitHub settings such as branch
+protection and required Code Owner approval are operational controls configured
+outside this repository and must be verified separately before launch.
+
 ## GitHub is not the ledger
 
 GitHub distributes source code and records its development history. It is not

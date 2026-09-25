@@ -21,6 +21,9 @@ import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/pe
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import {
+  createReleaseAuthoritySet, createReleaseTransparencyAnchor,
+} from "../blockchain/offline-release-governance.mjs";
+import {
   compileGenesis,
   createGenesisApprovalEnvelope,
   createGenesisPlan,
@@ -90,6 +93,18 @@ function fixture(label = "primary", {
     manifestHash: hashObject(releasePayload, "RELEASE_MANIFEST_HASH"),
   };
   const signedRelease = signReleaseManifest(releaseManifest, releaseSigner);
+  const networkId = `nir-${label}-valueless-devnet`;
+  const releaseAuthorities = Array.from({ length: 4 }, generateWallet);
+  const protocolUpgradeReleaseAnchor = createReleaseTransparencyAnchor({
+    initialSet: createReleaseAuthoritySet({
+      authorities: releaseAuthorities.map((wallet, index) => ({
+        ...publicWallet(wallet), operatorId: `release-${index}`,
+      })),
+      generation: 1, rotationDelayEntries: 2, threshold: 3,
+    }),
+    logId: "nir-protocol-releases",
+    networkId,
+  });
   const input = {
     beaconAuthorities: role(beacons, "beacon", 9300),
     ceremonyOperators: operators.map((wallet, index) => ({
@@ -101,8 +116,9 @@ function fixture(label = "primary", {
     evaluators: role(evaluators, "evaluator", 9200),
     evaluatorBondAmount: MIN_EVALUATOR_BOND.toString(),
     genesisTimestamp: 0,
-    networkId: `nir-${label}-valueless-devnet`,
+    networkId,
     protocolVersion: PROTOCOL_VERSION,
+    protocolUpgradeReleaseAnchor,
     sourceReleaseManifestHash: releaseManifest.manifestHash,
     treasury: {
       address: multisigAddress(memberPublicKeys, 2),
@@ -167,6 +183,16 @@ test("public genesis plans are canonical, exact, public-only commitments", () =>
     { ...values.input, protocolVersion: PROTOCOL_VERSION + 1 }, values.releaseOptions,
   ),
     /unsupported/);
+  const omittedAnchor = structuredClone(values.input);
+  delete omittedAnchor.protocolUpgradeReleaseAnchor;
+  assert.throws(() => createGenesisPlan(omittedAnchor, values.releaseOptions), /schema/);
+  const wrongNetworkAnchor = structuredClone(values.input);
+  wrongNetworkAnchor.protocolUpgradeReleaseAnchor.networkId = "nir-foreign-valueless-devnet";
+  assert.throws(() => createGenesisPlan(wrongNetworkAnchor, values.releaseOptions),
+    /another network|anchor/);
+  const tamperedAnchor = structuredClone(values.input);
+  tamperedAnchor.protocolUpgradeReleaseAnchor.anchorHash = `sha3-256:${"0".repeat(64)}`;
+  assert.throws(() => createGenesisPlan(tamperedAnchor, values.releaseOptions), /anchor hash/);
   const duplicate = structuredClone(values.input);
   duplicate.ceremonyOperators[1].contribution = duplicate.ceremonyOperators[0].contribution;
   assert.throws(() => createGenesisPlan(duplicate, values.releaseOptions), /duplicated/);
@@ -252,6 +278,11 @@ test("prior public plans reject reused network ids and operator contributions", 
 
   const sameNetworkValues = fixture("second");
   sameNetworkValues.input.networkId = first.plan.networkId;
+  sameNetworkValues.input.protocolUpgradeReleaseAnchor = createReleaseTransparencyAnchor({
+    initialSet: sameNetworkValues.input.protocolUpgradeReleaseAnchor.initialSet,
+    logId: sameNetworkValues.input.protocolUpgradeReleaseAnchor.logId,
+    networkId: first.plan.networkId,
+  });
   const sameNetwork = approved(sameNetworkValues);
   assert.throws(() => verifyGenesisCeremony(
     sameNetwork.plan, sameNetwork.envelope, {
@@ -282,6 +313,8 @@ test("compile emits the existing deterministic genesis config and round-trips it
   assert.equal(first.genesis.peerRegistry.signatures.length, 3);
   assert.equal(first.genesis.peerRegistry.peers.length, 4);
   assert.equal("protocolVersion" in first.genesis, false);
+  assert.deepEqual(first.genesis.protocolUpgradeReleaseAnchor,
+    plan.protocolUpgradeReleaseAnchor);
   assert.equal(JSON.stringify(first.genesis).includes("endpoint"), false);
   assert.equal(JSON.stringify(first.genesis).includes("contribution"), false);
   const chain = new NirChain(first.genesis);

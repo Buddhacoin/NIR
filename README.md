@@ -48,6 +48,7 @@ that independence.
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
 | Propose code or documentation safely | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Understand contributor, merge, release, and chain authority | [`docs/governance.md`](docs/governance.md) |
 | Review launch requirements and limitations | [`docs/launch-readiness.md`](docs/launch-readiness.md) and [`docs/public-testnet-gates.md`](docs/public-testnet-gates.md) |
 | Inspect the ordered roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
 

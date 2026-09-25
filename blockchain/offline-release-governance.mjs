@@ -311,6 +311,53 @@ function applyEntry(stateValue, entryValue) {
     sequence: proposal.sequence };
 }
 
+// Verify one release entry against an already trusted authority set and an
+// already trusted hash-linked log head. This deliberately does not accept an
+// authority set from the entry itself: callers must obtain the set and head
+// from genesis or another authenticated transition.
+export function validateReleaseAuthorizationEntry(entryValue, {
+  authoritySet: authoritySetValue,
+  entryHash,
+  lastBundleHash,
+  logId,
+  networkId,
+  sequence,
+} = {}) {
+  const authoritySet = validateReleaseAuthoritySet(authoritySetValue);
+  if (!Number.isSafeInteger(sequence) || sequence < 0 || !HASH.test(entryHash ?? "") ||
+      !(lastBundleHash === null || HASH.test(lastBundleHash ?? "")) ||
+      !LOG_ID.test(logId ?? "") || !NETWORK.test(networkId ?? "")) {
+    throw new Error("trusted release governance head is invalid");
+  }
+  if (entryValue?.type !== "release" || entryValue?.sequence !== sequence + 1 ||
+      entryValue?.previousEntryHash !== entryHash || entryValue?.logId !== logId ||
+      entryValue?.networkId !== networkId || entryValue?.activeSetId !== authoritySet.setId) {
+    throw new Error("release authorization entry does not extend the trusted head");
+  }
+  const state = {
+    activationSet: null,
+    activeSet: authoritySet,
+    anchorHash: entryHash,
+    entryHash,
+    lastBundleHash,
+    logId,
+    networkId,
+    pendingChange: null,
+    sequence,
+  };
+  const next = applyEntry(state, entryValue);
+  return {
+    entry: structuredClone(entryValue),
+    head: {
+      activeSetId: authoritySet.setId,
+      entryHash: next.entryHash,
+      lastBundleHash: next.lastBundleHash,
+      sequence: next.sequence,
+    },
+    release: structuredClone(entryValue.payload),
+  };
+}
+
 export function createReleaseProposal({ anchor: anchorValue, state: stateValue, bundle, nextSet, reason }) {
   const anchor = validateReleaseTransparencyAnchor(anchorValue);
   const state = applyPending(stateValue ?? initialState(anchor), (stateValue?.sequence ?? 0) + 1);

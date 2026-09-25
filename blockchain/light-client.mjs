@@ -32,6 +32,9 @@ import {
   createValidatorRecoveryPeerRegistry, peerRegistryHash,
 } from "./peer-registry.mjs";
 import { advanceValidatorRecoveryTrustStore } from "./validator-recovery-trust-store.mjs";
+import {
+  validateProtocolReleaseHead, validateProtocolUpgradeReleaseAnchor,
+} from "./protocol-upgrade-authorization.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 export const MAX_FINALITY_PROOFS = 512;
@@ -113,6 +116,7 @@ function verifyVotes(proof, validators, previousValidators = null) {
 }
 
 export function validateFinalityHeader(header, hash, expectedNetworkId, {
+  authorizationContext = null,
   supportedProtocolVersions = SUPPORTED_PROTOCOL_VERSIONS,
 } = {}) {
   const supported = normalizeSupportedProtocolVersions(supportedProtocolVersions);
@@ -151,6 +155,7 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
   if (header.protocolUpgrade !== null) {
     try {
       normalizeProtocolUpgrade(header.protocolUpgrade, {
+        authorizationContext,
         currentHeight: header.height,
         currentVersion: header.protocolVersion,
       });
@@ -159,7 +164,7 @@ export function validateFinalityHeader(header, hash, expectedNetworkId, {
   return header;
 }
 
-function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
+function validateProof(proof, expectedNetworkId, supportedProtocolVersions, authorizationContext = null) {
   const expectedFormat = proof?.header?.protocolVersion >=
     CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
     ? "nir-finality-proof-v5"
@@ -175,6 +180,7 @@ function validateProof(proof, expectedNetworkId, supportedProtocolVersions) {
     throw new Error("light client finality proof is invalid");
   }
   return validateFinalityHeader(proof.header, proof.hash, expectedNetworkId, {
+    authorizationContext,
     supportedProtocolVersions,
   });
 }
@@ -184,6 +190,7 @@ export function verifyFinalityProofChain(proofs, {
   expectedChainIdentityGenesisHash = null,
   expectedNetworkId,
   handoffs = [],
+  protocolUpgradeReleaseAnchor = null,
   supportedProtocolVersions = SUPPORTED_PROTOCOL_VERSIONS,
   trustedValidators,
 } = {}) {
@@ -201,6 +208,27 @@ export function verifyFinalityProofChain(proofs, {
   let previousTimestamp = null;
   let protocolVersion = checkpoint.protocolVersion ?? PROTOCOL_VERSION;
   let pendingProtocolUpgrade = checkpoint.pendingProtocolUpgrade ?? null;
+  const releaseAnchor = protocolUpgradeReleaseAnchor === null ? null
+    : validateProtocolUpgradeReleaseAnchor(protocolUpgradeReleaseAnchor, expectedNetworkId);
+  if (releaseAnchor !== null && !HASH.test(expectedChainIdentityGenesisHash ?? "")) {
+    throw new Error("authorized protocol upgrades require a pinned chain genesis identity");
+  }
+  let protocolReleaseHead;
+  if (releaseAnchor === null) {
+    if (checkpoint.protocolReleaseHead !== undefined && checkpoint.protocolReleaseHead !== null) {
+      throw new Error("protocol upgrade release head requires its pinned release anchor");
+    }
+    protocolReleaseHead = null;
+  } else {
+    protocolReleaseHead = checkpoint.protocolReleaseHead === undefined
+      ? {
+        activeSetId: releaseAnchor.initialSet.setId,
+        entryHash: releaseAnchor.anchorHash,
+        lastBundleHash: null,
+        sequence: 0,
+      }
+      : validateProtocolReleaseHead(checkpoint.protocolReleaseHead, releaseAnchor);
+  }
   let handoffIndex = 0;
   while (handoffIndex < handoffs.length && handoffs[handoffIndex].activationHeight <= checkpoint.height) {
     const advanced = verifyValidatorHandoff(handoffs[handoffIndex], {
@@ -216,7 +244,17 @@ export function verifyFinalityProofChain(proofs, {
     throw new Error("light client checkpoint validator set does not match handoff history");
   }
   for (const proof of proofs) {
-    const header = validateProof(proof, expectedNetworkId, supportedProtocolVersions);
+    const authorizationContext = releaseAnchor === null ? null : {
+      anchor: releaseAnchor,
+      baseHeight: previousHeight,
+      baseTipHash: previousHash,
+      chainIdentityGenesisHash: expectedChainIdentityGenesisHash ??
+        proof.header.chainIdentityGenesisHash,
+      head: protocolReleaseHead,
+      networkId: expectedNetworkId,
+    };
+    const header = validateProof(proof, expectedNetworkId, supportedProtocolVersions,
+      authorizationContext);
     if (expectedChainIdentityGenesisHash !== null &&
         header.chainIdentityGenesisHash !== expectedChainIdentityGenesisHash) {
       throw new Error("light client proof belongs to another chain identity");
@@ -226,6 +264,7 @@ export function verifyFinalityProofChain(proofs, {
       throw new Error("light client finality chain is discontinuous");
     }
     const protocolState = protocolTransition({
+      authorizationContext,
       blockVersion: header.protocolVersion,
       currentHeight: header.height,
       currentVersion: protocolVersion,
@@ -235,6 +274,7 @@ export function verifyFinalityProofChain(proofs, {
     });
     protocolVersion = protocolState.protocolVersion;
     pendingProtocolUpgrade = protocolState.pendingUpgrade;
+    protocolReleaseHead = protocolState.protocolReleaseHead;
     let oldSet = null;
     const handoff = handoffs[handoffIndex];
     if (handoff && handoff.activationHeight === header.height) {
@@ -268,6 +308,7 @@ export function verifyFinalityProofChain(proofs, {
       ? { chainIdentityGenesisHash: last.header.chainIdentityGenesisHash } : {}),
     networkId: expectedNetworkId,
     pendingProtocolUpgrade,
+    ...(protocolReleaseHead === null ? {} : { protocolReleaseHead }),
     protocolVersion,
     recoveryStateCommitment: last.header.recoveryStateCommitment,
     stateRoot: last.header.stateRoot,

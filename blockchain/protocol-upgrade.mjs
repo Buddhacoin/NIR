@@ -3,8 +3,11 @@ import {
   PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "./constants.mjs";
+import { validateProtocolUpgradeAuthorization } from "./protocol-upgrade-authorization.mjs";
 
-const FORMAT = "nir-protocol-upgrade-v1";
+const LEGACY_FORMAT = "nir-protocol-upgrade-v1";
+const AUTHORIZED_FORMAT = "nir-protocol-upgrade-v2";
+export const AUTHORIZED_PROTOCOL_UPGRADE_VERSION = 29;
 const MAX_VERSION = 2_147_483_647;
 
 export function normalizeSupportedProtocolVersions(
@@ -22,31 +25,58 @@ export function normalizeSupportedProtocolVersions(
   return ordered;
 }
 
-export function normalizeProtocolUpgrade(value, {
+function normalizeProtocolUpgradeWithContext(value, {
   currentHeight,
   currentVersion,
   pendingUpgrade = null,
+  authorizationContext = null,
 } = {}) {
   if (pendingUpgrade !== null) throw new Error("a protocol upgrade is already pending");
-  if (!value || Object.keys(value).sort().join(",") !== "activationHeight,format,version" ||
-      value.format !== FORMAT || !Number.isSafeInteger(currentHeight) || currentHeight < 1 ||
+  const authorized = value?.version >= AUTHORIZED_PROTOCOL_UPGRADE_VERSION;
+  const keys = authorized ? "activationHeight,authorization,format,version" :
+    "activationHeight,format,version";
+  if (!value || Object.keys(value).sort().join(",") !== keys ||
+      value.format !== (authorized ? AUTHORIZED_FORMAT : LEGACY_FORMAT) ||
+      !Number.isSafeInteger(currentHeight) || currentHeight < 1 ||
       !Number.isSafeInteger(currentVersion) || currentVersion < PROTOCOL_VERSION ||
       !Number.isSafeInteger(value.version) || value.version !== currentVersion + 1 ||
       value.version > MAX_VERSION || !Number.isSafeInteger(value.activationHeight) ||
       value.activationHeight < currentHeight + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS) {
     throw new Error("protocol upgrade schedule is invalid");
   }
-  return {
+  let nextReleaseHead = authorizationContext?.head ?? null;
+  let authorization;
+  if (authorized) {
+    if (!authorizationContext) throw new Error("protocol upgrade authorization context is required");
+    const verified = validateProtocolUpgradeAuthorization(value.authorization, {
+      ...authorizationContext,
+      activationHeight: value.activationHeight,
+      currentVersion,
+      targetVersion: value.version,
+    });
+    authorization = verified.authorization;
+    nextReleaseHead = verified.nextHead;
+  }
+  return { schedule: {
     activationHeight: value.activationHeight,
-    format: FORMAT,
+    ...(authorized ? { authorization } : {}),
+    format: authorized ? AUTHORIZED_FORMAT : LEGACY_FORMAT,
     version: value.version,
-  };
+  }, nextReleaseHead };
+}
+
+export function normalizeProtocolUpgrade(value, options = {}) {
+  return normalizeProtocolUpgradeWithContext(value, options).schedule;
 }
 
 export function normalizePendingProtocolUpgrade(value, { currentHeight, currentVersion } = {}) {
   if (value === null) return null;
-  if (!value || Object.keys(value).sort().join(",") !== "activationHeight,format,version" ||
-      value.format !== FORMAT || !Number.isSafeInteger(currentHeight) || currentHeight < 0 ||
+  const authorized = value?.version >= AUTHORIZED_PROTOCOL_UPGRADE_VERSION;
+  const keys = authorized ? "activationHeight,authorization,format,version" :
+    "activationHeight,format,version";
+  if (!value || Object.keys(value).sort().join(",") !== keys ||
+      value.format !== (authorized ? AUTHORIZED_FORMAT : LEGACY_FORMAT) ||
+      !Number.isSafeInteger(currentHeight) || currentHeight < 0 ||
       !Number.isSafeInteger(currentVersion) || currentVersion < PROTOCOL_VERSION ||
       !Number.isSafeInteger(value.version) || value.version !== currentVersion + 1 ||
       value.version > MAX_VERSION || !Number.isSafeInteger(value.activationHeight) ||
@@ -62,6 +92,7 @@ export function protocolTransition({
   currentVersion,
   pendingUpgrade = null,
   proposedUpgrade = null,
+  authorizationContext = null,
   supportedVersions = SUPPORTED_PROTOCOL_VERSIONS,
 } = {}) {
   const supported = normalizeSupportedProtocolVersions(supportedVersions);
@@ -85,15 +116,21 @@ export function protocolTransition({
     throw new Error("block protocol version does not match its activation height");
   }
   if (proposedUpgrade !== null) {
-    pendingAfter = normalizeProtocolUpgrade(proposedUpgrade, {
+    const normalized = normalizeProtocolUpgradeWithContext(proposedUpgrade, {
+      authorizationContext,
       currentHeight,
       currentVersion: activeVersion,
       pendingUpgrade: pendingAfter,
     });
+    pendingAfter = normalized.schedule;
+    authorizationContext = authorizationContext === null ? null : {
+      ...authorizationContext, head: normalized.nextReleaseHead,
+    };
   }
   return {
     pendingUpgrade: pendingAfter,
     protocolVersion: activeVersion,
+    protocolReleaseHead: authorizationContext?.head ?? null,
   };
 }
 

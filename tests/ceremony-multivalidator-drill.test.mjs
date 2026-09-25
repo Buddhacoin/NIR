@@ -28,6 +28,9 @@ import {
 import { requestJson } from "../blockchain/http-client.mjs";
 import { createPeerRequest, verifyPeerResponse } from "../blockchain/peer-auth.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
+import {
+  createReleaseAuthoritySet, createReleaseTransparencyAnchor,
+} from "../blockchain/offline-release-governance.mjs";
 import { encryptWallet } from "../blockchain/vault.mjs";
 import {
   proveValidatorPrepareEquivocation,
@@ -91,6 +94,16 @@ async function fixture(root) {
   const releaseSigner = generateWallet();
   const release = signedRelease(releaseSigner);
   const releaseOptions = { signedRelease: release, trustedAddress: releaseSigner.address };
+  const releaseAuthorities = Array.from({ length: 4 }, generateWallet);
+  const protocolUpgradeReleaseAnchor = createReleaseTransparencyAnchor({
+    initialSet: createReleaseAuthoritySet({
+      authorities: releaseAuthorities.map((wallet, index) => ({
+        ...publicWallet(wallet), operatorId: `release-${index}`,
+      })), generation: 1, rotationDelayEntries: 2, threshold: 3,
+    }),
+    logId: "nir-protocol-releases",
+    networkId: "nir-multivalidator-ceremony-drill",
+  });
   const plan = createGenesisPlan({
     beaconAuthorities: publicRoles(beacons, "beacon", 19300),
     ceremonyOperators: ceremonyOperators.map((wallet, index) => ({
@@ -102,6 +115,7 @@ async function fixture(root) {
     genesisTimestamp: 0,
     networkId: "nir-multivalidator-ceremony-drill",
     protocolVersion: PROTOCOL_VERSION,
+    protocolUpgradeReleaseAnchor,
     sourceReleaseManifestHash: release.manifest.manifestHash,
     treasury: {
       address: multisigAddress(guardians.map(({ publicKey }) => publicKey), 2),

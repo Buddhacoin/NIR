@@ -14,6 +14,7 @@ import { addressFromPublicKey, canonicalJson, hashObject, signObject, verifyObje
 import { EMPTY_PEER_REGISTRY_HASH, peerRegistryHash } from "./peer-registry.mjs";
 import { verifySignedRelease } from "./release-manifest.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
+import { validateProtocolUpgradeReleaseAnchor } from "./protocol-upgrade-authorization.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
@@ -21,6 +22,7 @@ const OPERATOR_ID = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 const PLAN_FIELDS = [
   "beaconAuthorities", "ceremonyOperators", "commitment", "format", "genesisTimestamp",
   "networkId", "protocolVersion", "purpose", "sourceReleaseManifestHash", "treasury",
+  "protocolUpgradeReleaseAnchor",
   "evaluatorBondAmount",
   "validators", "evaluators", "peerRegistryCommitment", "sourceRelease",
   "validatorSetCommitment",
@@ -262,6 +264,9 @@ function planPayload(input, withHeader, release) {
     throw new Error("genesis plan does not match the trusted signed source release");
   }
   const validators = roleList(input.validators, "validator", true);
+  const protocolUpgradeReleaseAnchor = validateProtocolUpgradeReleaseAnchor(
+    input.protocolUpgradeReleaseAnchor, input.networkId,
+  );
   const evaluators = roleList(input.evaluators, "evaluator");
   const beaconAuthorities = roleList(input.beaconAuthorities, "beacon authority");
   const occupiedAddresses = [...validators, ...evaluators, ...beaconAuthorities]
@@ -297,6 +302,7 @@ function planPayload(input, withHeader, release) {
     genesisTimestamp: input.genesisTimestamp,
     networkId: input.networkId,
     protocolVersion: input.protocolVersion,
+    protocolUpgradeReleaseAnchor,
     purpose: PURPOSE,
     peerRegistryCommitment,
     sourceReleaseManifestHash: input.sourceReleaseManifestHash,
@@ -462,6 +468,7 @@ export function compileGenesis(planValue, envelope, options = {}) {
       signatures: envelope.peerRegistryApprovals.map((approval) => structuredClone(approval))
         .sort((left, right) => left.validator.localeCompare(right.validator)),
     },
+    protocolUpgradeReleaseAnchor: structuredClone(plan.protocolUpgradeReleaseAnchor),
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: plan.treasury.address,
     validators: plan.validators.map(({

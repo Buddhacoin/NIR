@@ -116,6 +116,7 @@ function fixture() {
     evaluators: role(evaluators, "evaluator", 9200),
     evaluatorBondAmount: MIN_EVALUATOR_BOND.toString(), genesisTimestamp: 0, networkId,
     protocolVersion: PROTOCOL_VERSION, sourceReleaseManifestHash: sourceManifest.manifestHash,
+    protocolUpgradeReleaseAnchor: releaseAnchor,
     treasury: {
       address: multisigAddress(guardians.map(({ publicKey }) => publicKey), 2),
       algorithm: "ml-dsa-65-multisig", memberPublicKeys: guardians.map(({ publicKey }) => publicKey),

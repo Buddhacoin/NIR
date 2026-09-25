@@ -13,6 +13,9 @@ The input is public JSON containing:
 
 - network ID, genesis timestamp, current protocol version, and signed source-release
   manifest hash;
+- `protocolUpgradeReleaseAnchor`, the canonical release-transparency anchor for
+  the same network. It pins the log ID and initial threshold release-authority
+  set that must authorize every protocol version from v29 onward;
 - four or more disjoint validator, evaluator, and beacon public ML-DSA-65 identities,
   operator IDs, and HTTPS endpoints (loopback HTTP is allowed for local drills).
   Every validator also supplies a separate public transport identity and the required
@@ -46,6 +49,9 @@ signature and manifest hash are reverified each time. The plan commits exact pub
 provenance—manifest hash, signer address, source revision, and strict
 `major.minor.patch` release version—so another otherwise-valid release cannot be
 substituted.
+The upgrade anchor is part of the same canonical plan commitment and every ceremony
+signature. Omitting it, changing its authority set or log, supplying a self-chosen
+replacement during compilation, or using an anchor for another network is rejected.
 
 Each listed ceremony operator reviews the same canonical plan and signs it offline
 using an existing encrypted NIR vault:
@@ -161,7 +167,8 @@ npm run genesis:ceremony -- compile \
 ```
 
 Compilation emits the existing `NirChain` genesis configuration, including the
-quorum-signed epoch-zero `peerRegistry` and exact evaluator-bond bootstrap,
+quorum-signed epoch-zero `peerRegistry`, exact evaluator-bond bootstrap, and the
+exact `protocolUpgradeReleaseAnchor` approved by the ceremony,
 constructs the chain twice through canonical
 JSON, and requires the genesis block hash and validator/topology commitments to
 round-trip exactly. Evaluator and beacon endpoints and ceremony entropy remain bound

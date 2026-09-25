@@ -1,0 +1,63 @@
+# Repository review ownership. GitHub branch protection must separately require
+# Code Owner approval; this file does not grant merge, release, or network power.
+
+# Consensus, canonical encodings, state transitions, validators, and protocol inventory.
+/blockchain/                                   @Buddhacoin
+/nir/                                          @Buddhacoin
+/blockchain/chain.mjs                         @Buddhacoin
+/blockchain/consensus-*.mjs                  @Buddhacoin
+/blockchain/light-client.mjs                 @Buddhacoin
+/blockchain/transaction-tree.mjs             @Buddhacoin
+/blockchain/transfer-state-transition.mjs    @Buddhacoin
+/blockchain/state-snapshot.mjs               @Buddhacoin
+/blockchain/validator-*.mjs                  @Buddhacoin
+/blockchain/protocol-*.mjs                   @Buddhacoin
+/nir/consensus_codec.py                      @Buddhacoin
+/nir/assignment_chain_proof.py               @Buddhacoin
+/rust/nir-consensus-codec/                   @Buddhacoin
+/formal/                                     @Buddhacoin
+/protocol/                                   @Buddhacoin
+
+# Monetary policy, issuance, fees, staking, bonds, rewards, burns, and allocations.
+/blockchain/constants.mjs                    @Buddhacoin
+/blockchain/safety-bounty.mjs                @Buddhacoin
+/blockchain/validator-staking.mjs            @Buddhacoin
+/docs/value.md                               @Buddhacoin
+/docs/staking.md                             @Buddhacoin
+/docs/mining.md                              @Buddhacoin
+/docs/governance.md                          @Buddhacoin
+
+# Cryptography, key custody, trust anchors, certificates, and signing paths.
+/blockchain/crypto.mjs                       @Buddhacoin
+/blockchain/*auth*.mjs                       @Buddhacoin
+/blockchain/*certificate*.mjs                @Buddhacoin
+/blockchain/*trust*.mjs                      @Buddhacoin
+/blockchain/*vault*.mjs                      @Buddhacoin
+/blockchain/*signer*.mjs                     @Buddhacoin
+/blockchain/checkpoint-*.mjs                 @Buddhacoin
+/blockchain/pq-verify-cli.mjs                @Buddhacoin
+/SECURITY.md                                 @Buddhacoin
+
+# Release production, CI, manifests, launch evidence, and reproducible packaging.
+/.github/CODEOWNERS                          @Buddhacoin
+/.github/pull_request_template.md            @Buddhacoin
+/.github/workflows/                          @Buddhacoin
+/CONTRIBUTING.md                             @Buddhacoin
+/package.json                                @Buddhacoin
+/package-lock.json                           @Buddhacoin
+/blockchain/*release*.mjs                    @Buddhacoin
+/blockchain/production-*.mjs                 @Buddhacoin
+/blockchain/launch-*.mjs                     @Buddhacoin
+/docs/releases.md                            @Buddhacoin
+/docs/offline-release-governance.md          @Buddhacoin
+/docs/public-testnet-gates.md                @Buddhacoin
+/docs/launch-readiness.md                    @Buddhacoin
+
+# Wallet UI, wallet storage/bridges, payment requests, and transaction review.
+/wallet-ui/                                  @Buddhacoin
+/blockchain/wallet-*.mjs                     @Buddhacoin
+/blockchain/production-wallet-*.mjs          @Buddhacoin
+/blockchain/payment-request.mjs              @Buddhacoin
+/blockchain/transaction-simulation.mjs       @Buddhacoin
+/docs/wallet*.md                             @Buddhacoin
+/docs/payment-requests.md                    @Buddhacoin

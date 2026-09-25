@@ -28,6 +28,9 @@ import {
   assembleCeremonyRegistryAnchor, signCeremonyRegistryAnchor,
 } from "../blockchain/genesis-ceremony-anchor.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
+import {
+  createReleaseAuthoritySet, createReleaseTransparencyAnchor,
+} from "../blockchain/offline-release-governance.mjs";
 import { encryptWallet } from "../blockchain/vault.mjs";
 import { createPeerRequest } from "../blockchain/peer-auth.mjs";
 import { requestJson } from "../blockchain/http-client.mjs";
@@ -125,6 +128,16 @@ function fixture(root) {
   };
   const signedRelease = signReleaseManifest(releaseManifest, releaseSigner);
   const releaseOptions = { signedRelease, trustedAddress: releaseSigner.address };
+  const releaseAuthorities = Array.from({ length: 4 }, generateWallet);
+  const protocolUpgradeReleaseAnchor = createReleaseTransparencyAnchor({
+    initialSet: createReleaseAuthoritySet({
+      authorities: releaseAuthorities.map((wallet, index) => ({
+        ...publicWallet(wallet), operatorId: `release-${index}`,
+      })), generation: 1, rotationDelayEntries: 2, threshold: 3,
+    }),
+    logId: "nir-protocol-releases",
+    networkId: "nir-validator-onboarding-devnet",
+  });
   const plan = createGenesisPlan({
     beaconAuthorities: roles(beacons, "beacon", 9300),
     ceremonyOperators: operators.map((wallet, index) => ({
@@ -136,6 +149,7 @@ function fixture(root) {
     genesisTimestamp: 0,
     networkId: "nir-validator-onboarding-devnet",
     protocolVersion: PROTOCOL_VERSION,
+    protocolUpgradeReleaseAnchor,
     sourceReleaseManifestHash: releaseManifest.manifestHash,
     treasury: {
       address: multisigAddress(guardians.map(({ publicKey }) => publicKey), 2),
