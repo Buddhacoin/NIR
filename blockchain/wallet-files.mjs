@@ -61,7 +61,7 @@ function readPrivateJson(path, description) {
   const target = resolve(path);
   const activation = lstatSync(target);
   if (activation.isSymbolicLink() && activation.nlink !== 1) {
-    throw new Error(`${description} activation is unsafe`);
+    throw new Error(`${description} is invalid or unsafe`);
   }
   let source = target;
   let link = null;
