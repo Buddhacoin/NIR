@@ -47,7 +47,9 @@ status to match the plan. Plan creation alone does **not** claim live reachabili
 
 - Bonding or selection does not automatically place a validator into the active
   finality set; a separately authorized validator rotation is still required.
-- Validator exit and bond withdrawal are not implemented yet.
+- Protocol v30 implements testnet-gated validator exit and bond withdrawal with
+  a provisional 64-block cooldown. It is not yet production-audited or a final
+  mainnet economic parameter.
 - Certificate bootstrap requires quorum responses from already trusted,
   independent peers; listing them in a plan does not prove their independence.
 - Host hardening, external monitoring, supervisor credential pipes, independent

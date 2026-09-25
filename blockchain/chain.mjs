@@ -41,6 +41,8 @@ import {
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
   TRANSFER_CREDIT_STAKE_UNIT,
+  VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION,
+  VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
 } from "./constants.mjs";
@@ -502,6 +504,12 @@ const TRANSACTION_SCHEMAS = Object.freeze({
     "algorithm", "amount", "fee", "networkId", "nonce", "operatorId", "publicKey",
     "sender", "signature", "type",
   ]],
+  "validator-exit-request": [[
+    "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
+  ]],
+  "validator-withdrawal-claim": [[
+    "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
+  ]],
   transfer: [
     SINGLE_TRANSFER_FIELDS,
     [...SINGLE_TRANSFER_FIELDS, "resource"],
@@ -783,6 +791,28 @@ export function createValidatorBond({
   };
   if (operatorId !== undefined) transaction.operatorId = operatorId;
   return { ...transaction, signature: signObject(transaction, wallet, "VALIDATOR_BOND") };
+}
+
+export function createValidatorExitRequest({
+  wallet, networkId, nonce, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, type: "validator-exit-request",
+  };
+  return { ...transaction,
+    signature: signObject(transaction, wallet, "VALIDATOR_EXIT_REQUEST_V1") };
+}
+
+export function createValidatorWithdrawalClaim({
+  wallet, networkId, nonce, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, type: "validator-withdrawal-claim",
+  };
+  return { ...transaction,
+    signature: signObject(transaction, wallet, "VALIDATOR_WITHDRAWAL_CLAIM_V1") };
 }
 
 export function createEvaluatorBond({
@@ -1439,6 +1469,8 @@ export class NirChain {
   #validatorRecoveryPlan;
   #registeredValidators;
   #recentValidatorTransition;
+  #pendingValidatorExits;
+  #retiredValidators;
   #pendingEvaluatorRegistrations;
   #pendingValidatorRotation;
   #pendingProtocolUpgrade;
@@ -1612,6 +1644,8 @@ export class NirChain {
     this.#validatorRecoveryPlan = null;
     this.#registeredValidators = new Map(this.#validators);
     this.#recentValidatorTransition = null;
+    this.#pendingValidatorExits = new Map();
+    this.#retiredValidators = new Map();
     this.#pendingEvaluatorRegistrations = new Map();
     this.#pendingValidatorRotation = null;
     this.#pendingProtocolUpgrade = null;
@@ -1723,6 +1757,8 @@ export class NirChain {
       snapshot?.state?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION;
     const snapshotHasHistoricalValidatorEvidence =
       snapshot?.state?.protocolVersion >= HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION;
+    const snapshotHasValidatorExitLifecycle =
+      snapshot?.state?.protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
@@ -2207,6 +2243,73 @@ export class NirChain {
     const registeredValidators = snapshotEntries(state.registeredValidators, "registered validators");
     const validatorMembers = operatorRegistry([...validators.values()], "validator snapshot");
     const registeredMembers = operatorRegistry([...registeredValidators.values()], "registered validator snapshot");
+    if (snapshotHasValidatorExitLifecycle !==
+        (Object.hasOwn(state, "pendingValidatorExits") &&
+         Object.hasOwn(state, "retiredValidators")) ||
+        (!snapshotHasValidatorExitLifecycle &&
+         (Object.hasOwn(state, "pendingValidatorExits") ||
+          Object.hasOwn(state, "retiredValidators")))) {
+      throw new Error("validator exit lifecycle snapshot schema is invalid");
+    }
+    const pendingValidatorExits = snapshotHasValidatorExitLifecycle
+      ? snapshotEntries(state.pendingValidatorExits, "pending validator exits") : new Map();
+    const retiredValidators = snapshotHasValidatorExitLifecycle
+      ? snapshotEntries(state.retiredValidators, "retired validators") : new Map();
+    for (const [address, pending] of pendingValidatorExits) {
+      if (!registeredMembers.has(address) || !pending || pending.address !== address ||
+          Object.keys(pending).sort().join("\0") !==
+            "address\0exclusionHeight\0requestedHeight\0unlockHeight" ||
+          !Number.isSafeInteger(pending.requestedHeight) || pending.requestedHeight < 1 ||
+          pending.requestedHeight > snapshot.height ||
+          !((pending.exclusionHeight === null && pending.unlockHeight === null) ||
+            (Number.isSafeInteger(pending.exclusionHeight) &&
+             pending.exclusionHeight >= pending.requestedHeight &&
+             pending.unlockHeight === pending.exclusionHeight +
+               VALIDATOR_WITHDRAWAL_DELAY_BLOCKS)) ||
+          (pending.exclusionHeight !== null && pending.exclusionHeight > snapshot.height)) {
+        throw new Error("pending validator exit snapshot is invalid");
+      }
+      if ((pending.exclusionHeight === null) !== validatorMembers.has(address)) {
+        throw new Error("pending validator exit membership is inconsistent");
+      }
+      if (!validatorBonds.has(address) && !disabledValidators.has(address)) {
+        throw new Error("zero-bond pending validator exit is not disabled");
+      }
+      if ([...candidateBonds.values()].some((candidate) =>
+        candidate.purpose === "safety" && candidate.randomnessCommits.has(address) &&
+        !candidate.randomnessReveals.has(address))) {
+        throw new Error("pending validator exit has an unresolved randomness obligation");
+      }
+    }
+    const validatorRetiredOperators = new Set();
+    const validatorRetiredPublicKeys = new Set();
+    for (const [address, retired] of retiredValidators) {
+      if (!retired || retired.address !== address ||
+          Object.keys(retired).sort().join("\0") !==
+            "address\0algorithm\0operatorId\0publicKey\0retiredHeight" ||
+          retired.algorithm !== SIGNATURE_ALGORITHM ||
+          addressFromPublicKey(retired.publicKey) !== address ||
+          !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(retired.operatorId ?? "") ||
+          !Number.isSafeInteger(retired.retiredHeight) || retired.retiredHeight < 1 ||
+          retired.retiredHeight > snapshot.height || registeredMembers.has(address) ||
+          validatorBonds.has(address) || disabledValidators.has(address) ||
+          validatorRetiredOperators.has(retired.operatorId) ||
+          validatorRetiredPublicKeys.has(retired.publicKey)) {
+        throw new Error("retired validator snapshot is invalid");
+      }
+      validatorRetiredOperators.add(retired.operatorId);
+      validatorRetiredPublicKeys.add(retired.publicKey);
+    }
+    const liveProtocolIdentities = [
+      ...registeredMembers.values(), ...evaluators.values(),
+      ...registeredBeaconAuthorities.values(), ...retiredBeaconAuthorities.values(),
+      ...pendingBeaconAdmissions.values(), ...pendingEvaluatorRegistrations.values(),
+    ];
+    if ([...retiredValidators.values()].some((retired) =>
+      liveProtocolIdentities.some((member) => member.address === retired.address ||
+        member.operatorId === retired.operatorId || member.publicKey === retired.publicKey))) {
+      throw new Error("retired validator identity is reused by a protocol role");
+    }
     if (snapshotHasHistoricalValidatorEvidence !==
         Object.hasOwn(state, "recentValidatorTransition")) {
       throw new Error("historical validator evidence snapshot schema is invalid");
@@ -2228,6 +2331,14 @@ export class NirChain {
         peerRegistryRequired: state.peerRegistry !== null,
         registeredValidators: registeredMembers,
       });
+    if (validatorRecoveryPlan?.reserves.some(({ address }) =>
+      pendingValidatorExits.has(address) || retiredValidators.has(address))) {
+      throw new Error("validator recovery plan contains an exiting or retired reserve");
+    }
+    if (state.pendingValidatorRotation?.validators?.some(({ address }) =>
+      pendingValidatorExits.has(address) || retiredValidators.has(address))) {
+      throw new Error("validator rotation contains an exiting or retired validator");
+    }
     if (validatorRecoveryPlan && validatorRecoveryPlan.activationHeight > snapshot.height) {
       // A plan may be pending eligibility; activationHeight is a lower bound, not an expiry.
     }
@@ -2414,6 +2525,8 @@ export class NirChain {
     chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
     chain.#registeredValidators = registeredMembers;
     chain.#recentValidatorTransition = recentValidatorTransition;
+    chain.#pendingValidatorExits = pendingValidatorExits;
+    chain.#retiredValidators = retiredValidators;
     chain.#rewardEpoch = snapshotInteger(state.rewardEpoch, "reward epoch");
     if (!Array.isArray(state.rewardedProofs) || !Array.isArray(state.safetyEvidence)) {
       throw new Error("snapshot replay-protection sets are invalid");
@@ -2655,6 +2768,11 @@ export class NirChain {
       pendingValidatorRotation:
         overrides.pendingValidatorRotation === undefined
           ? this.#pendingValidatorRotation : overrides.pendingValidatorRotation,
+      ...(protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
+        pendingValidatorExits:
+          overrides.pendingValidatorExits ?? this.#pendingValidatorExits,
+        retiredValidators: overrides.retiredValidators ?? this.#retiredValidators,
+      } : {}),
       pendingProtocolUpgrade:
         overrides.pendingProtocolUpgrade === undefined
           ? this.#pendingProtocolUpgrade : overrides.pendingProtocolUpgrade,
@@ -2768,6 +2886,10 @@ export class NirChain {
           protocolReleaseHead: this.#protocolReleaseHead,
         }),
         pendingValidatorRotation: this.#pendingValidatorRotation,
+        ...(this.#protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
+          pendingValidatorExits: this.#pendingValidatorExits,
+          retiredValidators: this.#retiredValidators,
+        } : {}),
         peerRegistry: this.#peerRegistry,
         progressCommitments: this.#progressCommitments,
         progressEscrows: this.#progressEscrows,
@@ -2840,6 +2962,10 @@ export class NirChain {
 
   validatorBond(address) { return this.#validatorBonds.get(address) ?? 0n; }
   validatorDisabled(address) { return this.#disabledValidators.has(address); }
+  validatorExit(address) {
+    return structuredClone(this.#pendingValidatorExits.get(address) ?? null);
+  }
+  validatorRetired(address) { return this.#retiredValidators.has(address); }
   validatorAdmissionOmissionEvidenceUsed(evidenceHash) {
     return this.#validatorAdmissionOmissionEvidence.has(evidenceHash);
   }
@@ -3293,6 +3419,9 @@ export class NirChain {
         if (!member) throw new Error("proposed validator is not registered");
         if (this.#disabledValidators.has(address)) {
           throw new Error("disabled validator cannot be proposed for rotation");
+        }
+        if (this.#pendingValidatorExits.has(address) || this.#retiredValidators.has(address)) {
+          throw new Error("exiting or retired validator cannot be proposed for rotation");
         }
         return member;
       });
@@ -3930,7 +4059,8 @@ export class NirChain {
   #applyValidatorBond(
     transaction, balances, nonces, validatorBonds, registeredValidators,
     disabledValidators, progressCommitments, evaluators, pendingEvaluatorRegistrations,
-    registeredBeaconAuthorities, pendingBeaconAdmissions, retiredBeaconAuthorities, proposer,
+    registeredBeaconAuthorities, pendingBeaconAdmissions, retiredBeaconAuthorities,
+    pendingValidatorExits, retiredValidators, proposer,
   ) {
     if ([...progressCommitments.values()].some(({ sender, recipient }) =>
       transaction.sender === sender || transaction.sender === recipient)) {
@@ -3945,6 +4075,12 @@ export class NirChain {
     }
     if (disabledValidators.has(transaction.sender)) {
       throw new Error("disabled validator identity cannot bond again");
+    }
+    if (pendingValidatorExits.has(transaction.sender) ||
+        retiredValidators.has(transaction.sender) ||
+        [...retiredValidators.values()].some(({ operatorId, publicKey }) =>
+          operatorId === transaction.operatorId || publicKey === transaction.publicKey)) {
+      throw new Error("exiting or retired validator identity cannot bond");
     }
     if (!validator) {
       if (typeof transaction.operatorId !== "string" ||
@@ -3984,6 +4120,101 @@ export class NirChain {
     balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
     nonces.set(transaction.sender, expectedNonce + 1);
     validatorBonds.set(transaction.sender, (validatorBonds.get(transaction.sender) ?? 0n) + amount);
+  }
+
+  #verifyValidatorLifecycleEnvelope(transaction, domain) {
+    if (transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature,
+          transaction.publicKey, domain)) {
+      throw new Error("validator lifecycle transaction is invalid");
+    }
+  }
+
+  #hasPendingValidatorRandomnessObligation(address, candidateBonds) {
+    return [...candidateBonds.values()].some((candidate) =>
+      candidate?.purpose === "safety" &&
+      candidate.randomnessCommits?.has(address) &&
+      !candidate.randomnessReveals?.has(address));
+  }
+
+  #applyValidatorExitRequest(
+    transaction, balances, nonces, validatorBonds, registeredValidators,
+    disabledValidators, pendingValidatorExits, retiredValidators, candidateBonds,
+    proposer, height,
+  ) {
+    this.#verifyValidatorLifecycleEnvelope(transaction, "VALIDATOR_EXIT_REQUEST_V1");
+    const member = registeredValidators.get(transaction.sender);
+    if (!member || member.publicKey !== transaction.publicKey ||
+        retiredValidators.has(transaction.sender) ||
+        pendingValidatorExits.has(transaction.sender) ||
+        (!validatorBonds.has(transaction.sender) &&
+         !disabledValidators.has(transaction.sender)) ||
+        this.#pendingValidatorRotation?.validators.some(({ address }) =>
+          address === transaction.sender) ||
+        this.#validatorRecoveryPlan?.reserves.some(({ address }) =>
+          address === transaction.sender) ||
+        this.#hasPendingValidatorRandomnessObligation(transaction.sender, candidateBonds)) {
+      throw new Error("validator exit identity is unknown, retired, or already pending");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const fee = parseAtomic(transaction.fee, "fee");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee) {
+      throw new Error("validator exit fee is invalid or unfunded");
+    }
+    const active = this.#validators.has(transaction.sender);
+    pendingValidatorExits.set(transaction.sender, {
+      address: transaction.sender,
+      exclusionHeight: active ? null : height,
+      requestedHeight: height,
+      unlockHeight: active ? null : height + VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
+    });
+    balances.set(transaction.sender, balance - fee);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+  }
+
+  #applyValidatorWithdrawalClaim(
+    transaction, balances, nonces, validatorBonds, registeredValidators,
+    disabledValidators, pendingValidatorExits, retiredValidators, candidateBonds,
+    proposer, height,
+  ) {
+    this.#verifyValidatorLifecycleEnvelope(transaction, "VALIDATOR_WITHDRAWAL_CLAIM_V1");
+    const pending = pendingValidatorExits.get(transaction.sender);
+    const member = registeredValidators.get(transaction.sender);
+    if (!pending || !member || member.publicKey !== transaction.publicKey ||
+        pending.exclusionHeight === null || height < pending.unlockHeight ||
+        this.#validators.has(transaction.sender) ||
+        this.#pendingValidatorRotation?.validators.some(({ address }) =>
+          address === transaction.sender) ||
+        this.#validatorRecoveryPlan?.reserves.some(({ address }) =>
+          address === transaction.sender) ||
+        this.#hasPendingValidatorRandomnessObligation(transaction.sender, candidateBonds)) {
+      throw new Error("validator withdrawal is not finalized or mature");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const fee = parseAtomic(transaction.fee, "fee");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee) {
+      throw new Error("validator withdrawal fee is invalid or unfunded");
+    }
+    const amount = validatorBonds.get(transaction.sender) ?? 0n;
+    balances.set(transaction.sender, balance - fee + amount);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    validatorBonds.delete(transaction.sender);
+    disabledValidators.delete(transaction.sender);
+    pendingValidatorExits.delete(transaction.sender);
+    registeredValidators.delete(transaction.sender);
+    retiredValidators.set(transaction.sender, { ...member, retiredHeight: height });
   }
 
   #applyEvaluatorBond(transaction, balances, nonces, evaluatorBonds,
@@ -4657,6 +4888,10 @@ export class NirChain {
     fork.#protocolReleaseAnchor = structuredClone(this.#protocolReleaseAnchor);
     fork.#protocolReleaseHead = structuredClone(this.#protocolReleaseHead);
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
+    fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
+      .map(([address, pending]) => [address, { ...pending }]));
+    fork.#retiredValidators = new Map([...this.#retiredValidators]
+      .map(([address, retired]) => [address, { ...retired }]));
     fork.#peerRegistry = structuredClone(this.#peerRegistry);
     fork.#progressCommitments = new Map(this.#progressCommitments);
     fork.#progressEscrows = new Map([...this.#progressEscrows]
@@ -5043,6 +5278,10 @@ export class NirChain {
     let validatorRecoveryPlan = structuredClone(this.#validatorRecoveryPlan);
     let validatorRecoveryOccurred = false;
     const registeredValidators = new Map(this.#registeredValidators);
+    const pendingValidatorExits = new Map([...this.#pendingValidatorExits]
+      .map(([address, pending]) => [address, { ...pending }]));
+    const retiredValidators = new Map([...this.#retiredValidators]
+      .map(([address, retired]) => [address, { ...retired }]));
     const progressCommitments = new Map(this.#progressCommitments);
     const evaluationAssignments = protocolState.protocolVersion >=
       EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
@@ -5100,6 +5339,9 @@ export class NirChain {
         if (!member) throw new Error("proposed validator is not registered");
         if (this.#disabledValidators.has(address)) {
           throw new Error("disabled validator cannot be proposed for rotation");
+        }
+        if (pendingValidatorExits.has(address) || retiredValidators.has(address)) {
+          throw new Error("exiting or retired validator cannot be proposed for rotation");
         }
         return member;
       });
@@ -5285,8 +5527,29 @@ export class NirChain {
       throw new Error("invalid world capability memory root");
     }
     const transactionIds = new Set();
+    const validatorLifecycleTransactions = block.transactions.filter(({ type }) =>
+      type === "validator-exit-request" || type === "validator-withdrawal-claim");
+    if (validatorLifecycleTransactions.length > 0 &&
+        (protocolState.protocolVersion < VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ||
+         block.validatorRotation !== null || recoveryTransition ||
+         this.#pendingValidatorRotation?.activationHeight === block.height ||
+         block.transactions.some(({ type }) => type === "validator-recovery-plan"))) {
+      throw new Error("validator lifecycle conflicts with membership transition");
+    }
     for (const transaction of block.transactions) {
       requireExactTransactionSchema(transaction);
+      if (retiredValidators.has(transaction.sender) && [
+        "candidate-bond", "progress-commitment", "evaluator-bond", "beacon-bond",
+        "validator-bond", "validator-exit-request",
+      ].includes(transaction.type)) {
+        throw new Error("retired validator identity cannot assume a protocol role");
+      }
+      if (pendingValidatorExits.has(transaction.sender) && [
+        "candidate-bond", "progress-commitment", "evaluator-bond", "beacon-bond",
+        "validator-bond",
+      ].includes(transaction.type)) {
+        throw new Error("exiting validator identity cannot create a protocol obligation");
+      }
       const id = transactionId(transaction);
       if (transactionIds.has(id)) throw new Error("duplicate transaction in block");
       transactionIds.add(id);
@@ -5323,9 +5586,27 @@ export class NirChain {
           transaction, balances, nonces, validatorBonds, registeredValidators,
           disabledValidators, progressCommitments, evaluatorsAfter,
           pendingEvaluatorRegistrations, registeredBeaconAuthorities,
-          pendingBeaconAdmissions, retiredBeaconAuthorities, block.feeRecipient,
+          pendingBeaconAdmissions, retiredBeaconAuthorities,
+          pendingValidatorExits, retiredValidators, block.feeRecipient,
+        );
+      } else if (transaction.type === "validator-exit-request") {
+        this.#applyValidatorExitRequest(
+          transaction, balances, nonces, validatorBonds, registeredValidators,
+          disabledValidators, pendingValidatorExits, retiredValidators,
+          candidateBonds, block.feeRecipient, block.height,
+        );
+      } else if (transaction.type === "validator-withdrawal-claim") {
+        this.#applyValidatorWithdrawalClaim(
+          transaction, balances, nonces, validatorBonds, registeredValidators,
+          disabledValidators, pendingValidatorExits, retiredValidators,
+          candidateBonds, block.feeRecipient, block.height,
         );
       } else if (transaction.type === "evaluator-bond") {
+        if (retiredValidators.has(transaction.sender) ||
+            [...retiredValidators.values()].some(({ operatorId, publicKey }) =>
+              operatorId === transaction.operatorId || publicKey === transaction.publicKey)) {
+          throw new Error("retired validator identity cannot assume another protocol role");
+        }
         this.#applyEvaluatorBond(
           transaction, balances, nonces, evaluatorBonds,
           disabledEvaluators, evaluatorsAfter, pendingEvaluatorRegistrations,
@@ -5352,6 +5633,10 @@ export class NirChain {
         if (validatorRecoveryPlan || this.#pendingValidatorRotation || block.validatorRotation) {
           throw new Error("validator recovery plan conflicts with pending membership state");
         }
+        if (transaction.plan?.reserves?.some(({ address }) =>
+          pendingValidatorExits.has(address) || retiredValidators.has(address))) {
+          throw new Error("exiting or retired validator cannot be a recovery reserve");
+        }
         validatorRecoveryPlan = this.#applyValidatorRecoveryPlan(
           transaction, balances, nonces, validatorBonds, registeredValidators,
           block.feeRecipient, block.height,
@@ -5369,6 +5654,11 @@ export class NirChain {
         }
         validatorRecoveryOccurred = true;
       } else if (transaction.type === "beacon-bond") {
+        if (retiredValidators.has(transaction.sender) ||
+            [...retiredValidators.values()].some(({ operatorId, publicKey }) =>
+              operatorId === transaction.operatorId || publicKey === transaction.publicKey)) {
+          throw new Error("retired validator identity cannot assume another protocol role");
+        }
         this.#applyBeaconBond(
           transaction, balances, nonces, beaconBonds, block.feeRecipient, epochRandomness,
           registeredBeaconAuthorities, pendingBeaconAdmissions,
@@ -5636,6 +5926,7 @@ export class NirChain {
       if (!candidate || candidate.purpose !== "safety" || candidate.committee !== null || block.height !== candidate.committedHeight + 1 ||
           contribution.networkId !== this.#networkId || !/^[0-9a-f]{64}$/.test(contribution.commitment ?? "") ||
           !validator || (validatorBonds.get(contribution.contributor) ?? 0n) < MIN_VALIDATOR_BOND ||
+          pendingValidatorExits.has(contribution.contributor) ||
           candidate.randomnessCommits.has(contribution.contributor) ||
           !verifyObject(payload, contribution.signature, validator.publicKey, "RANDOMNESS_COMMIT")) {
         throw new Error("invalid or duplicate randomness commitment");
@@ -5780,6 +6071,14 @@ export class NirChain {
       pendingValidatorRotationAfter = null;
     }
     validatorOrderAfter = [...validatorsAfter.keys()].sort();
+    for (const [address, pending] of pendingValidatorExits) {
+      if (pending.exclusionHeight !== null || validatorsAfter.has(address)) continue;
+      pendingValidatorExits.set(address, {
+        ...pending,
+        exclusionHeight: block.height,
+        unlockHeight: block.height + VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
+      });
+    }
     const rewardEpochAfter = this.#rewardEpoch + (block.progressRewards.length > 0 ? 1 : 0);
     const lastRewardTimestampAfter = block.progressRewards.length > 0
       ? block.timestamp : this.#lastRewardTimestamp;
@@ -5819,6 +6118,7 @@ export class NirChain {
         protocolReleaseHead: protocolState.protocolReleaseHead,
       }),
       pendingValidatorRotation: pendingValidatorRotationAfter,
+      pendingValidatorExits,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
       progressEscrows,
@@ -5828,6 +6128,7 @@ export class NirChain {
       registeredBeaconAuthorities,
       retiredBeaconAuthorities,
       registeredValidators,
+      retiredValidators,
       recentValidatorTransition: recentValidatorTransitionAfter,
       rewardEpoch: rewardEpochAfter,
       rewardedProofs,
@@ -5924,6 +6225,8 @@ export class NirChain {
     this.#validatorRecoveryGeneration = validatorRecoveryGeneration;
     this.#validatorRecoveryPlan = validatorRecoveryPlan;
     this.#registeredValidators = registeredValidators;
+    this.#pendingValidatorExits = pendingValidatorExits;
+    this.#retiredValidators = retiredValidators;
     this.#recentValidatorTransition = recentValidatorTransitionAfter;
     this.#registeredBeaconAuthorities = registeredBeaconAuthorities;
     this.#retiredBeaconAuthorities = retiredBeaconAuthorities;

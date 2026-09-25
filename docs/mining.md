@@ -2,7 +2,9 @@
 
 Running an intelligence-mining role and joining the active validator finality
 set are separate operations. A selected or bonded validator still needs an
-authorized rotation; validator exit and bond withdrawal are not implemented.
+authorized rotation. Protocol v30 implements testnet-gated validator exit and
+bond withdrawal with a provisional 64-block cooldown; it is not yet
+production-audited or a final mainnet economic parameter.
 Operators deploying a validator should use the public, non-secret
 [Mac/Linux deployment wizard](validator-deployment.md).
 
