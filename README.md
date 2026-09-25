@@ -46,6 +46,7 @@ that independence.
 | Follow every user feature step by step | [`docs/user-journeys.md`](docs/user-journeys.md) |
 | Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
+| Deploy a ceremony-approved validator on Mac/Linux | [`docs/validator-deployment.md`](docs/validator-deployment.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
 | Propose code or documentation safely | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Understand contributor, merge, release, and chain authority | [`docs/governance.md`](docs/governance.md) |

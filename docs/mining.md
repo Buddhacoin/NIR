@@ -1,5 +1,11 @@
 # How NIR mining works
 
+Running an intelligence-mining role and joining the active validator finality
+set are separate operations. A selected or bonded validator still needs an
+authorized rotation; validator exit and bond withdrawal are not implemented.
+Operators deploying a validator should use the public, non-secret
+[Mac/Linux deployment wizard](validator-deployment.md).
+
 NIR mining means producing or verifying a measurable contribution. It does not
 mean leaving a computer to guess hashes for currency. Running the current demo
 does not create valuable NIR; the public mining network does not exist yet.

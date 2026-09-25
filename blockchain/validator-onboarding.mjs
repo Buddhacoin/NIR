@@ -138,8 +138,13 @@ function verifySignatures(payload, entries, members, domain, required) {
   const seen = new Set();
   for (const entry of entries) {
     const member = members.get(entry?.signer);
-    if (!member || seen.has(entry.signer) || typeof entry.signature !== "string" ||
-        entry.signature.length > 7_000 ||
+    const signature = entry?.signature;
+    const canonical = typeof signature === "string" && signature.length <= 7_000 &&
+      /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(signature) &&
+      Buffer.from(signature, "base64").length > 0 &&
+      Buffer.from(signature, "base64").toString("base64") === signature;
+    if (!entry || Object.keys(entry).sort().join(",") !== "signature,signer" ||
+        !member || seen.has(entry.signer) || !canonical ||
         !verifyObject(payload, entry.signature, member.publicKey, domain)) {
       throw new Error("validator onboarding signature is invalid");
     }

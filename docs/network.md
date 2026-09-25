@@ -1,5 +1,9 @@
 # Multi-process NIR devnet
 
+Independent Mac/Linux operators should start with the
+[validator deployment wizard](validator-deployment.md), which binds its public
+plan to the ceremony network, genesis, release, endpoint, and TLS identity.
+
 This milestone removes consensus private keys from the coordinator. Four
 validator replicas run as separate localhost processes, each with one ML-DSA-65
 key, its own verified chain journal, and a durable vote record.

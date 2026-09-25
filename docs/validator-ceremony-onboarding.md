@@ -10,6 +10,8 @@ host, or demonstrate that different validators run on independent hosts.
 This runbook implements gate 4 in the canonical
 [public-testnet gate matrix](public-testnet-gates.md); the separate multi-host
 evidence gate is what records operator attestations from distinct endpoints.
+For a non-secret, production-shaped sequence of exact commands, use the
+[Mac/Linux validator deployment wizard](validator-deployment.md).
 
 ## Required public evidence and local secrets
 
