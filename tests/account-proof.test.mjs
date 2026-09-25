@@ -93,3 +93,16 @@ test("account proofs reject mutation, stale height, minority, and a self-declare
   assert.throws(() => verifyAccountProof(proof, { ...options, trustedValidators: attackers }),
     /trust anchor/);
 });
+
+test("account proof envelope supports a post-quantum quorum above the former 64 KiB bound", () => {
+  const validatorWallets = Array.from({ length: 24 }, generateWallet);
+  const trustedValidators = validatorWallets.map(publicWallet);
+  const account = fixture().account;
+  const proof = createAccountProof({ account, height: 18, networkId: "nir-large-proof-test",
+    stateRoot: "c".repeat(64), tipHash: "d".repeat(64), validators: trustedValidators,
+    validatorWallets: validatorWallets.slice(0, 17) });
+  assert.ok(Buffer.byteLength(JSON.stringify(proof)) > 64 * 1024);
+  assert.equal(verifyAccountProof(proof, { expectedAddress: account.address,
+    expectedNetworkId: "nir-large-proof-test", minimumHeight: 18,
+    trustedValidators }).height, 18);
+});

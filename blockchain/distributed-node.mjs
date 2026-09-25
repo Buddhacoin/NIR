@@ -87,6 +87,7 @@ import {
   authorizeTransportAction,
   buildValidatorTransportView,
 } from "./validator-transport-view.mjs";
+import { createValidatorCandidateProof } from "./validator-candidate-proof.mjs";
 import {
   createAccountProof,
   verifyAccountProof,
@@ -559,6 +560,25 @@ export class ValidatorReplica {
       throw new Error("account proof attestation does not match local finalized state");
     }
     return candidate.attestations[0];
+  }
+
+  validatorCandidateContext(address) {
+    if (!ADDRESS.test(address ?? "")) throw new Error("validator candidate address is invalid");
+    const queue = this.#chain.validatorAdmissionQueue();
+    const queuePosition = queue.findIndex((entry) => entry.address === address);
+    const last = this.#chain.blocks().at(-1);
+    if (!last || last.height < 1) throw new Error("validator candidate context requires finalized state");
+    return {
+      accountProof: this.accountProofCandidate(address),
+      candidateProof: createValidatorCandidateProof({ address,
+        accountStateRoot: this.#chain.accountStateRoot,
+        admission: queuePosition < 0 ? null : queue[queuePosition], height: this.#chain.height,
+        networkId: this.#chain.networkId, protocolVersion: this.#chain.protocolVersion,
+        queuePosition: queuePosition < 0 ? null : queuePosition, queueSize: queue.length,
+        stateRoot: this.#chain.stateRoot, tipHash: this.#chain.tipHash,
+        validators: this.#chain.validatorMembers, wallet: this.#wallet }),
+      finalityProof: createFinalityProof(last),
+    };
   }
 
   assetProofCandidate(assetId, holder) {

@@ -2,7 +2,8 @@
 import process from "node:process";
 import {
   createValidatorJoinBackups, createValidatorJoinWorkspace, loadValidatorJoinInputs,
-  validatorJoinStatus, verifyValidatorJoinWorkspace,
+  loadValidatorCandidateSyncInput, syncValidatorJoinCandidateContext, validatorJoinStatus,
+  verifyValidatorJoinWorkspace,
 } from "./validator-join.mjs";
 
 function readSecret(prompt) {
@@ -52,12 +53,23 @@ try {
   } else if (command === "backup" && args.length === 3) {
     result = createValidatorJoinBackups({ directory: args[0], backupDirectory: args[1],
       generation: Number(args[2]), ...await twoPasswords() });
+  } else if (command === "sync" && args.length === 2) {
+    result = await syncValidatorJoinCandidateContext({ directory: args[0],
+      syncInput: loadValidatorCandidateSyncInput(args[1]) });
   } else {
-    throw new Error("usage: validator:join init <new-workspace> <private-config.json> | validator:join status <workspace> | validator:join verify <workspace> | validator:join backup <workspace> <new-private-backup-directory> <generation>");
+    throw new Error("usage: validator:join init <new-workspace> <private-config.json> | validator:join status <workspace> | validator:join verify <workspace> | validator:join backup <workspace> <new-private-backup-directory> <generation> | validator:join sync <workspace> <public-sync-input.json>");
   }
   console.log(JSON.stringify(result, null, 2));
-  console.error("Status: awaiting external v31 candidate service / quorum observation");
-  console.error("No transaction was built or broadcast.");
+  if (command === "sync") {
+    console.error("Status: proof-backed read-only v31 candidate context synchronized.");
+    console.error("Admission, readiness observation, selection, and activation are not implemented by this command.");
+  } else if (command === "status") {
+    console.error(`Status: ${result.status}.`);
+  } else {
+    console.error("Status: secure local validator workspace operation completed.");
+    console.error("A proof-backed v31 candidate context must be synchronized separately.");
+  }
+  console.error("No transaction was signed or broadcast.");
 } catch (error) {
   console.error(`Validator join operation failed: ${error.message}`); process.exitCode = 1;
 }

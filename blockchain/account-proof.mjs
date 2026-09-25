@@ -1,14 +1,16 @@
 import { canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { verifyAccountStateProof } from "./account-tree.mjs";
-import { PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "./constants.mjs";
+import { MAX_VALIDATORS, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "./constants.mjs";
 import { normalizePendingProtocolUpgrade } from "./protocol-upgrade.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const ATOMIC = /^(0|[1-9][0-9]{0,31})$/;
 const FORMAT = "nir-account-proof-v1";
-const MAX_PROOF_BYTES = 64 * 1024;
+// A quorum envelope contains one post-quantum signature per validator. Keep this below the
+// validator candidate endpoint's 4 MiB response bound while allowing the protocol maximum set.
+export const MAX_ACCOUNT_PROOF_BYTES = 512 * 1024 + MAX_VALIDATORS * 12 * 1024;
 
 function orderedValidators(validators) {
   return [...validators].sort((left, right) => left.address.localeCompare(right.address));
@@ -109,10 +111,11 @@ export function createAccountProof({
 function verifyAccountProofEnvelope(proof, {
   expectedAddress, expectedNetworkId, minimumHeight = 0, trustedValidators,
 } = {}, requiredAttestations) {
-  if (!proof || Buffer.byteLength(canonicalJson(proof)) > MAX_PROOF_BYTES ||
+  if (!proof || Buffer.byteLength(canonicalJson(proof)) > MAX_ACCOUNT_PROOF_BYTES ||
       !HASH.test(proof.statementHash ?? "") || !Array.isArray(proof.attestations) ||
       !Array.isArray(trustedValidators) || trustedValidators.length < 4 ||
-      trustedValidators.length > 128 || !Number.isSafeInteger(minimumHeight) || minimumHeight < 0) {
+      trustedValidators.length > MAX_VALIDATORS ||
+      !Number.isSafeInteger(minimumHeight) || minimumHeight < 0) {
     throw new Error("account proof envelope is invalid");
   }
   const { attestations, statementHash, ...statement } = proof;

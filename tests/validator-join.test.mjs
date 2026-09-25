@@ -8,7 +8,9 @@ import test from "node:test";
 
 import {
   createValidatorJoinBackups, createValidatorJoinWorkspace, loadValidatorJoinInputs,
-  validatorJoinStatus, verifyValidatorJoinWorkspace, writeValidatorJoinArtifact,
+  loadValidatorCandidateSyncInput, syncValidatorJoinCandidateContext, validatorJoinStatus,
+  verifyValidatorJoinWorkspace,
+  writeValidatorJoinArtifact,
 } from "../blockchain/validator-join.mjs";
 
 function fixture() {
@@ -18,11 +20,13 @@ function fixture() {
     "-out", cert, "-days", "1", "-subj", "/CN=localhost"], { stdio: "ignore" });
   chmodSync(cert, 0o600); chmodSync(key, 0o600);
   const fingerprint = new X509Certificate(readFileSync(cert)).fingerprint256.replaceAll(":", "").toLowerCase();
-  const config = { endpoint: "https://localhost", expectedChainIdentityGenesisHash: "a".repeat(64),
+  const config = { candidateContextMaxWitnessAgeMs: 300_000,
+    candidateContextMinimumCheckpointHeight: 1, candidateContextMinimumSequence: 0,
+    endpoint: "https://localhost", expectedChainIdentityGenesisHash: "a".repeat(64),
     expectedCheckpointPolicyId: `sha3-256:${"b".repeat(64)}`,
-    expectedTlsCertificateSha256: fingerprint, format: "nir-validator-join-config-v1",
+    expectedTlsCertificateSha256: fingerprint, format: "nir-validator-join-config-v2",
     networkId: "nir-testnet", operatorId: "operator-one", tlsCertificate: cert,
-    tlsPrivateKey: key, version: 1 };
+    tlsPrivateKey: key, version: 2 };
   const configPath = join(root, "config.json"); writeFileSync(configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
   return { cert, config, configPath, key, root, workspace: join(root, "workspace") };
 }
@@ -102,5 +106,46 @@ test("validator join CLI refuses secrets from a non-interactive stdin", () => {
       f.workspace, f.configPath], { cwd: process.cwd(), encoding: "utf8", input: "password\n" });
     assert.equal(result.status, 1); assert.match(result.stderr, /interactive terminal/);
     assert.throws(() => lstatSync(f.workspace), /ENOENT/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Slice-A v1 workspaces remain readable but cannot silently acquire B1 anchors", async () => {
+  const f = fixture();
+  try {
+    const config = { ...f.config, format: "nir-validator-join-config-v1", version: 1 };
+    delete config.candidateContextMaxWitnessAgeMs;
+    delete config.candidateContextMinimumCheckpointHeight;
+    delete config.candidateContextMinimumSequence;
+    const plan = createValidatorJoinWorkspace({ directory: f.workspace, config,
+      tlsCertificatePem: readFileSync(f.cert), tlsPrivateKeyPem: readFileSync(f.key),
+      consensusPassword: "legacy consensus password", transportPassword: "legacy transport password" });
+    assert.equal(plan.format, "nir-validator-join-plan-v1");
+    assert.match(validatorJoinStatus(f.workspace).status, /awaiting external/);
+    assert.equal(verifyValidatorJoinWorkspace({ directory: f.workspace,
+      consensusPassword: "legacy consensus password",
+      transportPassword: "legacy transport password" }).verified, true);
+    assert.equal(createValidatorJoinBackups({ directory: f.workspace,
+      backupDirectory: join(f.root, "legacy-backup"),
+      consensusPassword: "legacy consensus password", transportPassword: "legacy transport password",
+      generation: 1 }).consensus.verified, true);
+    await assert.rejects(() => syncValidatorJoinCandidateContext({ directory: f.workspace,
+      syncInput: { checkpointTrustPackage: {}, format: "nir-validator-candidate-sync-v1",
+        peers: [], version: 1 }, request: async () => assert.fail("network must not be queried") }),
+    /join plan|v2|invalid/i);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("candidate sync input uses its dedicated bounded reader", () => {
+  const f = fixture();
+  try {
+    const within = join(f.root, "large-public-sync.json");
+    writeFileSync(within, JSON.stringify({ checkpointTrustPackage: {},
+      format: "nir-validator-candidate-sync-v1", padding: "x".repeat(4 * 1024 * 1024),
+      peers: [], version: 1 }), { mode: 0o600 });
+    assert.throws(() => loadValidatorCandidateSyncInput(within), /unknown or missing fields/);
+    const beyond = join(f.root, "oversized-public-sync.json");
+    writeFileSync(beyond, JSON.stringify({ padding: "x".repeat(6 * 1024 * 1024) }),
+      { mode: 0o600 });
+    assert.throws(() => loadValidatorCandidateSyncInput(beyond), /unsafe/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
