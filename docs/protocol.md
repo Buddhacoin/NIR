@@ -512,7 +512,10 @@ old-quorum-certified schedule: every member must be registered and bonded,
 activation is delayed by at least five blocks, and at least one third of the old
 set must remain. From the activation height, only the new set can propose and
 certify blocks; the first such block needs quorum certificates from both sets.
-Validator exits and bond-withdrawal delays remain unfinished.
+Protocol v30 adds a protocol-gated validator exit and bond-withdrawal lifecycle:
+the bond remains slashable until finalized exclusion and a provisional 64-block
+testnet cooldown have both completed. This implementation is not yet
+production-audited, and the delay is not a final mainnet economic parameter.
 
 ## 5. World capability memory
 

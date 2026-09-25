@@ -206,8 +206,11 @@ rotation is certified by the old set, requires bonded registered members, gives
 at least five blocks of notice, preserves at least one-third overlap, and switches
 proposers and voters exactly at its activation height. The activation block
 requires both an old-set quorum and a new-set quorum. Production still needs
-validator withdrawal delays and independently operated, monitored and audited
-beacon deployments; the runnable service is documented in [beacon.md](beacon.md).
+independently operated, monitored and audited beacon deployments; the runnable
+service is documented in [beacon.md](beacon.md). Protocol v30 implements a
+testnet-gated validator exit and withdrawal lifecycle with a provisional
+64-block cooldown. It is not yet production-audited and the delay is not a
+final mainnet economic parameter.
 
 The ordered development and three-lane NIR architecture are documented in
 [roadmap.md](roadmap.md).

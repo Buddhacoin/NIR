@@ -487,6 +487,7 @@ candidate runs are committed.
 - `docs/finalized-assignment-v2.md` — exact protocol-v27 assignment proof, genesis ancestry and receipt boundary.
 - `docs/protocol-v28-exact-checkpoints.md` — bounded exact proofs for long histories and their explicit weak-subjectivity boundary.
 - `docs/protocol-v29-historical-validator-evidence.md` — bounded historical validator membership for slashing at dual-quorum activation boundaries.
+- `docs/protocol-v30-validator-exit-lifecycle.md` — finalized validator exits, slashable cooldowns, withdrawals, and permanent identity retirement.
 - `docs/checkpoint-trust-packages.md` and `docs/checkpoint-trust-store.md` — independently witnessed checkpoint packages plus durable anti-rollback acceptance state.
 - `SECURITY.md` — fixed findings, open blockers, and quantum-attacker review.
 - `CONTRIBUTING.md` — contribution, testing, disclosure, and secret-handling rules.
