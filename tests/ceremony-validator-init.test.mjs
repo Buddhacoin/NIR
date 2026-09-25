@@ -34,6 +34,7 @@ import {
 import { encryptWallet } from "../blockchain/vault.mjs";
 import { createPeerRequest } from "../blockchain/peer-auth.mjs";
 import { requestJson } from "../blockchain/http-client.mjs";
+import { createValidatorDeploymentPlan } from "../blockchain/validator-deployment-plan.mjs";
 
 const VALIDATOR_PASSWORD = "validator-password-2026";
 const TRANSPORT_PASSWORD = "transport-password-2026";
@@ -268,6 +269,59 @@ test("ceremony onboarding rejects identity, topology, release, anchor, and files
     const link = join(root, "preexisting-link");
     symlinkSync(basename(existing), link);
     assert.throws(() => initializeValidatorFromCeremony(link, cloneInputs(inputs)), /must not exist/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("public deployment plan binds ceremony network, genesis, release, endpoint, and TLS", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-validator-deployment-"));
+  try {
+    const inputs = fixture(root);
+    const participant = inputs.plan.validators[0];
+    const input = {
+      artifacts: Object.fromEntries(["anchor", "approvals", "genesis", "plan", "signedRelease",
+        "tlsCertificate"].map((name) => [name, join(root, `${name}.public`)])),
+      certificateMode: "lifecycle",
+      expected: { endpoint: participant.endpoint,
+        genesisHash: inputs.anchor.payload.latestGenesisHash,
+        networkId: inputs.genesis.networkId,
+        releaseManifestHash: inputs.plan.sourceRelease.manifestHash,
+        tlsCertificateSha256: participant.tlsCertificateSha256 },
+      format: "nir-validator-deployment-input-v1", listenPort: 9443,
+      operatorId: participant.operatorId,
+      paths: { planOutput: join(root, "deployment-plan.json"),
+        stateDirectory: join(root, "state"), tlsPrivateKey: join(root, "tls.key"),
+        transportVault: join(root, "transport.vault"), validatorVault: join(root, "validator.vault") },
+      trustedReleaseAddress: inputs.trustedAddress,
+      validatorAddress: participant.address, version: 1,
+    };
+    const options = { anchor: inputs.anchor, approvals: inputs.envelope, genesis: inputs.genesis,
+      ceremonyPlan: inputs.plan, nodeVersion: "26.0.0", platform: "darwin",
+      signedRelease: inputs.signedRelease, tlsCertificatePem: inputs.tlsCertificatePem };
+    const plan = createValidatorDeploymentPlan(input, options);
+    assert.equal(plan.networkId, inputs.genesis.networkId);
+    assert.deepEqual(plan.steps[3].argv.slice(5),
+      inputs.genesis.peerRegistry.peers.map(({ url }) => url));
+    assert.equal(plan.steps.at(-1).argv.at(-1), input.paths.planOutput);
+    assert.equal(JSON.stringify(plan).includes("password"), false);
+    const publicValues = { anchor: inputs.anchor, approvals: inputs.envelope,
+      genesis: inputs.genesis, plan: inputs.plan, signedRelease: inputs.signedRelease };
+    for (const [name, value] of Object.entries(publicValues)) {
+      writeFileSync(input.artifacts[name], `${canonicalJson(value)}\n`, { mode: 0o600 });
+    }
+    writeFileSync(input.artifacts.tlsCertificate, inputs.tlsCertificatePem, { mode: 0o600 });
+    const inputPath = join(root, "deployment-input.json");
+    writeFileSync(inputPath, `${canonicalJson(input)}\n`, { mode: 0o600 });
+    execFileSync(process.execPath, ["blockchain/validator-deployment-cli.mjs", "plan",
+      inputPath, input.paths.planOutput], { cwd: new URL("..", import.meta.url), stdio: "pipe" });
+    assert.equal(JSON.parse(readFileSync(input.paths.planOutput, "utf8")).planHash, plan.planHash);
+    for (const [field, value] of [["networkId", "foreign-network"],
+      ["genesisHash", "f".repeat(64)], ["releaseManifestHash", "e".repeat(64)],
+      ["endpoint", "https://attacker.example:9443/"],
+      ["tlsCertificateSha256", "d".repeat(64)]]) {
+      const changed = structuredClone(input); changed.expected[field] = value;
+      assert.throws(() => createValidatorDeploymentPlan(changed, options),
+        /deployment|ceremony|TLS|endpoint|release|genesis|network/);
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

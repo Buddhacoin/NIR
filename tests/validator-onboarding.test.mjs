@@ -74,3 +74,16 @@ test("minority approval, missing acceptance, endpoint mutation, and fake transpo
     networkId: fields.networkId, nextValidators: fields.nextValidators,
   }), /signature/);
 });
+
+test("non-canonical signature encodings fail for every onboarding signature role", () => {
+  const { current, fields, next, transports } = fixture();
+  const base = createValidatorOnboarding(fields, current.slice(0, 3), next, transports);
+  for (const collection of ["currentApprovals", "nextAcceptances", "transportProofs"]) {
+    const changed = structuredClone(base);
+    changed[collection][0].signature += "=";
+    assert.throws(() => verifyValidatorOnboarding(changed, {
+      activationHeight: 20, currentValidators: fields.currentValidators,
+      networkId: fields.networkId, nextValidators: fields.nextValidators,
+    }), /signature/);
+  }
+});
