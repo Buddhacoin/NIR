@@ -1,5 +1,9 @@
 import { addressFromPublicKey, canonicalJson, hashObject, signObject, verifyObject } from "./crypto.mjs";
-import { MIN_TRANSFER_FEE, SIGNATURE_ALGORITHM } from "./constants.mjs";
+import {
+  MIN_TRANSFER_FEE,
+  SIGNATURE_ALGORITHM,
+  VALIDATOR_ADMISSION_EXPIRY_PROTOCOL_VERSION,
+} from "./constants.mjs";
 import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 
 export const VALIDATOR_ADMISSION_DELAY_BLOCKS = 64;
@@ -7,6 +11,8 @@ export const VALIDATOR_ADMISSION_EXPIRY_BLOCKS = 256;
 export const MAX_PENDING_VALIDATOR_ADMISSIONS = 256;
 export const MAX_VALIDATOR_ADMISSIONS_PER_BLOCK = 16;
 export const MAX_RETIRED_VALIDATOR_TOMBSTONES = 512;
+// Provisional TESTNET replay window. It changes no fee, bond, or reward parameter.
+export const VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS = 64;
 
 export function assertValidatorIdentityCapacity(registeredSize, retiredSize) {
   if (!Number.isSafeInteger(registeredSize) || registeredSize < 0 ||
@@ -47,7 +53,7 @@ function transportIdentity(publicKey) {
   return { address, algorithm: SIGNATURE_ALGORITHM, publicKey };
 }
 
-function admissionPayload({ amount, endpoint, fee, networkId, nonce, operatorId, publicKey,
+function admissionPayloadV1({ amount, endpoint, fee, networkId, nonce, operatorId, publicKey,
   sender, tlsCertificateSha256, transportPublicKey, type }) {
   return {
     algorithm: SIGNATURE_ALGORITHM,
@@ -63,6 +69,18 @@ function admissionPayload({ amount, endpoint, fee, networkId, nonce, operatorId,
     transportAlgorithm: SIGNATURE_ALGORITHM,
     transportPublicKey,
     type,
+  };
+}
+
+function admissionPayloadV2({ amount, chainIdentityGenesisHash, endpoint, fee, networkId, nonce,
+  operatorId, publicKey, referenceHeight, sender, tlsCertificateSha256, transportPublicKey,
+  type, validUntilHeight }) {
+  return {
+    ...admissionPayloadV1({ amount, endpoint, fee, networkId, nonce, operatorId, publicKey,
+      sender, tlsCertificateSha256, transportPublicKey, type }),
+    chainIdentityGenesisHash,
+    referenceHeight,
+    validUntilHeight,
   };
 }
 
@@ -97,7 +115,8 @@ function readinessPayload({ admissionId, endpoint, expiresAtHeight, fee, network
   };
 }
 
-function validateCommon(payload, transportSignature, signature, domain) {
+function validateCommon(payload, transportSignature, signature, domain,
+  transportDomain = "VALIDATOR_ADMISSION_TRANSPORT_V1") {
   const transport = transportIdentity(payload.transportPublicKey);
   if (payload.algorithm !== SIGNATURE_ALGORITHM ||
       payload.transportAlgorithm !== SIGNATURE_ALGORITHM ||
@@ -105,8 +124,7 @@ function validateCommon(payload, transportSignature, signature, domain) {
       transport.address === payload.sender || !HASH.test(payload.tlsCertificateSha256 ?? "") ||
       !Number.isSafeInteger(payload.nonce) || payload.nonce < 0 ||
       !/^(0|[1-9][0-9]*)$/.test(payload.fee) || BigInt(payload.fee) < MIN_TRANSFER_FEE ||
-      !verifyObject(payload, transportSignature, transport.publicKey,
-        "VALIDATOR_ADMISSION_TRANSPORT_V1") ||
+      !verifyObject(payload, transportSignature, transport.publicKey, transportDomain) ||
       !verifyObject({ ...payload, transportSignature }, signature, payload.publicKey, domain)) {
     throw new Error("validator admission signature or transport proof is invalid");
   }
@@ -115,27 +133,49 @@ function validateCommon(payload, transportSignature, signature, domain) {
 
 export function createValidatorAdmission({ wallet, transportWallet, networkId, nonce, operatorId,
   endpoint, tlsCertificateSha256, amount = MIN_VALIDATOR_BOND.toString(),
-  fee = MIN_TRANSFER_FEE.toString() }) {
-  const payload = admissionPayload({ amount, endpoint, fee, networkId, nonce, operatorId,
-    publicKey: wallet.publicKey, sender: wallet.address, tlsCertificateSha256,
-    transportPublicKey: transportWallet.publicKey, type: "validator-admission" });
+  fee = MIN_TRANSFER_FEE.toString(), chainIdentityGenesisHash, referenceHeight,
+  validUntilHeight = Number.isSafeInteger(referenceHeight)
+    ? referenceHeight + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS : undefined }) {
+  const v2 = chainIdentityGenesisHash !== undefined || referenceHeight !== undefined ||
+    validUntilHeight !== undefined;
+  const payload = v2
+    ? admissionPayloadV2({ amount, chainIdentityGenesisHash, endpoint, fee, networkId, nonce,
+      operatorId, publicKey: wallet.publicKey, referenceHeight, sender: wallet.address,
+      tlsCertificateSha256, transportPublicKey: transportWallet.publicKey,
+      type: "validator-admission", validUntilHeight })
+    : admissionPayloadV1({ amount, endpoint, fee, networkId, nonce, operatorId,
+      publicKey: wallet.publicKey, sender: wallet.address, tlsCertificateSha256,
+      transportPublicKey: transportWallet.publicKey, type: "validator-admission" });
   const transportSignature = signObject(payload, transportWallet,
-    "VALIDATOR_ADMISSION_TRANSPORT_V1");
+    v2 ? "VALIDATOR_ADMISSION_TRANSPORT_V2" : "VALIDATOR_ADMISSION_TRANSPORT_V1");
   return { ...payload, transportSignature,
     signature: signObject({ ...payload, transportSignature }, wallet,
-      "VALIDATOR_ADMISSION_V1") };
+      v2 ? "VALIDATOR_ADMISSION_V2" : "VALIDATOR_ADMISSION_V1") };
 }
 
-export function verifyValidatorAdmission(transaction, networkId) {
+export function verifyValidatorAdmission(transaction, networkId, {
+  chainIdentityGenesisHash = null, currentHeight = null, protocolVersion = 31,
+} = {}) {
   const { signature, transportSignature, ...unsigned } = transaction ?? {};
-  const payload = admissionPayload(unsigned ?? {});
+  const v2 = protocolVersion >= VALIDATOR_ADMISSION_EXPIRY_PROTOCOL_VERSION;
+  const payload = v2 ? admissionPayloadV2(unsigned ?? {}) : admissionPayloadV1(unsigned ?? {});
   assertCanonicalEnvelope(transaction, payload, Object.keys(payload));
   if (payload.type !== "validator-admission" || payload.networkId !== networkId ||
-      payload.amount !== MIN_VALIDATOR_BOND.toString() || !OPERATOR.test(payload.operatorId ?? "")) {
+      payload.amount !== MIN_VALIDATOR_BOND.toString() || !OPERATOR.test(payload.operatorId ?? "") ||
+      (v2 && (!HASH.test(payload.chainIdentityGenesisHash ?? "") ||
+        payload.chainIdentityGenesisHash !== chainIdentityGenesisHash ||
+        !Number.isSafeInteger(currentHeight) || currentHeight < 1 ||
+        !Number.isSafeInteger(payload.referenceHeight) || payload.referenceHeight < 0 ||
+        payload.referenceHeight > currentHeight - 1 ||
+        !Number.isSafeInteger(payload.validUntilHeight) ||
+        payload.validUntilHeight !== payload.referenceHeight +
+          VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS ||
+        currentHeight > payload.validUntilHeight))) {
     throw new Error("validator admission context is invalid");
   }
   const transport = validateCommon(payload, transportSignature, signature,
-    "VALIDATOR_ADMISSION_V1");
+    v2 ? "VALIDATOR_ADMISSION_V2" : "VALIDATOR_ADMISSION_V1",
+    v2 ? "VALIDATOR_ADMISSION_TRANSPORT_V2" : "VALIDATOR_ADMISSION_TRANSPORT_V1");
   return { payload, transport };
 }
 

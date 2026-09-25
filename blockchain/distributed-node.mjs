@@ -47,6 +47,7 @@ import {
   verifyAdmissionInclusionReceipt,
 } from "./admission-inclusion.mjs";
 import { MAX_ADMISSION_OMISSION_EVIDENCE_BYTES } from "./validator-admission-omission.mjs";
+import { verifyValidatorAdmission } from "./validator-admission.mjs";
 import {
   createPeerRequest,
   createPeerResponse,
@@ -303,6 +304,29 @@ export class TransactionMempool {
   }
 }
 
+export function invalidValidatorAdmissionsForNextBlock(transactions, {
+  chainIdentityGenesisHash, currentHeight, networkId, nextNonce, protocolVersion,
+  _verifyAdmission = verifyValidatorAdmission,
+} = {}) {
+  if (!Array.isArray(transactions) || typeof nextNonce !== "function") {
+    throw new Error("validator admission pruning context is invalid");
+  }
+  const invalid = [];
+  for (const transaction of transactions) {
+    if (transaction?.type !== "validator-admission") continue;
+    try {
+      _verifyAdmission(transaction, networkId, { chainIdentityGenesisHash,
+        currentHeight, protocolVersion });
+      const finalizedNonce = nextNonce(transaction.sender);
+      if (!Number.isSafeInteger(finalizedNonce) || finalizedNonce < 0 ||
+          !Number.isSafeInteger(transaction.nonce) || transaction.nonce < finalizedNonce) {
+        throw new Error("validator admission nonce is finalized or invalid");
+      }
+    } catch { invalid.push(transaction); }
+  }
+  return invalid;
+}
+
 function proposalFields(block) {
   return {
     epochRandomnessCommits: block.epochRandomnessCommits,
@@ -455,6 +479,7 @@ export class ValidatorReplica {
         this.#admissionReceipts.set(id, receipt);
       }
     }
+    this.#pruneInvalidValidatorAdmissions();
   }
 
   get address() { return this.#wallet.address; }
@@ -987,10 +1012,31 @@ export class ValidatorReplica {
     if (this.#chain.validatorDisabled(this.address)) {
       throw new Error("disabled local validator cannot propose");
     }
+    this.#pruneInvalidValidatorAdmissions();
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("validator mempool is empty");
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
     return this.#chain.buildBlock({ transactions, timestamp });
+  }
+
+  #pruneInvalidValidatorAdmissions() {
+    const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
+    const nextProtocolVersion = this.#chain.buildBlock({ transactions: [], timestamp }).protocolVersion;
+    const invalid = invalidValidatorAdmissionsForNextBlock(this.#mempool.values(), {
+      chainIdentityGenesisHash: this.#chain.blocks()[0].hash,
+      currentHeight: this.#chain.height + 1,
+      networkId: this.#chain.networkId,
+      nextNonce: (address) => this.#chain.nextNonce(address),
+      protocolVersion: nextProtocolVersion,
+    });
+    this.#mempool.remove(invalid);
+    for (const transaction of invalid) {
+      const id = transactionId(transaction);
+      this.#admissionReceipts.delete(id);
+      rmSync(join(this.#directory, "mempool", `${id}.json`), { force: true });
+      rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
+    }
+    return invalid.length;
   }
 
   #assertAdmissionInclusion(proposal) {
@@ -1094,6 +1140,7 @@ export class ValidatorReplica {
   }
 
   submitTransaction(transaction) {
+    this.#pruneInvalidValidatorAdmissions();
     const id = transactionId(transaction);
     if (this.#mempool.has(id)) return {
       ...(this.#admissionReceipts.has(id) ? { receipt: this.#admissionReceipts.get(id) } : {}),
@@ -1349,6 +1396,7 @@ export class ValidatorReplica {
       rmSync(join(this.#directory, "mempool", `${id}.json`), { force: true });
       rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
     }
+    this.#pruneInvalidValidatorAdmissions();
     return { height: this.height, status: "committed" };
   }
 }
@@ -1527,6 +1575,7 @@ export class DistributedCoordinator {
   }
 
   #queueLocal(transaction) {
+    this.#pruneInvalidValidatorAdmissions();
     const id = transactionId(transaction);
     if (this.#mempool.has(id)) return { status: "known", transactionId: id };
     this.#mempool.add(transaction);
@@ -1541,6 +1590,21 @@ export class DistributedCoordinator {
       throw error;
     }
     return { status: "queued", transactionId: id };
+  }
+
+  #pruneInvalidValidatorAdmissions({ protocolUpgrade = null } = {}) {
+    const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
+    const nextProtocolVersion = this.#chain.buildBlock({ transactions: [], timestamp,
+      protocolUpgrade }).protocolVersion;
+    const invalid = invalidValidatorAdmissionsForNextBlock(this.#mempool.values(), {
+      chainIdentityGenesisHash: this.#chain.blocks()[0].hash,
+      currentHeight: this.#chain.height + 1,
+      networkId: this.#chain.networkId,
+      nextNonce: (address) => this.#chain.nextNonce(address),
+      protocolVersion: nextProtocolVersion,
+    });
+    this.#mempool.remove(invalid);
+    return invalid.length;
   }
 
   async submitTransaction(transaction) {
@@ -1632,6 +1696,7 @@ export class DistributedCoordinator {
     if (protocolUpgrade !== null && (!protocolUpgrade || typeof protocolUpgrade !== "object" ||
         Array.isArray(protocolUpgrade))) throw new Error("protocol upgrade proposal is invalid");
     await this.#recoverPeerTransactions();
+    this.#pruneInvalidValidatorAdmissions({ protocolUpgrade });
     const transactions = this.#mempool.take();
     if (transactions.length === 0) throw new Error("mempool is empty");
     const syncResults = await boundedAllSettled(this.#peers, (_, index) =>
@@ -1721,6 +1786,7 @@ export class DistributedCoordinator {
       trustedValidators: this.#genesis.validators,
     });
     this.#mempool.remove(transactions);
+    this.#pruneInvalidValidatorAdmissions();
     const broadcasts = await boundedAllSettled(this.#peers, (_, index) =>
       this.#request(index, "/v1/blocks", block));
     if (handoff) {

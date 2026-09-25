@@ -507,6 +507,11 @@ const TRANSACTION_SCHEMAS = Object.freeze({
     "algorithm", "amount", "endpoint", "fee", "networkId", "nonce", "operatorId",
     "publicKey", "sender", "signature", "tlsCertificateSha256", "transportAlgorithm",
     "transportPublicKey", "transportSignature", "type",
+  ], [
+    "algorithm", "amount", "chainIdentityGenesisHash", "endpoint", "fee", "networkId",
+    "nonce", "operatorId", "publicKey", "referenceHeight", "sender", "signature",
+    "tlsCertificateSha256", "transportAlgorithm", "transportPublicKey",
+    "transportSignature", "type", "validUntilHeight",
   ]],
   "validator-admission-readiness": [[
     "admissionId", "algorithm", "endpoint", "fee", "networkId", "nonce", "publicKey",
@@ -4367,7 +4372,11 @@ export class NirChain {
             MAX_RETIRED_VALIDATOR_TOMBSTONES))) {
       throw new Error("validator admission queue capacity is exhausted");
     }
-    const { payload, transport } = verifyValidatorAdmission(transaction, this.#networkId);
+    const { payload, transport } = verifyValidatorAdmission(transaction, this.#networkId, {
+      chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
+      currentHeight: height,
+      protocolVersion: state.protocolVersion,
+    });
     const existing = state.registeredValidators.get(payload.sender);
     if ((existing && (state.activeValidators.has(payload.sender) ||
         existing.publicKey !== payload.publicKey || existing.operatorId !== payload.operatorId ||
@@ -6091,6 +6100,7 @@ export class NirChain {
           pendingEvaluators: pendingEvaluatorRegistrations,
           pendingValidatorAdmissions, pendingValidatorExits,
           peerRegistry: nextPeerRegistry,
+          protocolVersion: protocolState.protocolVersion,
           registeredBeacons: registeredBeaconAuthorities, registeredValidators,
           retiredBeacons: retiredBeaconAuthorities, retiredValidators, validatorBonds,
         }, block.height, block.timestamp, block.feeRecipient);
