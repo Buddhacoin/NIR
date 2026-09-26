@@ -32,6 +32,13 @@ import { createValidatorAdmissionOmissionEvidence,
 import { createValidatorRecoveryCheckpointCertificate, verifyValidatorRecoveryCheckpoint }
   from "../blockchain/validator-recovery.mjs";
 import { ValidatorRecoveryLockStore } from "../blockchain/validator-recovery-store.mjs";
+import {
+  createValidatorAdmissionReadinessCandidateResponse,
+  createValidatorAdmissionReadinessCertificate,
+  createValidatorAdmissionReadinessChallenge,
+  createValidatorAdmissionReadinessReceipt,
+  verifyValidatorAdmissionReadinessCertificate,
+} from "../blockchain/validator-admission-readiness-auth.mjs";
 import { createFinalityProof, verifyValidatorRecoveryTransition }
   from "../blockchain/light-client.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
@@ -167,6 +174,53 @@ function verifiedSnapshotEnvelope(chain) {
 function restore(chain, genesis) {
   return NirChain.fromVerifiedSnapshot(genesis, verifiedSnapshotEnvelope(chain));
 }
+
+test("read-only live-readiness collection does not change candidate consensus state", () => {
+  const { chain, treasury, validators } = fixture(32);
+  const candidate = generateWallet(); const transport = generateWallet();
+  append(chain, { timestamp: TREASURY_VESTING_MS, transactions: [createTransfer({
+    amount: (MIN_VALIDATOR_BOND + 4n * MIN_TRANSFER_FEE).toString(), networkId: chain.networkId,
+    nonce: chain.nextNonce(treasury.address), recipient: candidate.address, wallet: treasury,
+  })] }, validators);
+  append(chain, { transactions: [createValidatorAdmission({
+    chainIdentityGenesisHash: chain.blocks()[0].hash, endpoint: "https://candidate-live.example",
+    networkId: chain.networkId, nonce: 0, operatorId: "candidate-live",
+    referenceHeight: chain.height, tlsCertificateSha256: "a".repeat(64),
+    transportWallet: transport, wallet: candidate,
+  })] }, validators);
+  const before = { height: chain.height, nonce: chain.nextNonce(candidate.address),
+    root: chain.stateRoot, snapshot: chain.consensusSnapshot(),
+    admission: chain.validatorAdmission(candidate.address) };
+  const context = chain.validatorAdmissionReadinessContext(candidate.address);
+  assert.deepEqual(context.checkpoint, { blockHash: chain.tipHash, height: chain.height,
+    stateRoot: chain.stateRoot, validatorSetId: chain.validatorSetId });
+  const receipts = validators.slice(0, 3).map((observerWallet, index) => {
+    const challenge = createValidatorAdmissionReadinessChallenge({
+      challengeNonce: String(index + 1).padStart(64, "0"), context, observerWallet,
+      validators: chain.validatorMembers });
+    const candidateResponse = createValidatorAdmissionReadinessCandidateResponse({
+      candidateWallet: candidate, challenge, context, transportWallet: transport,
+      validators: chain.validatorMembers });
+    return createValidatorAdmissionReadinessReceipt({ candidateResponse, observerWallet,
+      validators: chain.validatorMembers });
+  });
+  const certificate = createValidatorAdmissionReadinessCertificate({ context, receipts,
+    validators: chain.validatorMembers });
+  assert.equal(verifyValidatorAdmissionReadinessCertificate(certificate, {
+    validators: chain.validatorMembers }).status, "certificate-collected");
+  assert.deepEqual({ height: chain.height, nonce: chain.nextNonce(candidate.address),
+    root: chain.stateRoot, snapshot: chain.consensusSnapshot(),
+    admission: chain.validatorAdmission(candidate.address) }, before);
+  assert.equal(chain.validatorAdmission(candidate.address).readiness, false);
+  assert.throws(() => chain.validatorAdmissionReadinessContext(validators[0].address),
+    /not eligible/);
+
+  const legacy = generateWallet();
+  const legacyChain = fixture(31, [legacy]).chain;
+  assert.equal(legacyChain.validatorAdmission(legacy.address).legacy, true);
+  assert.throws(() => legacyChain.validatorAdmissionReadinessContext(legacy.address),
+    /not eligible/);
+});
 
 test("v32 admission survives restart and rotation cannot skip the FIFO head", () => {
   const { chain, genesis, treasury, validators, validatorTransports } = fixture(32);
