@@ -680,7 +680,7 @@ function releaseAdmissionNonceLock(path, lock) {
   }
 }
 
-function validateSignedValidatorAdmissionArtifact(signed, signingPackage, plan) {
+export function validateSignedValidatorAdmissionArtifact(signed, signingPackage, plan) {
   exact(signed, ["broadcast", "format", "packageHash", "transaction", "transactionId", "version"],
     "signed validator admission");
   const verified = verifyValidatorAdmission(signed.transaction, plan.networkId, {

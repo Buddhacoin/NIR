@@ -1,9 +1,9 @@
-# Validator join workspace (testnet Slices A, B1, B2a, and B2b1)
+# Validator join workspace (testnet Slices A, B1, B2a, B2b1, and B2b2a)
 
 `validator:join` prepares local validator identities on macOS or Linux. B2a can prepare and sign a
-protocol-v32 admission transaction offline, but it is not a network join, never broadcasts or
-submits that transaction, and does not claim that an address is queued, eligible, selected, or
-active.
+protocol-v32 admission transaction offline. The separate, explicit B2b1 command can submit those
+exact bytes to authenticated peers, and B2b2a can verify a supplied finalized inclusion proof.
+None of these slices claims that an address is ready, selected, or active.
 
 ## What this slice does
 
@@ -50,6 +50,7 @@ npm run validator:join -- prepare-admission /absolute/private/path/join-workspac
 npm run validator:join -- sign-admission /absolute/private/path/join-workspace /absolute/private/path/admission-package.json /absolute/private/path/signed-admission.json
 npm run validator:join -- resolve-expired-admission /absolute/private/path/join-workspace
 npm run validator:join -- submit-admission /absolute/private/path/join-workspace /absolute/private/path/signed-admission.json /absolute/path/fresh-public-sync-input.json
+npm run validator:admission-finality -- verify-file /absolute/path/canonical-finality-evidence.json /absolute/private/path/new-finality-receipt.json
 ```
 
 Passwords are rejected from ordinary stdin, command-line arguments, and environment variables.
@@ -143,13 +144,38 @@ The local head is rollback detection within the retained workspace, not an exter
 anchor. Deleting the entire workspace, all receipts, and the head together cannot be detected
 locally; backups or a later external receipt anchor remain an operational requirement.
 
+## Verify finalized admission inclusion offline (Slice B2b2a)
+
+`validator:admission-finality verify-file` verifies a canonical evidence file without network
+access and without opening either vault. The evidence binds the exact public plan, signing package,
+signed artifact, byte-identical signing journal, authenticated B2b1 receipt, candidate checkpoint,
+finality chain, validator handoffs, and transaction-tree proof.
+
+The finality chain must begin immediately after the candidate checkpoint and end at the exact block
+containing the signed protocol-v32 admission. The verifier checks block hash, height, transaction
+root and count, transaction ID and bytes, network, genesis identity, validator certificates and the
+admission lifetime. B2b1 acknowledgements are reverified but never treated as finality. Because the
+candidate checkpoint does not carry the complete upgrade authorization state, B2b2a rejects a
+pending or encountered protocol-upgrade boundary instead of inventing one. All handoffs must occur
+strictly after the checkpoint.
+
+A successful run atomically creates a new immutable mode-`0600` receipt and never replaces an
+existing path. A genuine partial B2b1 transport receipt is sufficient when the independent finality
+chain proves exact inclusion: transport acknowledgements and consensus finality are deliberately
+not conflated. The local finality receipt is evidence retained by this workspace, not an external
+rollback anchor; deleting the workspace and every backup cannot be detected from that receipt alone.
+This slice does not download evidence or expose a proof endpoint; authenticated
+multi-peer acquisition is a later slice. Finalized admission also does not prove readiness,
+selection, rotation, or activation.
+
 ## Later slices still required
 
 Joining the queue still requires a separately reviewed non-voting candidate service and finalized
-inclusion flow. It must prove finalized admission, perform a pinned HTTPS
+inclusion acquisition flow. It must obtain the proof from independent pinned peers, perform a pinned HTTPS
 challenge, collect a fresh current-validator quorum observation, expose proof-backed status, and
-bind onboarding to the certified endpoint and transport identity. B2b1 deliberately implements none
-of finalized inclusion proofs, readiness, selection, rotation, or activation.
+bind onboarding to the certified endpoint and transport identity. B2b2a verifies a supplied finalized
+inclusion bundle but deliberately implements none of proof downloading, readiness, selection,
+rotation, or activation.
 
 Do not manually fabricate a nonce, admission, readiness quorum, or “active” status from the files in
 this directory.
