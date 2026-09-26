@@ -5,7 +5,7 @@ software release, server operator or block proposer cannot change the active
 rules by itself.
 
 The genesis execution version is `24`. This implementation knows sequential
-versions through `33`; version `25` introduces the delayed upgrade state machine
+versions through `34`; version `25` introduces the delayed upgrade state machine
 and later versions add their documented deterministic transitions. A later
 version must ship its execution rules before nodes can execute its activation
 block.

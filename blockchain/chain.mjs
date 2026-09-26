@@ -44,6 +44,7 @@ import {
   VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION,
   VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
   VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
+  RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -154,6 +155,7 @@ import {
   verifyValidatorRecoveryEnvelope,
   verifyValidatorRecoveryPlan,
   verifyValidatorRecoveryPlanTransaction,
+  validatorRecoveryBlockValidatorSetId,
   validatorRecoveryStateCommitment,
   verifyValidatorRecoveryVotes,
 } from "./validator-recovery.mjs";
@@ -2571,14 +2573,35 @@ export class NirChain {
     }
     const rotationAddresses = new Set((state.pendingValidatorRotation?.validators ?? [])
       .map(({ address }) => address));
+    const recoveryReserveAddresses = new Set((validatorRecoveryPlan?.reserves ?? [])
+      .map(({ address }) => address));
     if ([...pendingValidatorAdmissions.keys()].some((address) =>
       pendingValidatorExits.has(address) || retiredValidators.has(address) ||
-      disabledValidators.has(address) || validatorRecoveryPlan?.reserves.some(
-        ({ address: reserve }) => reserve === address))) {
+      disabledValidators.has(address) ||
+      (state.protocolVersion < RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
+       recoveryReserveAddresses.has(address)))) {
       throw new Error("validator admission has a conflicting membership role");
     }
+    if (state.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
+        validatorRecoveryPlan) {
+      const peerByAddress = new Map((validatorRecoveryPlan.peers ?? [])
+        .map((peer) => [peer.validatorAddress, peer]));
+      if (recoveryReserveAddresses.size !== validatorRecoveryPlan.reserves.length ||
+          [...recoveryReserveAddresses].some((address) => {
+            const admission = pendingValidatorAdmissions.get(address);
+            const peer = peerByAddress.get(address);
+            return !admission || admission.readiness ||
+              (validatorRecoveryPlan.peers !== null && (!peer ||
+               admission.endpoint !== peer.url ||
+               admission.tlsCertificateSha256 !== peer.tlsCertificateSha256 ||
+               canonicalJson(admission.transport) !== canonicalJson(peer.transport)));
+          })) {
+        throw new Error("recovery reserve admission snapshot is invalid");
+      }
+    }
     if ([...pendingValidatorAdmissions.values()].some((entry) =>
-      entry.expiryHeight <= snapshot.height && !rotationAddresses.has(entry.address))) {
+      entry.expiryHeight <= snapshot.height && !rotationAddresses.has(entry.address) &&
+      !recoveryReserveAddresses.has(entry.address))) {
       throw new Error("expired validator admission survived without a pending selection");
     }
     if ([...pendingValidatorAdmissions.values()].some((entry) =>
@@ -3802,7 +3825,7 @@ export class NirChain {
       height,
       networkId: this.#networkId,
       peerRegistryHash: nextPeerRegistry ? peerRegistryHash(nextPeerRegistry) : "0".repeat(64),
-      peerRegistryUpdate: activatingOnboarding || nextPeerRegistry === this.#peerRegistry
+      peerRegistryUpdate: recovery || activatingOnboarding || nextPeerRegistry === this.#peerRegistry
         ? null : nextPeerRegistry,
       previousHash: this.#blocks.at(-1).hash,
       epochRandomnessCommits,
@@ -3827,7 +3850,10 @@ export class NirChain {
       ...(nextProtocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
         ? {
           chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
-          validatorSetId: validatorSetId(this.#validatorsForHeight(height)),
+          validatorSetId: recovery
+            ? validatorRecoveryBlockValidatorSetId(nextProtocolVersion,
+              this.#validatorsForHeight(height), this.#validatorRecoveryPlan)
+            : validatorSetId(this.#validatorsForHeight(height)),
         } : {}),
       round,
       roundCertificate,
@@ -5502,7 +5528,9 @@ export class NirChain {
       recoveryTransition, { currentHeight: block.height, networkId: this.#networkId,
         plan: this.#validatorRecoveryPlan, previousBlock: previous },
     ) : null;
-    const blockValidatorMembers = this.#validatorsForHeight(block.height);
+    const blockValidatorMembers = recoveryTransition &&
+        block.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION
+      ? this.#validatorRecoveryPlan.reserves : this.#validatorsForHeight(block.height);
     const blockValidators = new Map(blockValidatorMembers.map((member) => [member.address, member]));
     const blockQuorum = Math.floor((blockValidators.size * 2) / 3) + 1;
     if (block.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
@@ -5823,9 +5851,17 @@ export class NirChain {
       resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
       validatorReadinessObservationFloor = block.height;
     }
+    if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
+        this.#protocolVersion < RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
+        validatorRecoveryPlan) {
+      throw new Error("recovery reserve admission migration conflicts with an active plan");
+    }
     if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
       const selected = new Set((this.#pendingValidatorRotation?.validators ?? [])
         .map(({ address }) => address));
+      if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION) {
+        for (const { address } of validatorRecoveryPlan?.reserves ?? []) selected.add(address);
+      }
       for (const [address, admission] of pendingValidatorAdmissions) {
         if (admission.expiryHeight > block.height || selected.has(address)) continue;
         const bond = validatorBonds.get(address) ?? 0n;
@@ -5841,6 +5877,10 @@ export class NirChain {
       }
       const activating = new Set(this.#pendingValidatorRotation?.activationHeight === block.height
         ? this.#pendingValidatorRotation.validators.map(({ address }) => address) : []);
+      if (recoveryTransition && protocolState.protocolVersion >=
+          RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION) {
+        for (const { address } of validatorRecoveryPlan?.reserves ?? []) activating.add(address);
+      }
       if ([...pendingValidatorAdmissions.values()].some((entry) => !activating.has(entry.address) &&
         (nextPeerRegistry?.peers ?? []).some((peer) => peer.url === entry.endpoint ||
           peer.transport?.address === entry.transport?.address ||
@@ -6261,13 +6301,78 @@ export class NirChain {
         }
         if (transaction.plan?.reserves?.some(({ address }) =>
           pendingValidatorExits.has(address) || retiredValidators.has(address) ||
-          pendingValidatorAdmissions.has(address))) {
+          (protocolState.protocolVersion < RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
+           pendingValidatorAdmissions.has(address)))) {
           throw new Error("exiting, retired, or pending validator cannot be a recovery reserve");
         }
         validatorRecoveryPlan = this.#applyValidatorRecoveryPlan(
           transaction, balances, nonces, validatorBonds, registeredValidators,
           block.feeRecipient, block.height,
         );
+        if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION) {
+          const peerByAddress = new Map((validatorRecoveryPlan.peers ?? [])
+            .map((peer) => [peer.validatorAddress, peer]));
+          const reserveAddresses = new Set(validatorRecoveryPlan.reserves
+            .map(({ address }) => address));
+          const nonReserveAdmissions = [...pendingValidatorAdmissions.values()]
+            .filter(({ address }) => !reserveAddresses.has(address));
+          const liveProtocolIdentities = [
+            ...registeredValidators.values(), ...evaluatorsAfter.values(),
+            ...pendingEvaluatorRegistrations.values(), ...registeredBeaconAuthorities.values(),
+            ...pendingBeaconAdmissions.values(), ...retiredBeaconAuthorities.values(),
+            ...retiredValidators.values(),
+          ];
+          const reserveUpdates = [];
+          for (const member of validatorRecoveryPlan.reserves) {
+            const admission = pendingValidatorAdmissions.get(member.address);
+            const peer = peerByAddress.get(member.address);
+            const unboundLegacy = admission?.legacy === true && admission.readiness === false &&
+              admission.endpoint === null && admission.tlsCertificateSha256 === null &&
+              admission.transport === null;
+            const peerBindingInvalid = validatorRecoveryPlan.peers !== null && (!peer ||
+              (() => { try {
+                const endpoint = new URL(peer.url);
+                return endpoint.protocol !== "https:" || endpoint.origin !== peer.url ||
+                  endpoint.pathname !== "/";
+              } catch { return true; } })() ||
+              !/^[0-9a-f]{64}$/.test(peer.tlsCertificateSha256 ?? "") ||
+              peer.transport?.algorithm !== SIGNATURE_ALGORITHM ||
+              addressFromPublicKey(peer.transport?.publicKey) !== peer.transport?.address ||
+              peer.transport.address === member.address ||
+              (!unboundLegacy && (admission.endpoint !== peer.url ||
+               admission.tlsCertificateSha256 !== peer.tlsCertificateSha256 ||
+               canonicalJson(admission.transport) !== canonicalJson(peer.transport))));
+            const peerCollides = peer && ((nextPeerRegistry?.peers ?? []).some((activePeer) =>
+              activePeer.url === peer.url ||
+              activePeer.transport?.address === peer.transport.address ||
+              activePeer.transport?.publicKey === peer.transport.publicKey) ||
+              nonReserveAdmissions.some((entry) => entry.endpoint === peer.url ||
+                entry.transport?.address === peer.transport.address ||
+                entry.transport?.publicKey === peer.transport.publicKey) ||
+              liveProtocolIdentities.some((identity) =>
+                identity.address === peer.transport.address ||
+                identity.publicKey === peer.transport.publicKey));
+            if (!admission || admission.expiryHeight <= block.height ||
+                disabledValidators.has(member.address) ||
+                canonicalJson({ address: admission.address, algorithm: admission.algorithm,
+                  operatorId: admission.operatorId, publicKey: admission.publicKey }) !==
+                  canonicalJson(member) ||
+                peerBindingInvalid || peerCollides) {
+              throw new Error("recovery reserve requires an exact pending admission binding");
+            }
+            const cleared = clearValidatorAdmissionReadiness(admission);
+            reserveUpdates.push([member.address, unboundLegacy && peer ? {
+              ...cleared, endpoint: peer.url, legacy: false,
+              tlsCertificateSha256: peer.tlsCertificateSha256,
+              transport: structuredClone(peer.transport),
+            } : admission.legacy && peer ? { ...cleared, endpoint: peer.url, legacy: false,
+              tlsCertificateSha256: peer.tlsCertificateSha256,
+              transport: structuredClone(peer.transport) } : cleared]);
+          }
+          for (const [address, admission] of reserveUpdates) {
+            pendingValidatorAdmissions.set(address, admission);
+          }
+        }
       } else if (transaction.type === "validator-recovery") {
         newlyBurned += this.#applyValidatorAdmissionOmission(
           transaction.evidenceTransaction, balances, nonces, validatorBonds,
@@ -6689,6 +6794,11 @@ export class NirChain {
       }
       validatorsAfter = new Map(validatorRecoveryPlan.reserves
         .map((member) => [member.address, member]));
+      if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION) {
+        for (const { address } of validatorRecoveryPlan.reserves) {
+          pendingValidatorAdmissions.delete(address);
+        }
+      }
       validatorOrderAfter = [...validatorsAfter.keys()].sort();
       if (protocolState.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION) {
         resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
@@ -6727,6 +6837,28 @@ export class NirChain {
     }
     if (scheduledRotation) {
       pendingValidatorRotationAfter = scheduledRotation;
+      if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
+          validatorRecoveryPlan) {
+        for (const { address } of validatorRecoveryPlan.reserves) {
+          const admission = pendingValidatorAdmissions.get(address);
+          if (!admission) throw new Error("recovery reserve admission is unavailable");
+          if (admission.expiryHeight <= block.height) {
+            const bond = validatorBonds.get(address) ?? 0n;
+            if (bond > 0n) balances.set(address, (balances.get(address) ?? 0n) + bond);
+            validatorBonds.delete(address);
+            registeredValidators.delete(address);
+            pendingValidatorAdmissions.delete(address);
+            retiredValidators.set(address, {
+              address: admission.address, algorithm: admission.algorithm,
+              operatorId: admission.operatorId, publicKey: admission.publicKey,
+              retiredHeight: block.height,
+            });
+          } else {
+            pendingValidatorAdmissions.set(address,
+              clearValidatorAdmissionReadiness(admission));
+          }
+        }
+      }
       validatorRecoveryPlan = null;
     }
     if (pendingValidatorRotationAfter?.validators.some(({ address }) =>

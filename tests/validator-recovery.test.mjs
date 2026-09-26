@@ -18,7 +18,8 @@ import {
   verifyValidatorRecoveryTransition,
 } from "../blockchain/light-client.mjs";
 import {
-  MIN_BEACON_BOND, MIN_TRANSFER_FEE, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
+  MIN_BEACON_BOND, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS, MIN_TRANSFER_FEE,
+  SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import {
@@ -30,6 +31,7 @@ import {
   createValidatorRecoveryCheckpointCertificate,
   createValidatorRecoveryPlan,
   createValidatorRecoveryPlanTransaction,
+  validatorRecoveryBlockValidatorSetId,
   validatorRecoveryStateCommitment,
   verifyValidatorRecoveryCheckpoint,
   verifyValidatorRecoveryPlan,
@@ -68,7 +70,7 @@ function recoverySigners(wallets, t, prefix = "nir-recovery-signers-") {
     new ValidatorRecoveryLockStore(join(directory, `${index}.json`), wallet));
 }
 
-function fixture() {
+function fixture(protocolVersion = 25) {
   const validators = Array.from({ length: 4 }, generateWallet);
   const reserves = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -79,17 +81,31 @@ function fixture() {
     capabilityReferences: [{ artifactHash: `sha256:${"1".repeat(64)}`,
       behaviorCommitment: "2".repeat(64), capabilitiesBps: { "reasoning-v1": 1 },
       contentHash: `sha256:${"3".repeat(64)}` }],
+    evaluationEnvironment: { adapter_protocol: "nir-application-adapter-v1", cpu_limit: 2,
+      format: "nir-evaluation-environment-v1", image_digest: `sha256:${"4".repeat(64)}`,
+      memory_limit_bytes: 1 << 30, runner_digest: `sha256:${"5".repeat(64)}`,
+      timeout_seconds: 60 },
     evaluators: members(evaluators, "evaluator"), genesisTimestamp: 0,
-    genesisProtocolVersion: 25,
+    genesisProtocolVersion: protocolVersion === 28 ? 27 : protocolVersion,
     networkId: "nir-validator-recovery-test",
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: treasury.address, validators: members(validators, "validator"),
   };
-  return { chain: new NirChain(genesisConfig), genesisConfig, reserves, treasury, validators };
+  const chain = new NirChain(genesisConfig);
+  if (protocolVersion === 28) {
+    const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+    append(chain, chain.buildBlock({ protocolUpgrade: {
+      activationHeight, format: "nir-protocol-upgrade-v1", version: 28,
+    }, timestamp: 1 }), validators);
+    while (chain.height < activationHeight) {
+      append(chain, chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 }), validators);
+    }
+  }
+  return { chain, genesisConfig, reserves, treasury, validators };
 }
 
-function prepareRecovery(t) {
-  const values = fixture();
+function prepareRecovery(t, protocolVersion = 25) {
+  const values = fixture(protocolVersion);
   const { chain, reserves, treasury, validators } = values;
   const all = [...validators, ...reserves];
   append(chain, chain.buildBlock({ timestamp: TREASURY_VESTING_MS,
@@ -105,11 +121,13 @@ function prepareRecovery(t) {
     })) }), validators);
   const reserveMembers = members(reserves, "reserve");
   const reserveSigners = recoverySigners(reserves, t);
+  const scheduledHeight = chain.height + 1;
   const plan = createValidatorRecoveryPlan({
-    activationHeight: 67, activeValidators: members(validators, "validator"), generation: 1,
+    activationHeight: scheduledHeight + 64,
+    activeValidators: members(validators, "validator"), generation: 1,
     networkId: chain.networkId,
     reserveWallets: reserves.map((wallet, index) => ({ member: reserveMembers[index], wallet })),
-    scheduledHeight: 3,
+    scheduledHeight,
   });
   const safetyBondAmount = 1n;
   const planNonce = chain.nextNonce(treasury.address);
@@ -119,17 +137,19 @@ function prepareRecovery(t) {
       amount: safetyBondAmount.toString(), candidateId: "f".repeat(64),
       networkId: chain.networkId, nonce: planNonce + 1, wallet: treasury,
     })] }), validators);
-  for (let height = 4; height <= 66; height += 1) {
+  for (let height = chain.height + 1; height < plan.activationHeight; height += 1) {
     append(chain, chain.buildBlock({ timestamp: TREASURY_VESTING_MS + height }), validators);
   }
   const candidate = generateWallet();
-  const admission = createBeaconBond({ activationHeight: 131,
+  const admission = createBeaconBond({ activationHeight: plan.activationHeight + 64,
     amount: MIN_BEACON_BOND.toString(), networkId: chain.networkId, nonce: 0,
     operatorId: "recovery-trigger", wallet: candidate });
   const receipts = validators.slice(0, 3).map((validatorWallet) =>
-    createAdmissionInclusionReceipt({ acceptedHeight: 66, networkId: chain.networkId,
+    createAdmissionInclusionReceipt({ acceptedHeight: chain.height, networkId: chain.networkId,
       transaction: admission, validatorWallet, validators: members(validators, "validator") }));
-  const omission = finalizeBlock(chain.buildBlock({ timestamp: TREASURY_VESTING_MS + 67 }),
+  const omission = finalizeBlock(chain.buildBlock({
+    timestamp: TREASURY_VESTING_MS + plan.activationHeight,
+  }),
     validators.slice(1, 4));
   chain.appendBlock(omission);
   const evidence = createValidatorAdmissionOmissionEvidence({
@@ -168,6 +188,46 @@ function snapshotRestore(chain, genesisConfig) {
     recoveryStateCommitment: chain.recoveryStateCommitment,
     state: snapshot.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash });
 }
+
+test("recovery validator set commitment switches only with v34 reserve admissions", () => {
+  const active = members(Array.from({ length: 4 }, generateWallet), "active");
+  const reserves = members(Array.from({ length: 4 }, generateWallet), "reserve");
+  const plan = { reserveSetId: validatorSetId(reserves) };
+  for (const protocolVersion of [28, 31, 32, 33]) {
+    assert.equal(validatorRecoveryBlockValidatorSetId(protocolVersion, active, plan),
+      validatorSetId(active), `v${protocolVersion} did not retain the active set commitment`);
+  }
+  assert.equal(validatorRecoveryBlockValidatorSetId(34, active, plan), plan.reserveSetId);
+});
+
+test("v28 full node and light client retain the pre-recovery validator set commitment", (t) => {
+  const values = prepareRecovery(t, 28);
+  const currentSetId = validatorSetId(values.chain.validatorMembers);
+  const previousProof = createFinalityProof(values.omission);
+  const proposal = values.chain.buildBlock({ timestamp: values.omission.timestamp + 1,
+    transactions: [values.transition] });
+  assert.equal(proposal.validatorSetId, currentSetId);
+  assert.notEqual(proposal.validatorSetId, values.plan.reserveSetId);
+  const recovered = finalizeValidatorRecoveryBlock(proposal,
+    values.reserveSigners.slice(0, 3), values.plan,
+    { checkpointHash: values.checkpointHash, evidenceHash: values.evidence.evidenceHash });
+  assert.equal(verifyValidatorRecoveryTransition({ expectedNetworkId: values.chain.networkId,
+    plan: values.plan, previousProof, recoveryBlock: recovered,
+    trustedValidators: values.chain.validatorMembers }).validatorSetId, values.plan.reserveSetId);
+  values.chain.fork().appendBlock(recovered);
+
+  const forgedProposal = { ...structuredClone(proposal),
+    validatorSetId: values.plan.reserveSetId };
+  const forged = finalizeValidatorRecoveryBlock(forgedProposal,
+    recoverySigners(values.reserves, t, "nir-v28-reserve-set-signers-").slice(0, 3), values.plan,
+    { checkpointHash: values.checkpointHash, evidenceHash: values.evidence.evidenceHash });
+  assert.throws(() => values.chain.fork().appendBlock(forged),
+    /block validator set commitment is invalid/);
+  assert.throws(() => verifyValidatorRecoveryTransition({
+    expectedNetworkId: values.chain.networkId, plan: values.plan, previousProof,
+    recoveryBlock: forged, trustedValidators: values.chain.validatorMembers,
+  }), /light client recovery validator set commitment is invalid/);
+});
 
 test("precommitted reserve quorum recovers exactly H+1 and preserves slashing economics", (t) => {
   const values = prepareRecovery(t);
