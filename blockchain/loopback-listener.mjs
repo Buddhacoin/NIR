@@ -8,10 +8,16 @@ export function validateLoopbackListener({ host, label = "node listener", port }
   return { host, port };
 }
 
-export function listenOnLoopback(server, { host, label = "service listener", port }) {
+export function listenOnLoopback(server, {
+  host, inheritedFd = null, label = "service listener", port,
+}) {
   validateLoopbackListener({ host, label, port });
   if (!server || typeof server.listen !== "function" || typeof server.once !== "function") {
     throw new Error(`${label} server is invalid`);
+  }
+  if (inheritedFd !== null &&
+      (!Number.isSafeInteger(inheritedFd) || inheritedFd < 3 || inheritedFd > 255)) {
+    throw new Error(`${label} inherited descriptor is invalid`);
   }
   return new Promise((resolve, reject) => {
     const failed = () => {
@@ -20,10 +26,17 @@ export function listenOnLoopback(server, { host, label = "service listener", por
     };
     const listening = () => {
       server.off("error", failed);
+      const address = server.address();
+      if (!address || typeof address === "string" || address.port !== port || address.address !== host) {
+        server.close();
+        reject(new Error(`${label} inherited binding is invalid`));
+        return;
+      }
       resolve(server);
     };
     server.once("error", failed);
     server.once("listening", listening);
-    server.listen(port, host);
+    if (inheritedFd === null) server.listen(port, host);
+    else server.listen({ fd: inheritedFd });
   });
 }

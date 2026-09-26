@@ -160,37 +160,77 @@ async function reservePorts(count) {
   }
 }
 
+async function reserveExactPort(port) {
+  const server = createServer();
+  await new Promise((resolvePromise, reject) => {
+    server.once("error", reject); server.listen(port, LOOPBACK, resolvePromise);
+  });
+  return server;
+}
+
 class ServiceProcess {
   constructor(child, kind, port, maxOutputBytes) {
     this.child = child; this.kind = kind; this.port = port; this.exited = false; this.outputBytes = 0;
-    const consume = (chunk) => {
+    this.stderr = "";
+    const consume = (chunk, stderr = false) => {
       this.outputBytes += chunk.length;
+      if (stderr && this.stderr.length < 4_096) {
+        this.stderr += chunk.toString("utf8", 0, Math.max(0, 4_096 - this.stderr.length));
+      }
       if (this.outputBytes > maxOutputBytes) {
         this.failure = new Error(`${kind} service output limit exceeded`);
         try { process.kill(-child.pid, "SIGKILL"); } catch {}
       }
     };
-    child.stdout.on("data", consume); child.stderr.on("data", consume);
+    child.stdout.on("data", (chunk) => consume(chunk));
+    child.stderr.on("data", (chunk) => consume(chunk, true));
     child.once("error", () => { this.failure = new Error(`${kind} service failed to spawn`); });
     child.once("exit", (code, signal) => { this.exit = { code, signal }; this.exited = true; });
   }
 }
 
-function startBeacon({ networkId, password, policyPath, port, vaultPath }, limits) {
+function reservationDescriptor(server) {
+  const descriptor = server?.listening ? server?._handle?.fd : null;
+  if (!Number.isSafeInteger(descriptor) || descriptor < 0) {
+    throw new Error("real service port reservation descriptor is unavailable");
+  }
+  return descriptor;
+}
+
+function startupExitError(record) {
+  const category = /EADDRINUSE|address already in use/i.test(record.stderr) ? "PORT_IN_USE"
+    : /ENOENT|no such file or directory/i.test(record.stderr) ? "INPUT_MISSING"
+      : record.exit?.signal ? "SIGNAL" : record.exit?.code ? "EXIT_CODE" : "PROCESS_EXIT";
+  return new Error(`${record.kind} service exited during startup (category=${category} code=${
+    record.exit?.code ?? "none"} signal=${record.exit?.signal ?? "none"})`);
+}
+
+function startBeacon({ networkId, password, policyPath, port, vaultPath }, limits,
+  reservation = null) {
+  const stdio = ["ignore", "pipe", "pipe", "pipe"];
+  const env = { NIR_BEACON_PASSWORD_FD: "3" };
+  if (reservation !== null) {
+    stdio.push(reservationDescriptor(reservation));
+    env.NIR_LISTEN_FD = "4";
+  }
   const child = spawn(process.execPath,
     [BEACON_CLI, vaultPath, networkId, policyPath, String(port), LOOPBACK], {
-      cwd: REPOSITORY, detached: true, env: { NIR_BEACON_PASSWORD_FD: "3" }, shell: false,
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      cwd: REPOSITORY, detached: true, env, shell: false, stdio,
     });
   child.stdio[3].end(`${password}\n`);
   return new ServiceProcess(child, "beacon", port, limits.maxOutputBytes);
 }
 
-function startArchive(path, port, limits) {
+function startArchive(path, port, limits, reservation = null) {
+  const stdio = ["ignore", "pipe", "pipe"];
+  const env = {};
+  if (reservation !== null) {
+    stdio.push(reservationDescriptor(reservation));
+    env.NIR_LISTEN_FD = "3";
+  }
   const child = spawn(process.execPath,
     [ARCHIVE_CLI, "serve", path, String(port), LOOPBACK], {
-      cwd: REPOSITORY, detached: true, env: {}, shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      cwd: REPOSITORY, detached: true, env, shell: false, stdio,
     });
   return new ServiceProcess(child, "archive", port, limits.maxOutputBytes);
 }
@@ -199,7 +239,7 @@ async function waitHealth(record, predicate, limits) {
   const end = Date.now() + limits.startupTimeoutMs; let lastError;
   while (Date.now() < end) {
     if (record.failure) throw record.failure;
-    if (record.exited) throw new Error(`${record.kind} service exited during startup`);
+    if (record.exited) throw startupExitError(record);
     try {
       const response = await requestJson(`http://${LOOPBACK}:${record.port}/health`, {
         maxResponseBytes: 16 * 1024, timeoutMs: Math.min(250, limits.requestTimeoutMs),
@@ -424,8 +464,8 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
         port: reservations[index].address().port, vaultPath };
     });
     for (let index = 0; index < beaconConfigs.length; index += 1) {
+      const record = startBeacon(beaconConfigs[index], limits, reservations[index]); records.push(record);
       await new Promise((resolvePromise) => reservations[index].close(resolvePromise));
-      const record = startBeacon(beaconConfigs[index], limits); records.push(record);
       await waitHealth(record, (body) => body.address === beaconWallets[index].address &&
         body.networkId === chain.networkId, limits);
     }
@@ -477,7 +517,12 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
       networkId: chain.networkId, round: 2,
     }); } catch (error) { if (/quorum/.test(error.message)) outageQuorumRejected = true; else throw error; }
     if (!outageQuorumRejected) throw new Error("beacon quorum did not fail closed during outage");
-    const restartedBeacon = startBeacon(beaconConfigs[2], limits); records.push(restartedBeacon);
+    const beaconRestartReservation = await reserveExactPort(beaconConfigs[2].port);
+    const restartedBeacon = startBeacon(beaconConfigs[2], limits, beaconRestartReservation);
+    records.push(restartedBeacon);
+    await new Promise((resolvePromise) => beaconRestartReservation.close(resolvePromise));
+    await options._afterBeaconRestartPortRelease?.({ port: beaconConfigs[2].port,
+      processId: restartedBeacon.child.pid });
     await waitHealth(restartedBeacon, (body) => body.address === beaconWallets[2].address, limits);
     const restartReplay = await requestJson(`http://${LOOPBACK}:${beaconConfigs[2].port}/v1/share`, {
       body: firstRequests[2], method: "POST", timeoutMs: limits.requestTimeoutMs,
@@ -516,8 +561,9 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
     for (let index = 0; index < 2; index += 1) {
       const reservationIndex = index + 4;
       const port = reservations[reservationIndex].address().port;
+      const record = startArchive(archivePaths[index], port, limits,
+        reservations[reservationIndex]);
       await new Promise((resolvePromise) => reservations[reservationIndex].close(resolvePromise));
-      const record = startArchive(archivePaths[index], port, limits);
       records.push(record); archiveRecords.push(record);
       await waitHealth(record, (body) => body.archiveHash === artifacts[index].manifest.archiveHash &&
         body.networkId === chain.networkId, limits);
@@ -535,8 +581,13 @@ export async function runRealBeaconArchiveRehearsal({ releaseEvidence, ...option
       archiveOutageRejected = true;
     } else throw error; }
     if (!archiveOutageRejected) throw new Error("archive restore did not fail closed without quorum");
-    const restartedArchive = startArchive(archivePaths[1], archiveRecords[1].port, limits);
+    const archiveRestartReservation = await reserveExactPort(archiveRecords[1].port);
+    const restartedArchive = startArchive(archivePaths[1], archiveRecords[1].port, limits,
+      archiveRestartReservation);
     records.push(restartedArchive); archiveRecords[1] = restartedArchive;
+    await new Promise((resolvePromise) => archiveRestartReservation.close(resolvePromise));
+    await options._afterArchiveRestartPortRelease?.({ port: restartedArchive.port,
+      processId: restartedArchive.child.pid });
     await waitHealth(restartedArchive, (body) => body.archiveHash === artifacts[1].manifest.archiveHash,
       limits);
     const restoredDirectory = join(root, "restored"); mkdirSync(restoredDirectory, { mode: 0o700 });

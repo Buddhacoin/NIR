@@ -77,27 +77,61 @@ async function reserveContiguousPorts() {
   throw new Error("four bounded contiguous loopback ports are unavailable");
 }
 
+async function reserveExactPort(port) {
+  const server = createServer();
+  await new Promise((resolvePromise, reject) => {
+    server.once("error", reject); server.listen(port, LOOPBACK, resolvePromise);
+  });
+  return server;
+}
+
 class ValidatorProcess {
   constructor(child, index, port, limits) {
     this.child = child; this.index = index; this.port = port; this.exited = false;
     this.outputBytes = 0;
-    const consume = (chunk) => {
+    this.stderr = "";
+    const consume = (chunk, stderr = false) => {
       this.outputBytes += chunk.length;
+      if (stderr && this.stderr.length < 4_096) {
+        this.stderr += chunk.toString("utf8", 0, Math.max(0, 4_096 - this.stderr.length));
+      }
       if (this.outputBytes > limits.maxOutputBytes) {
         this.failure = new Error("real validator output limit exceeded");
         try { process.kill(-child.pid, "SIGKILL"); } catch {}
       }
     };
-    child.stdout.on("data", consume); child.stderr.on("data", consume);
+    child.stdout.on("data", (chunk) => consume(chunk));
+    child.stderr.on("data", (chunk) => consume(chunk, true));
     child.once("error", (error) => { this.spawnError = error; });
     child.once("exit", (code, signal) => { this.exited = true; this.exit = { code, signal }; });
   }
 }
 
-function spawnValidator(directory, port, index, limits) {
+function startupExitError(record) {
+  const category = /EADDRINUSE|address already in use/i.test(record.stderr) ? "PORT_IN_USE"
+    : /ENOENT|no such file or directory/i.test(record.stderr) ? "INPUT_MISSING"
+      : record.exit?.signal ? "SIGNAL" : record.exit?.code ? "EXIT_CODE" : "PROCESS_EXIT";
+  return new Error(`real validator exited during startup (category=${category} code=${
+    record.exit?.code ?? "none"} signal=${record.exit?.signal ?? "none"})`);
+}
+
+function reservationDescriptor(server) {
+  const descriptor = server?.listening ? server?._handle?.fd : null;
+  if (!Number.isSafeInteger(descriptor) || descriptor < 0) {
+    throw new Error("real validator port reservation descriptor is unavailable");
+  }
+  return descriptor;
+}
+
+function spawnValidator(directory, port, index, limits, reservation = null) {
+  const stdio = ["ignore", "pipe", "pipe"];
+  const env = { NIR_CERTIFICATE_MODE: "dev-genesis" };
+  if (reservation !== null) {
+    stdio.push(reservationDescriptor(reservation));
+    env.NIR_LISTEN_FD = "3";
+  }
   const child = spawn(process.execPath, [NETWORK_CLI, "serve-validator", directory, String(port)], {
-    cwd: REPOSITORY, detached: true, env: { NIR_CERTIFICATE_MODE: "dev-genesis" }, shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
+    cwd: REPOSITORY, detached: true, env, shell: false, stdio,
   });
   return new ValidatorProcess(child, index, port, limits);
 }
@@ -115,7 +149,7 @@ async function waitReady(processRecord, expectedHeight, limits) {
   while (Date.now() < end) {
     if (processRecord.failure) throw processRecord.failure;
     if (processRecord.spawnError) throw new Error("real validator process failed to spawn");
-    if (processRecord.exited) throw new Error("real validator exited during startup");
+    if (processRecord.exited) throw startupExitError(processRecord);
     try {
       const body = await publicHealth(processRecord.port, Math.min(250, limits.requestTimeoutMs));
       if (body.height === expectedHeight) return body;
@@ -306,11 +340,12 @@ export async function runRealValidatorRecoveryRehearsal(options = {}) {
     });
     for (let index = 0; index < 4; index += 1) {
       await options._beforeStart?.({ index, port: reservations.first + index });
-      await new Promise((resolvePromise) => reservations.servers[index].close(resolvePromise));
-      await options._afterPortRelease?.({ index, port: reservations.first + index });
       const record = spawnValidator(layout.validatorDirectories[index],
-        reservations.first + index, index, limits);
+        reservations.first + index, index, limits, reservations.servers[index]);
       records[index] = record;
+      await new Promise((resolvePromise) => reservations.servers[index].close(resolvePromise));
+      await options._afterPortRelease?.({ index, port: reservations.first + index,
+        processId: record.child.pid });
       await waitReady(record, 0, limits);
     }
     if (options._crashAfterStart !== undefined) {
@@ -346,9 +381,13 @@ export async function runRealValidatorRecoveryRehearsal(options = {}) {
     try { await publicHealth(records[targetIndex].port, 200); } catch { outageConnectionFailed = true; }
     if (!outageConnectionFailed) throw new Error("stopped validator remained reachable");
     await submit(1);
+    const replacementReservation = await reserveExactPort(reservations.first + targetIndex);
     const replacement = spawnValidator(layout.validatorDirectories[targetIndex],
-      reservations.first + targetIndex, targetIndex, limits);
+      reservations.first + targetIndex, targetIndex, limits, replacementReservation);
     records.push(replacement);
+    await new Promise((resolvePromise) => replacementReservation.close(resolvePromise));
+    await options._afterRestartPortRelease?.({ index: targetIndex,
+      port: reservations.first + targetIndex, processId: replacement.child.pid });
     await waitReady(replacement, 1, limits);
     const afterRestart = await authenticatedHealth(layout.validatorUrls[targetIndex],
       genesis.networkId, coordinatorWallet, target);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,8 +25,29 @@ import {
 
 const NETWORK_ID = "nir-real-recovery-devnet";
 let successful;
+const protectedRestarts = new Set();
+
+async function assertRestartPortProtected(kind, port) {
+  const competitor = createServer();
+  await new Promise((resolve, reject) => {
+    competitor.once("error", (error) => error.code === "EADDRINUSE" ? resolve() : reject(error));
+    competitor.listen(port, "127.0.0.1", () => {
+      competitor.close(); reject(new Error(`${kind} restart port became stealable`));
+    });
+  });
+  protectedRestarts.add(kind);
+}
+
 before(async () => {
-  successful = await runRealBeaconArchiveRehearsal({ releaseEvidence: releaseFixture() });
+  successful = await runRealBeaconArchiveRehearsal({
+    async _afterArchiveRestartPortRelease({ port }) {
+      await assertRestartPortProtected("archive", port);
+    },
+    async _afterBeaconRestartPortRelease({ port }) {
+      await assertRestartPortProtected("beacon", port);
+    },
+    releaseEvidence: releaseFixture(),
+  });
 });
 
 function releaseFixture() {
@@ -93,6 +115,7 @@ test("real beacon quorum and independent archive recovery bind release and valid
   assert.equal(successful.report.archive.recovery.matchingSources, 2);
   assert.equal(successful.cleanup.status, "PASS");
   assert.equal(successful.validatorCleanup.status, "PASS");
+  assert.deepEqual([...protectedRestarts].sort(), ["archive", "beacon"]);
   assert.deepEqual(validateRealBeaconArchiveReport(successful.report), successful.validation);
 });
 
