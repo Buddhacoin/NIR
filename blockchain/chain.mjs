@@ -82,6 +82,8 @@ import {
   verifyValidatorAdmission,
   verifyValidatorAdmissionReadiness,
 } from "./validator-admission.mjs";
+import { createValidatorAdmissionReadinessContext }
+  from "./validator-admission-readiness-auth.mjs";
 import {
   createValidatorRecoveryPeerRegistry, peerRegistryHash, verifyPeerRegistry,
 } from "./peer-registry.mjs";
@@ -3347,6 +3349,42 @@ export class NirChain {
   validatorAdmission(address) {
     const admission = this.#pendingValidatorAdmissions.get(address);
     return admission ? structuredClone(admission) : null;
+  }
+
+  validatorAdmissionReadinessContext(address) {
+    assertAddress(address, "validator admission readiness candidate");
+    if (this.#protocolVersion < VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
+      throw new Error("validator admission readiness requires the admission queue protocol");
+    }
+    const admission = this.#pendingValidatorAdmissions.get(address);
+    const registered = this.#registeredValidators.get(address);
+    const bindingInvalid = !admission || admission.legacy || admission.endpoint === null ||
+      admission.tlsCertificateSha256 === null || admission.transport === null ||
+      !registered || canonicalJson(registered) !== canonicalJson({ address: admission.address,
+        algorithm: admission.algorithm, operatorId: admission.operatorId,
+        publicKey: admission.publicKey });
+    const roleInvalid = this.#validators.has(address) || this.#disabledValidators.has(address) ||
+      this.#pendingValidatorExits.has(address) || this.#retiredValidators.has(address) ||
+      this.#pendingValidatorRotation?.validators.some((member) => member.address === address) ||
+      this.#validatorRecoveryPlan?.reserves.some((member) => member.address === address) ||
+      this.#evaluators.has(address) || this.#pendingEvaluatorRegistrations.has(address) ||
+      this.#registeredBeaconAuthorities.has(address) || this.#pendingBeaconAdmissions.has(address);
+    const activeBindingConflict = !bindingInvalid && (this.#peerRegistry?.peers ?? []).some((peer) =>
+      peer.url === admission.endpoint || peer.transport?.address === admission.transport.address ||
+      peer.transport?.publicKey === admission.transport.publicKey);
+    if (bindingInvalid || roleInvalid || activeBindingConflict ||
+        admission.expiryHeight <= this.height ||
+        (this.#validatorBonds.get(address) ?? 0n) < MIN_VALIDATOR_BOND ||
+        (this.#balances.get(address) ?? 0n) < MIN_TRANSFER_FEE ||
+        this.#validatorReadinessObservationFloor > this.height) {
+      throw new Error("validator admission is not eligible for a live readiness observation");
+    }
+    return createValidatorAdmissionReadinessContext({ admission,
+      chainIdentityGenesisHash: this.#chainIdentityGenesisHash,
+      checkpoint: { blockHash: this.tipHash, height: this.height, stateRoot: this.stateRoot,
+        validatorSetId: this.validatorSetId },
+      expiresAtHeight: this.height + 16, networkId: this.#networkId,
+      nonce: this.nextNonce(address) });
   }
 
   validatorAdmissionQueue() {

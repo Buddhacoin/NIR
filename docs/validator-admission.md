@@ -27,6 +27,29 @@ An active validator excluded by a finalized rotation is requeued without stale r
 bond remains sufficient, and must obtain a fresh live-observation certificate. An older inactive
 registration with no full bond may enter by submitting the exact v31 admission transaction.
 
+### Live-readiness proof artifacts
+
+The first live-readiness acquisition slice defines canonical, domain-separated artifacts without
+changing consensus state or the protocol version. A context binds the exact finalized checkpoint
+height, block hash, state root, validator-set ID, admission identity, endpoint, TLS fingerprint,
+transport identity, account nonce, and 16-block observation expiry. An active observer signs a
+fresh random challenge. The candidate response proves simultaneous control of the admitted
+transport and consensus keys: the transport identity signs the response core first, and the
+candidate consensus identity separately signs that core together with the transport signature.
+The observer then signs the existing consensus live-observation payload and a separate result
+commitment over the context, challenge, response, observation, and observer identity. This second
+signature pins the result to the exact checkpoint and fresh challenge even though the legacy
+consensus observation payload does not contain the checkpoint block hash or state root.
+
+An observation receipt retains all of these proofs. A canonical readiness certificate contains
+exactly the current validator quorum of distinct, address-sorted receipts and matching consensus
+attestations, and has status `certificate-collected`. Every challenge, receipt, and certificate
+path recomputes the validator-set ID from the supplied normalized active validators and requires it
+to match the checkpoint commitment. Creating or verifying these artifacts is
+read-only: it does not set the queued admission's readiness flag, consume its nonce, submit a
+transaction, or claim selection or activation. Network collection and candidate/validator runtime
+services are separate slices.
+
 ## Protocol v32 admission lifetime
 
 Protocol v32 replaces the v31 admission authorization with a chain- and height-bound envelope. Both
