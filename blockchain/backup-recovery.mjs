@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import {
   closeSync,
   existsSync,
@@ -33,6 +33,7 @@ import {
 } from "./crypto.mjs";
 
 const RECEIPT_FORMAT = "nir-remote-backup-receipt-v1";
+const require = createRequire(import.meta.url);
 const INVENTORY_FORMAT = "nir-portable-backup-inventory-v1";
 const DRILL_FORMAT = "nir-backup-restore-drill-v1";
 const HASH = /^[0-9a-f]{64}$/;
@@ -393,6 +394,7 @@ function json(response, status, value) {
 }
 
 export function createBackupHttpServer(directory, receipt) {
+  const { createServer } = require("node:http");
   const root = resolve(directory);
   const inventory = createBackupInventory(root);
   if (receipt?.payload?.inventoryRoot !== inventory.inventoryRoot) {

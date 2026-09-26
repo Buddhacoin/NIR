@@ -3,8 +3,9 @@ import { X509Certificate } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   createValidatorJoinBackups, createValidatorJoinWorkspace, loadValidatorJoinInputs,
@@ -13,6 +14,27 @@ import {
   verifyValidatorJoinWorkspace,
   writeValidatorJoinArtifact,
 } from "../blockchain/validator-join.mjs";
+
+test("offline validator join import graph excludes HTTP transports", () => {
+  const entry = resolve(dirname(fileURLToPath(import.meta.url)), "../blockchain/validator-join.mjs");
+  const visited = new Set();
+  const specifiers = new Set();
+  const walk = (filename) => {
+    if (visited.has(filename)) return;
+    visited.add(filename);
+    const source = readFileSync(filename, "utf8");
+    const imports = /(?:^|\n)\s*import\s+(?!\()(?:(?:[\s\S]*?)\s+from\s+)?["']([^"']+)["']\s*;/g;
+    for (const match of source.matchAll(imports)) {
+      const specifier = match[1];
+      specifiers.add(specifier);
+      if (specifier.startsWith(".")) walk(resolve(dirname(filename), specifier));
+    }
+  };
+  walk(entry);
+  assert.equal([...visited].some((filename) => filename.endsWith("/http-client.mjs")), false);
+  assert.equal(specifiers.has("node:http"), false);
+  assert.equal(specifiers.has("node:https"), false);
+});
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "nir-validator-join-")); chmodSync(root, 0o700);

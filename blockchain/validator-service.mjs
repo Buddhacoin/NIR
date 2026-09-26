@@ -513,6 +513,22 @@ export function createValidatorHttpServer(validator, options = {}) {
         return authenticatedNonce;
       };
       return await verificationScheduler.run(identity, async () => {
+      if (request.method === "POST" &&
+          url.pathname === "/v1/transactions/validator-admission-submission") {
+        consumeIngress(identity);
+        const attemptNonce = url.searchParams.get("attemptNonce");
+        const candidateContextHash = url.searchParams.get("candidateContextHash");
+        if (!/^[0-9a-f]{64}$/.test(attemptNonce ?? "") ||
+            !/^[0-9a-f]{64}$/.test(candidateContextHash ?? "") ||
+            [...url.searchParams.keys()].some((key) =>
+              key !== "attemptNonce" && key !== "candidateContextHash")) {
+          throw new Error("validator admission submission acknowledgement context is invalid");
+        }
+        const result = validator.submitTransaction(parsedBody);
+        const acknowledgement = validator.acknowledgeValidatorAdmissionSubmission(result,
+          { attemptNonce, candidateContextHash });
+        return send(response, 202, { acknowledgement });
+      }
       if (request.method === "POST" && url.pathname === "/v1/transactions") {
         consumeIngress(identity);
         const payload = parsedBody;
