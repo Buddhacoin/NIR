@@ -2,9 +2,12 @@
 import process from "node:process";
 import {
   createValidatorJoinBackups, createValidatorJoinWorkspace, loadValidatorJoinInputs,
-  loadValidatorCandidateSyncInput, syncValidatorJoinCandidateContext, validatorJoinStatus,
+  loadValidatorCandidateSyncInput, prepareValidatorAdmissionSigningPackage,
+  resolveExpiredValidatorAdmissionIntent, signValidatorAdmissionPackage,
+  syncValidatorJoinCandidateContext, validatorJoinStatus,
   verifyValidatorJoinWorkspace,
 } from "./validator-join.mjs";
+import { readCeremonyPasswordBuffers } from "./operator-secret-input.mjs";
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -56,20 +59,43 @@ try {
   } else if (command === "sync" && args.length === 2) {
     result = await syncValidatorJoinCandidateContext({ directory: args[0],
       syncInput: loadValidatorCandidateSyncInput(args[1]) });
+  } else if (command === "prepare-admission" && args.length === 2) {
+    result = prepareValidatorAdmissionSigningPackage({ directory: args[0], outputPath: args[1] });
+  } else if (command === "sign-admission" && args.length === 3) {
+    const passwords = await readCeremonyPasswordBuffers();
+    let consensusPassword; let transportPassword;
+    try {
+      consensusPassword = passwords.validatorPasswordBuffer.toString("utf8");
+      transportPassword = passwords.transportPasswordBuffer.toString("utf8");
+      result = signValidatorAdmissionPackage({ directory: args[0], packagePath: args[1],
+        outputPath: args[2], consensusPassword, transportPassword });
+    } finally {
+      passwords.validatorPasswordBuffer.fill(0); passwords.transportPasswordBuffer.fill(0);
+      consensusPassword = ""; transportPassword = "";
+    }
+  } else if (command === "resolve-expired-admission" && args.length === 1) {
+    result = resolveExpiredValidatorAdmissionIntent({ directory: args[0] });
   } else {
-    throw new Error("usage: validator:join init <new-workspace> <private-config.json> | validator:join status <workspace> | validator:join verify <workspace> | validator:join backup <workspace> <new-private-backup-directory> <generation> | validator:join sync <workspace> <public-sync-input.json>");
+    throw new Error("usage: validator:join init <new-workspace> <private-config.json> | validator:join status <workspace> | validator:join verify <workspace> | validator:join backup <workspace> <new-private-backup-directory> <generation> | validator:join sync <workspace> <public-sync-input.json> | validator:join prepare-admission <workspace> <new-package.json> | validator:join sign-admission <workspace> <package.json> <new-signed-transaction.json> | validator:join resolve-expired-admission <workspace>");
   }
   console.log(JSON.stringify(result, null, 2));
   if (command === "sync") {
     console.error("Status: proof-backed read-only v31 candidate context synchronized.");
     console.error("Admission, readiness observation, selection, and activation are not implemented by this command.");
+  } else if (command === "prepare-admission") {
+    console.error("Status: canonical protocol-v32 admission package prepared; nothing was signed or broadcast.");
+  } else if (command === "sign-admission") {
+    console.error("Status: admission signed offline and journaled as unresolved; nothing was broadcast.");
+  } else if (command === "resolve-expired-admission") {
+    console.error("Status: expired unsubmitted intent resolved from a newer proof-backed context.");
   } else if (command === "status") {
     console.error(`Status: ${result.status}.`);
   } else {
     console.error("Status: secure local validator workspace operation completed.");
     console.error("A proof-backed v31 candidate context must be synchronized separately.");
   }
-  console.error("No transaction was signed or broadcast.");
+  console.error(command === "sign-admission" ? "No transaction was broadcast." :
+    "No transaction was signed or broadcast.");
 } catch (error) {
   console.error(`Validator join operation failed: ${error.message}`); process.exitCode = 1;
 }

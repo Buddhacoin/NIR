@@ -28,6 +28,7 @@ import { addressFromPublicKey, generateWallet, hashObject } from "./crypto.mjs";
 import { createPaymentRequest } from "./payment-request.mjs";
 import { createSignedHistoryArchive } from "./archive-sync.mjs";
 import { createSignedBackupReceipt } from "./backup-recovery.mjs";
+import { createValidatorAdmission } from "./validator-admission.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 
 const MAX_PRIVATE_JSON_BYTES = 64 * 1024;
@@ -260,6 +261,37 @@ export function verifyWalletFile({ path, password }) {
     };
   } finally {
     wallet.privateKey = "";
+  }
+}
+
+export function signValidatorAdmissionWithWalletFiles({
+  consensusPath, consensusPassword, intent, transportPath, transportPassword,
+}) {
+  let consensusWallet;
+  let transportWallet;
+  try {
+    consensusWallet = decryptWallet(readVault(consensusPath), consensusPassword);
+    transportWallet = decryptWallet(readVault(transportPath), transportPassword);
+    if (consensusWallet.address === transportWallet.address) {
+      throw new Error("validator admission identities must be distinct");
+    }
+    return createValidatorAdmission({
+      amount: intent.amount,
+      chainIdentityGenesisHash: intent.chainIdentityGenesisHash,
+      endpoint: intent.endpoint,
+      fee: intent.fee,
+      networkId: intent.networkId,
+      nonce: intent.nonce,
+      operatorId: intent.operatorId,
+      referenceHeight: intent.referenceHeight,
+      tlsCertificateSha256: intent.tlsCertificateSha256,
+      transportWallet,
+      validUntilHeight: intent.validUntilHeight,
+      wallet: consensusWallet,
+    });
+  } finally {
+    if (consensusWallet) consensusWallet.privateKey = "";
+    if (transportWallet) transportWallet.privateKey = "";
   }
 }
 

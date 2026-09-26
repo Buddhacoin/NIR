@@ -1,18 +1,27 @@
 import { X509Certificate, createPrivateKey, createPublicKey, randomBytes } from "node:crypto";
 import {
   chmodSync, closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync,
-  readFileSync, readlinkSync, readdirSync, realpathSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync,
+  readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmdirSync, symlinkSync,
+  unlinkSync, writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { canonicalJson } from "./crypto.mjs";
+import { transactionId } from "./chain.mjs";
+import { MIN_TRANSFER_FEE } from "./constants.mjs";
+import { canonicalJson, hashObject } from "./crypto.mjs";
 import {
   MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES, MAX_VALIDATOR_CANDIDATE_SYNC_INPUT_BYTES,
   synchronizeValidatorCandidateContext, validateValidatorCandidateContext,
   validateValidatorCandidateSyncInput,
 } from "./validator-candidate-context.mjs";
 import {
-  createVerifiedWalletBackup, createWalletFile, verifyWalletFile, walletPublicInfo,
+  createVerifiedWalletBackup, createWalletFile, signValidatorAdmissionWithWalletFiles,
+  verifyWalletFile, walletPublicInfo,
 } from "./wallet-files.mjs";
+import {
+  VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
+  verifyValidatorAdmission,
+} from "./validator-admission.mjs";
+import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 
 const FORMAT_V1 = "nir-validator-join-plan-v1";
 const FORMAT = "nir-validator-join-plan-v2";
@@ -21,6 +30,8 @@ const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
 const NETWORK = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 const OPERATOR = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
+const MAX_ADMISSION_PACKAGE_BYTES = MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES + 1024 * 1024;
+export const VALIDATOR_ADMISSION_SIGNING_LOCK_LEASE_MS = 300_000;
 
 function exact(value, fields, label) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
@@ -298,22 +309,473 @@ export function validatorJoinStatus(directory) {
     status: context ? "proof-backed candidate context synchronized" :
       "awaiting external v31 candidate service / quorum observation",
     next: context ? ["keep encrypted identity backups separate and verified",
-      "use a separately reviewed future flow to build and sign admission (not implemented)",
+      "for a protocol-v32 absent-queue context, prepare and offline-sign one admission intent",
+      "submission and finalized inclusion proof are not implemented",
       "obtain finalized admission and fresh endpoint readiness proofs before selection",
       "after quorum-observed admission wait for a non-skipping authorized rotation"] :
       ["create and verify encrypted backups",
         "synchronize a proof-backed read-only v31 candidate context",
         "do not fabricate admission, readiness, selection, or activation state"] };
 }
-function latestValidatorCandidateContext(directory, plan = readPlan(directory)) {
+function latestValidatorCandidateContext(directory, plan = readPlan(directory), { now = Date.now() } = {}) {
   const root = dirname(plan.paths.consensusVault);
   const contexts = readdirSync(root).filter((name) =>
     /^candidate-context-[0-9a-f]{64}\.json$/.test(name)).map((name) => {
-    try { return validateValidatorCandidateContext(readJson(join(root, name),
-      "validator candidate context", true, MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES), plan); } catch { return null; }
+    const stored = readJson(join(root, name), "validator candidate context", true,
+      MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES);
+    const historical = validateValidatorCandidateContext(stored, plan, { now: stored.syncedAt });
+    try { return validateValidatorCandidateContext(historical, plan, { now }); }
+    catch (error) {
+      if (/time policy|stale|fresh/i.test(error?.message ?? "")) return null;
+      throw error;
+    }
   }).filter(Boolean).sort((a, b) => b.checkpoint.height - a.checkpoint.height ||
+    (b.checkpointTrustPackage?.sequence ?? -1) -
+      (a.checkpointTrustPackage?.sequence ?? -1) ||
     b.contextHash.localeCompare(a.contextHash));
   return contexts[0] ?? null;
+}
+
+function admissionPlanCommitment(plan) {
+  return hashObject({
+    candidateContextMaxWitnessAgeMs: plan.candidateContextMaxWitnessAgeMs,
+    candidateContextMinimumCheckpointHeight: plan.candidateContextMinimumCheckpointHeight,
+    candidateContextMinimumSequence: plan.candidateContextMinimumSequence,
+    consensus: plan.consensus,
+    endpoint: plan.endpoint,
+    expectedChainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
+    expectedCheckpointPolicyId: plan.expectedCheckpointPolicyId,
+    networkId: plan.networkId,
+    operatorId: plan.operatorId,
+    tlsCertificateSha256: plan.tlsCertificateSha256,
+    transport: plan.transport,
+  }, "VALIDATOR_ADMISSION_PLAN_V1");
+}
+
+export function validateValidatorAdmissionSigningPackage(value, plan, { now = Date.now() } = {}) {
+  exact(value, ["amount", "candidateContext", "candidateContextHash",
+    "chainIdentityGenesisHash", "consensus", "endpoint", "fee", "format", "networkId",
+    "nonce", "operatorId", "packageHash", "planCommitment", "referenceHeight",
+    "tlsCertificateSha256", "transport", "validUntilHeight", "version"],
+  "validator admission signing package");
+  if (Buffer.byteLength(canonicalJson(value)) > MAX_ADMISSION_PACKAGE_BYTES) {
+    throw new Error("validator admission signing package is too large");
+  }
+  const { packageHash, ...payload } = value;
+  const context = validateValidatorCandidateContext(value.candidateContext, plan, { now });
+  const balance = BigInt(context.account?.atomicBalance ?? "-1");
+  const expectedValidUntil = context.checkpoint.height +
+    VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS;
+  if (plan.format !== FORMAT || plan.version !== 2 ||
+      value.format !== "nir-validator-admission-signing-package-v1" || value.version !== 1 ||
+      value.networkId !== plan.networkId ||
+      value.chainIdentityGenesisHash !== plan.expectedChainIdentityGenesisHash ||
+      value.planCommitment !== admissionPlanCommitment(plan) ||
+      value.candidateContextHash !== context.contextHash ||
+      canonicalJson(value.consensus) !== canonicalJson(plan.consensus) ||
+      canonicalJson(value.transport) !== canonicalJson(plan.transport) ||
+      value.endpoint !== plan.endpoint || value.operatorId !== plan.operatorId ||
+      value.tlsCertificateSha256 !== plan.tlsCertificateSha256 ||
+      context.protocolVersion !== 32 || context.status !== "not-admitted" ||
+      context.admission !== null || context.queuePosition !== null ||
+      context.address !== plan.consensus.address ||
+      value.amount !== MIN_VALIDATOR_BOND.toString() || value.fee !== MIN_TRANSFER_FEE.toString() ||
+      balance < MIN_VALIDATOR_BOND + MIN_TRANSFER_FEE || context.bondAndFeeCovered !== true ||
+      value.nonce !== context.account.nextNonce || !Number.isSafeInteger(value.nonce) || value.nonce < 0 ||
+      value.referenceHeight !== context.checkpoint.height ||
+      value.validUntilHeight !== expectedValidUntil ||
+      packageHash !== hashObject(payload, "VALIDATOR_ADMISSION_PACKAGE_V1")) {
+    throw new Error("validator admission signing package context or policy is invalid");
+  }
+  return structuredClone(value);
+}
+
+function admissionIntentPath(plan, signingPackage) {
+  return join(dirname(plan.paths.consensusVault),
+    `admission-intent-${signingPackage.nonce}-${signingPackage.packageHash}.json`);
+}
+
+function admissionResolutionPath(plan, signingPackage) {
+  return join(dirname(plan.paths.consensusVault),
+    `admission-resolution-${signingPackage.nonce}-${signingPackage.packageHash}.json`);
+}
+
+function admissionNonceLockPath(plan, nonce) {
+  return join(dirname(plan.paths.consensusVault), `admission-nonce-${nonce}.lock`);
+}
+
+function persistIdempotentPrivateArtifact(path, value, label, maximumBytes = MAX_ADMISSION_PACKAGE_BYTES) {
+  try {
+    writeValidatorJoinArtifact(path, value);
+    return { created: true, path };
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const existing = readJson(path, label, true, maximumBytes);
+    if (canonicalJson(existing) !== canonicalJson(value)) {
+      throw new Error(`${label} conflicts with an existing unresolved same-nonce intent`);
+    }
+    return { created: false, path };
+  }
+}
+
+export function prepareValidatorAdmissionSigningPackage({ directory, outputPath, now = Date.now(),
+  _afterLockAcquire }) {
+  const plan = readPlan(directory);
+  if (plan.format !== FORMAT || plan.version !== 2) {
+    throw new Error("validator admission preparation requires a v2 join workspace");
+  }
+  const context = latestValidatorCandidateContext(directory, plan, { now });
+  if (context === null) throw new Error("a verified candidate context is required before admission preparation");
+  validateValidatorCandidateContext(context, plan, { now });
+  const payload = {
+    amount: MIN_VALIDATOR_BOND.toString(), candidateContext: context,
+    candidateContextHash: context.contextHash,
+    chainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
+    consensus: plan.consensus, endpoint: plan.endpoint, fee: MIN_TRANSFER_FEE.toString(),
+    format: "nir-validator-admission-signing-package-v1", networkId: plan.networkId,
+    nonce: context.account.nextNonce, operatorId: plan.operatorId,
+    planCommitment: admissionPlanCommitment(plan), referenceHeight: context.checkpoint.height,
+    tlsCertificateSha256: plan.tlsCertificateSha256, transport: plan.transport,
+    validUntilHeight: context.checkpoint.height + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
+    version: 1,
+  };
+  const signingPackage = validateValidatorAdmissionSigningPackage({ ...payload,
+    packageHash: hashObject(payload, "VALIDATOR_ADMISSION_PACKAGE_V1") }, plan, { now });
+  const lockPath = admissionNonceLockPath(plan, signingPackage.nonce);
+  const lock = acquireAdmissionNonceLock(lockPath, signingPackage.packageHash, now);
+  try {
+    if (_afterLockAcquire !== undefined) {
+      if (typeof _afterLockAcquire !== "function") throw new Error("signing lock hook is invalid");
+      _afterLockAcquire({ lockPath });
+    }
+    // The nonce reservation and durable intent must be one serialized operation. Re-reading
+    // after lock acquisition prevents two concurrent prepares from both passing uniqueness.
+    const lockedLatest = latestValidatorCandidateContext(directory, plan, { now });
+    if (lockedLatest === null || lockedLatest.contextHash !== signingPackage.candidateContextHash) {
+      throw new Error("validator admission package is not based on the latest verified context");
+    }
+    assertNoUnresolvedAdmissionIntent(plan, signingPackage, { now });
+    assertHeldSigningLock(lockPath, lock, lock.owned);
+    const intent = persistIdempotentPrivateArtifact(admissionIntentPath(plan, signingPackage),
+      signingPackage, "validator admission intent");
+    const output = persistIdempotentPrivateArtifact(outputPath, signingPackage,
+      "validator admission signing package");
+    return { broadcast: false, intentCreated: intent.created, outputCreated: output.created,
+      packageHash: signingPackage.packageHash, path: output.path,
+      status: "prepared for isolated offline signing" };
+  } finally {
+    releaseAdmissionNonceLock(lockPath, lock);
+  }
+}
+
+function validatorAdmissionIntentPackages(plan) {
+  const root = dirname(plan.paths.consensusVault);
+  return readdirSync(root).filter((name) =>
+    /^admission-intent-[0-9]+-[0-9a-f]{64}\.json$/.test(name)).map((name) => {
+    const value = readJson(join(root, name), "validator admission intent", true,
+      MAX_ADMISSION_PACKAGE_BYTES);
+    return validateValidatorAdmissionSigningPackage(value, plan,
+      { now: value.candidateContext?.syncedAt });
+  });
+}
+
+function validateAdmissionResolution(value, signingPackage, plan) {
+  exact(value, ["candidateContext", "chainIdentityGenesisHash", "format", "networkId", "nonce",
+    "oldPackageHash", "resolutionHash", "version"], "validator admission resolution");
+  const { resolutionHash, ...payload } = value;
+  const context = validateValidatorCandidateContext(value.candidateContext, plan,
+    { now: value.candidateContext?.syncedAt });
+  const oldSequence = signingPackage.candidateContext.checkpointTrustPackage?.sequence;
+  const newSequence = context.checkpointTrustPackage?.sequence;
+  if (value.format !== "nir-validator-admission-resolution-v1" || value.version !== 1 ||
+      value.oldPackageHash !== signingPackage.packageHash || value.nonce !== signingPackage.nonce ||
+      value.networkId !== plan.networkId ||
+      value.chainIdentityGenesisHash !== plan.expectedChainIdentityGenesisHash ||
+      context.protocolVersion !== 32 || context.status !== "not-admitted" ||
+      context.admission !== null || context.queuePosition !== null ||
+      context.address !== plan.consensus.address || context.account.nextNonce !== signingPackage.nonce ||
+      context.checkpoint.height <= signingPackage.validUntilHeight ||
+      !Number.isSafeInteger(oldSequence) || !Number.isSafeInteger(newSequence) ||
+      newSequence <= oldSequence ||
+      resolutionHash !== hashObject(payload, "VALIDATOR_ADMISSION_RESOLUTION_V1")) {
+    throw new Error("validator admission resolution is invalid or not monotonic");
+  }
+  return structuredClone(value);
+}
+
+function resolvedAdmissionIntent(plan, signingPackage) {
+  try {
+    return validateAdmissionResolution(readJson(admissionResolutionPath(plan, signingPackage),
+      "validator admission resolution", true, MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES + 1024 * 1024),
+    signingPackage, plan);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function assertNoOtherUnresolvedAdmissionIntent(plan, proposed) {
+  for (const intent of validatorAdmissionIntentPackages(plan)) {
+    if (intent.nonce !== proposed.nonce || intent.packageHash === proposed.packageHash) continue;
+    if (resolvedAdmissionIntent(plan, intent) === null) {
+      throw new Error("a different unresolved validator admission already uses this nonce");
+    }
+  }
+}
+
+function assertNoUnresolvedAdmissionIntent(plan, proposed, { now }) {
+  assertNoOtherUnresolvedAdmissionIntent(plan, proposed);
+  validateValidatorAdmissionSigningPackage(proposed, plan, { now });
+}
+
+function readExactAdmissionIntent(plan, signingPackage) {
+  const intent = validateValidatorAdmissionSigningPackage(readJson(
+    admissionIntentPath(plan, signingPackage), "validator admission intent", true,
+    MAX_ADMISSION_PACKAGE_BYTES), plan, { now: signingPackage.candidateContext?.syncedAt });
+  if (canonicalJson(intent) !== canonicalJson(signingPackage)) {
+    throw new Error("validator admission intent does not exactly match the signing package");
+  }
+  return intent;
+}
+
+export function resolveExpiredValidatorAdmissionIntent({ directory, now = Date.now() }) {
+  const plan = readPlan(directory);
+  if (plan.format !== FORMAT || plan.version !== 2) {
+    throw new Error("validator admission resolution requires a v2 join workspace");
+  }
+  const context = latestValidatorCandidateContext(directory, plan, { now });
+  if (context === null) throw new Error("a newer verified candidate context is required");
+  const unresolved = validatorAdmissionIntentPackages(plan).filter((intent) =>
+    resolvedAdmissionIntent(plan, intent) === null);
+  if (unresolved.length !== 1) {
+    throw new Error("validator admission resolution requires exactly one unresolved intent");
+  }
+  const intent = unresolved[0];
+  const payload = { candidateContext: context,
+    chainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
+    format: "nir-validator-admission-resolution-v1", networkId: plan.networkId,
+    nonce: intent.nonce, oldPackageHash: intent.packageHash, version: 1 };
+  const resolution = validateAdmissionResolution({ ...payload,
+    resolutionHash: hashObject(payload, "VALIDATOR_ADMISSION_RESOLUTION_V1") }, intent, plan);
+  const stored = persistIdempotentPrivateArtifact(admissionResolutionPath(plan, intent), resolution,
+    "validator admission resolution", MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES + 1024 * 1024);
+  return { broadcast: false, oldPackageHash: intent.packageHash, path: stored.path,
+    resolutionHash: resolution.resolutionHash, status: "expired unsubmitted intent resolved" };
+}
+
+function validateSigningLock(value, packageHash, now) {
+  exact(value, ["format", "packageHash", "pid", "startedAt", "token", "version"],
+    "validator admission signing lock");
+  if (value.format !== "nir-validator-admission-signing-lock-v1" || value.version !== 1 ||
+      (packageHash !== null && value.packageHash !== packageHash) ||
+      !Number.isSafeInteger(value.pid) || value.pid < 1 ||
+      !Number.isSafeInteger(value.startedAt) || value.startedAt < 0 ||
+      value.startedAt > now + 30_000 || !HASH.test(value.token ?? "")) {
+    throw new Error("validator admission signing lock is invalid");
+  }
+  return structuredClone(value);
+}
+
+function processIsLive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function quarantineOwnedSigningLock(path, identity, expected) {
+  const parent = pinDirectory(dirname(path));
+  const quarantine = join(parent.path,
+    `.${basename(path)}.quarantine-${randomBytes(16).toString("hex")}`);
+  try {
+    parent.assert();
+    const current = lstatSync(path);
+    const record = readJson(path, "validator admission signing lock", true, 64 * 1024);
+    if (!sameIdentity(current, identity) || canonicalJson(record) !== canonicalJson(expected)) {
+      throw new Error("validator admission signing lock changed before recovery");
+    }
+    renameSync(path, quarantine);
+    const moved = lstatSync(quarantine);
+    const movedRecord = readJson(quarantine, "validator admission signing lock", true, 64 * 1024);
+    if (!sameIdentity(moved, identity) || canonicalJson(movedRecord) !== canonicalJson(expected)) {
+      try { linkSync(quarantine, path); } catch { /* fail closed with quarantine retained */ }
+      throw new Error("validator admission signing lock changed during recovery");
+    }
+    fsyncSync(parent.descriptor); parent.assert();
+    unlinkSync(quarantine); fsyncSync(parent.descriptor); parent.assert();
+  } finally { closeSync(parent.descriptor); }
+}
+
+function assertOwnedSigningLock(path, identity, expected) {
+  const before = lstatSync(path);
+  const record = readJson(path, "validator admission signing lock", true, 64 * 1024);
+  const after = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink() || !sameIdentity(before, identity) ||
+      !sameIdentity(after, identity) || canonicalJson(record) !== canonicalJson(expected)) {
+    throw new Error("validator admission signing lock ownership is not stable");
+  }
+  return after;
+}
+
+function assertHeldSigningLock(path, lock, expected) {
+  const held = fstatSync(lock.descriptor);
+  if (!held.isFile() || !sameIdentity(held, lock.identity)) {
+    throw new Error("validator admission signing lock descriptor changed");
+  }
+  return assertOwnedSigningLock(path, lock.identity, expected);
+}
+
+function acquireAdmissionNonceLock(path, packageHash, now) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const owned = { format: "nir-validator-admission-signing-lock-v1", packageHash,
+      pid: process.pid, startedAt: now, token: randomBytes(32).toString("hex"), version: 1 };
+    try {
+      writeValidatorJoinArtifact(path, owned);
+      const identity = lstatSync(path);
+      assertOwnedSigningLock(path, identity, owned);
+      const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const lock = { descriptor, identity, owned };
+      try { assertHeldSigningLock(path, lock, owned); }
+      catch (error) { closeSync(descriptor); throw error; }
+      return lock;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const before = lstatSync(path);
+      const lock = validateSigningLock(readJson(path,
+        "validator admission signing lock", true, 64 * 1024), null, now);
+      if (now - lock.startedAt <= VALIDATOR_ADMISSION_SIGNING_LOCK_LEASE_MS &&
+          processIsLive(lock.pid)) {
+        throw new Error("validator admission signing is already in progress");
+      }
+      const current = validateSigningLock(readJson(path,
+        "validator admission signing lock", true, 64 * 1024), null, now);
+      if (canonicalJson(current) !== canonicalJson(lock) ||
+          (now - current.startedAt <= VALIDATOR_ADMISSION_SIGNING_LOCK_LEASE_MS &&
+           processIsLive(current.pid))) {
+        throw new Error("validator admission signing lock changed or renewed during recovery");
+      }
+      quarantineOwnedSigningLock(path, before, lock);
+    }
+  }
+  throw new Error("validator admission signing lock could not be acquired");
+}
+
+function releaseAdmissionNonceLock(path, lock) {
+  try {
+    assertHeldSigningLock(path, lock, lock.owned);
+    quarantineOwnedSigningLock(path, lock.identity, lock.owned);
+  } finally {
+    closeSync(lock.descriptor);
+  }
+}
+
+export function signValidatorAdmissionPackage({ directory, packagePath, outputPath,
+  consensusPassword, transportPassword, now = Date.now(), _afterLockAcquire }) {
+  const plan = readPlan(directory);
+  if (plan.format !== FORMAT || plan.version !== 2) {
+    throw new Error("validator admission signing requires a v2 join workspace");
+  }
+  const storedPackage = readJson(packagePath, "validator admission signing package", true,
+    MAX_ADMISSION_PACKAGE_BYTES);
+  const signingPackage = validateValidatorAdmissionSigningPackage(storedPackage, plan,
+    { now: storedPackage.candidateContext?.syncedAt });
+  const root = dirname(plan.paths.consensusVault);
+  const journalPath = join(root, `admission-signature-${signingPackage.nonce}-${signingPackage.packageHash}.json`);
+  const validateSigned = (signed) => {
+    exact(signed, ["broadcast", "format", "packageHash", "transaction", "transactionId", "version"],
+      "signed validator admission");
+    const verified = verifyValidatorAdmission(signed.transaction, plan.networkId, {
+      chainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
+      currentHeight: signingPackage.referenceHeight + 1, protocolVersion: 32,
+    });
+    const { signature: _signature, transportSignature: _transportSignature,
+      ...unsigned } = signed.transaction;
+    const expectedUnsigned = {
+      algorithm: plan.consensus.algorithm,
+      amount: signingPackage.amount,
+      chainIdentityGenesisHash: signingPackage.chainIdentityGenesisHash,
+      endpoint: signingPackage.endpoint,
+      fee: signingPackage.fee,
+      networkId: signingPackage.networkId,
+      nonce: signingPackage.nonce,
+      operatorId: signingPackage.operatorId,
+      publicKey: plan.consensus.publicKey,
+      referenceHeight: signingPackage.referenceHeight,
+      sender: plan.consensus.address,
+      tlsCertificateSha256: signingPackage.tlsCertificateSha256,
+      transportAlgorithm: plan.transport.algorithm,
+      transportPublicKey: plan.transport.publicKey,
+      type: "validator-admission",
+      validUntilHeight: signingPackage.validUntilHeight,
+    };
+    if (signed.broadcast !== false || signed.format !== "nir-signed-validator-admission-v1" ||
+        signed.version !== 1 || signed.packageHash !== signingPackage.packageHash ||
+        signed.transactionId !== transactionId(signed.transaction) ||
+        canonicalJson(unsigned) !== canonicalJson(expectedUnsigned) ||
+        verified.payload.sender !== plan.consensus.address ||
+        verified.transport.address !== plan.transport.address ||
+        verified.payload.publicKey !== plan.consensus.publicKey ||
+        verified.payload.transportPublicKey !== plan.transport.publicKey ||
+        verified.payload.nonce !== signingPackage.nonce ||
+        verified.payload.referenceHeight !== signingPackage.referenceHeight ||
+        verified.payload.validUntilHeight !== signingPackage.validUntilHeight) {
+      throw new Error("signed validator admission identity or package binding is invalid");
+    }
+    return structuredClone(signed);
+  };
+  const materialize = (signed, journalCreated) => {
+    const output = persistIdempotentPrivateArtifact(outputPath, signed,
+      "signed validator admission", 1024 * 1024);
+    return { broadcast: false, journalCreated, outputCreated: output.created,
+      packageHash: signingPackage.packageHash, path: output.path,
+      status: "signed offline; unresolved and not submitted", transactionId: signed.transactionId };
+  };
+  // Signing is only allowed for an already reserved, byte-identical prepare intent.
+  readExactAdmissionIntent(plan, signingPackage);
+  assertNoOtherUnresolvedAdmissionIntent(plan, signingPackage);
+  try {
+    return materialize(validateSigned(readJson(journalPath, "signed validator admission", true,
+      1024 * 1024)), false);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const lockPath = admissionNonceLockPath(plan, signingPackage.nonce);
+  const lock = acquireAdmissionNonceLock(lockPath, signingPackage.packageHash, now);
+  try {
+    // Another process may have completed while this caller waited for the nonce lock.
+    try {
+      return materialize(validateSigned(readJson(journalPath, "signed validator admission", true,
+        1024 * 1024)), false);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    readExactAdmissionIntent(plan, signingPackage);
+    const latest = latestValidatorCandidateContext(directory, plan, { now });
+    if (latest === null || latest.contextHash !== signingPackage.candidateContextHash) {
+      throw new Error("validator admission package is not based on the latest verified context");
+    }
+    // Re-read every same-nonce intent under the lock; pre-lock uniqueness is never authoritative.
+    assertNoUnresolvedAdmissionIntent(plan, signingPackage, { now });
+    if (_afterLockAcquire !== undefined) {
+      if (typeof _afterLockAcquire !== "function") throw new Error("signing lock hook is invalid");
+      _afterLockAcquire({ lockPath });
+    }
+    const transaction = signValidatorAdmissionWithWalletFiles({
+      consensusPassword, consensusPath: plan.paths.consensusVault,
+      intent: signingPackage, transportPassword, transportPath: plan.paths.transportVault,
+    });
+    const signed = validateSigned({ broadcast: false,
+      format: "nir-signed-validator-admission-v1", packageHash: signingPackage.packageHash,
+      transaction, transactionId: transactionId(transaction), version: 1 });
+    assertHeldSigningLock(lockPath, lock, lock.owned);
+    const journal = persistIdempotentPrivateArtifact(journalPath, signed,
+      "signed validator admission", 1024 * 1024);
+    return materialize(signed, journal.created);
+  } finally {
+    releaseAdmissionNonceLock(lockPath, lock);
+  }
 }
 export async function syncValidatorJoinCandidateContext({ directory, syncInput, request }) {
   const plan = readPlan(directory);

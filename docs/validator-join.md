@@ -1,8 +1,9 @@
-# Validator join workspace (testnet Slices A and B1)
+# Validator join workspace (testnet Slices A, B1, and B2a)
 
-`validator:join` prepares local validator identities on macOS or Linux. It is not a network join,
-does not build or broadcast a transaction, and does not claim that an address is queued, eligible,
-selected, or active.
+`validator:join` prepares local validator identities on macOS or Linux. B2a can prepare and sign a
+protocol-v32 admission transaction offline, but it is not a network join, never broadcasts or
+submits that transaction, and does not claim that an address is queued, eligible, selected, or
+active.
 
 ## What this slice does
 
@@ -45,6 +46,9 @@ npm run validator:join -- verify /absolute/private/path/join-workspace
 npm run validator:join -- backup /absolute/private/path/join-workspace /absolute/offline/path/join-backup 1
 npm run validator:join -- status /absolute/private/path/join-workspace
 npm run validator:join -- sync /absolute/private/path/join-workspace /absolute/path/public-sync-input.json
+npm run validator:join -- prepare-admission /absolute/private/path/join-workspace /absolute/private/path/admission-package.json
+npm run validator:join -- sign-admission /absolute/private/path/join-workspace /absolute/private/path/admission-package.json /absolute/private/path/signed-admission.json
+npm run validator:join -- resolve-expired-admission /absolute/private/path/join-workspace
 ```
 
 Passwords are rejected from ordinary stdin, command-line arguments, and environment variables.
@@ -78,13 +82,37 @@ freshness, quorum, and proof verification; a stored hash alone is not treated as
 `sync` is observation only. It never signs or broadcasts a transaction and does not mean that the
 candidate is admitted, ready, selected, or active.
 
+## Prepare and sign an admission offline (Slice B2a)
+
+`prepare-admission` works only with a v2 workspace and the newest fully reverified protocol-v32
+context. The context must prove that the consensus address is absent from the candidate queue, has
+the exact next nonce, and can cover the fixed minimum validator bond plus minimum fee. The package
+binds the pinned network, genesis, checkpoint policy, context hash, operator, HTTPS origin, TLS pin,
+both public identities, and the exact `referenceHeight`/`validUntilHeight = referenceHeight + 64`.
+The 64-block interval is a consensus expiry bound, not a guarantee that 64 blocks remain when an
+offline operator signs.
+
+`sign-admission` rechecks the plan, trust package, candidate context, package, both vault identities,
+and the completed dual-signed transaction. It reads passwords from an interactive terminal or
+restricted inherited descriptors 3 and 4, writes an exclusive mode-`0600` artifact, and records an
+append-only unresolved intent. Exact retries reuse the already verified journaled transaction bytes;
+they do not create a second post-quantum signature for the same intent. A bounded owner lock prevents
+concurrent signers and permits safe recovery after a dead or expired signer lease.
+
+An unresolved intent prevents signing a different transaction with the same nonce. If it expires
+without submission, first synchronize a newer proof-backed context. Only
+`resolve-expired-admission` can append a resolution, and only when the newer witness sequence is
+monotonic, its finalized height is past the old `validUntilHeight`, the nonce is unchanged, and the
+address is still absent from the queue. A fresh package may then be prepared. No manual deletion or
+editing of intent, resolution, lock, or signed files is safe.
+
 ## Later slices still required
 
-Joining the v31 queue still requires a separately reviewed non-voting candidate service and offline
-signing flow. They must submit to multiple peers, prove finalized admission, perform a pinned HTTPS
+Joining the queue still requires a separately reviewed non-voting candidate service and network
+submission flow. It must submit to multiple peers, prove finalized admission, perform a pinned HTTPS
 challenge, collect a fresh current-validator quorum observation, expose proof-backed status, and
-bind onboarding to the certified endpoint and transport identity. Only then may an offline
-transaction signer be connected to this workspace.
+bind onboarding to the certified endpoint and transport identity. B2a deliberately implements none
+of submission, rebroadcast, inclusion proofs, readiness, selection, rotation, or activation.
 
 Do not manually fabricate a nonce, admission, readiness quorum, or “active” status from the files in
 this directory.
