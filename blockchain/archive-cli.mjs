@@ -20,6 +20,17 @@ import { loadBlockStore } from "./block-store.mjs";
 import { listenOnLoopback, validateLoopbackListener } from "./loopback-listener.mjs";
 import { signWalletHistoryArchive } from "./wallet-files.mjs";
 
+function inheritedListenerFd() {
+  const text = process.env.NIR_LISTEN_FD;
+  if (text === undefined) return null;
+  delete process.env.NIR_LISTEN_FD;
+  const descriptor = Number(text);
+  if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 255) {
+    throw new Error("archive inherited listener descriptor is invalid");
+  }
+  return descriptor;
+}
+
 const MAX_ARCHIVE_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_CONFIG_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -132,7 +143,8 @@ try {
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
-    await listenOnLoopback(server, { host, label: "archive service listener", port });
+    await listenOnLoopback(server, { host, inheritedFd: inheritedListenerFd(),
+      label: "archive service listener", port });
     console.log(`NIR history archive listening on http://${host}:${port}`);
   } else {
     throw new Error("usage: archive:create <node-directory> <operator-wallet> <new-archive.json> | archive:restore <node-directory> <trusted-operators.json> <archive-a.json> <archive-b.json> [...] | archive:restore-remote <node-directory> <trusted-operators.json> <https-source-a> <https-source-b> [...] | archive:serve <archive.json> [port] [loopback-host]");

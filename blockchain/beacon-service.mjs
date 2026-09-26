@@ -11,6 +11,17 @@ import { decryptWallet } from "./vault.mjs";
 import { readRestrictedPasswordFd } from "./operator-secret-input.mjs";
 import { listenOnLoopback, validateLoopbackListener } from "./loopback-listener.mjs";
 
+function inheritedListenerFd() {
+  const text = process.env.NIR_LISTEN_FD;
+  if (text === undefined) return null;
+  delete process.env.NIR_LISTEN_FD;
+  const descriptor = Number(text);
+  if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 255) {
+    throw new Error("beacon inherited listener descriptor is invalid");
+  }
+  return descriptor;
+}
+
 function readBoundedFile(path, { privateFile = true } = {}) {
   if (!Number.isInteger(constants.O_NOFOLLOW) || constants.O_NOFOLLOW === 0) {
     throw new Error("beacon vault requires secure no-follow filesystem support");
@@ -81,6 +92,11 @@ const [vaultPath, networkId, requesterPolicyPath, portText = "8791", host = "127
   tlsCertPath, tlsKeyPath] = process.argv.slice(2);
 let stateStore = null;
 try {
+  const listenerFd = inheritedListenerFd();
+  const passwordFd = Number(process.env.NIR_BEACON_PASSWORD_FD);
+  if (listenerFd !== null && Number.isSafeInteger(passwordFd) && listenerFd === passwordFd) {
+    throw new Error("inherited listener descriptor collides with beacon password descriptor");
+  }
   if (!vaultPath || !networkId || !requesterPolicyPath || Buffer.byteLength(networkId) > 64 ||
       (tlsCertPath === undefined) !== (tlsKeyPath === undefined)) {
     throw new Error("usage: beacon:serve <wallet-vault> <network-id> <requester-policy.json> [port] [loopback-host] [tls-cert tls-key]");
@@ -129,7 +145,8 @@ try {
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  await listenOnLoopback(server, { host, label: "beacon service listener", port });
+  await listenOnLoopback(server, { host, inheritedFd: listenerFd,
+    label: "beacon service listener", port });
   console.log(`NIR beacon ${wallet.address} listening on ${tls ? "https" : "http"}://${host}:${port}`);
 } catch (error) {
   stateStore?.close();

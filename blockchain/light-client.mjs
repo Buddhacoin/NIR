@@ -288,6 +288,10 @@ export function verifyFinalityProofChain(proofs, {
     } else if (handoff && handoff.activationHeight < header.height) {
       throw new Error("light client validator handoff history is incomplete");
     }
+    if (header.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+        header.validatorSetId !== validatorSetId(current)) {
+      throw new Error("light client finality header validator set does not match handoff history");
+    }
     verifyVotes(proof, current, oldSet);
     previousHash = proof.hash;
     previousHeight = header.height;

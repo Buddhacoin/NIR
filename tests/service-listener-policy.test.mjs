@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, openSync, rmSync, writeFileSync, closeSync } from "node:fs";
+import {
+  closeSync, existsSync, mkdtempSync, openSync, readSync, rmSync, symlinkSync, writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +39,48 @@ test("shared service listener policy preserves both numeric loopback families", 
     { host: "::1", port: 65_535 });
   assert.throws(() => validateLoopbackListener({ host: "localhost", label: "test service", port: 8791 }),
     /test service requires .*explicit loopback/);
+});
+
+test("listener descriptors cannot alias beacon or ceremony password channels", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-listener-fd-collision-"));
+  const passwordPath = join(root, "password"); const transportPath = join(root, "transport");
+  let passwordFd; let transportFd;
+  try {
+    writeFileSync(passwordPath, "validator-password-2026\n", { mode: 0o600 });
+    writeFileSync(transportPath, "transport-password-2026\n", { mode: 0o600 });
+    passwordFd = openSync(passwordPath, "r");
+    const beacon = spawnSync(process.execPath, ["blockchain/beacon-service.mjs", "/missing/vault",
+      "nir-test", "/missing/policy", "8791", "127.0.0.1"], {
+      cwd: process.cwd(), encoding: "utf8",
+      env: { ...process.env, NIR_BEACON_PASSWORD_FD: "3", NIR_LISTEN_FD: "3" },
+      stdio: ["ignore", "pipe", "pipe", passwordFd],
+    });
+    assert.equal(beacon.status, 1);
+    assert.equal(beacon.stderr,
+      "Beacon service failed: inherited listener descriptor collides with beacon password descriptor\n");
+    const first = Buffer.alloc(1); assert.equal(readSync(passwordFd, first, 0, 1, null), 1);
+    assert.equal(first.toString(), "v");
+    closeSync(passwordFd); passwordFd = undefined;
+
+    const ceremonyLink = join(root, "ceremony-current");
+    symlinkSync(join(root, "missing-generation"), ceremonyLink);
+    passwordFd = openSync(passwordPath, "r"); transportFd = openSync(transportPath, "r");
+    const validator = spawnSync(process.execPath, ["blockchain/network-cli.mjs", "serve-validator",
+      ceremonyLink, "8791", `nir1${"0".repeat(64)}`], {
+      cwd: process.cwd(), encoding: "utf8", env: { NIR_LISTEN_FD: "3" },
+      stdio: ["ignore", "pipe", "pipe", passwordFd, transportFd],
+    });
+    assert.equal(validator.status, 1);
+    assert.equal(validator.stderr,
+      "Network operation failed: inherited listener descriptor collides with ceremony password descriptors\n");
+    const validatorFirst = Buffer.alloc(1);
+    assert.equal(readSync(passwordFd, validatorFirst, 0, 1, null), 1);
+    assert.equal(validatorFirst.toString(), "v");
+  } finally {
+    if (passwordFd !== undefined) closeSync(passwordFd);
+    if (transportFd !== undefined) closeSync(transportFd);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("beacon bind collision closes private state and emits only a bounded startup error", async () => {

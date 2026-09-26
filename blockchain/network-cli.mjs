@@ -20,6 +20,7 @@ import {
 import { loadValidatorRuntimeFromCeremony } from "./ceremony-validator-init.mjs";
 import { readCeremonyPasswordBuffers } from "./operator-secret-input.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
+import { listenOnLoopback } from "./loopback-listener.mjs";
 
 const [command, directory, parameter = "", portText = ""] = process.argv.slice(2);
 
@@ -27,6 +28,17 @@ function validPort(text, fallback) {
   const port = Number(text || fallback);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("invalid port");
   return port;
+}
+
+function inheritedListenerFd() {
+  const text = process.env.NIR_LISTEN_FD;
+  if (text === undefined) return null;
+  delete process.env.NIR_LISTEN_FD;
+  const descriptor = Number(text);
+  if (!Number.isSafeInteger(descriptor) || descriptor < 3 || descriptor > 255) {
+    throw new Error("inherited listener descriptor is invalid");
+  }
+  return descriptor;
 }
 
 function tlsFromEnvironment(defaultCertificatePath = null) {
@@ -56,6 +68,10 @@ try {
   } else if (command === "serve-validator" && directory) {
     const port = validPort(parameter, 8791);
     const ceremonyMode = lstatSync(directory).isSymbolicLink();
+    const listenerFd = inheritedListenerFd();
+    if (ceremonyMode && (listenerFd === 3 || listenerFd === 4)) {
+      throw new Error("inherited listener descriptor collides with ceremony password descriptors");
+    }
     let ceremonyCredentials = null;
     if (ceremonyMode) {
       if (!/^nir1[0-9a-f]{64}$/.test(portText)) {
@@ -88,10 +104,10 @@ try {
         validator,
       });
     }
-    server.listen(port, "127.0.0.1", () => {
-      const protocol = tls ? "https" : "http";
-      console.log(`NIR validator ${validator.address} listening on ${protocol}://127.0.0.1:${port}`);
-    });
+    await listenOnLoopback(server, { host: "127.0.0.1", inheritedFd: listenerFd,
+      label: "validator listener", port });
+    const protocol = tls ? "https" : "http";
+    console.log(`NIR validator ${validator.address} listening on ${protocol}://127.0.0.1:${port}`);
   } else if (command === "serve-coordinator" && directory && parameter) {
     const peers = parameter.split(",").filter(Boolean);
     const port = validPort(portText, 8787);
