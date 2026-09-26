@@ -22,7 +22,8 @@ import { transactionRoot } from "./transaction-tree.mjs";
 import { verifyEvaluationAssignmentProof } from "./evaluation-assignment-tree.mjs";
 import {
   verifyValidatorRecoveryEnvelope, verifyValidatorRecoveryPlanAcceptance,
-  validatorRecoveryStateCommitment, verifyValidatorRecoveryVotes,
+  validatorRecoveryBlockValidatorSetId, validatorRecoveryStateCommitment,
+  verifyValidatorRecoveryVotes,
 } from "./validator-recovery.mjs";
 import {
   verifyValidatorAdmissionOmissionEvidence,
@@ -470,6 +471,13 @@ export function verifyValidatorRecoveryTransition({
     })) : "0".repeat(64);
   if (recoveryBlock.peerRegistryHash !== expectedPeerRegistryHash) {
     throw new Error("light client recovery peer registry commitment is invalid");
+  }
+  const expectedRecoveryBlockValidatorSetId = validatorRecoveryBlockValidatorSetId(
+    recoveryBlock.protocolVersion, current, verifiedPlan,
+  );
+  if (recoveryBlock.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+      recoveryBlock.validatorSetId !== expectedRecoveryBlockValidatorSetId) {
+    throw new Error("light client recovery validator set commitment is invalid");
   }
   verifyValidatorRecoveryVotes({ commits: recoveryBlock.certificate,
     prepares: recoveryBlock.prepareCertificate }, {

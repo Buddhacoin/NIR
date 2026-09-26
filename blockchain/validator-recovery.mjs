@@ -1,7 +1,10 @@
 import {
   addressFromPublicKey, canonicalJson, hashObject, signObject, verifyObject,
 } from "./crypto.mjs";
-import { MAX_VALIDATORS, MIN_TRANSFER_FEE, SIGNATURE_ALGORITHM } from "./constants.mjs";
+import {
+  MAX_VALIDATORS, MIN_TRANSFER_FEE, RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION,
+  SIGNATURE_ALGORITHM,
+} from "./constants.mjs";
 import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { normalizePeerBindings } from "./peer-registry.mjs";
@@ -33,6 +36,13 @@ function quorum(size) { return Math.floor((size * 2) / 3) + 1; }
 
 function recoverySetId(members) {
   return validatorSetId([...members].sort((a, b) => a.address < b.address ? -1 : 1));
+}
+
+export function validatorRecoveryBlockValidatorSetId(
+  protocolVersion, activeValidators, plan,
+) {
+  return protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION
+    ? plan.reserveSetId : validatorSetId(activeValidators);
 }
 
 function canonicalSignature(value) {
@@ -177,6 +187,7 @@ export function verifyValidatorRecoveryPlan(plan, {
     throw new Error("validator recovery plan context is invalid");
   }
   if (verified.reserves.some((member) =>
+    !registeredValidators.has(member.address) ||
     canonicalJson(registeredValidators.get(member.address)) !== canonicalJson(member) ||
     (bonds.get(member.address) ?? 0n) < MIN_VALIDATOR_BOND)) {
     throw new Error("validator recovery reserve is unknown or unbonded");

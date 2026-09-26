@@ -72,3 +72,24 @@ current 256-entry validator registry can precommit recovery only for active sets
 of at most 128 members. These constraints avoid a post-halt administrator and a
 quietly weaker recovery quorum; they are operational risks, not solved Sybil or
 availability guarantees.
+
+## Protocol v34 reserve admissions
+
+Protocol v34 closes the post-v31 reserve-registration gap by requiring every member of a newly
+scheduled recovery plan to be an exact pending validator admission with the committed identity and
+minimum bond. When peer discovery is active, the plan's endpoint, TLS fingerprint, and transport
+key must exactly match the admission binding; a legacy unbound admission may be upgraded only from
+the plan's independently signed transport binding. Scheduling leaves each reserve admission in the
+bounded queue, clears its readiness atomically, and protects it from renewal, exit, withdrawal, and
+ordinary expiry while the plan is active. Reserve entries remain excluded from FIFO rotation
+selection.
+
+An ordinary rotation cancels the plan. Non-expired reserve admissions remain in their original
+queue positions with readiness cleared; an already expired reserve is atomically refunded and
+retired at cancellation. Successful recovery instead consumes the reserve admissions without a
+refund because their bonds continue to secure the newly active validators. These relationships are
+validated on snapshot restore and reproduced by replay. Protocol v31-v33 retain their original
+recovery-plan rules. Recovery-block headers through v33 therefore retain the authenticated
+pre-recovery validator-set commitment even though the reserve quorum signs the exceptional block;
+v34 switches that header commitment to the plan's exact reserve-set ID. Full nodes and light
+clients enforce the same version boundary.
