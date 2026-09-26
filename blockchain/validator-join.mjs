@@ -19,9 +19,15 @@ import {
 } from "./wallet-files.mjs";
 import {
   VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
-  verifyValidatorAdmission,
 } from "./validator-admission.mjs";
 import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
+import {
+  validateSignedValidatorAdmissionArtifact, validateValidatorAdmissionSigningPackage,
+} from "./validator-admission-artifact.mjs";
+
+export {
+  validateSignedValidatorAdmissionArtifact, validateValidatorAdmissionSigningPackage,
+} from "./validator-admission-artifact.mjs";
 
 const FORMAT_V1 = "nir-validator-join-plan-v1";
 const FORMAT = "nir-validator-join-plan-v2";
@@ -356,44 +362,6 @@ function admissionPublicPlan(plan) {
   };
 }
 
-export function validateValidatorAdmissionSigningPackage(value, plan, { now = Date.now() } = {}) {
-  exact(value, ["amount", "candidateContext", "candidateContextHash",
-    "chainIdentityGenesisHash", "consensus", "endpoint", "fee", "format", "networkId",
-    "nonce", "operatorId", "packageHash", "planCommitment", "referenceHeight",
-    "tlsCertificateSha256", "transport", "validUntilHeight", "version"],
-  "validator admission signing package");
-  if (Buffer.byteLength(canonicalJson(value)) > MAX_ADMISSION_PACKAGE_BYTES) {
-    throw new Error("validator admission signing package is too large");
-  }
-  const { packageHash, ...payload } = value;
-  const context = validateValidatorCandidateContext(value.candidateContext, plan, { now });
-  const balance = BigInt(context.account?.atomicBalance ?? "-1");
-  const expectedValidUntil = context.checkpoint.height +
-    VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS;
-  if (plan.format !== FORMAT || plan.version !== 2 ||
-      value.format !== "nir-validator-admission-signing-package-v1" || value.version !== 1 ||
-      value.networkId !== plan.networkId ||
-      value.chainIdentityGenesisHash !== plan.expectedChainIdentityGenesisHash ||
-      value.planCommitment !== admissionPlanCommitment(plan) ||
-      value.candidateContextHash !== context.contextHash ||
-      canonicalJson(value.consensus) !== canonicalJson(plan.consensus) ||
-      canonicalJson(value.transport) !== canonicalJson(plan.transport) ||
-      value.endpoint !== plan.endpoint || value.operatorId !== plan.operatorId ||
-      value.tlsCertificateSha256 !== plan.tlsCertificateSha256 ||
-      context.protocolVersion !== 32 || context.status !== "not-admitted" ||
-      context.admission !== null || context.queuePosition !== null ||
-      context.address !== plan.consensus.address ||
-      value.amount !== MIN_VALIDATOR_BOND.toString() || value.fee !== MIN_TRANSFER_FEE.toString() ||
-      balance < MIN_VALIDATOR_BOND + MIN_TRANSFER_FEE || context.bondAndFeeCovered !== true ||
-      value.nonce !== context.account.nextNonce || !Number.isSafeInteger(value.nonce) || value.nonce < 0 ||
-      value.referenceHeight !== context.checkpoint.height ||
-      value.validUntilHeight !== expectedValidUntil ||
-      packageHash !== hashObject(payload, "VALIDATOR_ADMISSION_PACKAGE_V1")) {
-    throw new Error("validator admission signing package context or policy is invalid");
-  }
-  return structuredClone(value);
-}
-
 function admissionIntentPath(plan, signingPackage) {
   return join(dirname(plan.paths.consensusVault),
     `admission-intent-${signingPackage.nonce}-${signingPackage.packageHash}.json`);
@@ -678,43 +646,6 @@ function releaseAdmissionNonceLock(path, lock) {
   } finally {
     closeSync(lock.descriptor);
   }
-}
-
-export function validateSignedValidatorAdmissionArtifact(signed, signingPackage, plan) {
-  exact(signed, ["broadcast", "format", "packageHash", "transaction", "transactionId", "version"],
-    "signed validator admission");
-  const verified = verifyValidatorAdmission(signed.transaction, plan.networkId, {
-    chainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
-    currentHeight: signingPackage.referenceHeight + 1, protocolVersion: 32,
-  });
-  const { signature: _signature, transportSignature: _transportSignature,
-    ...unsigned } = signed.transaction;
-  const expectedUnsigned = {
-    algorithm: plan.consensus.algorithm, amount: signingPackage.amount,
-    chainIdentityGenesisHash: signingPackage.chainIdentityGenesisHash,
-    endpoint: signingPackage.endpoint, fee: signingPackage.fee,
-    networkId: signingPackage.networkId, nonce: signingPackage.nonce,
-    operatorId: signingPackage.operatorId, publicKey: plan.consensus.publicKey,
-    referenceHeight: signingPackage.referenceHeight, sender: plan.consensus.address,
-    tlsCertificateSha256: signingPackage.tlsCertificateSha256,
-    transportAlgorithm: plan.transport.algorithm,
-    transportPublicKey: plan.transport.publicKey, type: "validator-admission",
-    validUntilHeight: signingPackage.validUntilHeight,
-  };
-  if (signed.broadcast !== false || signed.format !== "nir-signed-validator-admission-v1" ||
-      signed.version !== 1 || signed.packageHash !== signingPackage.packageHash ||
-      signed.transactionId !== transactionId(signed.transaction) ||
-      canonicalJson(unsigned) !== canonicalJson(expectedUnsigned) ||
-      verified.payload.sender !== plan.consensus.address ||
-      verified.transport.address !== plan.transport.address ||
-      verified.payload.publicKey !== plan.consensus.publicKey ||
-      verified.payload.transportPublicKey !== plan.transport.publicKey ||
-      verified.payload.nonce !== signingPackage.nonce ||
-      verified.payload.referenceHeight !== signingPackage.referenceHeight ||
-      verified.payload.validUntilHeight !== signingPackage.validUntilHeight) {
-    throw new Error("signed validator admission identity or package binding is invalid");
-  }
-  return structuredClone(signed);
 }
 
 export function signValidatorAdmissionPackage({ directory, packagePath, outputPath,

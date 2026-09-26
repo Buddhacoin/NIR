@@ -23,6 +23,7 @@ export function requestJson(url, {
   tlsCertificateSha256 = null,
   tlsCertificateSha256Pins = null,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  signal = null,
 } = {}) {
   const target = new URL(url);
   if (target.protocol !== "http:" && target.protocol !== "https:") {
@@ -35,6 +36,11 @@ export function requestJson(url, {
       maxResponseBytes > 40 * 1024 * 1024) {
     return Promise.reject(new Error("HTTP response size limit is invalid"));
   }
+  if (signal !== null && (typeof signal !== "object" ||
+      typeof signal.addEventListener !== "function" || typeof signal.aborted !== "boolean")) {
+    return Promise.reject(new Error("HTTP abort signal is invalid"));
+  }
+  if (signal?.aborted) return Promise.reject(new Error("HTTP request was aborted"));
   if (tlsCertificateSha256 !== null && !/^[0-9a-f]{64}$/.test(tlsCertificateSha256)) {
     return Promise.reject(new Error("TLS certificate pin is invalid"));
   }
@@ -57,12 +63,16 @@ export function requestJson(url, {
   const request = target.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
     let settled = false;
+    let outgoing;
+    const cleanup = () => signal?.removeEventListener?.("abort", abort);
     const fail = (error) => {
       if (settled) return;
-      settled = true;
+      settled = true; cleanup();
       reject(error);
     };
-    const outgoing = request(target, {
+    const abort = () => outgoing?.destroy(new Error("HTTP request was aborted"));
+    signal?.addEventListener("abort", abort, { once: true });
+    outgoing = request(target, {
       agent: certificatePins === null ? undefined : false,
       headers: encoded ? {
         "content-length": encoded.length,
@@ -108,7 +118,7 @@ export function requestJson(url, {
             ok: response.statusCode >= 200 && response.statusCode < 300,
             status: response.statusCode,
           };
-          settled = true;
+          settled = true; cleanup();
           resolve(result);
         } catch {
           fail(new Error("HTTP response is not valid JSON"));

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { request as httpRequest } from "node:http";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,11 @@ import { initializeDistributedDevnet, ValidatorReplica } from "../blockchain/dis
 import { HttpIngressGuard } from "../blockchain/http-ingress.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { createValidatorAdmissionProofResponseAuth,
+  verifyValidatorAdmissionProofResponseAuth }
+  from "../blockchain/validator-admission-proof-auth.mjs";
+import { requestJson } from "../blockchain/http-client.mjs";
 
 function nodeFixture(overrides = {}) {
   return {
@@ -126,6 +131,22 @@ test("invalid or rewound admission clocks fail closed", () => {
   assert.throws(() => guard.begin(request), /admission is unavailable/);
 });
 
+test("HTTP client abort signal destroys an in-flight request", async () => {
+  const server = createHttpServer((_request, response) => {
+    setTimeout(() => { if (!response.destroyed) response.end("{}"); }, 500).unref();
+  });
+  const url = await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${server.address().port}`));
+  });
+  try {
+    const controller = new AbortController();
+    const pending = requestJson(url, { signal: controller.signal, timeoutMs: 1_000 });
+    controller.abort();
+    await assert.rejects(() => pending, /aborted/);
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});
+
 test("slow request body expires without occupying ingress indefinitely", async () => {
   const server = createNodeHttpServer(nodeFixture(), {
     httpIngress: { bodyIdleTimeoutMs: 30, requestTimeoutMs: 500 },
@@ -188,6 +209,40 @@ test("validator P2P ingress rejects unauthenticated oversized bodies before cryp
     validator.closeSecurityState();
     rmSync(temporary, { force: true, recursive: true });
   }
+});
+
+test("validator exposes one consensus-authenticated atomic admission proof bundle", async () => {
+  const wallet = generateWallet(); const transactionId = "a".repeat(64);
+  const bundle = { finalityProofs: [], format: "nir-validator-admission-proof-bundle-v1",
+    handoffs: [], inclusion: {}, version: 1 };
+  const result = { bundle, format: "nir-validator-admission-proof-source-result-v1",
+    status: "found", version: 1 };
+  const validator = { address: wallet.address, certificateMode: "test", height: 4,
+    mempoolSize: 0, networkId: "nir-proof-service-test", pendingProtocolUpgrade: null,
+    protocolVersion: 32, tipHash: "b".repeat(64),
+    async validatorAdmissionProofBundle(request) {
+      assert.deepEqual(request, { chainIdentityGenesisHash: "d".repeat(64),
+        checkpointHash: "e".repeat(64), fromHeight: 3, transactionId }); return result;
+    },
+    authenticateValidatorAdmissionProofResponse(clientNonce, request, value) {
+      return createValidatorAdmissionProofResponseAuth({ clientNonce,
+        networkId: this.networkId, request, result: value, wallet });
+    } };
+  const server = createValidatorHttpServer(validator); const url = await listen(server);
+  try {
+    const clientNonce = "c".repeat(64); const path =
+      `/v1/public/validator-admission-finality?chainIdentityGenesisHash=${"d".repeat(64)}&checkpointHash=${"e".repeat(64)}&clientNonce=${clientNonce}&fromHeight=3&transactionId=${transactionId}`;
+    const response = await rawRequest(url, { method: "GET", path });
+    assert.equal(response.status, 200);
+    assert.deepEqual(verifyValidatorAdmissionProofResponseAuth(response.body.auth, {
+      clientNonce, networkId: validator.networkId, request: {
+        chainIdentityGenesisHash: "d".repeat(64), checkpointHash: "e".repeat(64),
+        fromHeight: 3, transactionId },
+      result: response.body.result, validator: publicWallet(wallet),
+    }), result);
+    const duplicate = await rawRequest(url, { method: "GET", path: `${path}&fromHeight=3` });
+    assert.equal(duplicate.status, 400);
+  } finally { await close(server); }
 });
 
 test("per-address admission drops duplicate unauthenticated floods before expensive dispatch", async () => {

@@ -457,6 +457,32 @@ export function createValidatorHttpServer(validator, options = {}) {
         return await verificationScheduler.run(identity, () =>
           send(response, 200, validator.validatorCandidateContext(address)));
       }
+      if (request.method === "GET" &&
+          url.pathname === "/v1/public/validator-admission-finality") {
+        identity = "public:validator-admission-finality";
+        consumeIngress(identity); peerReputation.assertAllowed(identity);
+        const allowed = new Set(["chainIdentityGenesisHash", "checkpointHash", "clientNonce",
+          "fromHeight", "transactionId"]);
+        if ([...url.searchParams.keys()].some((key) => !allowed.has(key)) ||
+            [...allowed].some((key) => url.searchParams.getAll(key).length !== 1)) {
+          throw new Error("validator admission proof query is invalid");
+        }
+        const clientNonce = url.searchParams.get("clientNonce");
+        const proofRequest = {
+          chainIdentityGenesisHash: url.searchParams.get("chainIdentityGenesisHash"),
+          checkpointHash: url.searchParams.get("checkpointHash"),
+          fromHeight: Number(url.searchParams.get("fromHeight")),
+          transactionId: url.searchParams.get("transactionId") };
+        if (!/^[0-9a-f]{64}$/.test(clientNonce ?? "")) {
+          throw new Error("validator admission proof client nonce is invalid");
+        }
+        return await verificationScheduler.run(identity, async () => {
+          const result = await validator.validatorAdmissionProofBundle(proofRequest);
+          const auth = validator.authenticateValidatorAdmissionProofResponse(
+            clientNonce, proofRequest, result);
+          return send(response, 200, { auth, result });
+        });
+      }
       if (request.method === "GET" && url.pathname === "/metrics") {
         identity = "public:metrics";
         consumeIngress(identity);

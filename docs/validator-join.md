@@ -1,4 +1,4 @@
-# Validator join workspace (testnet Slices A, B1, B2a, B2b1, and B2b2a)
+# Validator join workspace (testnet Slices A through B2b2b)
 
 `validator:join` prepares local validator identities on macOS or Linux. B2a can prepare and sign a
 protocol-v32 admission transaction offline. The separate, explicit B2b1 command can submit those
@@ -51,6 +51,7 @@ npm run validator:join -- sign-admission /absolute/private/path/join-workspace /
 npm run validator:join -- resolve-expired-admission /absolute/private/path/join-workspace
 npm run validator:join -- submit-admission /absolute/private/path/join-workspace /absolute/private/path/signed-admission.json /absolute/path/fresh-public-sync-input.json
 npm run validator:admission-finality -- verify-file /absolute/path/canonical-finality-evidence.json /absolute/private/path/new-finality-receipt.json
+npm run validator:admission-proof-fetch -- fetch-file /absolute/path/canonical-fetch-input.json /absolute/private/path/new-evidence.json /absolute/private/path/new-finality-receipt.json
 ```
 
 Passwords are rejected from ordinary stdin, command-line arguments, and environment variables.
@@ -167,6 +168,42 @@ rollback anchor; deleting the workspace and every backup cannot be detected from
 This slice does not download evidence or expose a proof endpoint; authenticated
 multi-peer acquisition is a later slice. Finalized admission also does not prove readiness,
 selection, rotation, or activation.
+
+## Fetch finalized admission evidence (Slice B2b2b)
+
+`validator:admission-proof-fetch fetch-file` contacts the exact active validator set committed by
+the authenticated B2b1 checkpoint. Its canonical public input contains the six B2b2a base artifacts
+plus the complete certificate histories used for the peer registry; it contains no vault, password,
+or private key. Each HTTPS request is pinned through that checkpoint-verified certificate history.
+
+```json
+{"candidateCheckpoint":{"...":"exact B1 checkpoint"},"certificateHistories":[{"history":["..."],"validatorAddress":"nir1<64 lowercase hex>"}],"format":"nir-validator-admission-proof-fetch-v1","publicPlan":{"...":"B2a public plan"},"signedArtifact":{"...":"exact signed admission"},"signedJournal":{"...":"byte-identical signed journal"},"signingPackage":{"...":"exact B2a package"},"submissionReceipt":{"...":"authenticated B2b1 receipt"},"version":1}
+```
+
+The public endpoint returns one bounded atomic bundle containing the transaction proof, contiguous
+finality proofs, and the relevant validator handoffs. It signs the exact request, client nonce,
+method, path, network, result hash, and validator identity with the validator consensus identity.
+
+One independently authenticated bundle that passes the existing B2b2a verifier is sufficient.
+Malformed responses, timeouts, HTTP 404 responses, and even authenticated `not-found` responses are
+not evidence of absence and are ignored.
+If two authenticated sources provide different bundles that each verify cryptographically, fetching
+fails closed instead of selecting one. Peers, validator identities, URLs, TLS bindings, response
+size, proof-chain length, concurrency, and timeouts are all bounded. The full active registry and
+all certificate histories are verified first. Validators are queried in canonical address order,
+two at a time, continuing through later batches when earlier validators withhold or fail. After the
+first valid proof, the bounded walk still checks every later validator so a different independently
+valid proof fails closed; only the first evidence object/hash and source identifiers are retained.
+Each response may use the protocol's
+40 MiB proof limit, each request is limited to two seconds, the entire operation to five minutes,
+and a bundle to 64 finalized blocks. In-flight HTTP requests are actively aborted on timeout. On success the
+command creates both the canonical evidence and finality receipt at mode-`0600` paths. A retry after
+a crash between the two writes accepts only byte-identical existing evidence/receipt and rejects a
+conflicting file.
+
+B2b2b is public-only network acquisition. It never imports vault/signing code, never signs an
+admission, and still does not prove readiness, selection, rotation, or activation. Its local files
+are not external rollback anchors.
 
 ## Later slices still required
 

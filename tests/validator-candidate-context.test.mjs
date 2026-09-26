@@ -33,6 +33,10 @@ import { createValidatorAdmission, createValidatorAdmissionRecord, verifyValidat
 import { submitValidatorAdmission } from "../blockchain/validator-admission-submission.mjs";
 import { createValidatorAdmissionSubmissionAck }
   from "../blockchain/validator-admission-submission-ack.mjs";
+import { createValidatorAdmissionProofResponseAuth }
+  from "../blockchain/validator-admission-proof-auth.mjs";
+import { fetchValidatorAdmissionFinalityEvidence }
+  from "../blockchain/validator-admission-proof-fetch.mjs";
 import { prepareValidatorAdmissionSigningPackage, resolveExpiredValidatorAdmissionIntent,
   signValidatorAdmissionPackage }
   from "../blockchain/validator-join.mjs";
@@ -40,7 +44,8 @@ import { encryptWallet } from "../blockchain/vault.mjs";
 import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 import { createTransactionProof } from "../blockchain/transaction-tree.mjs";
 import {
-  persistValidatorAdmissionFinalityReceipt, verifyValidatorAdmissionFinalityEvidence,
+  persistValidatorAdmissionFinalityEvidence, persistValidatorAdmissionFinalityReceipt,
+  verifyValidatorAdmissionFinalityEvidence,
   verifyValidatorAdmissionReceiptCheckpointBinding,
 } from "../blockchain/validator-admission-finality.mjs";
 import { assertValidatorCandidateContextSize, MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES,
@@ -571,6 +576,121 @@ test("B2a signs, B2b1 submits, and B2b2a proves exact v32 admission finality", a
     const unusedHandoff = structuredClone(evidence);
     unusedHandoff.handoffs.push({ activationHeight: inclusionBlock.height + 1 });
     assert.throws(() => verifyValidatorAdmissionFinalityEvidence(unusedHandoff));
+    const fetchInput = { candidateCheckpoint: evidence.candidateCheckpoint,
+      certificateHistories: submissionInput.certificateHistories,
+      format: "nir-validator-admission-proof-fetch-v1", publicPlan: evidence.publicPlan,
+      signedArtifact: evidence.signedArtifact, signedJournal: evidence.signedJournal,
+      signingPackage: evidence.signingPackage, submissionReceipt: evidence.submissionReceipt,
+      version: 1 };
+    const remoteBundle = { finalityProofs: evidence.finalityProofs,
+      format: "nir-validator-admission-proof-bundle-v1", handoffs: evidence.handoffs,
+      inclusion: evidence.inclusion, version: 1 };
+    const remoteResult = { bundle: remoteBundle,
+      format: "nir-validator-admission-proof-source-result-v1", status: "found", version: 1 };
+    const withholding = new Set(value.peerRegistry.peers.slice(0, 2)
+      .map(({ validatorAddress }) => validatorAddress));
+    const proofSource = value.peerRegistry.peers[2].validatorAddress;
+    const fetchRequest = async (url, options) => {
+      const parsed = new URL(url); const index = Number(parsed.hostname.match(/(\d+)/)[1]);
+      assert.equal(options.method, "GET"); assert.equal(options.validatorAddress,
+        value.validators[index].address);
+      assert.equal(options.maxResponseBytes, 40 * 1024 * 1024);
+      if (withholding.has(value.validators[index].address) ||
+          value.validators[index].address !== proofSource) {
+        return { body: { error: "not found" }, ok: false, status: 404 };
+      }
+      const clientNonce = parsed.searchParams.get("clientNonce");
+      const request = {
+        chainIdentityGenesisHash: parsed.searchParams.get("chainIdentityGenesisHash"),
+        checkpointHash: parsed.searchParams.get("checkpointHash"),
+        fromHeight: Number(parsed.searchParams.get("fromHeight")),
+        transactionId: parsed.searchParams.get("transactionId") };
+      return { body: { auth: createValidatorAdmissionProofResponseAuth({ clientNonce,
+        networkId: value.chain.networkId, request, result: remoteResult,
+        wallet: value.validators[index] }), result: remoteResult }, ok: true, status: 200 };
+    };
+    const fetched = await fetchValidatorAdmissionFinalityEvidence({ input: fetchInput,
+      request: fetchRequest });
+    assert.deepEqual(fetched.validSources, [proofSource]);
+    assert.equal(fetched.result.transactionId, artifact.transactionId);
+    const fetchedEvidencePath = join(root, "fetched-admission-finality-evidence.json");
+    persistValidatorAdmissionFinalityEvidence(fetchedEvidencePath, fetched.evidence);
+    assert.equal(JSON.parse(readFileSync(fetchedEvidencePath, "utf8")).inclusion.transactionId,
+      artifact.transactionId);
+    assert.throws(() => persistValidatorAdmissionFinalityEvidence(
+      fetchedEvidencePath, fetched.evidence), /EEXIST/);
+    assert.equal(persistValidatorAdmissionFinalityEvidence(
+      fetchedEvidencePath, fetched.evidence, { idempotent: true }).inclusion.transactionId,
+    artifact.transactionId);
+    const fetchedReceiptPath = join(root, "fetched-admission-finality-receipt.json");
+    const fetchedReceipt = persistValidatorAdmissionFinalityReceipt(
+      fetchedReceiptPath, fetched.result, { idempotent: true });
+    assert.equal(persistValidatorAdmissionFinalityReceipt(
+      fetchedReceiptPath, fetched.result, { idempotent: true }).receiptHash,
+    fetchedReceipt.receiptHash);
+    assert.throws(() => persistValidatorAdmissionFinalityReceipt(fetchedReceiptPath,
+      { ...fetched.result, evidenceHash: "f".repeat(64) }, { idempotent: true }), /conflicts/);
+    const conflictChain = value.chain.fork();
+    const conflictBlock = append(conflictChain, value.validators,
+      { timestamp: value.chain.blocks().at(-1).timestamp + 2,
+        transactions: [artifact.transaction] });
+    const conflictingBundle = { finalityProofs: [createFinalityProof(conflictBlock)],
+      format: "nir-validator-admission-proof-bundle-v1", handoffs: [],
+      inclusion: { blockHash: conflictBlock.hash,
+        format: "nir-validator-admission-transaction-proof-v1", height: conflictBlock.height,
+        proof: createTransactionProof(conflictBlock.transactions, 0),
+        transaction: artifact.transaction, transactionId: artifact.transactionId,
+        transactionsRoot: conflictBlock.transactionsRoot, version: 1 }, version: 1 };
+    const conflictingSources = new Map([
+      [value.peerRegistry.peers[0].validatorAddress, remoteBundle],
+      [value.peerRegistry.peers[2].validatorAddress, conflictingBundle],
+    ]);
+    await assert.rejects(() => fetchValidatorAdmissionFinalityEvidence({ input: fetchInput,
+      request: async (url) => {
+        const parsed = new URL(url); const index = Number(parsed.hostname.match(/(\d+)/)[1]);
+        const bundle = conflictingSources.get(value.validators[index].address);
+        if (!bundle) throw new Error("offline");
+        const result = { bundle, format: "nir-validator-admission-proof-source-result-v1",
+          status: "found", version: 1 };
+        const clientNonce = parsed.searchParams.get("clientNonce");
+        const request = {
+          chainIdentityGenesisHash: parsed.searchParams.get("chainIdentityGenesisHash"),
+          checkpointHash: parsed.searchParams.get("checkpointHash"),
+          fromHeight: Number(parsed.searchParams.get("fromHeight")),
+          transactionId: parsed.searchParams.get("transactionId") };
+        return { body: { auth: createValidatorAdmissionProofResponseAuth({ clientNonce,
+          networkId: value.chain.networkId, request, result, wallet: value.validators[index] }),
+          result }, ok: true, status: 200 };
+      } }), /conflicting finalized/);
+    await assert.rejects(() => fetchValidatorAdmissionFinalityEvidence({ input: fetchInput,
+      request: async () => ({ body: { error: "not found" }, ok: false, status: 404 }) }),
+    /no authenticated validator/);
+    await assert.rejects(() => fetchValidatorAdmissionFinalityEvidence({ input: fetchInput,
+      request: async (url) => {
+        const parsed = new URL(url); const index = Number(parsed.hostname.match(/(\d+)/)[1]);
+        const request = { chainIdentityGenesisHash: parsed.searchParams.get("chainIdentityGenesisHash"),
+          checkpointHash: parsed.searchParams.get("checkpointHash"),
+          fromHeight: Number(parsed.searchParams.get("fromHeight")),
+          transactionId: parsed.searchParams.get("transactionId") };
+        const result = { bundle: null, format: "nir-validator-admission-proof-source-result-v1",
+          status: "not-found", version: 1 };
+        return { body: { auth: createValidatorAdmissionProofResponseAuth({
+          clientNonce: parsed.searchParams.get("clientNonce"), networkId: value.chain.networkId,
+          request, result, wallet: value.validators[index] }), result }, ok: true, status: 200 };
+      } }), /no authenticated validator/);
+    await assert.rejects(() => fetchValidatorAdmissionFinalityEvidence({ input: fetchInput,
+      request: async (url) => {
+        const parsed = new URL(url); const index = Number(parsed.hostname.match(/(\d+)/)[1]);
+        const request = {
+          chainIdentityGenesisHash: parsed.searchParams.get("chainIdentityGenesisHash"),
+          checkpointHash: parsed.searchParams.get("checkpointHash"),
+          fromHeight: Number(parsed.searchParams.get("fromHeight")),
+          transactionId: parsed.searchParams.get("transactionId") };
+        return { body: { auth: createValidatorAdmissionProofResponseAuth({
+          clientNonce: "f".repeat(64), networkId: value.chain.networkId, request,
+          result: remoteResult, wallet: value.validators[index] }), result: remoteResult },
+        ok: true, status: 200 };
+      } }), /no authenticated validator/);
 
     const oldValidUntil = verified.payload.validUntilHeight;
     while (value.chain.height <= oldValidUntil) append(value.chain, value.validators);
