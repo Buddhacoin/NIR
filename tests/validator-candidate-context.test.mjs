@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync,
   rmSync, symlinkSync,
   unlinkSync, writeFileSync } from "node:fs";
@@ -37,6 +38,11 @@ import { prepareValidatorAdmissionSigningPackage, resolveExpiredValidatorAdmissi
   from "../blockchain/validator-join.mjs";
 import { encryptWallet } from "../blockchain/vault.mjs";
 import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
+import { createTransactionProof } from "../blockchain/transaction-tree.mjs";
+import {
+  persistValidatorAdmissionFinalityReceipt, verifyValidatorAdmissionFinalityEvidence,
+  verifyValidatorAdmissionReceiptCheckpointBinding,
+} from "../blockchain/validator-admission-finality.mjs";
 import { assertValidatorCandidateContextSize, MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES,
   synchronizeValidatorCandidateContext, validateValidatorCandidateContext,
   validateValidatorCandidateSyncInput }
@@ -268,7 +274,7 @@ test("persisted candidate context has a dedicated bounded envelope", () => {
   }), /too large/);
 });
 
-test("B2a prepares, signs, and B2b1 submits exact v32 admission bytes without claiming finality", async () => {
+test("B2a signs, B2b1 submits, and B2b2a proves exact v32 admission finality", async () => {
   const value = fixture(1_000_000, 4, 32, true, true);
   const context = await synchronizeValidatorCandidateContext({ now: value.now, plan: value.plan,
     syncInput: { checkpointTrustPackage: value.checkpointTrustPackage,
@@ -437,7 +443,7 @@ test("B2a prepares, signs, and B2b1 submits exact v32 admission bytes without cl
     writeFileSync(submissionHeadPath, `${canonicalJson(swappedHead)}\n`, { mode: 0o600 });
     await assert.rejects(() => submitValidatorAdmission({ directory: root,
       signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
-      validatorRequest, now: value.now + 1 }), /lacks its signed acknowledgement/);
+      validatorRequest, now: value.now + 1 }), /outcome is invalid|lacks its signed acknowledgement/);
     renameSync(swappedPartialPath, partialPath);
     writeFileSync(partialPath, authenticPartial, { mode: 0o600 });
     writeFileSync(submissionHeadPath, authenticPartialHead, { mode: 0o600 });
@@ -472,6 +478,99 @@ test("B2a prepares, signs, and B2b1 submits exact v32 admission bytes without cl
       signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
       validatorRequest, now: value.now + 3 }), /head detects deletion/);
     writeFileSync(submissionHeadPath, submissionHeadBytes, { mode: 0o600 });
+
+    const finalityChain = value.chain.fork();
+    const inclusionBlock = append(finalityChain, value.validators,
+      { transactions: [artifact.transaction] });
+    const signingPackage = JSON.parse(readFileSync(packagePath, "utf8"));
+    const signedJournal = JSON.parse(readFileSync(journalPath, "utf8"));
+    const publicPlan = JSON.parse(readFileSync(
+      join(root, "validator-admission-public-plan.json"), "utf8"));
+    const evidence = {
+      candidateCheckpoint: signingPackage.candidateContext.checkpoint,
+      finalityProofs: [createFinalityProof(inclusionBlock)],
+      format: "nir-validator-admission-finality-evidence-v1",
+      handoffs: [],
+      inclusion: { blockHash: inclusionBlock.hash,
+        format: "nir-validator-admission-transaction-proof-v1", height: inclusionBlock.height,
+        proof: createTransactionProof(inclusionBlock.transactions, 0),
+        transaction: artifact.transaction, transactionId: artifact.transactionId,
+        transactionsRoot: inclusionBlock.transactionsRoot, version: 1 },
+      publicPlan, signedArtifact: artifact, signedJournal, signingPackage,
+      submissionReceipt: submitted.receipt, version: 1,
+    };
+    const finalityResult = verifyValidatorAdmissionFinalityEvidence(evidence);
+    assert.equal(finalityResult.transactionId, artifact.transactionId);
+    assert.equal(finalityResult.height, inclusionBlock.height);
+    assert.equal(finalityResult.submissionStatus, "submitted-to-quorum");
+    const partialEvidence = structuredClone(evidence);
+    partialEvidence.submissionReceipt = partial.receipt;
+    const partialFinalityResult = verifyValidatorAdmissionFinalityEvidence(partialEvidence);
+    assert.equal(partialFinalityResult.submissionStatus, "partial-retryable");
+    const partialFinalityPath = join(root, "validator-admission-partial-finality.json");
+    assert.equal(persistValidatorAdmissionFinalityReceipt(
+      partialFinalityPath, partialFinalityResult).submissionStatus, "partial-retryable");
+    const forgedTransportReceipt = structuredClone(partial.receipt);
+    forgedTransportReceipt.status = "submitted-to-quorum";
+    const { receiptHash: _forgedReceiptHash, ...forgedTransportPayload } = forgedTransportReceipt;
+    forgedTransportReceipt.receiptHash = hashObject(forgedTransportPayload,
+      "VALIDATOR_ADMISSION_SUBMISSION_V1");
+    const forgedTransportEvidence = structuredClone(evidence);
+    forgedTransportEvidence.submissionReceipt = forgedTransportReceipt;
+    assert.throws(() => verifyValidatorAdmissionFinalityEvidence(forgedTransportEvidence), /forged/);
+    const finalityReceiptPath = join(root, "validator-admission-finality.json");
+    const persistedFinality = persistValidatorAdmissionFinalityReceipt(
+      finalityReceiptPath, finalityResult);
+    assert.equal(JSON.parse(readFileSync(finalityReceiptPath, "utf8")).receiptHash,
+      persistedFinality.receiptHash);
+    assert.throws(() => persistValidatorAdmissionFinalityReceipt(
+      finalityReceiptPath, finalityResult), /EEXIST/);
+    assert.throws(() => persistValidatorAdmissionFinalityReceipt(
+      join(root, "forged-finality.json"), { ...finalityResult, transactionId: "invalid" }),
+    /invalid/);
+    const evidencePath = join(root, "validator-admission-finality-evidence.json");
+    writeFileSync(evidencePath, `${canonicalJson(evidence)}\n`, { mode: 0o600 });
+    const cliReceiptPath = join(root, "validator-admission-finality-cli.json");
+    const cli = spawnSync(process.execPath,
+      ["blockchain/validator-admission-finality-cli.mjs", "verify-file", evidencePath,
+        cliReceiptPath], { cwd: new URL("..", import.meta.url), encoding: "utf8" });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(JSON.parse(readFileSync(cliReceiptPath, "utf8")).transactionId,
+      artifact.transactionId);
+    for (const mutate of [
+      (copy) => { copy.inclusion.height += 1; },
+      (copy) => { copy.inclusion.blockHash = "a".repeat(64); },
+      (copy) => { copy.inclusion.transactionsRoot = "b".repeat(64); },
+      (copy) => { copy.inclusion.proof.count += 1; },
+      (copy) => { copy.inclusion.transaction.amount = (MIN_VALIDATOR_BOND + 1n).toString(); },
+      (copy) => { copy.finalityProofs[0].header.chainIdentityGenesisHash = "c".repeat(64); },
+      (copy) => { copy.finalityProofs[0].header.protocolUpgrade = {}; },
+    ]) {
+      const copy = structuredClone(evidence); mutate(copy);
+      assert.throws(() => verifyValidatorAdmissionFinalityEvidence(copy));
+    }
+    const anchor = signingPackage.candidateContext.checkpoint;
+    const proofCheckpoint = { chainIdentityGenesisHash: inclusionBlock.chainIdentityGenesisHash,
+      height: inclusionBlock.height, protocolVersion: inclusionBlock.protocolVersion,
+      stateRoot: inclusionBlock.stateRoot, tipHash: inclusionBlock.hash,
+      validatorSetId: inclusionBlock.validatorSetId };
+    assert.doesNotThrow(() => verifyValidatorAdmissionReceiptCheckpointBinding({ anchor,
+      finalityProofs: evidence.finalityProofs, receiptCheckpoint: anchor,
+      tip: { height: inclusionBlock.height } }));
+    assert.doesNotThrow(() => verifyValidatorAdmissionReceiptCheckpointBinding({ anchor,
+      finalityProofs: evidence.finalityProofs, receiptCheckpoint: proofCheckpoint,
+      tip: { height: inclusionBlock.height } }));
+    assert.throws(() => verifyValidatorAdmissionReceiptCheckpointBinding({ anchor,
+      finalityProofs: evidence.finalityProofs,
+      receiptCheckpoint: { ...proofCheckpoint, tipHash: "d".repeat(64) },
+      tip: { height: inclusionBlock.height } }), /not on/);
+    assert.throws(() => verifyValidatorAdmissionReceiptCheckpointBinding({ anchor,
+      finalityProofs: evidence.finalityProofs,
+      receiptCheckpoint: { ...proofCheckpoint, height: inclusionBlock.height + 1 },
+      tip: { height: inclusionBlock.height } }), /outside/);
+    const unusedHandoff = structuredClone(evidence);
+    unusedHandoff.handoffs.push({ activationHeight: inclusionBlock.height + 1 });
+    assert.throws(() => verifyValidatorAdmissionFinalityEvidence(unusedHandoff));
 
     const oldValidUntil = verified.payload.validUntilHeight;
     while (value.chain.height <= oldValidUntil) append(value.chain, value.validators);

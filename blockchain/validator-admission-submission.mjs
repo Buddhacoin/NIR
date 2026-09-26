@@ -11,6 +11,8 @@ import { peerRegistryHash } from "./peer-registry.mjs";
 import { verifyValidatorAdmission } from "./validator-admission.mjs";
 import { verifyValidatorAdmissionSubmissionAck }
   from "./validator-admission-submission-ack.mjs";
+import { verifyValidatorAdmissionSubmissionReceipt }
+  from "./validator-admission-submission-receipt.mjs";
 import { MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES, MAX_VALIDATOR_CANDIDATE_SYNC_INPUT_BYTES,
   synchronizeValidatorCandidateContext, validateValidatorCandidateContext,
   validateValidatorCandidateSyncInput } from "./validator-candidate-context.mjs";
@@ -402,6 +404,10 @@ async function submitValidatorAdmissionLocked({ binding, submissionInput,
         receiptHash !== hashObject(payload, "VALIDATOR_ADMISSION_SUBMISSION_V1")) {
       throw new Error("validator admission submission receipt chain is forked or rolled back");
     }
+    verifyValidatorAdmissionSubmissionReceipt(stored, {
+      joinPlan: syncPlan, plan: binding.plan, signed: binding.signed,
+      signingPackage: binding.package,
+    });
     const storedContext = validateValidatorCandidateContext(stored.candidateContext, syncPlan,
       { now: stored.candidateContext?.syncedAt });
     const storedValidators = storedContext.checkpointTrustPackage.validators;
