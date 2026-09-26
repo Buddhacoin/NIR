@@ -11,7 +11,7 @@ import { verifyValidatorAdmissionSubmissionReceipt }
   from "./validator-admission-submission-receipt.mjs";
 import {
   validateSignedValidatorAdmissionArtifact, validateValidatorAdmissionSigningPackage,
-} from "./validator-join.mjs";
+} from "./validator-admission-artifact.mjs";
 import { verifyTransactionProof } from "./transaction-tree.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
@@ -49,6 +49,35 @@ function joinPlan(plan) {
   return value;
 }
 
+export function validateValidatorAdmissionFinalityBase(value) {
+  exact(value, ["candidateCheckpoint", "publicPlan", "signedArtifact", "signedJournal",
+    "signingPackage", "submissionReceipt"], "validator admission finality base");
+  const plan = publicPlan(value.publicPlan); const normalizedJoinPlan = joinPlan(plan);
+  const signingPackage = validateValidatorAdmissionSigningPackage(value.signingPackage,
+    normalizedJoinPlan, { now: value.signingPackage?.candidateContext?.syncedAt });
+  const signed = validateSignedValidatorAdmissionArtifact(value.signedArtifact,
+    signingPackage, normalizedJoinPlan);
+  const journal = validateSignedValidatorAdmissionArtifact(value.signedJournal,
+    signingPackage, normalizedJoinPlan);
+  if (canonicalJson(signed) !== canonicalJson(journal)) {
+    throw new Error("signed validator admission differs from its immutable journal");
+  }
+  const anchor = signingPackage.candidateContext.checkpoint;
+  if (canonicalJson(value.candidateCheckpoint) !== canonicalJson(anchor) ||
+      anchor.height !== signingPackage.referenceHeight || anchor.protocolVersion !== 32 ||
+      signingPackage.candidateContext.accountProof?.pendingProtocolUpgrade !== null) {
+    throw new Error("validator admission candidate checkpoint anchor is invalid");
+  }
+  const submission = verifyValidatorAdmissionSubmissionReceipt(value.submissionReceipt, {
+    joinPlan: normalizedJoinPlan, plan, signed, signingPackage,
+  });
+  if (submission.context.checkpoint.height < anchor.height ||
+      submission.context.checkpoint.height > signingPackage.validUntilHeight) {
+    throw new Error("validator admission submission receipt is outside admission lifetime");
+  }
+  return { anchor, normalizedJoinPlan, plan, signed, signingPackage, submission };
+}
+
 function checkpointForProof(proof) {
   return {
     chainIdentityGenesisHash: proof.header.chainIdentityGenesisHash,
@@ -81,36 +110,24 @@ export function verifyValidatorAdmissionReceiptCheckpointBinding({
 }
 
 export function verifyValidatorAdmissionFinalityEvidence(value) {
+  if (Buffer.byteLength(canonicalJson(value)) > MAX_VALIDATOR_ADMISSION_FINALITY_BYTES) {
+    throw new Error("validator admission finality evidence is too large");
+  }
   exact(value, ["candidateCheckpoint", "finalityProofs", "format", "handoffs", "inclusion",
     "publicPlan", "signedArtifact", "signedJournal", "signingPackage", "submissionReceipt",
     "version"], "validator admission finality evidence");
   if (value.format !== "nir-validator-admission-finality-evidence-v1" || value.version !== 1 ||
       !Array.isArray(value.finalityProofs) || value.finalityProofs.length < 1 ||
       !Array.isArray(value.handoffs)) throw new Error("validator admission finality evidence is invalid");
-  const plan = publicPlan(value.publicPlan); const normalizedJoinPlan = joinPlan(plan);
-  const signingPackage = validateValidatorAdmissionSigningPackage(value.signingPackage,
-    normalizedJoinPlan, { now: value.signingPackage?.candidateContext?.syncedAt });
-  const signed = validateSignedValidatorAdmissionArtifact(value.signedArtifact,
-    signingPackage, normalizedJoinPlan);
-  const journal = validateSignedValidatorAdmissionArtifact(value.signedJournal,
-    signingPackage, normalizedJoinPlan);
-  if (canonicalJson(signed) !== canonicalJson(journal)) {
-    throw new Error("signed validator admission differs from its immutable journal");
-  }
-  const anchor = signingPackage.candidateContext.checkpoint;
-  if (canonicalJson(value.candidateCheckpoint) !== canonicalJson(anchor) ||
-      anchor.height !== signingPackage.referenceHeight || anchor.protocolVersion !== 32 ||
-      signingPackage.candidateContext.accountProof?.pendingProtocolUpgrade !== null ||
+  const { anchor, plan, signed, signingPackage, submission } =
+    validateValidatorAdmissionFinalityBase({ candidateCheckpoint: value.candidateCheckpoint,
+      publicPlan: value.publicPlan, signedArtifact: value.signedArtifact,
+      signedJournal: value.signedJournal, signingPackage: value.signingPackage,
+      submissionReceipt: value.submissionReceipt });
+  if (
       value.handoffs.some((handoff) => !Number.isSafeInteger(handoff?.activationHeight) ||
         handoff.activationHeight <= anchor.height)) {
     throw new Error("validator admission candidate checkpoint anchor is invalid");
-  }
-  const submission = verifyValidatorAdmissionSubmissionReceipt(value.submissionReceipt, {
-    joinPlan: normalizedJoinPlan, plan, signed, signingPackage,
-  });
-  if (submission.context.checkpoint.height < anchor.height ||
-      submission.context.checkpoint.height > signingPackage.validUntilHeight) {
-    throw new Error("validator admission submission receipt is outside admission lifetime");
   }
   if (value.finalityProofs.some((proof) => proof?.header?.protocolVersion !== 32 ||
       proof?.header?.protocolUpgrade !== null ||
@@ -177,7 +194,65 @@ export function loadValidatorAdmissionFinalityEvidence(path) {
   } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
-export function persistValidatorAdmissionFinalityReceipt(path, result) {
+export function loadValidatorAdmissionFinalityReceipt(path) {
+  const requested = resolve(path); const parent = realpathSync(dirname(requested));
+  const target = join(parent, basename(requested)); let descriptor;
+  try {
+    const linked = lstatSync(target);
+    descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor); const bytes = readFileSync(descriptor); const after = fstatSync(descriptor);
+    if (!before.isFile() || before.nlink !== 1 || (before.mode & 0o077) ||
+        !sameIdentity(linked, before) || !sameIdentity(before, after) ||
+        !sameIdentity(before, lstatSync(target)) || bytes.length < 2 ||
+        bytes.length > 64 * 1024 || bytes.length !== before.size) {
+      throw new Error("validator admission finality receipt file is unsafe");
+    }
+    const text = bytes.toString("utf8");
+    if (!text.endsWith("\n")) throw new Error("validator admission finality receipt is not canonical JSON");
+    const value = JSON.parse(text.slice(0, -1));
+    if (`${canonicalJson(value)}\n` !== text) {
+      throw new Error("validator admission finality receipt is not canonical JSON");
+    }
+    return value;
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
+function persistCanonicalExclusive(path, value, label) {
+  const requested = resolve(path); const parent = realpathSync(dirname(requested));
+  const target = join(parent, basename(requested));
+  const temporary = join(parent, `.${basename(target)}.finality-${randomBytes(16).toString("hex")}`);
+  let descriptor; let identity;
+  try {
+    descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL |
+      constants.O_NOFOLLOW, 0o600);
+    identity = fstatSync(descriptor); writeFileSync(descriptor, `${canonicalJson(value)}\n`);
+    fsyncSync(descriptor); closeSync(descriptor); descriptor = undefined;
+    if (!sameIdentity(identity, lstatSync(temporary))) throw new Error(`${label} staging changed`);
+    linkSync(temporary, target); unlinkSync(temporary);
+    const directory = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+    if (!sameIdentity(identity, lstatSync(target))) throw new Error(`${label} activation changed`);
+    return value;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    try { if (identity && sameIdentity(identity, lstatSync(temporary))) unlinkSync(temporary); } catch {}
+  }
+}
+
+export function persistValidatorAdmissionFinalityEvidence(path, evidence, { idempotent = false } = {}) {
+  verifyValidatorAdmissionFinalityEvidence(evidence);
+  try { return persistCanonicalExclusive(path, evidence, "validator admission finality evidence"); }
+  catch (error) {
+    if (!idempotent || error?.code !== "EEXIST") throw error;
+    const existing = loadValidatorAdmissionFinalityEvidence(path);
+    if (canonicalJson(existing) !== canonicalJson(evidence)) {
+      throw new Error("existing validator admission finality evidence conflicts with fetched proof");
+    }
+    verifyValidatorAdmissionFinalityEvidence(existing); return existing;
+  }
+}
+
+export function persistValidatorAdmissionFinalityReceipt(path, result, { idempotent = false } = {}) {
   exact(result, ["blockHash", "evidenceHash", "format", "height", "networkId", "packageHash",
     "protocolVersion", "submissionStatus", "transactionId", "version"],
   "validator admission finality result");
@@ -193,23 +268,13 @@ export function persistValidatorAdmissionFinalityReceipt(path, result) {
   const payload = { ...result, format: "nir-validator-admission-finality-receipt-v1" };
   const receipt = { ...payload, receiptHash:
     hashObject(payload, "NIR_ADMISSION_FINALITY_RECEIPT_V1") };
-  const requested = resolve(path); const parent = realpathSync(dirname(requested));
-  const target = join(parent, basename(requested));
-  const temporary = join(parent, `.${basename(target)}.finality-${randomBytes(16).toString("hex")}`);
-  let descriptor; let identity;
-  try {
-    descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL |
-      constants.O_NOFOLLOW, 0o600);
-    identity = fstatSync(descriptor); writeFileSync(descriptor, `${canonicalJson(receipt)}\n`);
-    fsyncSync(descriptor); closeSync(descriptor); descriptor = undefined;
-    if (!sameIdentity(identity, lstatSync(temporary))) throw new Error("finality receipt staging changed");
-    linkSync(temporary, target); unlinkSync(temporary);
-    const directory = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try { fsyncSync(directory); } finally { closeSync(directory); }
-    if (!sameIdentity(identity, lstatSync(target))) throw new Error("finality receipt activation changed");
-    return receipt;
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-    try { if (identity && sameIdentity(identity, lstatSync(temporary))) unlinkSync(temporary); } catch {}
+  try { return persistCanonicalExclusive(path, receipt, "validator admission finality receipt"); }
+  catch (error) {
+    if (!idempotent || error?.code !== "EEXIST") throw error;
+    const existing = loadValidatorAdmissionFinalityReceipt(path);
+    if (canonicalJson(existing) !== canonicalJson(receipt)) {
+      throw new Error("existing validator admission finality receipt conflicts with fetched proof");
+    }
+    return existing;
   }
 }

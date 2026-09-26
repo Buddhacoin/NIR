@@ -22,6 +22,8 @@ import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { verifyAccountProof } from "../blockchain/account-proof.mjs";
 import { verifyAssetProof } from "../blockchain/asset-proof.mjs";
+import { verifyValidatorAdmissionProofResponseAuth }
+  from "../blockchain/validator-admission-proof-auth.mjs";
 
 async function listen(server, port = 0) {
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
@@ -236,6 +238,40 @@ test("independent HTTP validator replicas finalize with one peer offline", async
     assert.equal(caughtUp.votes, 4);
     assert.equal(replicas[offlineIndex].height, 3);
     assert.equal(coordinator.account(bob.address).atomicBalance, (3n * ATOMIC_UNITS).toString());
+
+    const replicaGenesis = JSON.parse(readFileSync(
+      join(layout.validatorDirectories[0], "genesis.json"), "utf8"));
+    const checkpointBlock = JSON.parse(readFileSync(
+      join(layout.validatorDirectories[0], "blocks", "000000000002.json"), "utf8"));
+    const chainIdentityGenesisHash = new NirChain(replicaGenesis).tipHash;
+    const clientNonce = "c".repeat(64);
+    const proofRequest = { chainIdentityGenesisHash, checkpointHash: checkpointBlock.hash,
+      fromHeight: 2, transactionId: transactionId(secondTransfer) };
+    const query = new URLSearchParams({ ...proofRequest, fromHeight: "2", clientNonce });
+    const proofResponse = await fetch(
+      `${urls[0]}/v1/public/validator-admission-finality?${query}`);
+    assert.equal(proofResponse.status, 200);
+    const proofBody = await proofResponse.json();
+    const proofValidator = replicaGenesis.validators.find(({ address }) =>
+      address === replicas[0].address);
+    const proofSourceResult = verifyValidatorAdmissionProofResponseAuth(proofBody.auth, {
+      clientNonce, networkId: coordinator.networkId, request: proofRequest,
+      result: proofBody.result, validator: proofValidator,
+    });
+    assert.equal(proofSourceResult.status, "found");
+    assert.equal(proofSourceResult.bundle.inclusion.transactionId,
+      transactionId(secondTransfer));
+    assert.equal(proofSourceResult.bundle.finalityProofs.length, 1);
+    const missingRequest = { ...proofRequest, transactionId: "f".repeat(64) };
+    const missingQuery = new URLSearchParams({ ...missingRequest, fromHeight: "2", clientNonce });
+    const missingResponse = await fetch(
+      `${urls[0]}/v1/public/validator-admission-finality?${missingQuery}`);
+    assert.equal(missingResponse.status, 200);
+    const missingBody = await missingResponse.json();
+    assert.equal(verifyValidatorAdmissionProofResponseAuth(missingBody.auth, {
+      clientNonce, networkId: coordinator.networkId, request: missingRequest,
+      result: missingBody.result, validator: proofValidator,
+    }).status, "not-found");
 
     coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
     assert.equal(coordinator.height, 3);

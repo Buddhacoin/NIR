@@ -36,6 +36,24 @@ test("offline validator join import graph excludes HTTP transports", () => {
   assert.equal(specifiers.has("node:https"), false);
 });
 
+test("online admission proof fetch import graph excludes vault and signer authority", () => {
+  const entry = resolve(dirname(fileURLToPath(import.meta.url)),
+    "../blockchain/validator-admission-proof-fetch.mjs");
+  const visited = new Set();
+  const walk = (filename) => {
+    if (visited.has(filename)) return;
+    visited.add(filename);
+    const source = readFileSync(filename, "utf8");
+    const imports = /(?:^|\n)\s*import\s+(?!\()(?:(?:[\s\S]*?)\s+from\s+)?["']([^"']+)["']\s*;/g;
+    for (const match of source.matchAll(imports)) {
+      if (match[1].startsWith(".")) walk(resolve(dirname(filename), match[1]));
+    }
+  };
+  walk(entry);
+  assert.equal([...visited].some((filename) => /(?:validator-join|wallet-files|vault)\.mjs$/.test(filename)),
+    false);
+});
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "nir-validator-join-")); chmodSync(root, 0o700);
   const cert = join(root, "tls-cert.pem"); const key = join(root, "tls-key.pem");

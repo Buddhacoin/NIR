@@ -50,6 +50,8 @@ import { MAX_ADMISSION_OMISSION_EVIDENCE_BYTES } from "./validator-admission-omi
 import { verifyValidatorAdmission } from "./validator-admission.mjs";
 import { createValidatorAdmissionSubmissionAck }
   from "./validator-admission-submission-ack.mjs";
+import { createValidatorAdmissionProofResponseAuth, validatorAdmissionProofRequest }
+  from "./validator-admission-proof-auth.mjs";
 import {
   createPeerRequest,
   createPeerResponse,
@@ -63,6 +65,7 @@ import {
 } from "./peer-registry.mjs";
 import { requestJson } from "./http-client.mjs";
 import { createPeerAnnouncement } from "./peer-discovery.mjs";
+import { createTransactionProof } from "./transaction-tree.mjs";
 import { installStateSnapshot } from "./snapshot-store.mjs";
 import {
   createValidatorHandoffCandidate,
@@ -1185,6 +1188,49 @@ export class ValidatorReplica {
     return createValidatorAdmissionSubmissionAck({ attemptNonce, candidateContextHash,
       chainIdentityGenesisHash: this.#chain.blocks()[0].hash, networkId: this.networkId,
       status: result.status, transactionId: result.transactionId }, this.#wallet);
+  }
+
+  async validatorAdmissionProofBundle(request) {
+    const normalized = validatorAdmissionProofRequest(request);
+    const anchorBlock = this.#chain.blockAtHeight(normalized.fromHeight);
+    if (normalized.chainIdentityGenesisHash !== this.#chain.blockAtHeight(0).hash ||
+        anchorBlock.hash !== normalized.checkpointHash) {
+      throw new Error("validator admission proof checkpoint anchor is unknown");
+    }
+    const upperHeight = Math.min(this.height, normalized.fromHeight + 64);
+    if (upperHeight <= normalized.fromHeight) {
+      return { bundle: null, format: "nir-validator-admission-proof-source-result-v1",
+        status: "not-found", version: 1 };
+    }
+    const range = this.#chain.blockRange(normalized.fromHeight, upperHeight, 64);
+    let inclusionBlock = null; let inclusionIndex = -1;
+    for (const block of range) {
+      const index = block.transactions.findIndex((transaction) =>
+        transactionId(transaction) === normalized.transactionId);
+      if (index >= 0) { inclusionBlock = block; inclusionIndex = index; break; }
+    }
+    if (inclusionBlock === null) {
+      return { bundle: null, format: "nir-validator-admission-proof-source-result-v1",
+        status: "not-found", version: 1 };
+    }
+    const finalityProofs = range.slice(0, inclusionBlock.height - normalized.fromHeight)
+      .map(createFinalityProof);
+    const handoffs = (await this.validatorHandoffHistory()).filter(({ activationHeight }) =>
+      activationHeight > normalized.fromHeight && activationHeight <= inclusionBlock.height);
+    const bundle = { finalityProofs, format: "nir-validator-admission-proof-bundle-v1", handoffs,
+      inclusion: { blockHash: inclusionBlock.hash,
+        format: "nir-validator-admission-transaction-proof-v1", height: inclusionBlock.height,
+        proof: createTransactionProof(inclusionBlock.transactions, inclusionIndex),
+        transaction: inclusionBlock.transactions[inclusionIndex],
+        transactionId: normalized.transactionId,
+        transactionsRoot: inclusionBlock.transactionsRoot, version: 1 }, version: 1 };
+    return { bundle, format: "nir-validator-admission-proof-source-result-v1",
+      status: "found", version: 1 };
+  }
+
+  authenticateValidatorAdmissionProofResponse(clientNonce, request, result) {
+    return createValidatorAdmissionProofResponseAuth({ clientNonce, networkId: this.networkId,
+      request, result, wallet: this.#wallet });
   }
 
   vote(block) {

@@ -77,6 +77,7 @@
     "validator:deploy": "node blockchain/validator-deployment-cli.mjs",
     "validator:join": "node blockchain/validator-join-cli.mjs",
     "validator:admission-finality": "node blockchain/validator-admission-finality-cli.mjs",
+    "validator:admission-proof-fetch": "node blockchain/validator-admission-proof-fetch-cli.mjs",
     "release:create": "node blockchain/release-cli.mjs create",
     "release:sign": "node blockchain/release-cli.mjs sign",
     "release:verify": "node blockchain/release-cli.mjs verify",

@@ -2803,6 +2803,33 @@ export class NirChain {
     return structuredClone(this.#blocks);
   }
 
+  blockRange(fromExclusive, toInclusive, maximum = 64) {
+    const baseHeight = this.#blocks[0].height;
+    if (!Number.isSafeInteger(fromExclusive) || !Number.isSafeInteger(toInclusive) ||
+        !Number.isSafeInteger(maximum) || maximum < 1 || maximum > 512 ||
+        fromExclusive < baseHeight || toInclusive <= fromExclusive ||
+        toInclusive > this.height || toInclusive - fromExclusive > maximum) {
+      throw new Error("block range is invalid or unavailable");
+    }
+    const start = fromExclusive - baseHeight + 1;
+    const blocks = this.#blocks.slice(start, start + (toInclusive - fromExclusive));
+    if (blocks.length !== toInclusive - fromExclusive ||
+        blocks[0]?.height !== fromExclusive + 1 || blocks.at(-1)?.height !== toInclusive) {
+      throw new Error("block range is unavailable");
+    }
+    return structuredClone(blocks);
+  }
+
+  blockAtHeight(height) {
+    const baseHeight = this.#blocks[0].height;
+    if (!Number.isSafeInteger(height) || height < baseHeight || height > this.height) {
+      throw new Error("block height is unavailable");
+    }
+    const block = this.#blocks[height - baseHeight];
+    if (block?.height !== height) throw new Error("block height is unavailable");
+    return structuredClone(block);
+  }
+
   get networkId() {
     return this.#networkId;
   }
