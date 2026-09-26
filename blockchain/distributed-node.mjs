@@ -48,6 +48,8 @@ import {
 } from "./admission-inclusion.mjs";
 import { MAX_ADMISSION_OMISSION_EVIDENCE_BYTES } from "./validator-admission-omission.mjs";
 import { verifyValidatorAdmission } from "./validator-admission.mjs";
+import { createValidatorAdmissionSubmissionAck }
+  from "./validator-admission-submission-ack.mjs";
 import {
   createPeerRequest,
   createPeerResponse,
@@ -1177,6 +1179,12 @@ export class ValidatorReplica {
       rmSync(join(this.#directory, "mempool", `${id}.receipt.json`), { force: true });
       throw error;
     }
+  }
+
+  acknowledgeValidatorAdmissionSubmission(result, { attemptNonce, candidateContextHash }) {
+    return createValidatorAdmissionSubmissionAck({ attemptNonce, candidateContextHash,
+      chainIdentityGenesisHash: this.#chain.blocks()[0].hash, networkId: this.networkId,
+      status: result.status, transactionId: result.transactionId }, this.#wallet);
   }
 
   vote(block) {

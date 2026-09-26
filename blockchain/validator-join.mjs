@@ -337,7 +337,11 @@ function latestValidatorCandidateContext(directory, plan = readPlan(directory), 
 }
 
 function admissionPlanCommitment(plan) {
-  return hashObject({
+  return hashObject(admissionPublicPlan(plan), "VALIDATOR_ADMISSION_PLAN_V1");
+}
+
+function admissionPublicPlan(plan) {
+  return {
     candidateContextMaxWitnessAgeMs: plan.candidateContextMaxWitnessAgeMs,
     candidateContextMinimumCheckpointHeight: plan.candidateContextMinimumCheckpointHeight,
     candidateContextMinimumSequence: plan.candidateContextMinimumSequence,
@@ -349,7 +353,7 @@ function admissionPlanCommitment(plan) {
     operatorId: plan.operatorId,
     tlsCertificateSha256: plan.tlsCertificateSha256,
     transport: plan.transport,
-  }, "VALIDATOR_ADMISSION_PLAN_V1");
+  };
 }
 
 export function validateValidatorAdmissionSigningPackage(value, plan, { now = Date.now() } = {}) {
@@ -456,6 +460,11 @@ export function prepareValidatorAdmissionSigningPackage({ directory, outputPath,
     }
     assertNoUnresolvedAdmissionIntent(plan, signingPackage, { now });
     assertHeldSigningLock(lockPath, lock, lock.owned);
+    persistIdempotentPrivateArtifact(join(dirname(plan.paths.consensusVault),
+      "validator-admission-public-plan.json"), { ...admissionPublicPlan(plan),
+      format: "nir-validator-admission-public-plan-v1",
+      planCommitment: admissionPlanCommitment(plan), version: 1 },
+    "validator admission public plan", 1024 * 1024);
     const intent = persistIdempotentPrivateArtifact(admissionIntentPath(plan, signingPackage),
       signingPackage, "validator admission intent");
     const output = persistIdempotentPrivateArtifact(outputPath, signingPackage,
@@ -671,6 +680,43 @@ function releaseAdmissionNonceLock(path, lock) {
   }
 }
 
+function validateSignedValidatorAdmissionArtifact(signed, signingPackage, plan) {
+  exact(signed, ["broadcast", "format", "packageHash", "transaction", "transactionId", "version"],
+    "signed validator admission");
+  const verified = verifyValidatorAdmission(signed.transaction, plan.networkId, {
+    chainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
+    currentHeight: signingPackage.referenceHeight + 1, protocolVersion: 32,
+  });
+  const { signature: _signature, transportSignature: _transportSignature,
+    ...unsigned } = signed.transaction;
+  const expectedUnsigned = {
+    algorithm: plan.consensus.algorithm, amount: signingPackage.amount,
+    chainIdentityGenesisHash: signingPackage.chainIdentityGenesisHash,
+    endpoint: signingPackage.endpoint, fee: signingPackage.fee,
+    networkId: signingPackage.networkId, nonce: signingPackage.nonce,
+    operatorId: signingPackage.operatorId, publicKey: plan.consensus.publicKey,
+    referenceHeight: signingPackage.referenceHeight, sender: plan.consensus.address,
+    tlsCertificateSha256: signingPackage.tlsCertificateSha256,
+    transportAlgorithm: plan.transport.algorithm,
+    transportPublicKey: plan.transport.publicKey, type: "validator-admission",
+    validUntilHeight: signingPackage.validUntilHeight,
+  };
+  if (signed.broadcast !== false || signed.format !== "nir-signed-validator-admission-v1" ||
+      signed.version !== 1 || signed.packageHash !== signingPackage.packageHash ||
+      signed.transactionId !== transactionId(signed.transaction) ||
+      canonicalJson(unsigned) !== canonicalJson(expectedUnsigned) ||
+      verified.payload.sender !== plan.consensus.address ||
+      verified.transport.address !== plan.transport.address ||
+      verified.payload.publicKey !== plan.consensus.publicKey ||
+      verified.payload.transportPublicKey !== plan.transport.publicKey ||
+      verified.payload.nonce !== signingPackage.nonce ||
+      verified.payload.referenceHeight !== signingPackage.referenceHeight ||
+      verified.payload.validUntilHeight !== signingPackage.validUntilHeight) {
+    throw new Error("signed validator admission identity or package binding is invalid");
+  }
+  return structuredClone(signed);
+}
+
 export function signValidatorAdmissionPackage({ directory, packagePath, outputPath,
   consensusPassword, transportPassword, now = Date.now(), _afterLockAcquire }) {
   const plan = readPlan(directory);
@@ -683,48 +729,8 @@ export function signValidatorAdmissionPackage({ directory, packagePath, outputPa
     { now: storedPackage.candidateContext?.syncedAt });
   const root = dirname(plan.paths.consensusVault);
   const journalPath = join(root, `admission-signature-${signingPackage.nonce}-${signingPackage.packageHash}.json`);
-  const validateSigned = (signed) => {
-    exact(signed, ["broadcast", "format", "packageHash", "transaction", "transactionId", "version"],
-      "signed validator admission");
-    const verified = verifyValidatorAdmission(signed.transaction, plan.networkId, {
-      chainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
-      currentHeight: signingPackage.referenceHeight + 1, protocolVersion: 32,
-    });
-    const { signature: _signature, transportSignature: _transportSignature,
-      ...unsigned } = signed.transaction;
-    const expectedUnsigned = {
-      algorithm: plan.consensus.algorithm,
-      amount: signingPackage.amount,
-      chainIdentityGenesisHash: signingPackage.chainIdentityGenesisHash,
-      endpoint: signingPackage.endpoint,
-      fee: signingPackage.fee,
-      networkId: signingPackage.networkId,
-      nonce: signingPackage.nonce,
-      operatorId: signingPackage.operatorId,
-      publicKey: plan.consensus.publicKey,
-      referenceHeight: signingPackage.referenceHeight,
-      sender: plan.consensus.address,
-      tlsCertificateSha256: signingPackage.tlsCertificateSha256,
-      transportAlgorithm: plan.transport.algorithm,
-      transportPublicKey: plan.transport.publicKey,
-      type: "validator-admission",
-      validUntilHeight: signingPackage.validUntilHeight,
-    };
-    if (signed.broadcast !== false || signed.format !== "nir-signed-validator-admission-v1" ||
-        signed.version !== 1 || signed.packageHash !== signingPackage.packageHash ||
-        signed.transactionId !== transactionId(signed.transaction) ||
-        canonicalJson(unsigned) !== canonicalJson(expectedUnsigned) ||
-        verified.payload.sender !== plan.consensus.address ||
-        verified.transport.address !== plan.transport.address ||
-        verified.payload.publicKey !== plan.consensus.publicKey ||
-        verified.payload.transportPublicKey !== plan.transport.publicKey ||
-        verified.payload.nonce !== signingPackage.nonce ||
-        verified.payload.referenceHeight !== signingPackage.referenceHeight ||
-        verified.payload.validUntilHeight !== signingPackage.validUntilHeight) {
-      throw new Error("signed validator admission identity or package binding is invalid");
-    }
-    return structuredClone(signed);
-  };
+  const validateSigned = (signed) =>
+    validateSignedValidatorAdmissionArtifact(signed, signingPackage, plan);
   const materialize = (signed, journalCreated) => {
     const output = persistIdempotentPrivateArtifact(outputPath, signed,
       "signed validator admission", 1024 * 1024);
@@ -777,6 +783,7 @@ export function signValidatorAdmissionPackage({ directory, packagePath, outputPa
     releaseAdmissionNonceLock(lockPath, lock);
   }
 }
+
 export async function syncValidatorJoinCandidateContext({ directory, syncInput, request }) {
   const plan = readPlan(directory);
   if (plan.format !== FORMAT || plan.version !== 2) {

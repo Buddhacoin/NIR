@@ -1,4 +1,4 @@
-# Validator join workspace (testnet Slices A, B1, and B2a)
+# Validator join workspace (testnet Slices A, B1, B2a, and B2b1)
 
 `validator:join` prepares local validator identities on macOS or Linux. B2a can prepare and sign a
 protocol-v32 admission transaction offline, but it is not a network join, never broadcasts or
@@ -49,6 +49,7 @@ npm run validator:join -- sync /absolute/private/path/join-workspace /absolute/p
 npm run validator:join -- prepare-admission /absolute/private/path/join-workspace /absolute/private/path/admission-package.json
 npm run validator:join -- sign-admission /absolute/private/path/join-workspace /absolute/private/path/admission-package.json /absolute/private/path/signed-admission.json
 npm run validator:join -- resolve-expired-admission /absolute/private/path/join-workspace
+npm run validator:join -- submit-admission /absolute/private/path/join-workspace /absolute/private/path/signed-admission.json /absolute/path/fresh-public-sync-input.json
 ```
 
 Passwords are rejected from ordinary stdin, command-line arguments, and environment variables.
@@ -106,13 +107,49 @@ monotonic, its finalized height is past the old `validUntilHeight`, the nonce is
 address is still absent from the queue. A fresh package may then be prepared. No manual deletion or
 editing of intent, resolution, lock, or signed files is safe.
 
+## Submit the exact signed bytes (Slice B2b1)
+
+`submit-admission` runs through a separate public-only network module: it does not import the vault
+or signing modules, does not open either vault, and never asks for a password. It first requires a
+fresh proof-backed protocol-v32 candidate context from the complete active validator set. That
+context must prove the same network, genesis, identity and nonce, continued queue absence,
+sufficient balance, and a finalized height inside the signed transaction's exact validity window.
+The command also requires the signed artifact to match its immutable package, unresolved intent,
+and local signed journal byte-for-byte.
+
+The third argument is a `nir-validator-admission-submission-input-v1` envelope. It contains the
+ordinary fresh `candidateSyncInput`, the exact peer registry committed by that finalized checkpoint,
+and one quorum-authorized certificate history per active validator. User-supplied URLs or TLS pins
+alone are never authority. The peer registry must cover the exact active set, and the histories must
+authenticate the TLS pin at the preflight height.
+
+Only then does it POST the exact canonical transaction to every committed validator endpoint.
+Requests use certificate-history-derived TLS pins and at most eight run concurrently. A response
+counts only when the expected validator signs a domain-separated acknowledgement binding network,
+genesis, transaction ID, status, fresh context hash, and a new attempt nonce. A
+two-thirds-plus-one acknowledgement quorum is recorded as `submitted-to-quorum`; this is only a
+transport acknowledgement, never a finalized inclusion claim.
+
+Every attempt is written as an immutable, secret-free receipt containing its full verified context,
+committed peer registry, signed acknowledgements, and a hash link to the previous attempt. An
+independent atomic head detects a missing tail, rollback, or fork on restart. The operation is
+serialized by a bounded crash-recoverable transaction lock; the ten-minute lease exceeds the
+worst-case bounded 256-peer GET-plus-POST timeout budget. A partial or timed-out attempt is
+`partial-retryable`: rerun with the same signed artifact and a new fresh proof input. Never re-sign
+or replace the transaction merely because peers were unavailable. Once a quorum receipt exists,
+restart is idempotent and does not resend after the mandatory fresh preflight.
+
+The local head is rollback detection within the retained workspace, not an external transparency
+anchor. Deleting the entire workspace, all receipts, and the head together cannot be detected
+locally; backups or a later external receipt anchor remain an operational requirement.
+
 ## Later slices still required
 
-Joining the queue still requires a separately reviewed non-voting candidate service and network
-submission flow. It must submit to multiple peers, prove finalized admission, perform a pinned HTTPS
+Joining the queue still requires a separately reviewed non-voting candidate service and finalized
+inclusion flow. It must prove finalized admission, perform a pinned HTTPS
 challenge, collect a fresh current-validator quorum observation, expose proof-backed status, and
-bind onboarding to the certified endpoint and transport identity. B2a deliberately implements none
-of submission, rebroadcast, inclusion proofs, readiness, selection, rotation, or activation.
+bind onboarding to the certified endpoint and transport identity. B2b1 deliberately implements none
+of finalized inclusion proofs, readiness, selection, rotation, or activation.
 
 Do not manually fabricate a nonce, admission, readiness quorum, or “active” status from the files in
 this directory.

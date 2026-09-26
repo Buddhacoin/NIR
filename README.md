@@ -48,7 +48,7 @@ that independence.
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
 | Deploy a ceremony-approved validator on Mac/Linux | [`docs/validator-deployment.md`](docs/validator-deployment.md) |
 | Join the protocol-v31 validator candidate queue | [`docs/validator-admission.md`](docs/validator-admission.md) |
-| Prepare identities, sync candidate context, and sign admission offline (testnet Slices A/B1/B2a) | [`docs/validator-join.md`](docs/validator-join.md) |
+| Prepare identities, sign offline, and submit admission without claiming finality (testnet A/B1/B2a/B2b1) | [`docs/validator-join.md`](docs/validator-join.md) |
 | Contribute without training a large model | [`docs/participation.md`](docs/participation.md) |
 | Propose code or documentation safely | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Understand contributor, merge, release, and chain authority | [`docs/governance.md`](docs/governance.md) |

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync,
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync,
+  rmSync, symlinkSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,10 @@ import { MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS, MIN_TRANSFER_FEE, SAFETY_POLICY_V1_C
 import { canonicalJson, generateWallet, hashObject, publicWallet, signObject }
   from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
+import { createCertificateRecord, EMPTY_CERTIFICATE_RECORD_HASH }
+  from "../blockchain/certificate-lifecycle.mjs";
+import { createPeerRegistry, EMPTY_PEER_REGISTRY_HASH, peerRegistryHash }
+  from "../blockchain/peer-registry.mjs";
 import { createReleaseAuthoritySet, createReleaseTransparencyAnchor }
   from "../blockchain/offline-release-governance.mjs";
 import { approveProtocolUpgradeAuthorization, assembleProtocolUpgradeAuthorization,
@@ -24,6 +29,9 @@ import { approveProtocolUpgradeAuthorization, assembleProtocolUpgradeAuthorizati
 import { createValidatorCandidateProof } from "../blockchain/validator-candidate-proof.mjs";
 import { createValidatorAdmission, createValidatorAdmissionRecord, verifyValidatorAdmission }
   from "../blockchain/validator-admission.mjs";
+import { submitValidatorAdmission } from "../blockchain/validator-admission-submission.mjs";
+import { createValidatorAdmissionSubmissionAck }
+  from "../blockchain/validator-admission-submission-ack.mjs";
 import { prepareValidatorAdmissionSigningPackage, resolveExpiredValidatorAdmissionIntent,
   signValidatorAdmissionPackage }
   from "../blockchain/validator-join.mjs";
@@ -83,7 +91,7 @@ function authorizedUpgrade(chain, set, wallets, targetVersion, activationHeight)
     approvals), format: "nir-protocol-upgrade-v2", version: targetVersion };
 }
 function fixture(now = 100_000, validatorCount = 4, targetProtocolVersion = 31,
-  fundCandidate = false) {
+  fundCandidate = false, withSubmissionTopology = false) {
   const validators = Array.from({ length: validatorCount }, generateWallet);
   const validatorMembers = members(validators, "validator");
   const releases = Array.from({ length: 4 }, generateWallet);
@@ -91,6 +99,13 @@ function fixture(now = 100_000, validatorCount = 4, targetProtocolVersion = 31,
     generation: 1, rotationDelayEntries: 2, threshold: 3 });
   const networkId = "nir-candidate-context-test";
   const candidate = generateWallet(); const treasury = generateWallet();
+  const transports = Array.from({ length: validatorCount }, generateWallet);
+  const topologyPeers = validatorMembers.map((member, index) => ({
+    tlsCertificateSha256: ((index + 1) % 16).toString(16).repeat(64),
+    transport: publicWallet(transports[index]), url: `https://validator-${index}.example`,
+    validatorAddress: member.address }));
+  const peerRegistry = withSubmissionTopology ? createPeerRegistry({ activationHeight: 0, epoch: 0,
+    networkId, peers: topologyPeers, previousRegistryHash: EMPTY_PEER_REGISTRY_HASH }, validators) : null;
   const chain = new NirChain({ beaconAuthorities: members(Array.from({ length: 4 }, generateWallet), "beacon"),
     capabilityReferences: [{ artifactHash: `sha256:${"1".repeat(64)}`,
       behaviorCommitment: "2".repeat(64), capabilitiesBps: { "reasoning-v1": 1 } }],
@@ -98,7 +113,7 @@ function fixture(now = 100_000, validatorCount = 4, targetProtocolVersion = 31,
       format: "nir-evaluation-environment-v1", image_digest: `sha256:${"3".repeat(64)}`,
       memory_limit_bytes: 1 << 30, runner_digest: `sha256:${"4".repeat(64)}`, timeout_seconds: 60 },
     evaluators: members(Array.from({ length: 4 }, generateWallet), "evaluator"),
-    genesisProtocolVersion: 27, genesisTimestamp: 0, networkId,
+    genesisProtocolVersion: 27, genesisTimestamp: 0, networkId, peerRegistry,
     protocolUpgradeReleaseAnchor: createReleaseTransparencyAnchor({ initialSet: releaseSet,
       logId: "nir-protocol-releases", networkId }),
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT], treasuryAddress: treasury.address,
@@ -135,16 +150,22 @@ function fixture(now = 100_000, validatorCount = 4, targetProtocolVersion = 31,
     height: chain.height, networkId, protocolVersion: chain.protocolVersion, queuePosition: null,
     queueSize: 0, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
     validators: validatorMembers, wallet }), finalityProof }));
-  const peers = validatorMembers.map((member, index) => ({
-    tlsCertificateSha256: ((index + 1) % 16).toString(16).repeat(64),
-    url: `https://validator-${index}.example`, validatorAddress: member.address }));
+  const peers = topologyPeers.map(({ tlsCertificateSha256, url, validatorAddress }) =>
+    ({ tlsCertificateSha256, url, validatorAddress }));
+  const certificateHistories = withSubmissionTopology ? validatorMembers.map((member, index) => ({
+    history: [createCertificateRecord({ activationHeight: 0,
+      certificate: { serial: (index + 1).toString(16), sha256: topologyPeers[index].tlsCertificateSha256 },
+      networkId, operation: "issue", overlapUntilHeight: 0,
+      peerRegistryHash: peerRegistryHash(peerRegistry), previousRecordHash: EMPTY_CERTIFICATE_RECORD_HASH,
+      sequence: 0, topologyHistoryHash: "f".repeat(64), validatorAddress: member.address }, validators)],
+    validatorAddress: member.address } )) : [];
   const plan = { candidateContextMaxWitnessAgeMs: 300_000,
     candidateContextMinimumCheckpointHeight: chain.height, candidateContextMinimumSequence: 1,
     consensus: publicWallet(candidate), expectedChainIdentityGenesisHash: chain.blocks()[0].hash,
     expectedCheckpointPolicyId: policy.policyId, format: "nir-validator-join-plan-v2",
     networkId, version: 2 };
-  return { candidate, chain, checkpointTrustPackage, now, peers, plan, policy, responses,
-    validatorMembers, validators, witnesses };
+  return { candidate, certificateHistories, chain, checkpointTrustPackage, now, peerRegistry,
+    peers, plan, policy, responses, validatorMembers, validators, witnesses };
 }
 
 test("candidate context synchronizes one exact finalized v31 view from 3-of-4 nodes", async () => {
@@ -247,8 +268,8 @@ test("persisted candidate context has a dedicated bounded envelope", () => {
   }), /too large/);
 });
 
-test("B2a prepares and dual-signs one unresolved v32 admission without broadcasting", async () => {
-  const value = fixture(1_000_000, 4, 32, true);
+test("B2a prepares, signs, and B2b1 submits exact v32 admission bytes without claiming finality", async () => {
+  const value = fixture(1_000_000, 4, 32, true, true);
   const context = await synchronizeValidatorCandidateContext({ now: value.now, plan: value.plan,
     syncInput: { checkpointTrustPackage: value.checkpointTrustPackage,
       format: "nir-validator-candidate-sync-v1", peers: value.peers, version: 1 },
@@ -360,6 +381,97 @@ test("B2a prepares and dual-signs one unresolved v32 admission without broadcast
     assert.equal(verified.transport.address, transport.address);
     assert.equal(verified.payload.referenceHeight, value.chain.height);
     assert.equal(verified.payload.validUntilHeight, value.chain.height + 64);
+
+    const submissionInput = { candidateSyncInput: {
+      checkpointTrustPackage: value.checkpointTrustPackage,
+      format: "nir-validator-candidate-sync-v1", peers: value.peers, version: 1 },
+    certificateHistories: value.certificateHistories,
+    format: "nir-validator-admission-submission-input-v1", peerRegistry: value.peerRegistry,
+    version: 1 };
+    const preflightRequest = async (url) => ({
+      body: value.responses[Number(new URL(url).hostname.match(/(\d+)/)[1])], ok: true, status: 200 });
+    let submissionRound = 0; let submissionPosts = 0; let concurrentRejected = false;
+    const validatorRequest = async (url, options) => {
+      const parsed = new URL(url); const index = Number(parsed.hostname.match(/(\d+)/)[1]);
+      submissionPosts += 1;
+      assert.equal(canonicalJson(options.body), canonicalJson(artifact.transaction));
+      if (!concurrentRejected) {
+        concurrentRejected = true;
+        await assert.rejects(() => submitValidatorAdmission({ directory: root,
+          signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+          validatorRequest, now: value.now }), /already in progress/);
+      }
+      if (index >= (submissionRound === 0 ? 2 : 3)) throw new Error("offline peer");
+      const status = index % 2 ? "known" : "queued";
+      return { body: { acknowledgement: createValidatorAdmissionSubmissionAck({
+        attemptNonce: parsed.searchParams.get("attemptNonce"),
+        candidateContextHash: parsed.searchParams.get("candidateContextHash"),
+        chainIdentityGenesisHash: value.chain.blocks()[0].hash,
+        networkId: value.chain.networkId, status, transactionId: artifact.transactionId,
+      }, value.validators[index]) }, ok: true, status: 202 };
+    };
+    const partial = await submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now });
+    assert.equal(partial.receipt.status, "partial-retryable");
+    assert.equal(partial.receipt.acknowledgements.length, 2);
+    assert.equal(concurrentRejected, true);
+    const partialName = readdirSync(root).find((name) =>
+      name.includes(artifact.transactionId) && name.endsWith(`${partial.receipt.receiptHash}.json`));
+    const partialPath = join(root, partialName); const authenticPartial = readFileSync(partialPath);
+    const submissionHeadPath = join(root, `admission-submission-${artifact.transactionId}-head.json`);
+    const authenticPartialHead = readFileSync(submissionHeadPath);
+    const outcomeSwap = JSON.parse(authenticPartial);
+    const knownOutcome = outcomeSwap.peerOutcomes.find(({ status }) => status === "known");
+    knownOutcome.status = "queued";
+    const { receiptHash: _oldReceiptHash, ...outcomeSwapPayload } = outcomeSwap;
+    outcomeSwap.receiptHash = hashObject(outcomeSwapPayload, "VALIDATOR_ADMISSION_SUBMISSION_V1");
+    const swappedHead = JSON.parse(authenticPartialHead);
+    swappedHead.receiptHash = outcomeSwap.receiptHash;
+    const { headHash: _oldHeadHash, ...swappedHeadPayload } = swappedHead;
+    swappedHead.headHash = hashObject(swappedHeadPayload, "VALIDATOR_ADMISSION_SUBMISSION_HEAD_V1");
+    const swappedPartialPath = join(root, partialName.replace(partial.receipt.receiptHash,
+      outcomeSwap.receiptHash));
+    renameSync(partialPath, swappedPartialPath);
+    writeFileSync(swappedPartialPath, `${canonicalJson(outcomeSwap)}\n`, { mode: 0o600 });
+    writeFileSync(submissionHeadPath, `${canonicalJson(swappedHead)}\n`, { mode: 0o600 });
+    await assert.rejects(() => submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now + 1 }), /lacks its signed acknowledgement/);
+    renameSync(swappedPartialPath, partialPath);
+    writeFileSync(partialPath, authenticPartial, { mode: 0o600 });
+    writeFileSync(submissionHeadPath, authenticPartialHead, { mode: 0o600 });
+    const forgedPartial = JSON.parse(authenticPartial); forgedPartial.status = "submitted-to-quorum";
+    writeFileSync(partialPath, `${canonicalJson(forgedPartial)}\n`, { mode: 0o600 });
+    await assert.rejects(() => submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now + 1 }), /forked|rolled back|forged/);
+    writeFileSync(partialPath, authenticPartial, { mode: 0o600 });
+    submissionRound = 1;
+    const submitted = await submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now + 1 });
+    assert.equal(submitted.receipt.status, "submitted-to-quorum");
+    assert.equal(submitted.receipt.acknowledgements.length, 3);
+    const postsAfterQuorum = submissionPosts;
+    const idempotent = await submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now + 2 });
+    assert.equal(idempotent.receipt.receiptHash, submitted.receipt.receiptHash);
+    assert.equal(submissionPosts, postsAfterQuorum);
+    const submittedName = readdirSync(root).find((name) =>
+      name.includes(artifact.transactionId) && name.endsWith(`${submitted.receipt.receiptHash}.json`));
+    const submittedPath = join(root, submittedName); const submittedBytes = readFileSync(submittedPath);
+    unlinkSync(submittedPath);
+    await assert.rejects(() => submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now + 3 }), /head detects deletion/);
+    writeFileSync(submittedPath, submittedBytes, { mode: 0o600 });
+    const submissionHeadBytes = readFileSync(submissionHeadPath); unlinkSync(submissionHeadPath);
+    await assert.rejects(() => submitValidatorAdmission({ directory: root,
+      signedArtifactPath: signedPath, submissionInput, request: preflightRequest,
+      validatorRequest, now: value.now + 3 }), /head detects deletion/);
+    writeFileSync(submissionHeadPath, submissionHeadBytes, { mode: 0o600 });
 
     const oldValidUntil = verified.payload.validUntilHeight;
     while (value.chain.height <= oldValidUntil) append(value.chain, value.validators);

@@ -4,7 +4,6 @@ import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES, verifyCheckpointTrustPackage }
   from "./checkpoint-trust-package.mjs";
 import { MAX_VALIDATORS, MIN_TRANSFER_FEE } from "./constants.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
-import { requestJson } from "./http-client.mjs";
 import { verifyRecentFinalityCheckpoint } from "./light-client.mjs";
 import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 import {
@@ -108,7 +107,9 @@ function responseView(response, { address, expectedCheckpoint, genesisHash, netw
 }
 
 export async function synchronizeValidatorCandidateContext({ plan, syncInput: input,
-  request = requestJson, now = Date.now() } = {}) {
+  request = null, now = Date.now() } = {}) {
+  if (request === null) ({ requestJson: request } = await import("./http-client.mjs"));
+  if (typeof request !== "function") throw new Error("candidate context request transport is invalid");
   const syncInput = validateValidatorCandidateSyncInput(input);
   if (!plan || !ADDRESS.test(plan.consensus?.address ?? "") ||
       plan.format !== "nir-validator-join-plan-v2" || plan.version !== 2 ||
