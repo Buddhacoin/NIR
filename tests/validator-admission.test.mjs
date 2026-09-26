@@ -7,6 +7,7 @@ import {
   VALIDATOR_ADMISSION_DELAY_BLOCKS,
   VALIDATOR_ADMISSION_EXPIRY_BLOCKS,
   MAX_RETIRED_VALIDATOR_TOMBSTONES,
+  VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
   assertValidatorIdentityCapacity,
   compareValidatorAdmissions,
   createValidatorAdmission,
@@ -38,6 +39,37 @@ test("validator admission binds exact bond, endpoint, TLS pin and separate trans
     amount: (MIN_VALIDATOR_BOND + 1n).toString() }, networkId), /context|signature/);
   assert.throws(() => verifyValidatorAdmission({ ...transaction,
     signature: `${transaction.signature}=` }, networkId), /non-canonical/);
+});
+
+test("v32 admission binds both signatures to genesis and a bounded finalized-height window", () => {
+  const wallet = generateWallet(); const transportWallet = generateWallet();
+  const chainIdentityGenesisHash = "d".repeat(64); const referenceHeight = 100;
+  const transaction = createValidatorAdmission({ chainIdentityGenesisHash,
+    endpoint: "https://validator.example", networkId, nonce: 0, operatorId: "operator-v32",
+    referenceHeight, tlsCertificateSha256, transportWallet, wallet });
+  assert.equal(transaction.validUntilHeight,
+    referenceHeight + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS);
+  assert.equal(verifyValidatorAdmission(transaction, networkId, { chainIdentityGenesisHash,
+    currentHeight: 101, protocolVersion: 32 }).payload.referenceHeight, referenceHeight);
+  assert.equal(verifyValidatorAdmission(transaction, networkId, { chainIdentityGenesisHash,
+    currentHeight: transaction.validUntilHeight, protocolVersion: 32 }).payload.validUntilHeight,
+  transaction.validUntilHeight);
+  assert.throws(() => verifyValidatorAdmission(transaction, networkId, {
+    chainIdentityGenesisHash: "e".repeat(64), currentHeight: 101, protocolVersion: 32,
+  }), /context/);
+  assert.throws(() => verifyValidatorAdmission(transaction, networkId, {
+    chainIdentityGenesisHash, currentHeight: referenceHeight, protocolVersion: 32,
+  }), /context/);
+  assert.throws(() => verifyValidatorAdmission(transaction, networkId, {
+    chainIdentityGenesisHash, currentHeight: transaction.validUntilHeight + 1,
+    protocolVersion: 32 }), /context/);
+  assert.throws(() => verifyValidatorAdmission(transaction, networkId, {
+    chainIdentityGenesisHash, currentHeight: 101, protocolVersion: 31,
+  }), /non-canonical/);
+  assert.throws(() => verifyValidatorAdmission({ ...transaction,
+    validUntilHeight: transaction.validUntilHeight - 1 }, networkId, {
+    chainIdentityGenesisHash, currentHeight: 101, protocolVersion: 32,
+  }), /context|signature/);
 });
 
 test("readiness envelope is canonical and carries quorum-certificate context", () => {

@@ -8,8 +8,14 @@ import { blockHash, createTransfer, finalizeBlock, nativeAssetId, NirChain, tran
 import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {
+  createValidatorAdmission,
+  VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
+  verifyValidatorAdmission,
+} from "../blockchain/validator-admission.mjs";
+import {
   DistributedCoordinator,
   initializeDistributedDevnet,
+  invalidValidatorAdmissionsForNextBlock,
   ValidatorReplica,
 } from "../blockchain/distributed-node.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
@@ -42,6 +48,72 @@ class RecordingScheduler {
     return { active: 0, queued: 0 };
   }
 }
+
+test("validator admission pruning is one pass and preserves future nonce dependencies", () => {
+  const admissions = Array.from({ length: 512 }, (_, nonce) => ({
+    nonce, sender: `nir1${String(nonce).padStart(40, "0")}`,
+    type: "validator-admission",
+  }));
+  const ordinary = { nonce: 0, sender: `nir1${"f".repeat(40)}`, type: "transfer" };
+  let verifications = 0;
+  const invalid = invalidValidatorAdmissionsForNextBlock([...admissions, ordinary], {
+    chainIdentityGenesisHash: "a".repeat(64), currentHeight: 33, networkId: "prune-test",
+    nextNonce: (address) => address === admissions[7].sender ? 8 : 0,
+    protocolVersion: 32,
+    _verifyAdmission: (transaction) => {
+      verifications += 1;
+      if (transaction === admissions[19]) throw new Error("expired");
+    },
+  });
+  assert.equal(verifications, admissions.length);
+  assert.deepEqual(invalid, [admissions[7], admissions[19]]);
+  assert.equal(invalid.includes(admissions[511]), false);
+});
+
+test("validator admission pruning evicts only wrong-era, expired, and finalized-nonce envelopes", () => {
+  const networkId = "admission-prune-test";
+  const genesisHash = "a".repeat(64);
+  const make = (index, { legacy = false, nonce = 0, referenceHeight = 1 } = {}) => {
+    const wallet = generateWallet();
+    const transportWallet = generateWallet();
+    return createValidatorAdmission({
+      ...(legacy ? {} : { chainIdentityGenesisHash: genesisHash, referenceHeight }),
+      endpoint: `https://prune-${index}.example`, networkId, nonce,
+      operatorId: `prune-candidate-${index}`, tlsCertificateSha256: `${index}`.repeat(64),
+      transportWallet, wallet,
+    });
+  };
+  const boundary = make(1);
+  const expired = make(2, { referenceHeight: 0 });
+  const legacy = make(3, { legacy: true });
+  const futureNonce = make(4, { nonce: 9 });
+  const finalizedNonce = make(5);
+  const ordinary = { nonce: 0, sender: generateWallet().address, type: "transfer" };
+  let verifications = 0;
+  const invalid = invalidValidatorAdmissionsForNextBlock(
+    [boundary, expired, legacy, futureNonce, finalizedNonce, ordinary], {
+      chainIdentityGenesisHash: genesisHash,
+      currentHeight: 1 + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
+      networkId,
+      nextNonce: (address) => address === finalizedNonce.sender ? 1 : 0,
+      protocolVersion: 32,
+      _verifyAdmission: (...args) => {
+        verifications += 1;
+        return verifyValidatorAdmission(...args);
+      },
+    },
+  );
+  assert.equal(verifications, 5);
+  assert.deepEqual(invalid, [expired, legacy, finalizedNonce]);
+  assert.equal(invalid.includes(boundary), false);
+  assert.equal(invalid.includes(futureNonce), false);
+  const afterBoundary = invalidValidatorAdmissionsForNextBlock([boundary, expired], {
+    chainIdentityGenesisHash: genesisHash,
+    currentHeight: 2 + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
+    networkId, nextNonce: () => 0, protocolVersion: 32,
+  });
+  assert.deepEqual(afterBoundary, [boundary, expired]);
+});
 
 test("claimed peer identities are scheduled only after authentication", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-auth-scheduler-test-"));

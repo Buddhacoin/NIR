@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { NirChain, createTransfer, createValidatorBond, finalizeBlock }
+import { NirChain, createTransfer, createValidatorBond, finalizeBlock, transactionId }
   from "../blockchain/chain.mjs";
 import { MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS, MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS } from "../blockchain/constants.mjs";
@@ -14,8 +17,10 @@ import { MIN_VALIDATOR_BOND } from "../blockchain/validator-staking.mjs";
 import { createPeerRegistry, EMPTY_PEER_REGISTRY_HASH } from "../blockchain/peer-registry.mjs";
 import { createValidatorOnboarding } from "../blockchain/validator-onboarding.mjs";
 import { createValidatorAdmission, createValidatorAdmissionReadiness,
-  validatorAdmissionObservationPayload }
+  VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS, validatorAdmissionObservationPayload }
   from "../blockchain/validator-admission.mjs";
+import { initializeBlockStore, persistBlock } from "../blockchain/block-store.mjs";
+import { ValidatorReplica } from "../blockchain/distributed-node.mjs";
 
 const members = (wallets, prefix) => wallets.map((wallet, index) => ({
   ...publicWallet(wallet), operatorId: `${prefix}-${index}`,
@@ -97,7 +102,7 @@ function fixture(targetProtocolVersion = 31) {
     validators: members(validators, "validator") };
   const chain = new NirChain(genesis);
   append(chain, {}, validators);
-  for (const version of [28, 29, 30, 31].filter((version) => version <= targetProtocolVersion)) {
+  for (const version of [28, 29, 30, 31, 32].filter((version) => version <= targetProtocolVersion)) {
     const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
     append(chain, { protocolUpgrade: version === 28
       ? { activationHeight, format: "nir-protocol-upgrade-v1", version }
@@ -219,4 +224,132 @@ test("v31 admission survives restart and rotation cannot skip the FIFO head", ()
   assert.ok(requeued);
   assert.equal(requeued.readiness, false);
   assert.equal(requeued.submittedHeight, activationHeight);
+});
+
+test("v32 admission expiry is chain-bound, atomic, restart-safe, and replay-resistant", () => {
+  const { chain, genesis, treasury, validators } = fixture(32);
+  const candidates = Array.from({ length: 5 }, generateWallet);
+  const transports = Array.from({ length: 5 }, generateWallet);
+  append(chain, { timestamp: TREASURY_VESTING_MS, transactions: candidates.map((wallet, nonce) =>
+    createTransfer({ amount: (MIN_VALIDATOR_BOND + 4n * MIN_TRANSFER_FEE).toString(),
+      networkId: chain.networkId, nonce, recipient: wallet.address, wallet: treasury })) }, validators);
+  const genesisHash = chain.blocks()[0].hash;
+  const make = (index, overrides = {}) => createValidatorAdmission({
+    chainIdentityGenesisHash: genesisHash, endpoint: `https://v32-${index}.example`,
+    networkId: chain.networkId, nonce: 0, operatorId: `candidate-v32-${index}`,
+    referenceHeight: chain.height, tlsCertificateSha256: String(index + 1).repeat(64),
+    transportWallet: transports[index], wallet: candidates[index], ...overrides });
+  const rejectAtomically = (transaction, pattern) => {
+    const before = { height: chain.height, root: chain.stateRoot,
+      balance: chain.balance(transaction.sender), queue: chain.validatorAdmissionQueue() };
+    assert.throws(() => {
+      const proposal = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1,
+        transactions: [transaction] });
+      chain.appendBlock(finalizeBlock(proposal, quorumFor(proposal, validators)));
+    }, pattern);
+    assert.deepEqual({ height: chain.height, root: chain.stateRoot,
+      balance: chain.balance(transaction.sender), queue: chain.validatorAdmissionQueue() }, before);
+  };
+  rejectAtomically(make(0, { chainIdentityGenesisHash: "f".repeat(64) }), /genesis|context|state root/);
+  rejectAtomically(make(1, { referenceHeight: chain.height + 1,
+    validUntilHeight: chain.height + 1 + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS }),
+  /context|state root/);
+  const staleReference = chain.height - VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS;
+  rejectAtomically(make(2, { referenceHeight: staleReference,
+    validUntilHeight: staleReference + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS }),
+  /context|state root/);
+  const changedExpiry = make(3); changedExpiry.validUntilHeight -= 1;
+  rejectAtomically(changedExpiry, /context|signature|state root/);
+
+  const transaction = make(4);
+  const included = append(chain, { transactions: [transaction] }, validators);
+  assert.equal(included.height, transaction.referenceHeight + 1);
+  const pending = chain.validatorAdmission(candidates[4].address);
+  const { signature: _signature, transportSignature: _transportSignature, ...payload } = transaction;
+  assert.equal(pending.admissionId, hashObject(payload, "VALIDATOR_ADMISSION_ID_V1"));
+  assert.equal(pending.rank, chain.validatorAdmissionQueue().find(({ address }) =>
+    address === candidates[4].address).rank);
+  rejectAtomically(transaction, /nonce|pending|protocol role|state root/);
+
+  const snapshot = chain.consensusSnapshot();
+  const restored = NirChain.fromVerifiedSnapshot(genesis, { capabilityMemory: snapshot.capabilityMemory,
+    checkpoint: chain.blocks().at(-1), evaluationAssignmentRoot: chain.evaluationAssignmentRoot,
+    height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment, state: snapshot.state,
+    stateRoot: chain.stateRoot, tipHash: chain.tipHash, validatorSetId: chain.validatorSetId });
+  assert.equal(restored.protocolVersion, 32);
+  assert.deepEqual(restored.validatorAdmissionQueue(), chain.validatorAdmissionQueue());
+});
+
+test("v32 activation boundary rejects legacy admissions and accepts only the new envelope", () => {
+  const { chain, releases, set, treasury, validators } = fixture(31);
+  const candidates = [generateWallet(), generateWallet()];
+  const transports = [generateWallet(), generateWallet()];
+  append(chain, { timestamp: TREASURY_VESTING_MS, transactions: candidates.map((wallet, nonce) =>
+    createTransfer({ amount: (MIN_VALIDATOR_BOND + 2n * MIN_TRANSFER_FEE).toString(),
+      networkId: chain.networkId, nonce, recipient: wallet.address, wallet: treasury })) }, validators);
+  const premature = createValidatorAdmission({ chainIdentityGenesisHash: chain.blocks()[0].hash,
+    endpoint: "https://premature.example", networkId: chain.networkId, nonce: 0,
+    operatorId: "premature-v32", referenceHeight: chain.height,
+    tlsCertificateSha256: "6".repeat(64), transportWallet: transports[0], wallet: candidates[0] });
+  assert.throws(() => chain.validateProposal(chain.buildBlock({ transactions: [premature] })),
+    /schema|state root|non-canonical/);
+  const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  append(chain, { protocolUpgrade: authorizedUpgrade(chain, set, releases, 32,
+    activationHeight) }, validators);
+  while (chain.height + 1 < activationHeight) append(chain, {}, validators);
+  const legacy = createValidatorAdmission({ endpoint: "https://legacy.example",
+    networkId: chain.networkId, nonce: 0, operatorId: "legacy-at-v32",
+    tlsCertificateSha256: "7".repeat(64), transportWallet: transports[0], wallet: candidates[0] });
+  assert.throws(() => chain.validateProposal(chain.buildBlock({ transactions: [legacy] })),
+    /schema|state root|non-canonical/);
+  const admitted = createValidatorAdmission({ chainIdentityGenesisHash: chain.blocks()[0].hash,
+    endpoint: "https://activation.example", networkId: chain.networkId, nonce: 0,
+    operatorId: "activation-v32", referenceHeight: chain.height,
+    tlsCertificateSha256: "8".repeat(64), transportWallet: transports[1], wallet: candidates[1] });
+  const block = append(chain, { transactions: [admitted] }, validators);
+  assert.equal(block.height, activationHeight);
+  assert.equal(block.protocolVersion, 32);
+  assert.ok(chain.validatorAdmission(candidates[1].address));
+});
+
+test("a v32 validator restart evicts an expired persisted admission", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-v32-admission-restart-"));
+  let replica;
+  try {
+    const { chain, genesis, validators, validatorTransports } = fixture(32);
+    const directory = join(temporary, "validator");
+    for (const name of ["blocks", "commits", "mempool", "prepares", "timeouts"]) {
+      mkdirSync(join(directory, name), { recursive: true, mode: 0o700 });
+    }
+    const serialized = (value) => `${JSON.stringify(value, null, 2)}\n`;
+    writeFileSync(join(directory, "genesis.json"), serialized(genesis), { mode: 0o600 });
+    writeFileSync(join(directory, "VALIDATOR-KEY.json"), serialized(validators[0]), { mode: 0o600 });
+    writeFileSync(join(directory, "TRANSPORT-KEY.json"), serialized(validatorTransports[0]),
+      { mode: 0o600 });
+    writeFileSync(join(directory, "AUTHORIZED-COORDINATOR.json"),
+      serialized(publicWallet(generateWallet())), { mode: 0o600 });
+    const stored = new NirChain(genesis);
+    initializeBlockStore(directory, stored);
+    for (const block of chain.blocks().slice(1)) {
+      stored.appendBlock(block);
+      persistBlock(directory, block, stored);
+    }
+    const candidate = generateWallet(); const transport = generateWallet();
+    const referenceHeight = chain.height - VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS;
+    const expired = createValidatorAdmission({ chainIdentityGenesisHash: chain.blocks()[0].hash,
+      endpoint: "https://expired-restart.example", networkId: chain.networkId, nonce: 0,
+      operatorId: "expired-restart", referenceHeight, tlsCertificateSha256: "e".repeat(64),
+      transportWallet: transport, wallet: candidate });
+    const persistedPath = join(directory, "mempool", `${transactionId(expired)}.json`);
+    writeFileSync(persistedPath, serialized(expired), { mode: 0o600 });
+    assert.equal(existsSync(persistedPath), true);
+    replica = new ValidatorReplica(directory);
+    assert.equal(replica.protocolVersion, 32);
+    assert.equal(replica.mempoolSize, 0);
+    assert.equal(existsSync(persistedPath), false);
+  } finally {
+    replica?.closeSecurityState();
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
