@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { NirChain, createTransfer, createValidatorBond, finalizeBlock, transactionId }
+import { NirChain, computeChainStateRoot, createTransfer, createValidatorBond, finalizeBlock,
+  transactionId }
   from "../blockchain/chain.mjs";
 import { MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS, MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS } from "../blockchain/constants.mjs";
@@ -102,7 +103,8 @@ function fixture(targetProtocolVersion = 31) {
     validators: members(validators, "validator") };
   const chain = new NirChain(genesis);
   append(chain, {}, validators);
-  for (const version of [28, 29, 30, 31, 32].filter((version) => version <= targetProtocolVersion)) {
+  for (const version of [28, 29, 30, 31, 32, 33]
+    .filter((version) => version <= targetProtocolVersion)) {
     const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
     append(chain, { protocolUpgrade: version === 28
       ? { activationHeight, format: "nir-protocol-upgrade-v1", version }
@@ -112,8 +114,38 @@ function fixture(targetProtocolVersion = 31) {
   return { chain, genesis, releases, set, treasury, validators, validatorTransports };
 }
 
-test("v31 admission survives restart and rotation cannot skip the FIFO head", () => {
-  const { chain, genesis, treasury, validators, validatorTransports } = fixture();
+function readinessTransaction({ candidate, chain, endpoint, nonce, tlsCertificateSha256,
+  transport, validators, observedHeight = chain.height }) {
+  const pending = chain.validatorAdmission(candidate.address);
+  const expiresAtHeight = observedHeight + 16;
+  const observation = validatorAdmissionObservationPayload({ admissionId: pending.admissionId,
+    chainIdentityGenesisHash: chain.blocks()[0].hash, endpoint, expiresAtHeight,
+    networkId: chain.networkId, nonce, observedHeight, tlsCertificateSha256,
+    transportAddress: transport.address, validatorSetId: chain.validatorSetId });
+  const readinessAttestations = validators.map((wallet) => ({ validator: wallet.address,
+    signature: signObject(observation, wallet, "VALIDATOR_ADMISSION_LIVE_OBSERVATION_V1") }))
+    .sort((a, b) => a.validator.localeCompare(b.validator)).slice(0, 3);
+  return createValidatorAdmissionReadiness({ admissionId: pending.admissionId, endpoint,
+    expiresAtHeight, networkId: chain.networkId, nonce, observedHeight, readinessAttestations,
+    tlsCertificateSha256, transportWallet: transport, validatorSetId: chain.validatorSetId,
+    wallet: candidate });
+}
+
+function verifiedSnapshotEnvelope(chain) {
+  const snapshot = chain.consensusSnapshot();
+  return { capabilityMemory: snapshot.capabilityMemory,
+    checkpoint: chain.blocks().at(-1), evaluationAssignmentRoot: chain.evaluationAssignmentRoot,
+    height: chain.height, networkId: chain.networkId,
+    recoveryStateCommitment: chain.recoveryStateCommitment, state: snapshot.state,
+    stateRoot: chain.stateRoot, tipHash: chain.tipHash, validatorSetId: chain.validatorSetId };
+}
+
+function restore(chain, genesis) {
+  return NirChain.fromVerifiedSnapshot(genesis, verifiedSnapshotEnvelope(chain));
+}
+
+test("v32 admission survives restart and rotation cannot skip the FIFO head", () => {
+  const { chain, genesis, treasury, validators, validatorTransports } = fixture(32);
   const candidates = [generateWallet(), generateWallet()];
   const transports = [generateWallet(), generateWallet()];
   const funded = [...candidates, ...validators];
@@ -124,8 +156,10 @@ test("v31 admission survives restart and rotation cannot skip the FIFO head", ()
     amount: MIN_VALIDATOR_BOND.toString(), networkId: chain.networkId, nonce: 0, wallet,
   })) }, validators);
   append(chain, { transactions: candidates.map((candidate, index) => createValidatorAdmission({
+    chainIdentityGenesisHash: chain.blocks()[0].hash,
     endpoint: `https://validator-${index}.example`, networkId: chain.networkId, nonce: 0,
     operatorId: `candidate-${index}`, tlsCertificateSha256: String(index + 5).repeat(64),
+    referenceHeight: chain.height,
     transportWallet: transports[index], wallet: candidate })) }, validators);
   const snapshot = chain.consensusSnapshot();
   const chainIdentityGenesisHash = chain.blocks()[0].hash;
@@ -224,6 +258,11 @@ test("v31 admission survives restart and rotation cannot skip the FIFO head", ()
   assert.ok(requeued);
   assert.equal(requeued.readiness, false);
   assert.equal(requeued.submittedHeight, activationHeight);
+  const restoredAfterRotation = restore(restored, genesis);
+  assert.equal(restoredAfterRotation.protocolVersion, 32);
+  assert.equal(restoredAfterRotation.stateRoot, restored.stateRoot);
+  assert.deepEqual(restoredAfterRotation.validatorAdmissionQueue(),
+    restored.validatorAdmissionQueue());
 });
 
 test("v32 admission expiry is chain-bound, atomic, restart-safe, and replay-resistant", () => {
@@ -352,4 +391,136 @@ test("a v32 validator restart evicts an expired persisted admission", () => {
     replica?.closeSecurityState();
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test("v33 resets stale readiness across cutover, registry change, rotation, snapshot, and replay", () => {
+  const { chain, genesis, releases, set, treasury, validators, validatorTransports } = fixture(32);
+  const candidates = Array.from({ length: 3 }, generateWallet);
+  const transports = Array.from({ length: 3 }, generateWallet);
+  append(chain, { timestamp: TREASURY_VESTING_MS, transactions: [...candidates, ...validators]
+    .map((wallet, nonce) => createTransfer({
+      amount: (MIN_VALIDATOR_BOND + 8n * MIN_TRANSFER_FEE).toString(),
+      networkId: chain.networkId, nonce, recipient: wallet.address, wallet: treasury,
+    })) }, validators);
+  append(chain, { transactions: validators.map((wallet) => createValidatorBond({
+    amount: MIN_VALIDATOR_BOND.toString(), networkId: chain.networkId, nonce: 0, wallet,
+  })) }, validators);
+  append(chain, { transactions: candidates.map((candidate, index) => createValidatorAdmission({
+    chainIdentityGenesisHash: chain.blocks()[0].hash,
+    endpoint: `https://v33-${index}.example`, networkId: chain.networkId, nonce: 0,
+    operatorId: `candidate-v33-${index}`, referenceHeight: chain.height,
+    tlsCertificateSha256: String(index + 4).repeat(64),
+    transportWallet: transports[index], wallet: candidate,
+  })) }, validators);
+  const ready = (target, nonce = chain.nextNonce(candidates[target].address)) => append(chain, {
+    transactions: [readinessTransaction({ candidate: candidates[target], chain,
+      endpoint: `https://v33-${target}.example`, nonce,
+      tlsCertificateSha256: String(target + 4).repeat(64), transport: transports[target],
+      validators })],
+  }, validators);
+  for (let index = 0; index < candidates.length; index += 1) ready(index);
+
+  const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  append(chain, { protocolUpgrade: authorizedUpgrade(chain, set, releases, 33,
+    activationHeight) }, validators);
+  while (chain.height + 1 < activationHeight) append(chain, {}, validators);
+  const cutoverRegistry = createPeerRegistry({ activationHeight,
+    epoch: chain.peerRegistry.epoch + 1, networkId: chain.networkId,
+    peers: chain.peerRegistry.peers.map((peer, index) => ({ ...peer,
+      url: `https://cutover-${index}.example` })),
+    previousRegistryHash: chain.peerRegistryHash,
+  }, validators.slice(0, 3));
+  append(chain, { peerRegistryUpdate: cutoverRegistry }, validators);
+  assert.equal(chain.protocolVersion, 33);
+  assert.equal(chain.consensusSnapshot().state.validatorReadinessObservationFloor,
+    activationHeight);
+  assert.ok(chain.validatorAdmissionQueue().every(({ readiness }) => readiness === false));
+
+  for (let index = 0; index < candidates.length; index += 1) ready(index);
+  const registryActivationHeight = chain.height + 1;
+  const registry = createPeerRegistry({ activationHeight: registryActivationHeight,
+    epoch: chain.peerRegistry.epoch + 1, networkId: chain.networkId,
+    peers: chain.peerRegistry.peers.map((peer, index) => ({ ...peer,
+      url: `https://refreshed-${index}.example` })),
+    previousRegistryHash: chain.peerRegistryHash,
+  }, validators.slice(0, 3));
+  append(chain, { peerRegistryUpdate: registry }, validators);
+  assert.equal(chain.consensusSnapshot().state.validatorReadinessObservationFloor,
+    registryActivationHeight);
+  assert.ok(chain.validatorAdmissionQueue().every(({ readiness }) => readiness === false));
+  const staleNonce = chain.nextNonce(candidates[0].address);
+  const beforeStale = { nonce: staleNonce, root: chain.stateRoot,
+    queue: chain.validatorAdmissionQueue() };
+  const staleReadiness = readinessTransaction({ candidate: candidates[0], chain,
+    endpoint: "https://v33-0.example", nonce: staleNonce,
+    observedHeight: registryActivationHeight - 1,
+    tlsCertificateSha256: "4".repeat(64), transport: transports[0], validators });
+  assert.throws(() => {
+    const staleProposal = chain.buildBlock({ transactions: [staleReadiness] });
+    chain.appendBlock(finalizeBlock(staleProposal, quorumFor(staleProposal, validators)));
+  }, /readiness certificate context/);
+  assert.deepEqual({ nonce: chain.nextNonce(candidates[0].address), root: chain.stateRoot,
+    queue: chain.validatorAdmissionQueue() }, beforeStale);
+  ready(0, staleNonce);
+  assert.equal(chain.validatorAdmission(candidates[0].address).observedHeight,
+    registryActivationHeight);
+
+  const eligibleHeight = Math.max(...chain.validatorAdmissionQueue()
+    .map((entry) => entry.eligibleHeight));
+  while (chain.height < eligibleHeight) append(chain, {}, validators);
+  for (let index = 0; index < candidates.length; index += 1) ready(index);
+  const restoredReady = restore(chain, genesis);
+  assert.deepEqual(restoredReady.validatorAdmissionQueue(), chain.validatorAdmissionQueue());
+  assert.equal(restoredReady.consensusSnapshot().state.validatorReadinessObservationFloor,
+    registryActivationHeight);
+  const forgedFloor = structuredClone(verifiedSnapshotEnvelope(chain));
+  forgedFloor.state.validatorReadinessObservationFloor = registryActivationHeight - 1;
+  forgedFloor.stateRoot = computeChainStateRoot(forgedFloor.state);
+  forgedFloor.checkpoint.stateRoot = forgedFloor.stateRoot;
+  assert.throws(() => NirChain.fromVerifiedSnapshot(genesis, forgedFloor),
+    /readiness observation floor snapshot/);
+
+  const [head] = chain.validatorAdmissionQueue();
+  const selectedWallet = candidates.find(({ address }) => address === head.address);
+  const selectedTransport = transports[candidates.indexOf(selectedWallet)];
+  const nextMembers = [...chain.validatorMembers.slice(1), {
+    address: head.address, algorithm: head.algorithm, operatorId: head.operatorId,
+    publicKey: head.publicKey,
+  }];
+  const nextWallets = nextMembers.map(({ address }) => address === selectedWallet.address
+    ? selectedWallet : validators.find((wallet) => wallet.address === address));
+  const activePeers = new Map(chain.peerRegistry.peers
+    .map((peer) => [peer.validatorAddress, peer]));
+  const rotationActivationHeight = chain.height + 5;
+  const onboardingPeers = nextWallets.map((wallet) => wallet.address === selectedWallet.address
+    ? { tlsCertificateSha256: head.tlsCertificateSha256,
+      transport: publicWallet(selectedTransport), url: head.endpoint,
+      validatorAddress: wallet.address }
+    : activePeers.get(wallet.address));
+  const nextTransports = nextWallets.map((wallet) => wallet.address === selectedWallet.address
+    ? selectedTransport : validatorTransports[validators.indexOf(wallet)]);
+  const onboarding = createValidatorOnboarding({ activationHeight: rotationActivationHeight,
+    currentValidators: chain.validatorMembers, networkId: chain.networkId,
+    nextValidators: nextMembers, peers: onboardingPeers }, validators.slice(0, 3),
+  nextWallets, nextTransports);
+  append(chain, { validatorRotation: { activationHeight: rotationActivationHeight,
+    onboarding, validators: nextMembers } }, validators);
+  assert.equal(chain.validatorAdmission(head.address).readiness, true,
+    "selection preserves the chosen certificate until activation");
+  while (chain.height + 1 < rotationActivationHeight) append(chain, {}, validators);
+  const activationProposal = chain.buildBlock({
+    timestamp: chain.blocks().at(-1).timestamp + 1,
+  });
+  chain.appendBlock(finalizeBlock(activationProposal, [...validators, selectedWallet]));
+  assert.equal(chain.validatorAdmission(head.address), null);
+  assert.ok(chain.validatorAdmissionQueue().every(({ readiness }) => readiness === false));
+  assert.equal(chain.consensusSnapshot().state.validatorReadinessObservationFloor,
+    rotationActivationHeight);
+
+  const restored = restore(chain, genesis);
+  assert.deepEqual(restored.consensusSnapshot(), chain.consensusSnapshot());
+  const replayed = new NirChain(genesis);
+  for (const block of chain.blocks().slice(1)) replayed.appendBlock(block);
+  assert.equal(replayed.stateRoot, chain.stateRoot);
+  assert.deepEqual(replayed.validatorAdmissionQueue(), chain.validatorAdmissionQueue());
 });
