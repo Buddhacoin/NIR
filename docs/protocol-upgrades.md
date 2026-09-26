@@ -4,10 +4,11 @@ NIR protocol changes activate through finalized chain state. A repository edit,
 software release, server operator or block proposer cannot change the active
 rules by itself.
 
-The genesis execution version is `24`. This implementation knows versions `24`
-and `25`; version `25` introduces the delayed upgrade state machine and keeps
-the existing economic transition rules unchanged. A later version must ship its
-deterministic execution rules before nodes can execute its activation block.
+The genesis execution version is `24`. This implementation knows sequential
+versions through `33`; version `25` introduces the delayed upgrade state machine
+and later versions add their documented deterministic transitions. A later
+version must ship its execution rules before nodes can execute its activation
+block.
 
 ## Schedule object
 

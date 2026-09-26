@@ -43,6 +43,7 @@ import {
   TRANSFER_CREDIT_STAKE_UNIT,
   VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION,
   VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
+  VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -1449,15 +1450,21 @@ function snapshotSignedInteger(value, field) {
 
 function assertValidatorAdmissionSelection({
   activationHeight, admissions, bonds, currentValidators, disabledValidators, selectionHeight,
-  pendingExits, proposedValidators, recoveryPlan,
+  pendingExits, proposedValidators, readinessObservationFloor = 0,
+  requireCurrentReadinessSet = false, recoveryPlan,
 }) {
   const current = new Set(currentValidators.map(({ address }) => address));
+  const currentValidatorSetId = requireCurrentReadinessSet
+    ? validatorSetId(currentValidators) : null;
   const newcomers = proposedValidators.filter(({ address }) => !current.has(address));
   if (newcomers.length === 0) return;
   const reserves = new Set((recoveryPlan?.reserves ?? []).map(({ address }) => address));
   const eligible = [...admissions.values()].filter((entry) =>
     entry.readiness && entry.eligibleHeight <= selectionHeight &&
     entry.expiryHeight > activationHeight && entry.readinessExpiresHeight > activationHeight &&
+    (currentValidatorSetId === null ||
+      entry.readinessValidatorSetId === currentValidatorSetId &&
+      entry.observedHeight >= readinessObservationFloor) &&
     !disabledValidators.has(entry.address) &&
     !pendingExits.has(entry.address) && !reserves.has(entry.address) &&
     (bonds.get(entry.address) ?? 0n) >= MIN_VALIDATOR_BOND)
@@ -1466,6 +1473,26 @@ function assertValidatorAdmissionSelection({
   const selected = newcomers.map(({ address }) => address).sort();
   if (eligible.length !== newcomers.length || canonicalJson(eligible) !== canonicalJson(selected)) {
     throw new Error("validator rotation skips deterministic admission priority");
+  }
+}
+
+function clearValidatorAdmissionReadiness(admission) {
+  return {
+    ...admission,
+    ...(admission.legacy ? { endpoint: null, tlsCertificateSha256: null, transport: null } : {}),
+    observedHeight: null,
+    readiness: false,
+    readinessCertificateHash: null,
+    readinessExpiresHeight: null,
+    readinessValidatorSetId: null,
+  };
+}
+
+function resetValidatorAdmissionReadiness(admissions, selected = new Set()) {
+  for (const [address, admission] of admissions) {
+    if (!selected.has(address) && admission.readiness) {
+      admissions.set(address, clearValidatorAdmissionReadiness(admission));
+    }
   }
 }
 
@@ -1540,6 +1567,7 @@ export class NirChain {
   #validatorRecoveryPlan;
   #registeredValidators;
   #pendingValidatorAdmissions;
+  #validatorReadinessObservationFloor;
   #recentValidatorTransition;
   #pendingValidatorExits;
   #retiredValidators;
@@ -1716,6 +1744,7 @@ export class NirChain {
     this.#validatorRecoveryPlan = null;
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorAdmissions = new Map();
+    this.#validatorReadinessObservationFloor = 0;
     this.#recentValidatorTransition = null;
     this.#pendingValidatorExits = new Map();
     this.#retiredValidators = new Map();
@@ -1834,6 +1863,8 @@ export class NirChain {
       snapshot?.state?.protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION;
     const snapshotHasValidatorAdmissionQueue =
       snapshot?.state?.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION;
+    const snapshotHasValidatorReadinessSetReset =
+      snapshot?.state?.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION;
     if (!snapshot || snapshot.networkId !== chain.#networkId ||
         snapshot.checkpoint?.hash !== snapshot.tipHash ||
         snapshot.checkpoint?.stateRoot !== snapshot.stateRoot ||
@@ -2328,6 +2359,19 @@ export class NirChain {
     const pendingValidatorAdmissions = snapshotHasValidatorAdmissionQueue
       ? snapshotEntries(state.pendingValidatorAdmissions, "pending validator admissions")
       : new Map();
+    if (snapshotHasValidatorReadinessSetReset !==
+        Object.hasOwn(state, "validatorReadinessObservationFloor")) {
+      throw new Error("validator readiness observation floor snapshot schema is invalid");
+    }
+    const validatorReadinessObservationFloor = snapshotHasValidatorReadinessSetReset
+      ? snapshotInteger(state.validatorReadinessObservationFloor,
+        "validator readiness observation floor") : 0;
+    if (validatorReadinessObservationFloor < 0 ||
+        validatorReadinessObservationFloor > snapshot.height ||
+        (snapshotHasValidatorReadinessSetReset &&
+         validatorReadinessObservationFloor < (state.peerRegistry?.activationHeight ?? 0))) {
+      throw new Error("validator readiness observation floor snapshot is invalid");
+    }
     if (pendingValidatorAdmissions.size > MAX_PENDING_VALIDATOR_ADMISSIONS) {
       throw new Error("validator admission queue capacity is exceeded");
     }
@@ -2374,6 +2418,9 @@ export class NirChain {
             admission.readinessExpiresHeight <= admission.observedHeight ||
             !/^[0-9a-f]{64}$/.test(admission.readinessValidatorSetId ?? "") ||
             !/^[0-9a-f]{64}$/.test(admission.readinessCertificateHash ?? "") ||
+            (state.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION &&
+              (admission.readinessValidatorSetId !== validatorSetId([...validators.values()]) ||
+               admission.observedHeight < validatorReadinessObservationFloor)) ||
             admissionTransports.has(admission.transport.address)) {
           throw new Error("pending validator admission readiness is invalid");
         }
@@ -2726,6 +2773,7 @@ export class NirChain {
     chain.#randomnessFaults = snapshotEntries(state.randomnessFaults, "randomness faults");
     chain.#registeredValidators = registeredMembers;
     chain.#pendingValidatorAdmissions = pendingValidatorAdmissions;
+    chain.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
     chain.#recentValidatorTransition = recentValidatorTransition;
     chain.#pendingValidatorExits = pendingValidatorExits;
     chain.#retiredValidators = retiredValidators;
@@ -3001,6 +3049,11 @@ export class NirChain {
         pendingValidatorAdmissions:
           overrides.pendingValidatorAdmissions ?? this.#pendingValidatorAdmissions,
       } : {}),
+      ...(protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION ? {
+        validatorReadinessObservationFloor:
+          overrides.validatorReadinessObservationFloor ??
+            this.#validatorReadinessObservationFloor,
+      } : {}),
       ...(protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
         pendingValidatorExits:
           overrides.pendingValidatorExits ?? this.#pendingValidatorExits,
@@ -3121,6 +3174,9 @@ export class NirChain {
         pendingValidatorRotation: this.#pendingValidatorRotation,
         ...(this.#protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION ? {
           pendingValidatorAdmissions: this.#pendingValidatorAdmissions,
+        } : {}),
+        ...(this.#protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION ? {
+          validatorReadinessObservationFloor: this.#validatorReadinessObservationFloor,
         } : {}),
         ...(this.#protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
           pendingValidatorExits: this.#pendingValidatorExits,
@@ -3685,6 +3741,9 @@ export class NirChain {
           disabledValidators: this.#disabledValidators,
           pendingExits: this.#pendingValidatorExits,
           proposedValidators: scheduledRotation.validators,
+          readinessObservationFloor: this.#validatorReadinessObservationFloor,
+          requireCurrentReadinessSet: protocolState.protocolVersion >=
+            VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
           recoveryPlan: this.#validatorRecoveryPlan,
           selectionHeight: this.height,
         });
@@ -4463,7 +4522,8 @@ export class NirChain {
     }));
   }
 
-  #applyValidatorAdmissionReadiness(transaction, state, proposer, height) {
+  #applyValidatorAdmissionReadiness(transaction, state, proposer, height,
+    readinessObservationFloor = 0) {
     const { payload, transport } = verifyValidatorAdmissionReadiness(transaction, this.#networkId);
     const pending = state.pendingValidatorAdmissions.get(payload.sender);
     if (!pending || pending.admissionId !== payload.admissionId ||
@@ -4494,7 +4554,9 @@ export class NirChain {
     }
     if (!Number.isSafeInteger(payload.observedHeight) ||
         !Number.isSafeInteger(payload.expiresAtHeight) || payload.observedHeight > height - 1 ||
-        payload.observedHeight < height - 16 || payload.expiresAtHeight <= height ||
+        payload.observedHeight < height - 16 ||
+        payload.observedHeight < readinessObservationFloor ||
+        payload.expiresAtHeight <= height ||
         payload.expiresAtHeight > payload.observedHeight + 16 ||
         payload.validatorSetId !== this.validatorSetId ||
         !Array.isArray(payload.readinessAttestations) ||
@@ -5328,6 +5390,7 @@ export class NirChain {
     fork.#pendingValidatorRotation = structuredClone(this.#pendingValidatorRotation);
     fork.#pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
       .map(([address, admission]) => [address, structuredClone(admission)]));
+    fork.#validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#retiredValidators = new Map([...this.#retiredValidators]
@@ -5720,6 +5783,7 @@ export class NirChain {
     const registeredValidators = new Map(this.#registeredValidators);
     const pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
       .map(([address, admission]) => [address, structuredClone(admission)]));
+    let validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
     const pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     const retiredValidators = new Map([...this.#retiredValidators]
@@ -5750,6 +5814,14 @@ export class NirChain {
           submittedHeight: block.height,
         }));
       }
+    }
+    if (protocolState.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION &&
+        this.#protocolVersion < VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION) {
+      // V32 did not persist a membership-transition floor. Reset every old
+      // certificate instead of guessing whether a matching set ID was reached
+      // before or after an A -> B -> A validator-set history.
+      resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
+      validatorReadinessObservationFloor = block.height;
     }
     if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
       const selected = new Set((this.#pendingValidatorRotation?.validators ?? [])
@@ -5854,6 +5926,9 @@ export class NirChain {
           disabledValidators,
           pendingExits: pendingValidatorExits,
           proposedValidators: scheduledRotation.validators,
+          readinessObservationFloor: validatorReadinessObservationFloor,
+          requireCurrentReadinessSet: protocolState.protocolVersion >=
+            VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
           recoveryPlan: validatorRecoveryPlan,
           selectionHeight: previous.height,
         });
@@ -6136,7 +6211,10 @@ export class NirChain {
           balances, disabledValidators, nonces, pendingValidatorAdmissions,
           pendingValidatorExits, pendingValidatorRotation: this.#pendingValidatorRotation,
           peerRegistry: nextPeerRegistry, validatorRecoveryPlan,
-        }, block.feeRecipient, block.height);
+        }, block.feeRecipient, block.height,
+        protocolState.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION
+          ? Math.max(validatorReadinessObservationFloor,
+            nextPeerRegistry?.activationHeight ?? 0) : 0);
       } else if (transaction.type === "validator-exit-request") {
         this.#applyValidatorExitRequest(
           transaction, balances, nonces, validatorBonds, registeredValidators,
@@ -6583,6 +6661,16 @@ export class NirChain {
     let validatorsAfter = this.#validators;
     let validatorOrderAfter = this.#validatorOrder;
     let pendingValidatorRotationAfter = this.#pendingValidatorRotation;
+    if (protocolState.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION &&
+        nextPeerRegistry !== null &&
+        nextPeerRegistry.activationHeight > validatorReadinessObservationFloor) {
+      // A registry activation changes the live endpoint context certified by
+      // readiness. Apply this after transactions so a certificate observed
+      // before the new registry's activation cannot survive by being included
+      // in the activation block itself.
+      resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
+      validatorReadinessObservationFloor = nextPeerRegistry.activationHeight;
+    }
     const recentValidatorTransitionAfter = protocolState.protocolVersion <
       HISTORICAL_VALIDATOR_EVIDENCE_PROTOCOL_VERSION || transitionValidators === null ? null
       : normalizeRecentValidatorTransition({
@@ -6602,6 +6690,10 @@ export class NirChain {
       validatorsAfter = new Map(validatorRecoveryPlan.reserves
         .map((member) => [member.address, member]));
       validatorOrderAfter = [...validatorsAfter.keys()].sort();
+      if (protocolState.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION) {
+        resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
+        validatorReadinessObservationFloor = block.height;
+      }
       pendingValidatorRotationAfter = null;
       validatorRecoveryGeneration = validatorRecoveryPlan.generation;
       validatorRecoveryPlan = null;
@@ -6612,6 +6704,10 @@ export class NirChain {
       if (protocolState.protocolVersion >= VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION) {
         for (const { address } of pendingValidatorRotationAfter.validators) {
           pendingValidatorAdmissions.delete(address);
+        }
+        if (protocolState.protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION) {
+          resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
+          validatorReadinessObservationFloor = block.height;
         }
         for (const [address, member] of this.#validators) {
           if (validatorsAfter.has(address) || pendingValidatorExits.has(address) ||
@@ -6686,6 +6782,7 @@ export class NirChain {
       }),
       pendingValidatorRotation: pendingValidatorRotationAfter,
       pendingValidatorAdmissions,
+      validatorReadinessObservationFloor,
       pendingValidatorExits,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
@@ -6794,6 +6891,7 @@ export class NirChain {
     this.#validatorRecoveryPlan = validatorRecoveryPlan;
     this.#registeredValidators = registeredValidators;
     this.#pendingValidatorAdmissions = pendingValidatorAdmissions;
+    this.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
     this.#pendingValidatorExits = pendingValidatorExits;
     this.#retiredValidators = retiredValidators;
     this.#recentValidatorTransition = recentValidatorTransitionAfter;

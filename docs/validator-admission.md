@@ -1,4 +1,4 @@
-# Validator candidate queue (protocol v31, v32 authorization envelope)
+# Validator candidate queue (protocol v31-v33)
 
 Protocol v31 adds an open candidate queue. It does **not** yet implement automatic validator
 churn or fully permissionless active membership: the current finality quorum still authorizes the
@@ -43,6 +43,23 @@ authorization from a proof-backed finalized context. Mempool eviction performs o
 per admission and only discards an expired/wrong-era envelope or a nonce already consumed in
 finalized state; it keeps future nonces and funding dependencies for ordered proposal validation.
 Readiness certificates and the candidate queue record remain the v31 mechanism.
+
+## Protocol v33 readiness epochs
+
+Protocol v33 prevents a live-observation certificate from becoming valid again after validator
+membership or the active peer registry changes. Consensus persists a
+`validatorReadinessObservationFloor` alongside the queue. Selection requires both the exact current
+`validatorSetId` and an `observedHeight` at or above that floor; matching an older set ID after an
+`A -> B -> A` history is insufficient.
+
+The v32-to-v33 activation resets every pending readiness certificate and advances the floor to the
+activation height. This deliberately requires one fresh observation because v32 snapshots did not
+record a membership-transition floor. Any later peer-registry activation also advances the floor
+and clears certificates observed before it. An ordinary validator rotation preserves the selected
+entries only until activation (when they leave the queue), clears readiness for every non-selected
+entry, and advances the floor to the activation block. Recovery activation does the same for the
+entire pending queue. The floor and cleared records are state-rooted and included in snapshots, so
+full replay, snapshot restore, forks, and restart cannot disagree about certificate freshness.
 
 ## Upgrade migration
 
