@@ -8,7 +8,8 @@ import test from "node:test";
 
 import {
   createValidatorJoinBackups, createValidatorJoinWorkspace, loadValidatorJoinInputs,
-  loadValidatorCandidateSyncInput, syncValidatorJoinCandidateContext, validatorJoinStatus,
+  loadValidatorCandidateSyncInput, prepareValidatorAdmissionSigningPackage,
+  syncValidatorJoinCandidateContext, validatorJoinStatus,
   verifyValidatorJoinWorkspace,
   writeValidatorJoinArtifact,
 } from "../blockchain/validator-join.mjs";
@@ -132,6 +133,8 @@ test("Slice-A v1 workspaces remain readable but cannot silently acquire B1 ancho
       syncInput: { checkpointTrustPackage: {}, format: "nir-validator-candidate-sync-v1",
         peers: [], version: 1 }, request: async () => assert.fail("network must not be queried") }),
     /join plan|v2|invalid/i);
+    assert.throws(() => prepareValidatorAdmissionSigningPackage({ directory: f.workspace,
+      outputPath: join(f.root, "legacy-admission.json") }), /v2 join workspace/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
