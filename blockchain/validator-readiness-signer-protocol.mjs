@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 
-import { parseConsensusJson } from "./consensus-json.mjs";
 import { canonicalJson, hashObject, verifyObject } from "./crypto.mjs";
+import {
+  createCanonicalIpcFrameDecoder,
+  encodeCanonicalIpcFrame,
+} from "./canonical-ipc-framing.mjs";
 import {
   VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN,
   VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN,
@@ -82,66 +85,16 @@ function commonResponse(value, verified, format, label) {
 function clone(value) { return JSON.parse(canonicalJson(value)); }
 
 export function encodeValidatorReadinessSignerFrame(value) {
-  const body = Buffer.from(canonicalJson(value), "utf8");
-  if (body.length < 1 || body.length > VALIDATOR_READINESS_SIGNER_MAX_FRAME_BYTES) {
-    throw new Error("validator readiness signer frame is outside the bounded limit");
-  }
-  const header = Buffer.allocUnsafe(4);
-  header.writeUInt32BE(body.length);
-  return Buffer.concat([header, body], header.length + body.length);
+  return encodeCanonicalIpcFrame(value, {
+    label: "validator readiness signer frame",
+    maximumBytes: VALIDATOR_READINESS_SIGNER_MAX_FRAME_BYTES,
+  });
 }
 
 export function createValidatorReadinessSignerFrameDecoder() {
-  let body = null; let bodyOffset = 0; let failed = false;
-  const header = Buffer.alloc(4); let headerOffset = 0;
-  const poison = (error) => {
-    failed = true; body = null; bodyOffset = 0; headerOffset = 0;
-    throw error;
-  };
-  return Object.freeze({
-    finish() {
-      if (failed) throw new Error("validator readiness signer frame decoder is poisoned");
-      if (headerOffset !== 0 || body !== null) {
-        poison(new Error("validator readiness signer frame ended before completion"));
-      }
-    },
-    hasPendingFrame() { return headerOffset !== 0 || body !== null; },
-    push(chunk) {
-      if (failed) throw new Error("validator readiness signer frame decoder is poisoned");
-      if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array)) {
-        return poison(new Error("validator readiness signer frame chunk is invalid"));
-      }
-      const bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      const messages = []; let offset = 0;
-      try {
-        while (offset < bytes.length) {
-          if (body === null) {
-            const copied = Math.min(4 - headerOffset, bytes.length - offset);
-            bytes.copy(header, headerOffset, offset, offset + copied);
-            headerOffset += copied; offset += copied;
-            if (headerOffset < 4) continue;
-            const length = header.readUInt32BE(0); headerOffset = 0;
-            if (length < 1 || length > VALIDATOR_READINESS_SIGNER_MAX_FRAME_BYTES) {
-              throw new Error("validator readiness signer frame length is invalid");
-            }
-            body = Buffer.allocUnsafe(length); bodyOffset = 0;
-          }
-          const copied = Math.min(body.length - bodyOffset, bytes.length - offset);
-          bytes.copy(body, bodyOffset, offset, offset + copied);
-          bodyOffset += copied; offset += copied;
-          if (bodyOffset !== body.length) continue;
-          let text;
-          try { text = new TextDecoder("utf-8", { fatal: true }).decode(body); }
-          catch { throw new Error("validator readiness signer frame is not UTF-8"); }
-          const value = parseConsensusJson(text);
-          if (canonicalJson(value) !== text) {
-            throw new Error("validator readiness signer frame is not canonical JSON");
-          }
-          messages.push(value); body = null; bodyOffset = 0;
-        }
-        return messages;
-      } catch (error) { return poison(error); }
-    },
+  return createCanonicalIpcFrameDecoder({
+    label: "validator readiness signer frame",
+    maximumBytes: VALIDATOR_READINESS_SIGNER_MAX_FRAME_BYTES,
   });
 }
 
