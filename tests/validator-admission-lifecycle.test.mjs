@@ -38,6 +38,7 @@ import {
   createValidatorAdmissionReadinessChallenge,
   createValidatorAdmissionReadinessReceipt,
   verifyValidatorAdmissionReadinessCertificate,
+  verifyValidatorAdmissionReadinessReceipt,
 } from "../blockchain/validator-admission-readiness-auth.mjs";
 import { createFinalityProof, verifyValidatorRecoveryTransition }
   from "../blockchain/light-client.mjs";
@@ -175,6 +176,32 @@ function restore(chain, genesis) {
   return NirChain.fromVerifiedSnapshot(genesis, verifiedSnapshotEnvelope(chain));
 }
 
+function persistedReplica({ chain, genesis, readinessProbe, validator, validatorTransport }) {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-readiness-observer-replica-"));
+  const directory = join(temporary, "validator");
+  for (const name of ["blocks", "commits", "mempool", "prepares", "timeouts"]) {
+    mkdirSync(join(directory, name), { recursive: true, mode: 0o700 });
+  }
+  const serialized = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  writeFileSync(join(directory, "genesis.json"), serialized(genesis), { mode: 0o600 });
+  writeFileSync(join(directory, "VALIDATOR-KEY.json"), serialized(validator), { mode: 0o600 });
+  writeFileSync(join(directory, "TRANSPORT-KEY.json"), serialized(validatorTransport),
+    { mode: 0o600 });
+  writeFileSync(join(directory, "AUTHORIZED-COORDINATOR.json"),
+    serialized(publicWallet(generateWallet())), { mode: 0o600 });
+  const stored = new NirChain(genesis);
+  initializeBlockStore(directory, stored);
+  for (const block of chain.blocks().slice(1)) {
+    stored.appendBlock(block);
+    persistBlock(directory, block, stored);
+  }
+  const replica = new ValidatorReplica(directory, { readinessProbe });
+  return { cleanup() {
+    replica.closeSecurityState();
+    rmSync(temporary, { recursive: true, force: true });
+  }, replica };
+}
+
 test("read-only live-readiness collection does not change candidate consensus state", () => {
   const { chain, treasury, validators } = fixture(32);
   const candidate = generateWallet(); const transport = generateWallet();
@@ -221,6 +248,76 @@ test("read-only live-readiness collection does not change candidate consensus st
   assert.throws(() => legacyChain.validatorAdmissionReadinessContext(legacy.address),
     /not eligible/);
 });
+
+test("validator replica privately orchestrates fresh readiness observations and rejects races",
+  async () => {
+    const { chain, genesis, treasury, validators, validatorTransports } = fixture(32);
+    const candidate = generateWallet(); const transport = generateWallet();
+    append(chain, { timestamp: TREASURY_VESTING_MS, transactions: [createTransfer({
+      amount: (MIN_VALIDATOR_BOND + 4n * MIN_TRANSFER_FEE).toString(), networkId: chain.networkId,
+      nonce: chain.nextNonce(treasury.address), recipient: candidate.address, wallet: treasury,
+    })] }, validators);
+    append(chain, { transactions: [createValidatorAdmission({
+      chainIdentityGenesisHash: chain.blocks()[0].hash, endpoint: "https://observer.example",
+      networkId: chain.networkId, nonce: 0, operatorId: "observer-candidate",
+      referenceHeight: chain.height, tlsCertificateSha256: "b".repeat(64),
+      transportWallet: transport, wallet: candidate,
+    })] }, validators);
+
+    const challenges = []; let gate = null; let release = null;
+    const readinessProbe = async ({ challenge, context, signal, validators: active }) => {
+      challenges.push(challenge);
+      if (gate !== null) {
+        const pending = [gate];
+        if (signal !== null) pending.push(new Promise((_, reject) => signal.addEventListener("abort",
+          () => reject(new Error("probe aborted")), { once: true })));
+        await Promise.race(pending);
+      }
+      return createValidatorAdmissionReadinessCandidateResponse({ candidateWallet: candidate,
+        challenge, context, transportWallet: transport, validators: active });
+    };
+    const persisted = persistedReplica({ chain, genesis, readinessProbe,
+      validator: validators[0], validatorTransport: validatorTransports[0] });
+    try {
+      const context = persisted.replica.validatorAdmissionReadinessContext(candidate.address);
+      const before = { height: persisted.replica.height, root: persisted.replica.stateRoot };
+      const first = await persisted.replica.observeValidatorAdmissionReadiness(context);
+      assert.deepEqual(verifyValidatorAdmissionReadinessReceipt(first,
+        { context, validators: chain.validatorMembers }), first);
+      assert.match(challenges[0].challengeNonce, /^[0-9a-f]{64}$/);
+      assert.deepEqual({ height: persisted.replica.height, root: persisted.replica.stateRoot }, before);
+      const second = await persisted.replica.observeValidatorAdmissionReadiness(context);
+      assert.notEqual(challenges[1].challengeNonce, challenges[0].challengeNonce);
+      assert.deepEqual(verifyValidatorAdmissionReadinessReceipt(second,
+        { context, validators: chain.validatorMembers }), second);
+
+      gate = new Promise((resolve) => { release = resolve; });
+      const controller = new AbortController();
+      const active = persisted.replica.observeValidatorAdmissionReadiness(context,
+        { signal: controller.signal });
+      await new Promise((resolve) => setImmediate(resolve));
+      await assert.rejects(() => persisted.replica.observeValidatorAdmissionReadiness(context),
+        /already active/);
+      controller.abort();
+      await assert.rejects(() => active, /probe aborted|was aborted/);
+      release(); gate = null;
+      await persisted.replica.observeValidatorAdmissionReadiness(context);
+
+      gate = new Promise((resolve) => { release = resolve; });
+      const stale = persisted.replica.observeValidatorAdmissionReadiness(context);
+      const staleRejected = assert.rejects(stale, /context is not current/);
+      await new Promise((resolve) => setImmediate(resolve));
+      const proposal = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+      const block = finalizeBlock(proposal, quorumFor(proposal, validators));
+      chain.appendBlock(block);
+      persisted.replica.commit(block);
+      release();
+      await staleRejected;
+    } finally {
+      release?.();
+      persisted.cleanup();
+    }
+  });
 
 test("v32 admission survives restart and rotation cannot skip the FIFO head", () => {
   const { chain, genesis, treasury, validators, validatorTransports } = fixture(32);

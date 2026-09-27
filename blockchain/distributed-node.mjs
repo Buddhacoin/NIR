@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -52,6 +53,13 @@ import { createValidatorAdmissionSubmissionAck }
   from "./validator-admission-submission-ack.mjs";
 import { createValidatorAdmissionProofResponseAuth, validatorAdmissionProofRequest }
   from "./validator-admission-proof-auth.mjs";
+import {
+  createValidatorAdmissionReadinessChallenge,
+  createValidatorAdmissionReadinessReceipt,
+  verifyValidatorAdmissionReadinessContext,
+} from "./validator-admission-readiness-auth.mjs";
+import { probeValidatorAdmissionReadiness }
+  from "./validator-admission-readiness-probe.mjs";
 import {
   createPeerRequest,
   createPeerResponse,
@@ -375,17 +383,24 @@ export class ValidatorReplica {
   #transportView;
   #transportWallet;
   #ceremonyMode;
+  #readinessProbe;
+  #activeReadinessObservations = new Set();
 
   constructor(directory, {
     certificateMode = CERTIFICATE_MODE_DEV_GENESIS,
     ceremonyCredentials = null,
     clock = () => Date.now(),
     nonceCacheOptions = {},
+    readinessProbe = probeValidatorAdmissionReadiness,
   } = {}) {
     if (typeof clock !== "function" || !nonceCacheOptions ||
         typeof nonceCacheOptions !== "object" || Array.isArray(nonceCacheOptions)) {
       throw new Error("validator security clock or nonce configuration is invalid");
     }
+    if (typeof readinessProbe !== "function") {
+      throw new Error("validator admission readiness probe is invalid");
+    }
+    this.#readinessProbe = readinessProbe;
     this.#clock = clock;
     this.#authNotBefore = clock();
     this.#nonceOptions = { ...nonceCacheOptions, clock };
@@ -609,6 +624,62 @@ export class ValidatorReplica {
         validators: this.#chain.validatorMembers, wallet: this.#wallet }),
       finalityProof: createFinalityProof(last),
     };
+  }
+
+  #currentValidatorAdmissionReadinessContext(value) {
+    const supplied = verifyValidatorAdmissionReadinessContext(value);
+    const context = this.#chain.validatorAdmissionReadinessContext(supplied.candidate.address);
+    if (canonicalJson(supplied) !== canonicalJson(context)) {
+      throw new Error("validator admission readiness context is not current");
+    }
+    const validators = this.#chain.validatorMembers;
+    const observer = validators.find(({ address }) => address === this.#wallet.address);
+    if (!observer || observer.algorithm !== this.#wallet.algorithm ||
+        observer.publicKey !== this.#wallet.publicKey) {
+      throw new Error("local validator is not an active readiness observer");
+    }
+    return { context, validators };
+  }
+
+  validatorAdmissionReadinessContext(address) {
+    return this.#chain.validatorAdmissionReadinessContext(address);
+  }
+
+  async observeValidatorAdmissionReadiness(value, { signal = null } = {}) {
+    if (signal !== null && (typeof signal !== "object" ||
+        typeof signal.addEventListener !== "function" || typeof signal.aborted !== "boolean")) {
+      throw new Error("validator admission readiness observer abort signal is invalid");
+    }
+    if (signal?.aborted) throw new Error("validator admission readiness observation was aborted");
+    const { context, validators } = this.#currentValidatorAdmissionReadinessContext(value);
+    const key = `${context.contextHash}\0${this.#wallet.address}`;
+    if (this.#activeReadinessObservations.has(key)) {
+      throw new Error("validator admission readiness observation is already active");
+    }
+    this.#activeReadinessObservations.add(key);
+    const validatorSnapshot = canonicalJson(validators);
+    try {
+      if (signal?.aborted) {
+        throw new Error("validator admission readiness observation was aborted");
+      }
+      const challenge = createValidatorAdmissionReadinessChallenge({
+        challengeNonce: randomBytes(32).toString("hex"), context,
+        observerWallet: this.#wallet, validators,
+      });
+      const candidateResponse = await this.#readinessProbe({ challenge, context, signal,
+        validators });
+      if (signal?.aborted) {
+        throw new Error("validator admission readiness observation was aborted");
+      }
+      const current = this.#currentValidatorAdmissionReadinessContext(context);
+      if (canonicalJson(current.validators) !== validatorSnapshot) {
+        throw new Error("validator admission readiness observer set changed during observation");
+      }
+      return createValidatorAdmissionReadinessReceipt({ candidateResponse,
+        observerWallet: this.#wallet, validators: current.validators });
+    } finally {
+      this.#activeReadinessObservations.delete(key);
+    }
   }
 
   assetProofCandidate(assetId, holder) {
