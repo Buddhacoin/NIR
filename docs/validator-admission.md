@@ -66,6 +66,21 @@ receives only cloned public context, peer, and validator data and cannot activat
 collected certificate still requires a separate consensus transaction slice before it can affect
 the admission queue.
 
+An active validator replica can act as an observer without exposing a generic signing endpoint. It
+derives the readiness context directly from its finalized chain, generates a fresh 32-byte random
+challenge nonce internally, and uses only its private validator wallet to sign the challenge and
+receipt. The replica checks the exact checkpoint context and active validator membership both
+before and after the candidate probe, rejects a duplicate in-flight observation for the same
+context and observer, and aborts instead of issuing a receipt if either view changes.
+
+The validator service publishes that narrow workflow over TLS 1.3 only. Observers fetch the exact
+current context with
+`GET /v1/public/validator-admission/readiness/context?address=<candidate>` and request one signed
+receipt with `POST /v1/validator-admission/readiness/receipt` using the exact body `{context}`.
+Both routes use bounded ingress and strict query/body schemas; disconnecting the POST client aborts
+the active probe. These public APIs return only authenticated proof artifacts and do not expose a
+wallet, arbitrary signer, private-key material, or a readiness state mutation.
+
 ## Protocol v32 admission lifetime
 
 Protocol v32 replaces the v31 admission authorization with a chain- and height-bound envelope. Both

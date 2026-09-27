@@ -9,11 +9,16 @@ import {
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
 import { requestJson } from "./http-client.mjs";
 import {
+  VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH,
+  VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH,
+} from "./validator-admission-readiness-observer-routes.mjs";
+import {
   hardenHttpServer,
   HTTP_MAX_HEADER_BYTES,
   HttpIngressGuard,
   ingressErrorResponse,
   readBoundedConsensusJson,
+  rejectUnexpectedRequestBody,
 } from "./http-ingress.mjs";
 import { IngressLimiter } from "./ingress-limiter.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
@@ -32,6 +37,7 @@ const MAX_TOPOLOGY_HISTORY_RESPONSE_BYTES =
   MAX_HANDOFF_STORE_BYTES + MAX_TOPOLOGY_STORE_BYTES + 64 * 1024;
 const MAX_CERTIFICATE_HISTORY_RESPONSE_BYTES = MAX_CERTIFICATE_STORE_BYTES + 64 * 1024;
 const SIGNER = /^nir1[0-9a-f]{64}$/;
+const VALIDATOR_ADMISSION_READINESS_OBSERVER_MAX_BODY_BYTES = 256 * 1024;
 const VALIDATOR_AUTH_PATHS = new Set([
   "/v1/gossip/transactions", "/v1/p2p/blocks", "/v1/p2p/blocks/range",
   "/v1/p2p/commits", "/v1/p2p/handoffs", "/v1/p2p/handoffs/history",
@@ -66,6 +72,13 @@ function send(response, status, value) {
     "x-content-type-options": "nosniff",
   });
   response.end(body);
+}
+
+function exact(value, fields, label) {
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).sort().join("\0") !== [...fields].sort().join("\0")) {
+    throw new Error(`${label} has unknown or missing fields`);
+  }
 }
 
 async function gossipPeerRequest(
@@ -458,6 +471,18 @@ export function createValidatorHttpServer(validator, options = {}) {
           send(response, 200, validator.validatorCandidateContext(address)));
       }
       if (request.method === "GET" &&
+          url.pathname === VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH) {
+        identity = "public:validator-admission-readiness-context";
+        consumeIngress(identity); peerReputation.assertAllowed(identity);
+        rejectUnexpectedRequestBody(request);
+        if (tls === null || [...url.searchParams.keys()].some((key) => key !== "address") ||
+            url.searchParams.getAll("address").length !== 1) {
+          throw new Error("validator admission readiness context request is invalid or unavailable");
+        }
+        return await verificationScheduler.run(identity, () => send(response, 200,
+          validator.validatorAdmissionReadinessContext(url.searchParams.get("address"))));
+      }
+      if (request.method === "GET" &&
           url.pathname === "/v1/public/validator-admission-finality") {
         identity = "public:validator-admission-finality";
         consumeIngress(identity); peerReputation.assertAllowed(identity);
@@ -499,7 +524,12 @@ export function createValidatorHttpServer(validator, options = {}) {
       const bodyless = request.method === "POST" &&
         ["/v1/sync", "/v1/blocks/produce"].includes(url.pathname);
       const parsedBody = request.method === "POST" && !bodyless
-        ? await readBoundedConsensusJson(request, httpIngressOptions) : null;
+        ? await readBoundedConsensusJson(request,
+          url.pathname === VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH
+            ? { ...httpIngressOptions,
+              maxBodyBytes: VALIDATOR_ADMISSION_READINESS_OBSERVER_MAX_BODY_BYTES,
+              maxJsonNodes: 20_000 }
+            : httpIngressOptions) : null;
       const authRole = request.method !== "POST" ? null
         : VALIDATOR_AUTH_PATHS.has(url.pathname) ? "validator"
           : COORDINATOR_AUTH_PATHS.has(url.pathname) ? "coordinator" : null;
@@ -539,6 +569,29 @@ export function createValidatorHttpServer(validator, options = {}) {
         return authenticatedNonce;
       };
       return await verificationScheduler.run(identity, async () => {
+      if (request.method === "POST" &&
+          url.pathname === VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH) {
+        consumeIngress(identity);
+        if (tls === null || url.search !== "") {
+          throw new Error("validator admission readiness receipt request is invalid or unavailable");
+        }
+        exact(parsedBody, ["context"], "validator admission readiness receipt request");
+        const controller = new AbortController();
+        const abort = () => {
+          if (!response.writableEnded) controller.abort();
+        };
+        const socket = request.socket;
+        request.once("aborted", abort); response.once("close", abort); socket?.once("close", abort);
+        if (response.destroyed) controller.abort();
+        try {
+          const receipt = await validator.observeValidatorAdmissionReadiness(parsedBody.context,
+            { signal: controller.signal });
+          if (response.destroyed || response.writableEnded) return;
+          return send(response, 200, receipt);
+        } finally {
+          request.off("aborted", abort); response.off("close", abort); socket?.off("close", abort);
+        }
+      }
       if (request.method === "POST" &&
           url.pathname === "/v1/transactions/validator-admission-submission") {
         consumeIngress(identity);
@@ -843,6 +896,7 @@ export function createValidatorHttpServer(validator, options = {}) {
       if (authenticatedIdentity !== null && objectivePeerViolation(error)) {
         peerReputation.recordViolation(authenticatedIdentity, "objective-protocol-violation");
       }
+      if (response.destroyed || response.writableEnded) return;
       const rejected = ingressErrorResponse(error);
       return send(response, rejected.status, { error: rejected.message });
     } finally {
@@ -852,7 +906,8 @@ export function createValidatorHttpServer(validator, options = {}) {
   const server = tls === null
     ? createHttpServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, handler)
     : createHttpsServer({
-      cert: tls.cert, key: tls.key, maxHeaderSize: HTTP_MAX_HEADER_BYTES, minVersion: "TLSv1.3",
+      cert: tls.cert, key: tls.key, maxHeaderSize: HTTP_MAX_HEADER_BYTES,
+      maxVersion: "TLSv1.3", minVersion: "TLSv1.3",
     }, handler);
   const maxConnections = options.maxConnections ?? 128;
   if (!Number.isSafeInteger(maxConnections) || maxConnections < 4 || maxConnections > 10_000) {

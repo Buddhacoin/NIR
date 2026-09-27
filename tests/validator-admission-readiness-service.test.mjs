@@ -22,6 +22,11 @@ import {
   VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH,
   VALIDATOR_ADMISSION_READINESS_MAX_BODY_BYTES,
 } from "../blockchain/validator-admission-readiness-service.mjs";
+import {
+  VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH,
+  VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH,
+} from "../blockchain/validator-admission-readiness-observer-routes.mjs";
+import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
 
 const temporary = mkdtempSync(join(tmpdir(), "nir-readiness-service-"));
@@ -309,6 +314,98 @@ test("body idle timeout and ingress rate limit are enforced over real TLS", asyn
     assert.equal(limited.status, 429);
     assert.deepEqual(calls, []);
   } finally { await close(server); }
+});
+
+test("validator service exposes strict TLS-only observer context and receipt routes", async () => {
+  const values = fixture(); const expectedReceipt = { receipt: "observer-signed" };
+  const calls = [];
+  const validator = {
+    validatorAdmissionReadinessContext(address) {
+      calls.push(["context", address]);
+      assert.equal(address, values.context.candidate.address);
+      return values.context;
+    },
+    async observeValidatorAdmissionReadiness(context, { signal }) {
+      calls.push(["observe", context]);
+      assert.equal(signal.aborted, false);
+      assert.deepEqual(context, values.context);
+      return expectedReceipt;
+    },
+  };
+  const server = createValidatorHttpServer(validator, { tls });
+  const base = await listen(server);
+  try {
+    const contextPath = `${VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH}?address=${
+      values.context.candidate.address}`;
+    const context = await request(base, { method: "GET", path: contextPath });
+    assert.equal(context.status, 200); assert.equal(context.protocol, "TLSv1.3");
+    assert.deepEqual(context.body, values.context);
+    assert.equal((await request(base, { method: "GET",
+      path: `${contextPath}&extra=1` })).status, 400);
+    assert.equal((await request(base, { method: "GET",
+      path: `${contextPath}&address=${values.context.candidate.address}` })).status, 400);
+    assert.equal((await request(base, { method: "GET",
+      path: VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH })).status, 400);
+
+    const receipt = await request(base, { body: { context: values.context },
+      path: VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH });
+    assert.equal(receipt.status, 200); assert.deepEqual(receipt.body, expectedReceipt);
+    assert.equal((await request(base, { body: { context: values.context, extra: true },
+      path: VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH })).status, 400);
+    assert.equal((await request(base, { body: { context: values.context },
+      path: `${VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH}?extra=1` })).status, 400);
+    assert.equal((await request(base, { method: "GET",
+      path: VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH })).status, 404);
+    await assert.rejects(() => request(base, { method: "GET", path: contextPath,
+      maxVersion: "TLSv1.2", minVersion: "TLSv1.2" }), /protocol|tlsv1 alert/i);
+    assert.deepEqual(calls.map(([name]) => name), ["context", "observe"]);
+  } finally { await close(server); }
+
+  const plaintext = createValidatorHttpServer(validator);
+  await new Promise((resolve, reject) => {
+    plaintext.once("error", reject); plaintext.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${plaintext.address().port}${
+      VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH}?address=${
+      values.context.candidate.address}`);
+    assert.equal(response.status, 400);
+  } finally { await close(plaintext); }
+});
+
+test("validator observer receipt route aborts orchestration on client disconnect", async () => {
+  const values = fixture(); let startedResolve; let abortedResolve;
+  const started = new Promise((resolve) => { startedResolve = resolve; });
+  const aborted = new Promise((resolve) => { abortedResolve = resolve; });
+  const validator = {
+    async observeValidatorAdmissionReadiness(_context, { signal }) {
+      startedResolve();
+      return new Promise((_, reject) => signal.addEventListener("abort", () => {
+        abortedResolve(signal.aborted); reject(new Error("observer request aborted"));
+      }, { once: true }));
+    },
+  };
+  const server = createValidatorHttpServer(validator, { tls });
+  const base = await listen(server); const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const body = Buffer.from(canonicalJson({ context: values.context }));
+    const outgoing = httpsRequest(new URL(
+      VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH, base), {
+      headers: { "content-length": String(body.length), "content-type": "application/json" },
+      method: "POST", minVersion: "TLSv1.3", rejectUnauthorized: false,
+    });
+    outgoing.on("error", () => {}); outgoing.end(body);
+    await started; outgoing.destroy();
+    assert.equal(await Promise.race([aborted,
+      new Promise((resolve) => setTimeout(() => resolve(false), 200))]), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    await close(server);
+  }
 });
 
 test("runtime import boundary has no join, wallet, vault, CLI, or general node service", () => {
