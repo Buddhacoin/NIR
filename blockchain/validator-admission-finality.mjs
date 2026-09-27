@@ -12,11 +12,12 @@ import { verifyValidatorAdmissionSubmissionReceipt }
 import {
   validateSignedValidatorAdmissionArtifact, validateValidatorAdmissionSigningPackage,
 } from "./validator-admission-artifact.mjs";
+import {
+  validateValidatorAdmissionPublicPlan, validatorAdmissionJoinPlan,
+} from "./validator-admission-public-plan.mjs";
 import { verifyTransactionProof } from "./transaction-tree.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
-const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
-const ADDRESS = /^nir1[0-9a-f]{64}$/;
 export const MAX_VALIDATOR_ADMISSION_FINALITY_BYTES = 40 * 1024 * 1024;
 
 function exact(value, fields, label) {
@@ -26,33 +27,11 @@ function exact(value, fields, label) {
   }
 }
 
-function publicPlan(value) {
-  exact(value, ["candidateContextMaxWitnessAgeMs", "candidateContextMinimumCheckpointHeight",
-    "candidateContextMinimumSequence", "consensus", "endpoint", "expectedChainIdentityGenesisHash",
-    "expectedCheckpointPolicyId", "format", "networkId", "operatorId", "planCommitment",
-    "tlsCertificateSha256", "transport", "version"], "validator admission public plan");
-  const { format: _format, planCommitment, version: _version, ...payload } = value;
-  if (value.format !== "nir-validator-admission-public-plan-v1" || value.version !== 1 ||
-      !HASH.test(value.expectedChainIdentityGenesisHash ?? "") ||
-      !TAGGED_HASH.test(value.expectedCheckpointPolicyId ?? "") ||
-      !HASH.test(value.tlsCertificateSha256 ?? "") || !ADDRESS.test(value.consensus?.address ?? "") ||
-      !ADDRESS.test(value.transport?.address ?? "") || value.consensus.address === value.transport.address ||
-      planCommitment !== hashObject(payload, "VALIDATOR_ADMISSION_PLAN_V1")) {
-    throw new Error("validator admission public plan is invalid");
-  }
-  return structuredClone(value);
-}
-
-function joinPlan(plan) {
-  const value = structuredClone(plan); delete value.planCommitment;
-  value.format = "nir-validator-join-plan-v2"; value.version = 2;
-  return value;
-}
-
 export function validateValidatorAdmissionFinalityBase(value) {
   exact(value, ["candidateCheckpoint", "publicPlan", "signedArtifact", "signedJournal",
     "signingPackage", "submissionReceipt"], "validator admission finality base");
-  const plan = publicPlan(value.publicPlan); const normalizedJoinPlan = joinPlan(plan);
+  const plan = validateValidatorAdmissionPublicPlan(value.publicPlan);
+  const normalizedJoinPlan = validatorAdmissionJoinPlan(plan);
   const signingPackage = validateValidatorAdmissionSigningPackage(value.signingPackage,
     normalizedJoinPlan, { now: value.signingPackage?.candidateContext?.syncedAt });
   const signed = validateSignedValidatorAdmissionArtifact(value.signedArtifact,

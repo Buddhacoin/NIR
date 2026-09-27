@@ -7,6 +7,8 @@ import {
 import {
   VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS, verifyValidatorAdmission,
 } from "./validator-admission.mjs";
+import { validatorAdmissionPlanCommitment }
+  from "./validator-admission-public-plan.mjs";
 import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 
 const MAX_ADMISSION_PACKAGE_BYTES = MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES + 1024 * 1024;
@@ -16,19 +18,6 @@ function exact(value, fields, label) {
       Object.keys(value).sort().join("\0") !== [...fields].sort().join("\0")) {
     throw new Error(`${label} has unknown or missing fields`);
   }
-}
-
-function admissionPublicPlan(plan) {
-  return {
-    candidateContextMaxWitnessAgeMs: plan.candidateContextMaxWitnessAgeMs,
-    candidateContextMinimumCheckpointHeight: plan.candidateContextMinimumCheckpointHeight,
-    candidateContextMinimumSequence: plan.candidateContextMinimumSequence,
-    consensus: plan.consensus, endpoint: plan.endpoint,
-    expectedChainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
-    expectedCheckpointPolicyId: plan.expectedCheckpointPolicyId, networkId: plan.networkId,
-    operatorId: plan.operatorId, tlsCertificateSha256: plan.tlsCertificateSha256,
-    transport: plan.transport,
-  };
 }
 
 export function validateValidatorAdmissionSigningPackage(value, plan, { now = Date.now() } = {}) {
@@ -47,7 +36,7 @@ export function validateValidatorAdmissionSigningPackage(value, plan, { now = Da
       value.format !== "nir-validator-admission-signing-package-v1" || value.version !== 1 ||
       value.networkId !== plan.networkId ||
       value.chainIdentityGenesisHash !== plan.expectedChainIdentityGenesisHash ||
-      value.planCommitment !== hashObject(admissionPublicPlan(plan), "VALIDATOR_ADMISSION_PLAN_V1") ||
+      value.planCommitment !== validatorAdmissionPlanCommitment(plan) ||
       value.candidateContextHash !== context.contextHash ||
       canonicalJson(value.consensus) !== canonicalJson(plan.consensus) ||
       canonicalJson(value.transport) !== canonicalJson(plan.transport) ||

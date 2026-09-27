@@ -24,6 +24,9 @@ import { MIN_VALIDATOR_BOND } from "./validator-staking.mjs";
 import {
   validateSignedValidatorAdmissionArtifact, validateValidatorAdmissionSigningPackage,
 } from "./validator-admission-artifact.mjs";
+import {
+  createValidatorAdmissionPublicPlan, validatorAdmissionPlanCommitment,
+} from "./validator-admission-public-plan.mjs";
 
 export {
   validateSignedValidatorAdmissionArtifact, validateValidatorAdmissionSigningPackage,
@@ -342,26 +345,6 @@ function latestValidatorCandidateContext(directory, plan = readPlan(directory), 
   return contexts[0] ?? null;
 }
 
-function admissionPlanCommitment(plan) {
-  return hashObject(admissionPublicPlan(plan), "VALIDATOR_ADMISSION_PLAN_V1");
-}
-
-function admissionPublicPlan(plan) {
-  return {
-    candidateContextMaxWitnessAgeMs: plan.candidateContextMaxWitnessAgeMs,
-    candidateContextMinimumCheckpointHeight: plan.candidateContextMinimumCheckpointHeight,
-    candidateContextMinimumSequence: plan.candidateContextMinimumSequence,
-    consensus: plan.consensus,
-    endpoint: plan.endpoint,
-    expectedChainIdentityGenesisHash: plan.expectedChainIdentityGenesisHash,
-    expectedCheckpointPolicyId: plan.expectedCheckpointPolicyId,
-    networkId: plan.networkId,
-    operatorId: plan.operatorId,
-    tlsCertificateSha256: plan.tlsCertificateSha256,
-    transport: plan.transport,
-  };
-}
-
 function admissionIntentPath(plan, signingPackage) {
   return join(dirname(plan.paths.consensusVault),
     `admission-intent-${signingPackage.nonce}-${signingPackage.packageHash}.json`);
@@ -406,7 +389,7 @@ export function prepareValidatorAdmissionSigningPackage({ directory, outputPath,
     consensus: plan.consensus, endpoint: plan.endpoint, fee: MIN_TRANSFER_FEE.toString(),
     format: "nir-validator-admission-signing-package-v1", networkId: plan.networkId,
     nonce: context.account.nextNonce, operatorId: plan.operatorId,
-    planCommitment: admissionPlanCommitment(plan), referenceHeight: context.checkpoint.height,
+    planCommitment: validatorAdmissionPlanCommitment(plan), referenceHeight: context.checkpoint.height,
     tlsCertificateSha256: plan.tlsCertificateSha256, transport: plan.transport,
     validUntilHeight: context.checkpoint.height + VALIDATOR_ADMISSION_TRANSACTION_LIFETIME_BLOCKS,
     version: 1,
@@ -429,9 +412,7 @@ export function prepareValidatorAdmissionSigningPackage({ directory, outputPath,
     assertNoUnresolvedAdmissionIntent(plan, signingPackage, { now });
     assertHeldSigningLock(lockPath, lock, lock.owned);
     persistIdempotentPrivateArtifact(join(dirname(plan.paths.consensusVault),
-      "validator-admission-public-plan.json"), { ...admissionPublicPlan(plan),
-      format: "nir-validator-admission-public-plan-v1",
-      planCommitment: admissionPlanCommitment(plan), version: 1 },
+      "validator-admission-public-plan.json"), createValidatorAdmissionPublicPlan(plan),
     "validator admission public plan", 1024 * 1024);
     const intent = persistIdempotentPrivateArtifact(admissionIntentPath(plan, signingPackage),
       signingPackage, "validator admission intent");
