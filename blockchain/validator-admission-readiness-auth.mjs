@@ -197,16 +197,20 @@ export function createValidatorAdmissionReadinessCandidateResponse({ challenge, 
     ...signed }, "VALIDATOR_READY_RESPONSE_HASH_V1");
   const transportSignature = signObject({ ...signed, responseHash }, transportWallet,
     VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN);
-  return { challenge: verifiedChallenge, consensusSignature: signObject({ ...signed, responseHash,
+  const transportResponse = verifyValidatorAdmissionReadinessCandidateTransportResponse({
+    challenge: verifiedChallenge, context: verifiedContext, ...signed, responseHash,
+    transportSignature,
+  }, { validators });
+  return { ...transportResponse, consensusSignature: signObject({ ...signed, responseHash,
     transportSignature }, candidateWallet,
-  VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN),
-  context: verifiedContext, ...signed, responseHash, transportSignature };
+  VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN) };
 }
 
-export function verifyValidatorAdmissionReadinessCandidateResponse(value, { validators } = {}) {
-  exact(value, ["challenge", "challengeHash", "consensusSignature", "context", "contextHash",
-    "format", "observer", "responseHash", "transportAddress", "transportSignature", "version"],
-  "validator admission readiness candidate response");
+export function verifyValidatorAdmissionReadinessCandidateTransportResponse(value,
+  { validators } = {}) {
+  exact(value, ["challenge", "challengeHash", "context", "contextHash", "format", "observer",
+    "responseHash", "transportAddress", "transportSignature", "version"],
+  "validator admission readiness candidate transport response");
   const context = verifyValidatorAdmissionReadinessContext(value.context);
   const challenge = verifyValidatorAdmissionReadinessChallenge(value.challenge,
     { context, validators });
@@ -219,10 +223,24 @@ export function verifyValidatorAdmissionReadinessCandidateResponse(value, { vali
       value.transportAddress !== context.transport.address || value.responseHash !== responseHash ||
       !canonicalSignature(value.transportSignature) ||
       !verifyObject({ ...signed, responseHash }, value.transportSignature,
-        context.transport.publicKey, VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN) ||
-      !canonicalSignature(value.consensusSignature) ||
-      !verifyObject({ ...signed, responseHash, transportSignature: value.transportSignature },
-        value.consensusSignature, context.candidate.publicKey,
+        context.transport.publicKey, VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN)) {
+    throw new Error("validator admission readiness candidate transport response is invalid");
+  }
+  return structuredClone(value);
+}
+
+export function verifyValidatorAdmissionReadinessCandidateResponse(value, { validators } = {}) {
+  exact(value, ["challenge", "challengeHash", "consensusSignature", "context", "contextHash",
+    "format", "observer", "responseHash", "transportAddress", "transportSignature", "version"],
+  "validator admission readiness candidate response");
+  const { consensusSignature, ...transportValue } = value;
+  const transportResponse = verifyValidatorAdmissionReadinessCandidateTransportResponse(
+    transportValue, { validators });
+  const signed = candidateResponsePayload(transportResponse.context, transportResponse.challenge);
+  if (!canonicalSignature(consensusSignature) ||
+      !verifyObject({ ...signed, responseHash: transportResponse.responseHash,
+        transportSignature: transportResponse.transportSignature },
+        consensusSignature, transportResponse.context.candidate.publicKey,
         VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN)) {
     throw new Error("validator admission readiness candidate response is invalid");
   }
