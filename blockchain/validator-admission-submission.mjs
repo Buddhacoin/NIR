@@ -9,6 +9,8 @@ import { canonicalJson, hashObject } from "./crypto.mjs";
 import { requestJson, requestValidatorJson } from "./http-client.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
 import { verifyValidatorAdmission } from "./validator-admission.mjs";
+import { validateValidatorAdmissionPublicPlan }
+  from "./validator-admission-public-plan.mjs";
 import { verifyValidatorAdmissionSubmissionAck }
   from "./validator-admission-submission-ack.mjs";
 import { verifyValidatorAdmissionSubmissionReceipt }
@@ -18,7 +20,6 @@ import { MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES, MAX_VALIDATOR_CANDIDATE_SYNC_INP
   validateValidatorCandidateSyncInput } from "./validator-candidate-context.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
-const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_PACKAGE_BYTES = MAX_VALIDATOR_CANDIDATE_CONTEXT_BYTES + 1024 * 1024;
 const MAX_ATTEMPTS = 64;
@@ -198,20 +199,7 @@ function releaseSubmissionLock(lock) {
 }
 
 function validatePublicPlan(value) {
-  exact(value, ["candidateContextMaxWitnessAgeMs", "candidateContextMinimumCheckpointHeight",
-    "candidateContextMinimumSequence", "consensus", "endpoint", "expectedChainIdentityGenesisHash",
-    "expectedCheckpointPolicyId", "format", "networkId", "operatorId", "planCommitment",
-    "tlsCertificateSha256", "transport", "version"], "validator admission public plan");
-  const { format: _format, planCommitment, version: _version, ...payload } = value;
-  if (value.format !== "nir-validator-admission-public-plan-v1" || value.version !== 1 ||
-      !HASH.test(value.expectedChainIdentityGenesisHash ?? "") ||
-      !TAGGED_HASH.test(value.expectedCheckpointPolicyId ?? "") ||
-      !HASH.test(value.tlsCertificateSha256 ?? "") ||
-      !ADDRESS.test(value.consensus?.address ?? "") || !ADDRESS.test(value.transport?.address ?? "") ||
-      planCommitment !== hashObject(payload, "VALIDATOR_ADMISSION_PLAN_V1")) {
-    throw new Error("validator admission public plan is invalid");
-  }
-  return structuredClone(value);
+  return validateValidatorAdmissionPublicPlan(value);
 }
 
 function validatePackage(value, plan) {
