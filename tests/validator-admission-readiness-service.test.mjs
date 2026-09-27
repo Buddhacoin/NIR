@@ -12,6 +12,8 @@ import { canonicalJson, generateWallet, hashObject, publicWallet, signObject }
 import {
   createValidatorAdmissionReadinessChallenge,
   createValidatorAdmissionReadinessContext,
+  VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN,
+  VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN,
   VALIDATOR_ADMISSION_READINESS_CHALLENGE_DOMAIN,
   verifyValidatorAdmissionReadinessCandidateResponse,
 } from "../blockchain/validator-admission-readiness-auth.mjs";
@@ -61,10 +63,14 @@ function fixture() {
 }
 
 function signer(wallet, calls, label, implementation = null) {
-  return { ...publicWallet(wallet), sign: async (payload, domain, options) => {
+  const method = label === "transport" ? "signReadinessTransport" : "signReadinessConsensus";
+  const domain = label === "transport"
+    ? VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN
+    : VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN;
+  return { ...publicWallet(wallet), [method]: async ({ signal, signingInput }) => {
     calls.push(label);
-    if (implementation) return implementation(payload, domain, options);
-    return signObject(payload, wallet, domain);
+    if (implementation) return implementation(signingInput, domain, { signal });
+    return signObject(signingInput, wallet, domain);
   } };
 }
 

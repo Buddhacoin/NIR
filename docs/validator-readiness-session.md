@@ -42,4 +42,6 @@ Three derived envelopes have distinct formats and hash domains:
 
 A consumer verifies both the embedded session and its expected role. A package issued for one role
 cannot be relabeled for another role. These envelopes define the data boundary only; they do not
-implement IPC, process launching, vault access, or a generic signing API.
+implement process launching or vault access. The separate readiness signer IPC consumes these
+packages through role-specific, bounded channels; see `validator-readiness-signer-ipc.md`. It has no
+generic signing command and does not by itself establish process isolation.

@@ -179,11 +179,35 @@ function candidateResponsePayload(context, challenge) {
     observer: challenge.observer, transportAddress: context.transport.address, version: 1 };
 }
 
-export function createValidatorAdmissionReadinessCandidateResponse({ challenge, context,
-  candidateWallet, transportWallet, validators } = {}) {
+export function validatorAdmissionReadinessTransportSigningInput({ challenge, context,
+  validators } = {}) {
   const verifiedContext = verifyValidatorAdmissionReadinessContext(context);
   const verifiedChallenge = verifyValidatorAdmissionReadinessChallenge(challenge,
     { context: verifiedContext, validators });
+  const signed = candidateResponsePayload(verifiedContext, verifiedChallenge);
+  const responseHash = hashObject({ challenge: verifiedChallenge, context: verifiedContext,
+    ...signed }, "VALIDATOR_READY_RESPONSE_HASH_V1");
+  return { challenge: verifiedChallenge, context: verifiedContext, responseHash,
+    signingInput: { ...signed, responseHash } };
+}
+
+export function validatorAdmissionReadinessConsensusSigningInput({ transportResponse,
+  validators } = {}) {
+  const verifiedTransportResponse = verifyValidatorAdmissionReadinessCandidateTransportResponse(
+    transportResponse, { validators });
+  const signed = candidateResponsePayload(verifiedTransportResponse.context,
+    verifiedTransportResponse.challenge);
+  return { signingInput: { ...signed, responseHash: verifiedTransportResponse.responseHash,
+    transportSignature: verifiedTransportResponse.transportSignature },
+  transportResponse: verifiedTransportResponse };
+}
+
+export function createValidatorAdmissionReadinessCandidateResponse({ challenge, context,
+  candidateWallet, transportWallet, validators } = {}) {
+  const prepared = validatorAdmissionReadinessTransportSigningInput({ challenge, context,
+    validators });
+  const verifiedContext = prepared.context;
+  const verifiedChallenge = prepared.challenge;
   if (transportWallet?.address !== verifiedContext.transport.address ||
       transportWallet?.publicKey !== verifiedContext.transport.publicKey) {
     throw new Error("validator admission readiness transport wallet is mismatched");
@@ -192,17 +216,15 @@ export function createValidatorAdmissionReadinessCandidateResponse({ challenge, 
       candidateWallet?.publicKey !== verifiedContext.candidate.publicKey) {
     throw new Error("validator admission readiness consensus wallet is mismatched");
   }
-  const signed = candidateResponsePayload(verifiedContext, verifiedChallenge);
-  const responseHash = hashObject({ challenge: verifiedChallenge, context: verifiedContext,
-    ...signed }, "VALIDATOR_READY_RESPONSE_HASH_V1");
-  const transportSignature = signObject({ ...signed, responseHash }, transportWallet,
+  const transportSignature = signObject(prepared.signingInput, transportWallet,
     VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN);
   const transportResponse = verifyValidatorAdmissionReadinessCandidateTransportResponse({
-    challenge: verifiedChallenge, context: verifiedContext, ...signed, responseHash,
+    challenge: verifiedChallenge, context: verifiedContext, ...prepared.signingInput,
     transportSignature,
   }, { validators });
-  return { ...transportResponse, consensusSignature: signObject({ ...signed, responseHash,
-    transportSignature }, candidateWallet,
+  const consensus = validatorAdmissionReadinessConsensusSigningInput({ transportResponse,
+    validators });
+  return { ...transportResponse, consensusSignature: signObject(consensus.signingInput, candidateWallet,
   VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN) };
 }
 
