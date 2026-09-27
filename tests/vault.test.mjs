@@ -8,7 +8,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { generateWallet } from "../blockchain/crypto.mjs";
-import { createMultisigRecoveryManifest, decryptWallet, encryptWallet } from "../blockchain/vault.mjs";
+import {
+  createMultisigRecoveryManifest, decryptWallet, encryptedVaultPublicCommitment, encryptWallet,
+} from "../blockchain/vault.mjs";
 import { createVaultSet, verifyVaultSet } from "../blockchain/vault-files.mjs";
 import {
   createVerifiedWalletBackup,
@@ -47,6 +49,31 @@ test("vault parsing rejects malformed and oversized cryptographic fields", () =>
     const malformed = structuredClone(vault);
     mutate(malformed);
     assert.throws(() => decryptWallet(malformed, password), /integrity check is invalid/);
+  }
+});
+
+test("public vault commitments validate the complete encrypted vault without exposing it", () => {
+  const vault = encryptWallet(generateWallet(), "public-commitment-test-password", {
+    label: "Consensus signer",
+  });
+  const commitment = encryptedVaultPublicCommitment(vault);
+  assert.deepEqual(Object.keys(commitment).sort(),
+    ["address", "algorithm", "publicKey", "vaultHash"]);
+  assert.equal(JSON.stringify(commitment).includes("ciphertext"), false);
+  assert.match(commitment.vaultHash, /^sha3-256:[0-9a-f]{64}$/);
+
+  const relabelled = structuredClone(vault); relabelled.label = "Consensus backup";
+  assert.notEqual(encryptedVaultPublicCommitment(relabelled).vaultHash, commitment.vaultHash);
+  for (const mutate of [
+    (copy) => { copy.extra = true; },
+    (copy) => { copy.kdf.extra = true; },
+    (copy) => { copy.cipher.extra = true; },
+    (copy) => { copy.algorithm = "ed25519"; },
+    (copy) => { copy.cipher.iv = `${copy.cipher.iv}=`; },
+    (copy) => { copy.cipher.ciphertext = Buffer.alloc(16_385).toString("base64"); },
+  ]) {
+    const malformed = structuredClone(vault); mutate(malformed);
+    assert.throws(() => encryptedVaultPublicCommitment(malformed));
   }
 });
 

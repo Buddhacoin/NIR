@@ -1,6 +1,7 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createPublicKey,
   randomBytes,
   scryptSync,
 } from "node:crypto";
@@ -18,6 +19,7 @@ import { SIGNATURE_ALGORITHM } from "./constants.mjs";
 const KDF = Object.freeze({ name: "scrypt", N: 32768, r: 8, p: 1 });
 const PASSWORD_MINIMUM = 16;
 const PASSWORD_MAXIMUM_BYTES = 1_024;
+const MAX_SERIALIZED_VAULT_BYTES = 64 * 1024;
 const DISPLAY_CONTROL = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
 function validPassword(password, { creation = false } = {}) {
@@ -30,13 +32,14 @@ function validPassword(password, { creation = false } = {}) {
 }
 
 function exactKeys(value, expected) {
-  return value && typeof value === "object" && !Array.isArray(value) &&
+  return value && Object.getPrototypeOf(value) === Object.prototype &&
     Object.keys(value).sort().join("\0") === [...expected].sort().join("\0");
 }
 
 function decodeBase64(value, field, minimum, maximum) {
   if (typeof value !== "string" || value.length === 0 || value.length > maximum * 2 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+      value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value) ||
+      value.slice(0, -2).includes("=")) {
     throw new Error(`${field} is not canonical base64`);
   }
   const decoded = Buffer.from(value, "base64");
@@ -55,7 +58,17 @@ function validateMetadata(vault) {
       !/^nir1[0-9a-f]{64}$/.test(vault.address ?? "")) {
     throw new Error("unsupported vault metadata");
   }
-  decodeBase64(vault.publicKey, "vault public key", 1, 4_000);
+  const publicKeyBytes = decodeBase64(vault.publicKey, "vault public key", 1, 4_000);
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: publicKeyBytes, type: "spki", format: "der" });
+  } catch {
+    throw new Error("vault public key is not valid ML-DSA-65");
+  }
+  if (publicKey.asymmetricKeyType !== SIGNATURE_ALGORITHM ||
+      !publicKey.export({ type: "spki", format: "der" }).equals(publicKeyBytes)) {
+    throw new Error("vault public key is not valid ML-DSA-65");
+  }
   if (addressFromPublicKey(vault.publicKey) !== vault.address) {
     throw new Error("vault address does not match its public key");
   }
@@ -66,6 +79,19 @@ function validateSerializedVault(vault) {
     throw new Error("unsupported vault schema");
   }
   validateMetadata(vaultMetadata(vault, vault.label));
+  if (!exactKeys(vault.kdf, ["N", "name", "p", "r", "salt"]) ||
+      !exactKeys(vault.cipher, ["ciphertext", "iv", "name", "tag"]) ||
+      vault.kdf.name !== "scrypt" || vault.kdf.N !== KDF.N || vault.kdf.r !== KDF.r ||
+      vault.kdf.p !== KDF.p || vault.cipher.name !== "aes-256-gcm") {
+    throw new Error("unsupported vault cryptography");
+  }
+  decodeBase64(vault.kdf.salt, "vault salt", 32, 32);
+  decodeBase64(vault.cipher.iv, "vault IV", 12, 12);
+  decodeBase64(vault.cipher.tag, "vault authentication tag", 16, 16);
+  decodeBase64(vault.cipher.ciphertext, "vault ciphertext", 1, 16_384);
+  if (Buffer.byteLength(canonicalJson(vault)) > MAX_SERIALIZED_VAULT_BYTES) {
+    throw new Error("encrypted vault is too large");
+  }
 }
 
 function vaultMetadata(wallet, label) {
@@ -174,6 +200,17 @@ export function decryptWallet(vault, password) {
     plaintext?.fill(0);
     parsed?.ciphertext.fill(0);
   }
+}
+
+/** Validate without decryption and expose only the public identity plus a full-vault commitment. */
+export function encryptedVaultPublicCommitment(vault) {
+  validateSerializedVault(vault);
+  return {
+    address: vault.address,
+    algorithm: vault.algorithm,
+    publicKey: vault.publicKey,
+    vaultHash: `sha3-256:${hashObject(vault, "VALIDATOR_READY_ENCRYPTED_VAULT_V1")}`,
+  };
 }
 
 export function createMultisigRecoveryManifest({ vaults, threshold, label = "NIR recovery plan" }) {

@@ -64,6 +64,7 @@ The isolated roles create `createValidatorReadinessTransportSignerEndpoint` or
 rejected.
 
 This module proves protocol separation and in-memory channel behavior. It is not process isolation.
-Production use remains blocked until the trusted launcher, inherited-descriptor bootstrap,
-role-specific vault opening, process cleanup, and authenticated current-height source are wired and
-audited.
+The canonical bootstrap, height-update, and signer READY package formats are specified separately
+in [validator-readiness-process-bootstrap.md](validator-readiness-process-bootstrap.md). Production
+use remains blocked until the trusted launcher, inherited descriptors, role-specific vault opening,
+process cleanup, and authenticated current-height source are wired and audited.
