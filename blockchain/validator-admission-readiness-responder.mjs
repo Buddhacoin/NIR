@@ -1,16 +1,14 @@
-import { hashObject } from "./crypto.mjs";
 import {
-  VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN,
-  VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN,
   verifyValidatorAdmissionReadinessCandidateResponse,
   verifyValidatorAdmissionReadinessCandidateTransportResponse,
-  verifyValidatorAdmissionReadinessChallenge,
-  verifyValidatorAdmissionReadinessContext,
+  validatorAdmissionReadinessConsensusSigningInput,
+  validatorAdmissionReadinessTransportSigningInput,
 } from "./validator-admission-readiness-auth.mjs";
 
 function assertSigner(signer, identity, label) {
+  const narrow = label === "transport" ? "signReadinessTransport" : "signReadinessConsensus";
   if (!signer || signer.address !== identity.address || signer.algorithm !== identity.algorithm ||
-      signer.publicKey !== identity.publicKey || typeof signer.sign !== "function") {
+      signer.publicKey !== identity.publicKey || typeof signer[narrow] !== "function") {
     throw new Error(`validator admission readiness ${label} signer is mismatched`);
   }
 }
@@ -22,12 +20,12 @@ function aborted(signal) {
   }
 }
 
-function signWithAbort(signer, payload, domain, signal) {
+function signWithAbort(operation, signal) {
   aborted(signal);
-  let operation;
-  try { operation = Promise.resolve(signer.sign(structuredClone(payload), domain, { signal })); }
-  catch (error) { operation = Promise.reject(error); }
-  if (signal === null) return operation;
+  let result;
+  try { result = Promise.resolve(operation()); }
+  catch (error) { result = Promise.reject(error); }
+  if (signal === null) return result;
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (callback, value) => {
@@ -40,7 +38,7 @@ function signWithAbort(signer, payload, domain, signal) {
       : new Error("validator admission readiness response was aborted"));
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
-    operation.then((value) => finish(resolve, value), (error) => finish(reject, error));
+    result.then((value) => finish(resolve, value), (error) => finish(reject, error));
   });
 }
 
@@ -61,31 +59,27 @@ export async function respondToValidatorAdmissionReadinessChallenge({
       typeof signal.addEventListener !== "function" || typeof signal.aborted !== "boolean")) {
     throw new Error("validator admission readiness response abort signal is invalid");
   }
-  const verifiedContext = verifyValidatorAdmissionReadinessContext(context);
-  const verifiedChallenge = verifyValidatorAdmissionReadinessChallenge(challenge, {
-    context: verifiedContext, validators,
-  });
+  const prepared = validatorAdmissionReadinessTransportSigningInput({ challenge, context,
+    validators });
+  const verifiedContext = prepared.context;
+  const verifiedChallenge = prepared.challenge;
   assertSigner(transportSigner, verifiedContext.transport, "transport");
   assertSigner(consensusSigner, verifiedContext.candidate, "consensus");
   aborted(signal);
 
-  const signed = { challengeHash: verifiedChallenge.challengeHash,
-    contextHash: verifiedContext.contextHash,
-    format: "nir-validator-admission-readiness-candidate-response-v1",
-    observer: verifiedChallenge.observer,
-    transportAddress: verifiedContext.transport.address, version: 1 };
-  const responseHash = hashObject({ challenge: verifiedChallenge, context: verifiedContext,
-    ...signed }, "VALIDATOR_READY_RESPONSE_HASH_V1");
-  const transportSignature = await signWithAbort(transportSigner, { ...signed, responseHash },
-    VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN, signal);
+  const transportSignature = await signWithAbort(() => transportSigner.signReadinessTransport({
+    challenge: verifiedChallenge, signal, signingInput: structuredClone(prepared.signingInput),
+  }), signal);
   aborted(signal);
   const transportResponse = verifyValidatorAdmissionReadinessCandidateTransportResponse({
-    challenge: verifiedChallenge, context: verifiedContext, ...signed, responseHash,
+    challenge: verifiedChallenge, context: verifiedContext, ...prepared.signingInput,
     transportSignature,
   }, { validators });
-  const consensusSignature = await signWithAbort(consensusSigner, { ...signed, responseHash,
-    transportSignature: transportResponse.transportSignature },
-  VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN, signal);
+  const consensus = validatorAdmissionReadinessConsensusSigningInput({ transportResponse,
+    validators });
+  const consensusSignature = await signWithAbort(() => consensusSigner.signReadinessConsensus({
+    signal, signingInput: structuredClone(consensus.signingInput), transportResponse,
+  }), signal);
   aborted(signal);
   return verifyValidatorAdmissionReadinessCandidateResponse({ ...transportResponse,
     consensusSignature }, { validators });

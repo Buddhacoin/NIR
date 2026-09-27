@@ -61,7 +61,11 @@ or socket disconnect aborts active signer work without attempting a late respons
 
 The service accepts narrow transport and consensus signer interfaces; it has no wallet, validator
 join, node service, filesystem path, or vault dependency. Actual secret storage and process wiring
-remain deployment responsibilities outside this runtime boundary. The public collector similarly
+remain deployment responsibilities outside this runtime boundary. The local readiness signer IPC
+implements the two role-specific interfaces with canonical bounded framing, pinned session packages,
+exactly-once semantic operation ledgers, independent challenge/signature verification, and trusted
+height expiry. It still requires a separately audited production launcher and isolated vault-owning
+processes. The public collector similarly
 receives only cloned public context, peer, and validator data and cannot activate readiness. A
 collected certificate still requires a separate consensus transaction slice before it can affect
 the admission queue.
