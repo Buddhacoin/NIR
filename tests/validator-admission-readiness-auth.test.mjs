@@ -83,7 +83,7 @@ test("readiness context and dual-signed live response are exact and domain bound
   const mutatedTransport = structuredClone(response);
   mutatedTransport.transportSignature = response.challenge.signature;
   assert.throws(() => verifyValidatorAdmissionReadinessCandidateResponse(mutatedTransport, {
-    validators: values.validators }), /candidate response/);
+    validators: values.validators }), /candidate transport response/);
   const mutatedConsensus = structuredClone(response);
   mutatedConsensus.consensusSignature = response.transportSignature;
   assert.throws(() => verifyValidatorAdmissionReadinessCandidateResponse(mutatedConsensus, {
@@ -102,7 +102,7 @@ test("a candidate response cannot be replayed under a fresh observer challenge",
   const replay = { ...structuredClone(first), challenge: freshChallenge,
     challengeHash: freshChallenge.challengeHash };
   assert.throws(() => verifyValidatorAdmissionReadinessCandidateResponse(replay, {
-    validators: values.validators }), /candidate response/);
+    validators: values.validators }), /candidate transport response/);
 });
 
 test("receipts and the certificate require one canonical exact quorum", () => {

@@ -47,8 +47,24 @@ attestations, and has status `certificate-collected`. Every challenge, receipt, 
 path recomputes the validator-set ID from the supplied normalized active validators and requires it
 to match the checkpoint commitment. Creating or verifying these artifacts is
 read-only: it does not set the queued admission's readiness flag, consume its nonce, submit a
-transaction, or claim selection or activation. Network collection and candidate/validator runtime
-services are separate slices.
+transaction, or claim selection or activation.
+
+The candidate runtime exposes only `POST /v1/validator-admission/readiness/challenge` over TLS 1.3.
+It accepts bounded, exact-schema, canonical JSON with an explicit content length, verifies the
+checkpoint context, the active-observer challenge, and the service certificate against the
+admission's TLS pin before signing, and returns the transport-signed then
+candidate-consensus-signed response. Replays, a second active request for the same
+context/observer, oversized or slow bodies, and requests outside the fixed method/path are rejected.
+Ingress and signer work are independently time-bounded and rate-limited. The transport signature
+is bounded and cryptographically verified before the consensus signer can be invoked, and a client
+or socket disconnect aborts active signer work without attempting a late response write.
+
+The service accepts narrow transport and consensus signer interfaces; it has no wallet, validator
+join, node service, filesystem path, or vault dependency. Actual secret storage and process wiring
+remain deployment responsibilities outside this runtime boundary. The public collector similarly
+receives only cloned public context, peer, and validator data and cannot activate readiness. A
+collected certificate still requires a separate consensus transaction slice before it can affect
+the admission queue.
 
 ## Protocol v32 admission lifetime
 
