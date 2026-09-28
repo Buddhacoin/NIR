@@ -29,6 +29,32 @@ test("an encrypted vault restores the exact post-quantum wallet", () => {
   assert.deepEqual(decryptWallet(vault, "a-long-unique-test-password"), wallet);
 });
 
+test("vault decryption accepts caller-owned password bytes without converting them to text", () => {
+  const wallet = generateWallet();
+  const text = "byte-native-vault-password";
+  const vault = encryptWallet(wallet, text);
+  const password = Buffer.from(text, "utf8");
+  const before = Buffer.from(password);
+  assert.deepEqual(decryptWallet(vault, password), wallet);
+  assert.deepEqual(password, before);
+  password.fill(0);
+
+  for (const invalid of [Buffer.from("short"), Buffer.from("wrong-password-long"),
+    Buffer.from("control\npassword-long"), Buffer.alloc(1_025, 0x61)]) {
+    const beforeInvalid = Buffer.from(invalid);
+    let message;
+    assert.throws(() => decryptWallet(vault, invalid), (error) => {
+      message = error.message; return /integrity check is invalid/.test(error.message);
+    });
+    assert.equal(message, "vault password, contents, or integrity check is invalid");
+    assert.deepEqual(invalid, beforeInvalid);
+    beforeInvalid.fill(0);
+    invalid.fill(0);
+  }
+  const source = readFileSync(new URL("../blockchain/vault.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /password\.(?:toString|toLocaleString)\s*\(/);
+});
+
 test("wrong passwords and modified vaults fail with the same closed error", () => {
   const vault = encryptWallet(generateWallet(), "another-long-test-password");
   assert.throws(() => decryptWallet(vault, "wrong-password-long-enough"), /integrity check is invalid/);

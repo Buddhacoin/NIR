@@ -23,6 +23,13 @@ const MAX_SERIALIZED_VAULT_BYTES = 64 * 1024;
 const DISPLAY_CONTROL = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
 function validPassword(password, { creation = false } = {}) {
+  if (!creation && Buffer.isBuffer(password)) {
+    if (password.length < 12 || password.length > PASSWORD_MAXIMUM_BYTES) return false;
+    for (const byte of password) {
+      if (byte <= 0x1f || byte === 0x7f) return false;
+    }
+    return true;
+  }
   const minimum = creation ? PASSWORD_MINIMUM : 12;
   if (typeof password !== "string" || [...password].length < minimum ||
       Buffer.byteLength(password) > PASSWORD_MAXIMUM_BYTES || DISPLAY_CONTROL.test(password)) return false;
@@ -166,6 +173,8 @@ export function decryptWallet(vault, password) {
     structurallyValid = false;
   }
   const salt = parsed?.salt ?? Buffer.alloc(32);
+  // A Buffer supplied by an isolated runtime stays byte-native through the KDF. The caller owns
+  // that Buffer and is responsible for clearing it immediately after this synchronous call.
   const key = scryptSync(structurallyValid ? password : "invalid-vault-password-padding", salt, 32, {
       N: KDF.N, r: KDF.r, p: KDF.p, maxmem: 64 * 1024 * 1024,
   });
