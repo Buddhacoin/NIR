@@ -23,6 +23,10 @@ const READY_FORMATS = Object.freeze({
   consensus: "nir-validator-readiness-consensus-process-ready-v1",
   transport: "nir-validator-readiness-transport-process-ready-v1",
 });
+export const VALIDATOR_READINESS_CONSENSUS_PROCESS_READY_SIGNATURE_DOMAIN =
+  "VR_CONS_PROCESS_READY_SIG_V1";
+export const VALIDATOR_READINESS_TRANSPORT_PROCESS_READY_SIGNATURE_DOMAIN =
+  "VR_TRANS_PROCESS_READY_SIG_V1";
 // The conventional name lets the conformance inventory enumerate fixed domains used via role maps.
 const domains = {
   bootstrap: {
@@ -39,8 +43,8 @@ const domains = {
     transport: "VR_TRANS_PROCESS_READY_HASH_V1",
   },
   readySignature: {
-    consensus: "VR_CONS_PROCESS_READY_SIG_V1",
-    transport: "VR_TRANS_PROCESS_READY_SIG_V1",
+    consensus: VALIDATOR_READINESS_CONSENSUS_PROCESS_READY_SIGNATURE_DOMAIN,
+    transport: VALIDATOR_READINESS_TRANSPORT_PROCESS_READY_SIGNATURE_DOMAIN,
   },
 };
 const LIMIT_FIELDS = Object.freeze([
@@ -413,6 +417,48 @@ export function createValidatorReadinessSignerReady({ bootstrap, pid, wallet } =
   const readyHash = tagged(payload, domains.readyHash[expectedRole]);
   return { ...payload, readyHash, signature: signObject({ ...payload, readyHash }, wallet,
     domains.readySignature[expectedRole]) };
+}
+
+export function createValidatorReadinessSignerReadyWithCapability({ bootstrap, pid, signer } = {},
+  { now = Date.now() } = {}) {
+  const expectedRole = role(bootstrap?.role);
+  const pinned = verifySignerBootstrapEnvelope(bootstrap, expectedRole, now);
+  const identity = signerIdentity(pinned.rolePackage.session, expectedRole);
+  const operationMethod = expectedRole === "transport" ? "signReadinessTransportInput"
+    : "signReadinessConsensusInput";
+  const capabilityFields = ["address", "algorithm", "publicKey", operationMethod,
+    "signValidatorReadinessReadyInput"].sort();
+  const descriptors = signer && Object.getOwnPropertyDescriptors(signer);
+  const publicDescriptorsAreData = ["address", "algorithm", "publicKey"].every((field) =>
+    descriptors?.[field] && Object.hasOwn(descriptors[field], "value") &&
+    descriptors[field].enumerable === true && descriptors[field].writable === false &&
+    descriptors[field].configurable === false);
+  const methodDescriptorsAreData = [operationMethod, "signValidatorReadinessReadyInput"]
+    .every((field) => descriptors?.[field] && Object.hasOwn(descriptors[field], "value") &&
+      descriptors[field].enumerable === false && descriptors[field].writable === false &&
+      descriptors[field].configurable === false);
+  if (!signer || Object.getPrototypeOf(signer) !== null || !Object.isFrozen(signer) ||
+      Reflect.ownKeys(signer).some((key) => typeof key !== "string") ||
+      Reflect.ownKeys(signer).sort().join("\0") !== capabilityFields.join("\0") ||
+      !publicDescriptorsAreData || !methodDescriptorsAreData ||
+      !same(identity, { address: signer.address, algorithm: signer.algorithm,
+        publicKey: signer.publicKey }) || typeof signer[operationMethod] !== "function" ||
+      typeof signer.signValidatorReadinessReadyInput !== "function") {
+    throw new Error(`validator readiness ${expectedRole} ready signer capability is invalid`);
+  }
+  const payload = readyPayload({ address: identity.address, bootstrapHash: pinned.bootstrapHash,
+    format: READY_FORMATS[expectedRole], launcherNonce: pinned.launcherNonce, pid,
+    processNonce: randomBytes(32).toString("hex"),
+    releaseProvenanceHash: pinned.releaseProvenanceHash, role: expectedRole,
+    rolePackageHash: pinned.rolePackageHash, sessionHash: pinned.sessionHash,
+    vaultHash: pinned.vaultCommitment.vaultHash, version: 1 }, pinned, expectedRole, now);
+  const readyHash = tagged(payload, domains.readyHash[expectedRole]);
+  const signature = signer.signValidatorReadinessReadyInput({ ...payload, readyHash });
+  if (typeof signature !== "string" || !verifyObject({ ...payload, readyHash }, signature,
+    identity.publicKey, domains.readySignature[expectedRole])) {
+    throw new Error(`validator readiness ${expectedRole} ready signer capability failed`);
+  }
+  return { ...payload, readyHash, signature };
 }
 
 export function verifyValidatorReadinessSignerReady(value, { bootstrap, expectedRole,
