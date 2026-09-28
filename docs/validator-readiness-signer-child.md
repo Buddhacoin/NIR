@@ -1,9 +1,8 @@
 # Validator readiness signer child protocol
 
-This layer defines the secret-input and canonical control packages required by the first isolated
-readiness signer process. It does not spawn a process, open a vault path, start a network listener,
-or implement the child lifecycle. A later runtime must use only inherited numeric descriptors and
-the verified values returned here.
+This layer defines the secret-input and canonical control packages used by the isolated readiness
+signer process. The concrete inherited-descriptor lifecycle is documented in
+[validator-readiness-signer-child-runtime.md](validator-readiness-signer-child-runtime.md).
 
 ## Byte-native password input
 
@@ -59,11 +58,12 @@ to accept a different activation. Because protocol verification is deliberately 
 child runtime must accept exactly one activation command: a replay of even the same valid command
 after activation is a fatal state-machine violation and must never produce a second ACK.
 
-## Framing and remaining runtime work
+## Framing and runtime boundary
 
 Signer-child packages use the shared four-byte big-endian canonical JSON framing with a 4 MiB body
-limit. Fragmented and coalesced frames are supported; partial EOF poisons the decoder. The next
-increment must implement the fixed role dispatcher, inherited FD map, READY-before-activation state
-machine, pre-activation data rejection, chained height control, fixed-code fatal reporting, and
-teardown. No signer endpoint may be created and no request byte may be accepted before activation
-has been verified and its ACK has been written successfully.
+limit. Fragmented frames are supported; partial EOF poisons the decoder. The runtime now implements
+the fixed role dispatcher, inherited FD map, READY-before-activation state machine,
+pre-activation data rejection, chained height control, fixed-code fatal reporting, and teardown.
+No signer endpoint is created and no request byte is accepted before activation has been verified
+and its ACK has been written successfully. Process spawning and whole-cohort supervision remain the
+trusted launcher's responsibility.

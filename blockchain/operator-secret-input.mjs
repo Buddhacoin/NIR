@@ -1,4 +1,5 @@
 import { closeSync, createReadStream, fstatSync, readSync } from "node:fs";
+import { Socket } from "node:net";
 import process from "node:process";
 
 const MAX_PASSWORD_BYTES = 1_024;
@@ -139,13 +140,17 @@ export async function readOneTimePasswordFd(descriptor, label, options = {}) {
   }
   let stream;
   try {
-    stream = createReadStream(null,
-      { autoClose: false, fd: descriptor, highWaterMark: 256 });
+    stream = metadata.isSocket()
+      ? new Socket({ fd: descriptor, readable: true, writable: false })
+      : createReadStream(null, { autoClose: true, fd: descriptor, highWaterMark: 256 });
   } catch (error) {
     closeDescriptor(descriptor); throw error;
   }
   try { return await readBoundedOneTimePasswordStream(stream, label, options); }
-  finally { if (!stream.destroyed) stream.destroy(); closeDescriptor(descriptor); }
+  finally {
+    if (!stream.destroyed) stream.destroy();
+    if (!stream.closed) await new Promise((resolve) => stream.once("close", resolve));
+  }
 }
 
 export function readRestrictedPasswordFd(descriptor, label) {

@@ -27,7 +27,7 @@ const members = (wallets, prefix) => wallets.map((wallet, index) => ({
   ...publicWallet(wallet), operatorId: `${prefix}-${index}`,
 }));
 
-export function validatorReadinessSignerFixture() {
+export function validatorReadinessSignerFixture({ now = READINESS_SIGNER_NOW } = {}) {
   const networkId = "nir-readiness-signer-test";
   const validatorWallets = Array.from({ length: 4 }, generateWallet);
   const validators = members(validatorWallets, "validator");
@@ -63,7 +63,7 @@ export function validatorReadinessSignerFixture() {
     generation: 1, networkId, threshold: 3, witnesses: members(witnesses, "witness") });
   const attestations = witnesses.slice(0, 3).map((wallet, index) =>
     createCheckpointWitnessAttestation({ finalityProof,
-      observedAt: READINESS_SIGNER_NOW - 1_000 + index, operatorId: `witness-${index}`,
+      observedAt: now - 1_000 + index, operatorId: `witness-${index}`,
       policy, sequence: 8, validators, wallet }));
   const checkpointTrustPackage = assembleCheckpointTrustPackage({ attestations, finalityProof,
     policy, sequence: 8, validators });
@@ -91,15 +91,15 @@ export function validatorReadinessSignerFixture() {
   const signedRelease = signReleaseManifest({ ...releasePayload,
     manifestHash: hashObject(releasePayload, "RELEASE_MANIFEST_HASH") }, releaseSigner);
   const session = createValidatorReadinessSession({ checkpointTrustPackage, context,
-    expiresAt: READINESS_SIGNER_NOW + 30_000, issuedAt: READINESS_SIGNER_NOW, joinPlan,
+    expiresAt: now + 30_000, issuedAt: now, joinPlan,
     signedRelease, trustedReleaseAddress: releaseSigner.address,
-    validators: checkpointTrustPackage.validators }, { now: READINESS_SIGNER_NOW });
+    validators: checkpointTrustPackage.validators }, { now });
   const gatewayRolePackage = createValidatorReadinessRolePackage(session, "gateway",
-    { now: READINESS_SIGNER_NOW });
+    { now });
   const transportRolePackage = createValidatorReadinessRolePackage(session, "transport",
-    { now: READINESS_SIGNER_NOW });
+    { now });
   const consensusRolePackage = createValidatorReadinessRolePackage(session, "consensus",
-    { now: READINESS_SIGNER_NOW });
+    { now });
   const challenge = createValidatorAdmissionReadinessChallenge({
     challengeNonce: "f".repeat(64), context, observerWallet: validatorWallets[0], validators,
   });
