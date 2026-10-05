@@ -6,6 +6,7 @@ import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { connect as tlsConnect } from "node:tls";
 
 import { canonicalJson, generateWallet, hashObject, publicWallet, signObject }
   from "../blockchain/crypto.mjs";
@@ -111,6 +112,23 @@ function request(base, { body = null, headers = {}, method = "POST",
   });
 }
 
+function rawTlsRequest(base, bytes) {
+  const endpoint = new URL(base);
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const socket = tlsConnect({ host: endpoint.hostname, port: Number(endpoint.port),
+      rejectUnauthorized: false }, () => socket.write(bytes));
+    const timer = setTimeout(() => {
+      socket.destroy(); reject(new Error("raw TLS response timed out"));
+    }, 1_000);
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("error", reject);
+    socket.on("close", () => {
+      clearTimeout(timer); resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+  });
+}
+
 test("pure responder verifies before sequential transport and consensus signing", async () => {
   const values = fixture(); const calls = [];
   const options = { challenge: values.challenge, context: values.context,
@@ -168,6 +186,75 @@ test("HTTPS responder is TLS 1.3 only, canonical, fixed-path, and replay safe", 
     await assert.rejects(() => request(base, { body: payload, maxVersion: "TLSv1.2",
       minVersion: "TLSv1.2" }), /protocol|tlsv1 alert/i);
   } finally { await close(server); }
+});
+
+test("production activation gate rejects before body parsing and opens exactly once", async () => {
+  const values = fixture(); const calls = [];
+  const server = createValidatorAdmissionReadinessServer({
+    consensusSigner: signer(values.candidate, calls, "consensus"),
+    transportSigner: signer(values.transport, calls, "transport"),
+    validators: values.validators,
+  }, { active: false, tls });
+  const base = await listen(server);
+  try {
+    const ingressBefore = server.validatorAdmissionReadinessMetrics().httpIngress;
+    const raw = await rawTlsRequest(base,
+      `POST ${VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH} HTTP/1.1\r\n` +
+      "Host: 127.0.0.1\r\nContent-Type: application/json\r\n" +
+      "Content-Length: 999999999\r\nConnection: keep-alive\r\n\r\n");
+    assert.match(raw, /^HTTP\/1\.1 503 /);
+    assert.match(raw.toLowerCase(), /connection: close/);
+    assert.deepEqual(server.validatorAdmissionReadinessMetrics().httpIngress, ingressBefore);
+    assert.deepEqual(calls, []);
+    const before = await request(base, { body: "not-canonical-or-json" });
+    assert.equal(before.status, 503);
+    assert.equal(before.body.error, "validator admission readiness service is not active");
+    assert.deepEqual(calls, []);
+    assert.equal(server.validatorAdmissionReadinessMetrics().activated, false);
+    assert.equal(server.validatorAdmissionReadinessActivate(), true);
+    assert.equal(server.validatorAdmissionReadinessMetrics().activated, true);
+    assert.throws(() => server.validatorAdmissionReadinessActivate(), /already active/);
+    const accepted = await request(base, { body: { challenge: values.challenge,
+      context: values.context } });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(calls, ["transport", "consensus"]);
+  } finally { await close(server); }
+  assert.equal(server.validatorAdmissionReadinessMetrics().activated, false);
+  assert.equal(server.validatorAdmissionReadinessMetrics().closed, true);
+  assert.throws(() => server.validatorAdmissionReadinessActivate(), /closed/);
+});
+
+test("close deactivates first, aborts an in-flight signer and permits no late response", async () => {
+  const values = fixture(); const calls = [];
+  let startedResolve; let abortedResolve;
+  const started = new Promise((resolve) => { startedResolve = resolve; });
+  const aborted = new Promise((resolve) => { abortedResolve = resolve; });
+  const transportSigner = signer(values.transport, calls, "transport",
+    (_payload, _domain, { signal }) => new Promise((_resolve, reject) => {
+      startedResolve();
+      signal.addEventListener("abort", () => {
+        abortedResolve(true); reject(signal.reason ?? new Error("aborted"));
+      }, { once: true });
+    }));
+  const server = createValidatorAdmissionReadinessServer({
+    consensusSigner: signer(values.candidate, calls, "consensus"), transportSigner,
+    validators: values.validators,
+  }, { active: false, responseTimeoutMs: 1_000, tls });
+  const base = await listen(server);
+  server.validatorAdmissionReadinessActivate();
+  const pending = request(base, { body: { challenge: values.challenge,
+    context: values.context } });
+  await started;
+  const closed = new Promise((resolve, reject) => server.close((error) =>
+    error ? reject(error) : resolve()));
+  assert.equal(server.validatorAdmissionReadinessMetrics().activated, false);
+  assert.equal(server.validatorAdmissionReadinessMetrics().closed, true);
+  assert.equal(await Promise.race([aborted,
+    new Promise((resolve) => setTimeout(() => resolve(false), 200))]), true);
+  await assert.rejects(pending);
+  await closed;
+  assert.deepEqual(calls, ["transport"]);
+  assert.throws(() => server.validatorAdmissionReadinessActivate(), /closed/);
 });
 
 test("inactive observers and malformed or oversized requests never reach a signer", async () => {
