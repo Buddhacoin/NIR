@@ -121,6 +121,11 @@ export function createValidatorAdmissionReadinessServer({
   transportSigner,
   validators,
 } = {}, options = {}) {
+  if (options.active !== undefined && typeof options.active !== "boolean") {
+    throw new Error("validator admission readiness activation state is invalid");
+  }
+  let activated = options.active ?? true;
+  let closed = false;
   const tls = options.tls;
   if (!tls || (typeof tls.key !== "string" && !Buffer.isBuffer(tls.key)) ||
       (typeof tls.cert !== "string" && !Buffer.isBuffer(tls.cert))) {
@@ -154,12 +159,22 @@ export function createValidatorAdmissionReadinessServer({
     requestTimeoutMs: options.requestTimeoutMs ?? 10_000 };
   const ingress = new HttpIngressGuard(httpIngressOptions);
   const active = new Set();
+  const activeControllers = new Set();
   const completed = new Set();
   const totals = { accepted: 0, rejected: 0, replayRejected: 0 };
 
   const handler = async (request, response) => {
     let finishIngress;
     try {
+      if (!activated || closed) {
+        totals.rejected += 1;
+        response.shouldKeepAlive = false;
+        response.setHeader("connection", "close");
+        const socket = request.socket;
+        response.once("finish", () => socket?.destroy());
+        json(response, 503, { error: "validator admission readiness service is not active" });
+        return;
+      }
       finishIngress = ingress.begin(request);
       if (request.url !== VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH) {
         discard(request);
@@ -195,8 +210,13 @@ export function createValidatorAdmissionReadinessServer({
         throw new HttpIngressError("capacity",
           "validator admission readiness replay capacity is exhausted", 503);
       }
+      if (!activated || closed) {
+        throw new HttpIngressError("inactive",
+          "validator admission readiness service is not active", 503);
+      }
       active.add(key);
       const controller = new AbortController();
+      activeControllers.add(controller);
       const timeout = setTimeout(() => controller.abort(new HttpIngressError("responseTimeout",
         "validator admission readiness response timed out", 408)), responseTimeoutMs);
       timeout.unref?.();
@@ -212,6 +232,10 @@ export function createValidatorAdmissionReadinessServer({
         const candidateResponse = await respondToValidatorAdmissionReadinessChallenge({ challenge,
           consensusSigner, context, signal: controller.signal, transportSigner,
           validators: observerValidators });
+        if (!activated || closed || controller.signal.aborted) {
+          throw new HttpIngressError("shutdown",
+            "validator admission readiness service is not active", 503);
+        }
         completed.add(challenge.challengeHash);
         totals.accepted += 1;
         json(response, 200, candidateResponse);
@@ -221,11 +245,13 @@ export function createValidatorAdmissionReadinessServer({
         response.off("close", abort);
         socket?.off("close", abort);
         active.delete(key);
+        activeControllers.delete(controller);
       }
     } catch (error) {
       totals.rejected += 1;
       ingress.record(error);
-      if (!response.destroyed && !response.writableEnded && !response.headersSent) {
+      if (closed && !response.destroyed && !response.writableEnded) response.destroy();
+      else if (!response.destroyed && !response.writableEnded && !response.headersSent) {
         const rejected = ingressErrorResponse(error);
         json(response, rejected.status, { error: rejected.message });
       } else if (!response.destroyed && !response.writableEnded) response.destroy();
@@ -235,7 +261,23 @@ export function createValidatorAdmissionReadinessServer({
   };
   const server = createHttpsServer({ cert: tls.cert, key: tls.key,
     maxHeaderSize: HTTP_MAX_HEADER_BYTES, maxVersion: "TLSv1.3", minVersion: "TLSv1.3" }, handler);
+  const beginShutdown = () => {
+    if (closed) return;
+    activated = false; closed = true;
+    for (const controller of activeControllers) controller.abort(new HttpIngressError("shutdown",
+      "validator admission readiness service is shutting down", 503));
+  };
+  const nativeClose = server.close.bind(server);
+  server.close = (callback) => { beginShutdown(); return nativeClose(callback); };
+  server.once("close", beginShutdown);
+  server.validatorAdmissionReadinessActivate = () => {
+    if (closed) throw new Error("validator admission readiness server is closed");
+    if (activated) throw new Error("validator admission readiness server is already active");
+    activated = true;
+    return true;
+  };
   server.validatorAdmissionReadinessMetrics = () => ({ active: active.size,
-    completedChallenges: completed.size, httpIngress: ingress.metrics(), ...totals });
+    activated, closed, completedChallenges: completed.size,
+    httpIngress: ingress.metrics(), ...totals });
   return hardenHttpServer(server, httpIngressOptions);
 }

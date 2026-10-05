@@ -57,3 +57,8 @@ three-process readiness set, send role-specific activation commands to both sign
 activation ACKs, and expose signer data channels to that same gateway only after the all-or-nothing
 ACK barrier. Accepting a gateway READY object from an arbitrary caller would not authenticate the
 gateway PID or listener and is deliberately unsupported.
+
+The canonical PREPARE/COMMIT boundary that such a child must enforce is now specified in
+[validator-readiness-gateway-child-protocol.md](validator-readiness-gateway-child-protocol.md).
+It does not remove this launcher limitation: no real gateway child or three-process activation
+wiring is implemented here.
