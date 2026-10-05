@@ -94,6 +94,8 @@ handles for inherited FIFO reads. This forced process exit happens only after bo
 and descriptor cleanup have completed, and it never writes diagnostics to stdout or stderr.
 
 The current two-signer supervisor is described in
-[validator-readiness-signer-cohort-launcher.md](validator-readiness-signer-cohort-launcher.md). It
-verifies real signed READY evidence and owns bounded cohort teardown, but intentionally stops before
-activation because no production gateway child exists yet.
+[validator-readiness-signer-cohort-launcher.md](validator-readiness-signer-cohort-launcher.md). The
+real gateway process and its inherited-FD boundary are described in
+[validator-readiness-gateway-child-runtime.md](validator-readiness-gateway-child-runtime.md).
+The existing supervisor still stops before activation; wiring all three real children into one
+atomic launcher remains the next increment.

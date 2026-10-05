@@ -1,9 +1,9 @@
 # Validator readiness signer cohort launcher
 
 This increment launches and supervises the real consensus and transport signer children as one
-fail-closed cohort. It does **not** claim that a production readiness gateway exists and it cannot
-activate the signers. The repository currently defines the gateway protocol packages but has no
-gateway process that binds the pinned TLS listener and owns the signer data channels.
+fail-closed cohort. It cannot activate the signers. A real gateway child now binds the pinned TLS
+listener and owns the signer data channels, but this two-child launcher does not yet spawn or wire
+that process into the same all-or-nothing supervision boundary.
 
 ## What the launcher guarantees
 
@@ -40,9 +40,9 @@ lifelines, then applies bounded `SIGTERM` and `SIGKILL` deadlines, waits for bot
 and destroys every parent pipe. A child cannot be silently replaced or relaunched inside the same
 cohort. `waitForTermination()` reports only the bounded public reason `closed` or `failed`.
 
-The signer children currently allow ten seconds between READY and activation. Until the gateway
-runtime exists, callers must use this launcher only as a bounded custody/readiness probe and close it
-immediately after inspecting the signed evidence.
+The signer children currently allow ten seconds between READY and activation. Until the three-child
+launcher integration exists, callers must use this launcher only as a bounded custody/readiness
+probe and close it immediately after inspecting the signed evidence.
 
 If the launcher process dies, the operating system closes its sole parent lifeline writers and both
 signers fail closed. This is process-lifetime containment, not protection against `SIGSTOP`, a
@@ -58,7 +58,9 @@ activation ACKs, and expose signer data channels to that same gateway only after
 ACK barrier. Accepting a gateway READY object from an arbitrary caller would not authenticate the
 gateway PID or listener and is deliberately unsupported.
 
-The canonical PREPARE/COMMIT boundary that such a child must enforce is now specified in
+The canonical PREPARE/COMMIT boundary that the gateway child enforces is specified in
 [validator-readiness-gateway-child-protocol.md](validator-readiness-gateway-child-protocol.md).
-It does not remove this launcher limitation: no real gateway child or three-process activation
-wiring is implemented here.
+The real child runtime is described in
+[validator-readiness-gateway-child-runtime.md](validator-readiness-gateway-child-runtime.md).
+Neither removes this launcher limitation: three-process spawn, descriptor inventory, activation,
+and cohort teardown are not implemented here.

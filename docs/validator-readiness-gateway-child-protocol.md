@@ -1,8 +1,9 @@
 # Validator readiness gateway child commit protocol
 
-This protocol is the fail-closed activation boundary for a future isolated readiness gateway
-process. It specifies canonical messages and lifecycle only. It does not spawn a child, open TLS
-keys, bind a listener, connect signer pipes, or claim that the production gateway runtime exists.
+This protocol is the fail-closed activation boundary for the isolated readiness gateway process.
+The canonical package layer itself does not spawn a child, open TLS keys, bind a listener, or connect
+signer pipes. Its real process consumer and inherited-FD lifecycle are documented in
+[validator-readiness-gateway-child-runtime.md](validator-readiness-gateway-child-runtime.md).
 
 ## Trusted input
 
