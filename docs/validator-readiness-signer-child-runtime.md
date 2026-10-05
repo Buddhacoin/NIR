@@ -84,3 +84,8 @@ After the runtime promise has completed its `finally` cleanup, the dedicated CLI
 explicit success or failure code. It does not rely on platform-specific natural draining of libuv
 handles for inherited FIFO reads. This forced process exit happens only after bounded status writes
 and descriptor cleanup have completed, and it never writes diagnostics to stdout or stderr.
+
+The current two-signer supervisor is described in
+[validator-readiness-signer-cohort-launcher.md](validator-readiness-signer-cohort-launcher.md). It
+verifies real signed READY evidence and owns bounded cohort teardown, but intentionally stops before
+activation because no production gateway child exists yet.
