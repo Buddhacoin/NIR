@@ -33,7 +33,8 @@ const members = (wallets, prefix) => wallets.map((wallet, index) => ({
   ...publicWallet(wallet), operatorId: `${prefix}-${index}`,
 }));
 
-export function validatorReadinessSignerFixture({ now = READINESS_SIGNER_NOW } = {}) {
+export function validatorReadinessSignerFixture({ endpoint = "https://candidate.example",
+  now = READINESS_SIGNER_NOW, tlsCertificateSha256 = "a".repeat(64) } = {}) {
   const networkId = "nir-readiness-signer-test";
   const validatorWallets = Array.from({ length: 4 }, generateWallet);
   const validators = members(validatorWallets, "validator");
@@ -76,9 +77,9 @@ export function validatorReadinessSignerFixture({ now = READINESS_SIGNER_NOW } =
   const joinFields = { candidateContextMaxWitnessAgeMs: 300_000,
     candidateContextMinimumCheckpointHeight: 1, candidateContextMinimumSequence: 8,
     consensus: { ...publicWallet(candidate), label: "candidate consensus" },
-    endpoint: "https://candidate.example", expectedChainIdentityGenesisHash: genesisHash,
+    endpoint, expectedChainIdentityGenesisHash: genesisHash,
     expectedCheckpointPolicyId: policy.policyId, networkId, operatorId: "candidate-one",
-    tlsCertificateSha256: "a".repeat(64),
+    tlsCertificateSha256,
     transport: { ...publicWallet(transport), label: "candidate transport" } };
   const joinPlan = { ...joinFields, format: "nir-validator-admission-public-plan-v1",
     planCommitment: hashObject(joinFields, "VALIDATOR_ADMISSION_PLAN_V1"), version: 1 };
