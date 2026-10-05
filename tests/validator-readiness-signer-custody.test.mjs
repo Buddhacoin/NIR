@@ -274,7 +274,7 @@ test("session-bound consumers reject a role capability created from the other ro
   }, { now: READINESS_SIGNER_NOW }), /capability is invalid/);
   const channel = pair();
   assert.throws(() => createValidatorReadinessTransportSignerEndpoint({
-    now: () => READINESS_SIGNER_NOW, rolePackage: values.transportRolePackage,
+    ...values.transportSignerBinding, now: () => READINESS_SIGNER_NOW,
     signer: wrongIdentity, stream: channel.right,
     trustedCurrentHeight: () => values.context.checkpoint.height,
   }), /endpoint signer is invalid/);
@@ -321,12 +321,13 @@ test("fixed signers reject aborts before and immediately after the key operation
 test("custody integrates with the existing endpoint and semantic duplicates sign once", async () => {
   const values = setup(); const signer = custody(values, "transport"); const channel = pair();
   const endpoint = createValidatorReadinessTransportSignerEndpoint({ maxOperations: 16,
-    maxRequests: 32, now: () => READINESS_SIGNER_NOW,
-    rolePackage: values.transportRolePackage, signer, stream: channel.right,
+    ...values.transportSignerBinding, maxRequests: 32, now: () => READINESS_SIGNER_NOW,
+    signer, stream: channel.right,
     trustedCurrentHeight: () => values.context.checkpoint.height });
   const requests = Array.from({ length: 20 }, () =>
     createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-      gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW }));
+      gatewayRolePackage: values.gatewayRolePackage }, {
+      channelBinding: values.transportSignerBinding, now: READINESS_SIGNER_NOW }));
   const decoder = createValidatorReadinessSignerFrameDecoder(); const responses = [];
   await new Promise((resolve, reject) => {
     channel.left.on("data", (chunk) => {

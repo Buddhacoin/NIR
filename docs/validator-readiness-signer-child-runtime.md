@@ -50,6 +50,14 @@ then send one activation command containing the independently verified three-pro
 The child verifies the command against its retained READY and input, sends and fully flushes its
 activation ACK, and only then creates the signer endpoint on FDs 7 and 8.
 
+Immediately before creating that endpoint, the child derives its role-specific signer channel
+epoch from the verified role-bootstrap hash, launcher nonce, its own PID and process nonce, its
+signed READY hash, role, and session hash. The epoch is not accepted from FD 5, FD 7, environment,
+or arguments. Every version 2 signing request and response commits to that epoch, so frames from a
+prior child, launcher run, session, or opposite role fail before the custody capability is called.
+The gateway must independently derive the same value from its verified READY set and retained child
+PID; the signing wire cannot establish this trust.
+
 FD 7 is actively guarded before ACK completion. Any byte, EOF, or channel error before activation
 is fatal; bytes are never buffered for later acceptance. A second or coalesced activation command,
 activation replay, unexpected control message, or partial canonical frame is also fatal.

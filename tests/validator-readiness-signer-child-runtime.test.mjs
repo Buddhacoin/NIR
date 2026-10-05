@@ -30,6 +30,7 @@ import {
   verifyValidatorReadinessSignerActivationAcknowledgement,
 } from "../blockchain/validator-readiness-signer-child-protocol.mjs";
 import {
+  createValidatorReadinessSignerChannelEpoch,
   createValidatorReadinessConsensusSignRequest,
   createValidatorReadinessSignerFrameDecoder,
   createValidatorReadinessTransportSignRequest,
@@ -169,26 +170,41 @@ async function activate(record, values, role, ownReady) {
   return { activation, command, readiness };
 }
 
-function requestPair(values, role) {
+function runtimeChannelBinding(values, role, ready) {
+  const bootstrap = role === "transport" ? values.transportSignerBootstrap
+    : values.consensusSignerBootstrap;
+  return { bootstrap, expectedLauncherNonce: ready.launcherNonce, expectedPid: ready.pid,
+    expectedReleaseProvenanceHash: ready.releaseProvenanceHash,
+    expectedSessionHash: ready.sessionHash, signerReady: ready };
+}
+
+function runtimeChannelEpoch(values, role, ready) {
+  return createValidatorReadinessSignerChannelEpoch(runtimeChannelBinding(values, role, ready),
+    { expectedRole: role, now: Date.now() });
+}
+
+function requestPair(values, role, ready) {
+  const channelBinding = runtimeChannelBinding(values, role, ready);
   if (role === "transport") {
     return Array.from({ length: 2 }, () => createValidatorReadinessTransportSignRequest({
       challenge: values.challenge, gatewayRolePackage: values.gatewayRolePackage,
-    }, { now: Date.now() }));
+    }, { channelBinding, now: Date.now() }));
   }
   const transportRequest = createValidatorReadinessTransportSignRequest({
     challenge: values.challenge, gatewayRolePackage: values.gatewayRolePackage,
-  }, { now: Date.now() });
+  }, { channelBinding: values.transportSignerBinding, now: Date.now() });
   const verified = verifyValidatorReadinessTransportSignRequest(transportRequest, {
+    channelBinding: values.transportSignerBinding,
     rolePackage: values.transportRolePackage, now: Date.now(),
   });
   const transportResponse = createValidatorReadinessTransportSignResponse({
     request: transportRequest, rolePackage: values.transportRolePackage,
     signature: signObject(verified.signingInput, values.transport,
       VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN),
-  }, { now: Date.now() }).transportResponse;
+  }, { channelBinding: values.transportSignerBinding, now: Date.now() }).transportResponse;
   return Array.from({ length: 2 }, () => createValidatorReadinessConsensusSignRequest({
     gatewayRolePackage: values.gatewayRolePackage, transportResponse,
-  }, { now: Date.now() }));
+  }, { channelBinding, now: Date.now() }));
 }
 
 for (const role of ["transport", "consensus"]) {
@@ -199,16 +215,17 @@ for (const role of ["transport", "consensus"]) {
       assert.equal(ready.role, role); assert.equal(ready.pid, record.child.pid);
       await activate(record, values, role, ready);
 
-      const requests = requestPair(values, role);
+      const channelBinding = runtimeChannelBinding(values, role, ready);
+      const requests = requestPair(values, role, ready);
       record.child.stdio[7].write(Buffer.concat(requests.map(encodeValidatorReadinessSignerFrame)));
       const first = await record.responses.next(`${role} first response`);
       const second = await record.responses.next(`${role} cached response`);
       const verify = role === "transport" ? verifyValidatorReadinessTransportSignResponse
         : verifyValidatorReadinessConsensusSignResponse;
       const firstVerified = verify(first, { gatewayRolePackage: values.gatewayRolePackage,
-        request: requests[0], now: Date.now() });
+        channelBinding, request: requests[0], now: Date.now() });
       const secondVerified = verify(second, { gatewayRolePackage: values.gatewayRolePackage,
-        request: requests[1], now: Date.now() });
+        channelBinding, request: requests[1], now: Date.now() });
       const core = role === "transport" ? "transportResponse" : "candidateResponse";
       assert.deepEqual(firstVerified[core], secondVerified[core]);
 
@@ -230,13 +247,42 @@ for (const role of ["transport", "consensus"]) {
   });
 }
 
+test("a frame captured from child A is rejected by restarted child B before signing", async () => {
+  const values = fixture("transport");
+  const first = launch("transport", values); let second = null;
+  try {
+    const firstReady = await first.status.next("first child ready");
+    await activate(first, values, "transport", firstReady);
+    const [capturedRequest] = requestPair(values, "transport", firstReady);
+    const firstEpoch = runtimeChannelEpoch(values, "transport", firstReady);
+    first.child.stdio[9].end();
+    assert.deepEqual(await exit(first.child), { code: 0, signal: null });
+
+    second = launch("transport", values);
+    const secondReady = await second.status.next("replacement child ready");
+    await activate(second, values, "transport", secondReady);
+    assert.notEqual(runtimeChannelEpoch(values, "transport", secondReady), firstEpoch);
+    second.child.stdio[7].write(encodeValidatorReadinessSignerFrame(capturedRequest));
+    const fatal = await second.status.next("replacement replay fatal");
+    assert.equal(fatal.messageType, "fatal");
+    assert.equal(fatal.code, "channel-failed");
+    await assert.rejects(second.responses.next("replacement replay response"),
+      /ended|failed|closed/);
+    assert.equal((await exit(second.child)).code, 1);
+  } finally {
+    if (first.child.exitCode === null) first.child.kill("SIGKILL");
+    if (second?.child.exitCode === null) second.child.kill("SIGKILL");
+  }
+});
+
 test("real child treats any signer byte before activation ACK as fatal", async () => {
   const values = fixture("transport"); const record = launch("transport", values);
   try {
     const ready = await record.status.next("pre-activation ready");
     assert.equal(ready.role, "transport");
     const request = createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-      gatewayRolePackage: values.gatewayRolePackage }, { now: Date.now() });
+      gatewayRolePackage: values.gatewayRolePackage }, {
+      channelBinding: runtimeChannelBinding(values, "transport", ready), now: Date.now() });
     record.child.stdio[7].write(encodeValidatorReadinessSignerFrame(request));
     const fatal = await record.status.next("pre-activation fatal");
     assert.equal(fatal.messageType, "fatal"); assert.equal(fatal.code, "channel-failed");
@@ -274,7 +320,7 @@ test("lifeline EOF racing a real key operation cannot release a signature", asyn
   try {
     const ready = await record.status.next("lifeline race ready");
     await activate(record, values, "transport", ready);
-    const [request] = requestPair(values, "transport");
+    const [request] = requestPair(values, "transport", ready);
     record.child.stdio[9].end();
     record.child.stdio[7].write(encodeValidatorReadinessSignerFrame(request));
     const result = await Promise.race([

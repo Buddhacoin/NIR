@@ -339,10 +339,13 @@ export async function runValidatorReadinessSignerChildProcess(expectedRole) {
 
     let currentHeight = input.cohortBootstraps[expectedRole].initialHeight;
     let previousUpdate = null;
-    const endpointOptions = { now: () => Date.now(),
-      rolePackage: input.cohortBootstraps[expectedRole].rolePackage,
+    const endpointOptions = {
+      bootstrap: input.cohortBootstraps[expectedRole],
+      expectedLauncherNonce: input.expectedLauncherNonce, expectedPid: ownReady.pid,
+      expectedReleaseProvenanceHash: input.expectedReleaseProvenanceHash,
+      expectedSessionHash: input.expectedSessionHash, now: () => Date.now(),
       signer: activeSigner(signer, expectedRole, () => stopped),
-      stream: dataChannel,
+      signerReady: ownReady, stream: dataChannel,
       timeoutMs: input.cohortBootstraps.gateway.limits.responseTimeoutMs,
       trustedCurrentHeight: () => currentHeight };
     try {

@@ -17,6 +17,8 @@ import {
   createValidatorReadinessRolePackage,
   verifyValidatorReadinessRolePackage,
 } from "./validator-readiness-session.mjs";
+import { verifyValidatorReadinessSignerReady }
+  from "./validator-readiness-process-protocol.mjs";
 
 export const VALIDATOR_READINESS_SIGNER_MAX_FRAME_BYTES = 512 * 1024;
 export const VALIDATOR_READINESS_SIGNER_MAX_TIMEOUT_MS = 60_000;
@@ -24,10 +26,10 @@ export const VALIDATOR_READINESS_SIGNER_MAX_TIMEOUT_MS = 60_000;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
 const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
 const FORMATS = Object.freeze({
-  consensusRequest: "nir-validator-readiness-consensus-sign-request-v1",
-  consensusResponse: "nir-validator-readiness-consensus-sign-response-v1",
-  transportRequest: "nir-validator-readiness-transport-sign-request-v1",
-  transportResponse: "nir-validator-readiness-transport-sign-response-v1",
+  consensusRequest: "nir-validator-readiness-consensus-sign-request-v2",
+  consensusResponse: "nir-validator-readiness-consensus-sign-response-v2",
+  transportRequest: "nir-validator-readiness-transport-sign-request-v2",
+  transportResponse: "nir-validator-readiness-transport-sign-response-v2",
 });
 
 function exact(value, fields, label) {
@@ -38,6 +40,41 @@ function exact(value, fields, label) {
 }
 
 function requestId() { return randomBytes(32).toString("hex"); }
+
+function channelEpoch(value) {
+  if (!TAGGED_HASH.test(value ?? "")) {
+    throw new Error("validator readiness signer channel epoch is invalid");
+  }
+  return value;
+}
+
+export function createValidatorReadinessSignerChannelEpoch(value = {}, {
+  expectedRole, now = Date.now(),
+} = {}) {
+  exact(value, ["bootstrap", "expectedLauncherNonce", "expectedPid",
+    "expectedReleaseProvenanceHash", "expectedSessionHash", "signerReady"],
+  "validator readiness signer channel binding");
+  if (!new Set(["consensus", "transport"]).has(expectedRole)) {
+    throw new Error("validator readiness signer channel role is invalid");
+  }
+  const ready = verifyValidatorReadinessSignerReady(value.signerReady, {
+    bootstrap: value.bootstrap, expectedLauncherNonce: value.expectedLauncherNonce,
+    expectedPid: value.expectedPid,
+    expectedReleaseProvenanceHash: value.expectedReleaseProvenanceHash,
+    expectedRole, expectedSessionHash: value.expectedSessionHash, now,
+  });
+  const anchors = { bootstrapHash: ready.bootstrapHash, launcherNonce: ready.launcherNonce,
+    pid: ready.pid, processNonce: ready.processNonce, readyHash: ready.readyHash,
+    role: expectedRole, sessionHash: ready.sessionHash };
+  const digest = expectedRole === "transport"
+    ? hashObject(anchors, "VR_TRANS_SIGNER_CHANNEL_EPOCH_V1")
+    : hashObject(anchors, "VR_CONS_SIGNER_CHANNEL_EPOCH_V1");
+  return `sha3-256:${digest}`;
+}
+
+function expectedEpoch(binding, expectedRole, now) {
+  return createValidatorReadinessSignerChannelEpoch(binding, { expectedRole, now });
+}
 
 function timestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0) {
@@ -61,9 +98,10 @@ function signerPair(signerValue, role, now) {
   return { gateway, signer };
 }
 
-function commonRequest(value, format, pair, label) {
-  if (value.format !== format || value.version !== 1 ||
+function commonRequest(value, format, pair, expectedChannelEpoch, label) {
+  if (value.format !== format || value.version !== 2 ||
       !REQUEST_ID.test(value.requestId ?? "") || !TAGGED_HASH.test(value.sessionHash ?? "") ||
+      value.channelEpoch !== channelEpoch(expectedChannelEpoch) ||
       value.gatewayRolePackageHash !== pair.gateway.rolePackageHash ||
       value.signerRolePackageHash !== pair.signer.rolePackageHash ||
       value.sessionHash !== pair.signer.session.sessionHash) {
@@ -71,13 +109,17 @@ function commonRequest(value, format, pair, label) {
   }
 }
 
-function commonResponse(value, verified, format, label) {
+function commonResponse(value, verified, format, expectedChannelEpoch, responseHashDomain, label) {
   const request = verified.request;
-  if (value.format !== format || value.version !== 1 || value.requestId !== request.requestId ||
+  const { responseHash, ...payload } = value;
+  if (value.format !== format || value.version !== 2 || value.requestId !== request.requestId ||
+      value.channelEpoch !== channelEpoch(expectedChannelEpoch) ||
+      value.channelEpoch !== request.channelEpoch ||
       value.gatewayRolePackageHash !== request.gatewayRolePackageHash ||
       value.signerRolePackageHash !== request.signerRolePackageHash ||
       value.sessionHash !== request.sessionHash || value.requestHash !== verified.requestHash ||
-      value.operationHash !== verified.operationHash) {
+      value.operationHash !== verified.operationHash || !TAGGED_HASH.test(responseHash ?? "") ||
+      responseHash !== `sha3-256:${hashObject(payload, responseHashDomain)}`) {
     throw new Error(`${label} binding is invalid`);
   }
 }
@@ -99,37 +141,44 @@ export function createValidatorReadinessSignerFrameDecoder() {
 }
 
 export function createValidatorReadinessTransportSignRequest({ challenge,
-  gatewayRolePackage } = {}, { now = Date.now() } = {}) {
+  gatewayRolePackage } = {}, { channelBinding, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "transport", now);
   const pair = rolePair(gatewayRolePackage, "transport", now);
   const prepared = validatorAdmissionReadinessTransportSigningInput({ challenge,
     context: pair.gateway.session.context, validators: pair.gateway.session.validators });
-  return { challenge: prepared.challenge, format: FORMATS.transportRequest,
+  return { challenge: prepared.challenge, channelEpoch: channelEpoch(expectedChannelEpoch),
+    format: FORMATS.transportRequest,
     gatewayRolePackageHash: pair.gateway.rolePackageHash, requestId: requestId(),
     sessionHash: pair.gateway.session.sessionHash,
-    signerRolePackageHash: pair.signer.rolePackageHash, version: 1 };
+    signerRolePackageHash: pair.signer.rolePackageHash, version: 2 };
 }
 
 export function verifyValidatorReadinessTransportSignRequest(value,
-  { rolePackage, now = Date.now() } = {}) {
-  exact(value, ["challenge", "format", "gatewayRolePackageHash", "requestId", "sessionHash",
+  { channelBinding, rolePackage, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "transport", now);
+  exact(value, ["challenge", "channelEpoch", "format", "gatewayRolePackageHash", "requestId", "sessionHash",
     "signerRolePackageHash", "version"], "validator readiness transport sign request");
   const pair = signerPair(rolePackage, "transport", now);
-  commonRequest(value, FORMATS.transportRequest, pair,
+  commonRequest(value, FORMATS.transportRequest, pair, expectedChannelEpoch,
     "validator readiness transport sign request");
   const prepared = validatorAdmissionReadinessTransportSigningInput({ challenge: value.challenge,
     context: pair.signer.session.context, validators: pair.signer.session.validators });
   const request = clone(value);
   return { operationHash: `sha3-256:${hashObject({
-    challengeHash: prepared.challenge.challengeHash, sessionHash: value.sessionHash,
+    challengeHash: prepared.challenge.challengeHash, channelEpoch: value.channelEpoch,
+    sessionHash: value.sessionHash,
     signerRolePackageHash: value.signerRolePackageHash,
-  }, "VALIDATOR_READY_TRANSPORT_OPERATION_V1")}`,
-  request, requestHash: `sha3-256:${hashObject(request, "VALIDATOR_READY_SIGNER_REQUEST_V1")}`,
+  }, "VALIDATOR_READY_TRANSPORT_OPERATION_V2")}`,
+  request, requestHash: `sha3-256:${hashObject(request,
+    "VR_TRANS_SIGN_REQUEST_V2")}`,
   signingInput: prepared.signingInput };
 }
 
 export function createValidatorReadinessTransportSignResponse({ request, rolePackage,
-  signature } = {}, { now = Date.now() } = {}) {
-  const verified = verifyValidatorReadinessTransportSignRequest(request, { rolePackage, now });
+  signature } = {}, { channelBinding, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "transport", now);
+  const verified = verifyValidatorReadinessTransportSignRequest(request,
+    { channelBinding, rolePackage, now });
   const session = signerPair(rolePackage, "transport", now).signer.session;
   if (!verifyObject(verified.signingInput, signature, session.context.transport.publicKey,
     VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN)) {
@@ -139,23 +188,27 @@ export function createValidatorReadinessTransportSignResponse({ request, rolePac
     challenge: verified.request.challenge, context: session.context, ...verified.signingInput,
     transportSignature: signature,
   }, { validators: session.validators });
-  return { format: FORMATS.transportResponse,
+  const payload = { channelEpoch: verified.request.channelEpoch, format: FORMATS.transportResponse,
     gatewayRolePackageHash: verified.request.gatewayRolePackageHash,
     operationHash: verified.operationHash, requestHash: verified.requestHash,
     requestId: verified.request.requestId, sessionHash: verified.request.sessionHash,
     signerRolePackageHash: verified.request.signerRolePackageHash,
-    transportResponse, version: 1 };
+    transportResponse, version: 2 };
+  return { ...payload, responseHash: `sha3-256:${hashObject(payload,
+    "VR_TRANS_SIGN_RESPONSE_V2")}` };
 }
 
 export function verifyValidatorReadinessTransportSignResponse(value, { gatewayRolePackage,
-  request, now = Date.now() } = {}) {
-  exact(value, ["format", "gatewayRolePackageHash", "operationHash", "requestHash", "requestId",
-    "sessionHash", "signerRolePackageHash", "transportResponse", "version"],
+  channelBinding, request, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "transport", now);
+  exact(value, ["channelEpoch", "format", "gatewayRolePackageHash", "operationHash", "requestHash", "requestId",
+    "responseHash", "sessionHash", "signerRolePackageHash", "transportResponse", "version"],
   "validator readiness transport sign response");
   const pair = rolePair(gatewayRolePackage, "transport", now);
   const expectedRequest = verifyValidatorReadinessTransportSignRequest(request,
-    { rolePackage: pair.signer, now });
-  commonResponse(value, expectedRequest, FORMATS.transportResponse,
+    { channelBinding, rolePackage: pair.signer, now });
+  commonResponse(value, expectedRequest, FORMATS.transportResponse, expectedChannelEpoch,
+    "VR_TRANS_SIGN_RESPONSE_V2",
     "validator readiness transport sign response");
   const transportResponse = verifyValidatorAdmissionReadinessCandidateTransportResponse(
     value.transportResponse, { validators: pair.gateway.session.validators });
@@ -168,7 +221,8 @@ export function verifyValidatorReadinessTransportSignResponse(value, { gatewayRo
 }
 
 export function createValidatorReadinessConsensusSignRequest({ gatewayRolePackage,
-  transportResponse } = {}, { now = Date.now() } = {}) {
+  transportResponse } = {}, { channelBinding, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "consensus", now);
   const pair = rolePair(gatewayRolePackage, "consensus", now);
   const prepared = validatorAdmissionReadinessConsensusSigningInput({ transportResponse,
     validators: pair.gateway.session.validators });
@@ -176,20 +230,21 @@ export function createValidatorReadinessConsensusSignRequest({ gatewayRolePackag
       canonicalJson(pair.gateway.session.context)) {
     throw new Error("validator readiness consensus sign request context is mismatched");
   }
-  return { format: FORMATS.consensusRequest,
+  return { channelEpoch: channelEpoch(expectedChannelEpoch), format: FORMATS.consensusRequest,
     gatewayRolePackageHash: pair.gateway.rolePackageHash, requestId: requestId(),
     sessionHash: pair.gateway.session.sessionHash,
     signerRolePackageHash: pair.signer.rolePackageHash,
-    transportResponse: prepared.transportResponse, version: 1 };
+    transportResponse: prepared.transportResponse, version: 2 };
 }
 
 export function verifyValidatorReadinessConsensusSignRequest(value,
-  { rolePackage, now = Date.now() } = {}) {
-  exact(value, ["format", "gatewayRolePackageHash", "requestId", "sessionHash",
+  { channelBinding, rolePackage, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "consensus", now);
+  exact(value, ["channelEpoch", "format", "gatewayRolePackageHash", "requestId", "sessionHash",
     "signerRolePackageHash", "transportResponse", "version"],
   "validator readiness consensus sign request");
   const pair = signerPair(rolePackage, "consensus", now);
-  commonRequest(value, FORMATS.consensusRequest, pair,
+  commonRequest(value, FORMATS.consensusRequest, pair, expectedChannelEpoch,
     "validator readiness consensus sign request");
   const prepared = validatorAdmissionReadinessConsensusSigningInput({
     transportResponse: value.transportResponse, validators: pair.signer.session.validators });
@@ -199,17 +254,21 @@ export function verifyValidatorReadinessConsensusSignRequest(value,
   }
   const request = clone(value);
   return { operationHash: `sha3-256:${hashObject({
-    responseHash: prepared.transportResponse.responseHash, sessionHash: value.sessionHash,
+    channelEpoch: value.channelEpoch, responseHash: prepared.transportResponse.responseHash,
+    sessionHash: value.sessionHash,
     signerRolePackageHash: value.signerRolePackageHash,
     transportSignature: prepared.transportResponse.transportSignature,
-  }, "VALIDATOR_READY_CONSENSUS_OPERATION_V1")}`,
-  request, requestHash: `sha3-256:${hashObject(request, "VALIDATOR_READY_SIGNER_REQUEST_V1")}`,
+  }, "VALIDATOR_READY_CONSENSUS_OPERATION_V2")}`,
+  request, requestHash: `sha3-256:${hashObject(request,
+    "VR_CONS_SIGN_REQUEST_V2")}`,
   signingInput: prepared.signingInput };
 }
 
 export function createValidatorReadinessConsensusSignResponse({ request, rolePackage,
-  signature } = {}, { now = Date.now() } = {}) {
-  const verified = verifyValidatorReadinessConsensusSignRequest(request, { rolePackage, now });
+  signature } = {}, { channelBinding, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "consensus", now);
+  const verified = verifyValidatorReadinessConsensusSignRequest(request,
+    { channelBinding, rolePackage, now });
   const session = signerPair(rolePackage, "consensus", now).signer.session;
   if (!verifyObject(verified.signingInput, signature, session.context.candidate.publicKey,
     VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN)) {
@@ -218,23 +277,27 @@ export function createValidatorReadinessConsensusSignResponse({ request, rolePac
   const candidateResponse = verifyValidatorAdmissionReadinessCandidateResponse({
     ...verified.request.transportResponse, consensusSignature: signature,
   }, { validators: session.validators });
-  return { candidateResponse, format: FORMATS.consensusResponse,
+  const payload = { candidateResponse, channelEpoch: verified.request.channelEpoch,
+    format: FORMATS.consensusResponse,
     gatewayRolePackageHash: verified.request.gatewayRolePackageHash,
     operationHash: verified.operationHash, requestHash: verified.requestHash,
     requestId: verified.request.requestId, sessionHash: verified.request.sessionHash,
-    signerRolePackageHash: verified.request.signerRolePackageHash,
-    version: 1 };
+    signerRolePackageHash: verified.request.signerRolePackageHash, version: 2 };
+  return { ...payload, responseHash: `sha3-256:${hashObject(payload,
+    "VR_CONS_SIGN_RESPONSE_V2")}` };
 }
 
 export function verifyValidatorReadinessConsensusSignResponse(value, { gatewayRolePackage,
-  request, now = Date.now() } = {}) {
-  exact(value, ["candidateResponse", "format", "gatewayRolePackageHash", "operationHash",
-    "requestHash", "requestId", "sessionHash", "signerRolePackageHash", "version"],
+  channelBinding, request, now = Date.now() } = {}) {
+  const expectedChannelEpoch = expectedEpoch(channelBinding, "consensus", now);
+  exact(value, ["candidateResponse", "channelEpoch", "format", "gatewayRolePackageHash", "operationHash",
+    "requestHash", "requestId", "responseHash", "sessionHash", "signerRolePackageHash", "version"],
   "validator readiness consensus sign response");
   const pair = rolePair(gatewayRolePackage, "consensus", now);
   const expectedRequest = verifyValidatorReadinessConsensusSignRequest(request,
-    { rolePackage: pair.signer, now });
-  commonResponse(value, expectedRequest, FORMATS.consensusResponse,
+    { channelBinding, rolePackage: pair.signer, now });
+  commonResponse(value, expectedRequest, FORMATS.consensusResponse, expectedChannelEpoch,
+    "VR_CONS_SIGN_RESPONSE_V2",
     "validator readiness consensus sign response");
   const candidateResponse = verifyValidatorAdmissionReadinessCandidateResponse(
     value.candidateResponse, { validators: pair.gateway.session.validators });

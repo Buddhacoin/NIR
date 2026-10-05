@@ -9,6 +9,7 @@ import {
 import {
   createValidatorReadinessConsensusSignRequest,
   createValidatorReadinessConsensusSignResponse,
+  createValidatorReadinessSignerChannelEpoch,
   createValidatorReadinessSignerFrameDecoder,
   createValidatorReadinessTransportSignRequest,
   createValidatorReadinessTransportSignResponse,
@@ -23,17 +24,22 @@ import {
   READINESS_SIGNER_NOW, validatorReadinessSignerFixture,
 } from "./validator-readiness-signer-fixture.mjs";
 
+function options(values, role) {
+  return { channelBinding: role === "transport" ? values.transportSignerBinding
+    : values.consensusSignerBinding, now: READINESS_SIGNER_NOW };
+}
+
 function transportRoundTrip(values) {
   const request = createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-    gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW });
+    gatewayRolePackage: values.gatewayRolePackage }, options(values, "transport"));
   const verified = verifyValidatorReadinessTransportSignRequest(request,
-    { now: READINESS_SIGNER_NOW, rolePackage: values.transportRolePackage });
+    { ...options(values, "transport"), rolePackage: values.transportRolePackage });
   const signature = signObject(verified.signingInput, values.transport,
     VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN);
   const response = createValidatorReadinessTransportSignResponse({ request,
-    rolePackage: values.transportRolePackage, signature }, { now: READINESS_SIGNER_NOW });
+    rolePackage: values.transportRolePackage, signature }, options(values, "transport"));
   verifyValidatorReadinessTransportSignResponse(response, { gatewayRolePackage:
-    values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request });
+    values.gatewayRolePackage, ...options(values, "transport"), request });
   return { request, response };
 }
 
@@ -45,6 +51,31 @@ test("bounded canonical framing handles fragmentation and coalescing", () => {
   bytewise.finish(); assert.deepEqual(decoded, values);
   const coalesced = createValidatorReadinessSignerFrameDecoder();
   assert.deepEqual(coalesced.push(Buffer.concat(encoded)), values); coalesced.finish();
+});
+
+test("channel epoch is deterministic, role-separated, and bound to every launch anchor", () => {
+  const values = validatorReadinessSignerFixture();
+  const binding = values.transportSignerBinding;
+  const epoch = createValidatorReadinessSignerChannelEpoch(binding,
+    { expectedRole: "transport", now: READINESS_SIGNER_NOW });
+  assert.equal(epoch, createValidatorReadinessSignerChannelEpoch(structuredClone(binding),
+    { expectedRole: "transport", now: READINESS_SIGNER_NOW }));
+  assert.notEqual(epoch, createValidatorReadinessSignerChannelEpoch(values.consensusSignerBinding,
+    { expectedRole: "consensus", now: READINESS_SIGNER_NOW }));
+  assert.throws(() => createValidatorReadinessSignerChannelEpoch({ ...binding, extra: true },
+    { expectedRole: "transport", now: READINESS_SIGNER_NOW }),
+    /unknown|missing/);
+  for (const mutation of [
+    { ...binding, expectedLauncherNonce: "0".repeat(64) },
+    { ...binding, expectedPid: binding.expectedPid + 1 },
+    { ...binding, expectedReleaseProvenanceHash: `sha3-256:${"0".repeat(64)}` },
+    { ...binding, expectedSessionHash: `sha3-256:${"0".repeat(64)}` },
+    { ...binding, signerReady: { ...binding.signerReady, processNonce: "0".repeat(64) } },
+  ]) assert.throws(() => createValidatorReadinessSignerChannelEpoch(mutation,
+    { expectedRole: "transport", now: READINESS_SIGNER_NOW }), /invalid/);
+  assert.throws(() => createValidatorReadinessSignerChannelEpoch(
+    Object.assign(Object.create({ inherited: true }), binding),
+  { expectedRole: "transport", now: READINESS_SIGNER_NOW }), /unknown|missing/);
 });
 
 test("framing fails closed on bad lengths, UTF-8, noncanonical JSON, and partial EOF", () => {
@@ -73,30 +104,48 @@ test("role-specific transport and consensus messages round-trip with fixed signi
   const transport = transportRoundTrip(values);
   const request = createValidatorReadinessConsensusSignRequest({ gatewayRolePackage:
     values.gatewayRolePackage, transportResponse: transport.response.transportResponse },
-  { now: READINESS_SIGNER_NOW });
+  options(values, "consensus"));
   const verified = verifyValidatorReadinessConsensusSignRequest(request,
-    { now: READINESS_SIGNER_NOW, rolePackage: values.consensusRolePackage });
+    { ...options(values, "consensus"), rolePackage: values.consensusRolePackage });
   const signature = signObject(verified.signingInput, values.candidate,
     VALIDATOR_ADMISSION_READINESS_CANDIDATE_CONSENSUS_RESPONSE_DOMAIN);
   const response = createValidatorReadinessConsensusSignResponse({ request,
-    rolePackage: values.consensusRolePackage, signature }, { now: READINESS_SIGNER_NOW });
+    rolePackage: values.consensusRolePackage, signature }, options(values, "consensus"));
+  assert.equal(request.format, "nir-validator-readiness-consensus-sign-request-v2");
+  assert.equal(request.version, 2);
+  assert.equal(response.format, "nir-validator-readiness-consensus-sign-response-v2");
+  assert.equal(response.version, 2);
   assert.deepEqual(verifyValidatorReadinessConsensusSignResponse(response, {
-    gatewayRolePackage: values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request }), response);
+    gatewayRolePackage: values.gatewayRolePackage, ...options(values, "consensus"), request }), response);
+  assert.throws(() => verifyValidatorReadinessConsensusSignRequest({ ...request,
+    format: "nir-validator-readiness-consensus-sign-request-v1", version: 1 },
+  { ...options(values, "consensus"), rolePackage: values.consensusRolePackage }), /binding/);
+  assert.throws(() => verifyValidatorReadinessConsensusSignResponse({ ...response,
+    format: "nir-validator-readiness-consensus-sign-response-v1", version: 1 }, {
+    gatewayRolePackage: values.gatewayRolePackage, ...options(values, "consensus"), request,
+  }), /binding/);
   for (const mutant of [{ ...request, extra: true },
     (({ transportResponse: _removed, ...rest }) => rest)(request)]) {
     assert.throws(() => verifyValidatorReadinessConsensusSignRequest(mutant,
-      { now: READINESS_SIGNER_NOW, rolePackage: values.consensusRolePackage }),
+      { ...options(values, "consensus"), rolePackage: values.consensusRolePackage }),
     /unknown or missing/);
   }
   for (const mutant of [{ ...response, extra: true },
     (({ candidateResponse: _removed, ...rest }) => rest)(response)]) {
     assert.throws(() => verifyValidatorReadinessConsensusSignResponse(mutant,
-      { gatewayRolePackage: values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request }),
+      { gatewayRolePackage: values.gatewayRolePackage, ...options(values, "consensus"), request }),
     /unknown or missing/);
+  }
+  for (const field of ["requestHash", "operationHash", "responseHash"]) {
+    const mutant = structuredClone(response);
+    mutant[field] = `sha3-256:${"0".repeat(64)}`;
+    assert.throws(() => verifyValidatorReadinessConsensusSignResponse(mutant, {
+      gatewayRolePackage: values.gatewayRolePackage, ...options(values, "consensus"), request,
+    }), /binding/);
   }
   assert.notEqual(verified.operationHash,
     verifyValidatorReadinessTransportSignRequest(transport.request,
-      { now: READINESS_SIGNER_NOW, rolePackage: values.transportRolePackage }).operationHash);
+      { ...options(values, "transport"), rolePackage: values.transportRolePackage }).operationHash);
 });
 
 test("exact schemas and role/session/request bindings reject mutation", () => {
@@ -112,29 +161,65 @@ test("exact schemas and role/session/request bindings reject mutation", () => {
   ]) {
     const copy = structuredClone(request); mutate(copy);
     assert.throws(() => verifyValidatorReadinessTransportSignRequest(copy,
-      { now: READINESS_SIGNER_NOW, rolePackage: values.transportRolePackage }));
+      { ...options(values, "transport"), rolePackage: values.transportRolePackage }));
   }
   const wrongId = structuredClone(response); wrongId.requestId = "1".repeat(64);
   assert.throws(() => verifyValidatorReadinessTransportSignResponse(wrongId,
-    { gatewayRolePackage: values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request }),
+    { gatewayRolePackage: values.gatewayRolePackage, ...options(values, "transport"), request }),
   /binding/);
-  for (const field of ["requestHash", "operationHash"]) {
+  for (const field of ["requestHash", "operationHash", "responseHash"]) {
     const wrongHash = structuredClone(response); wrongHash[field] = `sha3-256:${"0".repeat(64)}`;
     assert.throws(() => verifyValidatorReadinessTransportSignResponse(wrongHash,
-      { gatewayRolePackage: values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request }),
+      { gatewayRolePackage: values.gatewayRolePackage, ...options(values, "transport"), request }),
     /binding/);
   }
   assert.throws(() => verifyValidatorReadinessTransportSignRequest(request,
-    { now: READINESS_SIGNER_NOW, rolePackage: values.consensusRolePackage }), /identity/);
+    { ...options(values, "transport"), rolePackage: values.consensusRolePackage }), /identity/);
   for (const mutant of [{ ...response, extra: true },
     (({ transportResponse: _removed, ...rest }) => rest)(response)]) {
     assert.throws(() => verifyValidatorReadinessTransportSignResponse(mutant,
-      { gatewayRolePackage: values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request }),
+      { gatewayRolePackage: values.gatewayRolePackage, ...options(values, "transport"), request }),
     /unknown or missing/);
   }
   const exotic = Object.assign(Object.create({ inherited: true }), request);
   assert.throws(() => verifyValidatorReadinessTransportSignRequest(exotic,
-    { now: READINESS_SIGNER_NOW, rolePackage: values.transportRolePackage }), /unknown|missing/);
+    { ...options(values, "transport"), rolePackage: values.transportRolePackage }), /unknown|missing/);
+});
+
+test("old and foreign launch epochs fail closed in requests and responses", () => {
+  const values = validatorReadinessSignerFixture();
+  const { request, response } = transportRoundTrip(values);
+  assert.equal(request.format, "nir-validator-readiness-transport-sign-request-v2");
+  assert.equal(request.version, 2);
+  assert.equal(response.format, "nir-validator-readiness-transport-sign-response-v2");
+  assert.equal(response.version, 2);
+  const old = structuredClone(request); delete old.channelEpoch;
+  assert.throws(() => verifyValidatorReadinessTransportSignRequest(old,
+    { ...options(values, "transport"), rolePackage: values.transportRolePackage }),
+  /unknown or missing/);
+  const v1 = { ...request,
+    format: "nir-validator-readiness-transport-sign-request-v1", version: 1 };
+  assert.throws(() => verifyValidatorReadinessTransportSignRequest(v1,
+    { ...options(values, "transport"), rolePackage: values.transportRolePackage }), /binding/);
+  const v1Response = { ...response,
+    format: "nir-validator-readiness-transport-sign-response-v1", version: 1 };
+  assert.throws(() => verifyValidatorReadinessTransportSignResponse(v1Response, {
+    gatewayRolePackage: values.gatewayRolePackage, ...options(values, "transport"), request,
+  }), /binding/);
+  const foreignBinding = values.consensusSignerBinding;
+  assert.throws(() => verifyValidatorReadinessTransportSignRequest(
+    { ...request, channelEpoch: values.consensusChannelEpoch },
+    { ...options(values, "transport"), rolePackage: values.transportRolePackage }), /binding/);
+  assert.throws(() => verifyValidatorReadinessTransportSignResponse(
+    { ...response, channelEpoch: values.consensusChannelEpoch }, {
+      gatewayRolePackage: values.gatewayRolePackage, ...options(values, "transport"), request,
+    }), /binding/);
+  const current = verifyValidatorReadinessTransportSignRequest(request,
+    { ...options(values, "transport"), rolePackage: values.transportRolePackage });
+  assert.throws(() => verifyValidatorReadinessTransportSignRequest(request, {
+    channelBinding: foreignBinding, now: READINESS_SIGNER_NOW,
+    rolePackage: values.transportRolePackage }), /role|identity|binding/);
+  assert.match(current.requestHash, /^sha3-256:/);
 });
 
 test("forged transport proof cannot reach a consensus signing input", () => {
@@ -143,7 +228,7 @@ test("forged transport proof cannot reach a consensus signing input", () => {
   const forged = structuredClone(response.transportResponse);
   forged.transportSignature = Buffer.from("forged").toString("base64");
   assert.throws(() => createValidatorReadinessConsensusSignRequest({ gatewayRolePackage:
-    values.gatewayRolePackage, transportResponse: forged }, { now: READINESS_SIGNER_NOW }),
+    values.gatewayRolePackage, transportResponse: forged }, options(values, "consensus")),
   /transport response/);
 });
 

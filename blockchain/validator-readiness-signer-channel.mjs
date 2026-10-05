@@ -5,6 +5,7 @@ import {
 import {
   createValidatorReadinessConsensusSignRequest,
   createValidatorReadinessConsensusSignResponse,
+  createValidatorReadinessSignerChannelEpoch,
   createValidatorReadinessSignerFrameDecoder,
   createValidatorReadinessTransportSignRequest,
   createValidatorReadinessTransportSignResponse,
@@ -15,6 +16,8 @@ import {
   verifyValidatorReadinessTransportSignRequest,
   verifyValidatorReadinessTransportSignResponse,
 } from "./validator-readiness-signer-protocol.mjs";
+import { verifyValidatorReadinessSignerReady }
+  from "./validator-readiness-process-protocol.mjs";
 import { verifyValidatorReadinessRolePackage }
   from "./validator-readiness-session.mjs";
 
@@ -83,11 +86,25 @@ function publicIdentity(session, role) {
   return { address: value.address, algorithm: value.algorithm, publicKey: value.publicKey };
 }
 
-function createClient({ gatewayRolePackage, now = () => Date.now(), role, stream,
-  timeoutMs = DEFAULT_TIMEOUT_MS }) {
+function verifiedChannelBinding({ bootstrap, expectedLauncherNonce, expectedPid,
+  expectedReleaseProvenanceHash, expectedSessionHash, signerReady } = {}, role, now) {
+  const ready = verifyValidatorReadinessSignerReady(signerReady, { bootstrap,
+    expectedLauncherNonce, expectedPid, expectedReleaseProvenanceHash, expectedRole: role,
+    expectedSessionHash, now });
+  const channelBinding = structuredClone({ bootstrap, expectedLauncherNonce, expectedPid,
+    expectedReleaseProvenanceHash, expectedSessionHash, signerReady: ready });
+  createValidatorReadinessSignerChannelEpoch(channelBinding, { expectedRole: role, now });
+  return { channelBinding, ready };
+}
+
+function createClient({ bootstrap, expectedLauncherNonce, expectedPid,
+  expectedReleaseProvenanceHash, expectedSessionHash, gatewayRolePackage,
+  now = () => Date.now(), role, signerReady, stream, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   assertStream(stream);
   if (typeof now !== "function") throw new Error("validator readiness signer clock is invalid");
   const time = monotonicClock(now);
+  const { channelBinding } = verifiedChannelBinding({ bootstrap, expectedLauncherNonce,
+    expectedPid, expectedReleaseProvenanceHash, expectedSessionHash, signerReady }, role, time());
   timeoutMs = integer(timeoutMs, DEFAULT_TIMEOUT_MS, 1,
     VALIDATOR_READINESS_SIGNER_MAX_TIMEOUT_MS, "validator readiness signer timeout");
   const gateway = verifyValidatorReadinessRolePackage(gatewayRolePackage,
@@ -129,9 +146,9 @@ function createClient({ gatewayRolePackage, now = () => Date.now(), role, stream
       try {
         const response = role === "transport"
           ? verifyValidatorReadinessTransportSignResponse(message,
-            { gatewayRolePackage: gateway, request: current.request, now: time() })
+            { channelBinding, gatewayRolePackage: gateway, request: current.request, now: time() })
           : verifyValidatorReadinessConsensusSignResponse(message,
-            { gatewayRolePackage: gateway, request: current.request, now: time() });
+            { channelBinding, gatewayRolePackage: gateway, request: current.request, now: time() });
         cleanupPending(); pending = null; current.resolve(response);
       } catch (error) { poison(error); return; }
     }
@@ -170,7 +187,7 @@ function createClient({ gatewayRolePackage, now = () => Date.now(), role, stream
       boundedWriteFrame(stream, value, timeoutMs).catch(poison);
     });
   };
-  return { gateway, identity: publicIdentity(gateway.session, role), request, time };
+  return { channelBinding, gateway, identity: publicIdentity(gateway.session, role), request, time };
 }
 
 export function createValidatorReadinessTransportSignerAdapter(options = {}) {
@@ -178,7 +195,8 @@ export function createValidatorReadinessTransportSignerAdapter(options = {}) {
   return Object.freeze({ ...client.identity,
     async signReadinessTransport({ challenge, signal: requestSignal = null } = {}) {
       const request = createValidatorReadinessTransportSignRequest({ challenge,
-        gatewayRolePackage: client.gateway }, { now: client.time() });
+        gatewayRolePackage: client.gateway },
+      { channelBinding: client.channelBinding, now: client.time() });
       const response = await client.request(request, requestSignal);
       return response.transportResponse.transportSignature;
     },
@@ -191,7 +209,7 @@ export function createValidatorReadinessConsensusSignerAdapter(options = {}) {
     async signReadinessConsensus({ signal: requestSignal = null, transportResponse } = {}) {
       const request = createValidatorReadinessConsensusSignRequest({
         gatewayRolePackage: client.gateway, transportResponse,
-      }, { now: client.time() });
+      }, { channelBinding: client.channelBinding, now: client.time() });
       const response = await client.request(request, requestSignal);
       return response.candidateResponse.consensusSignature;
     },
@@ -209,21 +227,24 @@ function assertSigner(signer, identity, role) {
   return method;
 }
 
-function createEndpoint({ maxOperations = DEFAULT_MAX_OPERATIONS,
-  maxRequests = DEFAULT_MAX_REQUESTS, now = () => Date.now(), role, rolePackage, signer,
-  stream, timeoutMs = DEFAULT_TIMEOUT_MS, trustedCurrentHeight }) {
+function createEndpoint({ bootstrap, expectedLauncherNonce, expectedPid,
+  expectedReleaseProvenanceHash, expectedSessionHash, maxOperations = DEFAULT_MAX_OPERATIONS,
+  maxRequests = DEFAULT_MAX_REQUESTS, now = () => Date.now(), role, signer, signerReady, stream,
+  timeoutMs = DEFAULT_TIMEOUT_MS, trustedCurrentHeight }) {
   assertStream(stream);
   if (typeof now !== "function" || typeof trustedCurrentHeight !== "function") {
     throw new Error("validator readiness signer endpoint trust callbacks are invalid");
   }
   const time = monotonicClock(now);
+  const { channelBinding } = verifiedChannelBinding({ bootstrap, expectedLauncherNonce,
+    expectedPid, expectedReleaseProvenanceHash, expectedSessionHash, signerReady }, role, time());
   timeoutMs = integer(timeoutMs, DEFAULT_TIMEOUT_MS, 1,
     VALIDATOR_READINESS_SIGNER_MAX_TIMEOUT_MS, "validator readiness signer timeout");
   maxRequests = integer(maxRequests, DEFAULT_MAX_REQUESTS, 16, 1_000_000,
     "validator readiness signer request capacity");
   maxOperations = integer(maxOperations, DEFAULT_MAX_OPERATIONS, 16, maxRequests,
     "validator readiness signer operation capacity");
-  const pinned = verifyValidatorReadinessRolePackage(rolePackage,
+  const pinned = verifyValidatorReadinessRolePackage(bootstrap?.rolePackage,
     { expectedRole: role, now: time() });
   const identity = publicIdentity(pinned.session, role);
   const signerMethod = assertSigner(signer, identity, role);
@@ -279,9 +300,9 @@ function createEndpoint({ maxOperations = DEFAULT_MAX_OPERATIONS,
       height();
       const response = role === "transport"
         ? createValidatorReadinessTransportSignResponse({ request: verified.request,
-          rolePackage: pinned, signature }, { now: time() })
+          rolePackage: pinned, signature }, { channelBinding, now: time() })
         : createValidatorReadinessConsensusSignResponse({ request: verified.request,
-          rolePackage: pinned, signature }, { now: time() });
+          rolePackage: pinned, signature }, { channelBinding, now: time() });
       const core = role === "transport" ? response.transportResponse : response.candidateResponse;
       reservation.core = core; reservation.state = "completed";
       metrics.completedOperations += 1;
@@ -294,8 +315,10 @@ function createEndpoint({ maxOperations = DEFAULT_MAX_OPERATIONS,
   };
   const handle = async (message) => {
     const verified = role === "transport"
-      ? verifyValidatorReadinessTransportSignRequest(message, { rolePackage: pinned, now: time() })
-      : verifyValidatorReadinessConsensusSignRequest(message, { rolePackage: pinned, now: time() });
+      ? verifyValidatorReadinessTransportSignRequest(message,
+        { channelBinding, rolePackage: pinned, now: time() })
+      : verifyValidatorReadinessConsensusSignRequest(message,
+        { channelBinding, rolePackage: pinned, now: time() });
     const priorRequestHash = requestIds.get(verified.request.requestId);
     if (priorRequestHash !== undefined && priorRequestHash !== verified.requestHash) {
       throw new Error("validator readiness signer request id was reused for different input");
@@ -309,18 +332,10 @@ function createEndpoint({ maxOperations = DEFAULT_MAX_OPERATIONS,
     metrics.requests += 1;
     const core = await sign(verified);
     const response = role === "transport"
-      ? { format: "nir-validator-readiness-transport-sign-response-v1",
-        gatewayRolePackageHash: verified.request.gatewayRolePackageHash,
-        operationHash: verified.operationHash, requestHash: verified.requestHash,
-        requestId: verified.request.requestId, sessionHash: verified.request.sessionHash,
-        signerRolePackageHash: verified.request.signerRolePackageHash,
-        transportResponse: core, version: 1 }
-      : { candidateResponse: core, format: "nir-validator-readiness-consensus-sign-response-v1",
-        gatewayRolePackageHash: verified.request.gatewayRolePackageHash,
-        operationHash: verified.operationHash, requestHash: verified.requestHash,
-        requestId: verified.request.requestId, sessionHash: verified.request.sessionHash,
-        signerRolePackageHash: verified.request.signerRolePackageHash,
-        version: 1 };
+      ? createValidatorReadinessTransportSignResponse({ request: verified.request,
+        rolePackage: pinned, signature: core.transportSignature }, { channelBinding, now: time() })
+      : createValidatorReadinessConsensusSignResponse({ request: verified.request,
+        rolePackage: pinned, signature: core.consensusSignature }, { channelBinding, now: time() });
     await boundedWriteFrame(stream, response, timeoutMs);
   };
   const onData = (chunk) => {

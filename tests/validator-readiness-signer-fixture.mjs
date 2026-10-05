@@ -12,6 +12,7 @@ import {
 import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
+import { encryptWallet } from "../blockchain/vault.mjs";
 import {
   createValidatorAdmissionReadinessChallenge,
   createValidatorAdmissionReadinessContext,
@@ -20,6 +21,11 @@ import { validatorSetId } from "../blockchain/validator-rotation.mjs";
 import {
   createValidatorReadinessRolePackage, createValidatorReadinessSession,
 } from "../blockchain/validator-readiness-session.mjs";
+import {
+  createValidatorReadinessProcessBootstrapSet, createValidatorReadinessSignerReady,
+} from "../blockchain/validator-readiness-process-protocol.mjs";
+import { createValidatorReadinessSignerChannelEpoch }
+  from "../blockchain/validator-readiness-signer-protocol.mjs";
 
 export const READINESS_SIGNER_NOW = 1_800_000_000_000;
 
@@ -100,9 +106,32 @@ export function validatorReadinessSignerFixture({ now = READINESS_SIGNER_NOW } =
     { now });
   const consensusRolePackage = createValidatorReadinessRolePackage(session, "consensus",
     { now });
+  const consensusVault = encryptWallet(candidate, "fixture-consensus-password",
+    { label: "Fixture consensus" });
+  const transportVault = encryptWallet(transport, "fixture-transport-password",
+    { label: "Fixture transport" });
+  const { consensusSignerBootstrap, launcherNonce, transportSignerBootstrap } =
+    createValidatorReadinessProcessBootstrapSet({ consensusVault, gatewayRolePackage,
+      initialHeight: context.checkpoint.height,
+      tlsCertificateSha256: context.tlsCertificateSha256, transportVault }, { now });
+  const binding = (role, pid, bootstrap, wallet) => {
+    const signerReady = createValidatorReadinessSignerReady({ bootstrap, pid, wallet }, { now });
+    const localPins = { bootstrap, expectedLauncherNonce: launcherNonce, expectedPid: pid,
+      expectedReleaseProvenanceHash: session.releaseProvenanceHash,
+      expectedSessionHash: session.sessionHash, signerReady };
+    const channelEpoch = createValidatorReadinessSignerChannelEpoch(localPins,
+      { expectedRole: role, now });
+    return { channelEpoch, localPins };
+  };
+  const consensus = binding("consensus", 4_101, consensusSignerBootstrap, candidate);
+  const transportBinding = binding("transport", 4_102, transportSignerBootstrap, transport);
   const challenge = createValidatorAdmissionReadinessChallenge({
     challengeNonce: "f".repeat(64), context, observerWallet: validatorWallets[0], validators,
   });
-  return { candidate, challenge, consensusRolePackage, context, gatewayRolePackage, session,
-    transport, transportRolePackage, validatorWallets, validators };
+  return { candidate, challenge, consensusChannelEpoch: consensus.channelEpoch,
+    consensusRolePackage, consensusSignerBinding: consensus.localPins,
+    consensusSignerBootstrap, context, gatewayRolePackage, launcherNonce, session, transport,
+    transportChannelEpoch: transportBinding.channelEpoch,
+    transportRolePackage, transportSignerBinding: transportBinding.localPins,
+    transportSignerBootstrap, validatorWallets, validators };
 }
