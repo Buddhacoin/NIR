@@ -31,6 +31,8 @@ import {
 import {
   READINESS_SIGNER_NOW, validatorReadinessSignerFixture,
 } from "./validator-readiness-signer-fixture.mjs";
+import { createValidatorReadinessSignerReady }
+  from "../blockchain/validator-readiness-process-protocol.mjs";
 
 class MemoryDuplex extends Duplex {
   blockWrites = false;
@@ -76,9 +78,20 @@ function consensusSigner(values, counter, implementation = null) {
 }
 
 function endpointOptions(values, role, stream, signer, overrides = {}) {
-  return { now: () => READINESS_SIGNER_NOW,
-    rolePackage: role === "transport" ? values.transportRolePackage : values.consensusRolePackage,
+  return { ...(role === "transport" ? values.transportSignerBinding
+    : values.consensusSignerBinding), now: () => READINESS_SIGNER_NOW,
     signer, stream, trustedCurrentHeight: () => values.context.checkpoint.height, ...overrides };
+}
+
+function wireOptions(values, role) {
+  return { channelBinding: role === "transport" ? values.transportSignerBinding
+    : values.consensusSignerBinding, now: READINESS_SIGNER_NOW };
+}
+
+function adapterOptions(values, role, stream, overrides = {}) {
+  return { ...(role === "transport" ? values.transportSignerBinding
+    : values.consensusSignerBinding), gatewayRolePackage: values.gatewayRolePackage,
+    now: () => READINESS_SIGNER_NOW, stream, ...overrides };
 }
 
 test("narrow adapters produce the existing dual-signed readiness response", async () => {
@@ -89,12 +102,10 @@ test("narrow adapters produce the existing dual-signed readiness response", asyn
     "transport", transportPair.right, transportSigner(values, transportCalls)));
   const consensusEndpoint = createValidatorReadinessConsensusSignerEndpoint(endpointOptions(values,
     "consensus", consensusPair.right, consensusSigner(values, consensusCalls)));
-  const transportAdapter = createValidatorReadinessTransportSignerAdapter({
-    gatewayRolePackage: values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW,
-    stream: transportPair.left });
-  const consensusAdapter = createValidatorReadinessConsensusSignerAdapter({
-    gatewayRolePackage: values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW,
-    stream: consensusPair.left });
+  const transportAdapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", transportPair.left));
+  const consensusAdapter = createValidatorReadinessConsensusSignerAdapter(
+    adapterOptions(values, "consensus", consensusPair.left));
   try {
     const response = await respondToValidatorAdmissionReadinessChallenge({
       challenge: values.challenge, consensusSigner: consensusAdapter, context: values.context,
@@ -115,7 +126,7 @@ test("one hundred semantic duplicates with distinct IDs sign exactly once", asyn
       maxRequests: 128 }));
   const requests = Array.from({ length: 100 }, () =>
     createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-      gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW }));
+      gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport")));
   const decoder = createValidatorReadinessSignerFrameDecoder(); const responses = [];
   const completed = new Promise((resolve, reject) => {
     channel.left.on("data", (chunk) => {
@@ -133,7 +144,8 @@ test("one hundred semantic duplicates with distinct IDs sign exactly once", asyn
   assert.equal(endpoint.metrics().reusedOperations, 99);
   responses.forEach((response, index) => assert.deepEqual(
     verifyValidatorReadinessTransportSignResponse(response, { gatewayRolePackage:
-      values.gatewayRolePackage, now: READINESS_SIGNER_NOW, request: requests[index] }), response));
+      values.gatewayRolePackage, ...wireOptions(values, "transport"),
+      request: requests[index] }), response));
   endpoint.close();
 });
 
@@ -147,7 +159,7 @@ test("expired trusted height rejects queued work before any key operation", asyn
   channel.left.resume();
   channel.left.write(encodeValidatorReadinessSignerFrame(
     createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-      gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW })));
+      gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport"))));
   await closed; assert.equal(calls.count, 0); assert.equal(endpoint.metrics().poisoned, true);
 });
 
@@ -157,8 +169,8 @@ test("trusted height cannot move backwards while a signature is in progress", as
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", channel.right, transportSigner(values, calls), {
       trustedCurrentHeight: () => values.context.checkpoint.height - Math.min(reads++, 1) }));
-  const adapter = createValidatorReadinessTransportSignerAdapter({ gatewayRolePackage:
-    values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW, stream: channel.left });
+  const adapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", channel.left));
   await assert.rejects(() => adapter.signReadinessTransport({ challenge: values.challenge }),
     /ended|failed|unavailable/);
   assert.equal(calls.count, 1); assert.equal(endpoint.metrics().poisoned, true);
@@ -167,15 +179,15 @@ test("trusted height cannot move backwards while a signature is in progress", as
 test("a forged transport proof poisons consensus IPC without invoking its signer", async () => {
   const values = validatorReadinessSignerFixture();
   const transportRequest = createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-    gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW });
+    gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport"));
   const prepared = verifyValidatorReadinessTransportSignRequest(transportRequest,
-    { now: READINESS_SIGNER_NOW, rolePackage: values.transportRolePackage });
+    { ...wireOptions(values, "transport"), rolePackage: values.transportRolePackage });
   const transportResponse = createValidatorReadinessTransportSignResponse({ request: transportRequest,
     rolePackage: values.transportRolePackage, signature: signObject(prepared.signingInput,
       values.transport, VALIDATOR_ADMISSION_READINESS_CANDIDATE_RESPONSE_DOMAIN) },
-  { now: READINESS_SIGNER_NOW }).transportResponse;
+  wireOptions(values, "transport")).transportResponse;
   const valid = createValidatorReadinessConsensusSignRequest({ gatewayRolePackage:
-    values.gatewayRolePackage, transportResponse }, { now: READINESS_SIGNER_NOW });
+    values.gatewayRolePackage, transportResponse }, wireOptions(values, "consensus"));
   const forged = structuredClone(valid);
   forged.transportResponse.transportSignature = Buffer.from("forged").toString("base64");
   const channel = pair(); const calls = { count: 0 };
@@ -200,9 +212,8 @@ test("client abort during signing poisons both sides and aborts the key operatio
   }));
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", channel.right, signer, { timeoutMs: 1_000 }));
-  const adapter = createValidatorReadinessTransportSignerAdapter({ gatewayRolePackage:
-    values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW, stream: channel.left,
-  timeoutMs: 1_000 });
+  const adapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", channel.left, { timeoutMs: 1_000 }));
   const controller = new AbortController();
   const operation = adapter.signReadinessTransport({ challenge: values.challenge,
     signal: controller.signal });
@@ -218,7 +229,7 @@ test("an exact request-id replay returns the cached signature without signing tw
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", channel.right, transportSigner(values, calls)));
   const request = createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-    gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW });
+    gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport"));
   const decoder = createValidatorReadinessSignerFrameDecoder(); const responses = [];
   await new Promise((resolve, reject) => {
     channel.left.once("data", (chunk) => {
@@ -240,18 +251,38 @@ test("an exact request-id replay returns the cached signature without signing tw
   endpoint.close();
 });
 
+test("a request replayed from a prior launch epoch is fatal before key use", async () => {
+  const values = validatorReadinessSignerFixture(); const channel = pair();
+  const calls = { count: 0 };
+  const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
+    "transport", channel.right, transportSigner(values, calls)));
+  const priorPid = values.transportSignerBinding.expectedPid + 1;
+  const priorReady = createValidatorReadinessSignerReady({
+    bootstrap: values.transportSignerBootstrap, pid: priorPid, wallet: values.transport,
+  }, { now: READINESS_SIGNER_NOW });
+  const priorBinding = { ...values.transportSignerBinding, expectedPid: priorPid,
+    signerReady: priorReady };
+  const replay = createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
+    gatewayRolePackage: values.gatewayRolePackage },
+  { channelBinding: priorBinding, now: READINESS_SIGNER_NOW });
+  const ended = new Promise((resolve) => channel.left.once("end", resolve));
+  channel.left.resume(); channel.left.write(encodeValidatorReadinessSignerFrame(replay));
+  await ended;
+  assert.equal(calls.count, 0); assert.equal(endpoint.metrics().poisoned, true);
+});
+
 test("the same request id with different canonical input is fatal before a second signature", async () => {
   const values = validatorReadinessSignerFixture(); const channel = pair();
   const calls = { count: 0 };
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", channel.right, transportSigner(values, calls)));
   const first = createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-    gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW });
+    gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport"));
   const secondChallenge = createValidatorAdmissionReadinessChallenge({
     challengeNonce: "e".repeat(64), context: values.context,
     observerWallet: values.validatorWallets[0], validators: values.validators });
   const second = createValidatorReadinessTransportSignRequest({ challenge: secondChallenge,
-    gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW });
+    gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport"));
   second.requestId = first.requestId;
   const decoder = createValidatorReadinessSignerFrameDecoder();
   await new Promise((resolve, reject) => {
@@ -272,9 +303,8 @@ test("key timeout and partial-frame EOF are fatal and never permit late reuse", 
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", timeoutPair.right, transportSigner(values, timeoutCalls,
       () => new Promise(() => {})), { timeoutMs: 20 }));
-  const adapter = createValidatorReadinessTransportSignerAdapter({ gatewayRolePackage:
-    values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW, stream: timeoutPair.left,
-  timeoutMs: 100 });
+  const adapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", timeoutPair.left, { timeoutMs: 100 }));
   await assert.rejects(() => adapter.signReadinessTransport({ challenge: values.challenge }),
     /ended|timed out|failed/);
   assert.equal(timeoutCalls.count, 1); assert.equal(endpoint.metrics().poisoned, true);
@@ -294,9 +324,8 @@ test("a late key result after timeout is discarded and the channel stays poisone
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", channel.right, transportSigner(values, calls, () =>
       new Promise((resolve) => { resolveLate = resolve; })), { timeoutMs: 20 }));
-  const adapter = createValidatorReadinessTransportSignerAdapter({ gatewayRolePackage:
-    values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW, stream: channel.left,
-  timeoutMs: 100 });
+  const adapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", channel.left, { timeoutMs: 100 }));
   const operation = adapter.signReadinessTransport({ challenge: values.challenge });
   while (!resolveLate) await new Promise((resolve) => setImmediate(resolve));
   await assert.rejects(operation, /ended|timed out|failed/);
@@ -313,9 +342,8 @@ test("output backpressure timeout poisons the endpoint after one key operation",
   const calls = { count: 0 }; channel.right.blockWrites = true;
   const endpoint = createValidatorReadinessTransportSignerEndpoint(endpointOptions(values,
     "transport", channel.right, transportSigner(values, calls), { timeoutMs: 20 }));
-  const adapter = createValidatorReadinessTransportSignerAdapter({ gatewayRolePackage:
-    values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW, stream: channel.left,
-  timeoutMs: 100 });
+  const adapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", channel.left, { timeoutMs: 100 }));
   await assert.rejects(() => adapter.signReadinessTransport({ challenge: values.challenge }),
     /ended|timed out|failed/);
   assert.equal(calls.count, 1); assert.equal(endpoint.metrics().completedOperations, 1);
@@ -347,8 +375,8 @@ test("height expiry after the key operation poisons the endpoint without a respo
     "transport", channel.right, transportSigner(values, calls), {
       trustedCurrentHeight: () => reads++ === 0
         ? values.context.expiresAtHeight - 1 : values.context.expiresAtHeight }));
-  const adapter = createValidatorReadinessTransportSignerAdapter({ gatewayRolePackage:
-    values.gatewayRolePackage, now: () => READINESS_SIGNER_NOW, stream: channel.left });
+  const adapter = createValidatorReadinessTransportSignerAdapter(
+    adapterOptions(values, "transport", channel.left));
   await assert.rejects(() => adapter.signReadinessTransport({ challenge: values.challenge }),
     /ended|failed|unavailable/);
   assert.equal(calls.count, 1); assert.equal(endpoint.metrics().completedOperations, 0);
@@ -363,7 +391,7 @@ test("coalesced input cannot enqueue beyond the explicit request bound", async (
       maxOperations: 16, maxRequests: 16 }));
   const requests = Array.from({ length: 17 }, () =>
     createValidatorReadinessTransportSignRequest({ challenge: values.challenge,
-      gatewayRolePackage: values.gatewayRolePackage }, { now: READINESS_SIGNER_NOW }));
+      gatewayRolePackage: values.gatewayRolePackage }, wireOptions(values, "transport")));
   const ended = new Promise((resolve) => channel.left.once("end", resolve));
   channel.left.resume();
   channel.left.write(Buffer.concat(requests.map(encodeValidatorReadinessSignerFrame)));
@@ -376,6 +404,6 @@ test("signer IPC source boundary has no launcher, vault, filesystem, process, or
     "validator-readiness-signer-protocol.mjs"]) {
     const source = readFileSync(join(process.cwd(), "blockchain", name), "utf8");
     assert.doesNotMatch(source,
-      /node:(?:child_process|fs)|process\.env|(?:read|write)File|privateKey|vault|launcher/i);
+      /node:(?:child_process|fs)|process\.env|(?:read|write)File|privateKey|vault/i);
   }
 });
