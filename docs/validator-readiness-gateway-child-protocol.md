@@ -1,4 +1,4 @@
-# Validator readiness gateway child commit protocol
+# Validator readiness gateway child activation protocol
 
 This protocol is the fail-closed activation boundary for the isolated readiness gateway process.
 The canonical package layer itself does not spawn a child, open TLS keys, bind a listener, or connect
@@ -30,21 +30,26 @@ The only valid lifecycle is:
    activations;
 5. accept one `COMMIT` command and return one `COMMIT_ACK`;
 6. fully flush that exact `COMMIT_ACK` to the inherited launcher channel;
-7. and only then open the HTTPS admission-readiness activation gate.
+7. only then open the HTTPS admission-readiness activation gate;
+8. return an `ACTIVE_ACK` bound to that exact COMMIT_ACK after the gate opens.
 
 The PREPARE hash commits to the complete signed/verified readiness set, its separate readiness hash,
 all three complete activation objects, and all three activation hashes. The COMMIT hash repeats the
 complete readiness binding and all three activation hashes, and adds the exact PREPARE acknowledgement
 hash plus both complete signer acknowledgements and their two acknowledgement hashes. PREPARE,
-PREPARE_ACK, COMMIT, and COMMIT_ACK use distinct formats and cryptographic domains.
+PREPARE_ACK, COMMIT, COMMIT_ACK, and ACTIVE_ACK use distinct formats and cryptographic domains.
+ACTIVE_ACK binds the retained gateway process, launch, READY, COMMIT, and COMMIT_ACK hashes.
+It is a local inherited-channel status from the pinned child, not an independently signed
+attestation from another operator.
 
 `createValidatorReadinessGatewayActivationController` enforces order and one-shot semantics. After
 `prepare()` it remains in `prepare-ack-pending`; the caller must finish the bounded status-channel
 write and pass the exact acknowledgement to `prepareAcknowledgementFlushed()` before a COMMIT can
 be accepted. After `commit()` it remains in `commit-ack-pending`; the caller must finish the bounded
 status-channel write and pass the exact acknowledgement to `commitAcknowledgementFlushed()` before
-the state becomes `committed`. Duplicate, replayed, substituted, missing, cross-role, or out-of-order
-messages fail closed. Closing the controller is terminal.
+the state becomes `committed`. After the runtime opens the HTTP gate it calls `activated()`; only
+the exact `ACTIVE_ACK` flush advances the controller to `active`. Duplicate, replayed, substituted,
+missing, cross-role, or out-of-order messages fail closed. Closing the controller is terminal.
 
 ## HTTPS gate
 
@@ -53,7 +58,9 @@ runtime creates it with `{ active: false }`. While inactive, challenge requests 
 body parsing and before either signer can run. `validatorAdmissionReadinessActivate()` performs the
 single irreversible inactive-to-active transition; a second call is rejected.
 
-The runtime must call that method only after `commitAcknowledgementFlushed()` succeeds. Calling
+The runtime must call that method only after `commitAcknowledgementFlushed()` succeeds. It emits
+ACTIVE_ACK only after that method succeeds; the launcher does not publish an active handle on
+COMMIT_ACK alone. Calling
 `server.close()` disables the gate synchronously, aborts every active signer request, prevents late
 responses, and permanently rejects later activation. Thus listener shutdown and activation races are
 fail-closed.

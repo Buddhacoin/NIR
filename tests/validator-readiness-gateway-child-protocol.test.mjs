@@ -14,6 +14,7 @@ import {
 } from "../blockchain/validator-readiness-runtime-protocol.mjs";
 import {
   createValidatorReadinessGatewayActivationController,
+  createValidatorReadinessGatewayActiveAcknowledgement,
   createValidatorReadinessGatewayChildFrameDecoder,
   createValidatorReadinessGatewayChildInput,
   createValidatorReadinessGatewayCommitAcknowledgement,
@@ -21,6 +22,7 @@ import {
   createValidatorReadinessGatewayPrepareAcknowledgement,
   createValidatorReadinessGatewayPrepareCommand,
   encodeValidatorReadinessGatewayChildFrame,
+  verifyValidatorReadinessGatewayActiveAcknowledgement,
   verifyValidatorReadinessGatewayChildInput,
   verifyValidatorReadinessGatewayCommitAcknowledgement,
   verifyValidatorReadinessGatewayCommitCommand,
@@ -178,6 +180,29 @@ test("PREPARE and COMMIT bind independently verified READY, all activations and 
     ["consensus", "transport"]);
 });
 
+test("ACTIVE_ACK binds the exact committed gateway and activation phase", () => {
+  const result = flow();
+  const pins = { expectedCommit: result.commit, expectedPrepare: result.prepare,
+    expectedPrepareAcknowledgement: result.prepareAcknowledgement,
+    gatewayInput: result.values.gatewayInput, gatewayReady: result.values.readiness.gateway,
+    ...result.values.protocolPins };
+  const activeAck = createValidatorReadinessGatewayActiveAcknowledgement({
+    commitAcknowledgement: result.commitAcknowledgement,
+  }, pins, { now: READINESS_SIGNER_NOW });
+  assert.deepEqual(verifyValidatorReadinessGatewayActiveAcknowledgement(activeAck, {
+    ...pins, expectedCommitAcknowledgement: result.commitAcknowledgement,
+  }, { now: READINESS_SIGNER_NOW }), activeAck);
+  for (const changed of [
+    { ...activeAck, commitAcknowledgementHash: `sha3-256:${"0".repeat(64)}` },
+    { ...activeAck, pid: activeAck.pid + 1 },
+    { ...activeAck, messageType: "commit-ack" },
+    { ...activeAck, acknowledgementHash: `sha3-256:${"0".repeat(64)}` },
+    { ...activeAck, extra: true },
+  ]) assert.throws(() => verifyValidatorReadinessGatewayActiveAcknowledgement(changed, {
+    ...pins, expectedCommitAcknowledgement: result.commitAcknowledgement,
+  }, { now: READINESS_SIGNER_NOW }));
+});
+
 test("prepare rejects foreign READY, PID, role, activation, hash and schema mutations", () => {
   const result = flow();
   const verify = (value, pins = result.values.protocolPins) =>
@@ -273,6 +298,10 @@ test("stateful gateway controller rejects commit-before-prepare and every duplic
   assert.equal(earlyCommit.phase(), "closed");
   assert.throws(() => earlyCommit.prepare(result.prepare), /out of order/);
 
+  const earlyActive = controller();
+  assert.throws(() => earlyActive.activated(), /out of order/);
+  assert.equal(earlyActive.phase(), "closed");
+
   const badPrepareFlush = controller();
   const badPrepareAck = badPrepareFlush.prepare(result.prepare);
   assert.equal(badPrepareFlush.phase(), "prepare-ack-pending");
@@ -314,6 +343,13 @@ test("stateful gateway controller rejects commit-before-prepare and every duplic
   assert.equal(success.phase(), "commit-ack-pending");
   assert.equal(success.commitAcknowledgementFlushed(successCommitAck), true);
   assert.equal(success.phase(), "committed");
+  const successActiveAck = success.activated();
+  assert.equal(successActiveAck.messageType, "active-ack");
+  assert.equal(success.phase(), "active-ack-pending");
+  assert.equal(success.activeAcknowledgementFlushed(successActiveAck), true);
+  assert.equal(success.phase(), "active");
+  assert.throws(() => success.activated(), /out of order/);
+  assert.equal(success.phase(), "closed");
   success.close();
   assert.equal(success.phase(), "closed");
 });

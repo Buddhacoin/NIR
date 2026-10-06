@@ -438,6 +438,9 @@ export async function runValidatorReadinessGatewayChildProcess() {
     if (inbox.hasQueuedOrPartial() || stopped) throw new RuntimeStop("channel-failed");
     await assertSignerChannelsLive([transportChannel, consensusChannel], raceStop, () => stopped);
     server.validatorAdmissionReadinessActivate();
+    const activeAck = controller.activated();
+    await raceStop(writeFrame(statusChannel, activeAck));
+    controller.activeAcknowledgementFlushed(activeAck);
 
     await raceStop(inbox.next());
     throw new RuntimeStop("channel-failed");

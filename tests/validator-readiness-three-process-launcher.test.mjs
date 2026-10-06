@@ -124,8 +124,10 @@ test("launcher activates one real three-process cohort and closes it atomically"
   try {
     assert.equal(cohort.state(), "active");
     assert.equal(cohort.productionActivated, true);
-    assert.deepEqual(Object.keys(cohort).sort(), ["close", "endpoint", "pids",
+    assert.deepEqual(Object.keys(cohort).sort(), ["activeAcknowledgement", "close", "endpoint", "pids",
       "productionActivated", "readiness", "state", "updateHeight", "waitForTermination"]);
+    assert.equal(cohort.activeAcknowledgement.messageType, "active-ack");
+    assert.ok(Object.isFrozen(cohort.activeAcknowledgement));
     assert.equal((await request(values)).status, 200);
     const updated = await cohort.updateHeight(values.context.checkpoint.height + 1);
     assert.equal(updated.consensus.messageType, "height-ack");

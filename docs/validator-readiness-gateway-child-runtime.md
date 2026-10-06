@@ -22,7 +22,7 @@ spawn it with an empty environment and give it these exact descriptors:
 | 4 | launcher → gateway | raw TLS private-key bytes, then EOF |
 | 5 | launcher → gateway | raw TLS certificate bytes, then EOF |
 | 6 | launcher → gateway | persistent PREPARE and COMMIT control |
-| 7 | gateway → launcher | READY, PREPARE_ACK, COMMIT_ACK and bounded fatal status |
+| 7 | gateway → launcher | READY, PREPARE_ACK, COMMIT_ACK, ACTIVE_ACK and bounded fatal status |
 | 8 | transport signer → gateway | role-specific signer responses |
 | 9 | gateway → transport signer | role-specific signer requests |
 | 10 | consensus signer → gateway | role-specific signer responses |
@@ -57,7 +57,9 @@ The only successful order is:
 9. independently verify COMMIT and both exact signer activation acknowledgements;
 10. recheck both signer channels, write COMMIT_ACK, treat its write callback as the second flush
     barrier, mark the controller committed, recheck both channels again, and only then activate
-    the HTTPS service.
+    the HTTPS service;
+11. write and flush the exact ACTIVE_ACK after the HTTPS gate is active; failure closes the gate
+    before reporting a terminal status.
 
 Before step 10, a readiness challenge receives HTTP 503 before its body is parsed and before either
 signer can run. After activation, every request is relayed through the existing exactly-once,

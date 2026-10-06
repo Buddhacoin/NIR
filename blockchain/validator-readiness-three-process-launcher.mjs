@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { canonicalJson } from "./crypto.mjs";
 import {
+  verifyValidatorReadinessGatewayActiveAcknowledgement,
   createValidatorReadinessGatewayCommitCommand,
   createValidatorReadinessGatewayPrepareCommand,
   createValidatorReadinessGatewayChildFrameDecoder,
@@ -153,7 +154,8 @@ class Inbox {
           this.stop(new Error(`${label} sent unexpected status`)); return;
         }
         if (this.waiter) {
-          const resolve = this.waiter.resolve; this.waiter = null; this.expected = null;
+          const { resolve, followingType } = this.waiter;
+          this.waiter = null; this.expected = followingType;
           resolve(message);
         } else this.message = message;
       }
@@ -171,17 +173,19 @@ class Inbox {
     if (this.waiter) { const reject = this.waiter.reject; this.waiter = null; reject(error); }
     this.fail(error);
   }
-  next(type, label) {
+  next(type, label, followingType = null) {
     if (this.failure) return Promise.reject(this.failure);
     if (this.expected === null) this.expected = type;
     if (this.expected !== type || this.waiter) {
       return Promise.reject(new Error(`${this.label} status phase is invalid`));
     }
     if (this.message) {
-      const message = this.message; this.message = null; this.expected = null;
+      const message = this.message; this.message = null; this.expected = followingType;
       return Promise.resolve(message);
     }
-    return deadline(new Promise((resolve, reject) => { this.waiter = { resolve, reject }; }), label);
+    return deadline(new Promise((resolve, reject) => {
+      this.waiter = { followingType, resolve, reject };
+    }), label);
   }
 }
 
@@ -419,14 +423,22 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
     const commit = createValidatorReadinessGatewayCommitCommand({ gatewayInput: inputs.gateway,
       gatewayReady: readiness.gateway, prepare, prepareAcknowledgement,
       signerAcknowledgements }, pins, { now: Date.now() });
-    const commitPromise = byRole.gateway.inbox.next("commit-ack", "gateway COMMIT_ACK");
+    const commitPromise = byRole.gateway.inbox.next("commit-ack", "gateway COMMIT_ACK",
+      "active-ack");
     await write(byRole.gateway.pipes.control, encodeValidatorReadinessGatewayChildFrame(commit),
       "gateway COMMIT");
-    verifyValidatorReadinessGatewayCommitAcknowledgement(await commitPromise, {
+    const commitAcknowledgement = verifyValidatorReadinessGatewayCommitAcknowledgement(
+      await commitPromise, {
       expectedCommit: commit, expectedPrepare: prepare,
       expectedPrepareAcknowledgement: prepareAcknowledgement,
       gatewayInput: inputs.gateway, gatewayReady: readiness.gateway, ...pins,
     }, { now: Date.now() });
+    const activeAcknowledgement = verifyValidatorReadinessGatewayActiveAcknowledgement(
+      await byRole.gateway.inbox.next("active-ack", "gateway ACTIVE_ACK"), {
+        expectedCommit: commit, expectedCommitAcknowledgement: commitAcknowledgement,
+        expectedPrepare: prepare, expectedPrepareAcknowledgement: prepareAcknowledgement,
+        gatewayInput: inputs.gateway, gatewayReady: readiness.gateway, ...pins,
+      }, { now: Date.now() });
     live(records, () => closing);
     state = "active";
     const previousUpdates = { consensus: null, transport: null };
@@ -463,6 +475,7 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
       pids: Object.freeze({ consensus: byRole.consensus.child.pid,
         gateway: byRole.gateway.child.pid, transport: byRole.transport.child.pid }),
       productionActivated: true, readiness: deepFreeze(clone(readiness)), state: () => state,
+      activeAcknowledgement: deepFreeze(clone(activeAcknowledgement)),
       updateHeight, waitForTermination: () => terminal,
     });
   } catch {
