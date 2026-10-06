@@ -63,7 +63,12 @@ function certificateModeFromEnvironment({ ceremonyMode = false } = {}) {
 }
 
 function certificateHeadAnchorPathFromEnvironment(mode, runtimeDirectory) {
-  if (mode !== CERTIFICATE_MODE_LIFECYCLE) return null;
+  if (mode !== CERTIFICATE_MODE_LIFECYCLE) {
+    if (process.env.NIR_CERTIFICATE_HEAD_ANCHOR_PATH !== undefined) {
+      throw new Error("external certificate history anchor requires lifecycle mode");
+    }
+    return null;
+  }
   const path = process.env.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
   if (typeof path !== "string" || !isAbsolute(path) || path.includes("\0")) {
     throw new Error("lifecycle mode requires an absolute NIR_CERTIFICATE_HEAD_ANCHOR_PATH");

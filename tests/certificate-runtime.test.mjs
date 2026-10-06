@@ -15,6 +15,7 @@ import {
 import { certificateStorePaths, installCertificateRecord }
   from "../blockchain/certificate-lifecycle-store.mjs";
 import {
+  CERTIFICATE_MODE_DEV_GENESIS,
   CERTIFICATE_MODE_LIFECYCLE,
   RuntimeCertificatePins,
 } from "../blockchain/certificate-runtime.mjs";
@@ -151,6 +152,9 @@ test("coordinator runtime reloads renewal history across restart and drops the o
   try {
     const values = lifecycleFixture(root, "renew");
     values.install(values.layout.coordinatorDirectory);
+    assert.throws(() => new RuntimeCertificatePins(values.layout.coordinatorDirectory,
+      values.genesis, { externalAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) }),
+    /requires lifecycle mode/);
     assert.throws(() => new RuntimeCertificatePins(values.layout.coordinatorDirectory,
       values.genesis, { mode: CERTIFICATE_MODE_LIFECYCLE }), /external history anchor path/);
     assert.throws(() => new DistributedCoordinator(values.layout.coordinatorDirectory,
@@ -308,6 +312,13 @@ test("network lifecycle launch rejects an anchor inside node writable state", ()
       ...process.env, NIR_CERTIFICATE_MODE: CERTIFICATE_MODE_LIFECYCLE,
       NIR_CERTIFICATE_HEAD_ANCHOR_PATH: anchorPath,
     }, stdio: "pipe" }), /outside node state/);
+    assert.throws(() => execFileSync(process.execPath, [
+      "blockchain/network-cli.mjs", "serve-coordinator", directory,
+      "https://127.0.0.1:1", "8787",
+    ], { cwd: new URL("..", import.meta.url), env: {
+      ...process.env, NIR_CERTIFICATE_MODE: CERTIFICATE_MODE_DEV_GENESIS,
+      NIR_CERTIFICATE_HEAD_ANCHOR_PATH: anchorPath,
+    }, stdio: "pipe", timeout: 2000 }), /requires lifecycle mode/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

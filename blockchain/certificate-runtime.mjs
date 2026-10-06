@@ -81,6 +81,9 @@ export class RuntimeCertificatePins {
     if (mode !== CERTIFICATE_MODE_DEV_GENESIS && mode !== CERTIFICATE_MODE_LIFECYCLE) {
       throw new Error("certificate transport mode is invalid");
     }
+    if (mode !== CERTIFICATE_MODE_LIFECYCLE && externalAnchorPath !== null) {
+      throw new Error("external certificate history anchor requires lifecycle mode");
+    }
     if (mode === CERTIFICATE_MODE_LIFECYCLE &&
         (typeof externalAnchorPath !== "string" || !isAbsolute(externalAnchorPath))) {
       throw new Error("certificate lifecycle requires an external history anchor path");
