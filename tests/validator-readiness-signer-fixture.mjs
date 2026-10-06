@@ -34,8 +34,13 @@ const members = (wallets, prefix) => wallets.map((wallet, index) => ({
 }));
 
 export function validatorReadinessSignerFixture({ endpoint = "https://candidate.example",
-  now = READINESS_SIGNER_NOW, tlsCertificateSha256 = "a".repeat(64) } = {}) {
-  const networkId = "nir-readiness-signer-test";
+  networkId = "nir-readiness-signer-test", now = READINESS_SIGNER_NOW,
+  signedRelease: suppliedSignedRelease = null,
+  trustedReleaseAddress: suppliedTrustedReleaseAddress = null,
+  tlsCertificateSha256 = "a".repeat(64) } = {}) {
+  if ((suppliedSignedRelease === null) !== (suppliedTrustedReleaseAddress === null)) {
+    throw new Error("readiness signer fixture requires release and signer together");
+  }
   const validatorWallets = Array.from({ length: 4 }, generateWallet);
   const validators = members(validatorWallets, "validator");
   const witnesses = Array.from({ length: 4 }, generateWallet);
@@ -95,11 +100,12 @@ export function validatorReadinessSignerFixture({ endpoint = "https://candidate.
   const releasePayload = { files: [{ executable: false, path: "blockchain/example.mjs",
     sha3_256: "c".repeat(64), size: 42 }], format: "nir-source-release-v1",
   releaseVersion: "1.2.3", sourceRevision: "d".repeat(40) };
-  const signedRelease = signReleaseManifest({ ...releasePayload,
+  const signedRelease = suppliedSignedRelease ?? signReleaseManifest({ ...releasePayload,
     manifestHash: hashObject(releasePayload, "RELEASE_MANIFEST_HASH") }, releaseSigner);
+  const trustedReleaseAddress = suppliedTrustedReleaseAddress ?? releaseSigner.address;
   const session = createValidatorReadinessSession({ checkpointTrustPackage, context,
     expiresAt: now + 30_000, issuedAt: now, joinPlan,
-    signedRelease, trustedReleaseAddress: releaseSigner.address,
+    signedRelease, trustedReleaseAddress,
     validators: checkpointTrustPackage.validators }, { now });
   const gatewayRolePackage = createValidatorReadinessRolePackage(session, "gateway",
     { now });
@@ -132,7 +138,7 @@ export function validatorReadinessSignerFixture({ endpoint = "https://candidate.
   return { candidate, challenge, consensusChannelEpoch: consensus.channelEpoch,
     consensusRolePackage, consensusSignerBinding: consensus.localPins,
     consensusSignerBootstrap, context, gatewayRolePackage, launcherNonce,
-    signedRelease, trustedReleaseAddress: releaseSigner.address, session, transport,
+    signedRelease, trustedReleaseAddress, session, transport,
     transportChannelEpoch: transportBinding.channelEpoch,
     transportRolePackage, transportSignerBinding: transportBinding.localPins,
     transportSignerBootstrap, validatorWallets, validators };

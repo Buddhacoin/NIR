@@ -21,6 +21,7 @@ from the candidate's child package or from the same untrusted JSON file. This mo
 signature on the release manifest but does **not** verify the installed executable files against
 that manifest; installation/release verification is a separate required gate. A signed checkpoint
 package also does not establish that a remote operator or witness is organizationally independent.
-There is still no public operator CLI or production socket-activation service in this layer.
-Installed file verification is a separate [readiness installation check](validator-readiness-installation.md)
+There is still no public operator CLI for launching the cohort or production socket-activation
+service in this layer. Installed file verification is a separate
+[readiness installation check](validator-readiness-installation.md)
 that has not yet been made mandatory in the three-process launcher.

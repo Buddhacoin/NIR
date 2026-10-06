@@ -18,9 +18,24 @@ operator signer. This prevents a caller from supplying unrelated release-lineage
 for the same readiness cohort. The external anchor and trusted signer likewise need independent
 operator-controlled origins.
 
+An operator can inspect an installed generation without starting it:
+
+```sh
+npm run validator:verify-readiness-install -- session \
+  SESSION.json SIGNED.json ANCHOR.json HEAD_STORE INSTALLATION \
+  TRUSTED_SIGNER EXPECTED_PACKAGE_HASH
+```
+
+The `session` command verifies the bounded canonical session, signed release, external anchor,
+active installation, and exact package hash. `inspect` accepts a separate canonical expectations
+file instead of a session; it is useful for installation diagnostics but does not prove agreement
+with a readiness cohort. Both commands are read-only and return a small verified summary or fail
+with a nonzero exit code. The signer, package hash, and anchor must be independently retained
+operator inputs rather than values copied from the downloaded package.
+
 These helpers do not themselves execute the installed entrypoint or prove that the code calling
 them was loaded from that generation. The current three-process readiness launcher still does
-not require this helper, and there is no operator CLI. The next integration must make
+not require this helper. The next integration must make
 installation verification and installed-entrypoint identity mandatory before gateway activation,
 without accepting a caller-fabricated "verified" flag. Passing this check alone does not
 establish independent operators or authorize a public network.

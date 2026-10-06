@@ -32,6 +32,8 @@ import { createProductionStartupGuard,
   createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
 import { verifyValidatorReadinessInstallation }
   from "../blockchain/validator-readiness-installation.mjs";
+import { validatorReadinessSignerFixture }
+  from "./validator-readiness-signer-fixture.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
 import {
   assembleProductionRuntimePolicy, createProductionRuntimePolicy, inspectProductionRuntime,
@@ -69,37 +71,38 @@ const TIP = "a".repeat(64);
 
 function identity(wallet, operatorId) { return { ...publicWallet(wallet), operatorId }; }
 
-function developerReport() {
+function developerReport(genesisHash = GENESIS, networkId = NETWORK) {
   const checks = [
     { details: { ageMs: 0, sources: 2 }, id: "backup-restore-freshness", status: "PASS" },
     { details: { eligible: 4, minimumBondAtomic: "1000000000" }, id: "bonded-validator-eligibility", status: "PASS" },
     { details: { selectionHash: "1".repeat(64), witnesses: 3 }, id: "external-witness-quorum", status: "PASS" },
-    { details: { genesisHash: GENESIS, planCommitment: "2".repeat(64) }, id: "genesis", status: "PASS" },
+    { details: { genesisHash, planCommitment: "2".repeat(64) }, id: "genesis", status: "PASS" },
     { details: { ingressProfiles: 4, ports: 14 }, id: "host-readiness", status: "PASS" },
     { details: { scannedFiles: 1 }, id: "public-artifact-scan", status: "PASS" },
     { details: { bundleHash: `sha3-256:${"3".repeat(64)}`, checkpointHash: CHECKPOINT, sequence: 1 }, id: "release", status: "PASS" },
     { details: { identities: 14, operators: 14, tlsPins: 4 }, id: "role-and-key-separation", status: "PASS" },
   ];
-  const payload = { checks, format: "nir-developer-testnet-preflight-report-v1", networkId: NETWORK,
+  const payload = { checks, format: "nir-developer-testnet-preflight-report-v1", networkId,
     observedAt: NOW, summary: { failed: 0, passed: 8, status: "PASS" }, version: 1 };
   return { ...payload, reportHash: hashObject(payload, "DEVELOPER_TESTNET_PREFLIGHT_REPORT_V1") };
 }
 
-function productionEvidence(root, manifest, storeName = "attestation-store") {
-  const report = developerReport();
+function productionEvidence(root, manifest, storeName = "attestation-store",
+  { genesisHash = GENESIS, networkId = NETWORK } = {}) {
+  const report = developerReport(genesisHash, networkId);
   const validators = Array.from({ length: 4 }, generateWallet);
   const topology = { archives: Array.from({ length: 2 }, (_, index) => identity(generateWallet(), `archive-${index}`)),
     beacons: Array.from({ length: 4 }, (_, index) => identity(generateWallet(), `beacon-${index}`)),
     certificateRotation: { newPin: "4".repeat(64), oldPin: "5".repeat(64),
       overlapEndHeight: 20, overlapStartHeight: 10, validator: validators[0].address },
-    format: "nir-testnet-drill-topology-v1", networkId: NETWORK, releaseCheckpointHash: CHECKPOINT,
+    format: "nir-testnet-drill-topology-v1", networkId, releaseCheckpointHash: CHECKPOINT,
     validators: validators.map((wallet, index) => identity(wallet, `validator-${index}`)), version: 1 };
   const plan = createTestnetPartitionDrillPlan(report, topology);
   const attestors = Array.from({ length: 4 }, generateWallet);
   const operatorSet = createRehearsalAttestorSet({ threshold: 3,
     operators: attestors.map((wallet, index) => identity(wallet, `reviewer-${index}`)) });
   const statement = { drillPlanHash: plan.planHash, expiresAt: NOW + 10_000,
-    format: "nir-rehearsal-attestation-v1", genesisHash: GENESIS, networkId: NETWORK,
+    format: "nir-rehearsal-attestation-v1", genesisHash, networkId,
     observedAt: NOW - 100, releaseCheckpointHash: CHECKPOINT,
     releaseManifestHash: manifest.manifestHash, reportHash: `sha3-256:${"6".repeat(64)}`,
     runNonce: "b".repeat(64), setId: operatorSet.setId, validatorTip: TIP, version: 1 };
@@ -107,7 +110,7 @@ function productionEvidence(root, manifest, storeName = "attestation-store") {
     signRehearsalStatement(statement, { operatorId: `reviewer-${index}`, wallet }, operatorSet));
   const store = join(root, storeName);
   const accepted = acceptRehearsalAttestationQuorum(store, attestations, { now: NOW, operatorSet });
-  const context = { finalizedTip: TIP, genesisHash: GENESIS, releaseManifestHash: manifest.manifestHash };
+  const context = { finalizedTip: TIP, genesisHash, releaseManifestHash: manifest.manifestHash };
   const productionReport = evaluateDeveloperTestnetProductionPreflight({
     attestationInput: accepted.preflightInput,
     attestationStoreTranscript: exportRehearsalAttestationStoreTranscript(store),
@@ -119,7 +122,7 @@ function productionEvidence(root, manifest, storeName = "attestation-store") {
     developerReport: report, drillPlan: plan, expectedContext: context, now: NOW, operatorSet,
   });
   const productionTarget = { ...context, format: "nir-production-release-target-v1",
-    maxFutureSkewMs: 1_000, maxPreflightAgeMs: 5_000, networkId: NETWORK,
+    maxFutureSkewMs: 1_000, maxPreflightAgeMs: 5_000, networkId,
     releaseVersion: manifest.releaseVersion, sourceRevision: manifest.sourceRevision, version: 1 };
   return { failedReport, productionReport, productionTarget };
 }
@@ -789,6 +792,37 @@ test("readiness installation binding rejects wrong package policy and modified i
       signedRelease: values.signedRelease, trustedAddress: values.signer.address, expected };
     assert.equal(verifyValidatorReadinessInstallation(options).packageHash,
       packageValue.packageHash);
+    const cli = new URL("../blockchain/validator-readiness-installation-cli.mjs",
+      import.meta.url).pathname;
+    const expectedPath = join(values.root, "readiness-expected.json");
+    const signedPath = join(values.root, "readiness-signed.json");
+    const anchorPath = join(values.root, "readiness-anchor.json");
+    const sessionPath = join(values.root, "readiness-session.json");
+    for (const [path, value] of [[expectedPath, expected],
+      [signedPath, values.signedRelease], [anchorPath, anchor], [sessionPath, {}]]) {
+      writeFileSync(path, `${canonicalJson(value)}\n`);
+    }
+    const cliArgs = [expectedPath, signedPath, anchorPath, head, target, values.signer.address];
+    const inspected = spawnSync(process.execPath, [cli, "inspect", ...cliArgs], {
+      encoding: "utf8",
+    });
+    assert.equal(inspected.status, 0, inspected.stderr);
+    assert.equal(JSON.parse(inspected.stdout).packageHash, packageValue.packageHash);
+    const badSession = spawnSync(process.execPath, [cli, "session", sessionPath,
+      signedPath, anchorPath, head, target, values.signer.address, packageValue.packageHash], {
+      encoding: "utf8",
+    });
+    assert.equal(badSession.status, 1);
+    assert.equal(badSession.stdout, "");
+    assert.match(badSession.stderr, /session/);
+    writeFileSync(expectedPath, `${canonicalJson({ ...expected,
+      expectedPackageHash: "0".repeat(64) })}\n`);
+    const wrongPackage = spawnSync(process.execPath, [cli, "inspect", ...cliArgs], {
+      encoding: "utf8",
+    });
+    assert.equal(wrongPackage.status, 1);
+    assert.equal(wrongPackage.stdout, "");
+    writeFileSync(expectedPath, `${canonicalJson(expected)}\n`);
     assert.throws(() => verifyValidatorReadinessInstallation({ ...options,
       expected: { ...expected, expectedPackageHash: "0".repeat(64) } }),
     /operator policy/);
@@ -801,6 +835,51 @@ test("readiness installation binding rejects wrong package policy and modified i
     chmodSync(installedFile, 0o644);
     writeFileSync(installedFile, "export const node = false;\n");
     assert.throws(() => verifyValidatorReadinessInstallation(options));
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("readiness operator CLI verifies a live session against the installed release", () => {
+  const values = fixture();
+  try {
+    const readiness = validatorReadinessSignerFixture({ now: Date.now(),
+      networkId: NETWORK, signedRelease: values.signedRelease,
+      trustedReleaseAddress: values.signer.address });
+    const genesisHash = readiness.session.joinPlan.expectedChainIdentityGenesisHash;
+    const evidence = productionEvidence(values.root, values.manifest,
+      "readiness-session-attestation-store", { genesisHash });
+    const packageValue = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const target = join(values.root, "readiness-session-node");
+    installProductionReleasePackage(packageValue, target, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const head = join(values.root, "readiness-session-head");
+    advanceProductionHead(head, target, { kind: "node",
+      newPackageHash: packageValue.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address });
+    const sessionPath = join(values.root, "readiness-live-session.json");
+    const signedPath = join(values.root, "readiness-live-signed.json");
+    const anchorPath = join(values.root, "readiness-live-anchor.json");
+    for (const [path, value] of [[sessionPath, readiness.session],
+      [signedPath, values.signedRelease], [anchorPath, exportProductionHeadAnchor(head)]]) {
+      writeFileSync(path, `${canonicalJson(value)}\n`);
+    }
+    const cli = new URL("../blockchain/validator-readiness-installation-cli.mjs",
+      import.meta.url).pathname;
+    const args = ["session", sessionPath, signedPath, anchorPath, head, target,
+      values.signer.address, packageValue.packageHash];
+    const valid = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.equal(JSON.parse(valid.stdout).packageHash, packageValue.packageHash);
+    const wrongPackage = spawnSync(process.execPath,
+      [cli, ...args.slice(0, -1), "0".repeat(64)], { encoding: "utf8" });
+    assert.equal(wrongPackage.status, 1);
+    assert.equal(wrongPackage.stdout, "");
+    const wrongSigner = spawnSync(process.execPath,
+      [cli, ...args.slice(0, -2), generateWallet().address, packageValue.packageHash],
+      { encoding: "utf8" });
+    assert.equal(wrongSigner.status, 1);
+    assert.equal(wrongSigner.stdout, "");
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });
 
