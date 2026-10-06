@@ -97,7 +97,16 @@ function input(port, fd) {
     consensusPasswordBuffer: Buffer.from(consensusPasswordText), gatewayInput,
     listenerFd: fd, tlsCertificateBuffer: Buffer.from(certificate),
     tlsKeyBuffer: Buffer.from(key), transportInput: signerInputs.transport,
-    transportPasswordBuffer: Buffer.from(transportPasswordText) } };
+    transportPasswordBuffer: Buffer.from(transportPasswordText), trustedPins: {
+      expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
+      expectedConsensusBootstrapHash: values.consensusSignerBootstrap.bootstrapHash,
+      expectedGatewayBootstrapHash: values.gatewayBootstrap.bootstrapHash,
+      expectedLauncherNonce: values.launcherNonce,
+      expectedReleaseProvenanceHash: values.session.releaseProvenanceHash,
+      expectedSessionHash: values.session.sessionHash,
+      expectedTlsCertificateSha256: certificateHash,
+      expectedTransportBootstrapHash: values.transportSignerBootstrap.bootstrapHash,
+    } } };
 }
 function request(values) {
   const body = Buffer.from(canonicalJson({ challenge: values.challenge,
@@ -230,6 +239,23 @@ test("certificate mismatch and a non-socket listener are rejected before child l
     await assert.rejects(launchValidatorReadinessThreeProcess(invalidListener),
       /three-process launch failed/);
     assert.equal(invalidListener.transportPasswordBuffer.every((byte) => byte === 0), true);
+  } finally { await new Promise((resolve) => reservation.server.close(resolve)); }
+});
+
+test("self-consistent child inputs cannot replace independent operator pins", async () => {
+  const reservation = await listener();
+  try {
+    const first = input(reservation.port, reservation.fd).options;
+    const second = input(reservation.port, reservation.fd).options;
+    second.trustedPins = first.trustedPins;
+    await assert.rejects(launchValidatorReadinessThreeProcess(second),
+      /three-process launch failed/);
+    assert.equal(second.consensusPasswordBuffer.every((byte) => byte === 0), true);
+    assert.equal(second.tlsKeyBuffer.every((byte) => byte === 0), true);
+    const omitted = input(reservation.port, reservation.fd).options;
+    delete omitted.trustedPins;
+    await assert.rejects(launchValidatorReadinessThreeProcess(omitted),
+      /three-process launch failed/);
   } finally { await new Promise((resolve) => reservation.server.close(resolve)); }
 });
 

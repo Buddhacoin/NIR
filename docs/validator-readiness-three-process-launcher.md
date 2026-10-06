@@ -7,8 +7,13 @@ verified all three READY objects, gateway PREPARE_ACK, both signer activation ac
 gateway COMMIT_ACK, and the post-activation gateway ACTIVE_ACK. The old two-signer cohort launcher
 remains deliberately non-activating.
 
-The caller supplies exact, preverified consensus, transport, and gateway child inputs; two vault
-password `Buffer`s; TLS key and certificate `Buffer`s; and one numeric, already-bound socket FD.
+The caller supplies exact, preverified consensus, transport, and gateway child inputs; a separate
+trusted pin set for the three bootstrap hashes, launch/session/release identity, bound endpoint,
+and TLS fingerprint; two vault password `Buffer`s; TLS key and certificate `Buffer`s; and one
+numeric, already-bound socket FD. Pins must come from the operator's independently verified
+ceremony and release evidence, not from the child inputs being checked. A self-consistent replacement
+set of child inputs is rejected when it disagrees with those retained pins. The launcher cannot
+authenticate the caller or prove that the caller really obtained pins independently.
 There are no caller-selected executables, environment variables, vault paths, IPC commands, or
 restart hooks. Once exact options and a valid socket FD have been accepted, the listener FD is
 transferred and closed by the launcher on success or failure; the caller must not read, write, close,

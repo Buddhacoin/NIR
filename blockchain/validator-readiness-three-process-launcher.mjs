@@ -39,7 +39,13 @@ const GATEWAY_CLI = fileURLToPath(new URL("./validator-readiness-gateway-child-c
 const ROLES = Object.freeze(["consensus", "transport"]);
 const OPTION_KEYS = Object.freeze(["consensusInput", "consensusPasswordBuffer", "gatewayInput",
   "listenerFd", "tlsCertificateBuffer", "tlsKeyBuffer", "transportInput",
-  "transportPasswordBuffer"]);
+  "transportPasswordBuffer", "trustedPins"]);
+const PIN_KEYS = Object.freeze(["expectedBoundHost", "expectedBoundPort",
+  "expectedConsensusBootstrapHash", "expectedGatewayBootstrapHash",
+  "expectedLauncherNonce", "expectedReleaseProvenanceHash", "expectedSessionHash",
+  "expectedTlsCertificateSha256", "expectedTransportBootstrapHash"]);
+const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/u;
+const HEX_HASH = /^[0-9a-f]{64}$/u;
 const SECRET_KEYS = Object.freeze(["consensusPasswordBuffer", "transportPasswordBuffer",
   "tlsKeyBuffer", "tlsCertificateBuffer"]);
 const EPHEMERAL_PIPES = new Set(["bootstrap", "password", "tlsKey", "tlsCertificate"]);
@@ -62,6 +68,29 @@ function exactOptions(value) {
     throw new Error("validator readiness three-process launch options are invalid");
   }
   return value;
+}
+function trustedPins(value) {
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
+      Reflect.ownKeys(value).length !== PIN_KEYS.length ||
+      !PIN_KEYS.every((key) => Object.hasOwn(value, key) &&
+        Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), "value"))) {
+    throw new Error("validator readiness trusted pins are invalid");
+  }
+  for (const key of ["expectedConsensusBootstrapHash", "expectedGatewayBootstrapHash",
+    "expectedReleaseProvenanceHash", "expectedSessionHash",
+    "expectedTransportBootstrapHash"]) {
+    if (!TAGGED_HASH.test(value[key])) throw new Error(`validator readiness ${key} is invalid`);
+  }
+  for (const key of ["expectedLauncherNonce", "expectedTlsCertificateSha256"]) {
+    if (!HEX_HASH.test(value[key])) throw new Error(`validator readiness ${key} is invalid`);
+  }
+  if (typeof value.expectedBoundHost !== "string" || value.expectedBoundHost.length < 1 ||
+      value.expectedBoundHost.length > 255 || /[\u0000-\u0020\u007f]/u.test(value.expectedBoundHost) ||
+      !Number.isSafeInteger(value.expectedBoundPort) || value.expectedBoundPort < 1 ||
+      value.expectedBoundPort > 65_535) {
+    throw new Error("validator readiness trusted endpoint is invalid");
+  }
+  return deepFreeze(clone(value));
 }
 function secretBuffers(value) {
   if (!value || typeof value !== "object") return [];
@@ -107,7 +136,7 @@ function acceptListenerFd(listenerFd) {
   }
   return listenerFd;
 }
-function validatedInputs(options) {
+function validatedInputs(options, trusted) {
   const { consensusInput, gatewayInput, transportInput } = options;
   const now = Date.now();
   const consensus = verifyValidatorReadinessSignerChildInput(consensusInput,
@@ -115,13 +144,23 @@ function validatedInputs(options) {
   const transport = verifyValidatorReadinessSignerChildInput(transportInput,
     { expectedRole: "transport", now });
   const gateway = verifyValidatorReadinessGatewayChildInput(gatewayInput, {
-    expectedBootstrapHash: gatewayInput.expectedBootstrapHash,
-    expectedBoundHost: gatewayInput.expectedBoundHost,
-    expectedBoundPort: gatewayInput.expectedBoundPort,
-    expectedLauncherNonce: gatewayInput.expectedLauncherNonce,
-    expectedReleaseProvenanceHash: gatewayInput.expectedReleaseProvenanceHash,
-    expectedSessionHash: gatewayInput.expectedSessionHash,
+    expectedBootstrapHash: trusted.expectedGatewayBootstrapHash,
+    expectedBoundHost: trusted.expectedBoundHost,
+    expectedBoundPort: trusted.expectedBoundPort,
+    expectedLauncherNonce: trusted.expectedLauncherNonce,
+    expectedReleaseProvenanceHash: trusted.expectedReleaseProvenanceHash,
+    expectedSessionHash: trusted.expectedSessionHash,
   }, { now });
+  if (consensus.expectedBootstrapHash !== trusted.expectedConsensusBootstrapHash ||
+      transport.expectedBootstrapHash !== trusted.expectedTransportBootstrapHash ||
+      [consensus, transport].some((input) =>
+        input.expectedLauncherNonce !== trusted.expectedLauncherNonce ||
+        input.expectedReleaseProvenanceHash !== trusted.expectedReleaseProvenanceHash ||
+        input.expectedSessionHash !== trusted.expectedSessionHash) ||
+      gateway.cohortBootstraps.gateway.tlsCertificateSha256 !==
+        trusted.expectedTlsCertificateSha256) {
+    throw new Error("validator readiness inputs disagree with trusted pins");
+  }
   if (canonicalJson(consensus.cohortBootstraps) !== canonicalJson(transport.cohortBootstraps) ||
       canonicalJson(consensus.cohortBootstraps) !== canonicalJson(gateway.cohortBootstraps) ||
       [consensus, transport].some((input) =>
@@ -312,6 +351,7 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
   try {
     const accepted = exactOptions(options);
     transferredFd = acceptListenerFd(accepted.listenerFd);
+    const trusted = trustedPins(accepted.trustedPins);
     for (const key of SECRET_KEYS) validateBuffer(accepted[key], key,
       key.includes("Password") ? 1_024 : 1024 * 1024);
     for (let left = 0; left < SECRET_KEYS.length; left += 1) {
@@ -323,9 +363,9 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
     }
     for (const key of SECRET_KEYS) copies.set(key, Buffer.from(accepted[key]));
     for (const key of SECRET_KEYS) accepted[key].fill(0);
-    const inputs = validatedInputs(accepted);
+    const inputs = validatedInputs(accepted, trusted);
     checkCertificate(copies.get("tlsCertificateBuffer"), copies.get("tlsKeyBuffer"),
-      inputs.gateway.cohortBootstraps.gateway.tlsCertificateSha256);
+      trusted.expectedTlsCertificateSha256);
 
     for (const role of ROLES) records.push(childRecord(role, fail));
     const byRole = Object.fromEntries(records.map((record) => [record.role, record]));
