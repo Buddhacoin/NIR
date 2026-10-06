@@ -65,8 +65,10 @@ Before step 10, a readiness challenge receives HTTP 503 before its body is parse
 signer can run. After activation, every request is relayed through the existing exactly-once,
 epoch-bound signer adapters. No general signing operation is exposed.
 If either signer disappears at the COMMIT boundary or later, the gateway closes the listener and
-aborts in-flight signing. These checks narrow an activation race; they do not replace the missing
-atomic three-process launcher or make the deployment production-ready.
+aborts in-flight signing. The gateway also starts a deadline from the verified signed session and
+closes the listener when that session expires, even if all channels remain open. A new session
+requires a new cohort; expiry cannot be extended by a height update. These checks narrow the
+activation window; they do not make the deployment production-ready.
 
 ## Failure and teardown
 

@@ -55,12 +55,13 @@ function pins(values, role, bootstrap) {
     expectedReleaseProvenanceHash: values.session.releaseProvenanceHash,
     expectedRole: role, expectedSessionHash: values.session.sessionHash };
 }
-function input(port, fd, tls = { certificate, key, certificateHash }) {
+function input(port, fd, tls = { certificate, key, certificateHash }, sessionLifetimeMs) {
   const { certificate: tlsCertificate, key: tlsKey,
     certificateHash: tlsCertificateHash } = tls;
   const now = Date.now();
   const values = validatorReadinessSignerFixture({ now,
-    endpoint: `https://127.0.0.1:${port}`, tlsCertificateSha256: tlsCertificateHash });
+    endpoint: `https://127.0.0.1:${port}`, sessionLifetimeMs,
+    tlsCertificateSha256: tlsCertificateHash });
   const consensusPasswordText = "three-process-consensus-password";
   const transportPasswordText = "three-process-transport-password";
   const consensusVault = encryptWallet(values.candidate, consensusPasswordText,
@@ -374,6 +375,25 @@ test("one signer crash tears down gateway and the other signer", async () => {
   assert.throws(() => process.kill(cohort.pids.consensus, 0), { code: "ESRCH" });
   assert.throws(() => process.kill(cohort.pids.gateway, 0), { code: "ESRCH" });
   await assert.rejects(() => request(values));
+});
+
+test("signed session expiry tears down the complete three-process cohort", async () => {
+  const reservation = await listener();
+  const { options, values } = input(reservation.port, reservation.fd,
+    { certificate, key, certificateHash }, 20_000);
+  const launch = launchValidatorReadinessThreeProcess(options);
+  await new Promise((resolve) => reservation.server.close(resolve));
+  const cohort = await limit(launch, "expiring cohort launch");
+  try {
+    assert.equal((await request(values)).status, 200);
+    assert.deepEqual(await limit(cohort.waitForTermination(), "session expiry teardown", 25_000),
+      { reason: "failed" });
+    assert.ok(Date.now() >= values.session.expiresAt);
+    for (const pid of Object.values(cohort.pids)) {
+      assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    }
+    await assert.rejects(() => request(values));
+  } finally { await cohort.close(); }
 });
 
 test("gateway crash tears down both signer children", async () => {

@@ -28,6 +28,10 @@ obtain the bound FD from a trusted socket-activation facility; the test harness 
 internal handle to create its fixture. The launcher verifies that the FD is a socket and that the
 child reports the expected bound address and TLS fingerprint.
 
+The gateway closes its HTTPS gate at the signed session expiry even if every channel remains
+healthy. The supervisor treats that child exit as terminal and tears down both signer children;
+renewal requires a fresh signed session and a new cohort.
+
 The four caller-owned secret buffers are copied, checked for backing-memory overlap, and zeroed
 synchronously before asynchronous startup. Copies are zeroed after delivery and on all failure
 paths. The TLS private key is also checked against the certificate before spawning children. This
