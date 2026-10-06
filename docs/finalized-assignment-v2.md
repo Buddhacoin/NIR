@@ -51,6 +51,7 @@ finality have been verified. Any v26 leaf or v1 assignment remains non-exact.
 Execution-receipt creation accepts both assignment versions. Verification of v2
 receipts requires the matching preverified V3 anchor result, checks execution at
 `decisionHeight..expiresAtHeight` (inclusive), and does not accept a legacy
-authority-attestation map. The existing experimental file-based assignment-gate
-package remains v1-only; it must not be used as a substitute for the V3 chain
-anchor.
+authority-attestation map. The experimental file-based assignment gate now
+requires a v2 assignment and its matching V3 or V4 chain proof, with independent
+operator trust pins, before it consumes receipt replay state. Its result does
+not authorize adapter launch or award a chain reward.

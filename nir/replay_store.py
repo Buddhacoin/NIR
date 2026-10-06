@@ -412,12 +412,13 @@ class DurableAssignmentReceiptReplayGuard:
         assignment: object,
         bundle: object,
         receipts: tuple[object, ...],
-        trusted_authorities: Mapping[str, str],
+        trusted_authorities: Mapping[str, str] | None,
         expected_network_id: str,
         expected_genesis_hash: str,
         expected_adapter_protocol: str,
         expected_safety_policy_hash: str,
         observed_height: int,
+        exact_chain_anchor: object | None = None,
     ) -> tuple[str, ...]:
         from .execution_receipt import verify_execution_receipts
 
@@ -429,6 +430,7 @@ class DurableAssignmentReceiptReplayGuard:
             expected_genesis_hash=expected_genesis_hash,
             expected_adapter_protocol=expected_adapter_protocol,
             expected_safety_policy_hash=expected_safety_policy_hash,
+            exact_chain_anchor=exact_chain_anchor,
         )
         replay_keys = tuple(
             sorted(assignment_transcript_replay_key(assignment, receipt) for receipt in receipts)
