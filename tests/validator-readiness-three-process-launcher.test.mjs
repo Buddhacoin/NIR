@@ -30,7 +30,8 @@ const directory = mkdtempSync(join(tmpdir(), "nir-three-process-launcher-"));
 const keyPath = join(directory, "tls-key.pem");
 const certPath = join(directory, "tls-cert.pem");
 execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
-  "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+  "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost",
+  "-addext", "subjectAltName=IP:127.0.0.1"],
 { stdio: "ignore" });
 const key = readFileSync(keyPath); const certificate = readFileSync(certPath);
 const certificateHash = createHash("sha256")
@@ -54,10 +55,12 @@ function pins(values, role, bootstrap) {
     expectedReleaseProvenanceHash: values.session.releaseProvenanceHash,
     expectedRole: role, expectedSessionHash: values.session.sessionHash };
 }
-function input(port, fd) {
+function input(port, fd, tls = { certificate, key, certificateHash }) {
+  const { certificate: tlsCertificate, key: tlsKey,
+    certificateHash: tlsCertificateHash } = tls;
   const now = Date.now();
   const values = validatorReadinessSignerFixture({ now,
-    endpoint: `https://127.0.0.1:${port}`, tlsCertificateSha256: certificateHash });
+    endpoint: `https://127.0.0.1:${port}`, tlsCertificateSha256: tlsCertificateHash });
   const consensusPasswordText = "three-process-consensus-password";
   const transportPasswordText = "three-process-transport-password";
   const consensusVault = encryptWallet(values.candidate, consensusPasswordText,
@@ -66,7 +69,7 @@ function input(port, fd) {
     { label: "Three-process transport" });
   const bootstraps = createValidatorReadinessProcessBootstrapSet({ consensusVault,
     gatewayRolePackage: values.gatewayRolePackage,
-    initialHeight: values.context.checkpoint.height, tlsCertificateSha256: certificateHash,
+    initialHeight: values.context.checkpoint.height, tlsCertificateSha256: tlsCertificateHash,
     transportVault }, { now });
   Object.assign(values, bootstraps);
   const cohortBootstraps = { consensus: values.consensusSignerBootstrap,
@@ -106,11 +109,11 @@ function input(port, fd) {
       expectedEndpoint: values.context.endpoint, expectedLauncherNonce: values.launcherNonce,
       expectedNetworkId: values.session.joinPlan.networkId,
       expectedReleaseManifestHash: values.signedRelease.manifest.manifestHash,
-      expectedTlsCertificateSha256: certificateHash } };
+      expectedTlsCertificateSha256: tlsCertificateHash } };
   return { values, options: { consensusInput: signerInputs.consensus,
     consensusPasswordBuffer: Buffer.from(consensusPasswordText), gatewayInput,
-    listenerFd: fd, tlsCertificateBuffer: Buffer.from(certificate),
-    tlsKeyBuffer: Buffer.from(key), transportInput: signerInputs.transport,
+    listenerFd: fd, tlsCertificateBuffer: Buffer.from(tlsCertificate),
+    tlsKeyBuffer: Buffer.from(tlsKey), transportInput: signerInputs.transport,
     transportPasswordBuffer: Buffer.from(transportPasswordText), trustedEvidence,
     trustedPins: {
       expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
@@ -119,7 +122,7 @@ function input(port, fd) {
       expectedLauncherNonce: values.launcherNonce,
       expectedReleaseProvenanceHash: values.session.releaseProvenanceHash,
       expectedSessionHash: values.session.sessionHash,
-      expectedTlsCertificateSha256: certificateHash,
+      expectedTlsCertificateSha256: tlsCertificateHash,
       expectedTransportBootstrapHash: values.transportSignerBootstrap.bootstrapHash,
     } } };
 }
@@ -269,6 +272,27 @@ test("certificate mismatch and a non-socket listener are rejected before child l
     await assert.rejects(launchValidatorReadinessThreeProcess(invalidListener),
       /three-process launch failed/);
     assert.equal(invalidListener.transportPasswordBuffer.every((byte) => byte === 0), true);
+  } finally { await new Promise((resolve) => reservation.server.close(resolve)); }
+});
+
+test("a signed and pinned certificate for another endpoint cannot activate the cohort", async () => {
+  const wrongKeyPath = join(directory, "wrong-host-key.pem");
+  const wrongCertPath = join(directory, "wrong-host-cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", wrongKeyPath, "-out", wrongCertPath, "-days", "1",
+    "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.2"],
+  { stdio: "ignore" });
+  const wrongCertificate = readFileSync(wrongCertPath);
+  const tls = { certificate: wrongCertificate, key: readFileSync(wrongKeyPath),
+    certificateHash: createHash("sha256")
+      .update(new X509Certificate(wrongCertificate).raw).digest("hex") };
+  const reservation = await listener();
+  try {
+    const { options } = input(reservation.port, reservation.fd, tls);
+    await assert.rejects(launchValidatorReadinessThreeProcess(options),
+      (error) => /does not match the endpoint/.test(error.cause?.message ?? ""));
+    assert.equal(options.tlsKeyBuffer.every((byte) => byte === 0), true);
+    assert.equal(options.consensusPasswordBuffer.every((byte) => byte === 0), true);
   } finally { await new Promise((resolve) => reservation.server.close(resolve)); }
 });
 

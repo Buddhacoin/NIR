@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { closeSync, fstatSync, realpathSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -38,6 +37,8 @@ import {
 } from "./validator-readiness-signer-child-protocol.mjs";
 import { deriveValidatorReadinessTrustedPins }
   from "./validator-readiness-trusted-evidence.mjs";
+import { verifyValidatorReadinessTlsCertificate }
+  from "./validator-readiness-tls.mjs";
 
 const SIGNER_CLI = fileURLToPath(new URL("./validator-readiness-signer-child-cli.mjs", import.meta.url));
 const GATEWAY_CLI = fileURLToPath(new URL("./validator-readiness-gateway-child-cli.mjs", import.meta.url));
@@ -188,14 +189,6 @@ function validatedInputs(options, trusted) {
   }
   return deepFreeze(clone({ consensus, gateway, transport }));
 }
-function checkCertificate(certificate, key, expectedHash) {
-  const parsed = new X509Certificate(certificate);
-  const digest = createHash("sha256").update(parsed.raw).digest("hex");
-  if (digest !== expectedHash || !parsed.checkPrivateKey(createPrivateKey(key))) {
-    throw new Error("validator readiness TLS certificate or private key does not match the pin");
-  }
-}
-
 class Inbox {
   constructor(stream, decoder, fail, label) {
     this.decoder = decoder; this.label = label; this.fail = fail;
@@ -387,8 +380,10 @@ async function launchCohort(options = {}, verifyBeforeActivation = null) {
     for (const key of SECRET_KEYS) copies.set(key, Buffer.from(accepted[key]));
     for (const key of SECRET_KEYS) accepted[key].fill(0);
     const inputs = validatedInputs(accepted, trusted);
-    checkCertificate(copies.get("tlsCertificateBuffer"), copies.get("tlsKeyBuffer"),
-      trusted.expectedTlsCertificateSha256);
+    verifyValidatorReadinessTlsCertificate(copies.get("tlsCertificateBuffer"),
+      copies.get("tlsKeyBuffer"), {
+        expectedHost: new URL(accepted.trustedEvidence.policy.expectedEndpoint).hostname,
+        expectedSha256: trusted.expectedTlsCertificateSha256 });
 
     for (const role of ROLES) records.push(childRecord(role, fail));
     const byRole = Object.fromEntries(records.map((record) => [record.role, record]));

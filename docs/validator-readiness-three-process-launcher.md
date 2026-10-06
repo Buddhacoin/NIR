@@ -16,8 +16,10 @@ installation target, and an independently pinned package hash. Before accepting 
 the launcher checks that its own module was loaded from the active installed generation, verifies
 the complete installed release against the current session and operator signer, then checks the
 signed release, checkpoint, local policy and three bootstrap hashes. It repeats the installed
-entrypoint and release check before gateway COMMIT. The caller must obtain the policy, release
-signer, package hash, and anchor independently; the launcher cannot authenticate their source.
+entrypoint and release check before gateway COMMIT. Before starting any child, it also checks the
+pinned TLS certificate's validity window, public endpoint SAN (which may differ from the local
+bind address) and matching private key. The caller must obtain the policy, release signer,
+package hash, and anchor independently; the launcher cannot authenticate their source.
 There are no caller-selected executables, environment variables, vault paths, IPC commands, or
 restart hooks. Once exact options and a valid socket FD have been accepted, the listener FD is
 transferred and closed by the launcher on success or failure; the caller must not read, write, close,
