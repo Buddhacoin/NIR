@@ -29,6 +29,7 @@ import {
   createValidatorReadinessGatewayCommitCommand,
   createValidatorReadinessGatewayPrepareCommand,
   encodeValidatorReadinessGatewayChildFrame,
+  verifyValidatorReadinessGatewayActiveAcknowledgement,
   verifyValidatorReadinessGatewayCommitAcknowledgement,
   verifyValidatorReadinessGatewayPrepareAcknowledgement,
 } from "../blockchain/validator-readiness-gateway-child-protocol.mjs";
@@ -286,7 +287,14 @@ async function activate(bundle, { beforeCommit = async () => {} } = {}) {
     expectedPrepareAcknowledgement: prepareAcknowledgement,
     gatewayInput: values.gatewayInput, gatewayReady: readiness.gateway, ...pins,
   }, { now: Date.now() });
-  return { commit, commitAcknowledgement, prepare, prepareAcknowledgement };
+  const activeAcknowledgement = await records.gateway.status.next("gateway ACTIVE_ACK");
+  verifyValidatorReadinessGatewayActiveAcknowledgement(activeAcknowledgement, {
+    expectedCommit: commit, expectedCommitAcknowledgement: commitAcknowledgement,
+    expectedPrepare: prepare, expectedPrepareAcknowledgement: prepareAcknowledgement,
+    gatewayInput: values.gatewayInput, gatewayReady: readiness.gateway, ...pins,
+  }, { now: Date.now() });
+  return { activeAcknowledgement, commit, commitAcknowledgement, prepare,
+    prepareAcknowledgement };
 }
 
 test("gateway never activates when a signer dies at the COMMIT boundary", async () => {
@@ -365,6 +373,12 @@ test("real gateway child stays HTTP-inactive through PREPARE and COMMIT_ACK flus
     verifyValidatorReadinessGatewayCommitAcknowledgement(commitAcknowledgement, {
       expectedCommit: commit, expectedPrepare: prepare,
       expectedPrepareAcknowledgement: prepareAcknowledgement,
+      gatewayInput: values.gatewayInput, gatewayReady: readiness.gateway, ...pins,
+    }, { now: Date.now() });
+    const activeAcknowledgement = await records.gateway.status.next("gateway ACTIVE_ACK");
+    verifyValidatorReadinessGatewayActiveAcknowledgement(activeAcknowledgement, {
+      expectedCommit: commit, expectedCommitAcknowledgement: commitAcknowledgement,
+      expectedPrepare: prepare, expectedPrepareAcknowledgement: prepareAcknowledgement,
       gatewayInput: values.gatewayInput, gatewayReady: readiness.gateway, ...pins,
     }, { now: Date.now() });
     const accepted = await request(values);

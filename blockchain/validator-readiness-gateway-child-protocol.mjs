@@ -20,6 +20,7 @@ const ROLES = Object.freeze(["consensus", "gateway", "transport"]);
 const SIGNER_ROLES = Object.freeze(["consensus", "transport"]);
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const FORMATS = Object.freeze({
+  activeAck: "nir-validator-readiness-gateway-active-ack-v1",
   commitAck: "nir-validator-readiness-gateway-commit-ack-v1",
   commitCommand: "nir-validator-readiness-gateway-commit-command-v1",
   input: "nir-validator-readiness-gateway-child-input-v1",
@@ -27,6 +28,7 @@ const FORMATS = Object.freeze({
   prepareCommand: "nir-validator-readiness-gateway-prepare-command-v1",
 });
 const domains = Object.freeze({
+  activeAck: "VR_GATE_CHILD_ACTIVE_ACK_V1",
   commitAck: "VR_GATE_CHILD_COMMIT_ACK_V1",
   commitCommand: "VR_GATE_CHILD_COMMIT_CMD_V1",
   input: "VR_GATE_CHILD_INPUT_V1",
@@ -518,6 +520,71 @@ export function verifyValidatorReadinessGatewayCommitAcknowledgement(value, { ex
   return { ...payload, acknowledgementHash };
 }
 
+function activeAckPayload(value, commitAck, context) {
+  exact(value, ["activationHash", "bootstrapHash", "commitAcknowledgementHash", "commitHash",
+    "format", "gatewayReadyHash", "launcherNonce", "messageType", "pid", "processNonce",
+    "role", "sessionHash", "version"],
+  "validator readiness gateway active acknowledgement payload");
+  if (value.format !== FORMATS.activeAck || value.messageType !== "active-ack" ||
+      value.role !== "gateway" || value.version !== 1 ||
+      value.activationHash !== commitAck.activationHash ||
+      value.bootstrapHash !== context.input.expectedBootstrapHash ||
+      value.commitAcknowledgementHash !== commitAck.acknowledgementHash ||
+      value.commitHash !== commitAck.commitHash ||
+      value.gatewayReadyHash !== context.gatewayReady.readyHash ||
+      value.launcherNonce !== context.input.expectedLauncherNonce ||
+      value.pid !== context.gatewayReady.pid ||
+      value.processNonce !== context.gatewayReady.processNonce ||
+      value.sessionHash !== context.input.expectedSessionHash) {
+    throw new Error("validator readiness gateway active acknowledgement binding is invalid");
+  }
+  return clone(value);
+}
+
+export function createValidatorReadinessGatewayActiveAcknowledgement({ commitAcknowledgement } = {}, {
+  expectedCommit, expectedPrepare, expectedPrepareAcknowledgement, gatewayInput, gatewayReady,
+  ...pins
+} = {}, { now = Date.now() } = {}) {
+  const trusted = protocolPins(pins);
+  const context = protocolContext(gatewayInput, gatewayReady, trusted, now);
+  const commitAck = verifyValidatorReadinessGatewayCommitAcknowledgement(commitAcknowledgement, {
+    expectedCommit, expectedPrepare, expectedPrepareAcknowledgement,
+    gatewayInput, gatewayReady, ...trusted,
+  }, { now });
+  const payload = activeAckPayload({ activationHash: commitAck.activationHash,
+    bootstrapHash: context.input.expectedBootstrapHash,
+    commitAcknowledgementHash: commitAck.acknowledgementHash,
+    commitHash: commitAck.commitHash, format: FORMATS.activeAck,
+    gatewayReadyHash: context.gatewayReady.readyHash,
+    launcherNonce: context.input.expectedLauncherNonce, messageType: "active-ack",
+    pid: context.gatewayReady.pid, processNonce: context.gatewayReady.processNonce,
+    role: "gateway", sessionHash: context.input.expectedSessionHash, version: 1 },
+  commitAck, context);
+  return { ...payload, acknowledgementHash: tagged(payload, domains.activeAck) };
+}
+
+export function verifyValidatorReadinessGatewayActiveAcknowledgement(value, {
+  expectedCommit, expectedCommitAcknowledgement, expectedPrepare,
+  expectedPrepareAcknowledgement, gatewayInput, gatewayReady, ...pins
+} = {}, { now = Date.now() } = {}) {
+  const trusted = protocolPins(pins);
+  const context = protocolContext(gatewayInput, gatewayReady, trusted, now);
+  const commitAck = verifyValidatorReadinessGatewayCommitAcknowledgement(
+    expectedCommitAcknowledgement, { expectedCommit, expectedPrepare,
+      expectedPrepareAcknowledgement, gatewayInput, gatewayReady, ...trusted }, { now });
+  exact(value, ["acknowledgementHash", "activationHash", "bootstrapHash",
+    "commitAcknowledgementHash", "commitHash", "format", "gatewayReadyHash",
+    "launcherNonce", "messageType", "pid", "processNonce", "role", "sessionHash", "version"],
+  "validator readiness gateway active acknowledgement");
+  const { acknowledgementHash, ...unsigned } = value;
+  const payload = activeAckPayload(unsigned, commitAck, context);
+  if (!TAGGED_HASH.test(acknowledgementHash ?? "") ||
+      acknowledgementHash !== tagged(payload, domains.activeAck)) {
+    throw new Error("validator readiness gateway active acknowledgement hash is invalid");
+  }
+  return { ...payload, acknowledgementHash };
+}
+
 export function createValidatorReadinessGatewayActivationController({ gatewayInput,
   gatewayReady } = {}, pins = {}, { now = () => Date.now() } = {}) {
   if (typeof now !== "function") throw new Error("validator readiness gateway clock is invalid");
@@ -526,12 +593,37 @@ export function createValidatorReadinessGatewayActivationController({ gatewayInp
   let phase = "waiting-prepare";
   let prepared = null;
   let prepareAcknowledgement = null;
+  let committedCommand = null;
   let commitAcknowledgement = null;
+  let activeAcknowledgement = null;
   const poison = () => {
     phase = "closed"; prepared = null; prepareAcknowledgement = null;
-    commitAcknowledgement = null;
+    committedCommand = null; commitAcknowledgement = null; activeAcknowledgement = null;
   };
   return Object.freeze({
+    activated() {
+      try {
+        if (phase !== "committed") {
+          throw new Error("validator readiness gateway activation is out of order");
+        }
+        activeAcknowledgement = createValidatorReadinessGatewayActiveAcknowledgement({
+          commitAcknowledgement,
+        }, { expectedCommit: committedCommand, expectedPrepare: prepared,
+          expectedPrepareAcknowledgement: prepareAcknowledgement,
+          gatewayInput, gatewayReady, ...trusted }, { now: now() });
+        phase = "active-ack-pending";
+        return activeAcknowledgement;
+      } catch (error) { poison(); throw error; }
+    },
+    activeAcknowledgementFlushed(value) {
+      try {
+        if (phase !== "active-ack-pending" || !same(value, activeAcknowledgement)) {
+          throw new Error("validator readiness gateway active acknowledgement flush is out of order");
+        }
+        phase = "active";
+        return true;
+      } catch (error) { poison(); throw error; }
+    },
     close() { poison(); },
     commit(command) {
       try {
@@ -546,6 +638,7 @@ export function createValidatorReadinessGatewayActivationController({ gatewayInp
           { commit: verified }, { expectedPrepare: prepared,
             expectedPrepareAcknowledgement: prepareAcknowledgement,
             gatewayInput, gatewayReady, ...trusted }, { now: now() });
+        committedCommand = verified;
         phase = "commit-ack-pending";
         return commitAcknowledgement;
       } catch (error) { poison(); throw error; }
