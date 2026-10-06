@@ -5,10 +5,11 @@ operator-retained trust evidence. A bootstrap hash or pin copied from a child pa
 check, not evidence that an operator approved that package.
 
 The trust evidence contains the short-lived readiness session, the complete signed source release,
-the locally trusted release-signer address, and a local policy. The policy pins the network and
-genesis identity, checkpoint witness policy and exact checkpoint height/hash, admission ID and
-candidate address, public HTTPS endpoint, local bound host/port, TLS certificate fingerprint, and
-fresh launcher nonce. The launcher verifies the release signature against the separately trusted
+the locally trusted release-signer address, and a local policy. The policy pins the exact release
+manifest hash, network and genesis identity, checkpoint witness policy, exact checkpoint
+height/hash, admission ID and candidate address, public HTTPS endpoint, local bound host/port,
+TLS certificate fingerprint, and fresh launcher nonce. The launcher verifies the release signature
+against the separately trusted
 address, reconstructs the release provenance, verifies the session's checkpoint trust package and
 bindings, checks every policy field, verifies the three bootstraps against that session, and only
 then derives pins. The supplied pin set must match those derived pins exactly. Missing evidence,

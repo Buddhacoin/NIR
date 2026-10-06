@@ -11,7 +11,8 @@ const POLICY_KEYS = Object.freeze(["expectedAdmissionId", "expectedCandidateAddr
   "expectedBoundHost", "expectedBoundPort", "expectedChainIdentityGenesisHash",
   "expectedCheckpointBlockHash",
   "expectedCheckpointHeight", "expectedCheckpointPolicyId", "expectedEndpoint",
-  "expectedLauncherNonce", "expectedNetworkId", "expectedTlsCertificateSha256"]);
+  "expectedLauncherNonce", "expectedNetworkId", "expectedReleaseManifestHash",
+  "expectedTlsCertificateSha256"]);
 
 function exact(value, keys, label) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
@@ -26,7 +27,7 @@ function policy(value) {
   exact(value, POLICY_KEYS, "validator readiness trusted operator policy");
   for (const key of ["expectedAdmissionId", "expectedChainIdentityGenesisHash",
     "expectedCheckpointBlockHash", "expectedLauncherNonce",
-    "expectedTlsCertificateSha256"]) {
+    "expectedReleaseManifestHash", "expectedTlsCertificateSha256"]) {
     if (!HASH.test(value[key])) throw new Error(`validator readiness ${key} is invalid`);
   }
   if (!ADDRESS.test(value.expectedCandidateAddress) ||
@@ -69,6 +70,9 @@ export function deriveValidatorReadinessTrustedPins(evidence = {}, cohortBootstr
   }
   const { manifest, signer } = verifySignedRelease(signedRelease,
     { trustedAddress: trustedReleaseAddress });
+  if (manifest.manifestHash !== trusted.expectedReleaseManifestHash) {
+    throw new Error("validator readiness release manifest disagrees with operator policy");
+  }
   const verifiedSession = verifyValidatorReadinessSession(session, { now });
   const provenance = { manifestHash: manifest.manifestHash,
     releaseVersion: manifest.releaseVersion, signerAddress: signer.address,

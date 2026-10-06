@@ -104,6 +104,7 @@ function input(port, fd) {
       expectedCheckpointPolicyId: values.session.joinPlan.expectedCheckpointPolicyId,
       expectedEndpoint: values.context.endpoint, expectedLauncherNonce: values.launcherNonce,
       expectedNetworkId: values.session.joinPlan.networkId,
+      expectedReleaseManifestHash: values.signedRelease.manifest.manifestHash,
       expectedTlsCertificateSha256: certificateHash } };
   return { values, options: { consensusInput: signerInputs.consensus,
     consensusPasswordBuffer: Buffer.from(consensusPasswordText), gatewayInput,
@@ -283,6 +284,10 @@ test("signed release and local policy cannot be substituted during readiness lau
     const wrongPolicy = input(reservation.port, reservation.fd).options;
     wrongPolicy.trustedEvidence.policy.expectedCheckpointBlockHash = "0".repeat(64);
     await assert.rejects(launchValidatorReadinessThreeProcess(wrongPolicy),
+      /three-process launch failed/);
+    const wrongManifest = input(reservation.port, reservation.fd).options;
+    wrongManifest.trustedEvidence.policy.expectedReleaseManifestHash = "0".repeat(64);
+    await assert.rejects(launchValidatorReadinessThreeProcess(wrongManifest),
       /three-process launch failed/);
     const wrongSignature = input(reservation.port, reservation.fd).options;
     wrongSignature.trustedEvidence.signedRelease.signature = "0".repeat(64);
