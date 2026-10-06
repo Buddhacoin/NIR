@@ -36,4 +36,8 @@ The launcher is a library API, not an operator CLI or public deployment recipe. 
 deployment it still needs independent host evidence, release/OS hardening, external operational
 review, and a tested socket-activation integration. The `tests/validator-readiness-three-process-launcher.test.mjs`
 suite proves a real local three-process activation, height acknowledgements, secret zeroing,
-invalid inputs, and group teardown when a signer dies.
+invalid inputs, and group teardown when a signer dies. A second fixture now binds a loopback
+socket in an independent Python process, passes the listening OS descriptor to the Node test
+process, closes the Python copy, and verifies the same cohort and HTTPS challenge. This proves
+descriptor inheritance without Node's private handle API, but is still a local integration test:
+it does not supply an operator CLI, a hardened service manager, or independent-host evidence.

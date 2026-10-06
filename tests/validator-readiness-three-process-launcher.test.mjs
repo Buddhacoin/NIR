@@ -7,6 +7,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { canonicalJson } from "../blockchain/crypto.mjs";
 import { VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH }
@@ -139,6 +140,34 @@ test("launcher activates one real three-process cohort and closes it atomically"
     assert.strictEqual(cohort.close(), first);
     await first;
   }
+  assert.deepEqual(await cohort.waitForTermination(), { reason: "closed" });
+  await assert.rejects(() => request(values));
+});
+
+test("separate OS process hands a listening socket to the readiness launcher", {
+  skip: process.env.NIR_TEST_INHERITED_FD !== undefined,
+}, () => {
+  execFileSync("python3", [fileURLToPath(new URL(
+    "./validator-readiness-socket-activation-fixture.py", import.meta.url)),
+  process.execPath, fileURLToPath(import.meta.url)], { timeout: 40_000 });
+});
+
+test("OS-inherited listener activates the exact three-process cohort", {
+  skip: process.env.NIR_TEST_INHERITED_FD === undefined,
+}, async () => {
+  const fd = Number(process.env.NIR_TEST_INHERITED_FD);
+  const port = Number(process.env.NIR_TEST_INHERITED_PORT);
+  assert.ok(Number.isSafeInteger(fd) && fd >= 3);
+  assert.ok(Number.isSafeInteger(port) && port > 0 && port < 65536);
+  const { options, values } = input(port, fd);
+  const cohort = await limit(launchValidatorReadinessThreeProcess(options),
+    "OS-inherited three-process launch");
+  try {
+    assert.equal(cohort.state(), "active");
+    assert.equal(cohort.endpoint.port, port);
+    assert.equal(cohort.activeAcknowledgement.messageType, "active-ack");
+    assert.equal((await request(values)).status, 200);
+  } finally { await cohort.close(); }
   assert.deepEqual(await cohort.waitForTermination(), { reason: "closed" });
   await assert.rejects(() => request(values));
 });
