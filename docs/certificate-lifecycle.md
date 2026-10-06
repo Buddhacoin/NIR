@@ -127,6 +127,9 @@ lookup that returns an empty set means “do not connect”; the client rejects 
 malformed, duplicated, or oversized pin sets. During renewal it accepts either of the
 two authenticated fingerprints, and after overlap it fails closed on the predecessor.
 TLS certificate validity dates are checked in addition to fingerprint matching.
+For a pinned HTTPS request, the client verifies the peer at TLS handshake completion
+before transmitting HTTP headers or a request body. It snapshots the supplied pin set
+at call time, so later caller mutations cannot change the accepted peer.
 
 ## Runtime modes
 

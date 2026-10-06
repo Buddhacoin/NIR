@@ -54,8 +54,9 @@ export function requestJson(url, {
   if (tlsCertificateSha256 !== null && tlsCertificateSha256Pins !== null) {
     return Promise.reject(new Error("TLS certificate pin options conflict"));
   }
-  const certificatePins = tlsCertificateSha256Pins ??
-    (tlsCertificateSha256 === null ? null : [tlsCertificateSha256]);
+  const certificatePins = tlsCertificateSha256Pins !== null
+    ? Object.freeze([...tlsCertificateSha256Pins])
+    : tlsCertificateSha256 === null ? null : Object.freeze([tlsCertificateSha256]);
   if (target.protocol === "http:" && certificatePins !== null) {
     return Promise.reject(new Error("TLS certificate pin cannot be used with plaintext HTTP"));
   }
@@ -63,6 +64,7 @@ export function requestJson(url, {
   const request = target.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
     let settled = false;
+    let peerVerified = certificatePins === null;
     let outgoing;
     const cleanup = () => signal?.removeEventListener?.("abort", abort);
     const fail = (error) => {
@@ -72,6 +74,28 @@ export function requestJson(url, {
     };
     const abort = () => outgoing?.destroy(new Error("HTTP request was aborted"));
     signal?.addEventListener("abort", abort, { once: true });
+    const verifyPeer = (socket) => {
+      const certificate = socket.getPeerCertificate?.();
+      const fingerprint = certificateSha256(certificate?.raw);
+      if (!certificatePins.includes(fingerprint)) {
+        throw new Error("TLS peer certificate pin mismatch");
+      }
+      const parsed = new X509Certificate(certificate.raw);
+      const now = Date.now();
+      const validFrom = Date.parse(parsed.validFrom);
+      const validTo = Date.parse(parsed.validTo);
+      if (!Number.isFinite(validFrom) || !Number.isFinite(validTo) ||
+          now < validFrom || now >= validTo) {
+        throw new Error("TLS peer certificate is outside its validity period");
+      }
+    };
+    const send = () => {
+      if (settled) return;
+      try {
+        if (encoded) outgoing.write(encoded);
+        outgoing.end();
+      } catch (error) { outgoing.destroy(error); }
+    };
     outgoing = request(target, {
       agent: certificatePins === null ? undefined : false,
       headers: encoded ? {
@@ -82,24 +106,9 @@ export function requestJson(url, {
       minVersion: target.protocol === "https:" ? "TLSv1.3" : undefined,
       rejectUnauthorized: target.protocol === "https:" && certificatePins === null,
     }, (response) => {
-      if (target.protocol === "https:" && certificatePins !== null) {
-        const certificate = response.socket.getPeerCertificate?.();
-        let fingerprint;
-        try { fingerprint = certificateSha256(certificate?.raw); }
-        catch (error) {
-          response.destroy();
-          return fail(error);
-        }
-        if (!certificatePins.includes(fingerprint)) {
-          response.destroy();
-          return fail(new Error("TLS peer certificate pin mismatch"));
-        }
-        const parsed = new X509Certificate(certificate.raw);
-        const now = Date.now();
-        if (now < Date.parse(parsed.validFrom) || now > Date.parse(parsed.validTo)) {
-          response.destroy();
-          return fail(new Error("TLS peer certificate is outside its validity period"));
-        }
+      if (!peerVerified) {
+        response.destroy();
+        return fail(new Error("TLS peer certificate was not verified before the request"));
       }
       const chunks = [];
       let size = 0;
@@ -128,8 +137,16 @@ export function requestJson(url, {
     });
     outgoing.setTimeout(timeoutMs, () => outgoing.destroy(new Error("HTTP request timed out")));
     outgoing.on("error", fail);
-    if (encoded) outgoing.write(encoded);
-    outgoing.end();
+    if (certificatePins === null) send();
+    else outgoing.once("socket", (socket) => {
+      socket.once("secureConnect", () => {
+        if (settled) return;
+        try { verifyPeer(socket); }
+        catch (error) { outgoing.destroy(error); return; }
+        peerVerified = true;
+        send();
+      });
+    });
   });
 }
 
