@@ -37,6 +37,7 @@ The inspection helpers do not themselves execute the installed entrypoint. The p
 three-process launcher now requires this verification and proves its own module path belongs to
 the active generation before taking the listener and again before gateway COMMIT. Its separate
 development entrypoint remains intentionally ungated for local tests and must not be used as a
-public operator launch path. A successful end-to-end activation from an installed signed
-generation, independent operators, and external review remain outstanding. Passing this check
-alone does not authorize a public network.
+public operator launch path. A local end-to-end activation from a signed installed generation is
+covered by an integration test; independent operators, a hardened socket-activation service,
+and external review remain outstanding. Passing this check alone does not authorize a public
+network.

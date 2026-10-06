@@ -52,6 +52,8 @@ process, closes the Python copy, and verifies the same cohort and HTTPS challeng
 descriptor inheritance without Node's private handle API, but is still a local integration test:
 it does not supply an operator CLI, a hardened service manager, or independent-host evidence.
 The development path does not verify an installed release and refuses to run when its module is
-loaded from an installed generation. It must not be used as a production entrypoint. An
-end-to-end successful activation from a signed installed generation remains to be tested before
-a production claim.
+loaded from an installed generation. It must not be used as a production entrypoint. A separate
+local integration test now builds a complete signed node package, installs and anchors it,
+imports the launcher from its active generation, activates the real gateway and two signer
+children, completes one HTTPS challenge, and closes the cohort. This is not independent-host
+deployment evidence or an external security audit.
