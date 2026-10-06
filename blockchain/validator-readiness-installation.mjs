@@ -74,9 +74,10 @@ export function deriveValidatorReadinessInstallationExpectations(sessionValue,
 export function verifyValidatorReadinessInstallationForSession({ session, expectedPackageHash,
   now = Date.now(), externalAnchor, headStore, installationTarget, signedRelease,
   trustedAddress } = {}) {
-  const expected = deriveValidatorReadinessInstallationExpectations(session,
+  const verifiedSession = verifyValidatorReadinessSession(session, { now });
+  const expected = deriveValidatorReadinessInstallationExpectations(verifiedSession,
     expectedPackageHash, { now });
-  if (session.releaseProvenance.signerAddress !== trustedAddress) {
+  if (verifiedSession.releaseProvenance.signerAddress !== trustedAddress) {
     throw new Error("validator readiness session signer disagrees with operator policy");
   }
   return verifyValidatorReadinessInstallation({ externalAnchor, headStore, installationTarget,
