@@ -251,7 +251,7 @@ async function cohort({ statusPair = null } = {}) {
   return { readiness, records, values };
 }
 
-async function activate(bundle) {
+async function activate(bundle, { beforeCommit = async () => {} } = {}) {
   const { readiness, records, values } = bundle; const pins = protocolPins(values, records);
   const prepare = createValidatorReadinessGatewayPrepareCommand({ gatewayInput: values.gatewayInput,
     gatewayReady: readiness.gateway, readiness }, pins, { now: Date.now() });
@@ -276,6 +276,7 @@ async function activate(bundle) {
   const commit = createValidatorReadinessGatewayCommitCommand({ gatewayInput: values.gatewayInput,
     gatewayReady: readiness.gateway, prepare, prepareAcknowledgement,
     signerAcknowledgements }, pins, { now: Date.now() });
+  await beforeCommit();
   records.gateway.child.stdio[6].write(encodeValidatorReadinessGatewayChildFrame(commit));
   const commitAcknowledgement = await records.gateway.status.next("gateway COMMIT_ACK");
   assert.equal(commitAcknowledgement.messageType, "commit-ack",
@@ -287,6 +288,42 @@ async function activate(bundle) {
   }, { now: Date.now() });
   return { commit, commitAcknowledgement, prepare, prepareAcknowledgement };
 }
+
+test("gateway never activates when a signer dies at the COMMIT boundary", async () => {
+  const bundle = await cohort();
+  const { gateway, transport } = bundle.records;
+  try {
+    await assert.rejects(() => activate(bundle, { beforeCommit: async () => {
+      gateway.child.kill("SIGSTOP");
+      transport.child.kill("SIGKILL");
+      await exit(transport.child);
+      gateway.child.kill("SIGCONT");
+    } }));
+    assert.deepEqual(await exit(gateway.child), { code: 1, signal: null });
+    await assert.rejects(() => request(bundle.values));
+  } finally {
+    gateway.child.kill("SIGCONT");
+    for (const { child } of Object.values(bundle.records)) {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }
+  }
+});
+
+test("gateway revokes an active readiness listener when a signer exits", async () => {
+  const bundle = await cohort();
+  try {
+    await activate(bundle);
+    assert.equal((await request(bundle.values)).status, 200);
+    bundle.records.consensus.child.kill("SIGKILL");
+    await exit(bundle.records.consensus.child);
+    assert.deepEqual(await exit(bundle.records.gateway.child), { code: 1, signal: null });
+    await assert.rejects(() => request(bundle.values));
+  } finally {
+    for (const { child } of Object.values(bundle.records)) {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }
+  }
+});
 
 async function stopAll(records) {
   for (const record of Object.values(records)) {

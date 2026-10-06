@@ -57,11 +57,11 @@ async function chromeDebugPort(child) {
   });
 }
 
-async function pageSocket(port) {
+async function pageSocket(port, expectedUrl) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
       const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-      const page = pages.find(({ type }) => type === "page");
+      const page = pages.find(({ type, url }) => type === "page" && url === expectedUrl);
       if (page) return new WebSocket(page.webSocketDebuggerUrl);
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -130,7 +130,7 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
       "--remote-debugging-port=0", `--user-data-dir=${profile}`, `${origin}/index.html`,
     ], { stdio: ["ignore", "ignore", "pipe"] });
     const port = await chromeDebugPort(chrome);
-    socket = await pageSocket(port);
+    socket = await pageSocket(port, `${origin}/index.html`);
     if (socket.readyState !== WebSocket.OPEN) {
       await new Promise((resolve, reject) => {
         socket.onopen = resolve; socket.onerror = reject;
