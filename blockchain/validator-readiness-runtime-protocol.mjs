@@ -65,7 +65,7 @@ const domains = {
 };
 const FATAL_CODES = new Set([
   "bootstrap-invalid", "channel-failed", "height-invalid", "internal-failure",
-  "listener-failed", "password-invalid", "shutdown", "signer-unavailable", "tls-invalid",
+  "listener-failed", "password-invalid", "session-expired", "shutdown", "signer-unavailable", "tls-invalid",
   "vault-invalid",
 ]);
 const BOOTSTRAP_FIELDS = Object.freeze({
