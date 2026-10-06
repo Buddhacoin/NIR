@@ -925,7 +925,8 @@ test("installed launcher verifies its release and activates the exact cohort", a
     const keyPath = join(root, "readiness-tls-key.pem");
     const certPath = join(root, "readiness-tls-cert.pem");
     execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
-      "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+      "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost",
+      "-addext", "subjectAltName=IP:127.0.0.1"],
     { stdio: "ignore" });
     const tlsKey = readFileSync(keyPath); const tlsCertificate = readFileSync(certPath);
     const tlsCertificateSha256 = createHash("sha256")
@@ -1048,7 +1049,8 @@ test("installed launcher verifies its release and activates the exact cohort", a
       context: readiness.context }));
     const status = await new Promise((resolve, reject) => {
       const request = httpsRequest(new URL(VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH,
-        readiness.context.endpoint), { method: "POST", rejectUnauthorized: false,
+        readiness.context.endpoint), { ca: tlsCertificate, method: "POST",
+        rejectUnauthorized: true,
         minVersion: "TLSv1.3", headers: { "content-length": String(body.length),
           "content-type": "application/json" } }, (response) => {
         response.resume(); response.once("end", () => resolve(response.statusCode));
