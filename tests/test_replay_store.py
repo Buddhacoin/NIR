@@ -245,6 +245,7 @@ class ConsumedEvaluationStoreTests(unittest.TestCase):
                     expected_network_id="nir-test", expected_genesis_hash="1" * 64,
                     expected_adapter_protocol="nir-jsonl-v1",
                     expected_safety_policy_hash="c" * 64,
+                    exact_chain_anchor=None,
                 )
                 with self.assertRaises(ChallengeAlreadyConsumed):
                     guard.consume(**arguments)

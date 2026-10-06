@@ -1,6 +1,8 @@
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -16,6 +18,10 @@ from nir.assignment_gate import (
     verify_assignment_package,
 )
 from nir.replay_store import ConsumedEvaluationStore
+from nir.assignment_chain_proof import AssignmentChainProofV3, FinalityAnchor, PROOF_V3_FORMAT
+from nir.execution_receipt import AssignedEvaluator, FinalizedEvaluationAssignmentV2
+from nir.model import ProtocolError
+from nir.runner import CandidateCommitment
 
 
 class AssignmentGateTests(unittest.TestCase):
@@ -28,6 +34,7 @@ class AssignmentGateTests(unittest.TestCase):
         self.package = {
             "assignment": {"fixture": "assignment"},
             "bundle": {"fixture": "bundle"},
+            "chainProof": {"format": PROOF_V3_FORMAT},
             "format": PACKAGE_FORMAT,
             "receipts": [{"fixture": "baseline"}, {"fixture": "candidate"}],
         }
@@ -40,7 +47,9 @@ class AssignmentGateTests(unittest.TestCase):
             "format": POLICY_FORMAT,
             "observedHeight": 11,
             "replayCheckpoint": checkpoint,
-            "trustedAuthorities": {"nir1" + "3" * 64: "public-key-only"},
+            "checkpoint": {},
+            "trustedValidators": [{"operatorId": "operator-0"}] * 4,
+            "handoffs": [],
         }
         self.write_inputs()
 
@@ -77,17 +86,127 @@ class AssignmentGateTests(unittest.TestCase):
     def parser_patches(self):
         assignment, receipts = self.assignment_and_receipts()
         return assignment, receipts, (
-            patch("nir.assignment_gate.FinalizedEvaluationAssignment.from_dict", return_value=assignment),
+            patch("nir.assignment_gate.FinalizedEvaluationAssignmentV2.from_dict", return_value=assignment),
+            patch("nir.assignment_gate.AssignmentChainProofV3.from_dict", return_value=SimpleNamespace()),
             patch(
                 "nir.assignment_gate.EvaluationBundle.from_dict",
                 return_value=SimpleNamespace(bundle_hash="a" * 64),
             ),
             patch("nir.assignment_gate.SignedExecutionTranscript.from_dict", side_effect=receipts),
+            patch("nir.assignment_gate.verify_assignment_chain_anchor_v3", return_value=SimpleNamespace(
+                exact_assignment_included=True, assignment_hash=assignment.assignment_hash,
+            )),
         )
+
+    def real_chain_inputs(self):
+        helper = Path(__file__).parent / "assignment_chain_fixture.mjs"
+        completed = subprocess.run(
+            ["node", str(helper)], check=True, stdout=subprocess.PIPE,
+            env={**os.environ, "NIR_ASSIGNMENT_FIXTURE_V3": "1"},
+        )
+        value = json.loads(completed.stdout)
+        transaction = value["commitmentTransaction"]
+        leaf = value["consensusAssignment"]
+        keys = {item["address"]: item["publicKey"] for item in value["evaluators"]}
+        commitment = CandidateCommitment.from_dict({
+            "artifact_hash": transaction["artifactHash"],
+            "baseline_hash": transaction["baselineHash"],
+            "baseline_content_hash": transaction["baselineContentHash"],
+            "candidate_id": transaction["candidateId"],
+            "committed_epoch": value["transactionBlockHeight"],
+            "content_hash": transaction["contentHash"],
+            "network_id": transaction["networkId"],
+            "parents": transaction["parents"],
+            "recipient": transaction["recipient"],
+            "suite_commitment": transaction["suiteCommitment"],
+        })
+        assignment = FinalizedEvaluationAssignmentV2(
+            network_id=value["networkId"], genesis_hash=value["genesisHash"],
+            candidate_commitment_hash=commitment.commitment_hash,
+            candidate_id=leaf["candidateId"],
+            source_finality_height=leaf["sourceFinalityHeight"],
+            source_finality_state_root=leaf["sourceFinalityStateRoot"],
+            committed_height=leaf["committedHeight"], decision_height=leaf["challengeHeight"],
+            challenge_seed=leaf["challengeSeed"], challenge_epoch=leaf["challengeEpoch"],
+            environment_commitment=leaf["environmentCommitment"],
+            suite_commitment=leaf["suiteCommitment"],
+            baseline_artifact_hash=leaf["baselineHash"],
+            baseline_content_hash=leaf["baselineContentHash"],
+            candidate_artifact_hash=leaf["artifactHash"],
+            candidate_content_hash=leaf["contentHash"],
+            adapter_protocol=leaf["adapterProtocol"],
+            safety_policy_hash=leaf["safetyPolicyHash"],
+            authority_set_hash=leaf["authoritySetHash"], authority_mode=leaf["authorityMode"],
+            recipient=leaf["recipient"], parents=tuple(leaf["parents"]),
+            evaluators=tuple(AssignedEvaluator(item, keys[item]) for item in leaf["committee"]),
+            expires_at_height=leaf["expiresAtHeight"],
+        )
+        proof = AssignmentChainProofV3(
+            finality_proofs=tuple(value["finalityProofs"]),
+            commitment_transaction=transaction, transaction_proof=value["transactionProof"],
+            transaction_block_height=value["transactionBlockHeight"],
+            consensus_assignment=leaf, assignment_proof=value["assignmentProof"],
+            source_anchor=FinalityAnchor.from_dict(value["sourceAnchor"]),
+            decision_anchor=FinalityAnchor.from_dict(value["decisionAnchor"]),
+            inclusion_anchor=FinalityAnchor.from_dict(value["inclusionAnchor"], inclusion=True),
+        )
+        self.package["assignment"] = assignment.as_dict()
+        self.package["chainProof"] = proof.as_dict()
+        self.package["receipts"] = [{"fixture": "baseline"}]
+        self.policy.update({
+            "checkpoint": value["checkpoint"],
+            "expectedAdapterProtocol": assignment.adapter_protocol,
+            "expectedGenesisHash": value["genesisHash"],
+            "expectedNetworkId": value["networkId"],
+            "expectedSafetyPolicyHash": assignment.safety_policy_hash,
+            "observedHeight": assignment.decision_height,
+            "trustedValidators": value["trustedValidators"],
+        })
+        self.write_inputs()
+        return assignment
+
+    def test_real_exact_proof_is_required_before_replay_consumption(self):
+        assignment = self.real_chain_inputs()
+        with patch("nir.assignment_gate.EvaluationBundle.from_dict", return_value=SimpleNamespace(
+            bundle_hash="a" * 64,
+        )), patch("nir.assignment_gate.SignedExecutionTranscript.from_dict", side_effect=lambda _:
+            SimpleNamespace(payload=lambda: {}, assignment_hash=assignment.assignment_hash,
+                            candidate_id=assignment.candidate_id,
+                            challenge_seed=assignment.challenge_seed,
+                            challenge_epoch=assignment.challenge_epoch,
+                            environment_commitment=assignment.environment_commitment,
+                            suite_commitment=assignment.suite_commitment,
+                            adapter_protocol=assignment.adapter_protocol,
+                            safety_policy_hash=assignment.safety_policy_hash,
+                            evaluator_id=assignment.evaluators[0].evaluator_id,
+                            role="baseline")
+        ), patch("nir.execution_receipt.verify_execution_receipts") as verify:
+            # A missing proof and a foreign trusted genesis both fail before receipt verification.
+            proof = self.package.pop("chainProof")
+            self.write_inputs()
+            with self.assertRaises(AssignmentGateError):
+                verify_assignment_package(package_path=self.package_path,
+                                          policy_path=self.policy_path, replay_store=self.store)
+            self.package["chainProof"] = proof
+            self.policy["expectedGenesisHash"] = "0" * 64
+            self.write_inputs()
+            with self.assertRaises(ProtocolError):
+                verify_assignment_package(package_path=self.package_path,
+                                          policy_path=self.policy_path, replay_store=self.store)
+            self.assertEqual(current_replay_checkpoint(self.store)["generation"], 0)
+            verify.assert_not_called()
+
+            self.policy["expectedGenesisHash"] = assignment.genesis_hash
+            self.write_inputs()
+            result = verify_assignment_package(package_path=self.package_path,
+                                               policy_path=self.policy_path, replay_store=self.store)
+            self.assertTrue(result["chainInclusionVerified"])
+            self.assertEqual(result["replayCheckpoint"]["generation"], 1)
+            self.assertTrue(verify.call_args.kwargs["exact_chain_anchor"].exact_assignment_included)
 
     def test_verified_package_advances_replay_state_and_returns_only_public_metadata(self):
         assignment, receipts, patches = self.parser_patches()
-        with patches[0], patches[1], patches[2], patch(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
             "nir.execution_receipt.verify_execution_receipts",
         ) as verify:
             result = verify_assignment_package(
@@ -96,13 +215,13 @@ class AssignmentGateTests(unittest.TestCase):
             )
         self.assertFalse(result["adapterLaunchAuthorized"])
         self.assertTrue(result["packageVerified"])
-        self.assertFalse(result["chainInclusionVerified"])
+        self.assertTrue(result["chainInclusionVerified"])
         self.assertFalse(result["chainMutation"])
         self.assertEqual(result["receiptCount"], 2)
         self.assertEqual(result["replayCheckpoint"]["generation"], 1)
         verify.assert_called_once()
         serialized = json.dumps(result)
-        self.assertNotIn("public-key-only", serialized)
+        self.assertNotIn("operator-0", serialized)
         self.assertNotIn(str(self.package_path), serialized)
         with ConsumedEvaluationStore(
             self.store,
@@ -115,7 +234,7 @@ class AssignmentGateTests(unittest.TestCase):
 
     def test_failed_verification_does_not_advance_replay_state(self):
         _assignment, _receipts, patches = self.parser_patches()
-        with patches[0], patches[1], patches[2], patch(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
             "nir.execution_receipt.verify_execution_receipts",
             side_effect=ValueError("signature rejected"),
         ):
@@ -130,7 +249,7 @@ class AssignmentGateTests(unittest.TestCase):
         with ConsumedEvaluationStore(self.store) as store:
             store.consume("a" * 64)
         _assignment, _receipts, patches = self.parser_patches()
-        with patches[0], patches[1], patches[2], patch(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
             "nir.execution_receipt.verify_execution_receipts",
         ) as verify:
             with self.assertRaisesRegex(Exception, "rollback"):
@@ -183,7 +302,7 @@ class AssignmentGateTests(unittest.TestCase):
     def test_cli_sanitizes_unexpected_verifier_failure(self):
         _assignment, _receipts, patches = self.parser_patches()
         output = io.StringIO()
-        with patches[0], patches[1], patches[2], patch(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
             "nir.execution_receipt.verify_execution_receipts",
             side_effect=RuntimeError("secret subprocess diagnostic"),
         ), patch("sys.stdout", output):
