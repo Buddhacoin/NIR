@@ -14,7 +14,11 @@ import stat
 import sys
 from typing import Any, Sequence
 
-from .execution_receipt import FinalizedEvaluationAssignment, SignedExecutionTranscript
+from .assignment_chain_proof import (
+    AssignmentChainProofV3, AssignmentChainProofV4,
+    PROOF_V3_FORMAT, PROOF_V4_FORMAT, verify_assignment_chain_anchor_v3,
+)
+from .execution_receipt import FinalizedEvaluationAssignmentV2, SignedExecutionTranscript
 from .model import ProtocolError
 from .replay_store import (
     ConsumedEvaluationStore,
@@ -24,16 +28,16 @@ from .replay_store import (
 from .runner import EvaluationBundle
 
 
-PACKAGE_FORMAT = "nir-signed-assignment-package-v1-experimental"
-POLICY_FORMAT = "nir-assignment-verification-policy-v1-experimental"
-RESULT_FORMAT = "nir-assignment-preflight-result-v1-experimental"
+PACKAGE_FORMAT = "nir-signed-assignment-package-v2-experimental"
+POLICY_FORMAT = "nir-assignment-verification-policy-v2-experimental"
+RESULT_FORMAT = "nir-assignment-preflight-result-v2-experimental"
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
 MAX_POLICY_BYTES = 1024 * 1024
 MAX_RECEIPTS = 512
 WARNING = (
-    "EXPERIMENTAL OPERATOR VERIFICATION: verifies a completed signed execution package and "
-    "advances local replay state only. It does not authorize or start an AI adapter, prove exact "
-    "assignment chain inclusion, mine NIR, or award NIR."
+    "EXPERIMENTAL OPERATOR VERIFICATION: verifies exact finalized assignment inclusion and a "
+    "completed signed receipt package, then advances "
+    "local replay state. It does not authorize or start an AI adapter, mine NIR, or award NIR."
 )
 
 
@@ -94,31 +98,41 @@ def _read_bounded_json(path: str | Path, *, limit: int) -> object:
         raise AssignmentGateError("input is not strict UTF-8 JSON") from error
 
 
-def _parse_package(value: object) -> tuple[FinalizedEvaluationAssignment, EvaluationBundle, tuple[SignedExecutionTranscript, ...]]:
+def _parse_package(value: object) -> tuple[FinalizedEvaluationAssignmentV2, AssignmentChainProofV3 | AssignmentChainProofV4, EvaluationBundle, tuple[SignedExecutionTranscript, ...]]:
     if (
         not isinstance(value, dict)
-        or set(value) != {"assignment", "bundle", "format", "receipts"}
+        or set(value) != {"assignment", "bundle", "chainProof", "format", "receipts"}
         or value.get("format") != PACKAGE_FORMAT
         or not isinstance(value.get("assignment"), dict)
+        or not isinstance(value.get("chainProof"), dict)
         or not isinstance(value.get("bundle"), dict)
         or not isinstance(value.get("receipts"), list)
         or not 1 <= len(value["receipts"]) <= MAX_RECEIPTS
         or any(not isinstance(item, dict) for item in value["receipts"])
     ):
         raise AssignmentGateError("signed assignment package schema is invalid")
+    proof_value = value["chainProof"]
+    if proof_value.get("format") == PROOF_V3_FORMAT:
+        proof = AssignmentChainProofV3.from_dict(proof_value)
+    elif proof_value.get("format") == PROOF_V4_FORMAT:
+        proof = AssignmentChainProofV4.from_dict(proof_value)
+    else:
+        raise AssignmentGateError("exact assignment chain proof is required")
     return (
-        FinalizedEvaluationAssignment.from_dict(value["assignment"]),
+        FinalizedEvaluationAssignmentV2.from_dict(value["assignment"]), proof,
         EvaluationBundle.from_dict(value["bundle"]),
         tuple(SignedExecutionTranscript.from_dict(item) for item in value["receipts"]),
     )
 
 
-def _parse_policy(value: object) -> dict[str, object]:
+def _parse_policy(value: object, *, v4: bool) -> dict[str, object]:
     expected = {
         "expectedAdapterProtocol", "expectedGenesisHash", "expectedNetworkId",
         "expectedSafetyPolicyHash", "format", "observedHeight", "replayCheckpoint",
-        "trustedAuthorities",
+        "checkpoint", "trustedValidators", "handoffs",
     }
+    if v4:
+        expected |= {"expectedCheckpointPolicyId", "minimumCheckpointHeight", "minimumCheckpointSequence"}
     if not isinstance(value, dict) or set(value) != expected or value.get("format") != POLICY_FORMAT:
         raise AssignmentGateError("operator verification policy schema is invalid")
     strings = (
@@ -126,15 +140,26 @@ def _parse_policy(value: object) -> dict[str, object]:
         "expectedSafetyPolicyHash",
     )
     checkpoint = value["replayCheckpoint"]
-    authorities = value["trustedAuthorities"]
+    validators = value["trustedValidators"]
     if (
         any(not isinstance(value[field], str) or not value[field] for field in strings)
         or not isinstance(value["observedHeight"], int)
         or isinstance(value["observedHeight"], bool)
         or value["observedHeight"] < 0
-        or not isinstance(authorities, dict)
-        or not 1 <= len(authorities) <= 128
-        or any(not isinstance(key, str) or not isinstance(item, str) for key, item in authorities.items())
+        or not isinstance(value["checkpoint"], dict)
+        or not isinstance(validators, list)
+        or (len(validators) != 0 if v4 else not 4 <= len(validators) <= 256)
+        or any(not isinstance(item, dict) for item in validators)
+        or not isinstance(value["handoffs"], list)
+        or len(value["handoffs"]) > 256
+        or any(not isinstance(item, dict) for item in value["handoffs"])
+        or (v4 and (
+            not isinstance(value["expectedCheckpointPolicyId"], str)
+            or not isinstance(value["minimumCheckpointHeight"], int)
+            or isinstance(value["minimumCheckpointHeight"], bool)
+            or not isinstance(value["minimumCheckpointSequence"], int)
+            or isinstance(value["minimumCheckpointSequence"], bool)
+        ))
         or not isinstance(checkpoint, dict)
         or set(checkpoint) != {"generation", "stateHash"}
         or not isinstance(checkpoint["generation"], int)
@@ -159,8 +184,24 @@ def verify_assignment_package(
     *, package_path: str | Path, policy_path: str | Path, replay_store: str | Path,
 ) -> dict[str, object]:
     package = _read_bounded_json(package_path, limit=MAX_PACKAGE_BYTES)
-    policy = _parse_policy(_read_bounded_json(policy_path, limit=MAX_POLICY_BYTES))
-    assignment, bundle, receipts = _parse_package(package)
+    assignment, proof, bundle, receipts = _parse_package(package)
+    policy = _parse_policy(
+        _read_bounded_json(policy_path, limit=MAX_POLICY_BYTES),
+        v4=isinstance(proof, AssignmentChainProofV4),
+    )
+    anchor = verify_assignment_chain_anchor_v3(
+        assignment=assignment, proof=proof, checkpoint=policy["checkpoint"],
+        trusted_validators=policy["trustedValidators"], handoffs=policy["handoffs"],
+        expected_network_id=policy["expectedNetworkId"],
+        expected_genesis_hash=policy["expectedGenesisHash"],
+        **({
+            "expected_checkpoint_policy_id": policy["expectedCheckpointPolicyId"],
+            "minimum_checkpoint_height": policy["minimumCheckpointHeight"],
+            "minimum_checkpoint_sequence": policy["minimumCheckpointSequence"],
+        } if isinstance(proof, AssignmentChainProofV4) else {}),
+    )
+    if anchor.exact_assignment_included is not True or anchor.assignment_hash != assignment.assignment_hash:
+        raise AssignmentGateError("exact finalized assignment inclusion is required")
     checkpoint = policy["replayCheckpoint"]
     assert isinstance(checkpoint, dict)
     expected_checkpoint = (checkpoint["generation"], checkpoint["stateHash"])
@@ -173,7 +214,7 @@ def verify_assignment_package(
             assignment=assignment,
             bundle=bundle,
             receipts=receipts,
-            trusted_authorities=policy["trustedAuthorities"],
+            trusted_authorities=None, exact_chain_anchor=anchor,
             expected_network_id=policy["expectedNetworkId"],
             expected_genesis_hash=policy["expectedGenesisHash"],
             expected_adapter_protocol=policy["expectedAdapterProtocol"],
@@ -187,7 +228,7 @@ def verify_assignment_package(
         "assignmentHash": assignment.assignment_hash,
         "bundleHash": bundle.bundle_hash,
         "candidateId": assignment.candidate_id,
-        "chainInclusionVerified": False,
+        "chainInclusionVerified": True,
         "chainMutation": False,
         "experimental": True,
         "format": RESULT_FORMAT,
@@ -198,7 +239,7 @@ def verify_assignment_package(
         "receiptCount": len(receipts),
         "replayCheckpoint": {"generation": current[0], "stateHash": current[1]},
         "replayKeyCount": len(replay_keys),
-        "scope": "signed-execution-package-local-verification",
+        "scope": "exact-assignment-signed-execution-package-local-verification",
         "warning": WARNING,
     }
 
