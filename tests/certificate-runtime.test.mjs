@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { X509Certificate } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   createCertificateRecord,
+  certificateHistoryHead,
   EMPTY_CERTIFICATE_RECORD_HASH,
   topologyHistoryCommitment,
 } from "../blockchain/certificate-lifecycle.mjs";
-import { installCertificateRecord } from "../blockchain/certificate-lifecycle-store.mjs";
+import { certificateStorePaths, installCertificateRecord }
+  from "../blockchain/certificate-lifecycle-store.mjs";
 import {
   CERTIFICATE_MODE_LIFECYCLE,
   RuntimeCertificatePins,
@@ -232,6 +234,32 @@ test("coordinator runtime fails closed after lifecycle revocation and without li
       /active lifecycle|durability quorum/);
   } finally {
     await Promise.all(servers.map(close));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle runtime rejects two-copy rollback below an external certificate anchor", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-certificate-runtime-anchor-"));
+  try {
+    const values = lifecycleFixture(root, "revoke");
+    const directory = values.layout.coordinatorDirectory;
+    values.install(directory, values.issuedRecords);
+    const paths = certificateStorePaths(join(directory, "certificates"));
+    const oldPrimary = readFileSync(paths.primary);
+    const oldBackup = readFileSync(paths.backup);
+    values.install(directory, values.records);
+    const anchorPath = join(root, "operator-retained-certificate-head.json");
+    writeFileSync(anchorPath, JSON.stringify({ format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(values.records, values.context),
+      networkId: values.genesis.networkId, recordCount: values.records.length,
+      version: 1 }));
+    const pins = new RuntimeCertificatePins(directory, values.genesis,
+      { mode: CERTIFICATE_MODE_LIFECYCLE, externalAnchorPath: anchorPath });
+    assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1), /active lifecycle/);
+    writeFileSync(paths.primary, oldPrimary);
+    writeFileSync(paths.backup, oldBackup);
+    assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1), /external anchor/);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

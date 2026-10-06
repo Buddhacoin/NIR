@@ -151,6 +151,24 @@ At validator startup the configured server certificate must be one of that
 validator's lifecycle pins at the current height. Restart re-verifies the store,
 repairs one damaged redundant copy, and retains the same height-based decision.
 
+Lifecycle launches through `network-cli` require
+`NIR_CERTIFICATE_HEAD_ANCHOR_PATH` to name an absolute operator-controlled JSON
+file outside the node's writable state. Its exact shape is
+`{"format":"nir-certificate-history-anchor-v1","headHash":"<64 lowercase hex>","networkId":"<network ID>","recordCount":<positive integer>,"version":1}`.
+The `certificate:lifecycle status` command prints the verified `headHash`,
+`networkId`, and `records` needed to prepare it. Compare that head with the
+quorum-authenticated history and retain the anchor through a separate trusted
+channel. The runtime rereads the anchor for every lifecycle pin lookup and
+rejects a local history shorter than the anchored count or with a different
+hash at that count. This prevents restoring both locally valid copies to a
+pre-revocation or pre-renewal prefix once the external anchor has advanced.
+Advance the operator-controlled anchor after verifying a new quorum head;
+never derive it solely from the local store being protected. If the anchor is
+missing, malformed, or ahead of the local history, lifecycle requests fail
+closed. An anchor left at an old head cannot detect rollback of later records,
+so its retention and advancement are part of the operator procedure. The
+`dev-genesis` mode does not require an anchor.
+
 Lifecycle validators also expose the bounded `/v1/p2p/certificates/history` endpoint
 only through the validator-authenticated transport. During synchronization a node
 verifies every returned record from the genesis-rooted validator/topology history,

@@ -12,7 +12,12 @@ canonical input using format `nir-validator-deployment-input-v1`; its
 `artifacts` and `paths` entries must be distinct absolute paths. `expected` must
 state the network ID, compiled genesis hash, release manifest hash, validator
 HTTPS origin, and TLS SHA-256 fingerprint. Set `certificateMode` to `lifecycle`.
-Set `paths.planOutput` to the exact new output path. The operator does not enter
+Set `paths.planOutput` to the exact new output path. Set
+`paths.certificateHeadAnchor` to an absolute operator-controlled path outside
+the validator's writable state. After certificate bootstrap, retain the
+quorum-reviewed certificate history head at that path in the format described
+in [certificate lifecycle](certificate-lifecycle.md); the startup step requires
+it and fails closed when it is missing or stale. The operator does not enter
 bootstrap peers: the wizard derives the complete ordered URL list from the
 verified ceremony/genesis peer registry so positional transport identities
 cannot be reordered or omitted.

@@ -59,6 +59,15 @@ function certificateModeFromEnvironment() {
   return mode;
 }
 
+function certificateHeadAnchorPathFromEnvironment(mode) {
+  if (mode !== CERTIFICATE_MODE_LIFECYCLE) return null;
+  const path = process.env.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
+  if (typeof path !== "string" || !path.startsWith("/") || path.includes("\0")) {
+    throw new Error("lifecycle mode requires an absolute NIR_CERTIFICATE_HEAD_ANCHOR_PATH");
+  }
+  return path;
+}
+
 try {
   if (command === "init-dev" && directory) {
     const tls = tlsFromEnvironment();
@@ -82,8 +91,10 @@ try {
       });
     }
     const runtimeDirectory = ceremonyCredentials?.directory ?? directory;
+    const certificateMode = certificateModeFromEnvironment();
     const validator = new ValidatorReplica(runtimeDirectory, {
-      certificateMode: certificateModeFromEnvironment(),
+      certificateMode,
+      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode),
       ceremonyCredentials,
     });
     const tls = tlsFromEnvironment(ceremonyMode
@@ -111,8 +122,10 @@ try {
   } else if (command === "serve-coordinator" && directory && parameter) {
     const peers = parameter.split(",").filter(Boolean);
     const port = validPort(portText, 8787);
+    const certificateMode = certificateModeFromEnvironment();
     const node = new DistributedCoordinator(directory, peers, {
-      certificateMode: certificateModeFromEnvironment(),
+      certificateMode,
+      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode),
     });
     createNodeHttpServer(node).listen(port, "127.0.0.1", () => {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);

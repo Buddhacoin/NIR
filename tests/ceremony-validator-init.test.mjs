@@ -288,7 +288,8 @@ test("public deployment plan binds ceremony network, genesis, release, endpoint,
         tlsCertificateSha256: participant.tlsCertificateSha256 },
       format: "nir-validator-deployment-input-v1", listenPort: 9443,
       operatorId: participant.operatorId,
-      paths: { planOutput: join(root, "deployment-plan.json"),
+      paths: { certificateHeadAnchor: join(root, "certificate-head-anchor.json"),
+        planOutput: join(root, "deployment-plan.json"),
         stateDirectory: join(root, "state"), tlsPrivateKey: join(root, "tls.key"),
         transportVault: join(root, "transport.vault"), validatorVault: join(root, "validator.vault") },
       trustedReleaseAddress: inputs.trustedAddress,
@@ -301,6 +302,8 @@ test("public deployment plan binds ceremony network, genesis, release, endpoint,
     assert.equal(plan.networkId, inputs.genesis.networkId);
     assert.deepEqual(plan.steps[3].argv.slice(5),
       inputs.genesis.peerRegistry.peers.map(({ url }) => url));
+    assert.equal(plan.steps.find(({ label }) => label === "Start validator").environment
+      .NIR_CERTIFICATE_HEAD_ANCHOR_PATH, input.paths.certificateHeadAnchor);
     assert.equal(plan.steps.at(-1).argv.at(-1), input.paths.planOutput);
     assert.equal(JSON.stringify(plan).includes("password"), false);
     const publicValues = { anchor: inputs.anchor, approvals: inputs.envelope,
