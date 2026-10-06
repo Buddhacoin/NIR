@@ -5,10 +5,11 @@ the two narrow signer channels. It is deliberately not a key custodian: it recei
 only as bounded inherited bytes, cannot open a path, and can request only the fixed transport and
 consensus readiness signatures exposed by the existing signer children.
 
-This increment does not change `launchValidatorReadinessSignerCohort`. A later atomic launcher
-increment must create the complete descriptor inventory, spawn all three children, independently
-verify their READY evidence, drive PREPARE and signer activation, then send COMMIT. Running the
-gateway CLI by hand is not a production deployment.
+This increment does not change `launchValidatorReadinessSignerCohort`. The separate
+[`launchValidatorReadinessThreeProcess()`](validator-readiness-three-process-launcher.md)
+now creates the complete descriptor inventory, starts all three children, independently verifies
+their READY evidence, drives PREPARE and signer activation, then sends COMMIT. Running the gateway
+CLI by hand is not a production deployment.
 
 ## Fixed inherited descriptors
 
