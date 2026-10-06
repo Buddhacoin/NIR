@@ -51,7 +51,10 @@ function tlsFromEnvironment(defaultCertificatePath = null) {
   return { ...loadTlsKeyPair({ certPath, keyPath }), certPath, keyPath };
 }
 
-function certificateModeFromEnvironment() {
+function certificateModeFromEnvironment({ ceremonyMode = false } = {}) {
+  if (ceremonyMode && process.env.NIR_CERTIFICATE_MODE === undefined) {
+    throw new Error("ceremony validator startup requires explicit NIR_CERTIFICATE_MODE");
+  }
   const mode = process.env.NIR_CERTIFICATE_MODE ?? CERTIFICATE_MODE_DEV_GENESIS;
   if (mode !== CERTIFICATE_MODE_DEV_GENESIS && mode !== CERTIFICATE_MODE_LIFECYCLE) {
     throw new Error("NIR_CERTIFICATE_MODE must be dev-genesis or lifecycle");
@@ -82,6 +85,7 @@ try {
   } else if (command === "serve-validator" && directory) {
     const port = validPort(parameter, 8791);
     const ceremonyMode = lstatSync(directory).isSymbolicLink();
+    const certificateMode = certificateModeFromEnvironment({ ceremonyMode });
     const listenerFd = inheritedListenerFd();
     if (ceremonyMode && (listenerFd === 3 || listenerFd === 4)) {
       throw new Error("inherited listener descriptor collides with ceremony password descriptors");
@@ -96,7 +100,6 @@ try {
       });
     }
     const runtimeDirectory = ceremonyCredentials?.directory ?? directory;
-    const certificateMode = certificateModeFromEnvironment();
     const validator = new ValidatorReplica(runtimeDirectory, {
       certificateMode,
       certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(

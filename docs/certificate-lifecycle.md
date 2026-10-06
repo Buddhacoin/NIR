@@ -135,7 +135,8 @@ at call time, so later caller mutations cannot change the accepted peer.
 
 Validator and coordinator processes have two explicit transport-certificate modes:
 
-- `dev-genesis` is the default compatibility mode for local development. It uses
+- `dev-genesis` is the default compatibility mode for local development outside
+  ceremony validator startup. Ceremony startup requires an explicit mode. It uses
   the static pin in the finalized peer registry exactly as older devnets did.
 - `lifecycle` is required for a public testnet or production-like rehearsal. Set
   `NIR_CERTIFICATE_MODE=lifecycle` before starting every validator and the
@@ -154,7 +155,8 @@ At validator startup the configured server certificate must be one of that
 validator's lifecycle pins at the current height. Restart re-verifies the store,
 repairs one damaged redundant copy, and retains the same height-based decision.
 
-Lifecycle launches through `network-cli` require
+Every lifecycle `RuntimeCertificatePins` instance requires an external anchor
+path, including direct library callers. Lifecycle launches through `network-cli` require
 `NIR_CERTIFICATE_HEAD_ANCHOR_PATH` to name an absolute operator-controlled JSON
 file outside the node's writable state. Its exact shape is
 `{"format":"nir-certificate-history-anchor-v1","headHash":"<64 lowercase hex>","networkId":"<network ID>","recordCount":<positive integer>,"version":1}`.

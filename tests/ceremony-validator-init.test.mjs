@@ -63,8 +63,10 @@ async function availablePort() {
   return port;
 }
 
-async function startCeremonyProcess(target, port, inputs) {
+async function startCeremonyProcess(target, port, inputs, { certificateMode = "dev-genesis" } = {}) {
   const environment = { ...process.env, NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+  delete environment.NIR_CERTIFICATE_MODE;
+  if (certificateMode !== null) environment.NIR_CERTIFICATE_MODE = certificateMode;
   const child = spawn(process.execPath, [
     "blockchain/network-cli.mjs", "serve-validator", target, String(port),
     inputs.trustedAddress,
@@ -388,6 +390,8 @@ test("serve-validator restarts from inherited vault-password FDs and serves TLS/
     initializeValidatorFromCeremony(target, cloneInputs(inputs));
     const port = await availablePort();
     const url = `https://127.0.0.1:${port}`;
+    await assert.rejects(() => startCeremonyProcess(target, port, inputs,
+      { certificateMode: null }), /requires explicit NIR_CERTIFICATE_MODE/);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       running = await startCeremonyProcess(target, port, inputs);
       const health = await requestJson(`${url}/health`, {

@@ -1,4 +1,5 @@
-import { join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { certificatePinsAtHeight, topologyHistoryCommitment } from "./certificate-lifecycle.mjs";
 import { loadCertificateHistory, verifyCertificateHistoryAnchor }
@@ -80,11 +81,22 @@ export class RuntimeCertificatePins {
     if (mode !== CERTIFICATE_MODE_DEV_GENESIS && mode !== CERTIFICATE_MODE_LIFECYCLE) {
       throw new Error("certificate transport mode is invalid");
     }
+    if (mode === CERTIFICATE_MODE_LIFECYCLE &&
+        (typeof externalAnchorPath !== "string" || !isAbsolute(externalAnchorPath))) {
+      throw new Error("certificate lifecycle requires an external history anchor path");
+    }
     this.#directory = resolve(directory);
+    if (mode === CERTIFICATE_MODE_LIFECYCLE) {
+      const relativePath = relative(realpathSync(this.#directory), realpathSync(externalAnchorPath));
+      if (relativePath === "" || (!isAbsolute(relativePath) && relativePath !== ".." &&
+          !relativePath.startsWith(`..${sep}`))) {
+        throw new Error("external certificate history anchor must be outside node state");
+      }
+    }
     this.#genesis = structuredClone(genesis);
     this.#mode = mode;
     this.#externalAnchorPath = externalAnchorPath;
-    if (mode === CERTIFICATE_MODE_LIFECYCLE && externalAnchorPath !== null) {
+    if (mode === CERTIFICATE_MODE_LIFECYCLE) {
       this.loadVerifiedHistory();
     }
   }
