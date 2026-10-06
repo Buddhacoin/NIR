@@ -1,4 +1,5 @@
 import { verifyProductionStartupFromHead } from "./production-head-store.mjs";
+import { verifyValidatorReadinessSession } from "./validator-readiness-session.mjs";
 
 const HASH = /^[0-9a-f]{64}$/u;
 const CHAIN_HASH = /^(?:sha3-256:)?[0-9a-f]{64}$/u;
@@ -50,4 +51,35 @@ export function verifyValidatorReadinessInstallation({ externalAnchor, headStore
   return Object.freeze({ anchorHead: installed.anchorHead, kind: "node",
     packageHash: installed.packageHash,
     releaseManifestHash: target.releaseManifestHash, verified: true });
+}
+
+/** Pin installed-release expectations to a verified readiness session and an external package hash. */
+export function deriveValidatorReadinessInstallationExpectations(sessionValue,
+  expectedPackageHash, { now = Date.now() } = {}) {
+  if (!HASH.test(expectedPackageHash ?? "")) {
+    throw new Error("validator readiness expected package hash is invalid");
+  }
+  const session = verifyValidatorReadinessSession(sessionValue, { now });
+  return Object.freeze(expectations({
+    expectedGenesisHash: session.joinPlan.expectedChainIdentityGenesisHash,
+    expectedNetworkId: session.joinPlan.networkId,
+    expectedPackageHash,
+    expectedReleaseManifestHash: session.releaseProvenance.manifestHash,
+    expectedReleaseVersion: session.releaseProvenance.releaseVersion,
+    expectedSourceRevision: session.releaseProvenance.sourceRevision,
+  }));
+}
+
+/** Verify a node installation against the same session that authorizes the readiness cohort. */
+export function verifyValidatorReadinessInstallationForSession({ session, expectedPackageHash,
+  now = Date.now(), externalAnchor, headStore, installationTarget, signedRelease,
+  trustedAddress } = {}) {
+  const verifiedSession = verifyValidatorReadinessSession(session, { now });
+  const expected = deriveValidatorReadinessInstallationExpectations(verifiedSession,
+    expectedPackageHash, { now });
+  if (verifiedSession.releaseProvenance.signerAddress !== trustedAddress) {
+    throw new Error("validator readiness session signer disagrees with operator policy");
+  }
+  return verifyValidatorReadinessInstallation({ externalAnchor, headStore, installationTarget,
+    signedRelease, trustedAddress, expected });
 }
