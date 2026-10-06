@@ -22,3 +22,5 @@ signature on the release manifest but does **not** verify the installed executab
 that manifest; installation/release verification is a separate required gate. A signed checkpoint
 package also does not establish that a remote operator or witness is organizationally independent.
 There is still no public operator CLI or production socket-activation service in this layer.
+Installed file verification is a separate [readiness installation check](validator-readiness-installation.md)
+that has not yet been made mandatory in the three-process launcher.

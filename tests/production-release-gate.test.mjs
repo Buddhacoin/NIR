@@ -3,7 +3,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +30,8 @@ import { createTestnetPartitionDrillPlan } from "../blockchain/testnet-partition
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createProductionStartupGuard,
   createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
+import { verifyValidatorReadinessInstallation }
+  from "../blockchain/validator-readiness-installation.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
 import {
   assembleProductionRuntimePolicy, createProductionRuntimePolicy, inspectProductionRuntime,
@@ -760,6 +762,45 @@ test("production node guard self-binds active generation and entrypoint refuses 
       reservation.once("error", reject); reservation.listen(port, "127.0.0.1", resolvePromise);
     });
     await new Promise((resolvePromise) => reservation.close(resolvePromise));
+  } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("readiness installation binding rejects wrong package policy and modified installed files", () => {
+  const values = fixture();
+  try {
+    const packageValue = createProductionReleasePackage(values.artifact, { now: NOW,
+      productionReport: values.productionReport, productionTarget: values.productionTarget,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const target = join(values.root, "readiness-node");
+    installProductionReleasePackage(packageValue, target, { kind: "node", now: NOW,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address });
+    const head = join(values.root, "readiness-head");
+    advanceProductionHead(head, target, { kind: "node",
+      newPackageHash: packageValue.packageHash, signedRelease: values.signedRelease,
+      trustedAddress: values.signer.address });
+    const anchor = exportProductionHeadAnchor(head);
+    const expected = { expectedGenesisHash: values.productionTarget.genesisHash,
+      expectedNetworkId: values.productionTarget.networkId,
+      expectedPackageHash: packageValue.packageHash,
+      expectedReleaseManifestHash: values.manifest.manifestHash,
+      expectedReleaseVersion: values.manifest.releaseVersion,
+      expectedSourceRevision: values.manifest.sourceRevision };
+    const options = { externalAnchor: anchor, headStore: head, installationTarget: target,
+      signedRelease: values.signedRelease, trustedAddress: values.signer.address, expected };
+    assert.equal(verifyValidatorReadinessInstallation(options).packageHash,
+      packageValue.packageHash);
+    assert.throws(() => verifyValidatorReadinessInstallation({ ...options,
+      expected: { ...expected, expectedPackageHash: "0".repeat(64) } }),
+    /operator policy/);
+    assert.throws(() => verifyValidatorReadinessInstallation({ ...options,
+      expected: { ...expected, expectedReleaseManifestHash: "0".repeat(64) } }),
+    /operator policy/);
+    assert.throws(() => verifyValidatorReadinessInstallation({ ...options,
+      externalAnchor: null }), /trust inputs/);
+    const installedFile = join(target, "blockchain/node.mjs");
+    chmodSync(installedFile, 0o644);
+    writeFileSync(installedFile, "export const node = false;\n");
+    assert.throws(() => verifyValidatorReadinessInstallation(options));
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });
 
