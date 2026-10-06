@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { createServer as createNetServer } from "node:net";
 import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readlinkSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync,
@@ -34,6 +35,17 @@ import { verifyValidatorReadinessInstallation }
   from "../blockchain/validator-readiness-installation.mjs";
 import { launchValidatorReadinessThreeProcess }
   from "../blockchain/validator-readiness-three-process-launcher.mjs";
+import { VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH }
+  from "../blockchain/validator-admission-readiness-service.mjs";
+import { createValidatorReadinessProcessBootstrapSet }
+  from "../blockchain/validator-readiness-process-protocol.mjs";
+import { createValidatorReadinessRuntimeLaunchEnvelope }
+  from "../blockchain/validator-readiness-runtime-protocol.mjs";
+import { createValidatorReadinessGatewayChildInput }
+  from "../blockchain/validator-readiness-gateway-child-protocol.mjs";
+import { createValidatorReadinessSignerChildInput }
+  from "../blockchain/validator-readiness-signer-child-protocol.mjs";
+import { encryptWallet } from "../blockchain/vault.mjs";
 import { validatorReadinessSignerFixture }
   from "./validator-readiness-signer-fixture.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
@@ -895,8 +907,9 @@ test("readiness operator CLI verifies a live session against the installed relea
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });
 
-test("installed launcher verifies its own release before accepting a listener", async () => {
+test("installed launcher verifies its release and activates the exact cohort", async () => {
   const root = mkdtempSync(join(tmpdir(), "nir-installed-readiness-launcher-"));
+  let reservation = null; let reservationReleased = false; let cohort = null;
   try {
     const sourceRoot = fileURLToPath(new URL("../", import.meta.url));
     const paths = ["package.json", ...readdirSync(join(sourceRoot, "blockchain"))
@@ -909,9 +922,21 @@ test("installed launcher verifies its own release before accepting a listener", 
     const artifact = createReleaseArtifact(sourceRoot, artifactPaths("node", paths), {
       kind: "node", sourceManifest: manifest,
     });
+    const keyPath = join(root, "readiness-tls-key.pem");
+    const certPath = join(root, "readiness-tls-cert.pem");
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+      "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+    { stdio: "ignore" });
+    const tlsKey = readFileSync(keyPath); const tlsCertificate = readFileSync(certPath);
+    const tlsCertificateSha256 = createHash("sha256")
+      .update(new X509Certificate(tlsCertificate).raw).digest("hex");
+    reservation = createNetServer();
+    await new Promise((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+    const port = reservation.address().port;
     const readiness = validatorReadinessSignerFixture({ now: Date.now(),
-      networkId: NETWORK, sessionLifetimeMs: 60_000, signedRelease,
-      trustedReleaseAddress: signer.address });
+      endpoint: `https://127.0.0.1:${port}`, networkId: NETWORK,
+      sessionLifetimeMs: 60_000, signedRelease, trustedReleaseAddress: signer.address,
+      tlsCertificateSha256 });
     const genesisHash = readiness.session.joinPlan.expectedChainIdentityGenesisHash;
     const evidence = productionEvidence(root, manifest, "installed-launcher-attestations",
       { genesisHash });
@@ -942,7 +967,104 @@ test("installed launcher verifies its own release before accepting a listener", 
     await assert.rejects(installedModule.launchValidatorReadinessThreeProcess({ ...options,
       installation: { ...installation, expectedPackageHash: "0".repeat(64) } }),
     (error) => /operator policy/.test(error.cause?.message ?? ""));
-  } finally { rmSync(root, { force: true, recursive: true }); }
+    const consensusPassword = "installed-cohort-consensus-password";
+    const transportPassword = "installed-cohort-transport-password";
+    const consensusVault = encryptWallet(readiness.candidate, consensusPassword,
+      { label: "Installed cohort consensus" });
+    const transportVault = encryptWallet(readiness.transport, transportPassword,
+      { label: "Installed cohort transport" });
+    const bootstraps = createValidatorReadinessProcessBootstrapSet({ consensusVault,
+      gatewayRolePackage: readiness.gatewayRolePackage,
+      initialHeight: readiness.context.checkpoint.height, tlsCertificateSha256,
+      transportVault }, { now: Date.now() });
+    const cohortBootstraps = { consensus: bootstraps.consensusSignerBootstrap,
+      gateway: bootstraps.gatewayBootstrap, transport: bootstraps.transportSignerBootstrap };
+    const rolePins = (role, bootstrap) => ({ expectedBootstrapHash: bootstrap.bootstrapHash,
+      expectedLauncherNonce: bootstraps.launcherNonce,
+      expectedReleaseProvenanceHash: readiness.session.releaseProvenanceHash,
+      expectedRole: role, expectedSessionHash: readiness.session.sessionHash });
+    const signerInputs = {};
+    for (const [role, bootstrap, encryptedVault] of [
+      ["consensus", bootstraps.consensusSignerBootstrap, consensusVault],
+      ["transport", bootstraps.transportSignerBootstrap, transportVault],
+    ]) {
+      const pins = rolePins(role, bootstrap);
+      const launchEnvelope = createValidatorReadinessRuntimeLaunchEnvelope({ bootstrap }, pins,
+        { encryptedVault, now: Date.now() });
+      signerInputs[role] = createValidatorReadinessSignerChildInput({ cohortBootstraps,
+        encryptedVault, launchEnvelope }, pins, { now: Date.now() });
+    }
+    const gatewayPins = { expectedBootstrapHash: bootstraps.gatewayBootstrap.bootstrapHash,
+      expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
+      expectedLauncherNonce: bootstraps.launcherNonce,
+      expectedReleaseProvenanceHash: readiness.session.releaseProvenanceHash,
+      expectedSessionHash: readiness.session.sessionHash };
+    const gatewayEnvelope = createValidatorReadinessRuntimeLaunchEnvelope({
+      bootstrap: bootstraps.gatewayBootstrap,
+      consensusSignerBootstrap: bootstraps.consensusSignerBootstrap,
+      transportSignerBootstrap: bootstraps.transportSignerBootstrap,
+    }, rolePins("gateway", bootstraps.gatewayBootstrap), { now: Date.now() });
+    const gatewayInput = createValidatorReadinessGatewayChildInput({ cohortBootstraps,
+      launchEnvelope: gatewayEnvelope }, gatewayPins, { now: Date.now() });
+    const trustedEvidence = { session: readiness.session, signedRelease,
+      trustedReleaseAddress: signer.address,
+      policy: { expectedAdmissionId: readiness.context.admissionId,
+        expectedCandidateAddress: readiness.candidate.address,
+        expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
+        expectedChainIdentityGenesisHash: genesisHash,
+        expectedCheckpointBlockHash: readiness.context.checkpoint.blockHash,
+        expectedCheckpointHeight: readiness.context.checkpoint.height,
+        expectedCheckpointPolicyId: readiness.session.joinPlan.expectedCheckpointPolicyId,
+        expectedEndpoint: readiness.context.endpoint,
+        expectedLauncherNonce: bootstraps.launcherNonce,
+        expectedNetworkId: readiness.session.joinPlan.networkId,
+        expectedReleaseManifestHash: manifest.manifestHash,
+        expectedTlsCertificateSha256: tlsCertificateSha256 } };
+    const productionOptions = { consensusInput: signerInputs.consensus,
+      consensusPasswordBuffer: Buffer.from(consensusPassword), gatewayInput,
+      installation, listenerFd: reservation._handle.fd,
+      tlsCertificateBuffer: Buffer.from(tlsCertificate), tlsKeyBuffer: Buffer.from(tlsKey),
+      transportInput: signerInputs.transport,
+      transportPasswordBuffer: Buffer.from(transportPassword), trustedEvidence,
+      trustedPins: { expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
+        expectedConsensusBootstrapHash: bootstraps.consensusSignerBootstrap.bootstrapHash,
+        expectedGatewayBootstrapHash: bootstraps.gatewayBootstrap.bootstrapHash,
+        expectedLauncherNonce: bootstraps.launcherNonce,
+        expectedReleaseProvenanceHash: readiness.session.releaseProvenanceHash,
+        expectedSessionHash: readiness.session.sessionHash,
+        expectedTlsCertificateSha256: tlsCertificateSha256,
+        expectedTransportBootstrapHash: bootstraps.transportSignerBootstrap.bootstrapHash } };
+    const launched = installedModule.launchValidatorReadinessThreeProcess(productionOptions);
+    await new Promise((resolve) => reservation.close(resolve));
+    reservationReleased = true;
+    cohort = await launched;
+    assert.equal(cohort.state(), "active");
+    assert.equal(cohort.productionActivated, true);
+    for (const key of ["consensusPasswordBuffer", "transportPasswordBuffer",
+      "tlsCertificateBuffer", "tlsKeyBuffer"]) {
+      assert.equal(productionOptions[key].every((byte) => byte === 0), true);
+    }
+    const body = Buffer.from(canonicalJson({ challenge: readiness.challenge,
+      context: readiness.context }));
+    const status = await new Promise((resolve, reject) => {
+      const request = httpsRequest(new URL(VALIDATOR_ADMISSION_READINESS_CHALLENGE_PATH,
+        readiness.context.endpoint), { method: "POST", rejectUnauthorized: false,
+        minVersion: "TLSv1.3", headers: { "content-length": String(body.length),
+          "content-type": "application/json" } }, (response) => {
+        response.resume(); response.once("end", () => resolve(response.statusCode));
+      });
+      request.once("error", reject); request.end(body);
+    });
+    assert.equal(status, 200);
+    await cohort.close();
+    assert.deepEqual(await cohort.waitForTermination(), { reason: "closed" });
+  } finally {
+    if (cohort) await cohort.close();
+    if (reservation && !reservationReleased) {
+      await new Promise((resolve) => reservation.close(resolve));
+    }
+    rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("production wallet bridge and UI verify anchored generations before bind on every restart", async () => {
