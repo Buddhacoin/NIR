@@ -54,12 +54,16 @@ The only successful order is:
 8. connect the narrow role-specific adapters, write PREPARE_ACK, and treat its write callback as the
    flush barrier before accepting COMMIT;
 9. independently verify COMMIT and both exact signer activation acknowledgements;
-10. write COMMIT_ACK, treat its write callback as the second flush barrier, mark the controller
-    committed, and only then irreversibly activate the HTTPS service.
+10. recheck both signer channels, write COMMIT_ACK, treat its write callback as the second flush
+    barrier, mark the controller committed, recheck both channels again, and only then activate
+    the HTTPS service.
 
 Before step 10, a readiness challenge receives HTTP 503 before its body is parsed and before either
 signer can run. After activation, every request is relayed through the existing exactly-once,
 epoch-bound signer adapters. No general signing operation is exposed.
+If either signer disappears at the COMMIT boundary or later, the gateway closes the listener and
+aborts in-flight signing. These checks narrow an activation race; they do not replace the missing
+atomic three-process launcher or make the deployment production-ready.
 
 ## Failure and teardown
 

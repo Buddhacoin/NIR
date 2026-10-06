@@ -78,6 +78,19 @@ function boundedTeardown(promise) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function pollBoundary() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function assertSignerChannelsLive(channels, raceStop, stopped) {
+  await raceStop(pollBoundary());
+  await raceStop(pollBoundary());
+  if (stopped() || channels.some((channel) => !channel || channel.destroyed ||
+      channel.readableEnded || channel.writableEnded || channel.writableFinished)) {
+    throw new RuntimeStop("signer-unavailable");
+  }
+}
+
 function writeFrame(stream, value) {
   const bytes = encodeValidatorReadinessGatewayChildFrame(value);
   return deadline(new Promise((resolve, reject) => {
@@ -419,9 +432,11 @@ export async function runValidatorReadinessGatewayChildProcess() {
     try { commitAck = controller.commit(commit); }
     catch { throw new RuntimeStop("channel-failed"); }
     if (inbox.hasQueuedOrPartial() || stopped) throw new RuntimeStop("channel-failed");
+    await assertSignerChannelsLive([transportChannel, consensusChannel], raceStop, () => stopped);
     await raceStop(writeFrame(statusChannel, commitAck));
     controller.commitAcknowledgementFlushed(commitAck);
     if (inbox.hasQueuedOrPartial() || stopped) throw new RuntimeStop("channel-failed");
+    await assertSignerChannelsLive([transportChannel, consensusChannel], raceStop, () => stopped);
     server.validatorAdmissionReadinessActivate();
 
     await raceStop(inbox.next());
