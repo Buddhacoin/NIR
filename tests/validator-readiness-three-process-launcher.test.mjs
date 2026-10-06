@@ -93,11 +93,24 @@ function input(port, fd) {
   }, pins(values, "gateway", values.gatewayBootstrap), { now });
   const gatewayInput = createValidatorReadinessGatewayChildInput({ cohortBootstraps,
     launchEnvelope }, gatewayPins, { now });
+  const trustedEvidence = { signedRelease: values.signedRelease,
+    trustedReleaseAddress: values.trustedReleaseAddress, session: values.session,
+    policy: { expectedAdmissionId: values.context.admissionId,
+      expectedCandidateAddress: values.candidate.address,
+      expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
+      expectedChainIdentityGenesisHash: values.session.joinPlan.expectedChainIdentityGenesisHash,
+      expectedCheckpointBlockHash: values.context.checkpoint.blockHash,
+      expectedCheckpointHeight: values.context.checkpoint.height,
+      expectedCheckpointPolicyId: values.session.joinPlan.expectedCheckpointPolicyId,
+      expectedEndpoint: values.context.endpoint, expectedLauncherNonce: values.launcherNonce,
+      expectedNetworkId: values.session.joinPlan.networkId,
+      expectedTlsCertificateSha256: certificateHash } };
   return { values, options: { consensusInput: signerInputs.consensus,
     consensusPasswordBuffer: Buffer.from(consensusPasswordText), gatewayInput,
     listenerFd: fd, tlsCertificateBuffer: Buffer.from(certificate),
     tlsKeyBuffer: Buffer.from(key), transportInput: signerInputs.transport,
-    transportPasswordBuffer: Buffer.from(transportPasswordText), trustedPins: {
+    transportPasswordBuffer: Buffer.from(transportPasswordText), trustedEvidence,
+    trustedPins: {
       expectedBoundHost: "127.0.0.1", expectedBoundPort: port,
       expectedConsensusBootstrapHash: values.consensusSignerBootstrap.bootstrapHash,
       expectedGatewayBootstrapHash: values.gatewayBootstrap.bootstrapHash,
@@ -255,6 +268,42 @@ test("self-consistent child inputs cannot replace independent operator pins", as
     const omitted = input(reservation.port, reservation.fd).options;
     delete omitted.trustedPins;
     await assert.rejects(launchValidatorReadinessThreeProcess(omitted),
+      /three-process launch failed/);
+  } finally { await new Promise((resolve) => reservation.server.close(resolve)); }
+});
+
+test("signed release and local policy cannot be substituted during readiness launch", async () => {
+  const reservation = await listener();
+  try {
+    const wrongSigner = input(reservation.port, reservation.fd).options;
+    wrongSigner.trustedEvidence.trustedReleaseAddress = `nir1${"0".repeat(64)}`;
+    await assert.rejects(launchValidatorReadinessThreeProcess(wrongSigner),
+      /three-process launch failed/);
+    assert.equal(wrongSigner.tlsKeyBuffer.every((byte) => byte === 0), true);
+    const wrongPolicy = input(reservation.port, reservation.fd).options;
+    wrongPolicy.trustedEvidence.policy.expectedCheckpointBlockHash = "0".repeat(64);
+    await assert.rejects(launchValidatorReadinessThreeProcess(wrongPolicy),
+      /three-process launch failed/);
+    const wrongSignature = input(reservation.port, reservation.fd).options;
+    wrongSignature.trustedEvidence.signedRelease.signature = "0".repeat(64);
+    await assert.rejects(launchValidatorReadinessThreeProcess(wrongSignature),
+      /three-process launch failed/);
+    const wrongRelease = input(reservation.port, reservation.fd).options;
+    const otherOptions = input(reservation.port, reservation.fd).options;
+    wrongRelease.trustedEvidence.signedRelease = otherOptions.trustedEvidence.signedRelease;
+    wrongRelease.trustedEvidence.trustedReleaseAddress =
+      otherOptions.trustedEvidence.trustedReleaseAddress;
+    for (const name of ["consensusPasswordBuffer", "transportPasswordBuffer",
+      "tlsCertificateBuffer", "tlsKeyBuffer"]) otherOptions[name].fill(0);
+    await assert.rejects(launchValidatorReadinessThreeProcess(wrongRelease),
+      /three-process launch failed/);
+    const wrongBinding = input(reservation.port, reservation.fd).options;
+    wrongBinding.trustedEvidence.policy.expectedBoundPort += 1;
+    await assert.rejects(launchValidatorReadinessThreeProcess(wrongBinding),
+      /three-process launch failed/);
+    const missingEvidence = input(reservation.port, reservation.fd).options;
+    delete missingEvidence.trustedEvidence;
+    await assert.rejects(launchValidatorReadinessThreeProcess(missingEvidence),
       /three-process launch failed/);
   } finally { await new Promise((resolve) => reservation.server.close(resolve)); }
 });

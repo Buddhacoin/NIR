@@ -131,7 +131,8 @@ export function validatorReadinessSignerFixture({ endpoint = "https://candidate.
   });
   return { candidate, challenge, consensusChannelEpoch: consensus.channelEpoch,
     consensusRolePackage, consensusSignerBinding: consensus.localPins,
-    consensusSignerBootstrap, context, gatewayRolePackage, launcherNonce, session, transport,
+    consensusSignerBootstrap, context, gatewayRolePackage, launcherNonce,
+    signedRelease, trustedReleaseAddress: releaseSigner.address, session, transport,
     transportChannelEpoch: transportBinding.channelEpoch,
     transportRolePackage, transportSignerBinding: transportBinding.localPins,
     transportSignerBootstrap, validatorWallets, validators };

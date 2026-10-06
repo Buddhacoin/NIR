@@ -33,13 +33,15 @@ import {
   verifyValidatorReadinessSignerActivationAcknowledgement,
   verifyValidatorReadinessSignerChildInput,
 } from "./validator-readiness-signer-child-protocol.mjs";
+import { deriveValidatorReadinessTrustedPins }
+  from "./validator-readiness-trusted-evidence.mjs";
 
 const SIGNER_CLI = fileURLToPath(new URL("./validator-readiness-signer-child-cli.mjs", import.meta.url));
 const GATEWAY_CLI = fileURLToPath(new URL("./validator-readiness-gateway-child-cli.mjs", import.meta.url));
 const ROLES = Object.freeze(["consensus", "transport"]);
 const OPTION_KEYS = Object.freeze(["consensusInput", "consensusPasswordBuffer", "gatewayInput",
   "listenerFd", "tlsCertificateBuffer", "tlsKeyBuffer", "transportInput",
-  "transportPasswordBuffer", "trustedPins"]);
+  "transportPasswordBuffer", "trustedEvidence", "trustedPins"]);
 const PIN_KEYS = Object.freeze(["expectedBoundHost", "expectedBoundPort",
   "expectedConsensusBootstrapHash", "expectedGatewayBootstrapHash",
   "expectedLauncherNonce", "expectedReleaseProvenanceHash", "expectedSessionHash",
@@ -352,6 +354,11 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
     const accepted = exactOptions(options);
     transferredFd = acceptListenerFd(accepted.listenerFd);
     const trusted = trustedPins(accepted.trustedPins);
+    const derived = deriveValidatorReadinessTrustedPins(accepted.trustedEvidence,
+      accepted.gatewayInput?.cohortBootstraps);
+    if (canonicalJson(derived) !== canonicalJson(trusted)) {
+      throw new Error("validator readiness trusted pins disagree with signed evidence");
+    }
     for (const key of SECRET_KEYS) validateBuffer(accepted[key], key,
       key.includes("Password") ? 1_024 : 1024 * 1024);
     for (let left = 0; left < SECRET_KEYS.length; left += 1) {
