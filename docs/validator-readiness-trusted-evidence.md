@@ -24,4 +24,5 @@ package also does not establish that a remote operator or witness is organizatio
 There is still no public operator CLI for launching the cohort or production socket-activation
 service in this layer. Installed file verification is a separate
 [readiness installation check](validator-readiness-installation.md)
-that has not yet been made mandatory in the three-process launcher.
+that is mandatory in the production-facing three-process launcher. The explicitly named
+development launcher remains ungated for local tests.

@@ -26,7 +26,7 @@ function assertActiveLink(installationTarget) {
   return generation;
 }
 
-function assertEntrypointIsInstalled(installationTarget, moduleUrl) {
+export function assertProductionInstalledEntrypoint(installationTarget, moduleUrl) {
   const generation = assertActiveLink(installationTarget);
   const modulePath = realpathSync(fileURLToPath(moduleUrl));
   if (!modulePath.startsWith(`${generation}${sep}`)) {
@@ -81,12 +81,12 @@ export function createProductionStartupGuard({
   });
   const externalAnchor = readAnchor(externalAnchorPath);
   const verify = () => {
-    if (requireInstalledEntrypoint) assertEntrypointIsInstalled(installationTarget, moduleUrl);
+    if (requireInstalledEntrypoint) assertProductionInstalledEntrypoint(installationTarget, moduleUrl);
     const result = verifyProductionStartupFromHead(headStore, installationTarget, {
       externalAnchor, includeArtifact, signedRelease, trustedAddress,
     });
     if (result.kind !== kind) throw new Error("production startup anchor kind is mixed");
-    if (requireInstalledEntrypoint) assertEntrypointIsInstalled(installationTarget, moduleUrl);
+    if (requireInstalledEntrypoint) assertProductionInstalledEntrypoint(installationTarget, moduleUrl);
     else assertActiveLink(installationTarget);
     return result;
   };

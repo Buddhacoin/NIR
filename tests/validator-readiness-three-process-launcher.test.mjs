@@ -21,7 +21,8 @@ import { createValidatorReadinessGatewayChildInput }
   from "../blockchain/validator-readiness-gateway-child-protocol.mjs";
 import { createValidatorReadinessSignerChildInput }
   from "../blockchain/validator-readiness-signer-child-protocol.mjs";
-import { launchValidatorReadinessThreeProcess }
+import { launchValidatorReadinessThreeProcess as launchProduction,
+  launchValidatorReadinessThreeProcessDevelopment as launchValidatorReadinessThreeProcess }
   from "../blockchain/validator-readiness-three-process-launcher.mjs";
 import { validatorReadinessSignerFixture } from "./validator-readiness-signer-fixture.mjs";
 
@@ -138,6 +139,21 @@ function request(values) {
     outgoing.on("error", reject); outgoing.end(body);
   }), "readiness HTTPS response");
 }
+
+test("production launcher rejects a missing installation gate before taking the listener", async () => {
+  const reservation = await listener();
+  try {
+    const { options } = input(reservation.port, reservation.fd);
+    await assert.rejects(launchProduction(options), /production launch options/);
+    for (const key of ["consensusPasswordBuffer", "transportPasswordBuffer",
+      "tlsCertificateBuffer", "tlsKeyBuffer"]) {
+      assert.equal(options[key].every((byte) => byte === 0), true);
+    }
+    assert.equal(reservation.server.listening, true);
+  } finally {
+    await new Promise((resolve) => reservation.server.close(resolve));
+  }
+});
 
 test("launcher activates one real three-process cohort and closes it atomically", async () => {
   const reservation = await listener();

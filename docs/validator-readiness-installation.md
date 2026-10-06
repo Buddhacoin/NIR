@@ -33,9 +33,10 @@ with a readiness cohort. Both commands are read-only and return a small verified
 with a nonzero exit code. The signer, package hash, and anchor must be independently retained
 operator inputs rather than values copied from the downloaded package.
 
-These helpers do not themselves execute the installed entrypoint or prove that the code calling
-them was loaded from that generation. The current three-process readiness launcher still does
-not require this helper. The next integration must make
-installation verification and installed-entrypoint identity mandatory before gateway activation,
-without accepting a caller-fabricated "verified" flag. Passing this check alone does not
-establish independent operators or authorize a public network.
+The inspection helpers do not themselves execute the installed entrypoint. The production-facing
+three-process launcher now requires this verification and proves its own module path belongs to
+the active generation before taking the listener and again before gateway COMMIT. Its separate
+development entrypoint remains intentionally ungated for local tests and must not be used as a
+public operator launch path. A successful end-to-end activation from an installed signed
+generation, independent operators, and external review remain outstanding. Passing this check
+alone does not authorize a public network.
