@@ -49,18 +49,19 @@ signers fail closed. This is process-lifetime containment, not protection agains
 compromised same-UID process, inherited descriptors introduced by a future wrapper, or a hostile
 kernel. Production service supervision must not pass these descriptors to launcher descendants.
 
-## Missing production boundary
+## Separate three-process boundary
 
 Production activation requires one launcher to spawn and pin a gateway child, verify its unsigned
 READY over an inherited status channel after the TLS listener is bound, assemble the exact
 three-process readiness set, send role-specific activation commands to both signers, verify both
-activation ACKs, and expose signer data channels to that same gateway only after the all-or-nothing
-ACK barrier. Accepting a gateway READY object from an arbitrary caller would not authenticate the
-gateway PID or listener and is deliberately unsupported.
+activation ACKs, and let that same gateway use the role-specific signer channels only after the
+all-or-nothing ACK barrier. Accepting a gateway READY object from an arbitrary caller would not
+authenticate the gateway PID or listener and is deliberately unsupported.
 
 The canonical PREPARE/COMMIT boundary that the gateway child enforces is specified in
 [validator-readiness-gateway-child-protocol.md](validator-readiness-gateway-child-protocol.md).
 The real child runtime is described in
 [validator-readiness-gateway-child-runtime.md](validator-readiness-gateway-child-runtime.md).
-Neither removes this launcher limitation: three-process spawn, descriptor inventory, activation,
-and cohort teardown are not implemented here.
+This two-signer API intentionally retains its limitation. The separate
+[three-process launcher](validator-readiness-three-process-launcher.md) now owns the gateway spawn,
+descriptor inventory, activation, and cohort teardown; it does not silently upgrade this API.
