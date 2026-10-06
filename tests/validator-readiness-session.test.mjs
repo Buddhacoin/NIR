@@ -18,6 +18,10 @@ import {
 } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
+import {
+  deriveValidatorReadinessInstallationExpectations,
+  verifyValidatorReadinessInstallationForSession,
+} from "../blockchain/validator-readiness-installation.mjs";
 import { createValidatorAdmissionReadinessContext }
   from "../blockchain/validator-admission-readiness-auth.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
@@ -135,6 +139,31 @@ test("readiness session binds verified join, release, finality, identities, and 
   const second = createValidatorReadinessSession(value, { now: NOW });
   assert.notEqual(second.sessionId, value.session.sessionId);
   assert.notEqual(second.sessionHash, value.session.sessionHash);
+});
+
+test("installed-release pins derive from the verified session and external package hash", () => {
+  const { session } = fixture();
+  const expectedPackageHash = "f".repeat(64);
+  assert.deepEqual(deriveValidatorReadinessInstallationExpectations(session,
+    expectedPackageHash, { now: NOW }), {
+    expectedGenesisHash: session.joinPlan.expectedChainIdentityGenesisHash,
+    expectedNetworkId: session.joinPlan.networkId,
+    expectedPackageHash,
+    expectedReleaseManifestHash: session.releaseProvenance.manifestHash,
+    expectedReleaseVersion: session.releaseProvenance.releaseVersion,
+    expectedSourceRevision: session.releaseProvenance.sourceRevision,
+  });
+  assert.throws(() => deriveValidatorReadinessInstallationExpectations(session, "not-a-hash",
+    { now: NOW }), /package hash/);
+  const altered = structuredClone(session);
+  altered.releaseProvenance.releaseVersion = "9.9.9";
+  assert.throws(() => deriveValidatorReadinessInstallationExpectations(altered,
+    expectedPackageHash, { now: NOW }));
+  assert.throws(() => deriveValidatorReadinessInstallationExpectations(session,
+    expectedPackageHash, { now: session.expiresAt }), /expired/);
+  assert.throws(() => verifyValidatorReadinessInstallationForSession({ session,
+    expectedPackageHash, now: NOW, trustedAddress: generateWallet().address }),
+  /session signer/);
 });
 
 test("readiness session exact schema and commitments reject mutation", () => {

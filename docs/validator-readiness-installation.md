@@ -9,9 +9,18 @@ release manifest hash, stable version, and source revision with separately suppl
 It rejects a different valid package, altered installed files, missing anchor, mixed network,
 or damaged head copies.
 
-The helper does not itself execute the installed entrypoint or prove that the code calling it was
-loaded from that generation. The current three-process readiness launcher still does not require
-this helper, and there is no operator CLI. The next integration must make installation verification
-and installed-entrypoint identity mandatory before gateway activation, without accepting a caller-
-fabricated "verified" flag. Passing this check alone does not establish independent operators or
-authorize a public network.
+`deriveValidatorReadinessInstallationExpectations()` first verifies the current, unexpired
+readiness session and derives network, genesis, release manifest, version, and source revision
+from that session. The package hash remains an independent operator policy pin: it must not
+come from the package being inspected. `verifyValidatorReadinessInstallationForSession()`
+combines both checks and also requires the release signer in the session to match the trusted
+operator signer. This prevents a caller from supplying unrelated release-lineage expectations
+for the same readiness cohort. The external anchor and trusted signer likewise need independent
+operator-controlled origins.
+
+These helpers do not themselves execute the installed entrypoint or prove that the code calling
+them was loaded from that generation. The current three-process readiness launcher still does
+not require this helper, and there is no operator CLI. The next integration must make
+installation verification and installed-entrypoint identity mandatory before gateway activation,
+without accepting a caller-fabricated "verified" flag. Passing this check alone does not
+establish independent operators or authorize a public network.
