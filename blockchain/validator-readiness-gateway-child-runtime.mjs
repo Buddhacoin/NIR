@@ -275,6 +275,7 @@ export async function runValidatorReadinessGatewayChildProcess() {
   const resources = new Set(); const ownedDescriptors = new Set(); const ownedHandles = new Set();
   let input = null; let runtimeInput = null; let ready = null; let inbox = null; let statusChannel = null;
   let server = null; let tlsKey = null; let tlsCertificate = null; let controller = null;
+  let sessionExpiryTimer = null;
   let transportChannel = null; let consensusChannel = null;
   let stopped = false; let stopResolve; let failure = null; let listenerOwned = false;
   const stoppedPromise = new Promise((resolve) => { stopResolve = resolve; });
@@ -328,6 +329,11 @@ export async function runValidatorReadinessGatewayChildProcess() {
       input = runtimeInput.gatewayInput;
     } catch { throw new RuntimeStop("bootstrap-invalid"); }
 
+    const session = input.cohortBootstraps.gateway.rolePackage.session;
+    const remainingSessionMs = session.expiresAt - Date.now();
+    if (remainingSessionMs <= 0) throw new RuntimeStop("session-expired");
+    sessionExpiryTimer = setTimeout(() => stop("session-expired"), remainingSessionMs);
+
     const keyInput = inheritedPipe(FDS.tlsKey, "read", register,
       ownedDescriptors, ownedHandles);
     const certificateInput = inheritedPipe(FDS.tlsCertificate, "read", register,
@@ -343,7 +349,6 @@ export async function runValidatorReadinessGatewayChildProcess() {
       }
     } catch { throw new RuntimeStop("tls-invalid"); }
 
-    const session = input.cohortBootstraps.gateway.rolePackage.session;
     const transportProxy = deferredSigner(session.context.transport, "signReadinessTransport");
     const consensusProxy = deferredSigner(session.context.candidate, "signReadinessConsensus");
     server = createValidatorAdmissionReadinessServer({ consensusSigner: consensusProxy,
@@ -459,6 +464,7 @@ export async function runValidatorReadinessGatewayChildProcess() {
       throw new Error("validator readiness gateway child terminated");
     }
   } finally {
+    clearTimeout(sessionExpiryTimer);
     process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);
     tlsKey?.fill(0); tlsCertificate?.fill(0); tlsKey = null; tlsCertificate = null;
     try { controller?.close(); } catch {}

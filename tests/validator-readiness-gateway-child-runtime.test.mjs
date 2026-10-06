@@ -22,6 +22,7 @@ import {
   createValidatorReadinessRuntimeFrameDecoder,
   createValidatorReadinessRuntimeLaunchEnvelope,
   encodeValidatorReadinessRuntimeFrame,
+  verifyValidatorReadinessFatalStatus,
 } from "../blockchain/validator-readiness-runtime-protocol.mjs";
 import {
   createValidatorReadinessGatewayChildFrameDecoder,
@@ -88,10 +89,11 @@ class Frames {
     if (this.error) return; this.error = error;
     for (const waiter of this.waiters.splice(0)) waiter.reject(error);
   }
-  next(label) {
+  next(label, timeoutMs = TIMEOUT_MS) {
     if (this.queue.length) return Promise.resolve(this.queue.shift());
     if (this.error) return Promise.reject(this.error);
-    return deadline(new Promise((resolve, reject) => this.waiters.push({ reject, resolve })), label);
+    return deadline(new Promise((resolve, reject) => this.waiters.push({ reject, resolve })),
+      label, timeoutMs);
   }
 }
 
@@ -126,10 +128,10 @@ function signerStatusPins(values, role, ready) {
     expectedProcessNonce: ready.processNonce };
 }
 
-function setup(port) {
+function setup(port, sessionLifetimeMs) {
   const now = Date.now();
   const values = validatorReadinessSignerFixture({ endpoint: `https://127.0.0.1:${port}`,
-    now, tlsCertificateSha256 });
+    now, sessionLifetimeMs, tlsCertificateSha256 });
   const consensusPassword = "gateway-runtime-consensus-password";
   const transportPassword = "gateway-runtime-transport-password";
   const consensusVault = encryptWallet(values.candidate, consensusPassword,
@@ -239,8 +241,9 @@ function exit(child) {
     resolve({ code, signal }))), "child exit");
 }
 
-async function cohort({ statusPair = null } = {}) {
-  const reservation = await reserveListener(); const values = setup(reservation.port);
+async function cohort({ sessionLifetimeMs, statusPair = null } = {}) {
+  const reservation = await reserveListener();
+  const values = setup(reservation.port, sessionLifetimeMs);
   const consensus = launchSigner("consensus", values);
   const transport = launchSigner("transport", values);
   const gateway = await launchGateway(values, reservation, consensus, transport,
@@ -325,6 +328,30 @@ test("gateway revokes an active readiness listener when a signer exits", async (
     bundle.records.consensus.child.kill("SIGKILL");
     await exit(bundle.records.consensus.child);
     assert.deepEqual(await exit(bundle.records.gateway.child), { code: 1, signal: null });
+    await assert.rejects(() => request(bundle.values));
+  } finally {
+    for (const { child } of Object.values(bundle.records)) {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }
+  }
+});
+
+test("gateway closes the active listener when its signed session expires", async () => {
+  const bundle = await cohort({ sessionLifetimeMs: 20_000 });
+  try {
+    await activate(bundle);
+    assert.equal((await request(bundle.values)).status, 200);
+    const fatal = await bundle.records.gateway.status.next("session expiry fatal", 25_000);
+    assert.equal(fatal.messageType, "fatal");
+    assert.equal(verifyValidatorReadinessFatalStatus(fatal, {
+      ...basePins(bundle.values, "gateway", bundle.values.gatewayBootstrap),
+      expectedPid: bundle.readiness.gateway.pid,
+      expectedProcessNonce: bundle.readiness.gateway.processNonce,
+      expectedCode: "session-expired",
+    }).code, "session-expired");
+    assert.deepEqual(await deadline(exit(bundle.records.gateway.child),
+      "signed session expiry", 25_000), { code: 1, signal: null });
+    assert.ok(Date.now() >= bundle.values.session.expiresAt);
     await assert.rejects(() => request(bundle.values));
   } finally {
     for (const { child } of Object.values(bundle.records)) {
