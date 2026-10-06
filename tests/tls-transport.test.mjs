@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { X509Certificate } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +15,44 @@ import {
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { certificateSha256, requestJson } from "../blockchain/http-client.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+
+test("a mismatched pinned TLS peer receives no request body", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-pinned-tls-no-leak-"));
+  let server;
+  try {
+    const keyPath = join(temporary, "key.pem");
+    const certPath = join(temporary, "cert.pem");
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+      "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+    { stdio: "ignore" });
+    let requests = 0; let receivedBytes = 0;
+    server = createHttpsServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) },
+      (request, response) => {
+        requests += 1;
+        request.on("data", (chunk) => { receivedBytes += chunk.length; });
+        request.on("end", () => {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end("{}");
+        });
+      });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `https://127.0.0.1:${server.address().port}/signed`;
+    await assert.rejects(() => requestJson(url, {
+      body: { signedEnvelope: "must-not-reach-wrong-peer" },
+      tlsCertificateSha256: "0".repeat(64),
+    }), /certificate pin mismatch/);
+    const mutablePins = ["0".repeat(64)];
+    const pending = requestJson(url, { body: { signedEnvelope: "no-pin-swap" },
+      tlsCertificateSha256Pins: mutablePins });
+    mutablePins[0] = certificateSha256(new X509Certificate(readFileSync(certPath)).raw);
+    await assert.rejects(pending, /certificate pin mismatch/);
+    assert.equal(requests, 0);
+    assert.equal(receivedBytes, 0);
+  } finally {
+    if (server) await close(server);
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
 
 async function close(server) {
   if (!server.listening) return;
