@@ -158,9 +158,11 @@ file outside the node's writable state. Its exact shape is
 The `certificate:lifecycle status` command prints the verified `headHash`,
 `networkId`, and `records` needed to prepare it. Compare that head with the
 quorum-authenticated history and retain the anchor through a separate trusted
-channel. The runtime rereads the anchor for every lifecycle pin lookup and
-rejects a local history shorter than the anchored count or with a different
-hash at that count. This prevents restoring both locally valid copies to a
+channel. The network CLI rejects an anchor path inside the node's writable
+state. The runtime rereads the anchor for every lifecycle pin lookup, retains
+the highest anchor it has accepted in memory, and rejects a shorter anchor or
+a local history shorter than the retained count or with a different hash at
+that count. This prevents restoring both locally valid copies to a
 pre-revocation or pre-renewal prefix once the external anchor has advanced.
 Advance the operator-controlled anchor after verifying a new quorum head;
 never derive it solely from the local store being protected. If the anchor is

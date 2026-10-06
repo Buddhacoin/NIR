@@ -1,7 +1,8 @@
 import { join, resolve } from "node:path";
 
 import { certificatePinsAtHeight, topologyHistoryCommitment } from "./certificate-lifecycle.mjs";
-import { loadCertificateHistory } from "./certificate-lifecycle-store.mjs";
+import { loadCertificateHistory, verifyCertificateHistoryAnchor }
+  from "./certificate-lifecycle-store.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { loadValidatorHandoffs } from "./validator-handoff-store.mjs";
 import {
@@ -63,7 +64,7 @@ export function loadRuntimeCertificateHistory(directory, genesis, {
     !Object.hasOwn(context.validatorSetsByTopologyHash, record.topologyHistoryHash))) {
     throw new Error("certificate lifecycle record has no verified validator topology");
   }
-  return { ...loaded, context };
+  return { ...loaded, context, externalAnchor };
 }
 
 export class RuntimeCertificatePins {
@@ -71,6 +72,7 @@ export class RuntimeCertificatePins {
   #genesis;
   #mode;
   #externalAnchorPath;
+  #anchorFloor = null;
 
   constructor(directory, genesis, {
     mode = CERTIFICATE_MODE_DEV_GENESIS, externalAnchorPath = null,
@@ -83,18 +85,36 @@ export class RuntimeCertificatePins {
     this.#mode = mode;
     this.#externalAnchorPath = externalAnchorPath;
     if (mode === CERTIFICATE_MODE_LIFECYCLE && externalAnchorPath !== null) {
-      loadRuntimeCertificateHistory(this.#directory, this.#genesis, { externalAnchorPath });
+      this.loadVerifiedHistory();
     }
   }
 
   get mode() { return this.#mode; }
 
+  loadVerifiedHistory() {
+    if (this.#mode !== CERTIFICATE_MODE_LIFECYCLE) {
+      throw new Error("certificate history requires lifecycle mode");
+    }
+    const loaded = loadRuntimeCertificateHistory(this.#directory, this.#genesis,
+      { externalAnchorPath: this.#externalAnchorPath });
+    if (this.#anchorFloor !== null) {
+      if (loaded.externalAnchor === null ||
+          loaded.externalAnchor.recordCount < this.#anchorFloor.recordCount) {
+        throw new Error("external certificate history anchor rolled back");
+      }
+      verifyCertificateHistoryAnchor(loaded.history, loaded.context, this.#anchorFloor);
+    }
+    if (loaded.externalAnchor !== null) {
+      this.#anchorFloor = structuredClone(loaded.externalAnchor);
+    }
+    return loaded;
+  }
+
   pinsFor(validatorAddress, height, genesisPin = null) {
     if (this.#mode === CERTIFICATE_MODE_DEV_GENESIS) {
       return genesisPin === null ? null : [genesisPin];
     }
-    const loaded = loadRuntimeCertificateHistory(this.#directory, this.#genesis,
-      { externalAnchorPath: this.#externalAnchorPath });
+    const loaded = this.loadVerifiedHistory();
     const pins = certificatePinsAtHeight(loaded.history, validatorAddress, height);
     if (pins.length === 0) {
       throw new Error("validator has no active lifecycle TLS certificate");

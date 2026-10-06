@@ -118,7 +118,6 @@ import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
 import {
   CERTIFICATE_MODE_DEV_GENESIS,
   CERTIFICATE_MODE_LIFECYCLE,
-  loadRuntimeCertificateHistory,
   RuntimeCertificatePins,
 } from "./certificate-runtime.mjs";
 import { selectCertificateHistoryCandidates } from "./certificate-lifecycle.mjs";
@@ -380,7 +379,6 @@ export class ValidatorReplica {
   #peerTlsPins;
   #peerRegistry;
   #certificatePins;
-  #certificateHeadAnchorPath;
   #transportView;
   #transportWallet;
   #ceremonyMode;
@@ -440,7 +438,6 @@ export class ValidatorReplica {
       mode: certificateMode,
       externalAnchorPath: certificateHeadAnchorPath,
     });
-    this.#certificateHeadAnchorPath = certificateHeadAnchorPath;
     this.#validators = this.#chain.validatorMembers;
     const registry = this.#chain.peerRegistry;
     if (!registry) throw new Error("peer registry has no active version");
@@ -941,16 +938,14 @@ export class ValidatorReplica {
     if (this.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
       throw new Error("certificate history propagation requires lifecycle mode");
     }
-    return loadRuntimeCertificateHistory(this.#directory, this.#genesis,
-      { externalAnchorPath: this.#certificateHeadAnchorPath }).history;
+    return this.#certificatePins.loadVerifiedHistory().history;
   }
 
   installCertificateLifecycleHistoryCandidates(candidates) {
     if (this.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
       throw new Error("certificate history propagation requires lifecycle mode");
     }
-    const loaded = loadRuntimeCertificateHistory(this.#directory, this.#genesis,
-      { externalAnchorPath: this.#certificateHeadAnchorPath });
+    const loaded = this.#certificatePins.loadVerifiedHistory();
     const selected = selectCertificateHistoryCandidates(candidates, {
       context: loaded.context,
       localHistory: loaded.history,

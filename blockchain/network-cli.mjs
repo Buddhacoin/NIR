@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { lstatSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import process from "node:process";
 
 import {
@@ -59,11 +59,16 @@ function certificateModeFromEnvironment() {
   return mode;
 }
 
-function certificateHeadAnchorPathFromEnvironment(mode) {
+function certificateHeadAnchorPathFromEnvironment(mode, runtimeDirectory) {
   if (mode !== CERTIFICATE_MODE_LIFECYCLE) return null;
   const path = process.env.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
-  if (typeof path !== "string" || !path.startsWith("/") || path.includes("\0")) {
+  if (typeof path !== "string" || !isAbsolute(path) || path.includes("\0")) {
     throw new Error("lifecycle mode requires an absolute NIR_CERTIFICATE_HEAD_ANCHOR_PATH");
+  }
+  const relativePath = relative(realpathSync(runtimeDirectory), realpathSync(path));
+  if (relativePath === "" || (!isAbsolute(relativePath) && relativePath !== ".." &&
+      !relativePath.startsWith(`..${sep}`))) {
+    throw new Error("external certificate history anchor must be outside node state");
   }
   return path;
 }
@@ -94,7 +99,8 @@ try {
     const certificateMode = certificateModeFromEnvironment();
     const validator = new ValidatorReplica(runtimeDirectory, {
       certificateMode,
-      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode),
+      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(
+        certificateMode, runtimeDirectory),
       ceremonyCredentials,
     });
     const tls = tlsFromEnvironment(ceremonyMode
@@ -125,7 +131,7 @@ try {
     const certificateMode = certificateModeFromEnvironment();
     const node = new DistributedCoordinator(directory, peers, {
       certificateMode,
-      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode),
+      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode, directory),
     });
     createNodeHttpServer(node).listen(port, "127.0.0.1", () => {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);

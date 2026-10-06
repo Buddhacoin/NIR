@@ -247,6 +247,10 @@ test("lifecycle runtime rejects two-copy rollback below an external certificate 
     const paths = certificateStorePaths(join(directory, "certificates"));
     const oldPrimary = readFileSync(paths.primary);
     const oldBackup = readFileSync(paths.backup);
+    const oldAnchor = { format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(values.issuedRecords, values.context),
+      networkId: values.genesis.networkId, recordCount: values.issuedRecords.length,
+      version: 1 };
     values.install(directory, values.records);
     const anchorPath = join(root, "operator-retained-certificate-head.json");
     writeFileSync(anchorPath, JSON.stringify({ format: "nir-certificate-history-anchor-v1",
@@ -255,10 +259,33 @@ test("lifecycle runtime rejects two-copy rollback below an external certificate 
       version: 1 }));
     const pins = new RuntimeCertificatePins(directory, values.genesis,
       { mode: CERTIFICATE_MODE_LIFECYCLE, externalAnchorPath: anchorPath });
+    assert.deepEqual(pins.pinsFor(values.genesis.validators[0].address, 0),
+      [values.oldCertificates[0].fingerprint]);
     assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1), /active lifecycle/);
+    writeFileSync(anchorPath, JSON.stringify(oldAnchor));
     writeFileSync(paths.primary, oldPrimary);
     writeFileSync(paths.backup, oldBackup);
-    assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1), /external anchor/);
+    assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1),
+      /anchor rolled back/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("network lifecycle launch rejects an anchor inside node writable state", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-certificate-anchor-path-"));
+  try {
+    const values = lifecycleFixture(root, "issue");
+    const directory = values.layout.coordinatorDirectory;
+    const anchorPath = join(directory, "certificate-head-anchor.json");
+    writeFileSync(anchorPath, "{}\n");
+    assert.throws(() => execFileSync(process.execPath, [
+      "blockchain/network-cli.mjs", "serve-coordinator", directory,
+      "https://127.0.0.1:1", "8787",
+    ], { cwd: new URL("..", import.meta.url), env: {
+      ...process.env, NIR_CERTIFICATE_MODE: CERTIFICATE_MODE_LIFECYCLE,
+      NIR_CERTIFICATE_HEAD_ANCHOR_PATH: anchorPath,
+    }, stdio: "pipe" }), /outside node state/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
