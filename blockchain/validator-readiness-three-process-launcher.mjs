@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
 import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
-import { closeSync, fstatSync } from "node:fs";
+import { closeSync, fstatSync, realpathSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { canonicalJson } from "./crypto.mjs";
+import { assertProductionInstalledEntrypoint } from "./production-startup.mjs";
+import { verifyValidatorReadinessInstallationForSession }
+  from "./validator-readiness-installation.mjs";
 import {
   verifyValidatorReadinessGatewayActiveAcknowledgement,
   createValidatorReadinessGatewayCommitCommand,
@@ -42,6 +45,9 @@ const ROLES = Object.freeze(["consensus", "transport"]);
 const OPTION_KEYS = Object.freeze(["consensusInput", "consensusPasswordBuffer", "gatewayInput",
   "listenerFd", "tlsCertificateBuffer", "tlsKeyBuffer", "transportInput",
   "transportPasswordBuffer", "trustedEvidence", "trustedPins"]);
+const PRODUCTION_OPTION_KEYS = Object.freeze([...OPTION_KEYS, "installation"]);
+const INSTALLATION_KEYS = Object.freeze(["externalAnchor", "expectedPackageHash", "headStore",
+  "installationTarget"]);
 const PIN_KEYS = Object.freeze(["expectedBoundHost", "expectedBoundPort",
   "expectedConsensusBootstrapHash", "expectedGatewayBootstrapHash",
   "expectedLauncherNonce", "expectedReleaseProvenanceHash", "expectedSessionHash",
@@ -68,6 +74,15 @@ function exactOptions(value) {
       !OPTION_KEYS.every((key) => Object.hasOwn(value, key) &&
         Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), "value"))) {
     throw new Error("validator readiness three-process launch options are invalid");
+  }
+  return value;
+}
+function exactFields(value, keys, label) {
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
+      Reflect.ownKeys(value).length !== keys.length ||
+      !keys.every((key) => Object.hasOwn(value, key) &&
+        Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), "value"))) {
+    throw new Error(`${label} is invalid`);
   }
   return value;
 }
@@ -311,10 +326,10 @@ function live(records, closing) {
 
 /**
  * Atomically launch one fixed readiness cohort. listenerFd is a one-time transferred, already
- * bound socket descriptor: the caller must never use it after invocation. This launcher does not
+ * bound socket descriptor: the caller must never use it after acceptance. This launcher does not
  * create the listener, read paths, accept caller-provided child commands, or expose child handles.
  */
-export async function launchValidatorReadinessThreeProcess(options = {}) {
+async function launchCohort(options = {}, verifyBeforeActivation = null) {
   const callerSecrets = secretBuffers(options);
   const copies = new Map(); const records = [];
   let transferredFd = null; let state = "starting"; let closing = false;
@@ -352,6 +367,7 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
   const fail = () => { if (!closing) void teardown("failed"); };
   try {
     const accepted = exactOptions(options);
+    if (verifyBeforeActivation) verifyBeforeActivation();
     transferredFd = acceptListenerFd(accepted.listenerFd);
     const trusted = trustedPins(accepted.trustedPins);
     const derived = deriveValidatorReadinessTrustedPins(accepted.trustedEvidence,
@@ -470,6 +486,7 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
     const commit = createValidatorReadinessGatewayCommitCommand({ gatewayInput: inputs.gateway,
       gatewayReady: readiness.gateway, prepare, prepareAcknowledgement,
       signerAcknowledgements }, pins, { now: Date.now() });
+    if (verifyBeforeActivation) verifyBeforeActivation();
     const commitPromise = byRole.gateway.inbox.next("commit-ack", "gateway COMMIT_ACK",
       "active-ack");
     await write(byRole.gateway.pipes.control, encodeValidatorReadinessGatewayChildFrame(commit),
@@ -525,11 +542,52 @@ export async function launchValidatorReadinessThreeProcess(options = {}) {
       activeAcknowledgement: deepFreeze(clone(activeAcknowledgement)),
       updateHeight, waitForTermination: () => terminal,
     });
-  } catch {
+  } catch (error) {
     await teardown("failed");
-    throw new Error("validator readiness three-process launch failed");
+    throw new Error("validator readiness three-process launch failed", { cause: error });
   } finally {
     for (const copy of copies.values()) copy.fill(0);
     for (const buffer of callerSecrets) buffer.fill(0);
+  }
+}
+
+/** Local development supervisor; it does not prove an installed release. */
+export function launchValidatorReadinessThreeProcessDevelopment(options = {}) {
+  let segments;
+  try { segments = realpathSync(fileURLToPath(import.meta.url)).split(/[\\/]/u); }
+  catch {
+    for (const buffer of secretBuffers(options)) buffer.fill(0);
+    return Promise.reject(new Error("validator readiness development launcher source is unavailable"));
+  }
+  if (segments.some((segment) =>
+    /^\.[^/\x00-\x1f\x7f]{1,200}\.nir-generation-[0-9a-f]{32}$/u.test(segment))) {
+    for (const buffer of secretBuffers(options)) buffer.fill(0);
+    return Promise.reject(new Error("validator readiness development launch is unavailable from an installed generation"));
+  }
+  return launchCohort(options);
+}
+
+/** Production-facing path: verify the active installed release before spawn and gateway commit. */
+export function launchValidatorReadinessThreeProcess(options = {}) {
+  const callerSecrets = secretBuffers(options);
+  try {
+    exactFields(options, PRODUCTION_OPTION_KEYS,
+      "validator readiness production launch options");
+    const installation = deepFreeze(clone(exactFields(options.installation,
+      INSTALLATION_KEYS, "validator readiness installation inputs")));
+    const trustedEvidence = deepFreeze(clone(options.trustedEvidence));
+    const coreOptions = Object.fromEntries(OPTION_KEYS.map((key) => [key,
+      key === "trustedEvidence" ? trustedEvidence : options[key]]));
+    const verify = () => {
+      assertProductionInstalledEntrypoint(installation.installationTarget, import.meta.url);
+      verifyValidatorReadinessInstallationForSession({ ...installation,
+        session: trustedEvidence.session, signedRelease: trustedEvidence.signedRelease,
+        trustedAddress: trustedEvidence.trustedReleaseAddress });
+      assertProductionInstalledEntrypoint(installation.installationTarget, import.meta.url);
+    };
+    return launchCohort(coreOptions, verify);
+  } catch (error) {
+    for (const buffer of callerSecrets) buffer.fill(0);
+    return Promise.reject(error);
   }
 }

@@ -35,6 +35,7 @@ const members = (wallets, prefix) => wallets.map((wallet, index) => ({
 
 export function validatorReadinessSignerFixture({ endpoint = "https://candidate.example",
   networkId = "nir-readiness-signer-test", now = READINESS_SIGNER_NOW,
+  sessionLifetimeMs = 30_000,
   signedRelease: suppliedSignedRelease = null,
   trustedReleaseAddress: suppliedTrustedReleaseAddress = null,
   tlsCertificateSha256 = "a".repeat(64) } = {}) {
@@ -104,7 +105,7 @@ export function validatorReadinessSignerFixture({ endpoint = "https://candidate.
     manifestHash: hashObject(releasePayload, "RELEASE_MANIFEST_HASH") }, releaseSigner);
   const trustedReleaseAddress = suppliedTrustedReleaseAddress ?? releaseSigner.address;
   const session = createValidatorReadinessSession({ checkpointTrustPackage, context,
-    expiresAt: now + 30_000, issuedAt: now, joinPlan,
+    expiresAt: now + sessionLifetimeMs, issuedAt: now, joinPlan,
     signedRelease, trustedReleaseAddress,
     validators: checkpointTrustPackage.validators }, { now });
   const gatewayRolePackage = createValidatorReadinessRolePackage(session, "gateway",

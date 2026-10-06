@@ -9,7 +9,7 @@ import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mk
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { evaluateDeveloperTestnetProductionPreflight } from "../blockchain/developer-testnet-production-preflight.mjs";
@@ -32,6 +32,8 @@ import { createProductionStartupGuard,
   createWalletBridgeProductionGuard } from "../blockchain/production-startup.mjs";
 import { verifyValidatorReadinessInstallation }
   from "../blockchain/validator-readiness-installation.mjs";
+import { launchValidatorReadinessThreeProcess }
+  from "../blockchain/validator-readiness-three-process-launcher.mjs";
 import { validatorReadinessSignerFixture }
   from "./validator-readiness-signer-fixture.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
@@ -838,7 +840,7 @@ test("readiness installation binding rejects wrong package policy and modified i
   } finally { rmSync(values.root, { force: true, recursive: true }); }
 });
 
-test("readiness operator CLI verifies a live session against the installed release", () => {
+test("readiness operator CLI verifies a live session against the installed release", async () => {
   const values = fixture();
   try {
     const readiness = validatorReadinessSignerFixture({ now: Date.now(),
@@ -871,6 +873,16 @@ test("readiness operator CLI verifies a live session against the installed relea
     const valid = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
     assert.equal(valid.status, 0, valid.stderr);
     assert.equal(JSON.parse(valid.stdout).packageHash, packageValue.packageHash);
+    await assert.rejects(launchValidatorReadinessThreeProcess({
+      consensusInput: null, consensusPasswordBuffer: null, gatewayInput: null,
+      installation: { externalAnchor: exportProductionHeadAnchor(head),
+        expectedPackageHash: packageValue.packageHash, headStore: head,
+        installationTarget: target },
+      listenerFd: null, tlsCertificateBuffer: null, tlsKeyBuffer: null,
+      transportInput: null, transportPasswordBuffer: null,
+      trustedEvidence: { session: readiness.session, signedRelease: values.signedRelease,
+        trustedReleaseAddress: values.signer.address }, trustedPins: null,
+    }), (error) => /entrypoint/.test(error.cause?.message ?? ""));
     const wrongPackage = spawnSync(process.execPath,
       [cli, ...args.slice(0, -1), "0".repeat(64)], { encoding: "utf8" });
     assert.equal(wrongPackage.status, 1);
@@ -881,6 +893,56 @@ test("readiness operator CLI verifies a live session against the installed relea
     assert.equal(wrongSigner.status, 1);
     assert.equal(wrongSigner.stdout, "");
   } finally { rmSync(values.root, { force: true, recursive: true }); }
+});
+
+test("installed launcher verifies its own release before accepting a listener", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-installed-readiness-launcher-"));
+  try {
+    const sourceRoot = fileURLToPath(new URL("../", import.meta.url));
+    const paths = ["package.json", ...readdirSync(join(sourceRoot, "blockchain"))
+      .filter((name) => name.endsWith(".mjs")).map((name) => `blockchain/${name}`)];
+    const manifest = createReleaseManifest(sourceRoot, paths, {
+      releaseVersion: "1.2.3", sourceRevision: "d".repeat(40),
+    });
+    const signer = generateWallet();
+    const signedRelease = signReleaseManifest(manifest, signer);
+    const artifact = createReleaseArtifact(sourceRoot, artifactPaths("node", paths), {
+      kind: "node", sourceManifest: manifest,
+    });
+    const readiness = validatorReadinessSignerFixture({ now: Date.now(),
+      networkId: NETWORK, sessionLifetimeMs: 60_000, signedRelease,
+      trustedReleaseAddress: signer.address });
+    const genesisHash = readiness.session.joinPlan.expectedChainIdentityGenesisHash;
+    const evidence = productionEvidence(root, manifest, "installed-launcher-attestations",
+      { genesisHash });
+    const packageValue = createProductionReleasePackage(artifact, { now: NOW,
+      productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
+      signedRelease, trustedAddress: signer.address });
+    const target = join(root, "active-node");
+    installProductionReleasePackage(packageValue, target, { kind: "node", now: NOW,
+      signedRelease, trustedAddress: signer.address });
+    const head = join(root, "installed-launcher-head");
+    advanceProductionHead(head, target, { kind: "node",
+      newPackageHash: packageValue.packageHash, signedRelease,
+      trustedAddress: signer.address });
+    const installedModule = await import(pathToFileURL(join(target,
+      "blockchain/validator-readiness-three-process-launcher.mjs")).href);
+    const installation = { externalAnchor: exportProductionHeadAnchor(head),
+      expectedPackageHash: packageValue.packageHash, headStore: head,
+      installationTarget: target };
+    const options = { consensusInput: null, consensusPasswordBuffer: null,
+      gatewayInput: null, installation, listenerFd: null, tlsCertificateBuffer: null,
+      tlsKeyBuffer: null, transportInput: null, transportPasswordBuffer: null,
+      trustedEvidence: { session: readiness.session, signedRelease,
+        trustedReleaseAddress: signer.address }, trustedPins: null };
+    await assert.rejects(installedModule.launchValidatorReadinessThreeProcessDevelopment({}),
+      /unavailable from an installed generation/);
+    await assert.rejects(installedModule.launchValidatorReadinessThreeProcess(options),
+      (error) => /listener FD/.test(error.cause?.message ?? ""));
+    await assert.rejects(installedModule.launchValidatorReadinessThreeProcess({ ...options,
+      installation: { ...installation, expectedPackageHash: "0".repeat(64) } }),
+    (error) => /operator policy/.test(error.cause?.message ?? ""));
+  } finally { rmSync(root, { force: true, recursive: true }); }
 });
 
 test("production wallet bridge and UI verify anchored generations before bind on every restart", async () => {
