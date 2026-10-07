@@ -67,6 +67,7 @@
     "integrity:daemon": "node blockchain/integrity-scrubber-cli.mjs daemon",
     "network:init-dev": "node blockchain/network-cli.mjs init-dev",
     "network:validator": "node blockchain/network-cli.mjs serve-validator",
+    "network:transaction-ingress": "node blockchain/validator-transaction-ingress-cli.mjs",
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",
     "network:discover": "node blockchain/network-cli.mjs discover",
     "certificate:lifecycle": "node blockchain/certificate-lifecycle-cli.mjs",
