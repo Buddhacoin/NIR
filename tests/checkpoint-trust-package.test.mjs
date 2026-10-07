@@ -12,6 +12,12 @@ import {
   validateCheckpointWitnessEquivocationEvidence,
   verifyCheckpointTrustPackage,
 } from "../blockchain/checkpoint-trust-package.mjs";
+import {
+  assembleCheckpointTrustPackageV2, createCheckpointWitnessAttestationV2,
+  createCheckpointWitnessEquivocationEvidenceV2, parseAndVerifyCheckpointTrustPackageV2,
+  serializeCheckpointTrustPackageV2, validateCheckpointWitnessEquivocationEvidenceV2,
+  verifyCheckpointTrustPackageV2,
+} from "../blockchain/checkpoint-trust-package-v2.mjs";
 import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
 import {
   CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
@@ -19,7 +25,7 @@ import {
   MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   SAFETY_POLICY_V1_COMMITMENT,
 } from "../blockchain/constants.mjs";
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 
 function members(wallets, prefix) {
@@ -203,4 +209,78 @@ test("bounded canonical parser rejects malleability, unknown fields and oversize
     /not valid JSON/);
   assert.throws(() => parseAndVerifyCheckpointTrustPackage(
     Buffer.alloc(MAX_CHECKPOINT_TRUST_PACKAGE_BYTES + 1, 0x20), value.options), /bounded limit/);
+});
+
+function packageFixtureV2() {
+  const value = packageFixture();
+  const commitment = { certificateHistoryHead: "a".repeat(64), certificateRecordCount: 2 };
+  const attest = (wallet, index, selected = commitment) =>
+    createCheckpointWitnessAttestationV2({ ...selected, finalityProof: value.proof,
+      observedAt: 10_000 + index, operatorId: `witness-${index}`, policy: value.policy,
+      sequence: 7, validators: value.validatorMembers, wallet });
+  const attestations = value.witnesses.slice(0, 3).map((wallet, index) => attest(wallet, index));
+  const packageValueV2 = assembleCheckpointTrustPackageV2({ ...commitment, attestations,
+    finalityProof: value.proof, policy: value.policy, sequence: 7,
+    validators: value.validatorMembers });
+  return { ...value, attest, commitment, packageValueV2 };
+}
+
+test("v2 commits certificate head and count while v1 bytes and domains remain unchanged", () => {
+  const value = packageFixtureV2();
+  const verified = verifyCheckpointTrustPackageV2(value.packageValueV2, value.options);
+  assert.equal(verified.certificateHistoryHead, value.commitment.certificateHistoryHead);
+  assert.equal(verified.certificateRecordCount, value.commitment.certificateRecordCount);
+  assert.equal(verified.checkpoint.tipHash, value.checkpointBlock.hash);
+  assert.equal(parseAndVerifyCheckpointTrustPackageV2(
+    serializeCheckpointTrustPackageV2(value.packageValueV2), value.options).packageHash,
+  value.packageValueV2.packageHash);
+
+  const { packageHash, ...v1Payload } = value.packageValue;
+  assert.equal(packageHash, `sha3-256:${hashObject(v1Payload, "CHECKPOINT_TRUST_PACKAGE_V1")}`);
+  assert.equal(parseAndVerifyCheckpointTrustPackage(
+    serializeCheckpointTrustPackage(value.packageValue), value.options).packageHash, packageHash);
+  assert.throws(() => verifyCheckpointTrustPackage(value.packageValueV2, value.options),
+    /envelope/);
+  assert.throws(() => verifyCheckpointTrustPackageV2(value.packageValue, value.options),
+    /envelope/);
+});
+
+test("v2 rejects certificate commitment tampering, cross-version witnesses and malformed fields", () => {
+  const value = packageFixtureV2();
+  const changedHead = structuredClone(value.packageValueV2);
+  changedHead.view.certificateHistoryHead = "b".repeat(64);
+  assert.throws(() => verifyCheckpointTrustPackageV2(changedHead, value.options), /view/);
+  const changedCount = structuredClone(value.packageValueV2);
+  changedCount.view.certificateRecordCount = 3;
+  assert.throws(() => verifyCheckpointTrustPackageV2(changedCount, value.options), /view/);
+  const changedWitness = structuredClone(value.packageValueV2);
+  changedWitness.attestations[0].certificateHistoryHead = "b".repeat(64);
+  assert.throws(() => verifyCheckpointTrustPackageV2(changedWitness, value.options), /view/);
+  const mixed = structuredClone(value.packageValueV2);
+  mixed.attestations[0] = value.packageValue.attestations[0];
+  assert.throws(() => verifyCheckpointTrustPackageV2(mixed, value.options), /attestation/);
+  const extra = structuredClone(value.packageValueV2);
+  extra.view.unexpected = true;
+  assert.throws(() => verifyCheckpointTrustPackageV2(extra, value.options), /unknown or missing/);
+  assert.throws(() => value.attest(value.witnesses[0], 0,
+    { certificateHistoryHead: "A".repeat(64), certificateRecordCount: 2 }), /commitment/);
+  assert.throws(() => value.attest(value.witnesses[0], 0,
+    { certificateHistoryHead: "a".repeat(64), certificateRecordCount: 0 }), /commitment/);
+  assert.throws(() => parseAndVerifyCheckpointTrustPackageV2(
+    JSON.stringify(value.packageValueV2), value.options), /canonical/);
+});
+
+test("v2 identifies a witness that signs conflicting certificate heads at one checkpoint", () => {
+  const value = packageFixtureV2();
+  const conflicting = value.attest(value.witnesses[0], 0,
+    { certificateHistoryHead: "b".repeat(64), certificateRecordCount: 2 });
+  const evidence = createCheckpointWitnessEquivocationEvidenceV2(
+    value.packageValueV2.attestations[0], conflicting, { policy: value.policy });
+  assert.equal(validateCheckpointWitnessEquivocationEvidenceV2(evidence,
+    { policy: value.policy }).operatorId, "witness-0");
+  assert.throws(() => createCheckpointWitnessEquivocationEvidenceV2(
+    value.packageValueV2.attestations[0], value.packageValueV2.attestations[0],
+    { policy: value.policy }), /do not prove/);
+  assert.throws(() => createCheckpointWitnessEquivocationEvidenceV2(
+    value.packageValue.attestations[0], conflicting, { policy: value.policy }), /attestation/);
 });

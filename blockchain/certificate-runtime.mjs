@@ -46,6 +46,7 @@ export function runtimeCertificateContext(directory, genesis) {
     validatorSetsByTopologyHash[commitment] = verified.trustedValidators;
   }
   return {
+    handoffs: structuredClone(handoffs),
     networkId: genesis.networkId,
     validatorSetsByTopologyHash,
     validators: topology.trustedValidators,

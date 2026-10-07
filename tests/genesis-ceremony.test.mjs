@@ -27,6 +27,8 @@ import { installCertificateRecord } from "../blockchain/certificate-lifecycle-st
 import { runtimeCertificateContext } from "../blockchain/certificate-runtime.mjs";
 import { assembleCheckpointTrustPackage, createCheckpointWitnessAttestation,
   createCheckpointWitnessPolicy } from "../blockchain/checkpoint-trust-package.mjs";
+import { assembleCheckpointTrustPackageV2, createCheckpointWitnessAttestationV2 }
+  from "../blockchain/checkpoint-trust-package-v2.mjs";
 import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
@@ -435,16 +437,15 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       generation: 1, networkId: plan.networkId, threshold: 3,
       witnesses: witnesses.map((wallet, index) => ({ ...publicWallet(wallet),
         operatorId: `witness-${index}` })) });
-    const attestations = witnesses.slice(0, 3).map((wallet, index) =>
+    const v1Attestations = witnesses.slice(0, 3).map((wallet, index) =>
       createCheckpointWitnessAttestation({ finalityProof: proof,
         observedAt: Date.now() - 1000 + index, operatorId: `witness-${index}`,
         policy, sequence: 1, validators: compiled.genesis.validators, wallet }));
     const checkpointPackagePath = join(root, "checkpoint-package.json");
-    const packageBytes = JSON.stringify(assembleCheckpointTrustPackage({
-      attestations, finalityProof: proof, policy, sequence: 1,
+    const v1PackageBytes = JSON.stringify(assembleCheckpointTrustPackage({
+      attestations: v1Attestations, finalityProof: proof, policy, sequence: 1,
       validators: compiled.genesis.validators,
     }));
-    writeFileSync(checkpointPackagePath, packageBytes);
     const certificateDirectory = join(root, "validator-state");
     mkdirSync(certificateDirectory);
     const context = { ...runtimeCertificateContext(certificateDirectory, compiled.genesis),
@@ -466,6 +467,19 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       headHash: certificateHistoryHead([issue], context), networkId: plan.networkId,
       recordCount: 1, version: 1,
     }));
+    const commitment = { certificateHistoryHead: certificateHistoryHead([issue], context),
+      certificateRecordCount: 1 };
+    const packageBytesFor = (selected) => {
+      const attestations = witnesses.slice(0, 3).map((wallet, index) =>
+        createCheckpointWitnessAttestationV2({ ...selected, finalityProof: proof,
+          observedAt: Date.now() - 1000 + index, operatorId: `witness-${index}`,
+          policy, sequence: 1, validators: compiled.genesis.validators, wallet }));
+      return JSON.stringify(assembleCheckpointTrustPackageV2({ ...selected,
+        attestations, finalityProof: proof, policy, sequence: 1,
+        validators: compiled.genesis.validators }));
+    };
+    const packageBytes = packageBytesFor(commitment);
+    writeFileSync(checkpointPackagePath, packageBytes);
     const probe = createTcpServer();
     await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = probe.address().port;
@@ -501,6 +515,37 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       assert.match(rejected.stderr, /external ceremony anchor file is unsafe/);
     }
     writeOperator();
+    writeFileSync(checkpointPackagePath, v1PackageBytes);
+    const v1Initialization = spawnSync(process.execPath,
+      [cli, "--init-floor", operatorPath], { encoding: "utf8" });
+    assert.equal(v1Initialization.status, 1);
+    assert.match(v1Initialization.stderr, /checkpoint v2 package envelope/);
+    assert.equal(existsSync(operator.floorDirectory), false);
+    writeFileSync(checkpointPackagePath, packageBytesFor({
+      ...commitment, certificateRecordCount: 2 }));
+    const wrongCountInitialization = spawnSync(process.execPath,
+      [cli, "--init-floor", operatorPath], { encoding: "utf8" });
+    assert.equal(wrongCountInitialization.status, 1);
+    assert.match(wrongCountInitialization.stderr, /certificate head or count/);
+    assert.equal(existsSync(operator.floorDirectory), false);
+    writeFileSync(checkpointPackagePath, packageBytesFor({
+      ...commitment, certificateHistoryHead: "f".repeat(64) }));
+    const wrongHeadInitialization = spawnSync(process.execPath,
+      [cli, "--init-floor", operatorPath], { encoding: "utf8" });
+    assert.equal(wrongHeadInitialization.status, 1);
+    assert.match(wrongHeadInitialization.stderr, /certificate head or count/);
+    assert.equal(existsSync(operator.floorDirectory), false);
+    writeFileSync(checkpointPackagePath, packageBytes);
+    const insideCertificateAnchorPath = join(certificateDirectory, "inside-anchor.json");
+    writeFileSync(insideCertificateAnchorPath,
+      readFileSync(certificateHeadAnchorPath));
+    writeOperator({ certificateHeadAnchorPath: insideCertificateAnchorPath });
+    const insideAnchorInitialization = spawnSync(process.execPath,
+      [cli, "--init-floor", operatorPath], { encoding: "utf8" });
+    assert.equal(insideAnchorInitialization.status, 1);
+    assert.match(insideAnchorInitialization.stderr, /external certificate history anchor must be outside node state/);
+    assert.equal(existsSync(operator.floorDirectory), false);
+    writeOperator();
     const missingFloor = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
       { encoding: "utf8" });
     assert.equal(missingFloor.status, 1);
@@ -533,6 +578,14 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       assert.match(rejected.stderr, pattern);
     }
     writeOperator();
+    writeFileSync(checkpointPackagePath, v1PackageBytes);
+    const challengesBeforeV1Start = challengePosts;
+    const v1Start = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
+      { encoding: "utf8" });
+    assert.equal(v1Start.status, 1);
+    assert.match(v1Start.stderr, /checkpoint v2 package envelope/);
+    assert.equal(challengePosts, challengesBeforeV1Start);
+    writeFileSync(checkpointPackagePath, packageBytes);
     const available = createTcpServer();
     await new Promise((resolve) => available.listen(port, "127.0.0.1", resolve));
     await new Promise((resolve) => available.close(resolve));

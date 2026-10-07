@@ -3,15 +3,54 @@ import { certificateHistoryHead, certificatePinsAtHeight }
 import { CERTIFICATE_MODE_LIFECYCLE, RuntimeCertificatePins }
   from "./certificate-runtime.mjs";
 import { NirChain } from "./chain.mjs";
-import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES, verifyCheckpointTrustPackage }
+import { canonicalJson } from "./crypto.mjs";
+import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES }
   from "./checkpoint-trust-package.mjs";
+import { verifyCheckpointTrustPackageV2 }
+  from "./checkpoint-trust-package-v2.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { advanceTransactionIngressFloor, loadTransactionIngressFloor }
   from "./validator-transaction-ingress-floor.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
+
+export function assertTransactionIngressCertificateCommitment(verified, context, history) {
+  const head = certificateHistoryHead(history, context);
+  if (verified?.certificateRecordCount !== history.length ||
+      verified?.certificateHistoryHead !== head) {
+    throw new Error("transaction ingress V2 checkpoint certificate head or count does not match verified history");
+  }
+  return head;
+}
+
+export function assertTransactionIngressValidatorSet(verified, genesisValidators, context) {
+  if (!Array.isArray(genesisValidators) || !Array.isArray(context?.handoffs) ||
+      !Array.isArray(verified?.trustedValidators) ||
+      !Number.isSafeInteger(verified?.checkpoint?.height)) {
+    throw new Error("transaction ingress checkpoint validator topology is unavailable");
+  }
+  let expected = genesisValidators;
+  for (const handoff of context.handoffs) {
+    if (handoff.activationHeight > verified.checkpoint.height) break;
+    // A recent one-block proof checks only the supplied new quorum. At the
+    // activation block consensus requires both old and new quorums, plus the
+    // exact block hash and state root pinned by the signed handoff. Until a
+    // full handoff-aware finality chain is supplied, this height is inadmissible.
+    if (handoff.activationHeight === verified.checkpoint.height) {
+      throw new Error("transaction ingress handoff activation requires a full finality chain proof");
+    }
+    expected = handoff.nextValidators;
+  }
+  const ordered = (members) => [...members].sort((left, right) =>
+    left.address < right.address ? -1 : left.address > right.address ? 1 : 0);
+  if (validatorSetId(expected) !== verified.checkpoint.validatorSetId ||
+      canonicalJson(ordered(expected)) !== canonicalJson(ordered(verified.trustedValidators))) {
+    throw new Error("transaction ingress checkpoint validator set does not match verified topology at height");
+  }
+}
 
 /**
  * A local admission gate, not a claim that witnesses or the public network are independent.
@@ -61,7 +100,7 @@ export function createValidatorTransactionCheckpointGate({
       label: "transaction checkpoint trust package",
       maximumBytes: MAX_CHECKPOINT_TRUST_PACKAGE_BYTES,
     });
-    const verified = verifyCheckpointTrustPackage(packageValue, {
+    const verified = verifyCheckpointTrustPackageV2(packageValue, {
       expectedChainIdentityGenesisHash: expectedGenesisHash,
       expectedNetworkId, expectedPolicyId, maxAgeMs: maxWitnessAgeMs,
       maxFutureSkewMs, minimumCheckpointHeight: Math.max(minimumCheckpointHeight,
@@ -80,11 +119,13 @@ export function createValidatorTransactionCheckpointGate({
       throw new Error("transaction ingress validator is absent from finalized checkpoint quorum");
     }
     const { context, history } = certificatePins.loadVerifiedHistory();
+    assertTransactionIngressValidatorSet(verified, genesis.validators, context);
     if (floor.historyCount > 0 && (history.length < floor.historyCount ||
         certificateHistoryHead(history.slice(0, floor.historyCount), context) !==
           floor.historyHead)) {
       throw new Error("transaction ingress certificate history rolled back or diverged");
     }
+    const historyHead = assertTransactionIngressCertificateCommitment(verified, context, history);
     const latestCertificateHeight = history.reduce((height, record) =>
       record.validatorAddress === validatorAddress
         ? Math.max(height, record.activationHeight) : height, 0);
@@ -95,7 +136,7 @@ export function createValidatorTransactionCheckpointGate({
     }
     advanceTransactionIngressFloor(floorDirectory, floorIdentity, {
       height: verified.checkpoint.height, historyCount: history.length,
-      historyHead: certificateHistoryHead(history, context), observedAt,
+      historyHead, observedAt,
       packageHash: verified.packageHash, sequence: verified.sequence,
       tipHash: verified.checkpoint.tipHash,
     });

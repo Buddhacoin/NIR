@@ -2,12 +2,18 @@
 import process from "node:process";
 
 import { listenOnLoopback } from "./loopback-listener.mjs";
-import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES, verifyCheckpointTrustPackage }
+import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES }
   from "./checkpoint-trust-package.mjs";
+import { verifyCheckpointTrustPackageV2 }
+  from "./checkpoint-trust-package-v2.mjs";
+import { CERTIFICATE_MODE_LIFECYCLE, RuntimeCertificatePins }
+  from "./certificate-runtime.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { verifyCeremonyBoundTransactionIngressEvidence }
   from "./validator-transaction-ingress-ceremony.mjs";
-import { createValidatorTransactionCheckpointGate }
+import { assertTransactionIngressCertificateCommitment,
+  assertTransactionIngressValidatorSet,
+  createValidatorTransactionCheckpointGate }
   from "./validator-transaction-ingress-checkpoint.mjs";
 import { initializeTransactionIngressFloor }
   from "./validator-transaction-ingress-floor.mjs";
@@ -47,7 +53,8 @@ try {
     };
     if (args[0] === "--init-floor") {
       // A typo in a pinned witness policy must not make an unusable immutable floor.
-      verifyCheckpointTrustPackage(readBoundedPublicJsonFile(operator.checkpointPackagePath, {
+      const checkpoint = verifyCheckpointTrustPackageV2(readBoundedPublicJsonFile(
+        operator.checkpointPackagePath, {
         label: "transaction checkpoint trust package",
         maximumBytes: MAX_CHECKPOINT_TRUST_PACKAGE_BYTES,
       }), {
@@ -57,6 +64,14 @@ try {
         maxAgeMs: operator.maxWitnessAgeMs, maxFutureSkewMs: 5_000,
         minimumCheckpointHeight: 1, minimumSequence: 0, now: Date.now(),
       });
+      const certificatePins = new RuntimeCertificatePins(
+        operator.certificateDirectory, verified.genesis, {
+          mode: CERTIFICATE_MODE_LIFECYCLE,
+          externalAnchorPath: operator.certificateHeadAnchorPath,
+        });
+      const { context, history } = certificatePins.loadVerifiedHistory();
+      assertTransactionIngressValidatorSet(checkpoint, verified.genesis.validators, context);
+      assertTransactionIngressCertificateCommitment(checkpoint, context, history);
       initializeTransactionIngressFloor(operator.floorDirectory, floorIdentity);
       console.log("NIR transaction ingress floor initialized once; no listener was opened");
       process.exit(0);
