@@ -58,8 +58,13 @@ export function validateValidatorTransactionIngressConfig({
 }
 
 /** A loopback-only deployment component. Its sole upstream request path is fixed. */
-export function createValidatorTransactionIngressServer(config) {
+export function createValidatorTransactionIngressServer(config, {
+  checkpointCertificateGate = null,
+} = {}) {
   const trusted = validateValidatorTransactionIngressConfig(config);
+  if (checkpointCertificateGate !== null && typeof checkpointCertificateGate !== "function") {
+    throw new Error("transaction checkpoint certificate gate must be a function");
+  }
   const ingressOptions = {
     burst: 20, maxActive: 16, maxActivePerAddress: 8,
     maxBodyBytes: BODY_LIMIT, maxConnections: 64, requestsPerMinute: 60,
@@ -98,6 +103,19 @@ export function createValidatorTransactionIngressServer(config) {
       const transaction = await readBoundedConsensusJson(request, ingressOptions);
       if (transaction?.networkId !== trusted.expectedNetworkId) {
         return send(response, 400, { error: "transaction network is invalid" }, false, browserOrigin);
+      }
+      if (checkpointCertificateGate !== null) {
+        try {
+          const admitted = checkpointCertificateGate();
+          if (!admitted || typeof admitted.then === "function" ||
+              !Number.isSafeInteger(admitted.checkpointHeight) ||
+              admitted.checkpointHeight < 1) {
+            throw new Error("transaction checkpoint certificate gate did not admit the request");
+          }
+        } catch {
+          return send(response, 503, { error: "fresh checkpoint and certificate evidence is unavailable" },
+            false, browserOrigin);
+        }
       }
       const expectedId = transactionId(transaction);
       let upstream;

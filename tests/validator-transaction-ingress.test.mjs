@@ -18,6 +18,41 @@ import { createValidatorTransactionIngressServer, validateValidatorTransactionIn
   from "../blockchain/validator-transaction-ingress.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 
+test("checkpoint certificate gate blocks transaction forwarding and rejects asynchronous bypass", async () => {
+  const tls = fixture(); const servers = [];
+  try {
+    let reached = 0;
+    const upstream = createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => {
+      reached += 1; request.resume(); response.writeHead(500); response.end("upstream reached");
+    });
+    servers.push(upstream);
+    const upstreamOrigin = `https://127.0.0.1:${await listen(upstream)}`;
+    let gate = () => { throw new Error("stale witness evidence"); };
+    const ingress = createValidatorTransactionIngressServer({
+      expectedNetworkId: "nir-distributed-devnet", tlsCertificateSha256: tls.pin,
+      upstreamOrigin,
+    }, { checkpointCertificateGate: () => gate() });
+    servers.push(ingress);
+    const endpoint = `http://127.0.0.1:${await listen(ingress)}/v1/transactions`;
+    const signed = createTransfer({ wallet: generateWallet(),
+      networkId: "nir-distributed-devnet", recipient: generateWallet().address,
+      amount: "1000000", nonce: 0 });
+    const submit = () => fetch(endpoint, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(signed) });
+    assert.equal((await submit()).status, 503);
+    assert.equal(reached, 0);
+    gate = () => Promise.resolve({ checkpointHeight: 10 });
+    assert.equal((await submit()).status, 503);
+    assert.equal(reached, 0);
+    gate = () => ({ checkpointHeight: 10 });
+    assert.equal((await submit()).status, 502);
+    assert.equal(reached, 1);
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
+});
+
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   return server.address().port;
