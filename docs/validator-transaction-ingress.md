@@ -48,19 +48,26 @@ Copy it to a new absolute path, replace every `REPLACE_WITH...` value and
 `/ABSOLUTE/...` path, then compare the fields with the signed artifacts and
 your own independently recorded pins. The sample is intentionally invalid:
 its placeholders cannot be used to initialize a floor or start a listener.
-Use `pwd` in your chosen directory to see its absolute path; the literal
-`/absolute/...` strings below are placeholders, not folders created by NIR.
 The helper accepts readable draft JSON, rejects missing/extra fields, and
 writes a new canonical mode-`0600` config without replacing an existing file.
 Create the destination directory under your own account with mode `0700`
 beforehand; both `prepare` and startup reject a shared or unowned parent.
+From the repository root, this creates an example private directory beside
+the checkout. Keep the reviewed config there, outside version control:
 
 ```bash
-cp docs/examples/transaction-ingress-operator-config.example.json /absolute/operator-draft.json
+mkdir -m 700 ../nir-ingress-private
+NIR_INGRESS_PRIVATE_DIR="$(cd ../nir-ingress-private && pwd -P)"
+cp docs/examples/transaction-ingress-operator-config.example.json "$NIR_INGRESS_PRIVATE_DIR/operator-draft.json"
 # Edit the draft and independently check every address, hash, path and endpoint.
-npm run network:transaction-ingress-config -- prepare /absolute/operator-draft.json /absolute/operator-config.json
-npm run network:transaction-ingress-config -- check /absolute/operator-config.json
+npm run network:transaction-ingress-config -- prepare "$NIR_INGRESS_PRIVATE_DIR/operator-draft.json" "$NIR_INGRESS_PRIVATE_DIR/operator-config.json"
+npm run network:transaction-ingress-config -- check "$NIR_INGRESS_PRIVATE_DIR/operator-config.json"
 ```
+
+The draft's `/ABSOLUTE/...` paths and `REPLACE_WITH...` values are
+placeholders; the helper rejects them until replaced with reviewed evidence.
+If the example directory already exists, inspect its owner and permissions
+before reusing it. Do not overwrite an existing prepared config.
 
 `prepare` validates structure and permissions, **not signatures**. The draft
 and prepared file contain only public configuration; never add keys, vault
@@ -140,14 +147,22 @@ verify every transaction signature and network rule.
 
 For the local wallet preview, `wallet-ui/nodes.json` has an explicit
 `submissionOrigin` of `http://127.0.0.1:8789`; read nodes are selected
-separately. Start `npm run wallet:preview` at `http://127.0.0.1:8765` and the
-gateway command above. The wallet checks the current read node's valueless
-network ID against the signed transaction before either explicit submit
-action. Missing or invalid `submissionOrigin` disables submission; it never
-falls back to the read-only RPC. Restart the page after changing its signed
-policy. The service worker fetches `nodes.json` from the network without a
-cached fallback. To rehearse the unpacked extension, pass its pinned origin as
-the sixth argument:
+separately. Its example read URLs do **not** automatically start a matching
+read service, and an HTTP URL on port 8791 is not the HTTPS validator used in
+the gateway example. Do not connect an unrelated local node merely to make
+the wallet show a balance. First supply a reviewed read-only RPC for the
+**same** valueless genesis/network as the validator, set the exact read URL
+in `wallet-ui/nodes.json`, and verify `/health` reports that network. A
+matching validator-backed wallet read edge is still an integration task; this
+guide alone is not a complete one-command wallet deployment.
+
+Then start `npm run wallet:preview` at `http://127.0.0.1:8765` and the gateway
+command above. The wallet checks the current read node's network ID against
+the signed transaction before either explicit submit action. Missing or
+invalid `submissionOrigin` disables submission; it never falls back to the
+read RPC. Restart the page after changing its node policy. The service worker
+fetches `nodes.json` from the network without a cached fallback. To rehearse
+the unpacked extension, pass its pinned origin as the sixth argument:
 
 ```bash
 npm run network:transaction-ingress -- https://127.0.0.1:8791 <tls-certificate-sha256> <network-id> 8789 127.0.0.1 chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm
