@@ -98,3 +98,36 @@ or present it as a public-network service. A separately designed TLS edge,
 client abuse controls, trusted pin distribution, independent operators, and
 multi-host evidence are still required for a public deployment. This command
 is only a valueless, resettable developer-testnet integration rehearsal.
+
+## Checkpoint and certificate admission under integration
+
+The separate checkpoint gate is not yet wired into the command above. When an
+operator explicitly configures it, every signed-transaction `POST` must pass a
+fresh witness-signed finalized checkpoint package under an independently pinned
+genesis hash and witness-policy ID. The selected validator must belong to that
+checkpoint's validator set, and its upstream TLS fingerprint must be active in
+the signed certificate history at that height. A checkpoint predating the
+latest signed certificate change cannot authorize an old fingerprint. Missing,
+stale, revoked, conflicting, or unreadable evidence returns HTTP 503 before
+the upstream validator receives the transaction. This still does not prove
+that the witnesses are independently operated or that the checkpoint is the
+network's newest tip.
+
+Before the gate can start, an operator must explicitly initialize its private
+floor directory with the pinned network, genesis, witness policy, and validator
+identity. Ordinary startup never recreates a missing directory or resets a
+missing floor. The floor saves the highest verified checkpoint height and tip,
+witness sequence and package hash, certificate-history head and count, and the
+last verified observation time. Two mode-`0600` copies in an owned mode-`0700`
+directory are updated through a short writer lock, temporary-file fsync,
+atomic rename, and directory fsync. A restart accepts identical copies or an
+exactly linked one-revision old/new pair left by an interrupted write. An
+unrelated split, invalid copy, or lost directory fails closed. In-memory checks
+also reject replacing the floor with an older revision during one process run.
+
+This local floor survives ordinary crashes, but it is **not** an external trust
+anchor. An attacker controlling the directory owner or a full filesystem
+snapshot can replace both copies with an older valid pair after restart. An
+independently retained checkpoint/history anchor or hardware monotonic counter
+is required to close that threat. The gate and local floor alone do not make
+the ingress suitable for public deployment or real-value transfers.

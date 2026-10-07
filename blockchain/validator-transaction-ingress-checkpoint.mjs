@@ -6,6 +6,8 @@ import { NirChain } from "./chain.mjs";
 import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES, verifyCheckpointTrustPackage }
   from "./checkpoint-trust-package.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
+import { advanceTransactionIngressFloor, loadTransactionIngressFloor }
+  from "./validator-transaction-ingress-floor.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
@@ -18,13 +20,14 @@ const ADDRESS = /^nir1[0-9a-f]{64}$/;
  */
 export function createValidatorTransactionCheckpointGate({
   certificateDirectory, certificateHeadAnchorPath, checkpointPackagePath,
-  expectedGenesisHash, expectedNetworkId, expectedPolicyId, genesis,
+  expectedGenesisHash, expectedNetworkId, expectedPolicyId, floorDirectory, genesis,
   maxWitnessAgeMs, maxFutureSkewMs = 5_000, minimumCheckpointHeight = 1,
   minimumSequence = 0, now = Date.now, tlsCertificateSha256, validatorAddress,
 } = {}) {
   if (typeof certificateDirectory !== "string" || !certificateDirectory ||
       typeof certificateHeadAnchorPath !== "string" || !certificateHeadAnchorPath ||
       typeof checkpointPackagePath !== "string" || !checkpointPackagePath ||
+      typeof floorDirectory !== "string" || !floorDirectory ||
       !HASH.test(expectedGenesisHash ?? "") || !TAGGED_HASH.test(expectedPolicyId ?? "") ||
       !HASH.test(tlsCertificateSha256 ?? "") || !ADDRESS.test(validatorAddress ?? "") ||
       typeof expectedNetworkId !== "string" || expectedNetworkId !== genesis?.networkId ||
@@ -43,15 +46,15 @@ export function createValidatorTransactionCheckpointGate({
   const certificatePins = new RuntimeCertificatePins(certificateDirectory, genesis, {
     mode: CERTIFICATE_MODE_LIFECYCLE, externalAnchorPath: certificateHeadAnchorPath,
   });
-  // Remember cryptographically verified evidence even when it later denies this endpoint.
-  // A newer valid revocation/checkpoint must not be followed by an older admissible one.
-  let seenPackage = null;
-  let seenHistory = null;
-  let lastNow = null;
+  const floorIdentity = { expectedGenesisHash, expectedNetworkId, expectedPolicyId,
+    validatorAddress };
+  // Explicit initialization is a separate operator step. A missing floor never resets here.
+  loadTransactionIngressFloor(floorDirectory, floorIdentity);
   return () => {
+    const floor = loadTransactionIngressFloor(floorDirectory, floorIdentity);
     const observedAt = now();
     if (!Number.isSafeInteger(observedAt) || observedAt < 0 ||
-        (lastNow !== null && observedAt < lastNow)) {
+        observedAt < floor.observedAt) {
       throw new Error("transaction checkpoint gate clock moved backwards");
     }
     const packageValue = readBoundedPublicJsonFile(checkpointPackagePath, {
@@ -62,31 +65,38 @@ export function createValidatorTransactionCheckpointGate({
       expectedChainIdentityGenesisHash: expectedGenesisHash,
       expectedNetworkId, expectedPolicyId, maxAgeMs: maxWitnessAgeMs,
       maxFutureSkewMs, minimumCheckpointHeight: Math.max(minimumCheckpointHeight,
-        seenPackage?.height ?? 1), minimumSequence: Math.max(minimumSequence,
-        seenPackage?.sequence ?? 0), now: observedAt,
+        floor.height), minimumSequence: Math.max(minimumSequence,
+        floor.sequence), now: observedAt,
     });
-    if (seenPackage && (verified.sequence < seenPackage.sequence ||
-        verified.checkpoint.height < seenPackage.height ||
-        (verified.checkpoint.height === seenPackage.height &&
-          verified.checkpoint.tipHash !== seenPackage.tipHash) ||
-        (verified.sequence === seenPackage.sequence &&
-          verified.packageHash !== seenPackage.packageHash))) {
+    if (floor.height > 0 && (verified.sequence < floor.sequence ||
+        verified.checkpoint.height < floor.height ||
+        (verified.checkpoint.height === floor.height &&
+          verified.checkpoint.tipHash !== floor.tipHash) ||
+        (verified.sequence === floor.sequence &&
+          verified.packageHash !== floor.packageHash))) {
       throw new Error("transaction checkpoint trust package rolled back or diverged");
     }
-    seenPackage = { height: verified.checkpoint.height,
+    const packageFloor = advanceTransactionIngressFloor(floorDirectory, floorIdentity, {
+      height: verified.checkpoint.height, historyCount: floor.historyCount,
+      historyHead: floor.historyHead, observedAt,
       packageHash: verified.packageHash, sequence: verified.sequence,
-      tipHash: verified.checkpoint.tipHash };
-    lastNow = observedAt;
+      tipHash: verified.checkpoint.tipHash,
+    });
     if (!verified.trustedValidators.some(({ address }) => address === validatorAddress)) {
       throw new Error("transaction ingress validator is absent from finalized checkpoint quorum");
     }
     const { context, history } = certificatePins.loadVerifiedHistory();
-    if (seenHistory && (history.length < seenHistory.count ||
-        certificateHistoryHead(history.slice(0, seenHistory.count), context) !==
-          seenHistory.head)) {
+    if (packageFloor.historyCount > 0 && (history.length < packageFloor.historyCount ||
+        certificateHistoryHead(history.slice(0, packageFloor.historyCount), context) !==
+          packageFloor.historyHead)) {
       throw new Error("transaction ingress certificate history rolled back or diverged");
     }
-    seenHistory = { count: history.length, head: certificateHistoryHead(history, context) };
+    advanceTransactionIngressFloor(floorDirectory, floorIdentity, {
+      height: verified.checkpoint.height, historyCount: history.length,
+      historyHead: certificateHistoryHead(history, context), observedAt,
+      packageHash: verified.packageHash, sequence: verified.sequence,
+      tipHash: verified.checkpoint.tipHash,
+    });
     const latestCertificateHeight = history.reduce((height, record) =>
       record.validatorAddress === validatorAddress
         ? Math.max(height, record.activationHeight) : height, 0);
@@ -95,6 +105,7 @@ export function createValidatorTransactionCheckpointGate({
           .includes(tlsCertificateSha256)) {
       throw new Error("transaction ingress TLS pin is not active at the accepted checkpoint");
     }
-    return { checkpointHeight: seenPackage.height, checkpointSequence: seenPackage.sequence };
+    return { checkpointHeight: verified.checkpoint.height,
+      checkpointSequence: verified.sequence };
   };
 }

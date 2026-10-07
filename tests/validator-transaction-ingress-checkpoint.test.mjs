@@ -21,6 +21,8 @@ import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createValidatorTransactionCheckpointGate }
   from "../blockchain/validator-transaction-ingress-checkpoint.mjs";
+import { initializeTransactionIngressFloor, loadTransactionIngressFloor }
+  from "../blockchain/validator-transaction-ingress-floor.mjs";
 
 const NOW = 1_800_000_000_000;
 const PIN_A = "a".repeat(64);
@@ -97,16 +99,21 @@ function fixture() {
   }));
   writeAnchor([issue]);
   const checkpointPackagePath = join(root, "checkpoint-package.json");
+  const floorDirectory = join(root, "ingress-floor");
+  const floorIdentity = { expectedGenesisHash: genesisHash,
+    expectedNetworkId: genesis.networkId, expectedPolicyId: policy.policyId,
+    validatorAddress: address };
+  initializeTransactionIngressFloor(floorDirectory, floorIdentity);
   const writePackage = (value) => writeFileSync(checkpointPackagePath, JSON.stringify(value));
   writePackage(packageFor(8));
   const options = { certificateDirectory, certificateHeadAnchorPath,
     checkpointPackagePath, expectedGenesisHash: genesisHash,
     expectedNetworkId: genesis.networkId, expectedPolicyId: policy.policyId,
-    genesis, maxWitnessAgeMs: 30_000, minimumCheckpointHeight: 1,
+    floorDirectory, genesis, maxWitnessAgeMs: 30_000, minimumCheckpointHeight: 1,
     minimumSequence: 8, now: () => NOW, tlsCertificateSha256: PIN_A,
     validatorAddress: address };
   return { address, alternateFinalityProof, certificateDirectory, checkpoint,
-    context, genesis, issue,
+    context, floorIdentity, genesis, issue,
     options, packageFor, root, validatorWallets, writeAnchor, writePackage };
 }
 
@@ -120,8 +127,16 @@ test("fresh signed checkpoint and anchored active certificate admit repeatedly",
       checkpointSequence: 8 });
     values.writePackage(values.packageFor(9));
     assert.equal(gate().checkpointSequence, 9);
+    const restarted = createValidatorTransactionCheckpointGate(values.options);
+    assert.equal(restarted().checkpointSequence, 9);
     values.writePackage(values.packageFor(8));
-    assert.throws(gate, /anti-replay|rolled back|invalid/);
+    assert.throws(restarted, /anti-replay|rolled back|invalid/);
+    const durable = loadTransactionIngressFloor(values.options.floorDirectory,
+      values.floorIdentity);
+    assert.equal(durable.sequence, 9);
+    assert.equal(durable.height, values.checkpoint.height);
+    assert.equal(durable.tipHash, values.checkpoint.hash);
+    assert.equal(durable.observedAt, NOW);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
 });
 
@@ -179,8 +194,11 @@ test("renewal cannot be bypassed with a fresh re-attestation of an old checkpoin
     values.writeAnchor([values.issue, renewed]);
     values.writePackage(values.packageFor(9));
     assert.throws(gate, /TLS pin is not active/);
+    assert.equal(loadTransactionIngressFloor(values.options.floorDirectory,
+      values.floorIdentity).sequence, 9);
+    const restarted = createValidatorTransactionCheckpointGate(values.options);
     values.writePackage(values.packageFor(8));
-    assert.throws(gate, /anti-replay|rolled back|invalid/);
+    assert.throws(restarted, /anti-replay|rolled back|invalid/);
     values.writePackage(values.packageFor(9));
     values.writeAnchor([values.issue]);
     assert.throws(gate, /external anchor|rolled back|conflicts/);
