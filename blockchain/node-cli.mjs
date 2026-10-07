@@ -13,7 +13,7 @@ import {
 } from "./block-store.mjs";
 import { MAX_SNAPSHOT_BYTES } from "./state-snapshot.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
-import { createNodeHttpServer } from "./node-service.mjs";
+import { createDeveloperNodeHttpServer, createProductionNodeHttpServer } from "./node-service.mjs";
 import { initializeDevnet, PersistentDevNode } from "./node-store.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
 import { createProductionStartupGuard } from "./production-startup.mjs";
@@ -57,7 +57,7 @@ try {
     let server;
     try {
       node = new PersistentDevNode(directory);
-      server = createNodeHttpServer(node);
+      server = createDeveloperNodeHttpServer(node);
     } catch (error) {
       releaseLock();
       throw error;
@@ -86,7 +86,7 @@ try {
     const releaseLock = acquireDataDirectoryLock(runtimeDirectory); let server;
     try {
       const node = new PersistentDevNode(runtimeDirectory);
-      server = createNodeHttpServer(node);
+      server = createProductionNodeHttpServer(node);
       guard.verifyBeforeOpen();
       process.once("exit", releaseLock);
       const shutdown = () => server.close(() => { releaseLock(); process.exit(0); });

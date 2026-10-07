@@ -49,7 +49,7 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
   const genesis = JSON.parse(readFileSync(join(nodeDirectory, "genesis.json"), "utf8"));
   const genesisBlock = new NirChain(genesis).blocks()[0];
   const node = new PersistentDevNode(nodeDirectory);
-  const nodeServer = createNodeHttpServer(node);
+  const nodeServer = createNodeHttpServer(node, { rpcProfile: "developer" });
   const token = "7".repeat(64);
   let approvals = 0;
   const bridgeServer = createWalletBridgeServer({

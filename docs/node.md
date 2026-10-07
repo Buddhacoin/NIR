@@ -27,6 +27,16 @@ listener collision exits with a bounded error and releases the writer lock.
 
 ## RPC
 
+The default `public` RPC profile, used by `node:serve-production`, is read-only:
+it permits health, proof, account, asset, fee and aggregate metrics requests.
+The explicit `developer` profile, used by `node:serve`, additionally permits
+the four mutating POST routes below. `PersistentDevNode.submitTransaction`
+immediately creates and finalizes a block using local development keys, so even
+a correctly signed transaction cannot be submitted through the production RPC.
+The separate [validator transaction ingress](validator-transaction-ingress.md)
+is a local rehearsal, not a public deployment. No `Origin` header is required for
+non-browser clients, so CORS is not administrator authentication.
+
 - `GET /health`
 - `GET /v1/accounts/{nir-address}`
 - `GET /v1/accounts/{nir-address}/proof`
@@ -34,10 +44,19 @@ listener collision exits with a bounded error and releases the writer lock.
 - `GET /v1/finality-proofs?fromHeight={height}&limit={1..512}`
 - `GET /v1/transactions/{transaction-id}/proof`
 - `GET /v1/fees?amount={atomic-units}`
-- `POST /v1/faucet` with `{ "recipient": "nir1..." }`
-- `POST /v1/transactions` with a complete signed NIR transaction
 
-The faucet sends at most 10 test NIR once to a fresh address. The HTTP service
+Developer-only mutating routes (404 in the default public profile):
+
+- `POST /v1/transactions` with a complete signed NIR transaction
+- `POST /v1/faucet` with `{ "recipient": "nir1..." }`
+- `POST /v1/blocks/produce`
+- `POST /v1/snapshots/create` when the node supports snapshots
+
+The developer faucet sends at most 10 test NIR once to a fresh address. Public
+signed-transaction submission needs a reviewed validator-backed public edge. Test-unit
+distribution and any administrative block or snapshot operation need a
+separately designed operator-controlled channel; this repository does not
+provide or attest that control plane. The HTTP service
 binds only to loopback by default and permits browser origins on localhost or
 127.0.0.1. It is not a public-network security boundary.
 
@@ -175,6 +194,9 @@ recovered; malformed ownership data and symbolic-link substitutions fail
 closed. Graceful interrupt and termination release the lock.
 
 ## Wallet-to-wallet flow
+
+This flow uses only the local developer RPC profile; these POST routes are
+unavailable in the read-only production RPC.
 
 Create two native vaults with `npm run wallet:create`, inspect their addresses
 with `npm run wallet:address`, and fund the first address through `/v1/faucet`.

@@ -5,7 +5,8 @@ import { parseConsensusJson } from "./consensus-json.mjs";
 const FILES = Object.freeze([
   "address-book.js", "app.js", "index.html", "manifest.json", "manifest.webmanifest",
   "nir-coin-icon.png", "nir-coin-icon.svg", "node-selection.js", "nodes.json",
-  "offline-signing.js", "qr.js", "style.css", "sw.js", "transaction-decoder.js",
+  "offline-signing.js", "qr.js", "style.css", "submission-status.js", "sw.js",
+  "transaction-decoder.js",
 ]);
 const CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'";
 const EXTENSION_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1spnrvEc4lOeKPugnlZ8dWGkhaW3ohhy/2d1PQbQOE7Y/8G00yMTZ9s3E6tYylHJqdX1K9Aw3wubM8Px4K6t3daeYZW7HBrKu8Y1Otkgw/0t4VehrzvhrkLqylNt+LWv0FD5uZuoTTNs9WRa5Mt8Zr7fEdygXmVNFlf5hlXo2EQ3MoGnOSp95tUBBgspqZaJH6rfH16QmY2fZvCVt+bv1i0fQ9sl4+gOP6FUwLwQ6GV1K1srf2QbRsIwqUXcP8Ce0kKyukq5hfQHiKfVOvk0iuvWoVrFqGo0OwMGQ5CUHXOukBuuOPuUHUtSVAnTm0cRle3WD4qWtVFK1WaY/jAs2wIDAQAB";
