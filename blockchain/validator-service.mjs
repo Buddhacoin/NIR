@@ -931,17 +931,24 @@ export function createValidatorControlServer(validator, options = {}) {
   const peerUrls = options.peerUrls ?? (() => validator.peerUrls);
   const roundTimeoutMs = options.roundTimeoutMs ?? 250;
   const maxRoundTimeoutMs = options.maxRoundTimeoutMs ?? 2_000;
+  const frameDeadlineMs = options.frameDeadlineMs ?? 30_000;
+  const executeForTest = options._executeOperationForTest;
   if (!Number.isSafeInteger(roundTimeoutMs) || roundTimeoutMs < 1 || roundTimeoutMs > 2_000 ||
       !Number.isSafeInteger(maxRoundTimeoutMs) || maxRoundTimeoutMs < roundTimeoutMs ||
-      maxRoundTimeoutMs > 2_000) {
+      maxRoundTimeoutMs > 2_000 || !Number.isSafeInteger(frameDeadlineMs) ||
+      frameDeadlineMs < 25 || frameDeadlineMs > 30_000 ||
+      executeForTest !== undefined && typeof executeForTest !== "function") {
     throw new Error("validator control round timeout configuration is invalid");
   }
   let ready = false;
+  let operationActive = false;
   const server = createNetServer({ allowHalfOpen: true }, (socket) => {
     if (!ready) { socket.destroy(); return; }
     const decoder = createCanonicalIpcFrameDecoder(CONTROL_REQUEST_FRAME);
     let message = null; let failed = false;
     const fail = () => { failed = true; socket.destroy(); };
+    const deadline = setTimeout(fail, frameDeadlineMs);
+    socket.once("close", () => clearTimeout(deadline));
     socket.setTimeout(30_000, fail);
     socket.on("data", (chunk) => {
       try {
@@ -953,22 +960,35 @@ export function createValidatorControlServer(validator, options = {}) {
       } catch { fail(); }
     });
     socket.on("end", async () => {
+      clearTimeout(deadline);
       if (failed) return;
+      let ownsOperation = false;
       try {
         decoder.finish();
         if (!message || Object.keys(message).join() !== "operation" ||
             !["sync", "produce"].includes(message.operation)) {
           throw new Error("validator control request is invalid");
         }
-        const urls = typeof peerUrls === "function" ? peerUrls() : peerUrls;
-        const body = message.operation === "sync"
-          ? await synchronizeValidator(validator, urls)
-          : await produceValidatorBlock(validator, urls, roundTimeoutMs, maxRoundTimeoutMs);
+        if (operationActive) {
+          socket.end(encodeCanonicalIpcFrame({ ok: false, status: 503,
+            body: { error: "validator control operation already in progress" } }, CONTROL_RESPONSE_FRAME));
+          return;
+        }
+        operationActive = true;
+        ownsOperation = true;
+        const urls = executeForTest ? null : typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        const body = executeForTest
+          ? await executeForTest(message.operation)
+          : message.operation === "sync"
+            ? await synchronizeValidator(validator, urls)
+            : await produceValidatorBlock(validator, urls, roundTimeoutMs, maxRoundTimeoutMs);
         socket.end(encodeCanonicalIpcFrame({ ok: true,
           status: message.operation === "sync" ? 200 : 202, body }, CONTROL_RESPONSE_FRAME));
       } catch (error) {
         if (!socket.destroyed) socket.end(encodeCanonicalIpcFrame({ ok: false, status: 400,
           body: { error: ingressErrorResponse(error).message } }, CONTROL_RESPONSE_FRAME));
+      } finally {
+        if (ownsOperation) operationActive = false;
       }
     });
     socket.on("error", () => {});

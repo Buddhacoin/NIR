@@ -96,6 +96,77 @@ test("oversize, truncated, and extra control frames cause no operation", async (
   }
 });
 
+test("absolute frame deadline releases trickling clients despite their activity", async () => {
+  const base = mkdtempSync(join(tmpdir(), "nvc-test-"));
+  const control = createValidatorControlServer({}, {
+    frameDeadlineMs: 100,
+    _executeOperationForTest: async () => ({ height: 0 }),
+  });
+  let channel;
+  try {
+    assert.throws(() => createValidatorControlServer({}, { frameDeadlineMs: 24 }), /configuration/);
+    assert.throws(() => createValidatorControlServer({}, { frameDeadlineMs: 30_001 }), /configuration/);
+    channel = await listenOnPrivateValidatorControlSocket(control.server, base);
+    control.enable();
+    const started = Date.now();
+    await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
+      const socket = createConnection(channel.path);
+      let trickle;
+      socket.on("connect", () => {
+        socket.write(Buffer.from([0, 0, 1, 0])); // A valid 256-byte frame length.
+        trickle = setInterval(() => { if (!socket.destroyed) socket.write(Buffer.from([0x20])); }, 10);
+      });
+      socket.on("close", () => { clearInterval(trickle); resolve(); });
+      socket.on("error", reject);
+      socket.resume();
+    })));
+    assert.ok(Date.now() - started >= 80 && Date.now() - started < 1_000,
+      "trickle must remain connected briefly but cannot extend the frame deadline");
+    const after = await requestValidatorControl(channel.path, "sync");
+    assert.equal(after.status, 200);
+    assert.equal(after.body.height, 0);
+  } finally {
+    await channel?.close();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("two complete operator requests cannot execute concurrently", async () => {
+  const base = mkdtempSync(join(tmpdir(), "nvc-test-"));
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let started;
+  const begun = new Promise((resolve) => { started = resolve; });
+  let calls = 0;
+  const control = createValidatorControlServer({}, {
+    _executeOperationForTest: async () => {
+      calls += 1;
+      if (calls === 1) { started(); await gate; }
+      return { height: calls };
+    },
+  });
+  let channel;
+  try {
+    channel = await listenOnPrivateValidatorControlSocket(control.server, base);
+    control.enable();
+    const first = requestValidatorControl(channel.path, "sync");
+    await begun;
+    const second = await requestValidatorControl(channel.path, "produce");
+    assert.equal(second.status, 503);
+    assert.equal(second.ok, false);
+    assert.equal(calls, 1);
+    release();
+    assert.equal((await first).status, 200);
+    const third = await requestValidatorControl(channel.path, "produce");
+    assert.equal(third.status, 202);
+    assert.equal(calls, 2);
+  } finally {
+    release();
+    await channel?.close();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("a restart chooses a new socket path and leaves a crashed stale path untouched", async () => {
   const base = mkdtempSync(join(tmpdir(), "nvc-test-"));
   const first = createValidatorControlServer({}, { peerUrls: () => [] });

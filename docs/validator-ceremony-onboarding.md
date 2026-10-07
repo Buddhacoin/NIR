@@ -123,7 +123,9 @@ leave an inert stale socket in its old private subdirectory; a restart uses a
 new path and never removes that old or another process's path. After confirming
 the old process is gone, the operator may inspect and clean up its stale files.
 Use `npm run validator:control -- produce <current-socket-path>` or `sync` for
-the two local operator actions. The ceremony HTTPS listener rejects both
+the two local operator actions. Incomplete requests have a fixed 30-second
+deadline, and the socket runs at most one control operation at a time. The
+ceremony HTTPS listener rejects both
 unauthenticated control routes before invoking peers or changing state.
 
 This socket trusts local same-UID processes: Node does not provide peer UID
