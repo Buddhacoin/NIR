@@ -2,36 +2,81 @@
 import process from "node:process";
 
 import { listenOnLoopback } from "./loopback-listener.mjs";
+import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES, verifyCheckpointTrustPackage }
+  from "./checkpoint-trust-package.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { verifyCeremonyBoundTransactionIngressEvidence }
   from "./validator-transaction-ingress-ceremony.mjs";
+import { createValidatorTransactionCheckpointGate }
+  from "./validator-transaction-ingress-checkpoint.mjs";
+import { initializeTransactionIngressFloor }
+  from "./validator-transaction-ingress-floor.mjs";
+import { readTransactionIngressOperatorConfig }
+  from "./validator-transaction-ingress-operator-config.mjs";
 import { probeValidatorLiveIdentity } from "./validator-live-identity.mjs";
 import { createValidatorTransactionIngressServer }
   from "./validator-transaction-ingress.mjs";
 
 try {
   const args = process.argv.slice(2);
-  const ceremonyMode = args[0] === "--ceremony";
-  let portText, host, walletOrigin, config;
+  const ceremonyMode = args[0] === "--ceremony" || args[0] === "--init-floor";
+  let portText, host, config, checkpointCertificateGate = null;
   if (ceremonyMode) {
-    if (args.length < 10 || args.length > 12) {
-      throw new Error("usage: network:transaction-ingress --ceremony <registry-dir> <external-anchor.json> <trusted-release-signer-address> <pinned-genesis-hash> <validator-address> <loopback-https-validator-origin> <tls-sha256-pin> <network-id> <listen-port> [127.0.0.1|::1] [exact-wallet-origin]");
+    if (args.length !== 2) {
+      throw new Error("usage: network:transaction-ingress --init-floor|--ceremony <absolute-operator-config.json>; old positional ceremony arguments are not accepted");
     }
-    const [, registryDirectory, anchorPath, trustedReleaseSignerAddress,
-      expectedGenesisHash, validatorAddress, expectedUpstreamOrigin,
-      expectedTlsCertificateSha256, expectedNetworkId, selectedPort,
-      selectedHost = "127.0.0.1", selectedWalletOrigin = null] = args;
-    portText = selectedPort; host = selectedHost; walletOrigin = selectedWalletOrigin;
+    const operator = readTransactionIngressOperatorConfig(args[1]);
+    portText = String(operator.listenPort); host = operator.listenHost;
     const verified = verifyCeremonyBoundTransactionIngressEvidence({
-      anchor: readBoundedPublicJsonFile(anchorPath, {
+      anchor: readBoundedPublicJsonFile(operator.ceremonyAnchorPath, {
         label: "external ceremony anchor", maximumBytes: 1024 * 1024,
-      }), expectedGenesisHash, expectedNetworkId,
-      expectedTlsCertificateSha256, expectedUpstreamOrigin, registryDirectory,
-      trustedReleaseSignerAddress, validatorAddress, walletOrigin,
+      }), expectedGenesisHash: operator.expectedGenesisHash,
+      expectedNetworkId: operator.expectedNetworkId,
+      expectedTlsCertificateSha256: operator.expectedTlsCertificateSha256,
+      expectedUpstreamOrigin: operator.expectedUpstreamOrigin,
+      registryDirectory: operator.registryDirectory,
+      trustedReleaseSignerAddress: operator.trustedReleaseSignerAddress,
+      validatorAddress: operator.validatorAddress, walletOrigin: operator.walletOrigin,
     });
     config = verified.config;
+    const floorIdentity = {
+      expectedGenesisHash: operator.expectedGenesisHash,
+      expectedNetworkId: operator.expectedNetworkId,
+      expectedPolicyId: operator.expectedPolicyId,
+      validatorAddress: operator.validatorAddress,
+    };
+    if (args[0] === "--init-floor") {
+      // A typo in a pinned witness policy must not make an unusable immutable floor.
+      verifyCheckpointTrustPackage(readBoundedPublicJsonFile(operator.checkpointPackagePath, {
+        label: "transaction checkpoint trust package",
+        maximumBytes: MAX_CHECKPOINT_TRUST_PACKAGE_BYTES,
+      }), {
+        expectedChainIdentityGenesisHash: operator.expectedGenesisHash,
+        expectedNetworkId: operator.expectedNetworkId,
+        expectedPolicyId: operator.expectedPolicyId,
+        maxAgeMs: operator.maxWitnessAgeMs, maxFutureSkewMs: 5_000,
+        minimumCheckpointHeight: 1, minimumSequence: 0, now: Date.now(),
+      });
+      initializeTransactionIngressFloor(operator.floorDirectory, floorIdentity);
+      console.log("NIR transaction ingress floor initialized once; no listener was opened");
+      process.exit(0);
+    }
+    checkpointCertificateGate = createValidatorTransactionCheckpointGate({
+      certificateDirectory: operator.certificateDirectory,
+      certificateHeadAnchorPath: operator.certificateHeadAnchorPath,
+      checkpointPackagePath: operator.checkpointPackagePath,
+      expectedGenesisHash: operator.expectedGenesisHash,
+      expectedNetworkId: operator.expectedNetworkId,
+      expectedPolicyId: operator.expectedPolicyId,
+      floorDirectory: operator.floorDirectory,
+      genesis: verified.genesis,
+      maxWitnessAgeMs: operator.maxWitnessAgeMs,
+      tlsCertificateSha256: config.tlsCertificateSha256,
+      validatorAddress: operator.validatorAddress,
+    });
+    checkpointCertificateGate();
     await probeValidatorLiveIdentity({
-      chainIdentityGenesisHash: expectedGenesisHash,
+      chainIdentityGenesisHash: operator.expectedGenesisHash,
       networkId: config.expectedNetworkId,
       tlsCertificateSha256: config.tlsCertificateSha256,
       upstreamOrigin: config.upstreamOrigin,
@@ -43,11 +88,12 @@ try {
     }
     const [upstreamOrigin, tlsCertificateSha256, expectedNetworkId, selectedPort,
       selectedHost = "127.0.0.1", selectedWalletOrigin = null] = args;
-    portText = selectedPort; host = selectedHost; walletOrigin = selectedWalletOrigin;
-    config = { expectedNetworkId, tlsCertificateSha256, upstreamOrigin, walletOrigin };
+    portText = selectedPort; host = selectedHost;
+    config = { expectedNetworkId, tlsCertificateSha256, upstreamOrigin,
+      walletOrigin: selectedWalletOrigin };
   }
   const port = Number(portText);
-  const server = createValidatorTransactionIngressServer(config);
+  const server = createValidatorTransactionIngressServer(config, { checkpointCertificateGate });
   await listenOnLoopback(server, { host, label: "validator transaction ingress", port });
   const shutdown = () => server.gracefulShutdown().then(() => process.exit(0), () => process.exit(1));
   process.once("SIGINT", shutdown);

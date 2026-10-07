@@ -53,8 +53,9 @@ export function verifyCeremonyBoundTransactionIngressEvidence({
     tlsCertificateSha256: selected.tlsCertificateSha256,
     upstreamOrigin: selected.endpoint,
     walletOrigin,
-  }), validator: { address: selected.address, algorithm: selected.algorithm,
-    publicKey: selected.publicKey } };
+  }), genesis: compiled.genesis,
+    validator: { address: selected.address, algorithm: selected.algorithm,
+      publicKey: selected.publicKey } };
 }
 
 export function verifyCeremonyBoundTransactionIngressConfig(options) {

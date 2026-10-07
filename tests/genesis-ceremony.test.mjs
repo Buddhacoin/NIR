@@ -4,7 +4,7 @@ import { createHash, X509Certificate } from "node:crypto";
 import { createServer as createHttpsServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
 import {
-  mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,14 +12,21 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { finalizeBlock, NirChain, multisigAddress } from "../blockchain/chain.mjs";
+import { createTransfer, finalizeBlock, NirChain, multisigAddress } from "../blockchain/chain.mjs";
 import {
   MIN_EVALUATOR_BOND, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   PROTOCOL_VERSION,
   TREASURY_BPS,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
-import { generateWallet, hashObject, publicWallet, signObject, verifyObject } from "../blockchain/crypto.mjs";
+import { canonicalJson, generateWallet, hashObject, publicWallet, signObject, verifyObject } from "../blockchain/crypto.mjs";
+import { certificateHistoryHead, createCertificateRecord,
+  EMPTY_CERTIFICATE_RECORD_HASH, topologyHistoryCommitment }
+  from "../blockchain/certificate-lifecycle.mjs";
+import { installCertificateRecord } from "../blockchain/certificate-lifecycle-store.mjs";
+import { runtimeCertificateContext } from "../blockchain/certificate-runtime.mjs";
+import { assembleCheckpointTrustPackage, createCheckpointWitnessAttestation,
+  createCheckpointWitnessPolicy } from "../blockchain/checkpoint-trust-package.mjs";
 import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
@@ -361,8 +368,15 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
     const tlsCertificateSha256 = certificateSha256(new X509Certificate(cert).raw);
     let genesisHash;
     let wrongSigner = false;
+    let challengePosts = 0;
+    let transactionPosts = 0;
     const foreignWallet = generateWallet();
     upstream = createHttpsServer({ key, cert }, async (request, response) => {
+      if (request.url === "/v1/transactions") {
+        transactionPosts += 1;
+        request.resume(); response.writeHead(500); response.end(); return;
+      }
+      challengePosts += 1;
       let encoded = "";
       for await (const chunk of request) encoded += chunk;
       const { nonce } = JSON.parse(encoded);
@@ -400,16 +414,79 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
     });
     const anchorPath = join(root, "external-anchor.json");
     writeFileSync(anchorPath, JSON.stringify(anchor));
+    const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+    const chain = new NirChain(compiled.genesis);
+    for (let version = 25; version <= 28; version += 1) {
+      const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+      const proposal = chain.buildBlock({
+        timestamp: chain.blocks().at(-1).timestamp + 1,
+        protocolUpgrade: { activationHeight, format: "nir-protocol-upgrade-v1", version },
+      });
+      chain.appendBlock(finalizeBlock(proposal, values.validators.slice(0, 3)));
+      while (chain.height < activationHeight) {
+        chain.appendBlock(finalizeBlock(chain.buildBlock({
+          timestamp: chain.blocks().at(-1).timestamp + 1,
+        }), values.validators.slice(0, 3)));
+      }
+    }
+    const proof = createFinalityProof(chain.blocks().at(-1));
+    const witnesses = Array.from({ length: 4 }, generateWallet);
+    const policy = createCheckpointWitnessPolicy({ chainIdentityGenesisHash: genesisHash,
+      generation: 1, networkId: plan.networkId, threshold: 3,
+      witnesses: witnesses.map((wallet, index) => ({ ...publicWallet(wallet),
+        operatorId: `witness-${index}` })) });
+    const attestations = witnesses.slice(0, 3).map((wallet, index) =>
+      createCheckpointWitnessAttestation({ finalityProof: proof,
+        observedAt: Date.now() - 1000 + index, operatorId: `witness-${index}`,
+        policy, sequence: 1, validators: compiled.genesis.validators, wallet }));
+    const checkpointPackagePath = join(root, "checkpoint-package.json");
+    const packageBytes = JSON.stringify(assembleCheckpointTrustPackage({
+      attestations, finalityProof: proof, policy, sequence: 1,
+      validators: compiled.genesis.validators,
+    }));
+    writeFileSync(checkpointPackagePath, packageBytes);
+    const certificateDirectory = join(root, "validator-state");
+    mkdirSync(certificateDirectory);
+    const context = { ...runtimeCertificateContext(certificateDirectory, compiled.genesis),
+      currentHeight: 0, minimumActivationDelay: 0,
+      peerRegistryHash: peerRegistryHash(compiled.genesis.peerRegistry),
+      topologyHistoryHash: topologyHistoryCommitment() };
+    const issue = createCertificateRecord({ activationHeight: 0,
+      certificate: { serial: "10", sha256: tlsCertificateSha256 },
+      networkId: plan.networkId, operation: "issue", overlapUntilHeight: 0,
+      peerRegistryHash: peerRegistryHash(compiled.genesis.peerRegistry),
+      previousRecordHash: EMPTY_CERTIFICATE_RECORD_HASH, sequence: 0,
+      topologyHistoryHash: topologyHistoryCommitment(),
+      validatorAddress: values.validators[0].address,
+    }, values.validators.slice(0, 3));
+    installCertificateRecord(join(certificateDirectory, "certificates"), issue, context);
+    const certificateHeadAnchorPath = join(root, "certificate-anchor.json");
+    writeFileSync(certificateHeadAnchorPath, JSON.stringify({
+      format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead([issue], context), networkId: plan.networkId,
+      recordCount: 1, version: 1,
+    }));
     const probe = createTcpServer();
     await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const port = probe.address().port;
     await new Promise((resolve) => probe.close(resolve));
     const cli = fileURLToPath(new URL("../blockchain/validator-transaction-ingress-cli.mjs",
       import.meta.url));
-    const failedStart = spawnSync(process.execPath, [cli, "--ceremony", registryDirectory,
-      anchorPath, values.releaseOptions.trustedAddress, "f".repeat(64),
-      values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
-      plan.networkId, String(port)], { encoding: "utf8" });
+    const operatorPath = join(root, "operator.json");
+    const operator = { certificateDirectory, certificateHeadAnchorPath,
+      ceremonyAnchorPath: anchorPath, checkpointPackagePath,
+      expectedGenesisHash: genesisHash, expectedNetworkId: plan.networkId,
+      expectedPolicyId: policy.policyId, expectedTlsCertificateSha256: tlsCertificateSha256,
+      expectedUpstreamOrigin: upstreamOrigin, floorDirectory: join(root, "floor"),
+      format: "nir-transaction-ingress-operator-config-v1",
+      listenHost: "127.0.0.1", listenPort: port, maxWitnessAgeMs: 30_000,
+      registryDirectory, trustedReleaseSignerAddress: values.releaseOptions.trustedAddress,
+      validatorAddress: values.validators[0].address, version: 1, walletOrigin: null };
+    const writeOperator = (overrides = {}) => writeFileSync(operatorPath,
+      `${canonicalJson({ ...operator, ...overrides })}\n`, { mode: 0o600 });
+    writeOperator({ expectedGenesisHash: "f".repeat(64) });
+    const failedStart = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
+      { encoding: "utf8" });
     assert.equal(failedStart.status, 1);
     assert.match(failedStart.stderr, /genesis/);
     const linkedAnchorPath = join(root, "linked-anchor.json");
@@ -417,20 +494,50 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
     const oversizedAnchorPath = join(root, "oversized-anchor.json");
     writeFileSync(oversizedAnchorPath, " ".repeat(1024 * 1024 + 1), { mode: 0o600 });
     for (const unsafeAnchorPath of [linkedAnchorPath, oversizedAnchorPath]) {
-      const rejected = spawnSync(process.execPath, [cli, "--ceremony", registryDirectory,
-        unsafeAnchorPath, values.releaseOptions.trustedAddress, genesisHash,
-        values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
-        plan.networkId, String(port)], { encoding: "utf8" });
+      writeOperator({ ceremonyAnchorPath: unsafeAnchorPath });
+      const rejected = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
+        { encoding: "utf8" });
       assert.equal(rejected.status, 1);
       assert.match(rejected.stderr, /external ceremony anchor file is unsafe/);
     }
+    writeOperator();
+    const missingFloor = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
+      { encoding: "utf8" });
+    assert.equal(missingFloor.status, 1);
+    assert.match(missingFloor.stderr, /floor|ENOENT/);
+    writeOperator({ expectedPolicyId: `sha3-256:${"f".repeat(64)}` });
+    const invalidInitialization = spawnSync(process.execPath,
+      [cli, "--init-floor", operatorPath], { encoding: "utf8" });
+    assert.equal(invalidInitialization.status, 1);
+    assert.match(invalidInitialization.stderr, /trust policy/);
+    assert.equal(existsSync(operator.floorDirectory), false);
+    writeOperator();
+    const challengesBeforeInit = challengePosts;
+    const initialized = spawnSync(process.execPath, [cli, "--init-floor", operatorPath],
+      { encoding: "utf8" });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    assert.equal(challengePosts, challengesBeforeInit);
+    const repeatedInit = spawnSync(process.execPath, [cli, "--init-floor", operatorPath],
+      { encoding: "utf8" });
+    assert.equal(repeatedInit.status, 1);
+    for (const [overrides, pattern] of [
+      [{ expectedPolicyId: `sha3-256:${"f".repeat(64)}` }, /identity|trust policy/],
+      [{ certificateHeadAnchorPath: join(root, "missing-certificate-anchor.json") },
+        /ENOENT/],
+      [{ maxWitnessAgeMs: 1 }, /witness time policy/],
+    ]) {
+      writeOperator(overrides);
+      const rejected = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
+        { encoding: "utf8" });
+      assert.equal(rejected.status, 1);
+      assert.match(rejected.stderr, pattern);
+    }
+    writeOperator();
     const available = createTcpServer();
     await new Promise((resolve) => available.listen(port, "127.0.0.1", resolve));
     await new Promise((resolve) => available.close(resolve));
-    const running = spawn(process.execPath, [cli, "--ceremony", registryDirectory,
-      anchorPath, values.releaseOptions.trustedAddress, genesisHash,
-      values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
-      plan.networkId, String(port)], { stdio: ["ignore", "pipe", "pipe"] });
+    const running = spawn(process.execPath, [cli, "--ceremony", operatorPath],
+      { stdio: ["ignore", "pipe", "pipe"] });
     try {
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("ceremony-bound ingress did not listen")), 5_000);
@@ -445,6 +552,19 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       });
       const response = await fetch(`http://127.0.0.1:${port}/v1/transactions`);
       assert.equal(response.status, 404);
+      const transaction = createTransfer({ wallet: generateWallet(),
+        networkId: plan.networkId, recipient: generateWallet().address,
+        amount: "1000000", nonce: 0 });
+      const submit = () => fetch(`http://127.0.0.1:${port}/v1/transactions`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(transaction),
+      });
+      assert.equal((await submit()).status, 502);
+      assert.equal(transactionPosts, 1);
+      writeFileSync(checkpointPackagePath, "{}\n");
+      assert.equal((await submit()).status, 503);
+      assert.equal(transactionPosts, 1);
+      writeFileSync(checkpointPackagePath, packageBytes);
     } finally {
       if (running.exitCode === null) {
         const exited = new Promise((resolve) => running.once("exit", resolve));
@@ -453,10 +573,8 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       }
     }
     wrongSigner = true;
-    const forged = spawn(process.execPath, [cli, "--ceremony", registryDirectory,
-      anchorPath, values.releaseOptions.trustedAddress, genesisHash,
-      values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
-      plan.networkId, String(port)], { stdio: ["ignore", "ignore", "pipe"] });
+    const forged = spawn(process.execPath, [cli, "--ceremony", operatorPath],
+      { stdio: ["ignore", "ignore", "pipe"] });
     let forgedError = "";
     forged.stderr.on("data", (chunk) => { forgedError += chunk.toString(); });
     const forgedExit = await new Promise((resolve) => forged.once("exit", resolve));
@@ -497,10 +615,13 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
     }), /genesis/);
     const foreignAnchorPath = join(root, "foreign-anchor.json");
     writeFileSync(foreignAnchorPath, JSON.stringify(foreignAnchor));
-    const rejectedForeignStart = spawnSync(process.execPath, [cli, "--ceremony",
-      foreignRegistry, foreignAnchorPath, foreign.releaseOptions.trustedAddress,
-      genesisHash, foreign.validators[0].address, upstreamOrigin,
-      tlsCertificateSha256, other.plan.networkId, String(port)], { encoding: "utf8" });
+    writeOperator({ ceremonyAnchorPath: foreignAnchorPath,
+      registryDirectory: foreignRegistry,
+      trustedReleaseSignerAddress: foreign.releaseOptions.trustedAddress,
+      validatorAddress: foreign.validators[0].address,
+      expectedNetworkId: other.plan.networkId });
+    const rejectedForeignStart = spawnSync(process.execPath,
+      [cli, "--ceremony", operatorPath], { encoding: "utf8" });
     assert.equal(rejectedForeignStart.status, 1);
     assert.match(rejectedForeignStart.stderr, /genesis/);
     const afterForeign = createTcpServer();

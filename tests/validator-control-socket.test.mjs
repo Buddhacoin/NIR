@@ -121,7 +121,7 @@ test("absolute frame deadline releases trickling clients despite their activity"
       socket.on("close", () => { clearInterval(trickle); resolve(); });
       socket.on("error", (error) => {
         // The deadline may close a socket while a scheduled trickle is in flight.
-        if (!connected || error.code !== "ECONNRESET") reject(error);
+        if (!connected || !["ECONNRESET", "EPIPE"].includes(error.code)) reject(error);
       });
       socket.resume();
     })));

@@ -1,0 +1,21 @@
+{
+  "format": "nir-transaction-ingress-operator-config-v1",
+  "version": 1,
+  "registryDirectory": "/ABSOLUTE/PATH/TO/ceremony-registry",
+  "ceremonyAnchorPath": "/ABSOLUTE/INDEPENDENT/PATH/ceremony-anchor.json",
+  "trustedReleaseSignerAddress": "nir1REPLACE_WITH_64_LOWERCASE_HEX",
+  "expectedGenesisHash": "REPLACE_WITH_64_LOWERCASE_HEX",
+  "validatorAddress": "nir1REPLACE_WITH_64_LOWERCASE_HEX",
+  "expectedUpstreamOrigin": "https://127.0.0.1:8791",
+  "expectedTlsCertificateSha256": "REPLACE_WITH_64_LOWERCASE_HEX",
+  "expectedNetworkId": "nir-your-valueless-devnet",
+  "expectedPolicyId": "sha3-256:REPLACE_WITH_64_LOWERCASE_HEX",
+  "checkpointPackagePath": "/ABSOLUTE/PATH/TO/checkpoint-trust-package.json",
+  "certificateDirectory": "/ABSOLUTE/PATH/TO/validator-state",
+  "certificateHeadAnchorPath": "/ABSOLUTE/INDEPENDENT/PATH/certificate-head.json",
+  "floorDirectory": "/ABSOLUTE/PRIVATE/PATH/TO/ingress-floor",
+  "maxWitnessAgeMs": 30000,
+  "listenHost": "127.0.0.1",
+  "listenPort": 8789,
+  "walletOrigin": "http://127.0.0.1:8765"
+}
