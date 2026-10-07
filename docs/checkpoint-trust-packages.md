@@ -34,6 +34,26 @@ and commit quorums, then the exact witness quorum, and finally the package hash.
 An arbitrary validator set, a different network or genesis, a mixed view, an
 unknown field, a duplicate witness, or a changed signature fails closed.
 
+## Certificate-bound witness package v2
+
+`blockchain/checkpoint-trust-package-v2.mjs` provides separate v2 creation and
+verification functions. Its checkpoint view and each witness attestation add
+`certificateHistoryHead` (the lowercase 64-character result of
+`certificateHistoryHead()`) and `certificateRecordCount` (1–1024). Distinct v2
+view, attestation, package, and equivocation domains prevent a v1 signature or
+hash from being reused as v2. V1 functions remain strict v1 verifiers and do
+not reinterpret existing packages.
+
+A v2 verifier confirms that a witness quorum signed the exact certificate
+head and count with the finalized checkpoint view. A consumer must separately
+verify the complete quorum-approved certificate history, its external anchor,
+and equality with both committed fields before treating that history as
+authorized. The v2 package alone does not authenticate the history contents.
+The certificate lifecycle is not committed into the chain's finalized state;
+v2 provides a witness attestation associated with a finalized checkpoint,
+not an on-chain inclusion proof. Witness operation and history freshness remain
+independent trust requirements.
+
 ## Replay and equivocation
 
 Every verifier supplies both `minimumSequence` and `minimumCheckpointHeight`.

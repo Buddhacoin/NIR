@@ -12,6 +12,8 @@ import { installCertificateRecord }
   from "../blockchain/certificate-lifecycle-store.mjs";
 import { assembleCheckpointTrustPackage, createCheckpointWitnessAttestation,
   createCheckpointWitnessPolicy } from "../blockchain/checkpoint-trust-package.mjs";
+import { assembleCheckpointTrustPackageV2, createCheckpointWitnessAttestationV2 }
+  from "../blockchain/checkpoint-trust-package-v2.mjs";
 import { CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
   EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS }
   from "../blockchain/constants.mjs";
@@ -21,7 +23,8 @@ import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createValidatorTransactionCheckpointGate }
   from "../blockchain/validator-transaction-ingress-checkpoint.mjs";
-import { initializeTransactionIngressFloor, loadTransactionIngressFloor }
+import { advanceTransactionIngressFloor, initializeTransactionIngressFloor,
+  loadTransactionIngressFloor }
   from "../blockchain/validator-transaction-ingress-floor.mjs";
 
 const NOW = 1_800_000_000_000;
@@ -70,13 +73,26 @@ function fixture() {
     generation: 1, networkId: genesis.networkId, threshold: 3,
     witnesses: witnesses.map((wallet, index) =>
       ({ ...publicWallet(wallet), operatorId: `witness-${index}` })) });
-  const packageFor = (sequence, observedAt = NOW - 100, proof = finalityProof) => {
+  const v1PackageFor = (sequence, observedAt = NOW - 100, proof = finalityProof) => {
     const attestations = witnesses.slice(0, 3).map((wallet, index) =>
       createCheckpointWitnessAttestation({ finalityProof: proof,
         observedAt: observedAt + index, operatorId: `witness-${index}`,
         policy, sequence, validators: genesis.validators, wallet }));
     return assembleCheckpointTrustPackage({ attestations, finalityProof: proof,
       policy, sequence, validators: genesis.validators });
+  };
+  const packageFor = (sequence, observedAt = NOW - 100, proof = finalityProof,
+    history = [issue], commitmentOverride = null) => {
+    const commitment = commitmentOverride ?? {
+      certificateHistoryHead: certificateHistoryHead(history, context),
+      certificateRecordCount: history.length,
+    };
+    const attestations = witnesses.slice(0, 3).map((wallet, index) =>
+      createCheckpointWitnessAttestationV2({ ...commitment, finalityProof: proof,
+        observedAt: observedAt + index, operatorId: `witness-${index}`,
+        policy, sequence, validators: genesis.validators, wallet }));
+    return assembleCheckpointTrustPackageV2({ ...commitment, attestations,
+      finalityProof: proof, policy, sequence, validators: genesis.validators });
   };
   const context = { currentHeight: 0, minimumActivationDelay: 0,
     networkId: genesis.networkId, peerRegistryHash: peerRegistryHash(genesis.peerRegistry),
@@ -114,7 +130,7 @@ function fixture() {
     validatorAddress: address };
   return { address, alternateFinalityProof, certificateDirectory, checkpoint,
     context, floorIdentity, genesis, issue,
-    options, packageFor, root, validatorWallets, writeAnchor, writePackage };
+    options, packageFor, root, v1PackageFor, validatorWallets, writeAnchor, writePackage };
 }
 
 test("fresh signed checkpoint and anchored active certificate admit repeatedly", () => {
@@ -194,13 +210,17 @@ test("renewal cannot be bypassed with a fresh re-attestation of an old checkpoin
       values.context);
     values.writeAnchor([values.issue, renewed]);
     values.writePackage(values.packageFor(9));
+    assert.throws(gate, /certificate head or count/);
+    values.writePackage(values.packageFor(10, NOW - 100, undefined,
+      [values.issue, renewed]));
     assert.throws(gate, /TLS pin is not active/);
     assert.equal(loadTransactionIngressFloor(values.options.floorDirectory,
       values.floorIdentity).sequence, 8);
     const restarted = createValidatorTransactionCheckpointGate(values.options);
     values.writePackage(originalPackage);
-    assert.throws(restarted, /TLS pin is not active/);
-    values.writePackage(values.packageFor(9));
+    assert.throws(restarted, /certificate head or count/);
+    values.writePackage(values.packageFor(10, NOW - 100, undefined,
+      [values.issue, renewed]));
     values.writeAnchor([values.issue]);
     assert.throws(gate, /external anchor|rolled back|conflicts/);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
@@ -224,6 +244,9 @@ test("a finalized-height revocation and unsafe evidence path fail closed", () =>
       values.context);
     values.writeAnchor([values.issue, revoked]);
     values.writePackage(values.packageFor(9));
+    assert.throws(gate, /certificate head or count/);
+    values.writePackage(values.packageFor(10, NOW - 100, undefined,
+      [values.issue, revoked]));
     assert.throws(gate, /TLS pin is not active/);
     const linked = join(values.root, "linked-package.json");
     symlinkSync(values.options.checkpointPackagePath, linked);
@@ -232,5 +255,50 @@ test("a finalized-height revocation and unsafe evidence path fail closed", () =>
     assert.throws(unsafeGate, /file is unsafe/);
     rmSync(values.options.checkpointPackagePath);
     assert.throws(gate, /ENOENT/);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("ceremony gate rejects V1 and migrates a retained V1 floor only with a newer V2 package", () => {
+  const values = fixture();
+  try {
+    const old = values.v1PackageFor(8);
+    advanceTransactionIngressFloor(values.options.floorDirectory, values.floorIdentity, {
+      height: values.checkpoint.height, historyCount: 1,
+      historyHead: certificateHistoryHead([values.issue], values.context),
+      observedAt: NOW - 1, packageHash: old.packageHash,
+      sequence: 8, tipHash: values.checkpoint.hash,
+    });
+    values.writePackage(old);
+    const gate = createValidatorTransactionCheckpointGate(values.options);
+    assert.throws(gate, /checkpoint v2 package envelope/);
+    assert.equal(loadTransactionIngressFloor(values.options.floorDirectory,
+      values.floorIdentity).sequence, 8);
+    values.writePackage(values.packageFor(8));
+    assert.throws(gate, /rolled back or diverged/);
+    values.writePackage(values.packageFor(9));
+    assert.equal(gate().checkpointSequence, 9);
+    const restarted = createValidatorTransactionCheckpointGate(values.options);
+    values.writePackage(old);
+    assert.throws(restarted, /checkpoint v2 package envelope/);
+    assert.equal(loadTransactionIngressFloor(values.options.floorDirectory,
+      values.floorIdentity).sequence, 9);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("V2 head and count must exactly match all externally anchored lifecycle records", () => {
+  const values = fixture();
+  try {
+    const gate = createValidatorTransactionCheckpointGate(values.options);
+    values.writePackage(values.packageFor(8, NOW - 100, undefined, undefined, {
+      certificateHistoryHead: "f".repeat(64), certificateRecordCount: 1,
+    }));
+    assert.throws(gate, /certificate head or count/);
+    values.writePackage(values.packageFor(9, NOW - 100, undefined, undefined, {
+      certificateHistoryHead: certificateHistoryHead([values.issue], values.context),
+      certificateRecordCount: 2,
+    }));
+    assert.throws(gate, /certificate head or count/);
+    values.writePackage(values.packageFor(10));
+    assert.equal(gate().checkpointSequence, 10);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
 });
