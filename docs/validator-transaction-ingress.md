@@ -51,7 +51,7 @@ its placeholders cannot be used to initialize a floor or start a listener.
 Use `pwd` in your chosen directory to see its absolute path; the literal
 `/absolute/...` strings below are placeholders, not folders created by NIR.
 The helper accepts readable draft JSON, rejects missing/extra fields, and
-writes a new canonical mode-`0600` config without replacing an existing file:
+writes a new canonical mode-`0600` config without replacing an existing file.
 Create the destination directory under your own account with mode `0700`
 beforehand; both `prepare` and startup reject a shared or unowned parent.
 
@@ -111,8 +111,8 @@ Initialization verifies the ceremony identity and a fresh witness package
 against the pinned policy before creating the floor exactly once; a policy typo
 therefore fails before initialization. It does not contact the upstream or open
 a port and never silently recreates lost state. Normal launch
-verifies the ceremony, sends a nonce-bound validator-key challenge over pinned
-TLS, verifies the checkpoint and certificate gate and advances the floor
+verifies the ceremony and checkpoint/certificate gate, advances the floor,
+then sends a nonce-bound validator-key challenge over pinned TLS
 **before** opening a loopback listener. Each signed transaction is gated again
 before forwarding. A challenge can be relayed to a real signer; it does not
 prove the same process will handle a later transaction. Checkpoint witnesses
