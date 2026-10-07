@@ -45,6 +45,13 @@ cached fallback. The production extension package keeps its narrower
 `127.0.0.1` host-permission and CSP boundary; this rehearsal does not enable
 extension-origin CORS.
 
+The gateway verifies the configured network ID and pinned upstream certificate,
+but it does **not** prove that the network is valueless. A read node's
+`valueMode` label is not independent genesis evidence. Operators must use only
+their reviewed valueless developer-testnet ceremony and must not connect this
+preview to a network representing real value. Binding ingress startup to
+verified ceremony and certificate-lifecycle evidence remains a separate gate.
+
 The supplied fingerprint is a static local trust pin. It must be refreshed
 under operator control when the validator certificate rotates; this gateway
 does not independently verify the signed certificate lifecycle or detect
