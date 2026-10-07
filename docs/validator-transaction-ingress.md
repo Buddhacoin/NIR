@@ -98,3 +98,18 @@ or present it as a public-network service. A separately designed TLS edge,
 client abuse controls, trusted pin distribution, independent operators, and
 multi-host evidence are still required for a public deployment. This command
 is only a valueless, resettable developer-testnet integration rehearsal.
+
+The validator also has a loopback-only, TLS-protected live-identity challenge.
+The caller supplies a fresh random nonce; the response binds it to the
+validator's consensus key, local genesis hash, network ID and serving TLS
+certificate fingerprint from that exact connection, including after a TLS
+context reload. A caller must compare the signature with the
+validator public key from an independently verified ceremony, not with a key
+reported by the endpoint. This check can reject a substitute process that
+reuses the certificate but lacks that key. It does **not** prove that a
+transaction will be accepted by the same process: a malicious gateway could
+proxy the challenge to a genuine validator while routing the transaction
+elsewhere. It also does not prove the current tip is finalized, establish a
+certificate's lifecycle, or make this local service publicly deployable.
+The standalone gateway above does not yet require this challenge before
+forwarding; integration with the ceremony-bound ingress is a separate step.
