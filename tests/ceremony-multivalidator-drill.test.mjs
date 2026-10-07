@@ -27,6 +27,7 @@ import {
   assembleCeremonyRegistryAnchor, signCeremonyRegistryAnchor,
 } from "../blockchain/genesis-ceremony-anchor.mjs";
 import { requestJson } from "../blockchain/http-client.mjs";
+import { requestValidatorControl } from "../blockchain/validator-control-socket.mjs";
 import {
   certificateHistoryHead, createCertificateRecord, EMPTY_CERTIFICATE_RECORD_HASH,
   topologyHistoryCommitment,
@@ -189,9 +190,11 @@ async function startValidator(values, index, {
   anchorPath = null, certificatePath = null, keyPath = null,
   mode = "dev-genesis",
 } = {}) {
+  const controlBase = mkdtempSync(join(tmpdir(), "nvc-"));
   const environment = {
     ...process.env, NIR_CERTIFICATE_MODE: mode,
     NIR_TLS_KEY_PATH: keyPath ?? values.certificates[index].keyPath,
+    NIR_VALIDATOR_CONTROL_DIR: controlBase,
   };
   if (anchorPath === null) delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
   else environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH = anchorPath;
@@ -221,13 +224,18 @@ async function startValidator(values, index, {
       }
     }, 10);
   });
+  const controlPath = stdout.match(/NIR validator control socket ([^\n]+)/)?.[1];
+  assert.ok(controlPath, `validator ${index} did not report its control socket`);
   return {
     child, environment,
+    controlPath,
     logs: () => `${stdout}\n${stderr}`,
     async stop() {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      child.kill("SIGTERM");
-      await new Promise((resolve) => child.once("exit", resolve));
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await new Promise((resolve) => child.once("exit", resolve));
+      }
+      rmSync(controlBase, { recursive: true, force: true });
     },
   };
 }
@@ -272,7 +280,8 @@ function finalizedBlock(proposal, prepares, commits) {
 function scanDirectory(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
-    return entry.isDirectory() ? scanDirectory(path) : [readFileSync(path).toString("utf8")];
+    return entry.isDirectory() ? scanDirectory(path) : entry.isFile()
+      ? [readFileSync(path).toString("utf8")] : [];
   }).join("\n");
 }
 
@@ -335,11 +344,19 @@ test("four ceremony validators finalize, restart, and catch up without a coordin
     const chain = new NirChain(values.compiled.genesis);
     const firstProposer = chain.expectedProposer(1, 0);
     const firstProposerIndex = values.validators.findIndex(({ address }) => address === firstProposer);
-    const produced = await requestJson(
+    const deniedProduce = await requestJson(
       `https://127.0.0.1:${values.ports[firstProposerIndex]}/v1/blocks/produce`, {
         method: "POST", tlsCertificateSha256: values.certificates[firstProposerIndex].fingerprint,
-      },
-    );
+      });
+    assert.equal(deniedProduce.status, 404);
+    const deniedSync = await requestJson(
+      `https://127.0.0.1:${values.ports[firstProposerIndex]}/v1/sync?retry=1`, {
+        method: "POST", tlsCertificateSha256: values.certificates[firstProposerIndex].fingerprint,
+      });
+    assert.equal(deniedSync.status, 404);
+    assert.equal((await health(values, firstProposerIndex)).body.height, 0);
+    const produced = await requestValidatorControl(
+      running.get(firstProposerIndex).controlPath, "produce");
     assert.equal(produced.status, 202, produced.body.error);
     assert.ok(produced.body.prepares >= 3);
     assert.ok(produced.body.commits >= 3);
@@ -414,22 +431,15 @@ test("four ceremony validators finalize, restart, and catch up without a coordin
       },
     );
     assert.equal(secondIngress.status, 202, secondIngress.body.error);
-    const secondProduced = await requestJson(
-      `https://127.0.0.1:${values.ports[secondProposerIndex]}/v1/blocks/produce`, {
-        method: "POST",
-        tlsCertificateSha256: values.certificates[secondProposerIndex].fingerprint,
-      },
-    );
+    const secondProduced = await requestValidatorControl(
+      running.get(secondProposerIndex).controlPath, "produce");
     assert.equal(secondProduced.status, 202, secondProduced.body.error);
     assert.equal(secondProduced.body.height, 2);
     assert.ok(secondProduced.body.prepares >= 3 && secondProduced.body.commits >= 3);
 
     running.set(offlineIndex, await launch(offlineIndex));
-    const synchronized = await requestJson(
-      `https://127.0.0.1:${values.ports[offlineIndex]}/v1/sync`, {
-        method: "POST", tlsCertificateSha256: values.certificates[offlineIndex].fingerprint,
-      },
-    );
+    const synchronized = await requestValidatorControl(
+      running.get(offlineIndex).controlPath, "sync");
     assert.equal(synchronized.status, 200, synchronized.body.error);
     assert.equal(synchronized.body.height, 2);
     const finalHealth = await health(values, secondProposerIndex);
@@ -633,11 +643,8 @@ test("four ceremony validators finalize, restart, and catch up without a coordin
     );
     assert.equal(conflictingAfterRestart.status, 400);
     assert.match(conflictingAfterRestart.body.error, /refuses to equivocate/);
-    const healed = await requestJson(
-      `https://127.0.0.1:${values.ports[isolated]}/v1/sync`, {
-        method: "POST", tlsCertificateSha256: values.certificates[isolated].fingerprint,
-      },
-    );
+    const healed = await requestValidatorControl(
+      running.get(isolated).controlPath, "sync");
     assert.equal(healed.status, 200, healed.body.error);
     assert.equal(healed.body.height, 4);
     assert.equal((await health(values, isolated)).body.tipHash, majorityTip);
@@ -784,9 +791,7 @@ test("four ceremony processes enforce lifecycle renewal, expiry, revocation, and
         body: transfer, method: "POST", tlsCertificateSha256: proposerFingerprint,
       });
       assert.equal(ingress.status, 202, ingress.body.error);
-      const result = await requestJson(`${url}/v1/blocks/produce`, {
-        method: "POST", tlsCertificateSha256: proposerFingerprint,
-      });
+      const result = await requestValidatorControl(running.get(proposer).controlPath, "produce");
       assert.equal(result.status, 202, result.body.error);
       assert.equal(result.body.height, height);
       await waitForHeight(height, height === 4 ? target : -1);
