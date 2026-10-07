@@ -353,13 +353,15 @@ The built-in node server additionally refuses every non-loopback bind because it
 does not terminate public TLS. Operators must place an independently configured,
 authenticated TLS edge in front of the loopback listener; a wildcard address is
 never an implicit production shortcut.
-The production entrypoint uses the fail-closed public node RPC profile: it does
-not expose unauthenticated faucet, manual block-production, or snapshot-creation
-routes. Read/proof/fee/metrics routes and signed transaction submission remain
-available. Test-unit distribution and administrative operations require a
-separate operator-controlled channel; package verification and this route split
-do not implement or attest one. The local `node:serve` command explicitly uses
-the developer profile and must not be published as a public service.
+The production entrypoint uses the fail-closed read-only node RPC profile: it
+does not expose transaction submission, faucet, manual block-production, or
+snapshot-creation routes. `PersistentDevNode.submitTransaction` finalizes a
+block using local development keys; public signed-transaction submission must
+wait for validator-backed ingress. Test-unit distribution and administrative
+operations require a separate operator-controlled channel; package verification
+and this route split do not implement or attest one. The local `node:serve`
+command explicitly uses the developer profile and must not be published as a
+public service.
 
 The wallet bridge requires two independently anchored active generations: the
 wallet/UI package and the node/tool package containing the bridge executable. Both

@@ -8,7 +8,7 @@ import test from "node:test";
 
 import { initializeDistributedDevnet, ValidatorReplica } from "../blockchain/distributed-node.mjs";
 import { HttpIngressGuard } from "../blockchain/http-ingress.mjs";
-import { createNodeHttpServer } from "../blockchain/node-service.mjs";
+import { createDeveloperNodeHttpServer } from "../blockchain/node-service.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createValidatorAdmissionProofResponseAuth,
@@ -61,7 +61,7 @@ function rawRequest(url, { body = "", headers = {}, method = "POST", path = "/v1
 
 test("node ingress rejects oversized declarations and compressed/deep JSON before dispatch", async () => {
   let submitted = 0;
-  const server = createNodeHttpServer(nodeFixture({
+  const server = createDeveloperNodeHttpServer(nodeFixture({
     submitTransaction: async () => { submitted += 1; return { accepted: true }; },
   }), { httpIngress: { maxBodyBytes: 1_024 } });
   const url = await listen(server);
@@ -99,7 +99,7 @@ test("node ingress rejects oversized declarations and compressed/deep JSON befor
 
 test("wide JSON is rejected by node count without an unbounded spread", async () => {
   let submitted = 0;
-  const server = createNodeHttpServer(nodeFixture({
+  const server = createDeveloperNodeHttpServer(nodeFixture({
     submitTransaction: async () => { submitted += 1; return { accepted: true }; },
   }), { httpIngress: { maxBodyBytes: 32 * 1024, maxJsonNodes: 100 } });
   const url = await listen(server);
@@ -148,7 +148,7 @@ test("HTTP client abort signal destroys an in-flight request", async () => {
 });
 
 test("slow request body expires without occupying ingress indefinitely", async () => {
-  const server = createNodeHttpServer(nodeFixture(), {
+  const server = createDeveloperNodeHttpServer(nodeFixture(), {
     httpIngress: { bodyIdleTimeoutMs: 30, requestTimeoutMs: 500 },
   });
   await listen(server);
@@ -247,7 +247,7 @@ test("validator exposes one consensus-authenticated atomic admission proof bundl
 
 test("per-address admission drops duplicate unauthenticated floods before expensive dispatch", async () => {
   let submitted = 0;
-  const server = createNodeHttpServer(nodeFixture({
+  const server = createDeveloperNodeHttpServer(nodeFixture({
     submitTransaction: async () => { submitted += 1; return { accepted: true }; },
   }), { httpIngress: { burst: 1, requestsPerMinute: 1 } });
   const url = await listen(server);
@@ -272,7 +272,7 @@ test("per-address admission drops duplicate unauthenticated floods before expens
 });
 
 test("internal errors are redacted while graceful shutdown remains bounded", async () => {
-  const server = createNodeHttpServer(nodeFixture({
+  const server = createDeveloperNodeHttpServer(nodeFixture({
     submitTransaction: async () => { throw new Error("EACCES /Users/operator/private/vault.json"); },
   }));
   const url = await listen(server);
@@ -288,7 +288,7 @@ test("internal errors are redacted while graceful shutdown remains bounded", asy
 });
 
 test("unexpected non-path secrets are also redacted", async () => {
-  const server = createNodeHttpServer(nodeFixture({
+  const server = createDeveloperNodeHttpServer(nodeFixture({
     submitTransaction: async () => { throw new Error("database token hunter2 unavailable"); },
   }));
   const url = await listen(server);

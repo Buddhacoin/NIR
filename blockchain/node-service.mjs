@@ -8,8 +8,8 @@ import {
 } from "./http-ingress.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
-const ADMIN_POST_PATHS = new Set([
-  "/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create",
+const DEVELOPER_POST_PATHS = new Set([
+  "/v1/transactions", "/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create",
 ]);
 
 function send(response, status, value, origin = null) {
@@ -49,7 +49,7 @@ export function createNodeHttpServer(node, options = {}) {
       if (origin === false) return send(response, 403, { error: "origin is not allowed" });
       const url = new URL(request.url, "http://node.local");
       if ((request.method === "POST" || request.method === "OPTIONS") &&
-          ADMIN_POST_PATHS.has(url.pathname) && rpcProfile !== "developer") {
+          DEVELOPER_POST_PATHS.has(url.pathname) && rpcProfile !== "developer") {
         return send(response, 404, { error: "not found" }, origin);
       }
       if (request.method === "OPTIONS") {
