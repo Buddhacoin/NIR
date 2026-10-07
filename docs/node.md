@@ -32,8 +32,9 @@ it permits health, proof, account, asset, fee and aggregate metrics requests.
 The explicit `developer` profile, used by `node:serve`, additionally permits
 the four mutating POST routes below. `PersistentDevNode.submitTransaction`
 immediately creates and finalizes a block using local development keys, so even
-a correctly signed transaction cannot be submitted through the production RPC
-until a validator-backed ingress exists. No `Origin` header is required for
+a correctly signed transaction cannot be submitted through the production RPC.
+The separate [validator transaction ingress](validator-transaction-ingress.md)
+is a local rehearsal, not a public deployment. No `Origin` header is required for
 non-browser clients, so CORS is not administrator authentication.
 
 - `GET /health`
@@ -52,7 +53,7 @@ Developer-only mutating routes (404 in the default public profile):
 - `POST /v1/snapshots/create` when the node supports snapshots
 
 The developer faucet sends at most 10 test NIR once to a fresh address. Public
-signed-transaction submission needs validator-backed ingress. Test-unit
+signed-transaction submission needs a reviewed validator-backed public edge. Test-unit
 distribution and any administrative block or snapshot operation need a
 separately designed operator-controlled channel; this repository does not
 provide or attest that control plane. The HTTP service
