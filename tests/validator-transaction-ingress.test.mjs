@@ -1,0 +1,175 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { X509Certificate } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { createTransfer, transactionId } from "../blockchain/chain.mjs";
+import { generateWallet } from "../blockchain/crypto.mjs";
+import { initializeDistributedDevnet, ValidatorReplica } from "../blockchain/distributed-node.mjs";
+import { certificateSha256 } from "../blockchain/http-client.mjs";
+import { createValidatorTransactionIngressServer, validateValidatorTransactionIngressConfig }
+  from "../blockchain/validator-transaction-ingress.mjs";
+import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+
+async function listen(server) {
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return server.address().port;
+}
+
+async function close(server) {
+  if (!server?.listening) return;
+  const closed = new Promise((resolve) => server.close(resolve));
+  server.closeAllConnections?.();
+  await closed;
+}
+
+function fixture() {
+  const directory = mkdtempSync(join(tmpdir(), "nir-transaction-ingress-"));
+  const keyPath = join(directory, "key.pem");
+  const certPath = join(directory, "cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+  { stdio: "ignore" });
+  const cert = readFileSync(certPath);
+  return {
+    directory, cert, key: readFileSync(keyPath),
+    pin: certificateSha256(new X509Certificate(cert).raw),
+  };
+}
+
+test("loopback transaction ingress queues a signed transfer on two real validators without finality", async () => {
+  const tls = fixture();
+  const servers = [];
+  try {
+    const layout = initializeDistributedDevnet(join(tls.directory, "network"), {
+      tlsCertificateSha256: tls.pin,
+    });
+    const replicas = layout.validatorDirectories.slice(0, 2)
+      .map((directory) => new ValidatorReplica(directory));
+    const peerUrls = ["https://127.0.0.1:1", "https://127.0.0.1:1",
+      "https://127.0.0.1:1", "https://127.0.0.1:1"];
+    for (let index = 0; index < replicas.length; index += 1) {
+      const server = createValidatorHttpServer(replicas[index], {
+        tls: { cert: tls.cert, key: tls.key }, peerUrls: () => peerUrls,
+      });
+      servers.push(server);
+      peerUrls[index] = `https://127.0.0.1:${await listen(server)}`;
+    }
+    const ingress = createValidatorTransactionIngressServer({
+      expectedNetworkId: replicas[0].networkId, tlsCertificateSha256: tls.pin,
+      upstreamOrigin: peerUrls[0],
+    });
+    servers.push(ingress);
+    const base = `http://127.0.0.1:${await listen(ingress)}`;
+    const wallet = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "TREASURY-DEV-KEY.json")));
+    const signed = createTransfer({ wallet, networkId: replicas[0].networkId,
+      recipient: generateWallet().address, amount: "1000000", nonce: 0 });
+    const submit = async (payload) => fetch(`${base}/v1/transactions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const first = await submit(signed);
+    assert.equal(first.status, 202);
+    const receipt = await first.json();
+    assert.equal(receipt.status, "queued");
+    assert.equal(receipt.transactionId, transactionId(signed));
+    assert.ok(receipt.gossipedPeers >= 1);
+    assert.deepEqual(replicas.map((replica) => replica.mempoolSize), [1, 1]);
+    assert.deepEqual(replicas.map((replica) => replica.height), [0, 0]);
+
+    const duplicate = await submit(signed);
+    assert.equal(duplicate.status, 202);
+    assert.equal((await duplicate.json()).status, "known");
+    const invalid = await submit({ ...signed, signature: "tampered" });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(replicas.map((replica) => replica.mempoolSize), [1, 1]);
+    const admin = await fetch(`${base}/v1/blocks/produce`, { method: "POST" });
+    assert.equal(admin.status, 404);
+    assert.deepEqual(replicas.map((replica) => replica.height), [0, 0]);
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
+});
+
+test("ingress rejects every non-exact route and method before reaching its upstream", async () => {
+  const tls = fixture();
+  const servers = [];
+  try {
+    let reached = 0;
+    const upstream = createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => {
+      reached += 1;
+      request.resume();
+      response.writeHead(500); response.end("unexpected upstream request");
+    });
+    servers.push(upstream);
+    const upstreamOrigin = `https://127.0.0.1:${await listen(upstream)}`;
+    const ingress = createValidatorTransactionIngressServer({
+      expectedNetworkId: "nir-distributed-devnet", tlsCertificateSha256: tls.pin,
+      upstreamOrigin,
+    });
+    servers.push(ingress);
+    const base = `http://127.0.0.1:${await listen(ingress)}`;
+    for (const [method, path] of [["POST", "/v1/blocks/produce"], ["POST", "/v1/sync"],
+      ["POST", "/v1/gossip/transactions"], ["GET", "/v1/transactions"],
+      ["OPTIONS", "/v1/transactions"], ["POST", "/v1/transactions?admin=1"],
+      ["POST", "/v1//transactions"], ["POST", "/V1/transactions"]]) {
+      const response = await fetch(`${base}${path}`, { method });
+      assert.equal(response.status, 404, `${method} ${path}`);
+    }
+    assert.equal(reached, 0);
+    const origin = await fetch(`${base}/v1/transactions`, {
+      method: "POST", headers: { origin: "https://example.invalid", "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(origin.status, 403);
+    assert.equal(reached, 0);
+    const tooLarge = await fetch(`${base}/v1/transactions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ networkId: "nir-distributed-devnet", data: "x".repeat(65_536) }),
+    });
+    assert.equal(tooLarge.status, 413);
+    assert.equal(reached, 0);
+    const wrongPin = createValidatorTransactionIngressServer({
+      expectedNetworkId: "nir-distributed-devnet", tlsCertificateSha256: "0".repeat(64),
+      upstreamOrigin,
+    });
+    servers.push(wrongPin);
+    const wrongPinBase = `http://127.0.0.1:${await listen(wrongPin)}`;
+    const pinned = await fetch(`${wrongPinBase}/v1/transactions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ networkId: "nir-distributed-devnet" }),
+    });
+    assert.equal(pinned.status, 502);
+    assert.equal(reached, 0, "TLS mismatch must be rejected before sending an upstream HTTP request");
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
+});
+
+test("ingress upstream must be an exact pinned loopback HTTPS origin", () => {
+  const base = { expectedNetworkId: "nir-distributed-devnet",
+    tlsCertificateSha256: "a".repeat(64), upstreamOrigin: "https://127.0.0.1:8443" };
+  assert.deepEqual(validateValidatorTransactionIngressConfig(base), base);
+  for (const upstreamOrigin of ["http://127.0.0.1:8443", "https://example.com:8443",
+    "https://localhost:8443", "https://127.0.0.1:8443/v1/transactions",
+    "https://127.0.0.1:8443?x=1", "https://user@127.0.0.1:8443"] ) {
+    assert.throws(() => validateValidatorTransactionIngressConfig({ ...base, upstreamOrigin }),
+      /loopback HTTPS upstream origin/);
+  }
+});
+
+test("transaction ingress CLI refuses public listener addresses", () => {
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL("../blockchain/validator-transaction-ingress-cli.mjs", import.meta.url)),
+    "https://127.0.0.1:8443", "a".repeat(64), "nir-distributed-devnet", "8789", "0.0.0.0",
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /explicit loopback host/);
+});
