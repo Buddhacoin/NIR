@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import {
-  existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
+  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync,
+  writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -26,6 +27,15 @@ import {
   assembleCeremonyRegistryAnchor, signCeremonyRegistryAnchor,
 } from "../blockchain/genesis-ceremony-anchor.mjs";
 import { requestJson } from "../blockchain/http-client.mjs";
+import {
+  certificateHistoryHead, createCertificateRecord, EMPTY_CERTIFICATE_RECORD_HASH,
+  topologyHistoryCommitment,
+} from "../blockchain/certificate-lifecycle.mjs";
+import { certificateStorePaths, installCertificateRecord }
+  from "../blockchain/certificate-lifecycle-store.mjs";
+import { CERTIFICATE_MODE_LIFECYCLE, RuntimeCertificatePins }
+  from "../blockchain/certificate-runtime.mjs";
+import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createPeerRequest, verifyPeerResponse } from "../blockchain/peer-auth.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import {
@@ -58,7 +68,7 @@ function certificate(directory, index) {
   const pem = readFileSync(certificatePath);
   return {
     fingerprint: new X509Certificate(pem).fingerprint256.replaceAll(":", "").toLowerCase(),
-    keyPath,
+    certificatePath, keyPath,
     pem,
   };
 }
@@ -175,12 +185,18 @@ async function fixture(root) {
   };
 }
 
-async function startValidator(values, index) {
+async function startValidator(values, index, {
+  anchorPath = null, certificatePath = null, keyPath = null,
+  mode = "dev-genesis",
+} = {}) {
   const environment = {
-    ...process.env, NIR_CERTIFICATE_MODE: "dev-genesis",
-    NIR_TLS_KEY_PATH: values.certificates[index].keyPath,
+    ...process.env, NIR_CERTIFICATE_MODE: mode,
+    NIR_TLS_KEY_PATH: keyPath ?? values.certificates[index].keyPath,
   };
-  delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
+  if (anchorPath === null) delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
+  else environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH = anchorPath;
+  if (certificatePath === null) delete environment.NIR_TLS_CERT_PATH;
+  else environment.NIR_TLS_CERT_PATH = certificatePath;
   const child = spawn(process.execPath, [
     "blockchain/network-cli.mjs", "serve-validator", values.targets[index],
     String(values.ports[index]), values.releaseSigner.address,
@@ -216,7 +232,8 @@ async function startValidator(values, index) {
   };
 }
 
-async function authenticatedRequest(values, fromIndex, toIndex, path, payload) {
+async function authenticatedRequest(values, fromIndex, toIndex, path, payload,
+  certificateFingerprint = values.certificates[toIndex].fingerprint) {
   const auth = createPeerRequest({
     body: payload, networkId: values.plan.networkId, path,
     wallet: values.transports[fromIndex],
@@ -224,7 +241,7 @@ async function authenticatedRequest(values, fromIndex, toIndex, path, payload) {
   const response = await requestJson(`${values.plan.validators.find(({ address }) =>
     address === values.validators[toIndex].address).endpoint}${path}`, {
     body: { auth, payload }, method: "POST",
-    tlsCertificateSha256: values.certificates[toIndex].fingerprint,
+    tlsCertificateSha256: certificateFingerprint,
   });
   if (response.ok) {
     const trusted = publicWallet(values.transports[toIndex]);
@@ -650,6 +667,235 @@ test("four ceremony validators finalize, restart, and catch up without a coordin
     }
   } finally {
     await Promise.all(launched.map((instance) => instance.stop()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("four ceremony processes enforce lifecycle renewal, expiry, revocation, and anchored restart", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-ceremony-certificate-drill-"));
+  const running = new Map();
+  try {
+    const values = await fixture(root);
+    const chain = new NirChain(values.compiled.genesis);
+    const target = values.validators.findIndex(({ address }) =>
+      address === chain.expectedProposer(3, 0));
+    const observer = (target + 1) % 4;
+    const replacement = certificate(root, "replacement");
+    const liveCertificatePath = join(root, "live-certificate.pem");
+    const liveKeyPath = join(root, "live-key.pem");
+    copyFileSync(values.certificates[target].certificatePath, liveCertificatePath);
+    copyFileSync(values.certificates[target].keyPath, liveKeyPath);
+    const context = {
+      currentHeight: 0, minimumActivationDelay: 0,
+      networkId: values.compiled.genesis.networkId,
+      peerRegistryHash: peerRegistryHash(values.compiled.genesis.peerRegistry),
+      topologyHistoryHash: topologyHistoryCommitment(),
+      validators: values.compiled.genesis.validators,
+    };
+    const histories = [];
+    const anchorPaths = values.targets.map((_, index) =>
+      join(root, `external-certificate-head-${index}.json`));
+    const start = (index) => startValidator(values, index, {
+      anchorPath: anchorPaths[index],
+      certificatePath: index === target ? liveCertificatePath : null,
+      keyPath: index === target ? liveKeyPath : null,
+      mode: CERTIFICATE_MODE_LIFECYCLE,
+    });
+    // A ceremony process must not start lifecycle mode from only its static genesis pin.
+    await assert.rejects(() => start(0), /external certificate history anchor|ENOENT/);
+    const appendRecord = (record) => {
+      histories.push(record);
+      for (let index = 0; index < 4; index += 1) {
+        installCertificateRecord(join(values.targets[index], "certificates"), record, context);
+        writeFileSync(anchorPaths[index], `${JSON.stringify({
+          format: "nir-certificate-history-anchor-v1",
+          headHash: certificateHistoryHead(histories, context),
+          networkId: context.networkId, recordCount: histories.length, version: 1,
+        })}\n`, { mode: 0o600 });
+      }
+    };
+    for (let index = 0; index < 4; index += 1) {
+      appendRecord(createCertificateRecord({
+        activationHeight: 0,
+        certificate: {
+          serial: (0x10 + index).toString(16),
+          sha256: values.certificates[index].fingerprint,
+        },
+        networkId: context.networkId, operation: "issue", overlapUntilHeight: 0,
+        peerRegistryHash: context.peerRegistryHash,
+        previousRecordHash: EMPTY_CERTIFICATE_RECORD_HASH, sequence: 0,
+        topologyHistoryHash: context.topologyHistoryHash,
+        validatorAddress: values.validators[index].address,
+      }, values.validators.slice(0, 3)));
+    }
+    for (let index = 0; index < 4; index += 1) running.set(index, await start(index));
+    for (let index = 0; index < 4; index += 1) {
+      assert.equal((await health(values, index)).body.certificateMode, CERTIFICATE_MODE_LIFECYCLE);
+    }
+    const pins = (height) => new RuntimeCertificatePins(values.targets[observer],
+      values.compiled.genesis, { mode: CERTIFICATE_MODE_LIFECYCLE,
+        externalAnchorPath: anchorPaths[observer] }).pinsFor(values.validators[target].address, height);
+    const activeFingerprint = () => values.certificates[target].fingerprint;
+    let currentTargetFingerprint = activeFingerprint();
+    const liveHealth = (fingerprint) => requestJson(`https://127.0.0.1:${values.ports[target]}/health`, {
+      tlsCertificateSha256: fingerprint,
+    });
+    const waitForFingerprint = async (fingerprint) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          if ((await liveHealth(fingerprint)).status === 200) {
+            currentTargetFingerprint = fingerprint;
+            return;
+          }
+        } catch { /* The live context has not reloaded yet. */ }
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      throw new Error("ceremony process did not reload its TLS certificate");
+    };
+    const waitForHeight = async (height, except = -1) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const heights = await Promise.all(values.ports.map(async (_, index) => {
+          if (index === except) return height;
+          const fingerprint = index === target
+            ? currentTargetFingerprint : values.certificates[index].fingerprint;
+          try { return (await requestJson(`https://127.0.0.1:${values.ports[index]}/health`, {
+            tlsCertificateSha256: fingerprint,
+          })).body.height; } catch { return -1; }
+        }));
+        if (heights.every((seen) => seen >= height)) return;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`not all ceremony processes finalized height ${height}`);
+    };
+    const produce = async (height, submittedTransfer = null) => {
+      const proposer = values.validators.findIndex(({ address }) =>
+        address === chain.expectedProposer(height, 0));
+      const transfer = submittedTransfer ?? createMultisigTransfer({
+        amount: ATOMIC_UNITS.toString(), fee: MIN_TRANSFER_FEE.toString(),
+        memberPublicKeys: values.guardians.map(({ publicKey }) => publicKey),
+        networkId: context.networkId, nonce: height - 1,
+        recipient: generateWallet().address,
+        signerWallets: values.guardians.slice(0, 2), threshold: 2,
+      });
+      const proposerFingerprint = proposer === target
+        ? currentTargetFingerprint : values.certificates[proposer].fingerprint;
+      const url = `https://127.0.0.1:${values.ports[proposer]}`;
+      const ingress = await requestJson(`${url}/v1/transactions`, {
+        body: transfer, method: "POST", tlsCertificateSha256: proposerFingerprint,
+      });
+      assert.equal(ingress.status, 202, ingress.body.error);
+      const result = await requestJson(`${url}/v1/blocks/produce`, {
+        method: "POST", tlsCertificateSha256: proposerFingerprint,
+      });
+      assert.equal(result.status, 202, result.body.error);
+      assert.equal(result.body.height, height);
+      await waitForHeight(height, height === 4 ? target : -1);
+      const range = await authenticatedRequest(values, (observer + 1) % 4, observer,
+        "/v1/p2p/blocks/range", { fromHeight: height, limit: 1 });
+      assert.equal(range.status, 200, range.body.error);
+      const finalized = range.body.result.blocks[0];
+      if (height === 4) {
+        const delivered = await authenticatedRequest(values, observer, target,
+          "/v1/p2p/blocks", finalized, currentTargetFingerprint);
+        assert.equal(delivered.status, 200, delivered.body.error);
+        await waitForHeight(height);
+      }
+      chain.appendBlock(finalized);
+    };
+    const issue = histories.find((record) =>
+      record.validatorAddress === values.validators[target].address);
+    appendRecord(createCertificateRecord({
+      activationHeight: 1,
+      certificate: { serial: "20", sha256: replacement.fingerprint },
+      networkId: context.networkId, operation: "renew", overlapUntilHeight: 2,
+      peerRegistryHash: context.peerRegistryHash,
+      previousRecordHash: issue.recordHash, sequence: 1,
+      topologyHistoryHash: context.topologyHistoryHash,
+      validatorAddress: values.validators[target].address,
+    }, values.validators.slice(0, 3)));
+    await produce(1);
+    assert.deepEqual(pins(1), [replacement.fingerprint, activeFingerprint()]);
+    assert.equal((await liveHealth(activeFingerprint())).status, 200);
+    copyFileSync(replacement.certificatePath, liveCertificatePath);
+    copyFileSync(replacement.keyPath, liveKeyPath);
+    running.get(target).child.kill("SIGHUP");
+    await waitForFingerprint(replacement.fingerprint);
+    await produce(2);
+    assert.deepEqual(pins(2), [replacement.fingerprint, activeFingerprint()]);
+    copyFileSync(values.certificates[target].certificatePath, liveCertificatePath);
+    copyFileSync(values.certificates[target].keyPath, liveKeyPath);
+    running.get(target).child.kill("SIGHUP");
+    await waitForFingerprint(activeFingerprint());
+    await produce(3);
+    assert.deepEqual(pins(3), [replacement.fingerprint]);
+    const fourthTransfer = createMultisigTransfer({
+      amount: ATOMIC_UNITS.toString(), fee: MIN_TRANSFER_FEE.toString(),
+      memberPublicKeys: values.guardians.map(({ publicKey }) => publicKey),
+      networkId: context.networkId, nonce: 3,
+      recipient: generateWallet().address,
+      signerWallets: values.guardians.slice(0, 2), threshold: 2,
+    });
+    const gossipFromObserver = () => requestJson(
+      `https://127.0.0.1:${values.ports[observer]}/v1/transactions`, {
+        body: fourthTransfer, method: "POST",
+        tlsCertificateSha256: values.certificates[observer].fingerprint,
+      });
+    assert.equal((await liveHealth(activeFingerprint())).body.mempoolSize, 0);
+    const rejectedGossip = await gossipFromObserver();
+    assert.equal(rejectedGossip.status, 202, rejectedGossip.body.error);
+    assert.equal(rejectedGossip.body.gossipedPeers, 2,
+      "a running validator must refuse the expired old-certificate peer");
+    assert.equal((await liveHealth(activeFingerprint())).body.mempoolSize, 0);
+    const path = "/v1/p2p/health";
+    const payload = {};
+    const auth = createPeerRequest({
+      body: payload, networkId: context.networkId, path,
+      wallet: values.transports[observer],
+    });
+    await assert.rejects(() => requestJson(
+      `https://127.0.0.1:${values.ports[target]}${path}`, {
+        body: { auth, payload }, method: "POST", tlsCertificateSha256Pins: pins(3),
+      }), /certificate pin mismatch/);
+    assert.equal((await liveHealth(activeFingerprint())).body.height, 3);
+    copyFileSync(replacement.certificatePath, liveCertificatePath);
+    copyFileSync(replacement.keyPath, liveKeyPath);
+    running.get(target).child.kill("SIGHUP");
+    await waitForFingerprint(replacement.fingerprint);
+    const accepted = await requestJson(`https://127.0.0.1:${values.ports[target]}${path}`, {
+      body: { auth, payload }, method: "POST", tlsCertificateSha256Pins: pins(3),
+    });
+    assert.equal(accepted.status, 200, accepted.body.error);
+    verifyPeerResponse({
+      auth: accepted.body.auth, networkId: context.networkId,
+      requestNonce: auth.nonce, result: accepted.body.result,
+      trustedPeer: publicWallet(values.transports[target]),
+    });
+    const acceptedGossip = await gossipFromObserver();
+    assert.equal(acceptedGossip.status, 202, acceptedGossip.body.error);
+    assert.equal(acceptedGossip.body.gossipedPeers, 3);
+    assert.equal((await liveHealth(replacement.fingerprint)).body.mempoolSize, 1);
+    const beforeRevoke = certificateStorePaths(join(values.targets[target], "certificates"));
+    const oldPrimary = readFileSync(beforeRevoke.primary);
+    const oldBackup = readFileSync(beforeRevoke.backup);
+    appendRecord(createCertificateRecord({
+      activationHeight: 4, certificate: null,
+      networkId: context.networkId, operation: "revoke", overlapUntilHeight: 4,
+      peerRegistryHash: context.peerRegistryHash,
+      previousRecordHash: histories.at(-1).recordHash, sequence: 2,
+      topologyHistoryHash: context.topologyHistoryHash,
+      validatorAddress: values.validators[target].address,
+    }, values.validators.slice(0, 3)));
+    await produce(4, fourthTransfer);
+    assert.throws(() => pins(4), /no active lifecycle/);
+    await running.get(target).stop();
+    running.delete(target);
+    await assert.rejects(() => start(target), /no active lifecycle/);
+    // Rolling back both locally signed copies is still rejected by the off-node head.
+    writeFileSync(beforeRevoke.primary, oldPrimary);
+    writeFileSync(beforeRevoke.backup, oldBackup);
+    await assert.rejects(() => start(target), /external anchor|below or conflicts/);
+  } finally {
+    await Promise.all([...running.values()].map((instance) => instance.stop()));
     rmSync(root, { recursive: true, force: true });
   }
 });
