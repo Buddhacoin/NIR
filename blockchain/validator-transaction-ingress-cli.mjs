@@ -2,26 +2,48 @@
 import process from "node:process";
 
 import { listenOnLoopback } from "./loopback-listener.mjs";
+import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
+import { verifyCeremonyBoundTransactionIngressConfig }
+  from "./validator-transaction-ingress-ceremony.mjs";
 import { createValidatorTransactionIngressServer }
   from "./validator-transaction-ingress.mjs";
 
-const [upstreamOrigin, tlsCertificateSha256, expectedNetworkId, portText, host = "127.0.0.1",
-  walletOrigin = null] =
-  process.argv.slice(2);
-
 try {
-  if (process.argv.length < 6 || process.argv.length > 8) {
-    throw new Error("usage: network:transaction-ingress <loopback-https-validator-origin> <tls-sha256-pin> <network-id> <listen-port> [127.0.0.1|::1] [exact-http-wallet-or-pinned-extension-origin]");
+  const args = process.argv.slice(2);
+  const ceremonyMode = args[0] === "--ceremony";
+  let portText, host, walletOrigin, config;
+  if (ceremonyMode) {
+    if (args.length < 10 || args.length > 12) {
+      throw new Error("usage: network:transaction-ingress --ceremony <registry-dir> <external-anchor.json> <trusted-release-signer-address> <pinned-genesis-hash> <validator-address> <loopback-https-validator-origin> <tls-sha256-pin> <network-id> <listen-port> [127.0.0.1|::1] [exact-wallet-origin]");
+    }
+    const [, registryDirectory, anchorPath, trustedReleaseSignerAddress,
+      expectedGenesisHash, validatorAddress, expectedUpstreamOrigin,
+      expectedTlsCertificateSha256, expectedNetworkId, selectedPort,
+      selectedHost = "127.0.0.1", selectedWalletOrigin = null] = args;
+    portText = selectedPort; host = selectedHost; walletOrigin = selectedWalletOrigin;
+    config = verifyCeremonyBoundTransactionIngressConfig({
+      anchor: readBoundedPublicJsonFile(anchorPath, {
+        label: "external ceremony anchor", maximumBytes: 1024 * 1024,
+      }), expectedGenesisHash, expectedNetworkId,
+      expectedTlsCertificateSha256, expectedUpstreamOrigin, registryDirectory,
+      trustedReleaseSignerAddress, validatorAddress, walletOrigin,
+    });
+  } else {
+    if (args.length < 4 || args.length > 6) {
+      throw new Error("usage: network:transaction-ingress <loopback-https-validator-origin> <tls-sha256-pin> <network-id> <listen-port> [127.0.0.1|::1] [exact-wallet-origin]");
+    }
+    const [upstreamOrigin, tlsCertificateSha256, expectedNetworkId, selectedPort,
+      selectedHost = "127.0.0.1", selectedWalletOrigin = null] = args;
+    portText = selectedPort; host = selectedHost; walletOrigin = selectedWalletOrigin;
+    config = { expectedNetworkId, tlsCertificateSha256, upstreamOrigin, walletOrigin };
   }
   const port = Number(portText);
-  const server = createValidatorTransactionIngressServer({
-    expectedNetworkId, tlsCertificateSha256, upstreamOrigin, walletOrigin,
-  });
+  const server = createValidatorTransactionIngressServer(config);
   await listenOnLoopback(server, { host, label: "validator transaction ingress", port });
   const shutdown = () => server.gracefulShutdown().then(() => process.exit(0), () => process.exit(1));
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  console.log(`NIR transaction ingress listening on http://${host}:${port}`);
+  console.log(`NIR transaction ingress (${ceremonyMode ? "ceremony-bound startup" : "local/dev"}) listening on http://${host}:${port}`);
 } catch (error) {
   console.error(`Transaction ingress failed: ${error.message}`);
   process.exitCode = 1;

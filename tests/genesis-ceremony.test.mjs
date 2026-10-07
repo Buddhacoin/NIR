@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createServer as createTcpServer } from "node:net";
 import {
   mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync,
   writeFileSync,
@@ -8,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { finalizeBlock, NirChain, multisigAddress } from "../blockchain/chain.mjs";
 import {
@@ -45,6 +47,8 @@ import {
   repairCeremonyRegistryOneCopy,
   verifyCeremonyRegistry,
 } from "../blockchain/genesis-ceremony-store.mjs";
+import { verifyCeremonyBoundTransactionIngressConfig }
+  from "../blockchain/validator-transaction-ingress-ceremony.mjs";
 
 function digest(label) {
   return createHash("sha256").update(label).digest("hex");
@@ -337,6 +341,131 @@ test("v2 compiled genesis can activate sequential protocol v24 through v28", () 
     ...proofOptions, checkpoint: { ...proofOptions.checkpoint,
       stateRoot: foreign.blocks()[0].stateRoot, tipHash: foreignGenesis.genesisHash },
   }), /pinned genesis identity/);
+});
+
+test("ceremony-bound ingress startup derives its upstream only from an anchored v2 registry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-ceremony-bound-ingress-"));
+  try {
+    const values = v2Fixture("ingress-startup");
+    const upstreamOrigin = "https://127.0.0.1:8791";
+    const tlsCertificateSha256 = "a".repeat(64);
+    values.input.validators[0].endpoint = upstreamOrigin;
+    values.input.validators[0].tlsCertificateSha256 = tlsCertificateSha256;
+    const { plan, envelope } = approved(values);
+    const registryDirectory = join(root, "registry");
+    appendCeremonyRegistry(registryDirectory, plan, envelope, values.releaseOptions);
+    const state = verifyCeremonyRegistry(registryDirectory,
+      { trustedAddress: values.releaseOptions.trustedAddress });
+    const payload = createCeremonyRegistryAnchorPayload(state);
+    const approvals = values.operators.slice(0, 3).map((wallet) =>
+      signCeremonyRegistryAnchor(payload, plan, wallet, values.releaseOptions));
+    const anchor = assembleCeremonyRegistryAnchor(payload, plan, approvals,
+      values.releaseOptions);
+    const genesisHash = compileGenesis(plan, envelope, values.releaseOptions).genesisHash;
+    const options = { anchor, expectedGenesisHash: genesisHash,
+      expectedNetworkId: plan.networkId, expectedTlsCertificateSha256: tlsCertificateSha256,
+      expectedUpstreamOrigin: upstreamOrigin, registryDirectory,
+      trustedReleaseSignerAddress: values.releaseOptions.trustedAddress,
+      validatorAddress: values.validators[0].address, walletOrigin: null };
+    assert.deepEqual(verifyCeremonyBoundTransactionIngressConfig(options), {
+      expectedNetworkId: plan.networkId, tlsCertificateSha256,
+      upstreamOrigin, walletOrigin: null,
+    });
+    const anchorPath = join(root, "external-anchor.json");
+    writeFileSync(anchorPath, JSON.stringify(anchor));
+    const probe = createTcpServer();
+    await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = probe.address().port;
+    await new Promise((resolve) => probe.close(resolve));
+    const cli = fileURLToPath(new URL("../blockchain/validator-transaction-ingress-cli.mjs",
+      import.meta.url));
+    const failedStart = spawnSync(process.execPath, [cli, "--ceremony", registryDirectory,
+      anchorPath, values.releaseOptions.trustedAddress, "f".repeat(64),
+      values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
+      plan.networkId, String(port)], { encoding: "utf8" });
+    assert.equal(failedStart.status, 1);
+    assert.match(failedStart.stderr, /genesis/);
+    const linkedAnchorPath = join(root, "linked-anchor.json");
+    symlinkSync(anchorPath, linkedAnchorPath);
+    const oversizedAnchorPath = join(root, "oversized-anchor.json");
+    writeFileSync(oversizedAnchorPath, " ".repeat(1024 * 1024 + 1), { mode: 0o600 });
+    for (const unsafeAnchorPath of [linkedAnchorPath, oversizedAnchorPath]) {
+      const rejected = spawnSync(process.execPath, [cli, "--ceremony", registryDirectory,
+        unsafeAnchorPath, values.releaseOptions.trustedAddress, genesisHash,
+        values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
+        plan.networkId, String(port)], { encoding: "utf8" });
+      assert.equal(rejected.status, 1);
+      assert.match(rejected.stderr, /external ceremony anchor file is unsafe/);
+    }
+    const available = createTcpServer();
+    await new Promise((resolve) => available.listen(port, "127.0.0.1", resolve));
+    await new Promise((resolve) => available.close(resolve));
+    const running = spawn(process.execPath, [cli, "--ceremony", registryDirectory,
+      anchorPath, values.releaseOptions.trustedAddress, genesisHash,
+      values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
+      plan.networkId, String(port)], { stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("ceremony-bound ingress did not listen")), 5_000);
+        running.stdout.on("data", (chunk) => {
+          if (chunk.toString().includes("ceremony-bound startup")) {
+            clearTimeout(timer); resolve();
+          }
+        });
+        running.once("exit", (code) => {
+          clearTimeout(timer); reject(new Error(`ceremony-bound ingress exited ${code}`));
+        });
+      });
+      const response = await fetch(`http://127.0.0.1:${port}/v1/transactions`);
+      assert.equal(response.status, 404);
+    } finally {
+      if (running.exitCode === null) {
+        const exited = new Promise((resolve) => running.once("exit", resolve));
+        running.kill("SIGTERM");
+        await exited;
+      }
+    }
+    for (const changed of [
+      { anchor: null }, { expectedGenesisHash: "f".repeat(64) },
+      { trustedReleaseSignerAddress: values.operators[0].address },
+      { validatorAddress: values.validators[1].address },
+      { expectedNetworkId: "foreign-network" },
+      { expectedUpstreamOrigin: "https://127.0.0.1:8792" },
+      { expectedTlsCertificateSha256: "b".repeat(64) },
+    ]) {
+      assert.throws(() => verifyCeremonyBoundTransactionIngressConfig({ ...options, ...changed }));
+    }
+    const foreign = v2Fixture("foreign-ingress-startup");
+    foreign.input.validators[0].endpoint = upstreamOrigin;
+    foreign.input.validators[0].tlsCertificateSha256 = tlsCertificateSha256;
+    const other = approved(foreign);
+    const foreignRegistry = join(root, "foreign-registry");
+    appendCeremonyRegistry(foreignRegistry, other.plan, other.envelope, foreign.releaseOptions);
+    const foreignState = verifyCeremonyRegistry(foreignRegistry,
+      { trustedAddress: foreign.releaseOptions.trustedAddress });
+    const foreignPayload = createCeremonyRegistryAnchorPayload(foreignState);
+    const foreignApprovals = foreign.operators.slice(0, 3).map((wallet) =>
+      signCeremonyRegistryAnchor(foreignPayload, other.plan, wallet, foreign.releaseOptions));
+    const foreignAnchor = assembleCeremonyRegistryAnchor(foreignPayload, other.plan,
+      foreignApprovals, foreign.releaseOptions);
+    assert.throws(() => verifyCeremonyBoundTransactionIngressConfig({ ...options,
+      anchor: foreignAnchor, registryDirectory: foreignRegistry,
+      trustedReleaseSignerAddress: foreign.releaseOptions.trustedAddress,
+      validatorAddress: foreign.validators[0].address,
+      expectedNetworkId: other.plan.networkId,
+    }), /genesis/);
+    const foreignAnchorPath = join(root, "foreign-anchor.json");
+    writeFileSync(foreignAnchorPath, JSON.stringify(foreignAnchor));
+    const rejectedForeignStart = spawnSync(process.execPath, [cli, "--ceremony",
+      foreignRegistry, foreignAnchorPath, foreign.releaseOptions.trustedAddress,
+      genesisHash, foreign.validators[0].address, upstreamOrigin,
+      tlsCertificateSha256, other.plan.networkId, String(port)], { encoding: "utf8" });
+    assert.equal(rejectedForeignStart.status, 1);
+    assert.match(rejectedForeignStart.stderr, /genesis/);
+    const afterForeign = createTcpServer();
+    await new Promise((resolve) => afterForeign.listen(port, "127.0.0.1", resolve));
+    await new Promise((resolve) => afterForeign.close(resolve));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("legacy v1 ceremony genesis cannot acquire the v27 environment retroactively", () => {

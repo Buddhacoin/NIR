@@ -11,16 +11,41 @@ Its success response contains only `status` (`queued` or `known`),
 `transactionId`, and `gossipedPeers`; it never relays validator receipts,
 inclusion certificates, heights, or other finality-looking fields.
 
-Start a validator first, using its normal operator procedure. Obtain its
-network ID and currently trusted TLS certificate SHA-256 fingerprint from
+The positional command below is strictly for **local/dev use** and is not an
+acceptable production operator launcher. Start a validator
+first, using its normal operator procedure. Obtain its network ID and currently
+trusted TLS certificate SHA-256 fingerprint from
 operator-controlled evidence. Then run:
 
 ```bash
 npm run network:transaction-ingress -- https://127.0.0.1:8791 <tls-certificate-sha256> <network-id> 8789 127.0.0.1 http://127.0.0.1:8765
 ```
 
-The optional fifth argument is the listen address, limited to `127.0.0.1` or
-`::1`. The optional sixth argument enables browser submission for one exact
+An optional **ceremony-bound startup mode** verifies a v2 ceremony registry
+against an externally supplied operator-signed anchor, an independently pinned
+release signer address, and an independently pinned genesis hash before opening
+the loopback listener. Select the validator by its consensus address; the
+upstream origin, TLS pin, and network ID on the command line are exact assertions
+against that validator's verified ceremony record. The gateway uses the verified
+values. The external anchor file must be distributed separately from the
+registry and reviewed by the operator.
+
+```bash
+npm run network:transaction-ingress -- --ceremony \
+  <registry-dir> <external-anchor.json> <trusted-release-signer-address> \
+  <pinned-genesis-hash> <validator-address> https://127.0.0.1:8791 \
+  <tls-certificate-sha256> <network-id> 8789 127.0.0.1 \
+  http://127.0.0.1:8765
+```
+
+Missing or mismatched ceremony evidence exits before the listener opens. This
+checks startup metadata only. This does not prove the running upstream belongs
+to the pinned genesis or is live. It does not verify certificate lifecycle,
+current finality, or economic claims about the network. The listener remains
+loopback only.
+
+In local/dev mode, the optional fifth argument is the listen address, limited
+to `127.0.0.1` or `::1`. The optional sixth argument enables browser submission for one exact
 `http://127.0.0.1:<port>` wallet preview origin or the pinned unpacked wallet
 extension origin, `chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm`.
 Run a separate gateway instance if both browser surfaces are needed; each
@@ -58,12 +83,12 @@ unchanged. Current Chrome versions may ask the user to permit local or loopback
 network access before the extension can connect; this runtime browser grant is
 separate from the extension manifest permissions.
 
-The gateway verifies the configured network ID and pinned upstream certificate,
+The local/dev mode verifies the configured network ID and pinned upstream certificate,
 but it does **not** prove that the network is valueless. A read node's
 `valueMode` label is not independent genesis evidence. Operators must use only
 their reviewed valueless developer-testnet ceremony and must not connect this
-preview to a network representing real value. Binding ingress startup to
-verified ceremony and certificate-lifecycle evidence remains a separate gate.
+preview to a network representing real value. Signed certificate-lifecycle
+evidence remains a separate gate for both modes.
 
 The supplied fingerprint is a static local trust pin. It must be refreshed
 under operator control when the validator certificate rotates; this gateway

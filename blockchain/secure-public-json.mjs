@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 
 import { parseConsensusJson } from "./consensus-json.mjs";
 
@@ -24,10 +24,17 @@ export function readBoundedPublicJsonFile(path, {
       throw new Error(`${label} file changed during open`);
     }
     _afterOpen?.({ descriptor, path });
-    const bytes = readFileSync(descriptor); const after = fstatSync(descriptor); const linked = lstatSync(path);
-    if (bytes.length !== opened.size || !same(opened, after) || !same(opened, linked) ||
+    const bytes = Buffer.allocUnsafe(opened.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(descriptor, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    const after = fstatSync(descriptor); const linked = lstatSync(path);
+    if (length !== opened.size || !same(opened, after) || !same(opened, linked) ||
         opened.size !== after.size || opened.mtimeMs !== after.mtimeMs ||
         opened.ctimeMs !== after.ctimeMs) throw new Error(`${label} file changed during read`);
-    return parseConsensusJson(bytes.toString("utf8"));
+    return parseConsensusJson(bytes.subarray(0, length).toString("utf8"));
   } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, linkSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  appendFileSync, chmodSync, linkSync, mkdtempSync, renameSync, rmSync, symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +48,13 @@ test("secure public JSON rejects links, writable inputs, and path replacement ra
       renameSync(target, displaced);
       writeFileSync(target, "{\"value\":2}\n", { mode: 0o600 });
     } }), /changed during read/);
+
+    const growing = join(root, "growing.json");
+    writeFileSync(growing, "{\"value\":1}\n", { mode: 0o600 });
+    assert.throws(() => readBoundedPublicJsonFile(growing, {
+      maximumBytes: 64,
+      _afterOpen: () => appendFileSync(growing, " ".repeat(1024 * 1024)),
+    }), /changed during read/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
