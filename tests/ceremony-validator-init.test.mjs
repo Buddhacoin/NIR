@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import {
   chmodSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync,
@@ -64,7 +64,9 @@ async function availablePort() {
 }
 
 async function startCeremonyProcess(target, port, inputs) {
-  const environment = { ...process.env, NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+  const environment = { ...process.env, NIR_CERTIFICATE_MODE: "dev-genesis",
+    NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+  delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
   const child = spawn(process.execPath, [
     "blockchain/network-cli.mjs", "serve-validator", target, String(port),
     inputs.trustedAddress,
@@ -288,7 +290,8 @@ test("public deployment plan binds ceremony network, genesis, release, endpoint,
         tlsCertificateSha256: participant.tlsCertificateSha256 },
       format: "nir-validator-deployment-input-v1", listenPort: 9443,
       operatorId: participant.operatorId,
-      paths: { planOutput: join(root, "deployment-plan.json"),
+      paths: { certificateHeadAnchor: join(root, "certificate-head-anchor.json"),
+        planOutput: join(root, "deployment-plan.json"),
         stateDirectory: join(root, "state"), tlsPrivateKey: join(root, "tls.key"),
         transportVault: join(root, "transport.vault"), validatorVault: join(root, "validator.vault") },
       trustedReleaseAddress: inputs.trustedAddress,
@@ -301,6 +304,8 @@ test("public deployment plan binds ceremony network, genesis, release, endpoint,
     assert.equal(plan.networkId, inputs.genesis.networkId);
     assert.deepEqual(plan.steps[3].argv.slice(5),
       inputs.genesis.peerRegistry.peers.map(({ url }) => url));
+    assert.equal(plan.steps.find(({ label }) => label === "Start validator").environment
+      .NIR_CERTIFICATE_HEAD_ANCHOR_PATH, input.paths.certificateHeadAnchor);
     assert.equal(plan.steps.at(-1).argv.at(-1), input.paths.planOutput);
     assert.equal(JSON.stringify(plan).includes("password"), false);
     const publicValues = { anchor: inputs.anchor, approvals: inputs.envelope,
@@ -385,6 +390,16 @@ test("serve-validator restarts from inherited vault-password FDs and serves TLS/
     initializeValidatorFromCeremony(target, cloneInputs(inputs));
     const port = await availablePort();
     const url = `https://127.0.0.1:${port}`;
+    const noModeEnvironment = { ...process.env, NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+    delete noModeEnvironment.NIR_CERTIFICATE_MODE;
+    delete noModeEnvironment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
+    const noMode = spawnSync(process.execPath, [
+      "blockchain/network-cli.mjs", "serve-validator", target, String(port),
+      inputs.trustedAddress,
+    ], { cwd: new URL("..", import.meta.url), encoding: "utf8", env: noModeEnvironment });
+    assert.equal(noMode.status, 1);
+    assert.equal(noMode.stderr,
+      "Network operation failed: ceremony validator startup requires explicit NIR_CERTIFICATE_MODE\n");
     for (let attempt = 0; attempt < 2; attempt += 1) {
       running = await startCeremonyProcess(target, port, inputs);
       const health = await requestJson(`${url}/health`, {

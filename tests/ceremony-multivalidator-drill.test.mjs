@@ -177,8 +177,10 @@ async function fixture(root) {
 
 async function startValidator(values, index) {
   const environment = {
-    ...process.env, NIR_TLS_KEY_PATH: values.certificates[index].keyPath,
+    ...process.env, NIR_CERTIFICATE_MODE: "dev-genesis",
+    NIR_TLS_KEY_PATH: values.certificates[index].keyPath,
   };
+  delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
   const child = spawn(process.execPath, [
     "blockchain/network-cli.mjs", "serve-validator", values.targets[index],
     String(values.ports[index]), values.releaseSigner.address,

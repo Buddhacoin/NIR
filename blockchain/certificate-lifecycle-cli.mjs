@@ -9,6 +9,7 @@ import {
   createCertificateRecord,
   EMPTY_CERTIFICATE_RECORD_HASH,
   certificatePinsAtHeight,
+  certificateHistoryHead,
 } from "./certificate-lifecycle.mjs";
 import {
   installCertificateRecord,
@@ -105,6 +106,8 @@ try {
       validatorAddress))];
     console.log(JSON.stringify({
       height,
+      headHash: certificateHistoryHead(loaded.history, baseVerificationContext(context)),
+      networkId: context.networkId,
       records: loaded.history.length,
       validators: validators.map((validatorAddress) => ({
         pins: certificatePinsAtHeight(loaded.history, validatorAddress, height),

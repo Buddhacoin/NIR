@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import {
+  certificateHistoryHead,
   certificateRecordHash,
   MAX_CERTIFICATE_RECORDS,
   verifyCertificateHistory,
@@ -15,6 +16,24 @@ import {
 const PRIMARY = "NETWORK-CERTIFICATES.json";
 const BACKUP = "NETWORK-CERTIFICATES.backup.json";
 export const MAX_CERTIFICATE_STORE_BYTES = 4 * 1024 * 1024;
+const ANCHOR_FORMAT = "nir-certificate-history-anchor-v1";
+const HASH = /^[0-9a-f]{64}$/u;
+
+/** An independently retained lower bound on the locally accepted certificate history. */
+export function verifyCertificateHistoryAnchor(history, context, anchor) {
+  if (!anchor || typeof anchor !== "object" || Array.isArray(anchor) ||
+      Object.keys(anchor).sort().join("\0") !==
+        ["format", "headHash", "networkId", "recordCount", "version"].sort().join("\0") ||
+      anchor.format !== ANCHOR_FORMAT || anchor.version !== 1 ||
+      anchor.networkId !== context?.networkId ||
+      !Number.isSafeInteger(anchor.recordCount) || anchor.recordCount < 1 ||
+      anchor.recordCount > MAX_CERTIFICATE_RECORDS || !HASH.test(anchor.headHash ?? "") ||
+      !Array.isArray(history) || history.length < anchor.recordCount ||
+      certificateHistoryHead(history.slice(0, anchor.recordCount), context) !== anchor.headHash) {
+    throw new Error("certificate lifecycle history is below or conflicts with external anchor");
+  }
+  return history;
+}
 
 function serialized(history) {
   const contents = `${JSON.stringify(history)}\n`;
@@ -85,7 +104,7 @@ function readCopy(path, context) {
   }
 }
 
-export function loadCertificateHistory(directory, context) {
+export function loadCertificateHistory(directory, context, { externalAnchor = null } = {}) {
   const root = resolve(directory);
   if (existsSync(root) && lstatSync(root).isSymbolicLink()) {
     throw new Error("certificate lifecycle directory cannot be a symbolic link");
@@ -95,6 +114,7 @@ export function loadCertificateHistory(directory, context) {
   const valid = copies.filter(Boolean).sort((left, right) =>
     right.history.length - left.history.length);
   if (valid.length === 0) {
+    if (externalAnchor !== null) verifyCertificateHistoryAnchor([], context, externalAnchor);
     if (paths.some(existsSync)) throw new Error("all certificate lifecycle copies are invalid");
     return { history: [], recoveredCopies: 0 };
   }
@@ -105,6 +125,7 @@ export function loadCertificateHistory(directory, context) {
       throw new Error("certificate lifecycle store copies conflict");
     }
   }
+  if (externalAnchor !== null) verifyCertificateHistoryAnchor(valid[0].history, context, externalAnchor);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   let recoveredCopies = 0;
   for (let index = 0; index < paths.length; index += 1) {
