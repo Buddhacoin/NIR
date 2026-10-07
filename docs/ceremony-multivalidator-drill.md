@@ -80,7 +80,7 @@ This is a portable protocol and process-isolation drill. It does not claim that
 four ephemeral local processes represent independent machines, operators, fault
 domains, or production deployment readiness.
 
-## Certificate lifecycle process drill (Gate 5/11 preparation)
+## Certificate Lifecycle Process Drill
 
 Run the focused real-process test:
 
@@ -97,8 +97,8 @@ renewal overlap, verifies both pins at heights 1–2, and proves an old-certific
 connection is rejected at height 3 before its authenticated request reaches the
 handler. A second running validator's transaction gossip reaches only the two
 other peers while the expired certificate is served, then reaches all three
-after the target reloads the new certificate. It finalizes revocation at height 4, and
-rejects both a normal restart of the revoked validator and a restart after both
+after the target reloads the new certificate. It finalizes revocation at height 4
+and rejects both a normal restart of the revoked validator and a restart after both
 local history copies are rolled back below the external anchor.
 
 All four processes and anchors remain on one temporary local host. This is an
