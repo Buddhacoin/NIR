@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { X509Certificate } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
+import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -308,4 +309,36 @@ test("transaction ingress CLI refuses public listener addresses", () => {
   ], { encoding: "utf8" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /explicit loopback host/);
+});
+
+test("ceremony-bound CLI rejects a missing external anchor before port or upstream POST", async () => {
+  const tls = fixture();
+  const upstream = createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => {
+    posts += Number(request.method === "POST");
+    request.resume(); response.writeHead(500); response.end();
+  });
+  let posts = 0;
+  try {
+    const upstreamPort = await listen(upstream);
+    const probe = createTcpServer();
+    const port = await new Promise((resolve) => probe.listen(0, "127.0.0.1",
+      () => resolve(probe.address().port)));
+    await close(probe);
+    const cli = fileURLToPath(new URL("../blockchain/validator-transaction-ingress-cli.mjs",
+      import.meta.url));
+    const child = spawn(process.execPath, [cli, "--ceremony", join(tls.directory, "registry"),
+      join(tls.directory, "missing-anchor.json"), `nir1${"a".repeat(64)}`,
+      "a".repeat(64), `nir1${"b".repeat(64)}`,
+      `https://127.0.0.1:${upstreamPort}`, tls.pin, "nir-test-devnet", String(port)],
+    { stdio: "ignore" });
+    const status = await new Promise((resolve) => child.once("exit", resolve));
+    assert.equal(status, 1);
+    assert.equal(posts, 0);
+    const available = createTcpServer();
+    await new Promise((resolve) => available.listen(port, "127.0.0.1", resolve));
+    await close(available);
+  } finally {
+    await close(upstream);
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
 });
