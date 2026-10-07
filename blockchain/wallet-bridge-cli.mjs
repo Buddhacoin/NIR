@@ -10,18 +10,26 @@ import { NirChain } from "./chain.mjs";
 import { createProductionRuntimePolicyGuard,
   createWalletBridgeProductionGuard } from "./production-startup.mjs";
 
-function readSecret(prompt) {
+function readSecret(prompt, { signal } = {}) {
   return new Promise((resolve, reject) => {
     if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) {
       reject(new Error("wallet bridge confirmation requires an interactive terminal")); return;
     }
+    if (signal?.aborted) {
+      reject(new Error("signing confirmation expired")); return;
+    }
     process.stdout.write(prompt);
     let value = "";
+    let finished = false;
     const finish = (error) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
       process.stdin.off("data", onData); process.stdin.setRawMode(false);
       process.stdin.pause(); process.stdout.write("\n");
       error ? reject(error) : resolve(value);
     };
+    const onAbort = () => finish(new Error("signing confirmation expired"));
     const onData = (chunk) => {
       for (const character of chunk.toString("utf8")) {
         if (character === "\u0003") return finish(new Error("cancelled"));
@@ -30,6 +38,7 @@ function readSecret(prompt) {
         else if (character >= " ") value += character;
       }
     };
+    signal?.addEventListener("abort", onAbort, { once: true });
     process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on("data", onData);
   });
 }
@@ -137,7 +146,7 @@ try {
     ...(genesis ? { headerHistoryPath: `${vaultPath}.headers.json` } : {}),
     ...(genesis ? { trustHistoryPath } : {}),
     vaultPath,
-    authorize: async (intent) => {
+    authorize: async (intent, { signal } = {}) => {
       if (runtimePolicyGuard !== null) runtimePolicyGuard.verifyBeforeSensitiveAction();
       console.error("\nNIR signing request");
       console.error(`Action: ${intent.type ?? "transfer"}`);
@@ -151,9 +160,9 @@ try {
       console.error(`Fee: ${intent.fee ?? "consensus default"}`);
       console.error(`Nonce: ${intent.nonce}`);
       console.error(`Request: ${intent.requestId}`);
-      const confirmation = await readSecret("Type SIGN to approve: ");
+      const confirmation = await readSecret("Type SIGN to approve: ", { signal });
       if (confirmation !== "SIGN") return null;
-      const password = await readSecret("Wallet password: ");
+      const password = await readSecret("Wallet password: ", { signal });
       if (runtimePolicyGuard !== null) runtimePolicyGuard.verifyBeforeSensitiveAction();
       return password;
     },

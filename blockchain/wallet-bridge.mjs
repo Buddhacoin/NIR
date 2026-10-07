@@ -54,6 +54,8 @@ const REQUEST_ID = /^[0-9a-f]{64}$/;
 const SIMULATION_ID = /^[0-9a-f]{64}$/;
 const MAX_SIMULATIONS = 128;
 const SIMULATION_LIFETIME_MS = 120_000;
+const SIGN_CONFIRMATION_TIMEOUT_MS = 120_000;
+const SIGN_RESULT_LIFETIME_MS = 180_000;
 
 function send(response, status, value, origin) {
   const body = JSON.stringify(value);
@@ -376,6 +378,19 @@ export function createWalletBridgeServer({
   const verifiedAssetStates = new Map();
   const simulations = new Map();
   const seen = new Set();
+  const signResults = new Map();
+  const pruneSignResults = () => {
+    for (const [id, entry] of signResults) {
+      if (entry.completedAt && Date.now() - entry.completedAt > SIGN_RESULT_LIFETIME_MS) {
+        signResults.delete(id);
+      }
+    }
+    while (signResults.size > 128) {
+      const oldest = [...signResults].find(([, entry]) => entry.completedAt);
+      if (!oldest) break;
+      signResults.delete(oldest[0]);
+    }
+  };
   let pending = false;
   let pairingAttempts = 0;
   let pairingAvailable = pairingCode !== undefined;
@@ -443,7 +458,15 @@ export function createWalletBridgeServer({
         verifiedAccountStates.clear();
         verifiedAssetStates.clear();
         simulations.clear();
+        signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
+      }
+      if (request.method === "GET" && /^\/v1\/sign-result\/[0-9a-f]{64}$/.test(url.pathname)) {
+        pruneSignResults();
+        const entry = signResults.get(url.pathname.slice("/v1/sign-result/".length));
+        if (!entry) return send(response, 404, { error: "signing result is unavailable" }, origin);
+        if (!entry.completedAt) return send(response, 202, { status: "pending" }, origin);
+        return send(response, entry.status, entry.value, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(vaultPath), origin);
@@ -809,10 +832,23 @@ export function createWalletBridgeServer({
         });
         seen.add(intent.requestId);
         if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        pruneSignResults();
+        const resultEntry = { completedAt: null, status: null, value: null };
+        signResults.set(intent.requestId, resultEntry);
         pending = true;
         const signingGeneration = sessionGeneration;
         try {
-          const password = await authorize(structuredClone(intent));
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize(structuredClone(intent), { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("signing confirmation expired; review and start a new request"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
           if (typeof password !== "string") throw new Error("signing was rejected by the user");
           if (!sessionActive || signingGeneration !== sessionGeneration) {
             throw new Error("bridge session ended before signing authorization completed");
@@ -825,12 +861,21 @@ export function createWalletBridgeServer({
                 path: vaultPath, password, intent: { ...payload, requestId },
               })
               : signWalletTransfer({ path: vaultPath, password, ...payload });
-          return send(response, 200, {
+          const value = {
             requestId,
             ...(reviewedSimulationId ? { simulationId: reviewedSimulationId } : {}),
             ...(url.pathname === "/v1/sign-payment-request"
               ? { paymentRequest: transaction } : { transaction }),
-          }, origin);
+          };
+          resultEntry.status = 200;
+          resultEntry.value = value;
+          resultEntry.completedAt = Date.now();
+          return send(response, 200, value, origin);
+        } catch (error) {
+          resultEntry.status = 400;
+          resultEntry.value = { error: error.message };
+          resultEntry.completedAt = Date.now();
+          throw error;
         } finally {
           pending = false;
         }

@@ -49,6 +49,7 @@ import { encryptWallet } from "../blockchain/vault.mjs";
 import { validatorReadinessSignerFixture }
   from "./validator-readiness-signer-fixture.mjs";
 import { validateProductionWalletExtensionArtifact } from "../blockchain/production-wallet-extension.mjs";
+import { WALLET_EXTENSION_ORIGIN } from "../blockchain/validator-transaction-ingress.mjs";
 import {
   assembleProductionRuntimePolicy, createProductionRuntimePolicy, inspectProductionRuntime,
   signProductionRuntimePolicy,
@@ -1098,6 +1099,13 @@ test("production wallet bridge and UI verify anchored generations before bind on
       kind: "node", sourceManifest: manifest,
     });
     assert.equal(validateProductionWalletExtensionArtifact(walletArtifact).files, walletFiles.length);
+    const packagedManifest = JSON.parse(readFileSync(join(values.root, "wallet-ui/manifest.json"), "utf8"));
+    const extensionId = [...createHash("sha256").update(Buffer.from(packagedManifest.key, "base64"))
+      .digest().subarray(0, 16)].map((byte) =>
+      "abcdefghijklmnop"[byte >> 4] + "abcdefghijklmnop"[byte & 15]).join("");
+    assert.equal(WALLET_EXTENSION_ORIGIN, `chrome-extension://${extensionId}`);
+    assert.deepEqual(packagedManifest.permissions, []);
+    assert.deepEqual(packagedManifest.host_permissions, ["http://127.0.0.1/*"]);
     const foreignSubmission = mutateArtifactText(walletArtifact, "nodes.json", (text) =>
       JSON.stringify({ ...JSON.parse(text), submissionOrigin: "http://example.invalid:8789" }));
     assert.throws(() => validateProductionWalletExtensionArtifact(foreignSubmission),
@@ -1114,7 +1122,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
       const value = JSON.parse(text); value.background = { service_worker: "sw.js" };
       return JSON.stringify(value);
     });
-    assert.throws(() => validateProductionWalletExtensionArtifact(backgroundArtifact), /schema/);
+    assert.throws(() => validateProductionWalletExtensionArtifact(backgroundArtifact), /background worker/);
     const contentScriptArtifact = mutateArtifactText(walletArtifact, "manifest.json", (text) => {
       const value = JSON.parse(text); value.content_scripts = [{ js: ["app.js"], matches: ["<all_urls>"] }];
       return JSON.stringify(value);
@@ -1133,7 +1141,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     });
     assert.throws(() => validateProductionWalletExtensionArtifact(cspArtifact), /permissions or CSP/);
     const traversalArtifact = mutateArtifactText(walletArtifact, "index.html",
-      (text) => text.replace("app.js?v=33", "../app.js"));
+      (text) => text.replace("app.js?v=34", "../app.js"));
     assert.throws(() => validateProductionWalletExtensionArtifact(traversalArtifact), /unsafe|unverified/);
     const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,

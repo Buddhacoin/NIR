@@ -172,7 +172,19 @@ verified again.
 
 For an unpacked extension, pass its exact stable
 `chrome-extension://<32-character-id>` origin instead. Do not allow a wildcard
-origin. This bridge is locally tested but has not received an external security
+origin. In Chrome, load `wallet-ui/` at `chrome://extensions` with Developer mode
+and **Load unpacked**, then click the NIR toolbar icon. It opens a persistent
+extension tab. Keep that tab open while switching to Terminal to check the
+transaction summary, type `SIGN`, and enter the vault password. Return to the
+same tab to inspect the signed JSON and click the separate local-testnet Submit
+button. A new tab starts a new in-memory wallet session and requires a new
+bridge process and pairing code after the previous session is lost; no token or
+signed transaction is stored in browser storage. The bridge allows two minutes
+for terminal confirmation. If the initial browser request times out after 30
+seconds, the same tab polls the bridge for that exact request's signed result;
+it never starts a second signature automatically. After a confirmation timeout,
+review the state and start a new signing request. This bridge is locally tested
+but has not received an external security
 audit and must not yet protect real-value funds.
 
 Use a randomly generated passphrase of at least six unrelated words and keep
@@ -197,12 +209,14 @@ hardware-key support, multisignature recovery, and optional selective privacy.
 
 `wallet-ui/` contains the first responsive interface and an installable PWA
 manifest. It can also be loaded as an unpacked browser-extension preview through
-its Manifest V3 file. The preview intentionally has no website permissions and
+its Manifest V3 file. The extension toolbar button opens a normal tab so terminal
+confirmation cannot dismiss the wallet. The preview intentionally has no website permissions and
 does not handle secret keys. Local bridge signing and valueless-node submission
-are active only in the HTTP preview when connected to an operator-reviewed
-valueless test network: the ingress rejects browser-extension origins, so the
-unpacked extension cannot submit transactions. The gateway does not itself
-prove that a network is valueless. Real-value
+can be rehearsed in the HTTP preview or the pinned unpacked extension when
+connected to an operator-reviewed valueless test network. The gateway accepts
+one exact browser origin per instance, and Chrome may require a separate local
+network access grant. The gateway does not itself prove that a network is
+valueless or validate the certificate lifecycle. Real-value
 operation, independent synchronization and audited distribution remain disabled.
 
 Run `npm run wallet:preview` and open `http://127.0.0.1:8765` to inspect it. The

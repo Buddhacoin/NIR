@@ -24,9 +24,9 @@ async function close(server) {
   await closed;
 }
 
-async function jsonRequest(url, { body, headers = {}, method = "GET" } = {}) {
+async function jsonRequest(url, { body, headers = {}, method = "GET", signal } = {}) {
   const response = await fetch(url, {
-    method,
+    method, signal,
     headers: {
       origin: "http://127.0.0.1:8765",
       ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -38,7 +38,8 @@ async function jsonRequest(url, { body, headers = {}, method = "GET" } = {}) {
   return { response, value };
 }
 
-test("wallet flow funds, reviews, signs, submits, and finalizes through real HTTP boundaries", async () => {
+test("wallet flow funds, reviews, signs, submits, and finalizes through real HTTP boundaries",
+  { timeout: 60_000 }, async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-wallet-flow-e2e-"));
   const nodeDirectory = join(temporary, "node");
   const vaultPath = join(temporary, "payer.nirvault.json");
@@ -53,7 +54,11 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
   const token = "7".repeat(64);
   let approvals = 0;
   const bridgeServer = createWalletBridgeServer({
-    authorize: async () => { approvals += 1; return password; },
+    authorize: async () => {
+      approvals += 1;
+      if (approvals === 1) await new Promise((resolve) => setTimeout(resolve, 31_000));
+      return password;
+    },
     origin: "http://127.0.0.1:8765",
     pairingCode: "24681357",
     sessionToken: token,
@@ -177,11 +182,20 @@ test("wallet flow funds, reviews, signs, submits, and finalizes through real HTT
       }, headers: bridgeHeaders, method: "POST",
     });
     assert.equal(transferSimulation.response.status, 200, JSON.stringify(transferSimulation.value));
-    const signed = await jsonRequest(`${bridgeUrl}/v1/sign`, {
+    await assert.rejects(jsonRequest(`${bridgeUrl}/v1/sign`, {
       body: { ...intent, simulationId: transferSimulation.value.simulation.simulationId },
       headers: bridgeHeaders,
       method: "POST",
-    });
+      signal: AbortSignal.timeout(30_000),
+    }), { name: "TimeoutError" });
+    let signed;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      signed = await jsonRequest(`${bridgeUrl}/v1/sign-result/${intent.requestId}`, {
+        headers: bridgeHeaders,
+      });
+      if (signed.response.status !== 202) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
     assert.equal(signed.response.status, 200);
     assert.equal(approvals, 1);
     assert.equal(signed.value.transaction.sender, payer.address);
