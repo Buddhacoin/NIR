@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { closeSync, constants, fsyncSync, openSync, writeFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import process from "node:process";
 
 import { canonicalJson } from "./crypto.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
-import { readTransactionIngressOperatorConfig,
+import { assertPrivateTransactionIngressConfigParent, readTransactionIngressOperatorConfig,
   validateTransactionIngressOperatorConfig }
   from "./validator-transaction-ingress-operator-config.mjs";
 
@@ -29,12 +29,17 @@ try {
     if (!Number.isInteger(constants.O_NOFOLLOW) || !constants.O_NOFOLLOW) {
       throw new Error("secure config output is unavailable");
     }
+    assertPrivateTransactionIngressConfigParent(target);
     const descriptor = openSync(target, constants.O_WRONLY | constants.O_CREAT |
       constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try {
       writeFileSync(descriptor, `${canonicalJson(validated)}\n`);
       fsyncSync(descriptor);
     } finally { closeSync(descriptor); }
+    assertPrivateTransactionIngressConfigParent(target);
+    const parent = openSync(dirname(target), constants.O_RDONLY | constants.O_DIRECTORY |
+      constants.O_NOFOLLOW);
+    try { fsyncSync(parent); } finally { closeSync(parent); }
     readTransactionIngressOperatorConfig(target);
     console.log("NIR transaction ingress operator config prepared; review pins before initialization");
   } else {

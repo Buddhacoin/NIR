@@ -1,5 +1,5 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { canonicalJson } from "./crypto.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
@@ -19,6 +19,30 @@ const FIELDS = ["certificateDirectory", "certificateHeadAnchorPath", "ceremonyAn
   "walletOrigin"];
 
 function same(left, right) { return left.dev === right.dev && left.ino === right.ino; }
+
+export function assertPrivateTransactionIngressConfigParent(path) {
+  if (typeof path !== "string" || !isAbsolute(path) || path.includes("\0") ||
+      !Number.isInteger(constants.O_NOFOLLOW) || !constants.O_NOFOLLOW ||
+      !Number.isInteger(constants.O_DIRECTORY) || !constants.O_DIRECTORY) {
+    throw new Error("transaction ingress operator config parent is invalid");
+  }
+  const parent = dirname(path);
+  const linked = lstatSync(parent);
+  if (!linked.isDirectory() || linked.isSymbolicLink() ||
+      (linked.mode & 0o077) !== 0 ||
+      (typeof process.getuid === "function" && linked.uid !== process.getuid())) {
+    throw new Error("transaction ingress operator config parent is unsafe");
+  }
+  const descriptor = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY |
+    constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(descriptor);
+    if (!opened.isDirectory() || !same(linked, opened) ||
+        (opened.mode & 0o077) !== 0 || opened.uid !== linked.uid) {
+      throw new Error("transaction ingress operator config parent changed");
+    }
+  } finally { closeSync(descriptor); }
+}
 
 export function validateTransactionIngressOperatorConfig(value) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype ||
@@ -52,6 +76,7 @@ export function readTransactionIngressOperatorConfig(path) {
       !Number.isInteger(constants.O_NONBLOCK) || !constants.O_NONBLOCK) {
     throw new Error("transaction ingress operator config path is invalid");
   }
+  assertPrivateTransactionIngressConfigParent(path);
   const linked = lstatSync(path);
   if (!linked.isFile() || linked.isSymbolicLink() || linked.nlink !== 1 ||
       linked.size < 2 || linked.size > MAX_BYTES || (linked.mode & 0o077) !== 0 ||
@@ -90,6 +115,7 @@ export function readTransactionIngressOperatorConfig(path) {
     if (text !== `${canonicalJson(value)}\n`) {
       throw new Error("transaction ingress operator config must be canonical JSON");
     }
+    assertPrivateTransactionIngressConfigParent(path);
     return validateTransactionIngressOperatorConfig(value);
   } finally { closeSync(descriptor); }
 }

@@ -76,6 +76,13 @@ test("offline prepare canonicalizes a reviewed public draft without overwriting"
     const checked = spawnSync(process.execPath, [cli, "check", output],
       { encoding: "utf8" });
     assert.equal(checked.status, 0, checked.stderr);
+    chmodSync(root, 0o755);
+    assert.throws(() => readTransactionIngressOperatorConfig(output), /parent is unsafe/);
+    const sharedParent = spawnSync(process.execPath,
+      [cli, "prepare", draft, join(root, "shared.json")], { encoding: "utf8" });
+    assert.equal(sharedParent.status, 1);
+    assert.match(sharedParent.stderr, /parent is unsafe/);
+    chmodSync(root, 0o700);
     const extraCheckArgument = spawnSync(process.execPath,
       [cli, "check", output, "ignored"], { encoding: "utf8" });
     assert.equal(extraCheckArgument.status, 1);

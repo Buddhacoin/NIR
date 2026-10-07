@@ -52,6 +52,8 @@ Use `pwd` in your chosen directory to see its absolute path; the literal
 `/absolute/...` strings below are placeholders, not folders created by NIR.
 The helper accepts readable draft JSON, rejects missing/extra fields, and
 writes a new canonical mode-`0600` config without replacing an existing file:
+Create the destination directory under your own account with mode `0700`
+beforehand; both `prepare` and startup reject a shared or unowned parent.
 
 ```bash
 cp docs/examples/transaction-ingress-operator-config.example.json /absolute/operator-draft.json
@@ -62,7 +64,9 @@ npm run network:transaction-ingress-config -- check /absolute/operator-config.js
 
 `prepare` validates structure and permissions, **not signatures**. The draft
 and prepared file contain only public configuration; never add keys, vault
-passwords or seed phrases. Do not put the config or independently retained
+passwords or seed phrases. If a write fails and leaves an incomplete output,
+inspect it and choose a fresh pathname; `prepare` never overwrites it. Do not
+put the config or independently retained
 anchors inside the validator's writable state. A different pathname on the
 same machine does not prove different administration or survive a full-machine
 rollback. Keep independent copies and verify their provenance out of band.
