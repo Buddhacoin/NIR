@@ -44,6 +44,9 @@ export function createNodeHttpServer(node, options = {}) {
   if (walletReadOrigin !== null) {
     if (rpcProfile !== "public") throw new Error("wallet read requires public RPC");
     exactWalletReadOrigin(walletReadOrigin);
+    if (typeof node?.verifyReadPeers !== "function") {
+      throw new Error("wallet read requires authenticated peer readiness checks");
+    }
   }
   const httpIngressOptions = {
     maxBodyBytes: 64 * 1024,
@@ -62,6 +65,13 @@ export function createNodeHttpServer(node, options = {}) {
       if (walletReadOrigin !== null && (request.method !== "GET" ||
           !(WALLET_READ_EXACT.has(url.pathname) || WALLET_READ_PATH.test(url.pathname)))) {
         return send(response, 404, { error: "not found" }, origin);
+      }
+      if (walletReadOrigin !== null) {
+        try { await node.verifyReadPeers(); }
+        catch {
+          return send(response, 503,
+            { error: "wallet read peers do not match the loaded finalized tip" }, origin);
+        }
       }
       if ((request.method === "POST" || request.method === "OPTIONS") &&
           DEVELOPER_POST_PATHS.has(url.pathname) && rpcProfile !== "developer") {

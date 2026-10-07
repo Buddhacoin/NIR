@@ -46,9 +46,14 @@ test("wallet read pins the exact ceremony genesis, peers and local browser origi
 
 test("wallet read HTTP surface serves existing GET shapes and never calls a POST method", async () => {
   let writes = 0;
+  let ready = true;
+  let accountReads = 0;
   const node = {
     height: 2, networkId: "nir-valueless-test", tipHash: "a".repeat(64),
-    account: () => ({ nextNonce: 3 }),
+    verifyReadPeers: async () => {
+      if (!ready) throw new Error("a validator advanced to a different tip");
+    },
+    account: () => { accountReads += 1; return { nextNonce: 3 }; },
     accountProof: async () => ({ format: "existing-account-proof" }),
     accountHistoryPage: async () => ({ entries: [] }),
     assetProof: async () => ({ format: "existing-asset-proof" }),
@@ -85,6 +90,14 @@ test("wallet read HTTP surface serves existing GET shapes and never calls a POST
   }
   assert.equal((await fetch(`${base}/metrics`, { headers })).status, 404);
   assert.equal(writes, 0);
+  ready = false;
+  const staleHealth = await fetch(`${base}/health`, { headers });
+  assert.equal(staleHealth.status, 503);
+  assert.equal(staleHealth.headers.get("access-control-allow-origin"), headers.origin);
+  const staleAccount = await fetch(`${base}/v1/accounts/nir1${"1".repeat(64)}`, { headers });
+  assert.equal(staleAccount.status, 503);
+  assert.equal(accountReads, 0);
+  assert.equal((await fetch(`${base}/v1/fees?amount=1`, { headers })).status, 503);
 });
 
 test("wallet read genesis identity survives an installed snapshot and pruned block zero", () => {

@@ -39,8 +39,10 @@ underlying `DistributedCoordinator` still loads coordinator and treasury private
 keys, may update its local history index, and may send blocks to lagging validators
 while assembling proofs after startup. Do not run another coordinator against the
 same writable state directory. This HTTP launcher does not produce blocks or
-advance its loaded chain; once validators move ahead, quorum account and asset
-proof requests fail until a reviewed updated coordinator state is loaded in a
-new process. This command is for a bounded, reviewed, valueless rehearsal. It
+advance its loaded chain; every wallet GET first checks authenticated peer
+health against the loaded finalized tip and returns HTTP 503 if any peer has
+moved ahead, diverged, or become unavailable. A reviewed updated coordinator
+state must then be loaded in a new process. This command is for a bounded,
+reviewed, valueless rehearsal. It
 is not a keyless observer, a continuously synchronized read node, or a public
 service.
