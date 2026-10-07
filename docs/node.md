@@ -194,6 +194,9 @@ closed. Graceful interrupt and termination release the lock.
 
 ## Wallet-to-wallet flow
 
+This flow uses only the local developer RPC profile; these POST routes are
+unavailable in the read-only production RPC.
+
 Create two native vaults with `npm run wallet:create`, inspect their addresses
 with `npm run wallet:address`, and fund the first address through `/v1/faucet`.
 Use `/v1/accounts/{address}` to obtain its `nextNonce`, sign with
