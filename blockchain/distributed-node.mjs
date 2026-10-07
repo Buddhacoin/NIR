@@ -505,6 +505,7 @@ export class ValidatorReplica {
 
   get address() { return this.#wallet.address; }
   get certificateMode() { return this.#certificatePins.mode; }
+  get ceremonyMode() { return this.#ceremonyMode; }
   get height() { return this.#chain.height; }
   get networkId() { return this.#chain.networkId; }
   get pendingProtocolUpgrade() { return this.#chain.pendingProtocolUpgrade; }

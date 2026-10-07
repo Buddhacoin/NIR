@@ -199,8 +199,9 @@ hardware-key support, multisignature recovery, and optional selective privacy.
 manifest. It can also be loaded as an unpacked browser-extension preview through
 its Manifest V3 file. The preview intentionally has no website permissions and
 does not handle secret keys. Local bridge signing and valueless-node submission
-are active; real-value operation, independent synchronization and audited
-distribution remain disabled.
+are active only in the HTTP preview: the ingress rejects browser-extension
+origins, so the unpacked extension cannot submit transactions. Real-value
+operation, independent synchronization and audited distribution remain disabled.
 
 Run `npm run wallet:preview` and open `http://127.0.0.1:8765` to inspect it. The
 preview command explicitly binds to `127.0.0.1`; it does not expose the

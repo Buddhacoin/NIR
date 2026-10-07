@@ -1,5 +1,6 @@
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
+import { createServer as createNetServer } from "node:net";
 
 import { blockHash, transactionId } from "./chain.mjs";
 import {
@@ -26,6 +27,10 @@ import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { MAX_TOPOLOGY_STORE_BYTES } from "./validator-topology-history.mjs";
 import { MAX_CERTIFICATE_STORE_BYTES } from "./certificate-lifecycle-store.mjs";
 import { CERTIFICATE_MODE_LIFECYCLE } from "./certificate-runtime.mjs";
+import { createCanonicalIpcFrameDecoder, encodeCanonicalIpcFrame }
+  from "./canonical-ipc-framing.mjs";
+import { CONTROL_REQUEST_FRAME, CONTROL_RESPONSE_FRAME }
+  from "./validator-control-socket.mjs";
 import {
   boundedAllSettled,
   PeerReputation,
@@ -521,6 +526,11 @@ export function createValidatorHttpServer(validator, options = {}) {
           verification: verificationScheduler.metrics(),
         });
       }
+      // Ceremony control is available only on a separate restricted local socket.
+      if (validator.ceremonyMode && request.method === "POST" &&
+          ["/v1/sync", "/v1/blocks/produce"].includes(url.pathname)) {
+        return send(response, 404, { error: "not found" });
+      }
       const bodyless = request.method === "POST" &&
         ["/v1/sync", "/v1/blocks/produce"].includes(url.pathname);
       const parsedBody = request.method === "POST" && !bodyless
@@ -914,4 +924,75 @@ export function createValidatorHttpServer(validator, options = {}) {
     throw new Error("validator connection limit is invalid");
   }
   return hardenHttpServer(server, { ...httpIngressOptions, maxConnections });
+}
+
+/** A single-frame, same-UID operator channel with only sync and produce operations. */
+export function createValidatorControlServer(validator, options = {}) {
+  const peerUrls = options.peerUrls ?? (() => validator.peerUrls);
+  const roundTimeoutMs = options.roundTimeoutMs ?? 250;
+  const maxRoundTimeoutMs = options.maxRoundTimeoutMs ?? 2_000;
+  const frameDeadlineMs = options.frameDeadlineMs ?? 30_000;
+  const executeForTest = options._executeOperationForTest;
+  if (!Number.isSafeInteger(roundTimeoutMs) || roundTimeoutMs < 1 || roundTimeoutMs > 2_000 ||
+      !Number.isSafeInteger(maxRoundTimeoutMs) || maxRoundTimeoutMs < roundTimeoutMs ||
+      maxRoundTimeoutMs > 2_000 || !Number.isSafeInteger(frameDeadlineMs) ||
+      frameDeadlineMs < 25 || frameDeadlineMs > 30_000 ||
+      executeForTest !== undefined && typeof executeForTest !== "function") {
+    throw new Error("validator control round timeout configuration is invalid");
+  }
+  let ready = false;
+  let operationActive = false;
+  const server = createNetServer({ allowHalfOpen: true }, (socket) => {
+    if (!ready) { socket.destroy(); return; }
+    const decoder = createCanonicalIpcFrameDecoder(CONTROL_REQUEST_FRAME);
+    let message = null; let failed = false;
+    const fail = () => { failed = true; socket.destroy(); };
+    const deadline = setTimeout(fail, frameDeadlineMs);
+    socket.once("close", () => clearTimeout(deadline));
+    socket.setTimeout(30_000, fail);
+    socket.on("data", (chunk) => {
+      try {
+        const messages = decoder.push(chunk);
+        if (messages.length > 1 || message !== null && messages.length > 0) {
+          throw new Error("validator control request has extra frames");
+        }
+        if (messages.length === 1) message = messages[0];
+      } catch { fail(); }
+    });
+    socket.on("end", async () => {
+      clearTimeout(deadline);
+      if (failed) return;
+      let ownsOperation = false;
+      try {
+        decoder.finish();
+        if (!message || Object.keys(message).join() !== "operation" ||
+            !["sync", "produce"].includes(message.operation)) {
+          throw new Error("validator control request is invalid");
+        }
+        if (operationActive) {
+          socket.end(encodeCanonicalIpcFrame({ ok: false, status: 503,
+            body: { error: "validator control operation already in progress" } }, CONTROL_RESPONSE_FRAME));
+          return;
+        }
+        operationActive = true;
+        ownsOperation = true;
+        const urls = executeForTest ? null : typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        const body = executeForTest
+          ? await executeForTest(message.operation)
+          : message.operation === "sync"
+            ? await synchronizeValidator(validator, urls)
+            : await produceValidatorBlock(validator, urls, roundTimeoutMs, maxRoundTimeoutMs);
+        socket.end(encodeCanonicalIpcFrame({ ok: true,
+          status: message.operation === "sync" ? 200 : 202, body }, CONTROL_RESPONSE_FRAME));
+      } catch (error) {
+        if (!socket.destroyed) socket.end(encodeCanonicalIpcFrame({ ok: false, status: 400,
+          body: { error: ingressErrorResponse(error).message } }, CONTROL_RESPONSE_FRAME));
+      } finally {
+        if (ownsOperation) operationActive = false;
+      }
+    });
+    socket.on("error", () => {});
+  });
+  server.maxConnections = 8;
+  return { server, enable() { ready = true; } };
 }
