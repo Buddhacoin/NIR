@@ -56,17 +56,24 @@ function fixture() {
   const genesisHash = chain.blocks()[0].hash;
   const checkpoint = chain.blocks().at(-1);
   const finalityProof = createFinalityProof(checkpoint);
+  const fork = new NirChain(genesis);
+  for (const block of chain.blocks().slice(1, -1)) fork.appendBlock(block);
+  const alternateCheckpoint = finalizeBlock(fork.buildBlock({
+    timestamp: checkpoint.timestamp + 1,
+  }), validatorWallets.slice(0, 3));
+  fork.appendBlock(alternateCheckpoint);
+  const alternateFinalityProof = createFinalityProof(alternateCheckpoint);
   const witnesses = Array.from({ length: 4 }, generateWallet);
   const policy = createCheckpointWitnessPolicy({ chainIdentityGenesisHash: genesisHash,
     generation: 1, networkId: genesis.networkId, threshold: 3,
     witnesses: witnesses.map((wallet, index) =>
       ({ ...publicWallet(wallet), operatorId: `witness-${index}` })) });
-  const packageFor = (sequence, observedAt = NOW - 100) => {
+  const packageFor = (sequence, observedAt = NOW - 100, proof = finalityProof) => {
     const attestations = witnesses.slice(0, 3).map((wallet, index) =>
-      createCheckpointWitnessAttestation({ finalityProof,
+      createCheckpointWitnessAttestation({ finalityProof: proof,
         observedAt: observedAt + index, operatorId: `witness-${index}`,
         policy, sequence, validators: genesis.validators, wallet }));
-    return assembleCheckpointTrustPackage({ attestations, finalityProof,
+    return assembleCheckpointTrustPackage({ attestations, finalityProof: proof,
       policy, sequence, validators: genesis.validators });
   };
   const context = { currentHeight: 0, minimumActivationDelay: 0,
@@ -98,7 +105,8 @@ function fixture() {
     genesis, maxWitnessAgeMs: 30_000, minimumCheckpointHeight: 1,
     minimumSequence: 8, now: () => NOW, tlsCertificateSha256: PIN_A,
     validatorAddress: address };
-  return { address, certificateDirectory, checkpoint, context, genesis, issue,
+  return { address, alternateFinalityProof, certificateDirectory, checkpoint,
+    context, genesis, issue,
     options, packageFor, root, validatorWallets, writeAnchor, writePackage };
 }
 
@@ -114,6 +122,18 @@ test("fresh signed checkpoint and anchored active certificate admit repeatedly",
     assert.equal(gate().checkpointSequence, 9);
     values.writePackage(values.packageFor(8));
     assert.throws(gate, /anti-replay|rolled back|invalid/);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("a higher witness sequence cannot switch to another valid finalized tip at the same height", () => {
+  const values = fixture();
+  try {
+    const gate = createValidatorTransactionCheckpointGate(values.options);
+    gate();
+    const alternate = values.packageFor(9, NOW - 100, values.alternateFinalityProof);
+    assert.notEqual(alternate.view.checkpointTipHash, values.checkpoint.hash);
+    values.writePackage(alternate);
+    assert.throws(gate, /rolled back or diverged/);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
 });
 

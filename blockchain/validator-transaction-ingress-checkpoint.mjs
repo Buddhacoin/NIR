@@ -67,12 +67,15 @@ export function createValidatorTransactionCheckpointGate({
     });
     if (seenPackage && (verified.sequence < seenPackage.sequence ||
         verified.checkpoint.height < seenPackage.height ||
+        (verified.checkpoint.height === seenPackage.height &&
+          verified.checkpoint.tipHash !== seenPackage.tipHash) ||
         (verified.sequence === seenPackage.sequence &&
           verified.packageHash !== seenPackage.packageHash))) {
       throw new Error("transaction checkpoint trust package rolled back or diverged");
     }
     seenPackage = { height: verified.checkpoint.height,
-      packageHash: verified.packageHash, sequence: verified.sequence };
+      packageHash: verified.packageHash, sequence: verified.sequence,
+      tipHash: verified.checkpoint.tipHash };
     lastNow = observedAt;
     if (!verified.trustedValidators.some(({ address }) => address === validatorAddress)) {
       throw new Error("transaction ingress validator is absent from finalized checkpoint quorum");
