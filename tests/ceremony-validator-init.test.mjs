@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import {
   chmodSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync,
@@ -63,10 +63,10 @@ async function availablePort() {
   return port;
 }
 
-async function startCeremonyProcess(target, port, inputs, { certificateMode = "dev-genesis" } = {}) {
-  const environment = { ...process.env, NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
-  delete environment.NIR_CERTIFICATE_MODE;
-  if (certificateMode !== null) environment.NIR_CERTIFICATE_MODE = certificateMode;
+async function startCeremonyProcess(target, port, inputs) {
+  const environment = { ...process.env, NIR_CERTIFICATE_MODE: "dev-genesis",
+    NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+  delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
   const child = spawn(process.execPath, [
     "blockchain/network-cli.mjs", "serve-validator", target, String(port),
     inputs.trustedAddress,
@@ -390,8 +390,16 @@ test("serve-validator restarts from inherited vault-password FDs and serves TLS/
     initializeValidatorFromCeremony(target, cloneInputs(inputs));
     const port = await availablePort();
     const url = `https://127.0.0.1:${port}`;
-    await assert.rejects(() => startCeremonyProcess(target, port, inputs,
-      { certificateMode: null }), /requires explicit NIR_CERTIFICATE_MODE/);
+    const noModeEnvironment = { ...process.env, NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+    delete noModeEnvironment.NIR_CERTIFICATE_MODE;
+    delete noModeEnvironment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
+    const noMode = spawnSync(process.execPath, [
+      "blockchain/network-cli.mjs", "serve-validator", target, String(port),
+      inputs.trustedAddress,
+    ], { cwd: new URL("..", import.meta.url), encoding: "utf8", env: noModeEnvironment });
+    assert.equal(noMode.status, 1);
+    assert.equal(noMode.stderr,
+      "Network operation failed: ceremony validator startup requires explicit NIR_CERTIFICATE_MODE\n");
     for (let attempt = 0; attempt < 2; attempt += 1) {
       running = await startCeremonyProcess(target, port, inputs);
       const health = await requestJson(`${url}/health`, {
