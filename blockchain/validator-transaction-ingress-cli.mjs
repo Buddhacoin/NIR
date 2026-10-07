@@ -6,7 +6,8 @@ import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES }
   from "./checkpoint-trust-package.mjs";
 import { verifyCheckpointTrustPackageV2 }
   from "./checkpoint-trust-package-v2.mjs";
-import { loadRuntimeCertificateHistory } from "./certificate-runtime.mjs";
+import { CERTIFICATE_MODE_LIFECYCLE, RuntimeCertificatePins }
+  from "./certificate-runtime.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { verifyCeremonyBoundTransactionIngressEvidence }
   from "./validator-transaction-ingress-ceremony.mjs";
@@ -62,9 +63,12 @@ try {
         maxAgeMs: operator.maxWitnessAgeMs, maxFutureSkewMs: 5_000,
         minimumCheckpointHeight: 1, minimumSequence: 0, now: Date.now(),
       });
-      const { context, history } = loadRuntimeCertificateHistory(
-        operator.certificateDirectory, verified.genesis,
-        { externalAnchorPath: operator.certificateHeadAnchorPath });
+      const certificatePins = new RuntimeCertificatePins(
+        operator.certificateDirectory, verified.genesis, {
+          mode: CERTIFICATE_MODE_LIFECYCLE,
+          externalAnchorPath: operator.certificateHeadAnchorPath,
+        });
+      const { context, history } = certificatePins.loadVerifiedHistory();
       assertTransactionIngressCertificateCommitment(checkpoint, context, history);
       initializeTransactionIngressFloor(operator.floorDirectory, floorIdentity);
       console.log("NIR transaction ingress floor initialized once; no listener was opened");

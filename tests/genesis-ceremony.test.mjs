@@ -536,6 +536,16 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
     assert.match(wrongHeadInitialization.stderr, /certificate head or count/);
     assert.equal(existsSync(operator.floorDirectory), false);
     writeFileSync(checkpointPackagePath, packageBytes);
+    const insideCertificateAnchorPath = join(certificateDirectory, "inside-anchor.json");
+    writeFileSync(insideCertificateAnchorPath,
+      readFileSync(certificateHeadAnchorPath));
+    writeOperator({ certificateHeadAnchorPath: insideCertificateAnchorPath });
+    const insideAnchorInitialization = spawnSync(process.execPath,
+      [cli, "--init-floor", operatorPath], { encoding: "utf8" });
+    assert.equal(insideAnchorInitialization.status, 1);
+    assert.match(insideAnchorInitialization.stderr, /external certificate history anchor must be outside node state/);
+    assert.equal(existsSync(operator.floorDirectory), false);
+    writeOperator();
     const missingFloor = spawnSync(process.execPath, [cli, "--ceremony", operatorPath],
       { encoding: "utf8" });
     assert.equal(missingFloor.status, 1);
