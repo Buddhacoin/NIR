@@ -90,7 +90,11 @@ export function createValidatorTransactionIngressServer(config) {
           result.blockHash !== undefined) {
         return send(response, 502, { error: "validator ingress response is invalid" });
       }
-      return send(response, 202, result);
+      return send(response, 202, {
+        status: result.status,
+        transactionId: result.transactionId,
+        gossipedPeers: result.gossipedPeers,
+      });
     } catch (error) {
       ingress.record(error);
       const rejected = ingressErrorResponse(error);

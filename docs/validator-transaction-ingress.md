@@ -7,6 +7,9 @@ transaction signature and network rules. A successful HTTP 202 means `queued`
 or `known` in the validator mempool; it does **not** mean block inclusion or
 finality. The gateway cannot produce blocks, invoke administrator routes, or
 hold a signing key.
+Its success response contains only `status` (`queued` or `known`),
+`transactionId`, and `gossipedPeers`; it never relays validator receipts,
+inclusion certificates, heights, or other finality-looking fields.
 
 Start a validator first, using its normal operator procedure. Obtain its
 network ID and currently trusted TLS certificate SHA-256 fingerprint from

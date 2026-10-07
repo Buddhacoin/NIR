@@ -153,6 +153,52 @@ test("ingress rejects every non-exact route and method before reaching its upstr
   }
 });
 
+test("ingress strips extra upstream fields and rejects an upstream height claim", async () => {
+  const tls = fixture();
+  const servers = [];
+  try {
+    const transaction = { networkId: "nir-distributed-devnet" };
+    const id = transactionId(transaction);
+    let includeHeight = false;
+    const upstream = createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => {
+      request.resume();
+      request.on("end", () => {
+        const body = JSON.stringify({
+          status: "queued", transactionId: id, gossipedPeers: 1,
+          receipt: { untrusted: true }, inclusionCertificate: { untrusted: true },
+          futureField: "must-not-leak", ...(includeHeight ? { height: 7 } : {}),
+        });
+        response.writeHead(202, { "content-type": "application/json" });
+        response.end(body);
+      });
+    });
+    servers.push(upstream);
+    const upstreamOrigin = `https://127.0.0.1:${await listen(upstream)}`;
+    const ingress = createValidatorTransactionIngressServer({
+      expectedNetworkId: transaction.networkId, tlsCertificateSha256: tls.pin,
+      upstreamOrigin,
+    });
+    servers.push(ingress);
+    const base = `http://127.0.0.1:${await listen(ingress)}`;
+    const submit = () => fetch(`${base}/v1/transactions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(transaction),
+    });
+    const accepted = await submit();
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(await accepted.json(), {
+      status: "queued", transactionId: id, gossipedPeers: 1,
+    });
+    includeHeight = true;
+    const rejected = await submit();
+    assert.equal(rejected.status, 502);
+    assert.deepEqual(await rejected.json(), { error: "validator ingress response is invalid" });
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
+});
+
 test("ingress upstream must be an exact pinned loopback HTTPS origin", () => {
   const base = { expectedNetworkId: "nir-distributed-devnet",
     tlsCertificateSha256: "a".repeat(64), upstreamOrigin: "https://127.0.0.1:8443" };
