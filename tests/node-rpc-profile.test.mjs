@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import test from "node:test";
 
 import {
@@ -29,6 +30,18 @@ async function withServer(server, run) {
   finally { await server.gracefulShutdown(200); }
 }
 
+function rawStatus(base, path, method = "POST") {
+  const { hostname, port } = new URL(base);
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ hostname, method, path, port }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode));
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 const adminPaths = ["/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create"];
 
 test("default public node RPC rejects every administrative POST before dispatch", async () => {
@@ -50,6 +63,16 @@ test("default public node RPC rejects every administrative POST before dispatch"
         assert.deepEqual(await response.json(), { error: "not found" });
         const preflight = await fetch(`${base}${path}`, { method: "OPTIONS" });
         assert.equal(preflight.status, 404, path);
+        assert.equal(await rawStatus(base, path, "GET"), 404, path);
+        assert.equal(await rawStatus(base, path, "HEAD"), 404, path);
+      }
+      for (const path of [
+        "/x/../v1/faucet",
+        "/v1/%2e%2e/v1/faucet",
+        "/v1/faucet?rpcProfile=developer",
+        `${base}/v1/faucet`,
+      ]) {
+        assert.equal(await rawStatus(base, path), 404, path);
       }
       assert.equal((await fetch(`${base}/health`)).status, 200);
       assert.equal((await fetch(`${base}/v1/fees?amount=1`)).status, 200);
