@@ -112,12 +112,17 @@ test("absolute frame deadline releases trickling clients despite their activity"
     await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
       const socket = createConnection(channel.path);
       let trickle;
+      let connected = false;
       socket.on("connect", () => {
+        connected = true;
         socket.write(Buffer.from([0, 0, 1, 0])); // A valid 256-byte frame length.
         trickle = setInterval(() => { if (!socket.destroyed) socket.write(Buffer.from([0x20])); }, 10);
       });
       socket.on("close", () => { clearInterval(trickle); resolve(); });
-      socket.on("error", reject);
+      socket.on("error", (error) => {
+        // The deadline may close a socket while a scheduled trickle is in flight.
+        if (!connected || error.code !== "ECONNRESET") reject(error);
+      });
       socket.resume();
     })));
     assert.ok(Date.now() - started >= 80 && Date.now() - started < 1_000,

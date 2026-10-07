@@ -9,7 +9,15 @@ This is gate 2 in the canonical
 contributions, approvals, registry anchor, and compiled genesis is an external
 operator responsibility.
 
-The input is public JSON containing:
+For a new ceremony, use the **v2** public input schema: set
+`"format": "nir-public-genesis-plan-v2"` and include a complete
+`evaluationEnvironment` object. The exact environment schema is
+`nir-evaluation-environment-v1`: `adapter_protocol`, `cpu_limit`, `image_digest`,
+`memory_limit_bytes`, `runner_digest`, and `timeout_seconds` alongside `format`.
+Both digests are `sha256:`-prefixed 64-character lowercase hex. The plan,
+ceremony approvals, and genesis commit this same environment; v27 activation
+requires its genesis commitment. Operators must review the actual runner/image
+artifacts behind the digests independently. The other input is public JSON containing:
 
 - network ID, genesis timestamp, current protocol version, and signed source-release
   manifest hash;
@@ -33,6 +41,13 @@ Every object has an exact schema. Unknown fields and fields named like private k
 secrets, seeds, passwords, or mnemonics are rejected. The tool never generates an
 address or private key. Contributions and nonces must be generated independently by
 operators and must not be reused.
+
+The v1 plan and approval formats remain verifiable with their original hash and
+signature domains, including in mixed-version registries and `prior-plans.json`.
+They do **not** carry an evaluation environment: a chain already launched from a
+v1 ceremony cannot add one to its genesis without changing chain identity, and
+the current sequential upgrade rules cannot advance such a chain through v27 to
+v28. v2 applies to **new** ceremonies only; it is not a migration mechanism.
 
 ## Workflow
 
@@ -71,8 +86,12 @@ npm run genesis:ceremony -- sign-peer-registry \
   validator-vault.json peer-registry-approval.json
 ```
 
-This second quorum is necessary because `NirChain` already requires peer-registry
-signatures from the consensus validator keys. The plan contains explicit
+For v2, each validator approval also includes a distinct v2-domain signature
+over the plan commitment, network ID, and peer-registry commitment; a v1 registry
+signature alone cannot authorize a v2 ceremony. The original registry signature
+is still included separately because `NirChain` verifies it in the existing
+consensus domain. This second quorum is necessary because `NirChain` already
+requires peer-registry signatures from the consensus validator keys. The plan contains explicit
 `validatorSetCommitment` and `peerRegistryCommitment` values; compilation checks both.
 
 Collect approvals into an object with `approvals` and `peerRegistryApprovals` arrays,
