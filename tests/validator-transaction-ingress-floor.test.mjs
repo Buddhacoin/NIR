@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync }
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync,
+  unlinkSync, writeFileSync }
   from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +33,14 @@ function crashAdvance(directory, next, hook) {
      advanceTransactionIngressFloor(process.argv[1], JSON.parse(process.argv[2]),
        JSON.parse(process.argv[3]), { ${hook}: () => process.exit(77) });`,
     directory, JSON.stringify(identity), JSON.stringify(next)], { encoding: "utf8" });
+}
+
+function clearTerminatedTestWriterLock(directory) {
+  const lock = join(directory, ".floor.lock");
+  const owner = JSON.parse(readFileSync(lock, "utf8"));
+  unlinkSync(lock);
+  const temporary = join(directory, owner.temporaryName);
+  if (existsSync(temporary)) unlinkSync(temporary);
 }
 
 test("restart reloads the exact persistent floor and refuses silent reinitialization", () => {
@@ -91,11 +100,13 @@ test("repeated interruption repairs the torn pair before starting another revisi
     assert.equal(crashAdvance(values.directory, candidate(9, 11, 101),
       "_afterFirstCopy").status, 77);
     assert.equal(loadTransactionIngressFloor(values.directory, identity).revision, 2);
+    clearTerminatedTestWriterLock(values.directory);
     assert.equal(crashAdvance(values.directory, candidate(10, 12, 102),
       "_afterFirstCopy").status, 77);
     const recovered = loadTransactionIngressFloor(values.directory, identity);
     assert.equal(recovered.revision, 3);
     assert.equal(recovered.height, 12);
+    clearTerminatedTestWriterLock(values.directory);
     assert.equal(advanceTransactionIngressFloor(values.directory, identity,
       candidate(11, 13, 103)).revision, 4);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
@@ -120,8 +131,6 @@ test("descriptor-open growth is bounded before allocation for floor and lock fil
   const lockValues = temporary();
   try {
     initializeTransactionIngressFloor(lockValues.directory, identity);
-    assert.equal(crashAdvance(lockValues.directory, candidate(8, 10, 100),
-      "_afterLockPublish").status, 77);
     Buffer.alloc = (size, ...args) => {
       if (size > 4096) throw new Error("unbounded allocation attempted");
       return allocate(size, ...args);
@@ -136,7 +145,7 @@ test("descriptor-open growth is bounded before allocation for floor and lock fil
   }
 });
 
-test("a crash before lock publication leaves no partial lock; a published linked lock is recoverable", () => {
+test("crash before publication leaves no lock; published stale lock denies until manual recovery", () => {
   const values = temporary();
   try {
     initializeTransactionIngressFloor(values.directory, identity);
@@ -146,6 +155,12 @@ test("a crash before lock publication leaves no partial lock; a published linked
     assert.equal(crashAdvance(values.directory, candidate(8, 10, 100),
       "_afterLockPublish").status, 77);
     assert.equal(existsSync(join(values.directory, ".floor.lock")), true);
+    assert.throws(() => advanceTransactionIngressFloor(values.directory, identity,
+      candidate(8, 10, 100)), /EEXIST/);
+    assert.equal(loadTransactionIngressFloor(values.directory, identity).revision, 0);
+    // Only this test's terminated child owned the lock. Ordinary runtime code
+    // never removes it; an operator must establish that fact independently.
+    clearTerminatedTestWriterLock(values.directory);
     assert.equal(advanceTransactionIngressFloor(values.directory, identity,
       candidate(8, 10, 100)).revision, 1);
   } finally { rmSync(values.root, { recursive: true, force: true }); }

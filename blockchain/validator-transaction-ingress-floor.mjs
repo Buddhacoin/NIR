@@ -242,98 +242,64 @@ function readLock(path, afterOpen) {
     return { identity: opened, value };
   } finally { closeSync(descriptor); }
 }
-function processAlive(pid) {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return error?.code !== "ESRCH"; }
-}
-function removeStaleLock(root, path, afterLockOpen) {
-  const stale = readLock(path, afterLockOpen);
-  if (processAlive(stale.value.pid)) {
-    throw new Error("transaction ingress floor is held by a live writer");
-  }
-  assertRoot(root);
-  const linked = lstatSync(path);
-  if (!same(stale.identity, linked) || processAlive(stale.value.pid)) {
-    throw new Error("transaction ingress floor stale lock changed");
-  }
-  const temporary = join(root.path, stale.value.temporaryName);
-  if (linked.nlink === 2 && !same(linked, lstatSync(temporary))) {
-    throw new Error("transaction ingress floor stale lock temporary changed");
-  }
-  unlinkSync(path); fsyncSync(root.descriptor);
-  if (linked.nlink === 2) {
-    const remaining = lstatSync(temporary);
-    if (!same(stale.identity, remaining) || remaining.nlink !== 1) {
-      throw new Error("transaction ingress floor stale lock temporary changed");
-    }
-    unlinkSync(temporary); fsyncSync(root.descriptor);
-  }
-}
-function acquireLock(root, afterLockOpen, afterLockPublish, afterLockTemporaryOpen) {
+function acquireLock(root, afterLockPublish, afterLockTemporaryOpen) {
   const path = join(root.path, LOCK); assertRoot(root);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      lstatSync(path);
-      if (attempt > 0) throw new Error("transaction ingress floor lock is still occupied");
-      removeStaleLock(root, path, afterLockOpen);
-      continue;
-    } catch (error) { if (error?.code !== "ENOENT") throw error; }
-    const temporaryName = `.floor-lock.${randomBytes(16).toString("hex")}.tmp`;
-    const temporary = join(root.path, temporaryName);
-    const value = { pid: process.pid, temporaryName,
-      token: randomBytes(32).toString("hex") };
-    let descriptor; let opened = null; let published = false;
-    try {
-      descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT |
-        constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      opened = fstatSync(descriptor);
-      afterLockTemporaryOpen?.();
-      writeFileSync(descriptor, `${canonicalJson(value)}\n`); fsyncSync(descriptor);
-      const ready = lstatSync(temporary);
-      if (!same(opened, ready) || !ready.isFile() || ready.isSymbolicLink() ||
-          ready.nlink !== 1 || (ready.mode & 0o077) !== 0) {
-        throw new Error("transaction ingress floor temporary lock changed");
-      }
-      assertRoot(root);
-      linkSync(temporary, path); published = true;
-      fsyncSync(root.descriptor);
-      afterLockPublish?.();
-      const linked = lstatSync(path);
-      if (!same(opened, linked) || linked.nlink !== 2) {
-        throw new Error("transaction ingress floor published lock changed");
-      }
-      unlinkSync(temporary);
-      fsyncSync(root.descriptor);
-      return { descriptor, identity: opened, path, value };
-    } catch (error) {
-      if (descriptor !== undefined) closeSync(descriptor);
-      if (opened !== null) {
-        try {
-          if (published) {
-            const linked = lstatSync(path);
-            if (!same(opened, linked) || linked.isSymbolicLink()) {
-              throw new Error("transaction ingress floor published lock changed");
-            }
-            unlinkSync(path); fsyncSync(root.descriptor);
-          }
-        } catch (cleanupError) { if (cleanupError?.code !== "ENOENT") throw cleanupError; }
-        try {
-          const linked = lstatSync(temporary);
-          if (!same(opened, linked) || linked.isSymbolicLink()) {
-            throw new Error("transaction ingress floor temporary lock changed");
-          }
-          unlinkSync(temporary); fsyncSync(root.descriptor);
-        } catch (cleanupError) { if (cleanupError?.code !== "ENOENT") throw cleanupError; }
-      }
-      throw error;
+  const temporaryName = `.floor-lock.${randomBytes(16).toString("hex")}.tmp`;
+  const temporary = join(root.path, temporaryName);
+  const value = { pid: process.pid, temporaryName,
+    token: randomBytes(32).toString("hex") };
+  let descriptor; let opened = null; let published = false;
+  try {
+    descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT |
+      constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    opened = fstatSync(descriptor);
+    afterLockTemporaryOpen?.();
+    writeFileSync(descriptor, `${canonicalJson(value)}\n`); fsyncSync(descriptor);
+    const ready = lstatSync(temporary);
+    if (!same(opened, ready) || !ready.isFile() || ready.isSymbolicLink() ||
+        ready.nlink !== 1 || (ready.mode & 0o077) !== 0) {
+      throw new Error("transaction ingress floor temporary lock changed");
     }
+    assertRoot(root);
+    // linkSync is create-only. An existing lock, including one from a dead
+    // process, remains untouched and requires deliberate operator recovery.
+    linkSync(temporary, path); published = true;
+    fsyncSync(root.descriptor);
+    afterLockPublish?.();
+    const linked = lstatSync(path);
+    if (!same(opened, linked) || linked.nlink !== 2) {
+      throw new Error("transaction ingress floor published lock changed");
+    }
+    unlinkSync(temporary);
+    fsyncSync(root.descriptor);
+    return { descriptor, identity: opened, path, value };
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (opened !== null) {
+      try {
+        if (published) {
+          const linked = lstatSync(path);
+          if (!same(opened, linked) || linked.isSymbolicLink()) {
+            throw new Error("transaction ingress floor published lock changed");
+          }
+          unlinkSync(path); fsyncSync(root.descriptor);
+        }
+      } catch (cleanupError) { if (cleanupError?.code !== "ENOENT") throw cleanupError; }
+      try {
+        const linked = lstatSync(temporary);
+        if (!same(opened, linked) || linked.isSymbolicLink()) {
+          throw new Error("transaction ingress floor temporary lock changed");
+        }
+        unlinkSync(temporary); fsyncSync(root.descriptor);
+      } catch (cleanupError) { if (cleanupError?.code !== "ENOENT") throw cleanupError; }
+    }
+    throw error;
   }
-  throw new Error("transaction ingress floor lock cannot be acquired");
 }
-function releaseLock(root, lock) {
+function releaseLock(root, lock, afterLockOpen) {
   closeSync(lock.descriptor);
   assertRoot(root);
-  const current = readLock(lock.path);
+  const current = readLock(lock.path, afterLockOpen);
   if (!same(current.identity, lock.identity) || current.value.token !== lock.value.token) {
     throw new Error("transaction ingress floor writer lock changed");
   }
@@ -426,8 +392,7 @@ export function advanceTransactionIngressFloor(directory, expectedIdentity, cand
   const pins = identity(expectedIdentity);
   const root = openRoot(directory); let lock;
   try {
-    lock = acquireLock(root, _afterLockOpen, _afterLockPublish,
-      _afterLockTemporaryOpen);
+    lock = acquireLock(root, _afterLockPublish, _afterLockTemporaryOpen);
     const { record: old, staleCopy } = loadCopies(root); validateIdentity(old, pins);
     rejectInProcessRollback(root, old);
     // Normalize a one-step crash pair before starting another revision. Otherwise a
@@ -449,5 +414,5 @@ export function advanceTransactionIngressFloor(directory, expectedIdentity, cand
     _afterFirstCopy?.();
     writeCopy(root, SECONDARY, next, _beforeCopyRename);
     return structuredClone(next);
-  } finally { if (lock) releaseLock(root, lock); closeSync(root.descriptor); }
+  } finally { if (lock) releaseLock(root, lock, _afterLockOpen); closeSync(root.descriptor); }
 }

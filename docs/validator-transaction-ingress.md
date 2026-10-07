@@ -127,7 +127,14 @@ also reject replacing the floor with an older revision during one process run.
 Before a new revision, a torn pair is repaired to the newer verified record;
 otherwise a second interruption could leave copies two revisions apart. The
 lock becomes visible only after its complete owner record has been fsynced, so
-a crash while preparing that record cannot leave an empty active lock.
+a crash while preparing that record cannot leave an empty active lock. A crash
+after publication can leave a valid lock behind. The runtime never removes an
+existing lock automatically, even if its recorded process appears dead:
+concurrent attempts to reclaim it could delete a new writer's lock. An
+operator must first verify that no writer is running and that both floor
+copies form a valid current or one-step linked pair before removing that
+specific lock and any linked temporary name. If ownership or copy state is
+unclear, keep the gateway closed.
 
 An interruption during one-time initialization may leave just the first copy.
 The gate refuses to start and initialization refuses to run again over it.
