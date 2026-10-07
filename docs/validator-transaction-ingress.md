@@ -224,9 +224,11 @@ validator must belong to the package's finalized checkpoint validator set. The
 entire package validator set must equal the genesis set advanced through locally
 verified handoffs active at the checkpoint height; a checkpoint before a later
 rotation uses its historical set. Initialization checks the same binding before
-creating the floor. A single checkpoint proof does not establish that an earlier
-handoff activation block is an ancestor of that checkpoint; this local topology
-check is not a full finality-chain proof. The selected validator's original
+creating the floor. A checkpoint exactly at a handoff activation height is
+rejected: its standalone proof does not verify the handoff-pinned block hash,
+state root, and both old and new validator quorums. A later single checkpoint
+proof also does not establish that the activation block is its ancestor; this
+local topology check is not a full finality-chain proof. The selected validator's original
 ceremony TLS fingerprint must be active in the signed certificate
 history at that height. The v2 package does not rotate the upstream pin; a
 certificate renewal still requires a separate ingress migration. A checkpoint predating the

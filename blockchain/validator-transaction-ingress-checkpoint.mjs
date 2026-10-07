@@ -35,6 +35,13 @@ export function assertTransactionIngressValidatorSet(verified, genesisValidators
   let expected = genesisValidators;
   for (const handoff of context.handoffs) {
     if (handoff.activationHeight > verified.checkpoint.height) break;
+    // A recent one-block proof checks only the supplied new quorum. At the
+    // activation block consensus requires both old and new quorums, plus the
+    // exact block hash and state root pinned by the signed handoff. Until a
+    // full handoff-aware finality chain is supplied, this height is inadmissible.
+    if (handoff.activationHeight === verified.checkpoint.height) {
+      throw new Error("transaction ingress handoff activation requires a full finality chain proof");
+    }
     expected = handoff.nextValidators;
   }
   const ordered = (members) => [...members].sort((left, right) =>
