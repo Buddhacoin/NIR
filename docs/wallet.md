@@ -79,6 +79,15 @@ intent.
 Review and submission remain separate actions, limiting the damage from a
 compromised interface.
 
+For a local browser-to-validator rehearsal, the two explicit submit buttons
+use the separate loopback `submissionOrigin` in `wallet-ui/nodes.json`, not the
+selected read-only RPC. Start the pinned validator transaction gateway with
+the exact wallet preview origin as described in
+[`validator-transaction-ingress.md`](validator-transaction-ingress.md). An
+absent or invalid submission origin, or a network-ID mismatch, stops sending.
+This local HTTP path trusts the same host and is not a public TLS endpoint or
+evidence of independent operation.
+
 The same bridge can sign an expiring payment request and verify a request from
 another NIR account. Verification binds the exact address, amount, network,
 expiry, identifier and memo before the wallet fills transfer fields. It does not

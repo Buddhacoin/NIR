@@ -1,4 +1,4 @@
-import { normalizeNodePolicy, selectNodeHealth } from "./node-selection.js";
+import { normalizeNodePolicy, selectNodeHealth, transactionSubmissionUrl } from "./node-selection.js";
 import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
 import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
@@ -828,7 +828,7 @@ document.querySelector("#submit-resource").onclick = async (event) => {
         health.networkId !== signedResourceTransaction.networkId) {
       throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
     }
-    const response = await fetch(nodeUrl("/v1/transactions"), {
+    const response = await fetch(transactionSubmissionUrl(nodePolicy), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(signedResourceTransaction),
@@ -1257,7 +1257,7 @@ document.querySelector("#submit-signed").onclick = async () => {
     if (currentNetwork.networkId !== signedTransaction.networkId) {
       throw new Error("Сеть узла не совпадает с сетью подписанной транзакции.");
     }
-    const response = await fetch(nodeUrl("/v1/transactions"), {
+    const response = await fetch(transactionSubmissionUrl(nodePolicy), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(signedTransaction),

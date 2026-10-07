@@ -10,6 +10,20 @@ function exactOrigin(value) {
   return url.origin;
 }
 
+function exactLoopbackSubmissionOrigin(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new Error("wallet submission origin is invalid");
+  let url;
+  try { url = new URL(value); }
+  catch { throw new Error("wallet submission requires an exact loopback HTTP origin"); }
+  if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) ||
+      !url.port || Number(url.port) < 1 || url.username || url.password || url.pathname !== "/" ||
+      url.search || url.hash || url.origin !== value) {
+    throw new Error("wallet submission requires an exact loopback HTTP origin");
+  }
+  return url.origin;
+}
+
 export function normalizeNodePolicy(value) {
   if (!value || !Array.isArray(value.nodes) || value.nodes.length < 1 || value.nodes.length > 16 ||
       !Number.isSafeInteger(value.minimumAgreement) || value.minimumAgreement < 1 ||
@@ -18,7 +32,13 @@ export function normalizeNodePolicy(value) {
   }
   const nodes = value.nodes.map(exactOrigin);
   if (new Set(nodes).size !== nodes.length) throw new Error("wallet nodes must be unique");
-  return { minimumAgreement: value.minimumAgreement, nodes };
+  return { minimumAgreement: value.minimumAgreement, nodes,
+    submissionOrigin: exactLoopbackSubmissionOrigin(value.submissionOrigin) };
+}
+
+export function transactionSubmissionUrl(policy) {
+  if (!policy?.submissionOrigin) throw new Error("Локальный адрес отправки транзакций не настроен.");
+  return `${exactLoopbackSubmissionOrigin(policy.submissionOrigin)}/v1/transactions`;
 }
 
 export function selectNodeHealth(entries, {

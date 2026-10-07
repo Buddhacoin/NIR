@@ -1098,6 +1098,10 @@ test("production wallet bridge and UI verify anchored generations before bind on
       kind: "node", sourceManifest: manifest,
     });
     assert.equal(validateProductionWalletExtensionArtifact(walletArtifact).files, walletFiles.length);
+    const foreignSubmission = mutateArtifactText(walletArtifact, "nodes.json", (text) =>
+      JSON.stringify({ ...JSON.parse(text), submissionOrigin: "http://example.invalid:8789" }));
+    assert.throws(() => validateProductionWalletExtensionArtifact(foreignSubmission),
+      /extension loopback boundary/);
     const extraArtifact = structuredClone(walletArtifact);
     extraArtifact.entries.push({ content: Buffer.from("extra").toString("base64"),
       executable: false, path: "wallet-ui/background.js", sha3_256: "0".repeat(64), size: 5 });
@@ -1129,7 +1133,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     });
     assert.throws(() => validateProductionWalletExtensionArtifact(cspArtifact), /permissions or CSP/);
     const traversalArtifact = mutateArtifactText(walletArtifact, "index.html",
-      (text) => text.replace("app.js?v=32", "../app.js"));
+      (text) => text.replace("app.js?v=33", "../app.js"));
     assert.throws(() => validateProductionWalletExtensionArtifact(traversalArtifact), /unsafe|unverified/);
     const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,

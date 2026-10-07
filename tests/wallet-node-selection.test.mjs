@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   normalizeNodePolicy,
   selectNodeHealth,
+  transactionSubmissionUrl,
 } from "../wallet-ui/node-selection.js";
 
 const tip = (character) => character.repeat(64);
@@ -56,6 +57,7 @@ test("wallet node policy rejects duplicate and non-origin URLs", () => {
   }), {
     minimumAgreement: 2,
     nodes: ["https://node-a.example", "https://node-b.example"],
+    submissionOrigin: null,
   });
   assert.throws(() => normalizeNodePolicy({
     minimumAgreement: 1,
@@ -67,4 +69,19 @@ test("wallet node policy rejects duplicate and non-origin URLs", () => {
   assert.throws(() => normalizeNodePolicy({
     minimumAgreement: 1, nodes: ["http://node-a.example"],
   }), /exact HTTP origin/);
+});
+
+test("submission policy requires an explicit exact loopback origin", () => {
+  const base = { minimumAgreement: 1, nodes: ["https://node-a.example"] };
+  assert.throws(() => transactionSubmissionUrl(normalizeNodePolicy(base)), /не настроен/);
+  for (const submissionOrigin of ["http://127.0.0.1:8789", "http://[::1]:8789"]) {
+    const policy = normalizeNodePolicy({ ...base, submissionOrigin });
+    assert.equal(transactionSubmissionUrl(policy), `${submissionOrigin}/v1/transactions`);
+  }
+  for (const submissionOrigin of ["http://localhost:8789", "https://127.0.0.1:8789",
+    "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:8789/path",
+    "http://127.0.0.1:8789?admin=1", "http://user@127.0.0.1:8789",
+    "http://example.com:8789"]) {
+    assert.throws(() => normalizeNodePolicy({ ...base, submissionOrigin }), /loopback HTTP origin/);
+  }
 });

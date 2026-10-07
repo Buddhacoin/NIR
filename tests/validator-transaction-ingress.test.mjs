@@ -62,19 +62,31 @@ test("loopback transaction ingress queues a signed transfer on two real validato
     }
     const ingress = createValidatorTransactionIngressServer({
       expectedNetworkId: replicas[0].networkId, tlsCertificateSha256: tls.pin,
-      upstreamOrigin: peerUrls[0],
+      upstreamOrigin: peerUrls[0], walletOrigin: "http://127.0.0.1:8765",
     });
     servers.push(ingress);
     const base = `http://127.0.0.1:${await listen(ingress)}`;
+    const preflight = await fetch(`${base}/v1/transactions`, {
+      method: "OPTIONS", headers: { origin: "http://127.0.0.1:8765",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type" },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "http://127.0.0.1:8765");
+    assert.equal(preflight.headers.get("access-control-allow-methods"), "POST");
+    assert.equal(preflight.headers.get("access-control-allow-headers"), "content-type");
+    assert.deepEqual(replicas.map((replica) => replica.mempoolSize), [0, 0]);
     const wallet = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "TREASURY-DEV-KEY.json")));
     const signed = createTransfer({ wallet, networkId: replicas[0].networkId,
       recipient: generateWallet().address, amount: "1000000", nonce: 0 });
     const submit = async (payload) => fetch(`${base}/v1/transactions`, {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { origin: "http://127.0.0.1:8765",
+        "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
     const first = await submit(signed);
     assert.equal(first.status, 202);
+    assert.equal(first.headers.get("access-control-allow-origin"), "http://127.0.0.1:8765");
     const receipt = await first.json();
     assert.equal(receipt.status, "queued");
     assert.equal(receipt.transactionId, transactionId(signed));
@@ -87,6 +99,8 @@ test("loopback transaction ingress queues a signed transfer on two real validato
     assert.equal((await duplicate.json()).status, "known");
     const invalid = await submit({ ...signed, signature: "tampered" });
     assert.equal(invalid.status, 400);
+    const wrongNetwork = await submit({ ...signed, networkId: "foreign-devnet" });
+    assert.equal(wrongNetwork.status, 400);
     assert.deepEqual(replicas.map((replica) => replica.mempoolSize), [1, 1]);
     const admin = await fetch(`${base}/v1/blocks/produce`, { method: "POST" });
     assert.equal(admin.status, 404);
@@ -111,16 +125,32 @@ test("ingress rejects every non-exact route and method before reaching its upstr
     const upstreamOrigin = `https://127.0.0.1:${await listen(upstream)}`;
     const ingress = createValidatorTransactionIngressServer({
       expectedNetworkId: "nir-distributed-devnet", tlsCertificateSha256: tls.pin,
-      upstreamOrigin,
+      upstreamOrigin, walletOrigin: "http://127.0.0.1:8765",
     });
     servers.push(ingress);
     const base = `http://127.0.0.1:${await listen(ingress)}`;
     for (const [method, path] of [["POST", "/v1/blocks/produce"], ["POST", "/v1/sync"],
       ["POST", "/v1/gossip/transactions"], ["GET", "/v1/transactions"],
-      ["OPTIONS", "/v1/transactions"], ["POST", "/v1/transactions?admin=1"],
+      ["POST", "/v1/transactions?admin=1"],
       ["POST", "/v1//transactions"], ["POST", "/V1/transactions"]]) {
       const response = await fetch(`${base}${path}`, { method });
       assert.equal(response.status, 404, `${method} ${path}`);
+    }
+    assert.equal(reached, 0);
+    for (const [path, method, headers] of [
+      ["/v1/blocks/produce", "POST", { origin: "http://127.0.0.1:8765" }],
+      ["/v1/sync", "OPTIONS", { origin: "http://127.0.0.1:8765",
+        "access-control-request-method": "POST", "access-control-request-headers": "content-type" }],
+      ["/v1/transactions", "OPTIONS", { origin: "http://127.0.0.1:8765",
+        "access-control-request-method": "DELETE", "access-control-request-headers": "content-type" }],
+      ["/v1/transactions", "OPTIONS", { origin: "http://127.0.0.1:8765",
+        "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-admin" }],
+      ["/v1/transactions", "OPTIONS", { origin: "http://evil.invalid",
+        "access-control-request-method": "POST", "access-control-request-headers": "content-type" }],
+    ]) {
+      const response = await fetch(`${base}${path}`, { method, headers });
+      assert.ok([403, 404].includes(response.status), `${method} ${path}`);
+      assert.equal(response.headers.get("access-control-allow-origin"), null);
     }
     assert.equal(reached, 0);
     const origin = await fetch(`${base}/v1/transactions`, {
@@ -202,7 +232,15 @@ test("ingress strips extra upstream fields and rejects an upstream height claim"
 test("ingress upstream must be an exact pinned loopback HTTPS origin", () => {
   const base = { expectedNetworkId: "nir-distributed-devnet",
     tlsCertificateSha256: "a".repeat(64), upstreamOrigin: "https://127.0.0.1:8443" };
-  assert.deepEqual(validateValidatorTransactionIngressConfig(base), base);
+  assert.deepEqual(validateValidatorTransactionIngressConfig(base), { ...base, walletOrigin: null });
+  assert.equal(validateValidatorTransactionIngressConfig({ ...base,
+    walletOrigin: "http://127.0.0.1:8765" }).walletOrigin, "http://127.0.0.1:8765");
+  for (const walletOrigin of ["http://localhost:8765", "https://127.0.0.1:8765",
+    "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:8765/path",
+    "http://evil.invalid:8765"]) {
+    assert.throws(() => validateValidatorTransactionIngressConfig({ ...base, walletOrigin }),
+      /exact local wallet origin/);
+  }
   for (const upstreamOrigin of ["http://127.0.0.1:8443", "https://example.com:8443",
     "https://localhost:8443", "https://127.0.0.1:8443/v1/transactions",
     "https://127.0.0.1:8443?x=1", "https://user@127.0.0.1:8443"] ) {

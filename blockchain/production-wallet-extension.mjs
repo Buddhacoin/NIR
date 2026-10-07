@@ -18,6 +18,12 @@ function exact(value, fields, label) {
   }
 }
 
+function exactExtensionLoopbackOrigin(value) {
+  if (typeof value !== "string" || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(value)) return false;
+  try { const url = new URL(value); return url.origin === value && Number(url.port) > 0; }
+  catch { return false; }
+}
+
 function localReference(value, files) {
   if (typeof value !== "string" || value.length < 1 || value.length > 256 ||
       /^(?:[A-Za-z][A-Za-z0-9+.-]*:|\/\/)/.test(value) || value.includes("\\") ||
@@ -125,11 +131,12 @@ export function validateProductionWalletExtensionArtifact(artifact) {
     localReference(icon.src, files);
   }
   const nodes = parseConsensusJson(entries.get("nodes.json").toString("utf8"));
-  exact(nodes, ["minimumAgreement", "nodes"], "wallet node policy");
+  exact(nodes, ["minimumAgreement", "nodes", "submissionOrigin"], "wallet node policy");
   if (!Number.isSafeInteger(nodes.minimumAgreement) || nodes.minimumAgreement < 1 ||
       !Array.isArray(nodes.nodes) || nodes.nodes.length < nodes.minimumAgreement ||
       nodes.nodes.length > 16 || new Set(nodes.nodes).size !== nodes.nodes.length ||
-      nodes.nodes.some((url) => !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(url))) {
+      nodes.nodes.some((url) => !exactExtensionLoopbackOrigin(url)) ||
+      !exactExtensionLoopbackOrigin(nodes.submissionOrigin)) {
     throw new Error("wallet node policy exceeds the extension loopback boundary");
   }
   return { artifactHash: artifact.artifactHash, files: FILES.length, manifestVersion: 3,
