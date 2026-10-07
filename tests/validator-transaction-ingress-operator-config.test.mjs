@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync,
+  writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { canonicalJson } from "../blockchain/crypto.mjs";
 import { readTransactionIngressOperatorConfig,
@@ -47,5 +50,45 @@ test("operator config is exact, canonical, owned and mode 0600", () => {
     chmodSync(path, 0o600);
     writeFileSync(path, JSON.stringify(config, null, 2), { mode: 0o600 });
     assert.throws(() => readTransactionIngressOperatorConfig(path), /canonical/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("offline prepare canonicalizes a reviewed public draft without overwriting", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-operator-config-prepare-"));
+  try {
+    const draft = join(root, "draft.json"); const output = join(root, "operator.json");
+    const cli = fileURLToPath(new URL(
+      "../blockchain/validator-transaction-ingress-config-cli.mjs", import.meta.url));
+    const sample = JSON.parse(readFileSync(new URL(
+      "../docs/examples/transaction-ingress-operator-config.example.json", import.meta.url)));
+    writeFileSync(draft, JSON.stringify(sample, null, 2));
+    const placeholder = spawnSync(process.execPath, [cli, "prepare", draft, output],
+      { encoding: "utf8" });
+    assert.equal(placeholder.status, 1);
+    assert.match(placeholder.stderr, /schema or pins/);
+    assert.throws(() => statSync(output), /ENOENT/);
+    writeFileSync(draft, JSON.stringify(value(root), null, 2));
+    const prepared = spawnSync(process.execPath, [cli, "prepare", draft, output],
+      { encoding: "utf8" });
+    assert.equal(prepared.status, 0, prepared.stderr);
+    assert.equal(statSync(output).mode & 0o777, 0o600);
+    assert.equal(readFileSync(output, "utf8"), `${canonicalJson(value(root))}\n`);
+    const checked = spawnSync(process.execPath, [cli, "check", output],
+      { encoding: "utf8" });
+    assert.equal(checked.status, 0, checked.stderr);
+    const extraCheckArgument = spawnSync(process.execPath,
+      [cli, "check", output, "ignored"], { encoding: "utf8" });
+    assert.equal(extraCheckArgument.status, 1);
+    const repeated = spawnSync(process.execPath, [cli, "prepare", draft, output],
+      { encoding: "utf8" });
+    assert.equal(repeated.status, 1);
+    assert.match(repeated.stderr, /EEXIST/);
+    assert.equal(readFileSync(output, "utf8"), `${canonicalJson(value(root))}\n`);
+    const extra = { ...value(root), privateKey: "must-not-be-saved" };
+    writeFileSync(draft, JSON.stringify(extra));
+    const rejected = spawnSync(process.execPath, [cli, "prepare", draft,
+      join(root, "unsafe.json")], { encoding: "utf8" });
+    assert.equal(rejected.status, 1);
+    assert.throws(() => statSync(join(root, "unsafe.json")), /ENOENT/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
