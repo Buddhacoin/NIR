@@ -12,7 +12,8 @@ import { createTransfer, transactionId } from "../blockchain/chain.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { initializeDistributedDevnet, ValidatorReplica } from "../blockchain/distributed-node.mjs";
 import { certificateSha256 } from "../blockchain/http-client.mjs";
-import { createValidatorTransactionIngressServer, validateValidatorTransactionIngressConfig }
+import { createValidatorTransactionIngressServer, validateValidatorTransactionIngressConfig,
+  WALLET_EXTENSION_ORIGIN }
   from "../blockchain/validator-transaction-ingress.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
 
@@ -229,17 +230,68 @@ test("ingress strips extra upstream fields and rejects an upstream height claim"
   }
 });
 
+test("only the pinned extension origin can forward a direct JSON POST", async () => {
+  const tls = fixture();
+  const servers = [];
+  try {
+    const transaction = { networkId: "nir-distributed-devnet" };
+    let forwarded = 0;
+    const upstream = createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => {
+      forwarded += 1;
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(202, { "content-type": "application/json" });
+        response.end(JSON.stringify({ status: "queued", transactionId: transactionId(transaction),
+          gossipedPeers: 0 }));
+      });
+    });
+    servers.push(upstream);
+    const upstreamOrigin = `https://127.0.0.1:${await listen(upstream)}`;
+    const ingress = createValidatorTransactionIngressServer({
+      expectedNetworkId: transaction.networkId, tlsCertificateSha256: tls.pin,
+      upstreamOrigin, walletOrigin: WALLET_EXTENSION_ORIGIN,
+    });
+    servers.push(ingress);
+    const base = `http://127.0.0.1:${await listen(ingress)}`;
+    const accepted = await fetch(`${base}/v1/transactions`, {
+      method: "POST", headers: { origin: WALLET_EXTENSION_ORIGIN,
+        "content-type": "application/json" }, body: JSON.stringify(transaction),
+    });
+    assert.equal(accepted.status, 202);
+    assert.equal(accepted.headers.get("access-control-allow-origin"), WALLET_EXTENSION_ORIGIN);
+    assert.equal((await accepted.json()).transactionId, transactionId(transaction));
+    assert.equal(forwarded, 1);
+    for (const origin of ["https://evil.invalid", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "http://127.0.0.1:8765"]) {
+      const denied = await fetch(`${base}/v1/transactions`, {
+        method: "POST", headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify(transaction),
+      });
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers.get("access-control-allow-origin"), null);
+      assert.equal(forwarded, 1);
+    }
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
+});
+
 test("ingress upstream must be an exact pinned loopback HTTPS origin", () => {
   const base = { expectedNetworkId: "nir-distributed-devnet",
     tlsCertificateSha256: "a".repeat(64), upstreamOrigin: "https://127.0.0.1:8443" };
   assert.deepEqual(validateValidatorTransactionIngressConfig(base), { ...base, walletOrigin: null });
   assert.equal(validateValidatorTransactionIngressConfig({ ...base,
     walletOrigin: "http://127.0.0.1:8765" }).walletOrigin, "http://127.0.0.1:8765");
+  assert.equal(validateValidatorTransactionIngressConfig({ ...base,
+    walletOrigin: WALLET_EXTENSION_ORIGIN }).walletOrigin, WALLET_EXTENSION_ORIGIN);
   for (const walletOrigin of ["http://localhost:8765", "https://127.0.0.1:8765",
     "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:8765/path",
-    "http://evil.invalid:8765"]) {
+    "http://evil.invalid:8765", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    `${WALLET_EXTENSION_ORIGIN}/`, `${WALLET_EXTENSION_ORIGIN}/path`,
+    "chrome-extension://*", "chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnn"]) {
     assert.throws(() => validateValidatorTransactionIngressConfig({ ...base, walletOrigin }),
-      /exact local wallet origin/);
+      /exact local wallet or pinned extension origin/);
   }
   for (const upstreamOrigin of ["http://127.0.0.1:8443", "https://example.com:8443",
     "https://localhost:8443", "https://127.0.0.1:8443/v1/transactions",

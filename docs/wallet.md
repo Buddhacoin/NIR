@@ -199,10 +199,11 @@ hardware-key support, multisignature recovery, and optional selective privacy.
 manifest. It can also be loaded as an unpacked browser-extension preview through
 its Manifest V3 file. The preview intentionally has no website permissions and
 does not handle secret keys. Local bridge signing and valueless-node submission
-are active only in the HTTP preview when connected to an operator-reviewed
-valueless test network: the ingress rejects browser-extension origins, so the
-unpacked extension cannot submit transactions. The gateway does not itself
-prove that a network is valueless. Real-value
+can be rehearsed in the HTTP preview or the pinned unpacked extension when
+connected to an operator-reviewed valueless test network. The gateway accepts
+one exact browser origin per instance, and Chrome may require a separate local
+network access grant. The gateway does not itself prove that a network is
+valueless or validate the certificate lifecycle. Real-value
 operation, independent synchronization and audited distribution remain disabled.
 
 Run `npm run wallet:preview` and open `http://127.0.0.1:8765` to inspect it. The
