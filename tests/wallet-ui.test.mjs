@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { submissionStatus } from "../wallet-ui/submission-status.js";
 
 const html = readFileSync(new URL("../wallet-ui/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
@@ -58,9 +59,10 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=31/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=31/);
-  assert.match(serviceWorker, /app\.js\?v=31/);
-  assert.match(serviceWorker, /nir-wallet-shell-v33/);
+  assert.match(html, /app\.js\?v=32/);
+  assert.match(serviceWorker, /app\.js\?v=32/);
+  assert.match(serviceWorker, /nir-wallet-shell-v34/);
+  assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
   assert.match(serviceWorker, /node-selection\.js/);
@@ -124,6 +126,23 @@ test("wallet exposes native resource staking and delegation controls", () => {
   assert.match(html, /id="submit-resource"[^>]*>Отправить в local testnet/);
   assert.match(script, /signedResourceTransaction = signed\.transaction/);
   assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
+});
+
+test("submission responses cannot claim transaction finality", () => {
+  assert.equal(submissionStatus({ status: "queued", transactionId: "a".repeat(64) }),
+    "Принято в очередь, ждите проверенного подтверждения.");
+  for (const response of [
+    { status: "known", transactionId: "a".repeat(64) },
+    { status: "finalized", height: 12, blockHash: "b".repeat(64) },
+    { height: 12, blockHash: "b".repeat(64) },
+    {},
+  ]) {
+    assert.match(submissionStatus(response), /ждите проверенного подтверждения/);
+    assert.doesNotMatch(submissionStatus(response), /Подтверждено|в блоке 12/);
+  }
+  assert.match(script, /resourcesStatus\.textContent = submissionStatus\(result\)/);
+  assert.match(script, /sendStatus\.textContent = submissionStatus\(result\)/);
+  assert.doesNotMatch(script, /Подтверждено в блоке \$\{result\.height\}/);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {

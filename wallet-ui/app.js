@@ -2,6 +2,7 @@ import { normalizeNodePolicy, selectNodeHealth } from "./node-selection.js";
 import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
 import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
+import { submissionStatus } from "./submission-status.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
 
 if (globalThis.top !== globalThis.self) {
@@ -834,7 +835,7 @@ document.querySelector("#submit-resource").onclick = async (event) => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Узел отклонил операцию.");
-    resourcesStatus.textContent = `Подтверждено в блоке ${result.height}.`;
+    resourcesStatus.textContent = submissionStatus(result);
     signedResourceTransaction = null;
     document.querySelector("#resource-signed").hidden = true;
     await refreshNodeStatus();
@@ -1263,7 +1264,7 @@ document.querySelector("#submit-signed").onclick = async () => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Узел отклонил транзакцию.");
-    sendStatus.textContent = `Принято local testnet · ${result.transactionId ?? result.status}`;
+    sendStatus.textContent = submissionStatus(result);
     submitButton.hidden = true;
     signedTransaction = null;
     await refreshNodeStatus();

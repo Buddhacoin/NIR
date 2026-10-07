@@ -71,6 +71,11 @@ review transfers and resource operations, and request a terminal-confirmed
 signature. It displays signed transaction JSON first. A separate button can
 submit it only after a fresh node health check reports `valueless-devnet` and
 the signed network ID matches the node. Signing never submits automatically.
+An HTTP submission response (including `queued`, `known`, or a reported height)
+is displayed as pending, never as a confirmed block. Only the separate
+proof-verified account history and transaction proof workflow below can show a
+transaction as confirmed; the wallet does not automatically retry the signed
+intent.
 Review and submission remain separate actions, limiting the damage from a
 compromised interface.
 

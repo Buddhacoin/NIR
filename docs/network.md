@@ -186,6 +186,13 @@ a failed proposer cannot alter balances or create a competing execution result.
 
 The development faucet both queues and finalizes its transfer so the wallet can
 still use it as one action.
+The `network:coordinator` command explicitly uses the local developer RPC
+profile for this manual transaction, faucet, block-production and snapshot
+workflow. It is not an operator-authenticated public control plane. The installed
+`node:serve-production` entrypoint uses a read-only RPC profile and does not
+expose those four mutating POST routes. Public transaction submission needs a
+validator-backed ingress; test-unit distribution needs a separate
+operator-controlled channel.
 
 ## Transaction ingress and gossip
 

@@ -8,6 +8,9 @@ import {
 } from "./http-ingress.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
+const DEVELOPER_POST_PATHS = new Set([
+  "/v1/transactions", "/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create",
+]);
 
 function send(response, status, value, origin = null) {
   const body = JSON.stringify(value);
@@ -29,6 +32,10 @@ function allowedOrigin(request) {
 }
 
 export function createNodeHttpServer(node, options = {}) {
+  const rpcProfile = options.rpcProfile ?? "public";
+  if (rpcProfile !== "public" && rpcProfile !== "developer") {
+    throw new Error("node RPC profile must be public or developer");
+  }
   const httpIngressOptions = {
     maxBodyBytes: 64 * 1024,
     ...(options.httpIngress ?? {}),
@@ -40,6 +47,11 @@ export function createNodeHttpServer(node, options = {}) {
     try {
       finishIngress = httpIngress.begin(request);
       if (origin === false) return send(response, 403, { error: "origin is not allowed" });
+      const url = new URL(request.url, "http://node.local");
+      if ((request.method === "POST" || request.method === "OPTIONS") &&
+          DEVELOPER_POST_PATHS.has(url.pathname) && rpcProfile !== "developer") {
+        return send(response, 404, { error: "not found" }, origin);
+      }
       if (request.method === "OPTIONS") {
         response.writeHead(204, {
           "access-control-allow-headers": "content-type",
@@ -48,7 +60,6 @@ export function createNodeHttpServer(node, options = {}) {
         });
         response.end(); return;
       }
-      const url = new URL(request.url, "http://node.local");
       if (request.method === "GET" && url.pathname === "/health") {
         return send(response, 200, {
           height: node.height, networkId: node.networkId, status: "ready",
@@ -152,4 +163,12 @@ export function createNodeHttpServer(node, options = {}) {
     }
   });
   return hardenHttpServer(server, httpIngressOptions);
+}
+
+export function createProductionNodeHttpServer(node, options = {}) {
+  return createNodeHttpServer(node, { ...options, rpcProfile: "public" });
+}
+
+export function createDeveloperNodeHttpServer(node, options = {}) {
+  return createNodeHttpServer(node, { ...options, rpcProfile: "developer" });
 }

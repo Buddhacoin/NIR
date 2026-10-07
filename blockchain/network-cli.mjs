@@ -164,7 +164,7 @@ try {
       certificateMode,
       certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode, directory),
     });
-    createNodeHttpServer(node).listen(port, "127.0.0.1", () => {
+    createNodeHttpServer(node, { rpcProfile: "developer" }).listen(port, "127.0.0.1", () => {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);
     });
   } else if (command === "discover" && directory && parameter) {

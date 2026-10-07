@@ -299,7 +299,7 @@ test("validators independently attest one snapshot and the coordinator stages it
     assert.match((await unsigned.json()).error, /authentication is required/);
 
     let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
-    coordinatorServer = createNodeHttpServer(coordinator);
+    coordinatorServer = createNodeHttpServer(coordinator, { rpcProfile: "developer" });
     const coordinatorUrl = await listen(coordinatorServer);
     const response = await fetch(`${coordinatorUrl}/v1/snapshots/create`, { method: "POST" });
     assert.equal(response.status, 201);
