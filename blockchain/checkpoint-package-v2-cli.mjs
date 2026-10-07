@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync,
-  openSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fsyncSync, openSync,
+  writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import process from "node:process";
 
@@ -12,8 +12,8 @@ import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES, validateCheckpointWitnessPolicy }
   from "./checkpoint-trust-package.mjs";
 import { assembleCheckpointTrustPackageV2, serializeCheckpointTrustPackageV2,
   verifyCheckpointTrustPackageV2 } from "./checkpoint-trust-package-v2.mjs";
-import { parseConsensusJson } from "./consensus-json.mjs";
-import { canonicalJson } from "./crypto.mjs";
+import { readCanonicalCheckpointV2Input as readCanonical }
+  from "./checkpoint-package-v2-input.mjs";
 
 const CONFIG_FIELDS = ["certificateDirectory", "certificateHeadAnchorPath",
   "expectedGenesisHash", "expectedNetworkId", "expectedPolicyId", "format",
@@ -26,41 +26,6 @@ function exact(value, fields, label) {
       Object.keys(value).sort().join("\0") !== [...fields].sort().join("\0")) {
     throw new Error(`${label} has unknown or missing fields`);
   }
-}
-
-function readCanonical(path, label, maximumBytes = 4 * 1024 * 1024) {
-  if (typeof path !== "string" || !isAbsolute(path) ||
-      !Number.isInteger(constants.O_NOFOLLOW) || !constants.O_NOFOLLOW ||
-      !Number.isInteger(constants.O_NONBLOCK) || !constants.O_NONBLOCK) {
-    throw new Error(`${label} path is invalid`);
-  }
-  const before = lstatSync(path); let descriptor;
-  try {
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
-        before.size < 2 || before.size > maximumBytes || (before.mode & 0o022) !== 0) {
-      throw new Error(`${label} file is unsafe`);
-    }
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW |
-      constants.O_NONBLOCK);
-    const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
-        opened.size !== before.size) throw new Error(`${label} changed during open`);
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor); const linked = lstatSync(path);
-    if (bytes.length !== opened.size || after.dev !== opened.dev || after.ino !== opened.ino ||
-        linked.dev !== opened.dev || linked.ino !== opened.ino ||
-        after.size !== opened.size || after.mtimeMs !== opened.mtimeMs ||
-        after.ctimeMs !== opened.ctimeMs) throw new Error(`${label} changed during read`);
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (!text.endsWith("\n") || text.endsWith("\n\n")) {
-      throw new Error(`${label} must be canonical JSON with one newline`);
-    }
-    const value = parseConsensusJson(text.slice(0, -1));
-    if (`${canonicalJson(value)}\n` !== text) {
-      throw new Error(`${label} must be canonical JSON with one newline`);
-    }
-    return value;
-  } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
 function readContext(path) {
