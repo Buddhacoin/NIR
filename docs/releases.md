@@ -104,6 +104,29 @@ npm run release:verify-node-install -- \
   signed-release.json nir1TRUSTED_RELEASE_ADDRESS
 ```
 
+## Rehearse both portable installations
+
+On a clean, committed checkout with Node.js 26 or newer, run:
+
+```bash
+npm run release:rehearse
+```
+
+This creates a disposable signing identity in memory, places the signed test
+release and all build/install outputs in one private temporary directory, and
+uses the existing release CLI. For both `node` and `wallet`, it builds the
+`.nirpkg` twice, requires byte-for-byte equality and the same artifact hash,
+verifies the package, installs into a fresh path, reverifies the installation,
+then changes one installed file and requires reverification to reject it. The
+temporary directory is removed when the command ends. It is intended for
+local macOS/Linux runs and also runs on Linux in CI. A dirty tracked checkout
+fails at release creation; commit the intended source first.
+
+The rehearsal key is not a project release authority. This exercise does not
+create native installers, provide platform signatures, verify an operator's
+independent release anchor, or prove that separate machines built the same
+artifact. Those remain separate launch requirements.
+
 The install commands verify the post-quantum release signature, trusted signer
 address, source-manifest binding, artifact hash, complete deterministic file
 set, every file digest, and all paths before creating the destination. They
