@@ -119,19 +119,23 @@ npm run network:validator -- .nir-network/validators/validator-2 8793
 npm run network:validator -- .nir-network/validators/validator-3 8794
 ```
 
-These commands default to `NIR_CERTIFICATE_MODE=dev-genesis`, which preserves
+These development-directory commands default to `NIR_CERTIFICATE_MODE=dev-genesis`, which preserves
 the static-pin behavior of an initialized localhost devnet. A production-like
 testnet must first install the verified lifecycle history under each validator's
-`certificates/` directory and then start with the mode stated explicitly:
+`certificates/` directory, retain its verified head outside node state, and then
+start with both the mode and anchor path stated explicitly:
 
 ```bash
 export NIR_CERTIFICATE_MODE=lifecycle
+export NIR_CERTIFICATE_HEAD_ANCHOR_PATH=/secure/operator/certificate-head.json
 npm run network:validator -- .nir-network/validators/validator-0 8791
 ```
 
 In lifecycle mode a missing, revoked, expired-overlap, corrupt, or
 topology-detached record fails closed. The process does not retry with the stale
 pin from genesis.
+Ceremony-installed validator directories require an explicit certificate mode
+even for local fixtures; they never silently default to `dev-genesis`.
 
 ## Start the coordinator
 

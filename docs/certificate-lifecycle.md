@@ -135,7 +135,8 @@ at call time, so later caller mutations cannot change the accepted peer.
 
 Validator and coordinator processes have two explicit transport-certificate modes:
 
-- `dev-genesis` is the default compatibility mode for local development. It uses
+- `dev-genesis` is the default compatibility mode for local development outside
+  ceremony validator startup. Ceremony startup requires an explicit mode. It uses
   the static pin in the finalized peer registry exactly as older devnets did.
 - `lifecycle` is required for a public testnet or production-like rehearsal. Set
   `NIR_CERTIFICATE_MODE=lifecycle` before starting every validator and the
@@ -153,6 +154,27 @@ request. Lifecycle mode never falls back to a genesis pin.
 At validator startup the configured server certificate must be one of that
 validator's lifecycle pins at the current height. Restart re-verifies the store,
 repairs one damaged redundant copy, and retains the same height-based decision.
+
+Every lifecycle `RuntimeCertificatePins` instance requires an external anchor
+path, including direct library callers. Lifecycle launches through `network-cli` require
+`NIR_CERTIFICATE_HEAD_ANCHOR_PATH` to name an absolute operator-controlled JSON
+file outside the node's writable state. Its exact shape is
+`{"format":"nir-certificate-history-anchor-v1","headHash":"<64 lowercase hex>","networkId":"<network ID>","recordCount":<positive integer>,"version":1}`.
+The `certificate:lifecycle status` command prints the verified `headHash`,
+`networkId`, and `records` needed to prepare it. Compare that head with the
+quorum-authenticated history and retain the anchor through a separate trusted
+channel. The network CLI rejects an anchor path inside the node's writable
+state. The runtime rereads the anchor for every lifecycle pin lookup, retains
+the highest anchor it has accepted in memory, and rejects a shorter anchor or
+a local history shorter than the retained count or with a different hash at
+that count. This prevents restoring both locally valid copies to a
+pre-revocation or pre-renewal prefix once the external anchor has advanced.
+Advance the operator-controlled anchor after verifying a new quorum head;
+never derive it solely from the local store being protected. If the anchor is
+missing, malformed, or ahead of the local history, lifecycle requests fail
+closed. An anchor left at an old head cannot detect rollback of later records,
+so its retention and advancement are part of the operator procedure. The
+`dev-genesis` mode does not require an anchor.
 
 Lifecycle validators also expose the bounded `/v1/p2p/certificates/history` endpoint
 only through the validator-authenticated transport. During synchronization a node

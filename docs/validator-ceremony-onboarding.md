@@ -69,12 +69,19 @@ to `ValidatorReplica`. Ceremony mode rejects `VALIDATOR-KEY.json` and
 `TRANSPORT-KEY.json`; it never falls back to the development plaintext layout.
 The finality and transport private keys remain in memory only for the lifetime
 of the validator process.
+Ceremony startup requires an explicit `NIR_CERTIFICATE_MODE`; an omitted mode
+cannot select the development genesis pin. Public operator starts use
+`lifecycle` after certificate bootstrap and supply an independently retained
+`NIR_CERTIFICATE_HEAD_ANCHOR_PATH` outside node state. Explicit `dev-genesis`
+remains available only for local ceremony fixtures.
 
 For an attended start, run the command in a real terminal. Both prompts disable
 terminal echo and the passwords are not accepted through arguments,
 environment variables, or configuration files:
 
 ```sh
+NIR_CERTIFICATE_MODE=lifecycle \
+NIR_CERTIFICATE_HEAD_ANCHOR_PATH=/secure/operator/certificate-head.json \
 NIR_TLS_KEY_PATH=/secure/runtime/validator-tls-key.pem \
   npm run network:validator -- \
   /srv/nir/validator-0 9443 nir1_TRUSTED_RELEASE_SIGNER
@@ -91,6 +98,8 @@ files must already be `0600` and should preferably be replaced by a supervisor's
 anonymous credential pipes):
 
 ```sh
+NIR_CERTIFICATE_MODE=lifecycle \
+NIR_CERTIFICATE_HEAD_ANCHOR_PATH=/secure/operator/certificate-head.json \
 NIR_TLS_KEY_PATH=/secure/runtime/validator-tls-key.pem \
   npm run network:validator -- \
   /srv/nir/validator-0 9443 nir1_TRUSTED_RELEASE_SIGNER \

@@ -67,7 +67,8 @@ test("listener descriptors cannot alias beacon or ceremony password channels", (
     passwordFd = openSync(passwordPath, "r"); transportFd = openSync(transportPath, "r");
     const validator = spawnSync(process.execPath, ["blockchain/network-cli.mjs", "serve-validator",
       ceremonyLink, "8791", `nir1${"0".repeat(64)}`], {
-      cwd: process.cwd(), encoding: "utf8", env: { NIR_LISTEN_FD: "3" },
+      cwd: process.cwd(), encoding: "utf8",
+      env: { NIR_CERTIFICATE_MODE: "dev-genesis", NIR_LISTEN_FD: "3" },
       stdio: ["ignore", "pipe", "pipe", passwordFd, transportFd],
     });
     assert.equal(validator.status, 1);

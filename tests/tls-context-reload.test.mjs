@@ -6,10 +6,11 @@ import {
   mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
+  certificateHistoryHead,
   createCertificateRecord,
   EMPTY_CERTIFICATE_RECORD_HASH,
   topologyHistoryCommitment,
@@ -98,17 +99,24 @@ function fixture(root, operation) {
     validatorAddress: wallets[0].address,
   }, wallets.slice(0, 3));
   const history = [...issues, transition];
+  const anchorPathFor = (directory) => join(root, `head-${basename(directory)}.json`);
   for (const directory of [layout.coordinatorDirectory, ...layout.validatorDirectories]) {
     for (const record of history) {
       installCertificateRecord(join(directory, "certificates"), record, context);
     }
+    writeFileSync(anchorPathFor(directory), JSON.stringify({
+      format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(history, context), networkId: genesis.networkId,
+      recordCount: history.length, version: 1,
+    }));
   }
-  return { genesis, layout, nextCertificate, oldCertificates };
+  return { anchorPathFor, genesis, layout, nextCertificate, oldCertificates };
 }
 
 async function start(values) {
   const replicas = values.layout.validatorDirectories.map((directory) =>
-    new ValidatorReplica(directory, { certificateMode: CERTIFICATE_MODE_LIFECYCLE }));
+    new ValidatorReplica(directory, { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(directory) }));
   const urls = [];
   const servers = replicas.map((replica, index) => createValidatorHttpServer(replica, {
     peerUrls: () => urls,
@@ -158,7 +166,8 @@ test("SIGHUP rotates to an active overlap certificate and failures retain the ol
 
     const coordinator = new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     assert.equal((await coordinator.faucet(generateWallet().address)).height, 1);
 
@@ -193,7 +202,8 @@ test("a revoked lifecycle certificate cannot be reloaded and the old context is 
     running = await start(values);
     const coordinator = new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     assert.equal((await coordinator.faucet(generateWallet().address)).height, 1);
     if (running.replicas[0].height === 0) {

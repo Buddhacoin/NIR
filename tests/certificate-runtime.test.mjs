@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { X509Certificate } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
   createCertificateRecord,
+  certificateHistoryHead,
   EMPTY_CERTIFICATE_RECORD_HASH,
   topologyHistoryCommitment,
 } from "../blockchain/certificate-lifecycle.mjs";
-import { installCertificateRecord } from "../blockchain/certificate-lifecycle-store.mjs";
+import { certificateStorePaths, installCertificateRecord }
+  from "../blockchain/certificate-lifecycle-store.mjs";
 import {
+  CERTIFICATE_MODE_DEV_GENESIS,
   CERTIFICATE_MODE_LIFECYCLE,
   RuntimeCertificatePins,
 } from "../blockchain/certificate-runtime.mjs";
@@ -111,13 +114,20 @@ function lifecycleFixture(root, operation = "renew") {
     }
   }
   const records = [...issuedRecords, ...followupRecords];
+  const anchorPathFor = (directory) => join(root, `certificate-head-${basename(directory)}.json`);
   const install = (directory, history = records) => {
     for (const record of history) {
       installCertificateRecord(join(directory, "certificates"), record, context);
     }
+    writeFileSync(anchorPathFor(directory), JSON.stringify({
+      format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(history, context), networkId: genesis.networkId,
+      recordCount: history.length, version: 1,
+    }));
   };
   return {
-    context, genesis, install, issuedRecords, layout, newCertificates, oldCertificates, records,
+    anchorPathFor, context, genesis, install, issuedRecords, layout, newCertificates,
+    oldCertificates, records,
   };
 }
 
@@ -142,16 +152,27 @@ test("coordinator runtime reloads renewal history across restart and drops the o
   try {
     const values = lifecycleFixture(root, "renew");
     values.install(values.layout.coordinatorDirectory);
+    assert.throws(() => new RuntimeCertificatePins(values.layout.coordinatorDirectory,
+      values.genesis, { externalAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) }),
+    /requires lifecycle mode/);
+    assert.throws(() => new RuntimeCertificatePins(values.layout.coordinatorDirectory,
+      values.genesis, { mode: CERTIFICATE_MODE_LIFECYCLE }), /external history anchor path/);
+    assert.throws(() => new DistributedCoordinator(values.layout.coordinatorDirectory,
+      ["https://127.0.0.1:1", "https://127.0.0.1:2", "https://127.0.0.1:3",
+        "https://127.0.0.1:4"], { certificateMode: CERTIFICATE_MODE_LIFECYCLE }),
+    /external history anchor path/);
     const running = await startValidators(values.layout, values.oldCertificates);
     servers.push(...running.servers);
     let coordinator = new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     assert.equal((await coordinator.faucet(generateWallet().address)).height, 1);
     const overlapPins = new RuntimeCertificatePins(
       values.layout.coordinatorDirectory, values.genesis,
-      { mode: CERTIFICATE_MODE_LIFECYCLE },
+      { mode: CERTIFICATE_MODE_LIFECYCLE,
+        externalAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     ).pinsFor(values.genesis.validators[0].address, 1);
     assert.deepEqual(overlapPins, [
       values.newCertificates[0].fingerprint,
@@ -160,7 +181,8 @@ test("coordinator runtime reloads renewal history across restart and drops the o
 
     coordinator = new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     assert.equal((await coordinator.faucet(generateWallet().address)).height, 2);
     assert.equal((await coordinator.faucet(generateWallet().address)).height, 3);
@@ -178,7 +200,8 @@ test("coordinator runtime reloads renewal history across restart and drops the o
       server.listen(ports[index], "127.0.0.1", resolve))));
     const runtimePins = new RuntimeCertificatePins(
       values.layout.coordinatorDirectory, values.genesis,
-      { mode: CERTIFICATE_MODE_LIFECYCLE },
+      { mode: CERTIFICATE_MODE_LIFECYCLE,
+        externalAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     for (let index = 0; index < running.urls.length; index += 1) {
       const health = await requestJson(`${running.urls[index]}/health`, {
@@ -201,37 +224,102 @@ test("coordinator runtime fails closed after lifecycle revocation and without li
     const values = lifecycleFixture(root, "revoke");
     const running = await startValidators(values.layout, values.oldCertificates);
     servers.push(...running.servers);
-    const missingPins = new RuntimeCertificatePins(
+    assert.throws(() => new RuntimeCertificatePins(
       values.layout.coordinatorDirectory, values.genesis,
-      { mode: CERTIFICATE_MODE_LIFECYCLE },
-    );
-    assert.throws(() => missingPins.pinsFor(values.genesis.validators[0].address, 0),
-      /active lifecycle/);
-    await assert.rejects(() => new DistributedCoordinator(
+      { mode: CERTIFICATE_MODE_LIFECYCLE,
+        externalAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
+    ), /external certificate history anchor|ENOENT/);
+    assert.throws(() => new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
-    ).faucet(generateWallet().address), /active lifecycle|durability quorum/);
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
+    ), /external certificate history anchor|ENOENT/);
 
     values.install(values.layout.coordinatorDirectory);
     let coordinator = new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     assert.equal((await coordinator.faucet(generateWallet().address)).height, 1);
     const revokedPins = new RuntimeCertificatePins(
       values.layout.coordinatorDirectory, values.genesis,
-      { mode: CERTIFICATE_MODE_LIFECYCLE },
+      { mode: CERTIFICATE_MODE_LIFECYCLE,
+        externalAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     assert.throws(() => revokedPins.pinsFor(values.genesis.validators[0].address, 1),
       /active lifecycle/);
     coordinator = new DistributedCoordinator(
       values.layout.coordinatorDirectory, running.urls,
-      { certificateMode: CERTIFICATE_MODE_LIFECYCLE },
+      { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+        certificateHeadAnchorPath: values.anchorPathFor(values.layout.coordinatorDirectory) },
     );
     await assert.rejects(() => coordinator.faucet(generateWallet().address),
       /active lifecycle|durability quorum/);
   } finally {
     await Promise.all(servers.map(close));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle runtime rejects two-copy rollback below an external certificate anchor", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-certificate-runtime-anchor-"));
+  try {
+    const values = lifecycleFixture(root, "revoke");
+    const directory = values.layout.coordinatorDirectory;
+    values.install(directory, values.issuedRecords);
+    const paths = certificateStorePaths(join(directory, "certificates"));
+    const oldPrimary = readFileSync(paths.primary);
+    const oldBackup = readFileSync(paths.backup);
+    const oldAnchor = { format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(values.issuedRecords, values.context),
+      networkId: values.genesis.networkId, recordCount: values.issuedRecords.length,
+      version: 1 };
+    values.install(directory, values.records);
+    const anchorPath = join(root, "operator-retained-certificate-head.json");
+    writeFileSync(anchorPath, JSON.stringify({ format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(values.records, values.context),
+      networkId: values.genesis.networkId, recordCount: values.records.length,
+      version: 1 }));
+    const pins = new RuntimeCertificatePins(directory, values.genesis,
+      { mode: CERTIFICATE_MODE_LIFECYCLE, externalAnchorPath: anchorPath });
+    assert.deepEqual(pins.pinsFor(values.genesis.validators[0].address, 0),
+      [values.oldCertificates[0].fingerprint]);
+    assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1), /active lifecycle/);
+    writeFileSync(anchorPath, JSON.stringify(oldAnchor));
+    writeFileSync(paths.primary, oldPrimary);
+    writeFileSync(paths.backup, oldBackup);
+    assert.throws(() => pins.pinsFor(values.genesis.validators[0].address, 1),
+      /anchor rolled back/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("network lifecycle launch rejects an anchor inside node writable state", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-certificate-anchor-path-"));
+  try {
+    const values = lifecycleFixture(root, "issue");
+    const directory = values.layout.coordinatorDirectory;
+    const anchorPath = join(directory, "certificate-head-anchor.json");
+    writeFileSync(anchorPath, "{}\n");
+    assert.throws(() => new RuntimeCertificatePins(directory, values.genesis,
+      { mode: CERTIFICATE_MODE_LIFECYCLE, externalAnchorPath: anchorPath }), /outside node state/);
+    assert.throws(() => execFileSync(process.execPath, [
+      "blockchain/network-cli.mjs", "serve-coordinator", directory,
+      "https://127.0.0.1:1", "8787",
+    ], { cwd: new URL("..", import.meta.url), env: {
+      ...process.env, NIR_CERTIFICATE_MODE: CERTIFICATE_MODE_LIFECYCLE,
+      NIR_CERTIFICATE_HEAD_ANCHOR_PATH: anchorPath,
+    }, stdio: "pipe" }), /outside node state/);
+    assert.throws(() => execFileSync(process.execPath, [
+      "blockchain/network-cli.mjs", "serve-coordinator", directory,
+      "https://127.0.0.1:1", "8787",
+    ], { cwd: new URL("..", import.meta.url), env: {
+      ...process.env, NIR_CERTIFICATE_MODE: CERTIFICATE_MODE_DEV_GENESIS,
+      NIR_CERTIFICATE_HEAD_ANCHOR_PATH: anchorPath,
+    }, stdio: "pipe", timeout: 2000 }), /requires lifecycle mode/);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -242,8 +330,9 @@ test("validator P2P synchronization uses lifecycle pins on the live request path
   try {
     const values = lifecycleFixture(root, "issue");
     for (const directory of values.layout.validatorDirectories) values.install(directory);
-    const running = await startValidators(values.layout, values.oldCertificates, () => ({
+    const running = await startValidators(values.layout, values.oldCertificates, (directory) => ({
       certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(directory),
     }));
     servers.push(...running.servers);
     const response = await requestJson(`${running.urls[0]}/v1/sync`, {
@@ -259,6 +348,7 @@ test("validator P2P synchronization uses lifecycle pins on the live request path
 
     const restarted = new ValidatorReplica(values.layout.validatorDirectories[0], {
       certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(values.layout.validatorDirectories[0]),
     });
     assert.deepEqual(restarted.peerTlsCertificateSha256Pins(1), [
       values.oldCertificates[1].fingerprint,
@@ -278,8 +368,9 @@ test("validator P2P propagates a quorum renewal history atomically and survives 
     for (const directory of values.layout.validatorDirectories.slice(1)) {
       values.install(directory);
     }
-    const running = await startValidators(values.layout, values.oldCertificates, () => ({
+    const running = await startValidators(values.layout, values.oldCertificates, (directory) => ({
       certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(directory),
     }));
     servers.push(...running.servers);
     const response = await requestJson(`${running.urls[0]}/v1/sync`, {
@@ -292,11 +383,13 @@ test("validator P2P propagates a quorum renewal history atomically and survives 
 
     const restarted = new ValidatorReplica(values.layout.validatorDirectories[0], {
       certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(values.layout.validatorDirectories[0]),
     });
     assert.equal(restarted.certificateLifecycleHistory().length, values.records.length);
     const pins = new RuntimeCertificatePins(
       values.layout.validatorDirectories[0], values.genesis,
-      { mode: CERTIFICATE_MODE_LIFECYCLE },
+      { mode: CERTIFICATE_MODE_LIFECYCLE,
+        externalAnchorPath: values.anchorPathFor(values.layout.validatorDirectories[0]) },
     ).pinsFor(values.genesis.validators[1].address, 1);
     assert.deepEqual(pins, [
       values.newCertificates[1].fingerprint,
