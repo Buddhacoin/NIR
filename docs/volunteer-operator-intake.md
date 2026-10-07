@@ -1,4 +1,4 @@
-# Volunteer operator intake — preparation draft
+# Volunteer Operator Intake Preparation Draft
 
 This is a preparation draft for a possible private NIR developer-testnet
 rehearsal, **not open recruitment** or an invitation to start a service. The
