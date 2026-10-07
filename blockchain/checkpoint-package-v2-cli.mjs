@@ -14,6 +14,8 @@ import { assembleCheckpointTrustPackageV2, serializeCheckpointTrustPackageV2,
   verifyCheckpointTrustPackageV2 } from "./checkpoint-trust-package-v2.mjs";
 import { readCanonicalCheckpointV2Input as readCanonical }
   from "./checkpoint-package-v2-input.mjs";
+import { assertTransactionIngressValidatorSet }
+  from "./validator-transaction-ingress-checkpoint.mjs";
 
 const CONFIG_FIELDS = ["certificateDirectory", "certificateHeadAnchorPath",
   "expectedGenesisHash", "expectedNetworkId", "expectedPolicyId", "format",
@@ -66,7 +68,7 @@ function trustedInputs(config) {
   const { context, history } = pins.loadVerifiedHistory();
   if (history.length < 1) throw new Error("checkpoint v2 certificate history is empty");
   return { commitment: { certificateHistoryHead: certificateHistoryHead(history, context),
-    certificateRecordCount: history.length }, context, policy };
+    certificateRecordCount: history.length }, context, genesis, policy };
 }
 
 function nonnegative(value, label) {
@@ -74,6 +76,19 @@ function nonnegative(value, label) {
   if (!/^(0|[1-9][0-9]*)$/.test(value ?? "") ||
       !Number.isSafeInteger(parsed)) throw new Error(`${label} is invalid`);
   return parsed;
+}
+
+function candidateValidatorsAtHeight(genesisValidators, context, height) {
+  if (!Array.isArray(genesisValidators) || !Array.isArray(context?.handoffs) ||
+      !Number.isSafeInteger(height) || height < 0) {
+    throw new Error("checkpoint v2 validator topology is unavailable");
+  }
+  let validators = genesisValidators;
+  for (const handoff of context.handoffs) {
+    if (handoff.activationHeight > height) break;
+    validators = handoff.nextValidators;
+  }
+  return validators;
 }
 
 function writeExclusive(path, contents) {
@@ -102,20 +117,24 @@ try {
   if (command === "assemble" && args.length === 5) {
     const [contextPath, proofPath, sequenceText, attestationsPath, outputPath] = args;
     const config = readContext(contextPath);
-    const { commitment, context, policy } = trustedInputs(config);
+    const { commitment, context, genesis, policy } = trustedInputs(config);
     const finalityProof = readCanonical(proofPath, "checkpoint finality proof");
     const attestations = readCanonical(attestationsPath, "checkpoint v2 attestations");
     if (!Array.isArray(attestations)) throw new Error("checkpoint v2 attestations must be an array");
     const sequence = nonnegative(sequenceText, "checkpoint v2 sequence");
+    // The proof height selects a candidate topology only; verification below authenticates it.
+    const validators = candidateValidatorsAtHeight(genesis.validators, context,
+      finalityProof?.header?.height);
     const packageValue = assembleCheckpointTrustPackageV2({ ...commitment, attestations,
-      finalityProof, policy, sequence, validators: context.validators });
-    verifyCheckpointTrustPackageV2(packageValue, {
+      finalityProof, policy, sequence, validators });
+    const verified = verifyCheckpointTrustPackageV2(packageValue, {
       expectedChainIdentityGenesisHash: config.expectedGenesisHash,
       expectedNetworkId: config.expectedNetworkId,
       expectedPolicyId: config.expectedPolicyId,
       maxAgeMs: config.maxWitnessAgeMs, maxFutureSkewMs: 5_000,
       minimumCheckpointHeight: 1, minimumSequence: sequence, now: Date.now(),
     });
+    assertTransactionIngressValidatorSet(verified, genesis.validators, context);
     const bytes = serializeCheckpointTrustPackageV2(packageValue);
     if (Buffer.byteLength(bytes) > MAX_CHECKPOINT_TRUST_PACKAGE_BYTES) {
       throw new Error("checkpoint v2 package exceeds bounded size");
@@ -125,7 +144,7 @@ try {
   } else if (command === "verify" && args.length === 5) {
     const [contextPath, packagePath, heightText, sequenceText, nowText] = args;
     const config = readContext(contextPath);
-    const { commitment } = trustedInputs(config);
+    const { commitment, context, genesis } = trustedInputs(config);
     const packageValue = readCanonical(packagePath, "checkpoint v2 package",
       MAX_CHECKPOINT_TRUST_PACKAGE_BYTES);
     const verified = verifyCheckpointTrustPackageV2(packageValue, {
@@ -141,6 +160,7 @@ try {
         verified.certificateRecordCount !== commitment.certificateRecordCount) {
       throw new Error("checkpoint v2 package certificate head or count differs from verified history");
     }
+    assertTransactionIngressValidatorSet(verified, genesis.validators, context);
     console.log(`Checkpoint v2 package ${verified.packageHash} verified.`);
   } else {
     throw new Error("usage: checkpoint:package-v2 assemble <context.json> <finality-proof.json> <sequence> <attestations.json> <new-package.json> | verify <context.json> <package.json> <minimum-height> <minimum-sequence> <now-ms>");

@@ -61,7 +61,10 @@ not create witness keys or signatures. Assemble requires a threshold of
 separately supplied, already signed v2 attestations. It recomputes the complete
 certificate history head and count from the lifecycle store under an external
 anchor, checks the pinned genesis and policy, verifies the finality proof and
-witness quorum, and writes a new mode-`0600` package without overwriting a
+witness quorum, and requires the proof's complete validator set to match the
+genesis set or the verified handoff active at its checkpoint height. A
+substitute signer quorum cannot supply its own validator topology. Assemble
+writes a new mode-`0600` package without overwriting a
 previous file. Verify repeats these checks against the current anchored
 history. Inputs must be bounded canonical JSON with one trailing newline;
 symlinks and group-writable public inputs are refused.

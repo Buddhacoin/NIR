@@ -433,7 +433,7 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
     const cli = fileURLToPath(new URL("../blockchain/checkpoint-package-v2-cli.mjs",
       import.meta.url));
     const paths = Object.fromEntries(["context", "genesis", "policy", "proof",
-      "attestations", "package", "wrong-package"].map((name) =>
+      "attestations", "package", "wrong-package", "forged-package"].map((name) =>
       [name, join(values.root, `${name}.json`)]));
     const writeCanonical = (path, value) => writeFileSync(path, `${canonicalJson(value)}\n`);
     writeCanonical(paths.genesis, values.genesis);
@@ -460,6 +460,30 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
       [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
         "8", String(Date.now())], { encoding: "utf8" });
     assert.equal(verified.status, 0, verified.stderr);
+    const replacements = Array.from({ length: 3 }, generateWallet);
+    const fakeWallets = [values.validatorWallets[0], ...replacements];
+    const fakeValidators = [values.genesis.validators.find(({ address }) =>
+      address === values.address), ...replacements.map((wallet, index) =>
+      ({ ...publicWallet(wallet), operatorId: `fabricated-${index}` }))]
+      .sort((left, right) => left.address.localeCompare(right.address));
+    const forgedBlock = finalizeBlock({ ...values.checkpoint,
+      validatorSetId: validatorSetId(fakeValidators) }, fakeWallets.slice(0, 3));
+    const forgedProof = createFinalityProof(forgedBlock);
+    const forged = values.packageFor(8, Date.now() - 100, forgedProof,
+      undefined, null, fakeValidators);
+    writeCanonical(paths["forged-package"], forged);
+    const forgedVerify = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths["forged-package"],
+        String(values.checkpoint.height), "8", String(Date.now())], { encoding: "utf8" });
+    assert.equal(forgedVerify.status, 1);
+    assert.match(forgedVerify.stderr, /validator set does not match verified topology/);
+    writeCanonical(paths.proof, forgedProof);
+    writeCanonical(paths.attestations, forged.attestations);
+    const forgedAssemble = assemble(paths.attestations, paths["wrong-package"]);
+    assert.equal(forgedAssemble.status, 1);
+    assert.equal(existsSync(paths["wrong-package"]), false);
+    writeCanonical(paths.proof, values.finalityProof);
+    writeCanonical(paths.attestations, signed.attestations);
     const repeated = assemble(paths.attestations, paths.package);
     assert.equal(repeated.status, 1);
     assert.match(repeated.stderr, /EEXIST/);
