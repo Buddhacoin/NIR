@@ -124,6 +124,17 @@ atomic rename, and directory fsync. A restart accepts identical copies or an
 exactly linked one-revision old/new pair left by an interrupted write. An
 unrelated split, invalid copy, or lost directory fails closed. In-memory checks
 also reject replacing the floor with an older revision during one process run.
+Before a new revision, a torn pair is repaired to the newer verified record;
+otherwise a second interruption could leave copies two revisions apart. The
+lock becomes visible only after its complete owner record has been fsynced, so
+a crash while preparing that record cannot leave an empty active lock.
+
+An interruption during one-time initialization may leave just the first copy.
+The gate refuses to start and initialization refuses to run again over it.
+Recovery then requires an operator to establish from independent evidence
+whether any floor had ever been accepted. If that cannot be established, do
+not delete or recreate the directory: restore an externally retained trusted
+floor instead.
 
 This local floor survives ordinary crashes, but it is **not** an external trust
 anchor. An attacker controlling the directory owner or a full filesystem

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync }
+  from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +22,16 @@ const candidate = (sequence, height, observedAt) => ({
 function temporary() {
   const root = mkdtempSync(join(tmpdir(), "nir-ingress-floor-test-"));
   return { root, directory: join(root, "floor") };
+}
+
+function crashAdvance(directory, next, hook) {
+  const source = new URL("../blockchain/validator-transaction-ingress-floor.mjs",
+    import.meta.url).href;
+  return spawnSync(process.execPath, ["--input-type=module", "-e",
+    `import { advanceTransactionIngressFloor } from ${JSON.stringify(source)};
+     advanceTransactionIngressFloor(process.argv[1], JSON.parse(process.argv[2]),
+       JSON.parse(process.argv[3]), { ${hook}: () => process.exit(77) });`,
+    directory, JSON.stringify(identity), JSON.stringify(next)], { encoding: "utf8" });
 }
 
 test("restart reloads the exact persistent floor and refuses silent reinitialization", () => {
@@ -69,6 +80,98 @@ test("interruption before rename retains old floor; after first copy recovers on
     assert.equal(advanceTransactionIngressFloor(values.directory, identity,
       candidate(10, 12, 102)).revision, 3);
     assert.equal(loadTransactionIngressFloor(values.directory, identity).height, 12);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("repeated interruption repairs the torn pair before starting another revision", () => {
+  const values = temporary();
+  try {
+    initializeTransactionIngressFloor(values.directory, identity);
+    advanceTransactionIngressFloor(values.directory, identity, candidate(8, 10, 100));
+    assert.equal(crashAdvance(values.directory, candidate(9, 11, 101),
+      "_afterFirstCopy").status, 77);
+    assert.equal(loadTransactionIngressFloor(values.directory, identity).revision, 2);
+    assert.equal(crashAdvance(values.directory, candidate(10, 12, 102),
+      "_afterFirstCopy").status, 77);
+    const recovered = loadTransactionIngressFloor(values.directory, identity);
+    assert.equal(recovered.revision, 3);
+    assert.equal(recovered.height, 12);
+    assert.equal(advanceTransactionIngressFloor(values.directory, identity,
+      candidate(11, 13, 103)).revision, 4);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("descriptor-open growth is bounded before allocation for floor and lock files", () => {
+  const values = temporary();
+  const allocate = Buffer.alloc;
+  try {
+    initializeTransactionIngressFloor(values.directory, identity);
+    Buffer.alloc = (size, ...args) => {
+      if (size > 4096) throw new Error("unbounded allocation attempted");
+      return allocate(size, ...args);
+    };
+    assert.throws(() => loadTransactionIngressFloor(values.directory, identity, {
+      _afterCopyOpen: ({ path }) => truncateSync(path, 16 * 1024 * 1024),
+    }), /changed during open/);
+  } finally {
+    Buffer.alloc = allocate;
+    rmSync(values.root, { recursive: true, force: true });
+  }
+  const lockValues = temporary();
+  try {
+    initializeTransactionIngressFloor(lockValues.directory, identity);
+    assert.equal(crashAdvance(lockValues.directory, candidate(8, 10, 100),
+      "_afterLockPublish").status, 77);
+    Buffer.alloc = (size, ...args) => {
+      if (size > 4096) throw new Error("unbounded allocation attempted");
+      return allocate(size, ...args);
+    };
+    assert.throws(() => advanceTransactionIngressFloor(lockValues.directory, identity,
+      candidate(8, 10, 100), {
+        _afterLockOpen: ({ path }) => truncateSync(path, 16 * 1024 * 1024),
+      }), /lock changed/);
+  } finally {
+    Buffer.alloc = allocate;
+    rmSync(lockValues.root, { recursive: true, force: true });
+  }
+});
+
+test("a crash before lock publication leaves no partial lock; a published linked lock is recoverable", () => {
+  const values = temporary();
+  try {
+    initializeTransactionIngressFloor(values.directory, identity);
+    assert.equal(crashAdvance(values.directory, candidate(8, 10, 100),
+      "_afterLockTemporaryOpen").status, 77);
+    assert.equal(existsSync(join(values.directory, ".floor.lock")), false);
+    assert.equal(crashAdvance(values.directory, candidate(8, 10, 100),
+      "_afterLockPublish").status, 77);
+    assert.equal(existsSync(join(values.directory, ".floor.lock")), true);
+    assert.equal(advanceTransactionIngressFloor(values.directory, identity,
+      candidate(8, 10, 100)).revision, 1);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("interrupted one-time initialization remains closed and cannot silently reset", () => {
+  const values = temporary();
+  try {
+    assert.throws(() => initializeTransactionIngressFloor(values.directory, identity, {
+      _afterFirstCopy: () => { throw new Error("power cut"); },
+    }), /power cut/);
+    assert.throws(() => loadTransactionIngressFloor(values.directory, identity), /ENOENT/);
+    assert.throws(() => initializeTransactionIngressFloor(values.directory, identity));
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("an initial witness sequence of zero is accepted once without weakening later monotonicity", () => {
+  const values = temporary();
+  try {
+    initializeTransactionIngressFloor(values.directory, identity);
+    assert.equal(advanceTransactionIngressFloor(values.directory, identity,
+      candidate(0, 10, 100)).sequence, 0);
+    assert.throws(() => advanceTransactionIngressFloor(values.directory, identity,
+      candidate(0, 11, 101)), /rollback/);
+    assert.equal(advanceTransactionIngressFloor(values.directory, identity,
+      candidate(1, 11, 101)).sequence, 1);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
 });
 
