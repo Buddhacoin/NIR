@@ -1129,7 +1129,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     });
     assert.throws(() => validateProductionWalletExtensionArtifact(cspArtifact), /permissions or CSP/);
     const traversalArtifact = mutateArtifactText(walletArtifact, "index.html",
-      (text) => text.replace("app.js?v=31", "../app.js"));
+      (text) => text.replace("app.js?v=32", "../app.js"));
     assert.throws(() => validateProductionWalletExtensionArtifact(traversalArtifact), /unsafe|unverified/);
     const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
@@ -1637,7 +1637,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
         "public, max-age=31536000, immutable");
       assert.deepEqual(Buffer.from(await immutable.arrayBuffer()),
         Buffer.from(appEntry.content, "base64"));
-      assert.equal((await fetch(`${originUrl}/app.js?v=31`)).headers.get("cache-control"),
+      assert.equal((await fetch(`${originUrl}/app.js?v=32`)).headers.get("cache-control"),
         "no-store");
       assert.equal((await fetch(`${originUrl}/..%2fpackage.json`)).status, 400);
       assert.equal((await fetch(`${originUrl}/app.js`, { headers: { range: "bytes=0-1" } })).status,
