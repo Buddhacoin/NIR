@@ -42,6 +42,8 @@ The detailed validator procedure is in
 [validator-ceremony-onboarding.md](validator-ceremony-onboarding.md). Network
 operations are documented in [network.md](network.md), and the current launch
 boundary is maintained in [launch-readiness.md](launch-readiness.md).
+A [preparation-only volunteer intake template](volunteer-operator-intake.md)
+is available; it is not an open call for operators.
 
 Frontier-model training will often require organizations with substantial
 compute. NIR therefore separates invention from the other work needed to prove
