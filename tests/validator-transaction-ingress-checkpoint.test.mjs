@@ -30,8 +30,8 @@ import { createValidatorHandoff, verifyValidatorHandoff }
   from "../blockchain/validator-handoff.mjs";
 import { installValidatorHandoff } from "../blockchain/validator-handoff-store.mjs";
 import { createValidatorOnboarding } from "../blockchain/validator-onboarding.mjs";
-import { installValidatorTopology } from "../blockchain/validator-topology-history.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
+import { installValidatorTopology } from "../blockchain/validator-topology-history.mjs";
 import { advanceTransactionIngressFloor, initializeTransactionIngressFloor,
   loadTransactionIngressFloor }
   from "../blockchain/validator-transaction-ingress-floor.mjs";
@@ -55,6 +55,8 @@ function fixture() {
   };
   const validatorWallets = layout.validatorDirectories.map((directory) =>
     JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"))));
+  const validatorTransports = layout.validatorDirectories.map((directory) =>
+    JSON.parse(readFileSync(join(directory, "TRANSPORT-KEY.json"))));
   const chain = new NirChain(genesis);
   const append = (options = {}) => {
     const proposal = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1,
@@ -139,7 +141,8 @@ function fixture() {
     validatorAddress: address };
   return { address, alternateFinalityProof, certificateDirectory, checkpoint,
     context, finalityProof, floorIdentity, genesis, issue, policy,
-    layout, options, packageFor, root, v1PackageFor, validatorWallets, writeAnchor, writePackage };
+    layout, options, packageFor, root, v1PackageFor, validatorTransports, validatorWallets,
+    writeAnchor, writePackage };
 }
 
 test("a new-set checkpoint at handoff activation cannot substitute another finalized block", () => {
@@ -512,5 +515,83 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
         "8", String(Date.now())], { encoding: "utf8" });
     assert.equal(misplacedAnchor.status, 1);
     assert.match(misplacedAnchor.stderr, /outside node state/);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("offline V2 CLI rejects a substitute activation block despite a new-set quorum", () => {
+  const values = fixture();
+  try {
+    const nextWallets = [values.validatorWallets[0], values.validatorWallets[1],
+      generateWallet(), generateWallet()];
+    const nextValidators = [
+      ...nextWallets.slice(0, 2).map((wallet) => values.genesis.validators.find(
+        ({ address }) => address === wallet.address)),
+      ...nextWallets.slice(2).map((wallet, index) =>
+        ({ ...publicWallet(wallet), operatorId: `rotated-${index}` }))];
+    const handoff = createValidatorHandoff({
+      activationBlockHash: "c".repeat(64), activationHeight: values.checkpoint.height,
+      activationStateRoot: "d".repeat(64), networkId: values.genesis.networkId,
+      nextValidators, previousValidators: values.genesis.validators,
+    }, values.validatorWallets.slice(0, 3), nextWallets.slice(0, 3));
+    const transportWallets = [values.validatorTransports[0],
+      values.validatorTransports[1], generateWallet(), generateWallet()];
+    const previousPeers = new Map(values.genesis.peerRegistry.peers.map((peer) =>
+      [peer.validatorAddress, peer]));
+    const onboarding = createValidatorOnboarding({
+      activationHeight: values.checkpoint.height,
+      currentValidators: values.genesis.validators, networkId: values.genesis.networkId,
+      nextValidators,
+      peers: nextWallets.map((wallet, index) => index < 2
+        ? previousPeers.get(wallet.address) : {
+          tlsCertificateSha256: PIN_A,
+          transport: publicWallet(transportWallets[index]),
+          url: `https://rotated-${index}.example`, validatorAddress: wallet.address,
+        }),
+    }, values.validatorWallets.slice(0, 3), nextWallets, transportWallets);
+    installValidatorHandoff(join(values.certificateDirectory, "handoffs"), handoff, {
+      expectedNetworkId: values.genesis.networkId,
+      trustedValidators: values.genesis.validators,
+    });
+    installValidatorTopology(join(values.certificateDirectory, "topologies"), onboarding, {
+      genesisPeerRegistry: values.genesis.peerRegistry,
+      genesisValidators: values.genesis.validators, handoffs: [handoff],
+      networkId: values.genesis.networkId,
+    });
+    const substitute = finalizeBlock({ ...values.checkpoint,
+      validatorSetId: validatorSetId(nextValidators) }, nextWallets.slice(0, 3));
+    const substituteProof = createFinalityProof(substitute);
+    const signed = values.packageFor(8, Date.now() - 100, substituteProof,
+      undefined, null, nextValidators);
+    const paths = Object.fromEntries(["context", "genesis", "policy", "proof",
+      "attestations", "package", "output"].map((name) =>
+      [name, join(values.root, `activation-${name}.json`)]));
+    const writeCanonical = (path, value) => writeFileSync(path, `${canonicalJson(value)}\n`);
+    writeCanonical(paths.genesis, values.genesis);
+    writeCanonical(paths.policy, values.policy);
+    writeCanonical(paths.proof, substituteProof);
+    writeCanonical(paths.attestations, signed.attestations);
+    writeCanonical(paths.package, signed);
+    writeCanonical(paths.context, {
+      certificateDirectory: values.certificateDirectory,
+      certificateHeadAnchorPath: values.options.certificateHeadAnchorPath,
+      expectedGenesisHash: values.options.expectedGenesisHash,
+      expectedNetworkId: values.options.expectedNetworkId,
+      expectedPolicyId: values.options.expectedPolicyId,
+      format: "nir-checkpoint-v2-operator-context-v1", genesisPath: paths.genesis,
+      maxWitnessAgeMs: 30_000, policyPath: paths.policy, version: 1,
+    });
+    const cli = fileURLToPath(new URL("../blockchain/checkpoint-package-v2-cli.mjs",
+      import.meta.url));
+    const verify = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
+        "8", String(Date.now())], { encoding: "utf8" });
+    assert.equal(verify.status, 1);
+    assert.match(verify.stderr, /handoff activation requires a full finality chain proof/);
+    const assemble = spawnSync(process.execPath,
+      [cli, "assemble", paths.context, paths.proof, "8", paths.attestations,
+        paths.output], { encoding: "utf8" });
+    assert.equal(assemble.status, 1);
+    assert.match(assemble.stderr, /handoff activation requires a full finality chain proof/);
+    assert.equal(existsSync(paths.output), false);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
 });

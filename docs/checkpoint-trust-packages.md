@@ -69,6 +69,13 @@ previous file. Verify repeats these checks against the current anchored
 history. Inputs must be bounded canonical JSON with one trailing newline;
 symlinks and group-writable public inputs are refused.
 
+At a verified handoff's exact activation height, both commands fail closed.
+The standalone v2 package proof cannot establish the handoff-pinned activation
+block hash and state root together with the required old- and new-set finality
+quorums. Use a checkpoint after the activation height for this rehearsal;
+accepting the activation block itself needs a verified handoff-aware finality
+chain proof.
+
 The canonical operator context has exactly these fields:
 `format: "nir-checkpoint-v2-operator-context-v1"`, `version: 1`,
 `genesisPath`, `policyPath`, `certificateDirectory`,
