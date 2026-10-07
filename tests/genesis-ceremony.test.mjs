@@ -9,14 +9,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { NirChain, multisigAddress } from "../blockchain/chain.mjs";
+import { finalizeBlock, NirChain, multisigAddress } from "../blockchain/chain.mjs";
 import {
-  MIN_EVALUATOR_BOND,
+  MIN_EVALUATOR_BOND, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   PROTOCOL_VERSION,
   TREASURY_BPS,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
-import { generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
+import { generateWallet, hashObject, publicWallet, signObject, verifyObject } from "../blockchain/crypto.mjs";
 import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
@@ -158,6 +158,152 @@ function approved(values, count = 3) {
     registryApprovals,
   };
 }
+
+const evaluationEnvironment = {
+  adapter_protocol: "nir-application-adapter-v1",
+  cpu_limit: 2,
+  format: "nir-evaluation-environment-v1",
+  image_digest: `sha256:${digest("ceremony-v2-image")}`,
+  memory_limit_bytes: 1 << 30,
+  runner_digest: `sha256:${digest("ceremony-v2-runner")}`,
+  timeout_seconds: 60,
+};
+
+function v2Fixture(label = "v2") {
+  const values = fixture(label);
+  values.input.format = "nir-public-genesis-plan-v2";
+  values.input.evaluationEnvironment = structuredClone(evaluationEnvironment);
+  return values;
+}
+
+test("frozen pre-v2 public ceremony artifacts retain their v1 hashes", () => {
+  const vector = JSON.parse(readFileSync(new URL("./vectors/genesis-ceremony-v1.json",
+    import.meta.url), "utf8"));
+  const options = { signedRelease: vector.signedRelease,
+    trustedAddress: vector.trustedAddress };
+  assert.equal(verifyGenesisPlan(vector.plan, options).commitment, vector.planCommitment);
+  assert.equal(verifyGenesisCeremony(vector.plan, vector.envelope, options).verified, true);
+  assert.equal(compileGenesis(vector.plan, vector.envelope, options).genesisHash,
+    vector.genesisHash);
+});
+
+test("v2 ceremony commits the exact evaluation environment and keeps v1 unchanged", () => {
+  const legacy = fixture("legacy-vector");
+  const v1 = approved(legacy);
+  const oldPayload = { ...v1.plan };
+  delete oldPayload.commitment;
+  assert.equal(v1.plan.format, "nir-public-genesis-plan-v1");
+  assert.equal(v1.plan.commitment, hashObject(oldPayload, "PUBLIC_GENESIS_CEREMONY_V1"));
+  assert.equal(v1.envelope.format, "nir-public-genesis-approvals-v1");
+  assert.equal(verifyObject({ commitment: v1.plan.commitment, format: v1.plan.format,
+    networkId: v1.plan.networkId }, v1.approvals[0].signature,
+  legacy.operators[0].publicKey, "PUBLIC_GENESIS_APPROVAL_V1"), true);
+  const oldGenesis = compileGenesis(v1.plan, v1.envelope, legacy.releaseOptions);
+  assert.equal(Object.hasOwn(oldGenesis.genesis, "evaluationEnvironment"), false);
+  assert.equal(new NirChain(oldGenesis.genesis).blocks()[0].hash, oldGenesis.genesisHash);
+  assert.throws(() => verifyGenesisPlan({ ...v1.plan,
+    evaluationEnvironment }, legacy.releaseOptions), /schema/);
+
+  const values = v2Fixture();
+  const { plan, envelope, approvals } = approved(values);
+  assert.equal(plan.format, "nir-public-genesis-plan-v2");
+  assert.equal(envelope.format, "nir-public-genesis-approvals-v2");
+  assert.deepEqual(plan.evaluationEnvironment, evaluationEnvironment);
+  assert.equal(verifyGenesisCeremony(plan, envelope, values.releaseOptions).verified, true);
+  const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  assert.deepEqual(compiled.genesis.evaluationEnvironment, evaluationEnvironment);
+  assert.equal(new NirChain(compiled.genesis).blocks()[0].hash, compiled.genesisHash);
+
+  const changed = structuredClone(plan);
+  changed.evaluationEnvironment.cpu_limit += 1;
+  assert.throws(() => verifyGenesisCeremony(changed, envelope, values.releaseOptions), /commitment/);
+  const malformed = structuredClone(values.input);
+  malformed.evaluationEnvironment.extra = true;
+  assert.throws(() => createGenesisPlan(malformed, values.releaseOptions), /environment/);
+  const missing = structuredClone(values.input);
+  delete missing.evaluationEnvironment;
+  assert.throws(() => createGenesisPlan(missing, values.releaseOptions), /schema|environment/);
+  const mixed = { ...envelope, format: "nir-public-genesis-approvals-v1" };
+  assert.throws(() => verifyGenesisCeremony(plan, mixed, values.releaseOptions), /envelope/);
+  const forged = { ...envelope, approvals: approvals.map((approval) => ({ ...approval })) };
+  forged.approvals[0].signature = signObject({ commitment: plan.commitment,
+    format: plan.format, networkId: plan.networkId }, values.operators[0],
+  "PUBLIC_GENESIS_APPROVAL_V1");
+  assert.throws(() => verifyGenesisCeremony(plan, forged, values.releaseOptions), /approval/);
+});
+
+test("mixed v1/v2 registry verifies without reinterpreting prior plans", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-ceremony-v2-registry-"));
+  try {
+    const releaseSigner = generateWallet();
+    const oldValues = fixture("legacy-registry", { releaseSigner, releaseVersion: "0.2.0" });
+    const newValues = v2Fixture("new-registry");
+    // Both records must be checked against the same independently pinned release signer.
+    const signedRelease = signReleaseManifest(newValues.releaseOptions.signedRelease.manifest,
+      releaseSigner);
+    newValues.releaseOptions = { signedRelease, trustedAddress: releaseSigner.address };
+    const old = approved(oldValues);
+    const next = approved(newValues);
+    const directory = join(root, "registry");
+    appendCeremonyRegistry(directory, old.plan, old.envelope, oldValues.releaseOptions);
+    appendCeremonyRegistry(directory, next.plan, next.envelope, newValues.releaseOptions);
+    const verified = verifyCeremonyRegistry(directory, { trustedAddress: releaseSigner.address });
+    assert.equal(verified.count, 2);
+    assert.equal(verified.records[0].plan.format, "nir-public-genesis-plan-v1");
+    assert.equal(verified.records[1].plan.format, "nir-public-genesis-plan-v2");
+    const reused = v2Fixture("reused-registry");
+    reused.input.ceremonyOperators[0].contribution = old.plan.ceremonyOperators[0].contribution;
+    const replay = approved(reused);
+    assert.throws(() => verifyGenesisCeremony(replay.plan, replay.envelope, {
+      ...reused.releaseOptions, priorPlans: [old.plan, next.plan],
+    }), /contribution/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("v2 compiled genesis can activate sequential protocol v24 through v28", () => {
+  const values = v2Fixture("v2-upgrade");
+  const { plan, envelope } = approved(values);
+  const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  const chain = new NirChain(compiled.genesis);
+  for (let version = 25; version <= 28; version += 1) {
+    const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+    const proposal = chain.buildBlock({
+      timestamp: chain.blocks().at(-1).timestamp + 1,
+      protocolUpgrade: { activationHeight, format: "nir-protocol-upgrade-v1", version },
+    });
+    chain.appendBlock(finalizeBlock(proposal, values.validators.slice(0, 3)));
+    while (chain.height < activationHeight) {
+      const block = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+      chain.appendBlock(finalizeBlock(block, values.validators.slice(0, 3)));
+    }
+    assert.equal(chain.protocolVersion, version);
+  }
+});
+
+test("legacy v1 ceremony genesis cannot acquire the v27 environment retroactively", () => {
+  const values = fixture("legacy-upgrade-limit");
+  const { plan, envelope } = approved(values);
+  const chain = new NirChain(compileGenesis(plan, envelope, values.releaseOptions).genesis);
+  for (let version = 25; version <= 27; version += 1) {
+    const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+    const proposal = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1,
+      protocolUpgrade: { activationHeight, format: "nir-protocol-upgrade-v1", version } });
+    chain.appendBlock(finalizeBlock(proposal, values.validators.slice(0, 3)));
+    while (chain.height < activationHeight - 1) {
+      const block = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+      chain.appendBlock(finalizeBlock(block, values.validators.slice(0, 3)));
+    }
+    if (version === 27) {
+      const block = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+      assert.throws(() => chain.appendBlock(finalizeBlock(block,
+        values.validators.slice(0, 3))), /lacks a genesis evaluation environment/);
+    } else {
+      const block = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+      chain.appendBlock(finalizeBlock(block, values.validators.slice(0, 3)));
+      assert.equal(chain.protocolVersion, version);
+    }
+  }
+});
 
 test("public genesis plans are canonical, exact, public-only commitments", () => {
   const values = fixture();

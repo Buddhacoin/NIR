@@ -1,6 +1,6 @@
 import { createPublicKey } from "node:crypto";
 
-import { NirChain, multisigAddress } from "./chain.mjs";
+import { NirChain, multisigAddress, normalizeEvaluationEnvironment } from "./chain.mjs";
 import {
   MAX_FUTURE_DRIFT_MS,
   MIN_EVALUATOR_BOND,
@@ -30,6 +30,8 @@ const PLAN_FIELDS = [
 const INPUT_FIELDS = PLAN_FIELDS.filter((field) =>
   !["commitment", "format", "peerRegistryCommitment", "purpose",
     "sourceRelease", "validatorSetCommitment"].includes(field));
+const PLAN_FIELDS_V2 = [...PLAN_FIELDS, "evaluationEnvironment"];
+const INPUT_FIELDS_V2 = [...INPUT_FIELDS, "evaluationEnvironment", "format"];
 const ROLE_FIELDS = ["address", "algorithm", "endpoint", "operatorId", "publicKey"];
 const VALIDATOR_FIELDS = [
   "address", "algorithm", "endpoint", "operatorId", "publicKey", "tlsCertificateSha256",
@@ -50,6 +52,24 @@ const RELEASE_FIELDS = ["manifestHash", "releaseVersion", "signerAddress", "sour
 const PURPOSE = "valueless-developer-testnet";
 const FORMAT = "nir-public-genesis-plan-v1";
 const ENVELOPE_FORMAT = "nir-public-genesis-approvals-v1";
+const FORMAT_V2 = "nir-public-genesis-plan-v2";
+const ENVELOPE_FORMAT_V2 = "nir-public-genesis-approvals-v2";
+
+function planVersion(value, withHeader) {
+  if (value?.format === FORMAT_V2) return 2;
+  if (withHeader && value?.format !== FORMAT) {
+    throw new Error("genesis plan format is invalid");
+  }
+  return 1;
+}
+
+function planCommitmentDomain(version) {
+  return version === 2 ? "PUBLIC_GENESIS_CEREMONY_V2" : "PUBLIC_GENESIS_CEREMONY_V1";
+}
+
+function approvalDomain(version) {
+  return version === 2 ? "PUBLIC_GENESIS_APPROVAL_V2" : "PUBLIC_GENESIS_APPROVAL_V1";
+}
 
 function exactObject(value, fields, label) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -243,8 +263,11 @@ function treasuryPolicy(treasury) {
 
 function planPayload(input, withHeader, release) {
   rejectSecrets(input);
-  exactObject(input, withHeader ? PLAN_FIELDS : INPUT_FIELDS, "genesis plan");
-  if (withHeader && (input.format !== FORMAT || input.purpose !== PURPOSE)) {
+  const version = planVersion(input, withHeader);
+  exactObject(input, withHeader
+    ? (version === 2 ? PLAN_FIELDS_V2 : PLAN_FIELDS)
+    : (version === 2 ? INPUT_FIELDS_V2 : INPUT_FIELDS), "genesis plan");
+  if (withHeader && input.purpose !== PURPOSE) {
     throw new Error("genesis plan is not a valueless developer testnet plan");
   }
   if (typeof input.networkId !== "string" ||
@@ -258,6 +281,8 @@ function planPayload(input, withHeader, release) {
   if (input.evaluatorBondAmount !== MIN_EVALUATOR_BOND.toString()) {
     throw new Error("genesis evaluator bond must equal the protocol bootstrap amount");
   }
+  const evaluationEnvironment = version === 2
+    ? normalizeEvaluationEnvironment(input.evaluationEnvironment) : null;
   exactObject(release, RELEASE_FIELDS, "genesis source release provenance");
   if (input.sourceReleaseManifestHash !== release.manifestHash ||
       (withHeader && canonicalJson(input.sourceRelease) !== canonicalJson(release))) {
@@ -298,7 +323,8 @@ function planPayload(input, withHeader, release) {
     beaconAuthorities,
     ceremonyOperators: ceremonyOperators(input.ceremonyOperators),
     evaluatorBondAmount: input.evaluatorBondAmount,
-    format: FORMAT,
+    format: version === 2 ? FORMAT_V2 : FORMAT,
+    ...(version === 2 ? { evaluationEnvironment } : {}),
     genesisTimestamp: input.genesisTimestamp,
     networkId: input.networkId,
     protocolVersion: input.protocolVersion,
@@ -316,19 +342,20 @@ function planPayload(input, withHeader, release) {
 
 export function createGenesisPlan(input, options = {}) {
   const payload = planPayload(input, false, trustedRelease(options));
-  return { ...payload, commitment: hashObject(payload, "PUBLIC_GENESIS_CEREMONY_V1") };
+  return { ...payload, commitment: hashObject(payload,
+    planCommitmentDomain(planVersion(payload, true))) };
 }
 
 export function verifyGenesisPlan(plan, options = {}) {
   const payload = planPayload(plan, true, trustedRelease(options));
-  if (plan.commitment !== hashObject(payload, "PUBLIC_GENESIS_CEREMONY_V1")) {
+  if (plan.commitment !== hashObject(payload, planCommitmentDomain(planVersion(payload, true)))) {
     throw new Error("genesis plan commitment does not match its exact contents");
   }
   return structuredClone({ ...payload, commitment: plan.commitment });
 }
 
 function approvalPayload(plan) {
-  return { commitment: plan.commitment, format: FORMAT, networkId: plan.networkId };
+  return { commitment: plan.commitment, format: plan.format, networkId: plan.networkId };
 }
 
 export function signGenesisPlan(planValue, wallet, options = {}) {
@@ -340,7 +367,8 @@ export function signGenesisPlan(planValue, wallet, options = {}) {
   }
   return {
     operatorId: operator.operatorId,
-    signature: signObject(approvalPayload(plan), wallet, "PUBLIC_GENESIS_APPROVAL_V1"),
+    signature: signObject(approvalPayload(plan), wallet,
+      approvalDomain(planVersion(plan, true))),
   };
 }
 
@@ -366,7 +394,7 @@ export function createGenesisApprovalEnvelope(
     approvals: approvals.map((approval) => structuredClone(approval))
       .sort((left, right) => String(left.operatorId).localeCompare(String(right.operatorId))),
     commitment: plan.commitment,
-    format: ENVELOPE_FORMAT,
+    format: plan.format === FORMAT_V2 ? ENVELOPE_FORMAT_V2 : ENVELOPE_FORMAT,
     peerRegistryApprovals: peerRegistryApprovals.map((approval) => structuredClone(approval))
       .sort((left, right) => String(left.validator).localeCompare(String(right.validator))),
   };
@@ -378,7 +406,8 @@ function checkReuse(plan, priorPlans) {
   for (const priorValue of priorPlans) {
     exactObject(priorValue?.sourceRelease, RELEASE_FIELDS, "prior genesis source release");
     const priorPayload = planPayload(priorValue, true, priorValue.sourceRelease);
-    if (priorValue.commitment !== hashObject(priorPayload, "PUBLIC_GENESIS_CEREMONY_V1")) {
+    if (priorValue.commitment !== hashObject(priorPayload,
+      planCommitmentDomain(planVersion(priorPayload, true)))) {
       throw new Error("prior genesis plan commitment is invalid");
     }
     const prior = { ...priorPayload, commitment: priorValue.commitment };
@@ -396,7 +425,8 @@ export function verifyGenesisCeremony(planValue, envelope, options = {}) {
   const plan = verifyGenesisPlan(planValue, options);
   checkReuse(plan, priorPlans);
   exactObject(envelope, ENVELOPE_FIELDS, "genesis approval envelope");
-  if (envelope.format !== ENVELOPE_FORMAT || envelope.commitment !== plan.commitment ||
+  if (envelope.format !== (plan.format === FORMAT_V2 ? ENVELOPE_FORMAT_V2 : ENVELOPE_FORMAT) ||
+      envelope.commitment !== plan.commitment ||
       !Array.isArray(envelope.approvals) || envelope.approvals.length > plan.ceremonyOperators.length) {
     throw new Error("genesis approval envelope is invalid or for another commitment");
   }
@@ -408,7 +438,7 @@ export function verifyGenesisCeremony(planValue, envelope, options = {}) {
     if (!operator || seen.has(approval.operatorId) ||
         typeof approval.signature !== "string" || approval.signature.length > 7_000 ||
         !verifyObject(approvalPayload(plan), approval.signature, operator.publicKey,
-          "PUBLIC_GENESIS_APPROVAL_V1")) {
+          approvalDomain(planVersion(plan, true)))) {
       throw new Error("genesis approval is unknown, duplicated, or invalid");
     }
     seen.add(approval.operatorId);
@@ -460,6 +490,9 @@ export function compileGenesis(planValue, envelope, options = {}) {
       capabilitiesBps: { "developer-test-v1": 0 },
     }],
     evaluators: plan.evaluators.map(({ endpoint: _endpoint, ...identity }) => identity),
+    ...(plan.format === FORMAT_V2 ? {
+      evaluationEnvironment: structuredClone(plan.evaluationEnvironment),
+    } : {}),
     evaluatorBondAmount: plan.evaluatorBondAmount,
     genesisTimestamp: plan.genesisTimestamp,
     networkId: plan.networkId,

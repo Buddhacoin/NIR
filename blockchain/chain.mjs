@@ -180,7 +180,7 @@ function parseAtomic(value, field) {
   return BigInt(value);
 }
 
-function normalizeEvaluationEnvironment(value) {
+export function normalizeEvaluationEnvironment(value) {
   const fields = [
     "adapter_protocol", "cpu_limit", "format", "image_digest",
     "memory_limit_bytes", "runner_digest", "timeout_seconds",
