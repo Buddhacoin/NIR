@@ -188,10 +188,10 @@ function exactLoopbackUrl(value) {
   return url.origin;
 }
 
-async function bridgeRequest(path, options = {}) {
+async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
   if (!bridgeSession) throw new Error("Сначала подключите vault.");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${bridgeSession.url}${path}`, {
       ...options,
@@ -210,6 +210,31 @@ async function bridgeRequest(path, options = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function signWithRecovery(path, intent, simulationId, onWait) {
+  const requestId = intent.requestId;
+  let result;
+  try {
+    result = await bridgeRequest(path, {
+      method: "POST", body: JSON.stringify({ ...intent, simulationId }),
+    });
+  } catch (error) {
+    if (error.name !== "AbortError" && !(error instanceof TypeError)) throw error;
+    onWait?.();
+    const deadline = Date.now() + 130_000;
+    while (Date.now() < deadline) {
+      const recovered = await bridgeRequest(`/v1/sign-result/${requestId}`, {}, 5_000);
+      if (recovered.status !== "pending") {
+        result = recovered;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    if (!result) throw new Error("Время подтверждения истекло. Проверьте терминал и начните новый запрос.");
+  }
+  if (result.requestId !== requestId) throw new Error("Bridge вернул результат другого запроса подписи.");
+  return result;
 }
 
 /** Artifact verification uses the paired session but never decrypts or signs with the vault. */
@@ -799,9 +824,8 @@ document.querySelector("#confirm-resource-simulation").onclick = async (event) =
   try {
     const refreshed = await recheckSimulation(pendingResourceIntent, pendingSimulation);
     resourcesStatus.textContent = "Подтвердите параметры и пароль только в терминале bridge…";
-    const signed = await bridgeRequest("/v1/sign-resource", {
-      method: "POST", body: JSON.stringify({ ...pendingResourceIntent, simulationId: refreshed.simulationId }),
-    });
+    const signed = await signWithRecovery("/v1/sign-resource", pendingResourceIntent,
+      refreshed.simulationId, () => { resourcesStatus.textContent = "Ожидание подтверждения в терминале…"; });
     assertSignedMatchesIntent(signed.transaction, pendingResourceIntent);
     signedResourceTransaction = signed.transaction;
     document.querySelector("#resource-signed-json").value = JSON.stringify(signedResourceTransaction, null, 2);
@@ -994,9 +1018,8 @@ document.querySelector("#confirm-payment-request-simulation").onclick = async (e
     if (!account.proofVerified) throw new Error("Состояние сети больше не подтверждено. Подпись отменена.");
     const refreshed = await simulateIntent(pendingPaymentRequest.intent, account);
     if (!sameSimulation(refreshed, pendingPaymentRequest.simulation)) throw new Error("Результат симуляции изменился. Подпись отменена.");
-    const result = await bridgeRequest("/v1/sign-payment-request", {
-      method: "POST", body: JSON.stringify({ ...pendingPaymentRequest.intent, simulationId: refreshed.simulationId }),
-    });
+    const result = await signWithRecovery("/v1/sign-payment-request", pendingPaymentRequest.intent,
+      refreshed.simulationId, () => { receiveStatus.textContent = "Ожидание подтверждения в терминале…"; });
     const verifiedRequest = await bridgeRequest("/v1/verify-payment-request", {
       method: "POST", body: JSON.stringify({ networkId: pendingPaymentRequest.intent.networkId, request: result.paymentRequest }),
     });
@@ -1222,10 +1245,8 @@ document.querySelector("#request-signature").onclick = async () => {
   sendStatus.textContent = "Подтвердите запрос и введите пароль в терминале bridge…";
   try {
     const refreshed = await recheckSimulation(pendingIntent, pendingSimulation);
-    const result = await bridgeRequest("/v1/sign", {
-      method: "POST",
-      body: JSON.stringify({ ...pendingIntent, simulationId: refreshed.simulationId }),
-    });
+    const result = await signWithRecovery("/v1/sign", pendingIntent, refreshed.simulationId,
+      () => { sendStatus.textContent = "Ожидание подтверждения в терминале…"; });
     assertSignedMatchesIntent(result.transaction, pendingIntent);
     document.querySelector("#signed-json").value = JSON.stringify(result.transaction, null, 2);
     signedTransaction = result.transaction;

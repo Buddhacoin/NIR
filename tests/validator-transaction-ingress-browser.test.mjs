@@ -289,6 +289,17 @@ test("unpacked pinned extension submits directly while a foreign browser origin 
     const send = await openSocket(socket);
     await send("Runtime.enable"); await send("Page.enable");
     await waitPageOrigin(send, WALLET_EXTENSION_ORIGIN);
+    assert.equal(await evaluate(send,
+      "document.querySelector('#request-signature')?.textContent.trim()"), "Запросить подпись");
+    await evaluate(send, "window.__nirReviewSurvivedFocus = true");
+    const targets = await browserSend("Target.getTargets");
+    const extensionTarget = targets.targetInfos.find(({ url, type }) =>
+      type === "page" && url === extensionPage);
+    assert.ok(extensionTarget);
+    const terminalStandIn = await browserSend("Target.createTarget", { url: "about:blank" });
+    await browserSend("Target.activateTarget", { targetId: terminalStandIn.targetId });
+    await browserSend("Target.activateTarget", { targetId: extensionTarget.targetId });
+    assert.equal(await evaluate(send, "window.__nirReviewSurvivedFocus"), true);
     const request = `window.__nirIngressResult = "pending";
       fetch(${JSON.stringify(`${ingressOrigin}/v1/transactions`)}, {
         method: "POST", headers: { "content-type": "application/json" },

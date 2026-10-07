@@ -1122,7 +1122,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
       const value = JSON.parse(text); value.background = { service_worker: "sw.js" };
       return JSON.stringify(value);
     });
-    assert.throws(() => validateProductionWalletExtensionArtifact(backgroundArtifact), /schema/);
+    assert.throws(() => validateProductionWalletExtensionArtifact(backgroundArtifact), /background worker/);
     const contentScriptArtifact = mutateArtifactText(walletArtifact, "manifest.json", (text) => {
       const value = JSON.parse(text); value.content_scripts = [{ js: ["app.js"], matches: ["<all_urls>"] }];
       return JSON.stringify(value);
@@ -1141,7 +1141,7 @@ test("production wallet bridge and UI verify anchored generations before bind on
     });
     assert.throws(() => validateProductionWalletExtensionArtifact(cspArtifact), /permissions or CSP/);
     const traversalArtifact = mutateArtifactText(walletArtifact, "index.html",
-      (text) => text.replace("app.js?v=33", "../app.js"));
+      (text) => text.replace("app.js?v=34", "../app.js"));
     assert.throws(() => validateProductionWalletExtensionArtifact(traversalArtifact), /unsafe|unverified/);
     const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
