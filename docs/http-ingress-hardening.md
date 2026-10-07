@@ -50,9 +50,11 @@ The audited server surfaces are:
 
 - `validator-service.mjs`: public health/discovery/metrics, public transaction ingress,
   validator-authenticated P2P, and coordinator-authenticated RPC. It uses the shared boundary.
-- `node-service.mjs`: public read/proof/account/fee RPC and transaction/faucet/operator POSTs. It
-  uses the shared boundary. Deployments must still authenticate or disable faucet, block-production,
-  and snapshot operator routes at the surrounding control plane; rate limiting is not authorization.
+- `node-service.mjs`: public read/proof/account/fee RPC and signed-transaction ingress use the
+  shared boundary. The default public profile rejects faucet, manual block-production, and snapshot
+  creation; those routes are available only in an explicitly selected local developer profile.
+  Test-unit distribution and administrative operation need a separate operator-controlled channel;
+  rate limiting, loopback binding and package verification do not provide one.
 - `wallet-bridge.mjs`: loopback wallet signing/verification bridge. It already has per-route body,
   connection, header, request, and pending-operation limits plus pairing/session authorization. It
   must remain loopback-only; this change does not turn it into a public service.

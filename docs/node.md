@@ -27,6 +27,14 @@ listener collision exits with a bounded error and releases the writer lock.
 
 ## RPC
 
+The default `public` RPC profile, used by `node:serve-production`, permits
+read-only health, proof, account, asset, fee and aggregate metrics requests,
+plus `POST /v1/transactions` for complete signed transactions. The latter is
+public transaction ingress, not an administrative operation. The explicit
+`developer` profile, used by `node:serve`, additionally permits the three
+administrative POST routes below. No `Origin` header is required for non-browser
+clients, so CORS is not administrator authentication.
+
 - `GET /health`
 - `GET /v1/accounts/{nir-address}`
 - `GET /v1/accounts/{nir-address}/proof`
@@ -34,10 +42,18 @@ listener collision exits with a bounded error and releases the writer lock.
 - `GET /v1/finality-proofs?fromHeight={height}&limit={1..512}`
 - `GET /v1/transactions/{transaction-id}/proof`
 - `GET /v1/fees?amount={atomic-units}`
-- `POST /v1/faucet` with `{ "recipient": "nir1..." }`
 - `POST /v1/transactions` with a complete signed NIR transaction
 
-The faucet sends at most 10 test NIR once to a fresh address. The HTTP service
+Developer-only administrative routes (404 in the default public profile):
+
+- `POST /v1/faucet` with `{ "recipient": "nir1..." }`
+- `POST /v1/blocks/produce`
+- `POST /v1/snapshots/create` when the node supports snapshots
+
+The developer faucet sends at most 10 test NIR once to a fresh address. Public
+test-unit distribution and any administrative block or snapshot operation need
+a separately designed operator-controlled channel; this repository does not
+provide or attest that control plane. The HTTP service
 binds only to loopback by default and permits browser origins on localhost or
 127.0.0.1. It is not a public-network security boundary.
 

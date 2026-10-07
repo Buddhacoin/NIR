@@ -336,7 +336,7 @@ test("the localhost RPC exposes health, faucet, account, and rejects foreign ori
   const server = createNodeHttpServer((() => {
     initializeDevnet(directory);
     return new PersistentDevNode(directory);
-  })());
+  })(), { rpcProfile: "developer" });
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address();
