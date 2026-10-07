@@ -48,6 +48,7 @@ const VESTING_FIELDS = ["allocationBps", "durationMs", "model"];
 const ENVELOPE_FIELDS = ["approvals", "commitment", "format", "peerRegistryApprovals"];
 const APPROVAL_FIELDS = ["operatorId", "signature"];
 const REGISTRY_APPROVAL_FIELDS = ["signature", "validator"];
+const REGISTRY_APPROVAL_FIELDS_V2 = ["registrySignature", "signature", "validator"];
 const RELEASE_FIELDS = ["manifestHash", "releaseVersion", "signerAddress", "sourceRevision"];
 const PURPOSE = "valueless-developer-testnet";
 const FORMAT = "nir-public-genesis-plan-v1";
@@ -358,6 +359,11 @@ function approvalPayload(plan) {
   return { commitment: plan.commitment, format: plan.format, networkId: plan.networkId };
 }
 
+function peerRegistryApprovalPayloadV2(plan) {
+  return { commitment: plan.commitment, format: plan.format,
+    networkId: plan.networkId, peerRegistryCommitment: plan.peerRegistryCommitment };
+}
+
 export function signGenesisPlan(planValue, wallet, options = {}) {
   const plan = verifyGenesisPlan(planValue, options);
   const operator = plan.ceremonyOperators.find(({ address }) => address === wallet?.address);
@@ -379,10 +385,15 @@ export function signGenesisPeerRegistry(planValue, wallet, options = {}) {
       addressFromPublicKey(wallet.publicKey) !== wallet.address) {
     throw new Error("peer-registry signer is not a genesis validator");
   }
-  return {
-    signature: signObject(peerRegistryPayload(plan), wallet, "PEER_REGISTRY_APPROVAL"),
-    validator: validator.address,
-  };
+  const registrySignature = signObject(peerRegistryPayload(plan), wallet,
+    "PEER_REGISTRY_APPROVAL");
+  if (plan.format === FORMAT_V2) {
+    return { registrySignature,
+      signature: signObject(peerRegistryApprovalPayloadV2(plan), wallet,
+        "PUBLIC_GENESIS_PEER_REGISTRY_APPROVAL_V2"),
+      validator: validator.address };
+  }
+  return { signature: registrySignature, validator: validator.address };
 }
 
 export function createGenesisApprovalEnvelope(
@@ -452,12 +463,20 @@ export function verifyGenesisCeremony(planValue, envelope, options = {}) {
   const validators = new Map(plan.validators.map((validator) => [validator.address, validator]));
   const registryVoters = new Set();
   for (const approval of envelope.peerRegistryApprovals) {
-    exactObject(approval, REGISTRY_APPROVAL_FIELDS, "genesis peer-registry approval");
+    exactObject(approval, plan.format === FORMAT_V2
+      ? REGISTRY_APPROVAL_FIELDS_V2 : REGISTRY_APPROVAL_FIELDS,
+    "genesis peer-registry approval");
     const validator = validators.get(approval.validator);
     if (!validator || registryVoters.has(approval.validator) ||
         typeof approval.signature !== "string" || approval.signature.length > 7_000 ||
-        !verifyObject(peerRegistryPayload(plan), approval.signature, validator.publicKey,
-          "PEER_REGISTRY_APPROVAL")) {
+        (plan.format === FORMAT_V2 &&
+          (!verifyObject(peerRegistryApprovalPayloadV2(plan), approval.signature,
+            validator.publicKey, "PUBLIC_GENESIS_PEER_REGISTRY_APPROVAL_V2") ||
+           typeof approval.registrySignature !== "string" ||
+           approval.registrySignature.length > 7_000)) ||
+        !verifyObject(peerRegistryPayload(plan), plan.format === FORMAT_V2
+          ? approval.registrySignature : approval.signature,
+        validator.publicKey, "PEER_REGISTRY_APPROVAL")) {
       throw new Error("genesis peer-registry approval is unknown, duplicated, or invalid");
     }
     registryVoters.add(approval.validator);
@@ -498,7 +517,10 @@ export function compileGenesis(planValue, envelope, options = {}) {
     networkId: plan.networkId,
     peerRegistry: {
       ...peerRegistryPayload(plan),
-      signatures: envelope.peerRegistryApprovals.map((approval) => structuredClone(approval))
+      signatures: envelope.peerRegistryApprovals.map((approval) =>
+        plan.format === FORMAT_V2
+          ? { signature: approval.registrySignature, validator: approval.validator }
+          : structuredClone(approval))
         .sort((left, right) => left.validator.localeCompare(right.validator)),
     },
     protocolUpgradeReleaseAnchor: structuredClone(plan.protocolUpgradeReleaseAnchor),

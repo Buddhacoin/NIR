@@ -19,6 +19,7 @@ import {
 import { generateWallet, hashObject, publicWallet, signObject, verifyObject } from "../blockchain/crypto.mjs";
 import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
+import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
 import {
   createReleaseAuthoritySet, createReleaseTransparencyAnchor,
@@ -208,6 +209,7 @@ test("v2 ceremony commits the exact evaluation environment and keeps v1 unchange
   const { plan, envelope, approvals } = approved(values);
   assert.equal(plan.format, "nir-public-genesis-plan-v2");
   assert.equal(envelope.format, "nir-public-genesis-approvals-v2");
+  assert.equal(envelope.peerRegistryApprovals[0].registrySignature !== undefined, true);
   assert.deepEqual(plan.evaluationEnvironment, evaluationEnvironment);
   assert.equal(verifyGenesisCeremony(plan, envelope, values.releaseOptions).verified, true);
   const compiled = compileGenesis(plan, envelope, values.releaseOptions);
@@ -225,6 +227,21 @@ test("v2 ceremony commits the exact evaluation environment and keeps v1 unchange
   assert.throws(() => createGenesisPlan(missing, values.releaseOptions), /schema|environment/);
   const mixed = { ...envelope, format: "nir-public-genesis-approvals-v1" };
   assert.throws(() => verifyGenesisCeremony(plan, mixed, values.releaseOptions), /envelope/);
+  const v1RegistryApproval = signObject({
+    activationHeight: 0, epoch: 0, networkId: plan.networkId,
+    peers: compiled.genesis.peerRegistry.peers,
+    previousRegistryHash: compiled.genesis.peerRegistry.previousRegistryHash,
+  }, values.validators[0], "PEER_REGISTRY_APPROVAL");
+  const reusedRegistry = structuredClone(envelope);
+  reusedRegistry.peerRegistryApprovals[0] = {
+    validator: values.validators[0].address, signature: v1RegistryApproval,
+  };
+  assert.throws(() => verifyGenesisCeremony(plan, reusedRegistry, values.releaseOptions),
+    /schema|peer-registry approval/);
+  const wrongDomainRegistry = structuredClone(envelope);
+  wrongDomainRegistry.peerRegistryApprovals[0].signature = v1RegistryApproval;
+  assert.throws(() => verifyGenesisCeremony(plan, wrongDomainRegistry,
+    values.releaseOptions), /peer-registry approval/);
   const forged = { ...envelope, approvals: approvals.map((approval) => ({ ...approval })) };
   forged.approvals[0].signature = signObject({ commitment: plan.commitment,
     format: plan.format, networkId: plan.networkId }, values.operators[0],
@@ -263,8 +280,12 @@ test("mixed v1/v2 registry verifies without reinterpreting prior plans", () => {
 test("v2 compiled genesis can activate sequential protocol v24 through v28", () => {
   const values = v2Fixture("v2-upgrade");
   const { plan, envelope } = approved(values);
+  assert.equal(verifyGenesisCeremony(plan, envelope, values.releaseOptions).verified, true);
   const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  const independentlyPinnedGenesisHash = compiled.genesisHash;
   const chain = new NirChain(compiled.genesis);
+  const genesisBlock = chain.blocks()[0];
+  const proofs = [];
   for (let version = 25; version <= 28; version += 1) {
     const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
     const proposal = chain.buildBlock({
@@ -272,12 +293,50 @@ test("v2 compiled genesis can activate sequential protocol v24 through v28", () 
       protocolUpgrade: { activationHeight, format: "nir-protocol-upgrade-v1", version },
     });
     chain.appendBlock(finalizeBlock(proposal, values.validators.slice(0, 3)));
+    proofs.push(createFinalityProof(chain.blocks().at(-1)));
     while (chain.height < activationHeight) {
       const block = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
       chain.appendBlock(finalizeBlock(block, values.validators.slice(0, 3)));
+      proofs.push(createFinalityProof(chain.blocks().at(-1)));
     }
     assert.equal(chain.protocolVersion, version);
   }
+  const proofOptions = {
+    checkpoint: { height: 0, protocolVersion: PROTOCOL_VERSION,
+      stateRoot: genesisBlock.stateRoot, tipHash: genesisBlock.hash },
+    expectedChainIdentityGenesisHash: independentlyPinnedGenesisHash,
+    expectedNetworkId: plan.networkId,
+    protocolUpgradeReleaseAnchor: plan.protocolUpgradeReleaseAnchor,
+    trustedValidators: compiled.genesis.validators,
+  };
+  assert.equal(verifyFinalityProofChain(proofs, proofOptions).tipHash, chain.tipHash);
+
+  const foreignInput = structuredClone(values.input);
+  foreignInput.evaluationEnvironment.runner_digest = `sha256:${digest("foreign-runner")}`;
+  const foreignPlan = createGenesisPlan(foreignInput, values.releaseOptions);
+  const foreignApprovals = values.operators.slice(0, 3)
+    .map((wallet) => signGenesisPlan(foreignPlan, wallet, values.releaseOptions));
+  const replayedRegistryEnvelope = createGenesisApprovalEnvelope(foreignPlan,
+    foreignApprovals, envelope.peerRegistryApprovals, values.releaseOptions);
+  assert.throws(() => verifyGenesisCeremony(foreignPlan, replayedRegistryEnvelope,
+    values.releaseOptions), /peer-registry approval/);
+  const foreignRegistryApprovals = values.validators.slice(0, 3)
+    .map((wallet) => signGenesisPeerRegistry(foreignPlan, wallet, values.releaseOptions));
+  const foreignEnvelope = createGenesisApprovalEnvelope(foreignPlan, foreignApprovals,
+    foreignRegistryApprovals, values.releaseOptions);
+  assert.equal(verifyGenesisCeremony(foreignPlan, foreignEnvelope,
+    values.releaseOptions).verified, true);
+  const foreignGenesis = compileGenesis(foreignPlan, foreignEnvelope,
+    values.releaseOptions);
+  assert.notEqual(foreignGenesis.genesisHash, independentlyPinnedGenesisHash);
+  const foreign = new NirChain(foreignGenesis.genesis);
+  const foreignBlock = finalizeBlock(foreign.buildBlock({ timestamp: 1 }),
+    values.validators.slice(0, 3));
+  foreign.appendBlock(foreignBlock);
+  assert.throws(() => verifyFinalityProofChain([createFinalityProof(foreignBlock)], {
+    ...proofOptions, checkpoint: { ...proofOptions.checkpoint,
+      stateRoot: foreign.blocks()[0].stateRoot, tipHash: foreignGenesis.genesisHash },
+  }), /pinned genesis identity/);
 });
 
 test("legacy v1 ceremony genesis cannot acquire the v27 environment retroactively", () => {

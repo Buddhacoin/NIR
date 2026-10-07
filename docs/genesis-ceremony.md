@@ -86,8 +86,12 @@ npm run genesis:ceremony -- sign-peer-registry \
   validator-vault.json peer-registry-approval.json
 ```
 
-This second quorum is necessary because `NirChain` already requires peer-registry
-signatures from the consensus validator keys. The plan contains explicit
+For v2, each validator approval also includes a distinct v2-domain signature
+over the plan commitment, network ID, and peer-registry commitment; a v1 registry
+signature alone cannot authorize a v2 ceremony. The original registry signature
+is still included separately because `NirChain` verifies it in the existing
+consensus domain. This second quorum is necessary because `NirChain` already
+requires peer-registry signatures from the consensus validator keys. The plan contains explicit
 `validatorSetCommitment` and `peerRegistryCommitment` values; compilation checks both.
 
 Collect approvals into an object with `approvals` and `peerRegistryApprovals` arrays,
