@@ -118,7 +118,6 @@ import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
 import {
   CERTIFICATE_MODE_DEV_GENESIS,
   CERTIFICATE_MODE_LIFECYCLE,
-  loadRuntimeCertificateHistory,
   RuntimeCertificatePins,
 } from "./certificate-runtime.mjs";
 import { selectCertificateHistoryCandidates } from "./certificate-lifecycle.mjs";
@@ -388,6 +387,7 @@ export class ValidatorReplica {
 
   constructor(directory, {
     certificateMode = CERTIFICATE_MODE_DEV_GENESIS,
+    certificateHeadAnchorPath = null,
     ceremonyCredentials = null,
     clock = () => Date.now(),
     nonceCacheOptions = {},
@@ -436,6 +436,7 @@ export class ValidatorReplica {
     this.#genesis = genesis;
     this.#certificatePins = new RuntimeCertificatePins(this.#directory, genesis, {
       mode: certificateMode,
+      externalAnchorPath: certificateHeadAnchorPath,
     });
     this.#validators = this.#chain.validatorMembers;
     const registry = this.#chain.peerRegistry;
@@ -937,14 +938,14 @@ export class ValidatorReplica {
     if (this.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
       throw new Error("certificate history propagation requires lifecycle mode");
     }
-    return loadRuntimeCertificateHistory(this.#directory, this.#genesis).history;
+    return this.#certificatePins.loadVerifiedHistory().history;
   }
 
   installCertificateLifecycleHistoryCandidates(candidates) {
     if (this.certificateMode !== CERTIFICATE_MODE_LIFECYCLE) {
       throw new Error("certificate history propagation requires lifecycle mode");
     }
-    const loaded = loadRuntimeCertificateHistory(this.#directory, this.#genesis);
+    const loaded = this.#certificatePins.loadVerifiedHistory();
     const selected = selectCertificateHistoryCandidates(candidates, {
       context: loaded.context,
       localHistory: loaded.history,
@@ -1558,6 +1559,7 @@ export class DistributedCoordinator {
 
   constructor(directory, validatorUrls, {
     certificateMode = CERTIFICATE_MODE_DEV_GENESIS,
+    certificateHeadAnchorPath = null,
   } = {}) {
     this.#directory = resolve(directory);
     ({ chain: this.#chain } = loadChain(this.#directory));
@@ -1572,6 +1574,7 @@ export class DistributedCoordinator {
     this.#genesis = genesis;
     this.#certificatePins = new RuntimeCertificatePins(this.#directory, genesis, {
       mode: certificateMode,
+      externalAnchorPath: certificateHeadAnchorPath,
     });
     this.#validators = genesis.validators;
     const registryByValidator = new Map((genesis.peerRegistry?.peers ?? []).map((peer) =>

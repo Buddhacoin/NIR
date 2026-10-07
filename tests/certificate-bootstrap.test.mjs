@@ -5,7 +5,7 @@ import {
   cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -13,6 +13,7 @@ import {
   certificateBootstrapMarkerPath,
 } from "../blockchain/certificate-bootstrap.mjs";
 import {
+  certificateHistoryHead,
   createCertificateRecord,
   EMPTY_CERTIFICATE_RECORD_HASH,
   topologyHistoryCommitment,
@@ -97,6 +98,7 @@ function fixture(root) {
     validatorAddress: wallets[0].address,
   }, wallets.slice(0, 3));
   return {
+    anchorPathFor: (directory) => join(root, `head-${basename(directory)}.json`),
     clientDirectory,
     context,
     histories: { a: [...issues, renewal("a")], b: [...issues, renewal("b")] },
@@ -117,10 +119,18 @@ function install(directory, history, context) {
 }
 
 async function startPeers(values, histories, tls = values.tls) {
-  values.layout.validatorDirectories.forEach((directory, index) =>
-    install(directory, histories[index], values.context));
+  values.layout.validatorDirectories.forEach((directory, index) => {
+    install(directory, histories[index], values.context);
+    writeFileSync(values.anchorPathFor(directory), JSON.stringify({
+      format: "nir-certificate-history-anchor-v1",
+      headHash: certificateHistoryHead(histories[index], values.context),
+      networkId: values.context.networkId, recordCount: histories[index].length,
+      version: 1,
+    }));
+  });
   const replicas = values.layout.validatorDirectories.map((directory) =>
-    new ValidatorReplica(directory, { certificateMode: CERTIFICATE_MODE_LIFECYCLE }));
+    new ValidatorReplica(directory, { certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(directory) }));
   const urls = [];
   const servers = replicas.map((replica) => createValidatorHttpServer(replica, {
     peerUrls: () => urls,
@@ -140,6 +150,10 @@ test("one-time bootstrap installs a quorum head, repairs restart, and forbids re
     const values = fixture(root);
     running = await startPeers(values, Array(4).fill(values.histories.a));
     const result = await bootstrapCertificateLifecycle(values.clientDirectory, running.urls);
+    writeFileSync(values.anchorPathFor(values.clientDirectory), JSON.stringify({
+      format: "nir-certificate-history-anchor-v1", headHash: result.headHash,
+      networkId: values.context.networkId, recordCount: result.records, version: 1,
+    }));
     assert.equal(result.records, values.histories.a.length);
     assert.equal(result.matchingSources.length, 4);
     assert.equal(existsSync(certificateBootstrapMarkerPath(values.clientDirectory)), true);
@@ -152,6 +166,7 @@ test("one-time bootstrap installs a quorum head, repairs restart, and forbids re
     writeFileSync(paths.primary, "{interrupted", { mode: 0o600 });
     const restarted = new ValidatorReplica(values.clientDirectory, {
       certificateMode: CERTIFICATE_MODE_LIFECYCLE,
+      certificateHeadAnchorPath: values.anchorPathFor(values.clientDirectory),
     });
     assert.equal(restarted.certificateLifecycleHistory().length, values.histories.a.length);
     assert.equal(loadCertificateHistory(storeDirectory, values.context).recoveredCopies, 0);
@@ -163,7 +178,7 @@ test("one-time bootstrap installs a quorum head, repairs restart, and forbids re
     rmSync(paths.primary);
     rmSync(paths.backup);
     assert.throws(() => restarted.peerTlsCertificateSha256Pins(1),
-      /active lifecycle|all certificate/);
+      /active lifecycle|all certificate|external anchor/);
     await assert.rejects(
       () => bootstrapCertificateLifecycle(values.clientDirectory, running.urls),
       /already used/,

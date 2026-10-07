@@ -34,7 +34,8 @@ export function validateValidatorDeploymentInput(value) {
   "deployment input");
   exact(value.artifacts, ["anchor", "approvals", "genesis", "plan", "signedRelease",
     "tlsCertificate"], "deployment artifacts");
-  exact(value.paths, ["planOutput", "stateDirectory", "tlsPrivateKey", "transportVault", "validatorVault"],
+  exact(value.paths, ["certificateHeadAnchor", "planOutput", "stateDirectory", "tlsPrivateKey",
+    "transportVault", "validatorVault"],
     "deployment paths");
   exact(value.expected, ["endpoint", "genesisHash", "networkId", "releaseManifestHash",
     "tlsCertificateSha256"], "deployment expectations");
@@ -119,6 +120,7 @@ export function createValidatorDeploymentPlan(inputValue, {
       "reverify", p.stateDirectory, input.trustedReleaseAddress]),
     command("Start validator", ["npm", "run", "network:validator", "--", p.stateDirectory,
       String(input.listenPort), input.trustedReleaseAddress], {
+      NIR_CERTIFICATE_HEAD_ANCHOR_PATH: p.certificateHeadAnchor,
       NIR_CERTIFICATE_MODE: "lifecycle", NIR_TLS_KEY_PATH: p.tlsPrivateKey,
     }),
     command("Verify pinned public health", ["npm", "run", "validator:deploy", "--", "health",

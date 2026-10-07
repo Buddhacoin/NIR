@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { lstatSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import process from "node:process";
 
 import {
@@ -51,12 +51,34 @@ function tlsFromEnvironment(defaultCertificatePath = null) {
   return { ...loadTlsKeyPair({ certPath, keyPath }), certPath, keyPath };
 }
 
-function certificateModeFromEnvironment() {
+function certificateModeFromEnvironment({ ceremonyMode = false } = {}) {
+  if (ceremonyMode && process.env.NIR_CERTIFICATE_MODE === undefined) {
+    throw new Error("ceremony validator startup requires explicit NIR_CERTIFICATE_MODE");
+  }
   const mode = process.env.NIR_CERTIFICATE_MODE ?? CERTIFICATE_MODE_DEV_GENESIS;
   if (mode !== CERTIFICATE_MODE_DEV_GENESIS && mode !== CERTIFICATE_MODE_LIFECYCLE) {
     throw new Error("NIR_CERTIFICATE_MODE must be dev-genesis or lifecycle");
   }
   return mode;
+}
+
+function certificateHeadAnchorPathFromEnvironment(mode, runtimeDirectory) {
+  if (mode !== CERTIFICATE_MODE_LIFECYCLE) {
+    if (process.env.NIR_CERTIFICATE_HEAD_ANCHOR_PATH !== undefined) {
+      throw new Error("external certificate history anchor requires lifecycle mode");
+    }
+    return null;
+  }
+  const path = process.env.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
+  if (typeof path !== "string" || !isAbsolute(path) || path.includes("\0")) {
+    throw new Error("lifecycle mode requires an absolute NIR_CERTIFICATE_HEAD_ANCHOR_PATH");
+  }
+  const relativePath = relative(realpathSync(runtimeDirectory), realpathSync(path));
+  if (relativePath === "" || (!isAbsolute(relativePath) && relativePath !== ".." &&
+      !relativePath.startsWith(`..${sep}`))) {
+    throw new Error("external certificate history anchor must be outside node state");
+  }
+  return path;
 }
 
 try {
@@ -68,6 +90,7 @@ try {
   } else if (command === "serve-validator" && directory) {
     const port = validPort(parameter, 8791);
     const ceremonyMode = lstatSync(directory).isSymbolicLink();
+    const certificateMode = certificateModeFromEnvironment({ ceremonyMode });
     const listenerFd = inheritedListenerFd();
     if (ceremonyMode && (listenerFd === 3 || listenerFd === 4)) {
       throw new Error("inherited listener descriptor collides with ceremony password descriptors");
@@ -83,7 +106,9 @@ try {
     }
     const runtimeDirectory = ceremonyCredentials?.directory ?? directory;
     const validator = new ValidatorReplica(runtimeDirectory, {
-      certificateMode: certificateModeFromEnvironment(),
+      certificateMode,
+      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(
+        certificateMode, runtimeDirectory),
       ceremonyCredentials,
     });
     const tls = tlsFromEnvironment(ceremonyMode
@@ -111,8 +136,10 @@ try {
   } else if (command === "serve-coordinator" && directory && parameter) {
     const peers = parameter.split(",").filter(Boolean);
     const port = validPort(portText, 8787);
+    const certificateMode = certificateModeFromEnvironment();
     const node = new DistributedCoordinator(directory, peers, {
-      certificateMode: certificateModeFromEnvironment(),
+      certificateMode,
+      certificateHeadAnchorPath: certificateHeadAnchorPathFromEnvironment(certificateMode, directory),
     });
     createNodeHttpServer(node).listen(port, "127.0.0.1", () => {
       console.log(`NIR distributed coordinator listening on http://127.0.0.1:${port}`);
