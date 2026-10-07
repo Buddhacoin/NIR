@@ -59,9 +59,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=31/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=32/);
-  assert.match(serviceWorker, /app\.js\?v=32/);
-  assert.match(serviceWorker, /nir-wallet-shell-v34/);
+  assert.match(html, /app\.js\?v=33/);
+  assert.match(serviceWorker, /app\.js\?v=33/);
+  assert.match(serviceWorker, /nir-wallet-shell-v35/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -71,6 +71,8 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /transaction-decoder\.js/);
   assert.match(serviceWorker, /offline-signing\.js/);
   assert.match(serviceWorker, /nodes\.json/);
+  assert.match(serviceWorker, /fetch\(event\.request,\{cache:"no-store"\}\)/);
+  assert.doesNotMatch(serviceWorker.match(/const ASSETS=\[[^;]+/)[0], /nodes\.json/);
 });
 
 test("wallet provides safe onboarding, recovery guidance, and session revocation", () => {
@@ -145,6 +147,13 @@ test("submission responses cannot claim transaction finality", () => {
   assert.doesNotMatch(script, /Подтверждено в блоке \$\{result\.height\}/);
 });
 
+test("only explicit submit actions use the configured local ingress", () => {
+  assert.equal((script.match(/fetch\(transactionSubmissionUrl\(nodePolicy\)/g) ?? []).length, 2);
+  assert.doesNotMatch(script, /fetch\(nodeUrl\("\/v1\/transactions"\)/);
+  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+});
+
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {
   assert.match(html, /id="bridge-code"[^>]*pattern="\[0-9\]\{8\}"/);
   assert.match(script, /pairBridge\(url, code\)/);
@@ -177,7 +186,7 @@ test("wallet requires a proof-backed simulation before a separate testnet-only b
   assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
   assert.match(script, /currentNetwork\.valueMode !== "valueless-devnet"/);
   assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
-  assert.match(script, /fetch\(nodeUrl\("\/v1\/transactions"\)/);
+  assert.match(script, /fetch\(transactionSubmissionUrl\(nodePolicy\)/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
 });
 
