@@ -155,11 +155,12 @@ For the local wallet preview, `wallet-ui/nodes.json` has an explicit
 separately. Its example read URLs do **not** automatically start a matching
 read service, and an HTTP URL on port 8791 is not the HTTPS validator used in
 the gateway example. Do not connect an unrelated local node merely to make
-the wallet show a balance. First supply a reviewed read-only RPC for the
-**same** valueless genesis/network as the validator, set the exact read URL
-in `wallet-ui/nodes.json`, and verify `/health` reports that network. A
-matching validator-backed wallet read edge is still an integration task; this
-guide alone is not a complete one-command wallet deployment.
+the wallet show a balance. First start the
+[ceremony-bound wallet read HTTP surface](validator-wallet-read.md) for the
+**same** valueless genesis/network as the validator, set its exact read URL
+in `wallet-ui/nodes.json`, and verify `/health` reports that network. The
+read surface still depends on the existing key-holding coordinator and its
+multi-validator proof assembly; it is not an independent observer.
 
 Then start `npm run wallet:preview` at `http://127.0.0.1:8765` and the gateway
 command above. The wallet checks the current read node's network ID against

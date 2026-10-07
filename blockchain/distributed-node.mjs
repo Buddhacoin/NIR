@@ -1601,6 +1601,26 @@ export class DistributedCoordinator {
   get mempoolSize() { return this.#mempool.size; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
+  // A verified snapshot can replace block zero as the retained chain base.
+  get genesisHash() { return new NirChain(this.#genesis).blocks()[0].hash; }
+
+  /** Read-edge startup check: authenticate every configured peer without synchronizing it. */
+  async verifyReadPeers() {
+    const results = await boundedAllSettled(this.#peers, (_, index) =>
+      this.#request(index, "/v1/health", {}));
+    for (let index = 0; index < results.length; index += 1) {
+      const result = results[index];
+      if (result.status !== "fulfilled") {
+        throw new Error(`wallet read peer ${index} is unavailable or unauthenticated`);
+      }
+      const status = result.value;
+      if (status.address !== this.#validators[index].address ||
+          status.networkId !== this.networkId || status.height !== this.height ||
+          status.tipHash !== this.tipHash) {
+        throw new Error(`wallet read peer ${index} does not match the local finalized tip`);
+      }
+    }
+  }
 
   finalityProofsAfter(fromHeight, limit = MAX_FINALITY_PROOFS) {
     if (!Number.isSafeInteger(fromHeight) || fromHeight < 0 ||

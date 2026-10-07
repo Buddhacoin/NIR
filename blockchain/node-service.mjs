@@ -6,11 +6,15 @@ import {
   ingressErrorResponse,
   readBoundedConsensusJson,
 } from "./http-ingress.mjs";
+import { exactWalletReadOrigin } from "./validator-wallet-read.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const DEVELOPER_POST_PATHS = new Set([
   "/v1/transactions", "/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create",
 ]);
+const WALLET_READ_PATH = /^\/v1\/(?:accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history))?|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof)$/;
+const WALLET_READ_EXACT = new Set(["/health", "/v1/validator-handoffs",
+  "/v1/finality-proofs", "/v1/fees"]);
 
 function send(response, status, value, origin = null) {
   const body = JSON.stringify(value);
@@ -36,6 +40,14 @@ export function createNodeHttpServer(node, options = {}) {
   if (rpcProfile !== "public" && rpcProfile !== "developer") {
     throw new Error("node RPC profile must be public or developer");
   }
+  const walletReadOrigin = options.walletReadOrigin ?? null;
+  if (walletReadOrigin !== null) {
+    if (rpcProfile !== "public") throw new Error("wallet read requires public RPC");
+    exactWalletReadOrigin(walletReadOrigin);
+    if (typeof node?.verifyReadPeers !== "function") {
+      throw new Error("wallet read requires authenticated peer readiness checks");
+    }
+  }
   const httpIngressOptions = {
     maxBodyBytes: 64 * 1024,
     ...(options.httpIngress ?? {}),
@@ -43,11 +55,24 @@ export function createNodeHttpServer(node, options = {}) {
   const httpIngress = new HttpIngressGuard(httpIngressOptions);
   const server = createServer({ maxHeaderSize: HTTP_MAX_HEADER_BYTES }, async (request, response) => {
     let finishIngress = null;
-    const origin = allowedOrigin(request);
+    const origin = walletReadOrigin === null ? allowedOrigin(request)
+      : request.headers.origin === undefined ? null
+        : request.headers.origin === walletReadOrigin ? walletReadOrigin : false;
     try {
       finishIngress = httpIngress.begin(request);
       if (origin === false) return send(response, 403, { error: "origin is not allowed" });
       const url = new URL(request.url, "http://node.local");
+      if (walletReadOrigin !== null && (request.method !== "GET" ||
+          !(WALLET_READ_EXACT.has(url.pathname) || WALLET_READ_PATH.test(url.pathname)))) {
+        return send(response, 404, { error: "not found" }, origin);
+      }
+      if (walletReadOrigin !== null) {
+        try { await node.verifyReadPeers(); }
+        catch {
+          return send(response, 503,
+            { error: "wallet read peers do not match the loaded finalized tip" }, origin);
+        }
+      }
       if ((request.method === "POST" || request.method === "OPTIONS") &&
           DEVELOPER_POST_PATHS.has(url.pathname) && rpcProfile !== "developer") {
         return send(response, 404, { error: "not found" }, origin);

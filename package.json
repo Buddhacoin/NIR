@@ -69,6 +69,7 @@
     "network:validator": "node blockchain/network-cli.mjs serve-validator",
     "validator:control": "node blockchain/validator-control-cli.mjs",
     "network:transaction-ingress": "node blockchain/validator-transaction-ingress-cli.mjs",
+    "network:wallet-read": "node blockchain/validator-wallet-read-cli.mjs",
     "network:transaction-ingress-config": "node blockchain/validator-transaction-ingress-config-cli.mjs",
     "network:coordinator": "node blockchain/network-cli.mjs serve-coordinator",
     "network:discover": "node blockchain/network-cli.mjs discover",
