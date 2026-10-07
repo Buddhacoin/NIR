@@ -1601,7 +1601,8 @@ export class DistributedCoordinator {
   get mempoolSize() { return this.#mempool.size; }
   get networkId() { return this.#chain.networkId; }
   get tipHash() { return this.#chain.tipHash; }
-  get genesisHash() { return this.#chain.blocks()[0].hash; }
+  // A verified snapshot can replace block zero as the retained chain base.
+  get genesisHash() { return new NirChain(this.#genesis).blocks()[0].hash; }
 
   /** Read-edge startup check: authenticate every configured peer without synchronizing it. */
   async verifyReadPeers() {

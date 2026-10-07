@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
 
+import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
+import { finalizeBlockPruning, installBlockStoreSnapshot, persistBlock,
+  stageBlockPruning, verifyStagedBlockPruning } from "../blockchain/block-store.mjs";
+import { DistributedCoordinator, initializeDistributedDevnet, ValidatorReplica }
+  from "../blockchain/distributed-node.mjs";
 import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { exactWalletReadOrigin, pinWalletReadPeerUrls }
   from "../blockchain/validator-wallet-read.mjs";
@@ -77,4 +85,35 @@ test("wallet read HTTP surface serves existing GET shapes and never calls a POST
   }
   assert.equal((await fetch(`${base}/metrics`, { headers })).status, 404);
   assert.equal(writes, 0);
+});
+
+test("wallet read genesis identity survives an installed snapshot and pruned block zero", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-wallet-read-pruned-"));
+  try {
+    const layout = initializeDistributedDevnet(join(temporary, "network"));
+    const genesis = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "genesis.json"), "utf8"));
+    const chain = new NirChain(genesis);
+    const immutableGenesisHash = chain.blocks()[0].hash;
+    const wallets = layout.validatorDirectories.map((directory) =>
+      JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"), "utf8")));
+    const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+    const block = finalizeBlock(chain.buildBlock({ timestamp: 1 }), wallets);
+    chain.appendBlock(block);
+    persistBlock(layout.coordinatorDirectory, block, chain);
+    for (const replica of replicas) replica.commit(block);
+    const candidate = replicas[0].stateSnapshotCandidate();
+    const snapshot = { ...candidate, attestations: replicas.map((replica) =>
+      replica.stateSnapshotAttestation({ height: candidate.height,
+        snapshotHash: candidate.snapshotHash })) };
+    installBlockStoreSnapshot(layout.coordinatorDirectory, genesis, snapshot);
+    const pruning = { minimumPrunableBlocks: 1, minimumPrunableBytes: 1 };
+    stageBlockPruning(layout.coordinatorDirectory, genesis, pruning);
+    verifyStagedBlockPruning(layout.coordinatorDirectory, genesis);
+    finalizeBlockPruning(layout.coordinatorDirectory, genesis);
+    const coordinator = new DistributedCoordinator(layout.coordinatorDirectory,
+      layout.validatorUrls);
+    assert.equal(coordinator.height, 1);
+    assert.notEqual(coordinator.tipHash, immutableGenesisHash);
+    assert.equal(coordinator.genesisHash, immutableGenesisHash);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
