@@ -64,8 +64,10 @@ async function availablePort() {
 }
 
 async function startCeremonyProcess(target, port, inputs) {
+  const controlBase = mkdtempSync(join(tmpdir(), "nvc-"));
   const environment = { ...process.env, NIR_CERTIFICATE_MODE: "dev-genesis",
-    NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath };
+    NIR_TLS_KEY_PATH: inputs.tlsCertificateKeyPath,
+    NIR_VALIDATOR_CONTROL_DIR: controlBase };
   delete environment.NIR_CERTIFICATE_HEAD_ANCHOR_PATH;
   const child = spawn(process.execPath, [
     "blockchain/network-cli.mjs", "serve-validator", target, String(port),
@@ -99,6 +101,7 @@ async function startCeremonyProcess(target, port, inputs) {
     async stop() {
       child.kill("SIGTERM");
       await new Promise((resolve) => child.once("exit", resolve));
+      rmSync(controlBase, { recursive: true, force: true });
     },
   };
 }

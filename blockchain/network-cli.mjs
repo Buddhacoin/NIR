@@ -9,7 +9,8 @@ import {
   ValidatorReplica,
 } from "./distributed-node.mjs";
 import { createNodeHttpServer } from "./node-service.mjs";
-import { createValidatorHttpServer } from "./validator-service.mjs";
+import { createValidatorControlServer, createValidatorHttpServer } from "./validator-service.mjs";
+import { listenOnPrivateValidatorControlSocket } from "./validator-control-socket.mjs";
 import { discoverPeersFromSeeds } from "./peer-discovery.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
 import { installValidatorTlsReloader, loadTlsKeyPair } from "./tls-context-reload.mjs";
@@ -131,6 +132,28 @@ try {
     }
     await listenOnLoopback(server, { host: "127.0.0.1", inheritedFd: listenerFd,
       label: "validator listener", port });
+    let control = null;
+    if (ceremonyMode) {
+      try {
+        const local = createValidatorControlServer(validator);
+        control = await listenOnPrivateValidatorControlSocket(local.server,
+          process.env.NIR_VALIDATOR_CONTROL_DIR);
+        local.enable();
+      } catch (error) {
+        await server.gracefulShutdown();
+        throw error;
+      }
+      console.log(`NIR validator control socket ${control.path}`);
+    }
+    const shutdown = async () => {
+      try {
+        await control?.close();
+        await server.gracefulShutdown();
+        process.exitCode = 0;
+      } catch { process.exit(1); }
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
     const protocol = tls ? "https" : "http";
     console.log(`NIR validator ${validator.address} listening on ${protocol}://127.0.0.1:${port}`);
   } else if (command === "serve-coordinator" && directory && parameter) {

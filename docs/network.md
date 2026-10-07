@@ -216,6 +216,11 @@ transactions are removed from every validator's durable pool.
 
 ## Validator-led block production
 
+The HTTP command below is for the local `init-dev` network only. A
+ceremony-installed validator rejects this unauthenticated HTTP route; its
+operator uses the owner-only Unix socket described in
+[validator ceremony onboarding](validator-ceremony-onboarding.md).
+
 The round-zero proposer can assemble a block directly from its durable pool:
 
 ```bash
@@ -265,6 +270,9 @@ error. For round zero, which has no embedded timeout certificate, recovery still
 requires `N - quorum + 1` independent lock proofs.
 
 ## Validator catch-up
+
+The HTTP command below is dev-only. Ceremony operators use
+`validator:control sync` on the current owner-only socket.
 
 A validator that was offline can synchronize directly from the other validators:
 

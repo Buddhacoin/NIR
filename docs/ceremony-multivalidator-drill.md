@@ -27,8 +27,8 @@ The drill then performs these checks through the network services:
 4. Reject an unknown transport signer, a valid old certificate replayed over a
    different height-2 proposal, and a proposal from a finalized stale height.
 5. Stop a non-proposer, finalize another valid transfer with the remaining
-   three-node quorum, restart the stopped validator, and invoke its public sync
-   path. Its height and tip must match the quorum.
+   three-node quorum, restart the stopped validator, and invoke its local
+   owner-only control socket for sync. Its height and tip must match the quorum.
 6. Restart that validator once more and prove that the caught-up finalized tip
    survived process restart.
 7. Recursively scan every ceremony generation and all process arguments,

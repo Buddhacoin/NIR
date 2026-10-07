@@ -82,6 +82,7 @@ environment variables, or configuration files:
 ```sh
 NIR_CERTIFICATE_MODE=lifecycle \
 NIR_CERTIFICATE_HEAD_ANCHOR_PATH=/secure/operator/certificate-head.json \
+NIR_VALIDATOR_CONTROL_DIR=/run/user/1000/nir-control \
 NIR_TLS_KEY_PATH=/secure/runtime/validator-tls-key.pem \
   npm run network:validator -- \
   /srv/nir/validator-0 9443 nir1_TRUSTED_RELEASE_SIGNER
@@ -100,6 +101,7 @@ anonymous credential pipes):
 ```sh
 NIR_CERTIFICATE_MODE=lifecycle \
 NIR_CERTIFICATE_HEAD_ANCHOR_PATH=/secure/operator/certificate-head.json \
+NIR_VALIDATOR_CONTROL_DIR=/run/user/1000/nir-control \
 NIR_TLS_KEY_PATH=/secure/runtime/validator-tls-key.pem \
   npm run network:validator -- \
   /srv/nir/validator-0 9443 nir1_TRUSTED_RELEASE_SIGNER \
@@ -111,6 +113,23 @@ The public TLS certificate is loaded from the verified ceremony generation by
 default. `NIR_TLS_KEY_PATH` names the separately provisioned TLS private key;
 the existing TLS loader verifies that it matches the certificate. The trusted
 release signer and filesystem paths are public configuration, not passwords.
+
+Before startup, create `NIR_VALIDATOR_CONTROL_DIR` as an absolute, non-symlink
+directory owned by the validator process UID with mode `0700`. Keep its path
+short enough for Unix-domain sockets. The process creates a fresh private
+subdirectory and mode-`0600` socket on every start, prints the current socket
+path, and refuses to start if validation fails. An interrupted process can
+leave an inert stale socket in its old private subdirectory; a restart uses a
+new path and never removes that old or another process's path. After confirming
+the old process is gone, the operator may inspect and clean up its stale files.
+Use `npm run validator:control -- produce <current-socket-path>` or `sync` for
+the two local operator actions. The ceremony HTTPS listener rejects both
+unauthenticated control routes before invoking peers or changing state.
+
+This socket trusts local same-UID processes: Node does not provide peer UID
+credentials through its standard socket API. Do not run unrelated or untrusted
+programs under the validator UID, and do not forward the socket or expose its
+private directory to other accounts. This is not remote operator authentication.
 
 Ceremony genesis has no centralized coordinator identity. Therefore this mode
 serves public health/discovery and validator-authenticated P2P routes, while all
