@@ -21,33 +21,44 @@ operator-controlled evidence. Then run:
 npm run network:transaction-ingress -- https://127.0.0.1:8791 <tls-certificate-sha256> <network-id> 8789 127.0.0.1 http://127.0.0.1:8765
 ```
 
-An optional **ceremony-bound startup mode** verifies a v2 ceremony registry
-against an externally supplied operator-signed anchor, an independently pinned
-release signer address, and an independently pinned genesis hash before opening
-the loopback listener. Select the validator by its consensus address; the
-upstream origin, TLS pin, and network ID on the command line are exact assertions
-against that validator's verified ceremony record. The gateway uses the verified
-values. The external anchor file must be distributed separately from the
-registry and reviewed by the operator.
+The **ceremony-bound mode** is separate from local/dev mode. Its single exact,
+canonical JSON operator config is an independently controlled, owned mode-`0600`
+file (one JSON line followed by a newline; no unknown fields). It pins the v2
+ceremony registry, separately distributed signed ceremony anchor, release signer
+address, genesis hash, validator address, exact upstream origin/TLS fingerprint
+and network ID. It also specifies the witness-policy ID, current checkpoint
+package, certificate-history directory and separately retained head anchor,
+private floor directory, maximum witness age in milliseconds, loopback listener
+and optional exact wallet origin. The file itself is a trusted operator input;
+its contents are not self-authenticating. All paths in it are absolute.
+
+Its exact fields are `format` (`nir-transaction-ingress-operator-config-v1`),
+`version` (`1`), `registryDirectory`, `ceremonyAnchorPath`,
+`trustedReleaseSignerAddress`, `expectedGenesisHash`, `validatorAddress`,
+`expectedUpstreamOrigin`, `expectedTlsCertificateSha256`, `expectedNetworkId`,
+`expectedPolicyId`, `checkpointPackagePath`, `certificateDirectory`,
+`certificateHeadAnchorPath`, `floorDirectory`, `maxWitnessAgeMs` (1–120000),
+`listenPort` (1–65535), `listenHost` (`127.0.0.1` or `::1`), and `walletOrigin`
+(an exact local preview or pinned extension origin, or `null`). Prepare the
+config off-node, independently check its trust pins, and retain a trusted copy.
+The old positional `--ceremony` form is refused: it cannot omit this gate.
 
 ```bash
-npm run network:transaction-ingress -- --ceremony \
-  <registry-dir> <external-anchor.json> <trusted-release-signer-address> \
-  <pinned-genesis-hash> <validator-address> https://127.0.0.1:8791 \
-  <tls-certificate-sha256> <network-id> 8789 127.0.0.1 \
-  http://127.0.0.1:8765
+npm run network:transaction-ingress -- --init-floor /absolute/operator-config.json
+npm run network:transaction-ingress -- --ceremony /absolute/operator-config.json
 ```
 
-Missing or mismatched ceremony evidence exits before the listener opens. The
-gateway then sends a fresh nonce-bound challenge to the selected validator
-before opening its listener. It verifies the response against the validator
-consensus public key in the signed ceremony, the pinned genesis and network,
-and the TLS certificate presented on that connection. A silent or offline
-upstream cannot pass startup; an upstream without the key can pass only by
-relaying the challenge to a genuine signer. This is a startup liveness and
-key-possession check, not continuing proof of the upstream process. It does
-not verify certificate lifecycle, current finality, or economic claims about
-the network. The listener remains loopback only.
+Initialization verifies the ceremony identity and a fresh witness package
+against the pinned policy before creating the floor exactly once; a policy typo
+therefore fails before initialization. It does not contact the upstream or open
+a port and never silently recreates lost state. Normal launch
+verifies the ceremony, sends a nonce-bound validator-key challenge over pinned
+TLS, verifies the checkpoint and certificate gate and advances the floor
+**before** opening a loopback listener. Each signed transaction is gated again
+before forwarding. A challenge can be relayed to a real signer; it does not
+prove the same process will handle a later transaction. Checkpoint witnesses
+must actually be independently operated and their policy must be distributed
+out of band; the local gate cannot establish either fact.
 
 In local/dev mode, the optional fifth argument is the listen address, limited
 to `127.0.0.1` or `::1`. The optional sixth argument enables browser submission for one exact
@@ -92,13 +103,14 @@ The local/dev mode verifies the configured network ID and pinned upstream certif
 but it does **not** prove that the network is valueless. A read node's
 `valueMode` label is not independent genesis evidence. Operators must use only
 their reviewed valueless developer-testnet ceremony and must not connect this
-preview to a network representing real value. Signed certificate-lifecycle
-evidence remains a separate gate for both modes.
+preview to a network representing real value. Local/dev mode has no signed
+certificate-lifecycle gate; ceremony mode requires one.
 
-The supplied fingerprint is a static local trust pin. It must be refreshed
-under operator control when the validator certificate rotates; this gateway
-does not independently verify the signed certificate lifecycle or detect
-revocation. Do not expose its plaintext loopback listener on a public interface
+In local/dev mode the fingerprint is a static local pin without lifecycle
+verification. Ceremony mode checks the signed certificate lifecycle at every
+POST, but the pinned endpoint/fingerprint in its ceremony config still requires
+an operator-reviewed migration when a legitimate certificate rotates. Do not
+expose its plaintext loopback listener on a public interface
 or present it as a public-network service. A separately designed TLS edge,
 client abuse controls, trusted pin distribution, independent operators, and
 multi-host evidence are still required for a public deployment. This command
@@ -120,3 +132,53 @@ Only the ceremony-bound startup mode requires this challenge; positional
 local/dev mode remains unchanged. The challenge is not repeated for each
 transfer, so a later upstream replacement is not detected by this startup
 check alone.
+
+## Mandatory checkpoint and certificate admission in ceremony mode
+
+Every signed-transaction `POST` in ceremony mode must pass a
+fresh witness-signed finalized checkpoint package under an independently pinned
+genesis hash and witness-policy ID. The selected validator must belong to that
+checkpoint's validator set, and its upstream TLS fingerprint must be active in
+the signed certificate history at that height. A checkpoint predating the
+latest signed certificate change cannot authorize an old fingerprint. Missing,
+stale, revoked, conflicting, or unreadable evidence returns HTTP 503 before
+the upstream validator receives the transaction. This still does not prove
+that the witnesses are independently operated or that the checkpoint is the
+network's newest tip.
+
+Before the gate can start, an operator must explicitly initialize its private
+floor directory with the pinned network, genesis, witness policy, and validator
+identity. Ordinary startup never recreates a missing directory or resets a
+missing floor. The floor saves the highest verified checkpoint height and tip,
+witness sequence and package hash, certificate-history head and count, and the
+last verified observation time. Two mode-`0600` copies in an owned mode-`0700`
+directory are updated through a short writer lock, temporary-file fsync,
+atomic rename, and directory fsync. A restart accepts identical copies or an
+exactly linked one-revision old/new pair left by an interrupted write. An
+unrelated split, invalid copy, or lost directory fails closed. In-memory checks
+also reject replacing the floor with an older revision during one process run.
+Before a new revision, a torn pair is repaired to the newer verified record;
+otherwise a second interruption could leave copies two revisions apart. The
+lock becomes visible only after its complete owner record has been fsynced, so
+a crash while preparing that record cannot leave an empty active lock. A crash
+after publication can leave a valid lock behind. The runtime never removes an
+existing lock automatically, even if its recorded process appears dead:
+concurrent attempts to reclaim it could delete a new writer's lock. An
+operator must first verify that no writer is running and that both floor
+copies form a valid current or one-step linked pair before removing that
+specific lock and any linked temporary name. If ownership or copy state is
+unclear, keep the gateway closed.
+
+An interruption during one-time initialization may leave just the first copy.
+The gate refuses to start and initialization refuses to run again over it.
+Recovery then requires an operator to establish from independent evidence
+whether any floor had ever been accepted. If that cannot be established, do
+not delete or recreate the directory: restore an externally retained trusted
+floor instead.
+
+This local floor survives ordinary crashes, but it is **not** an external trust
+anchor. An attacker controlling the directory owner or a full filesystem
+snapshot can replace both copies with an older valid pair after restart. An
+independently retained checkpoint/history anchor or hardware monotonic counter
+is required to close that threat. The gate and local floor alone do not make
+the ingress suitable for public deployment or real-value transfers.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { X509Certificate } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,13 +10,48 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createTransfer, transactionId } from "../blockchain/chain.mjs";
-import { generateWallet } from "../blockchain/crypto.mjs";
+import { canonicalJson, generateWallet } from "../blockchain/crypto.mjs";
 import { initializeDistributedDevnet, ValidatorReplica } from "../blockchain/distributed-node.mjs";
 import { certificateSha256 } from "../blockchain/http-client.mjs";
 import { createValidatorTransactionIngressServer, validateValidatorTransactionIngressConfig,
   WALLET_EXTENSION_ORIGIN }
   from "../blockchain/validator-transaction-ingress.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+
+test("checkpoint certificate gate blocks transaction forwarding and rejects asynchronous bypass", async () => {
+  const tls = fixture(); const servers = [];
+  try {
+    let reached = 0;
+    const upstream = createHttpsServer({ cert: tls.cert, key: tls.key }, (request, response) => {
+      reached += 1; request.resume(); response.writeHead(500); response.end("upstream reached");
+    });
+    servers.push(upstream);
+    const upstreamOrigin = `https://127.0.0.1:${await listen(upstream)}`;
+    let gate = () => { throw new Error("stale witness evidence"); };
+    const ingress = createValidatorTransactionIngressServer({
+      expectedNetworkId: "nir-distributed-devnet", tlsCertificateSha256: tls.pin,
+      upstreamOrigin,
+    }, { checkpointCertificateGate: () => gate() });
+    servers.push(ingress);
+    const endpoint = `http://127.0.0.1:${await listen(ingress)}/v1/transactions`;
+    const signed = createTransfer({ wallet: generateWallet(),
+      networkId: "nir-distributed-devnet", recipient: generateWallet().address,
+      amount: "1000000", nonce: 0 });
+    const submit = () => fetch(endpoint, { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(signed) });
+    assert.equal((await submit()).status, 503);
+    assert.equal(reached, 0);
+    gate = () => Promise.resolve({ checkpointHeight: 10 });
+    assert.equal((await submit()).status, 503);
+    assert.equal(reached, 0);
+    gate = () => ({ checkpointHeight: 10 });
+    assert.equal((await submit()).status, 502);
+    assert.equal(reached, 1);
+  } finally {
+    await Promise.all(servers.map(close));
+    rmSync(tls.directory, { recursive: true, force: true });
+  }
+});
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -326,10 +361,24 @@ test("ceremony-bound CLI rejects a missing external anchor before port or upstre
     await close(probe);
     const cli = fileURLToPath(new URL("../blockchain/validator-transaction-ingress-cli.mjs",
       import.meta.url));
-    const child = spawn(process.execPath, [cli, "--ceremony", join(tls.directory, "registry"),
-      join(tls.directory, "missing-anchor.json"), `nir1${"a".repeat(64)}`,
-      "a".repeat(64), `nir1${"b".repeat(64)}`,
-      `https://127.0.0.1:${upstreamPort}`, tls.pin, "nir-test-devnet", String(port)],
+    const operatorPath = join(tls.directory, "operator.json");
+    writeFileSync(operatorPath, `${canonicalJson({
+      certificateDirectory: tls.directory,
+      certificateHeadAnchorPath: join(tls.directory, "missing-certificate-anchor.json"),
+      ceremonyAnchorPath: join(tls.directory, "missing-anchor.json"),
+      checkpointPackagePath: join(tls.directory, "missing-package.json"),
+      expectedGenesisHash: "a".repeat(64), expectedNetworkId: "nir-test-devnet",
+      expectedPolicyId: `sha3-256:${"d".repeat(64)}`,
+      expectedTlsCertificateSha256: tls.pin,
+      expectedUpstreamOrigin: `https://127.0.0.1:${upstreamPort}`,
+      floorDirectory: join(tls.directory, "floor"),
+      format: "nir-transaction-ingress-operator-config-v1", listenHost: "127.0.0.1",
+      listenPort: port, maxWitnessAgeMs: 30_000,
+      registryDirectory: join(tls.directory, "registry"),
+      trustedReleaseSignerAddress: `nir1${"a".repeat(64)}`,
+      validatorAddress: `nir1${"b".repeat(64)}`, version: 1, walletOrigin: null,
+    })}\n`, { mode: 0o600 });
+    const child = spawn(process.execPath, [cli, "--ceremony", operatorPath],
     { stdio: "ignore" });
     const status = await new Promise((resolve) => child.once("exit", resolve));
     assert.equal(status, 1);
