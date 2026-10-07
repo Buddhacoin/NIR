@@ -21,6 +21,8 @@ jobs:
         with:
           node-version: "26"
       - run: npm run verify
+      - name: Rehearse node and wallet release installation on Linux
+        run: npm run release:rehearse
       - name: Install Rust verification toolchain
         run: rustup show active-toolchain
       - name: Verify independent Rust consensus codec
