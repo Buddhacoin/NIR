@@ -21,8 +21,11 @@ import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { initializeDistributedDevnet } from "../blockchain/distributed-node.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
-import { createValidatorTransactionCheckpointGate }
+import { assertTransactionIngressValidatorSet, createValidatorTransactionCheckpointGate }
   from "../blockchain/validator-transaction-ingress-checkpoint.mjs";
+import { createValidatorHandoff, verifyValidatorHandoff }
+  from "../blockchain/validator-handoff.mjs";
+import { validatorSetId } from "../blockchain/validator-rotation.mjs";
 import { advanceTransactionIngressFloor, initializeTransactionIngressFloor,
   loadTransactionIngressFloor }
   from "../blockchain/validator-transaction-ingress-floor.mjs";
@@ -82,7 +85,7 @@ function fixture() {
       policy, sequence, validators: genesis.validators });
   };
   const packageFor = (sequence, observedAt = NOW - 100, proof = finalityProof,
-    history = [issue], commitmentOverride = null) => {
+    history = [issue], commitmentOverride = null, validators = genesis.validators) => {
     const commitment = commitmentOverride ?? {
       certificateHistoryHead: certificateHistoryHead(history, context),
       certificateRecordCount: history.length,
@@ -90,9 +93,9 @@ function fixture() {
     const attestations = witnesses.slice(0, 3).map((wallet, index) =>
       createCheckpointWitnessAttestationV2({ ...commitment, finalityProof: proof,
         observedAt: observedAt + index, operatorId: `witness-${index}`,
-        policy, sequence, validators: genesis.validators, wallet }));
+        policy, sequence, validators, wallet }));
     return assembleCheckpointTrustPackageV2({ ...commitment, attestations,
-      finalityProof: proof, policy, sequence, validators: genesis.validators });
+      finalityProof: proof, policy, sequence, validators });
   };
   const context = { currentHeight: 0, minimumActivationDelay: 0,
     networkId: genesis.networkId, peerRegistryHash: peerRegistryHash(genesis.peerRegistry),
@@ -132,6 +135,64 @@ function fixture() {
     context, floorIdentity, genesis, issue,
     options, packageFor, root, v1PackageFor, validatorWallets, writeAnchor, writePackage };
 }
+
+test("a witness package cannot supply its own unrelated finality validator quorum", () => {
+  const values = fixture();
+  try {
+    const replacements = Array.from({ length: 3 }, generateWallet);
+    const fakeWallets = [values.validatorWallets[0], ...replacements];
+    const fakeValidators = [values.genesis.validators.find(({ address }) =>
+      address === values.address), ...replacements.map((wallet, index) =>
+      ({ ...publicWallet(wallet), operatorId: `fabricated-${index}` }))]
+      .sort((left, right) => left.address.localeCompare(right.address));
+    const forgedBlock = finalizeBlock({ ...values.checkpoint,
+      validatorSetId: validatorSetId(fakeValidators) }, fakeWallets.slice(0, 3));
+    values.writePackage(values.packageFor(8, NOW - 100, createFinalityProof(forgedBlock),
+      undefined, null, fakeValidators));
+    const gate = createValidatorTransactionCheckpointGate(values.options);
+    assert.throws(gate, /validator set does not match verified topology/);
+    const floor = loadTransactionIngressFloor(values.options.floorDirectory, values.floorIdentity);
+    assert.equal(floor.height, 0);
+    assert.equal(floor.sequence, 0);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("validator set binding selects signed topology at the checkpoint height", () => {
+  const values = fixture();
+  try {
+    const nextWallets = [values.validatorWallets[0], values.validatorWallets[1],
+      generateWallet(), generateWallet()];
+    const nextValidators = [
+      ...nextWallets.slice(0, 2).map((wallet) => values.genesis.validators.find(
+        ({ address }) => address === wallet.address)),
+      ...nextWallets.slice(2).map((wallet, index) =>
+        ({ ...publicWallet(wallet), operatorId: `rotated-${index}` }))];
+    const activationHeight = values.checkpoint.height + 2;
+    const handoff = createValidatorHandoff({
+      activationBlockHash: "c".repeat(64), activationHeight,
+      activationStateRoot: "d".repeat(64), networkId: values.genesis.networkId,
+      nextValidators, previousValidators: values.genesis.validators,
+    }, values.validatorWallets.slice(0, 3), nextWallets.slice(0, 3));
+    const trusted = verifyValidatorHandoff(handoff, {
+      expectedNetworkId: values.genesis.networkId,
+      trustedValidators: values.genesis.validators,
+    });
+    assert.deepEqual(trusted.trustedValidators, [...nextValidators]
+      .sort((left, right) => left.address.localeCompare(right.address)));
+    const context = { handoffs: [handoff] };
+    const verified = (height, validators) => ({ checkpoint: { height,
+      validatorSetId: validatorSetId(validators) }, trustedValidators: validators });
+    assert.doesNotThrow(() => assertTransactionIngressValidatorSet(
+      verified(activationHeight - 1, values.genesis.validators), values.genesis.validators, context));
+    assert.doesNotThrow(() => assertTransactionIngressValidatorSet(
+      verified(activationHeight, nextValidators), values.genesis.validators, context));
+    assert.doesNotThrow(() => assertTransactionIngressValidatorSet(
+      verified(activationHeight + 1, nextValidators), values.genesis.validators, context));
+    assert.throws(() => assertTransactionIngressValidatorSet(
+      verified(activationHeight, values.genesis.validators), values.genesis.validators, context),
+    /validator set does not match verified topology/);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
 
 test("fresh signed checkpoint and anchored active certificate admit repeatedly", () => {
   const values = fixture();

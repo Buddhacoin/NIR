@@ -3,6 +3,7 @@ import { certificateHistoryHead, certificatePinsAtHeight }
 import { CERTIFICATE_MODE_LIFECYCLE, RuntimeCertificatePins }
   from "./certificate-runtime.mjs";
 import { NirChain } from "./chain.mjs";
+import { canonicalJson } from "./crypto.mjs";
 import { MAX_CHECKPOINT_TRUST_PACKAGE_BYTES }
   from "./checkpoint-trust-package.mjs";
 import { verifyCheckpointTrustPackageV2 }
@@ -10,6 +11,7 @@ import { verifyCheckpointTrustPackageV2 }
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { advanceTransactionIngressFloor, loadTransactionIngressFloor }
   from "./validator-transaction-ingress-floor.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const TAGGED_HASH = /^sha3-256:[0-9a-f]{64}$/;
@@ -22,6 +24,25 @@ export function assertTransactionIngressCertificateCommitment(verified, context,
     throw new Error("transaction ingress V2 checkpoint certificate head or count does not match verified history");
   }
   return head;
+}
+
+export function assertTransactionIngressValidatorSet(verified, genesisValidators, context) {
+  if (!Array.isArray(genesisValidators) || !Array.isArray(context?.handoffs) ||
+      !Array.isArray(verified?.trustedValidators) ||
+      !Number.isSafeInteger(verified?.checkpoint?.height)) {
+    throw new Error("transaction ingress checkpoint validator topology is unavailable");
+  }
+  let expected = genesisValidators;
+  for (const handoff of context.handoffs) {
+    if (handoff.activationHeight > verified.checkpoint.height) break;
+    expected = handoff.nextValidators;
+  }
+  const ordered = (members) => [...members].sort((left, right) =>
+    left.address < right.address ? -1 : left.address > right.address ? 1 : 0);
+  if (validatorSetId(expected) !== verified.checkpoint.validatorSetId ||
+      canonicalJson(ordered(expected)) !== canonicalJson(ordered(verified.trustedValidators))) {
+    throw new Error("transaction ingress checkpoint validator set does not match verified topology at height");
+  }
 }
 
 /**
@@ -91,6 +112,7 @@ export function createValidatorTransactionCheckpointGate({
       throw new Error("transaction ingress validator is absent from finalized checkpoint quorum");
     }
     const { context, history } = certificatePins.loadVerifiedHistory();
+    assertTransactionIngressValidatorSet(verified, genesis.validators, context);
     if (floor.historyCount > 0 && (history.length < floor.historyCount ||
         certificateHistoryHead(history.slice(0, floor.historyCount), context) !==
           floor.historyHead)) {

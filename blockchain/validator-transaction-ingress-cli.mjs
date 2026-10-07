@@ -12,6 +12,7 @@ import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import { verifyCeremonyBoundTransactionIngressEvidence }
   from "./validator-transaction-ingress-ceremony.mjs";
 import { assertTransactionIngressCertificateCommitment,
+  assertTransactionIngressValidatorSet,
   createValidatorTransactionCheckpointGate }
   from "./validator-transaction-ingress-checkpoint.mjs";
 import { initializeTransactionIngressFloor }
@@ -69,6 +70,7 @@ try {
           externalAnchorPath: operator.certificateHeadAnchorPath,
         });
       const { context, history } = certificatePins.loadVerifiedHistory();
+      assertTransactionIngressValidatorSet(checkpoint, verified.genesis.validators, context);
       assertTransactionIngressCertificateCommitment(checkpoint, context, history);
       initializeTransactionIngressFloor(operator.floorDirectory, floorIdentity);
       console.log("NIR transaction ingress floor initialized once; no listener was opened");

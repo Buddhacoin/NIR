@@ -220,8 +220,14 @@ Every signed-transaction `POST` in ceremony mode must pass a fresh v2
 witness-signed checkpoint package under an independently pinned genesis hash
 and witness-policy ID. Its certificate-history head and record count must equal
 the complete locally verified history under the external anchor. The selected
-validator must belong to the package's finalized checkpoint validator set, and
-its original ceremony TLS fingerprint must be active in the signed certificate
+validator must belong to the package's finalized checkpoint validator set. The
+entire package validator set must equal the genesis set advanced through locally
+verified handoffs active at the checkpoint height; a checkpoint before a later
+rotation uses its historical set. Initialization checks the same binding before
+creating the floor. A single checkpoint proof does not establish that an earlier
+handoff activation block is an ancestor of that checkpoint; this local topology
+check is not a full finality-chain proof. The selected validator's original
+ceremony TLS fingerprint must be active in the signed certificate
 history at that height. The v2 package does not rotate the upstream pin; a
 certificate renewal still requires a separate ingress migration. A checkpoint predating the
 latest signed certificate change cannot authorize an old fingerprint. Missing,
