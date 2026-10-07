@@ -85,6 +85,7 @@
     "release:build": "node blockchain/release-cli.mjs build",
     "release:build-production": "node blockchain/release-cli.mjs build-production",
     "release:verify-artifact": "node blockchain/release-cli.mjs verify-artifact",
+    "release:rehearse": "node blockchain/release-rehearsal-cli.mjs",
     "release:verify-production-artifact": "node blockchain/release-cli.mjs verify-production-artifact",
     "release:install-wallet": "node blockchain/release-cli.mjs install-wallet",
     "release:verify-wallet-install": "node blockchain/release-cli.mjs verify-wallet-install",
