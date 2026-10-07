@@ -180,6 +180,7 @@ test("renewal cannot be bypassed with a fresh re-attestation of an old checkpoin
   const values = fixture();
   try {
     const gate = createValidatorTransactionCheckpointGate(values.options);
+    const originalPackage = JSON.parse(readFileSync(values.options.checkpointPackagePath));
     gate();
     const renewed = createCertificateRecord({ activationHeight: values.checkpoint.height + 1,
       certificate: { serial: "11", sha256: PIN_B }, networkId: values.genesis.networkId,
@@ -195,10 +196,10 @@ test("renewal cannot be bypassed with a fresh re-attestation of an old checkpoin
     values.writePackage(values.packageFor(9));
     assert.throws(gate, /TLS pin is not active/);
     assert.equal(loadTransactionIngressFloor(values.options.floorDirectory,
-      values.floorIdentity).sequence, 9);
+      values.floorIdentity).sequence, 8);
     const restarted = createValidatorTransactionCheckpointGate(values.options);
-    values.writePackage(values.packageFor(8));
-    assert.throws(restarted, /anti-replay|rolled back|invalid/);
+    values.writePackage(originalPackage);
+    assert.throws(restarted, /TLS pin is not active/);
     values.writePackage(values.packageFor(9));
     values.writeAnchor([values.issue]);
     assert.throws(gate, /external anchor|rolled back|conflicts/);

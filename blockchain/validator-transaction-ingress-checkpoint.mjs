@@ -76,27 +76,15 @@ export function createValidatorTransactionCheckpointGate({
           verified.packageHash !== floor.packageHash))) {
       throw new Error("transaction checkpoint trust package rolled back or diverged");
     }
-    const packageFloor = advanceTransactionIngressFloor(floorDirectory, floorIdentity, {
-      height: verified.checkpoint.height, historyCount: floor.historyCount,
-      historyHead: floor.historyHead, observedAt,
-      packageHash: verified.packageHash, sequence: verified.sequence,
-      tipHash: verified.checkpoint.tipHash,
-    });
     if (!verified.trustedValidators.some(({ address }) => address === validatorAddress)) {
       throw new Error("transaction ingress validator is absent from finalized checkpoint quorum");
     }
     const { context, history } = certificatePins.loadVerifiedHistory();
-    if (packageFloor.historyCount > 0 && (history.length < packageFloor.historyCount ||
-        certificateHistoryHead(history.slice(0, packageFloor.historyCount), context) !==
-          packageFloor.historyHead)) {
+    if (floor.historyCount > 0 && (history.length < floor.historyCount ||
+        certificateHistoryHead(history.slice(0, floor.historyCount), context) !==
+          floor.historyHead)) {
       throw new Error("transaction ingress certificate history rolled back or diverged");
     }
-    advanceTransactionIngressFloor(floorDirectory, floorIdentity, {
-      height: verified.checkpoint.height, historyCount: history.length,
-      historyHead: certificateHistoryHead(history, context), observedAt,
-      packageHash: verified.packageHash, sequence: verified.sequence,
-      tipHash: verified.checkpoint.tipHash,
-    });
     const latestCertificateHeight = history.reduce((height, record) =>
       record.validatorAddress === validatorAddress
         ? Math.max(height, record.activationHeight) : height, 0);
@@ -105,6 +93,12 @@ export function createValidatorTransactionCheckpointGate({
           .includes(tlsCertificateSha256)) {
       throw new Error("transaction ingress TLS pin is not active at the accepted checkpoint");
     }
+    advanceTransactionIngressFloor(floorDirectory, floorIdentity, {
+      height: verified.checkpoint.height, historyCount: history.length,
+      historyHead: certificateHistoryHead(history, context), observedAt,
+      packageHash: verified.packageHash, sequence: verified.sequence,
+      tipHash: verified.checkpoint.tipHash,
+    });
     return { checkpointHeight: verified.checkpoint.height,
       checkpointSequence: verified.sequence };
   };
