@@ -21,13 +21,18 @@ npm run network:transaction-ingress -- https://127.0.0.1:8791 <tls-certificate-s
 
 The optional fifth argument is the listen address, limited to `127.0.0.1` or
 `::1`. The optional sixth argument enables browser submission for one exact
-`http://127.0.0.1:<port>` wallet origin; omit it to reject all browser
+`http://127.0.0.1:<port>` wallet preview origin or the pinned unpacked wallet
+extension origin, `chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm`.
+Run a separate gateway instance if both browser surfaces are needed; each
+instance accepts only one origin. Omit the argument to reject all browser
 `Origin` requests as before. The upstream must be an exact loopback HTTPS
 origin with an explicit port. Only `Content-Type: application/json` is
 accepted. Browser preflight permits only `OPTIONS /v1/transactions` asking
 for `POST` with the `content-type` header from that configured origin. The
-gateway responds to that origin only, never `*`. A local CLI without `Origin`
-can still submit already-signed JSON. Every other route or method is rejected
+unpacked Chrome extension can send its JSON `POST` directly without a preflight;
+the gateway checks its exact `Origin` before forwarding either form. The
+gateway responds to the configured origin only, never `*`. A local CLI without
+`Origin` can still submit already-signed JSON. Every other route or method is rejected
 before any upstream HTTP request.
 The CORS check controls browser access, not client authentication: a local
 non-browser process can set an `Origin` header, and the validator must still
@@ -41,9 +46,17 @@ network ID against the signed transaction before either explicit submit
 action. Missing or invalid `submissionOrigin` disables submission; it never
 falls back to the read-only RPC. Restart the page after changing its signed
 policy. The service worker fetches `nodes.json` from the network without a
-cached fallback. The production extension package keeps its narrower
-`127.0.0.1` host-permission and CSP boundary; this rehearsal does not enable
-extension-origin CORS.
+cached fallback. To rehearse the unpacked extension, pass its pinned origin as
+the sixth argument:
+
+```bash
+npm run network:transaction-ingress -- https://127.0.0.1:8791 <tls-certificate-sha256> <network-id> 8789 127.0.0.1 chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm
+```
+
+Its existing `127.0.0.1` host permission and CSP remain
+unchanged. Current Chrome versions may ask the user to permit local or loopback
+network access before the extension can connect; this runtime browser grant is
+separate from the extension manifest permissions.
 
 The gateway verifies the configured network ID and pinned upstream certificate,
 but it does **not** prove that the network is valueless. A read node's

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { submissionStatus } from "../wallet-ui/submission-status.js";
 
 const html = readFileSync(new URL("../wallet-ui/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../wallet-ui/style.css", import.meta.url), "utf8");
 const serviceWorker = readFileSync(new URL("../wallet-ui/sw.js", import.meta.url), "utf8");
+const extensionBackground = readFileSync(new URL("../wallet-ui/extension-background.js", import.meta.url), "utf8");
 const bridgeCli = readFileSync(new URL("../blockchain/wallet-bridge-cli.mjs", import.meta.url), "utf8");
 const bridgeSource = readFileSync(new URL("../blockchain/wallet-bridge.mjs", import.meta.url), "utf8");
 const extensionManifest = JSON.parse(readFileSync(
@@ -59,9 +61,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=31/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=33/);
-  assert.match(serviceWorker, /app\.js\?v=33/);
-  assert.match(serviceWorker, /nir-wallet-shell-v35/);
+  assert.match(html, /app\.js\?v=34/);
+  assert.match(serviceWorker, /app\.js\?v=34/);
+  assert.match(serviceWorker, /nir-wallet-shell-v36/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -91,6 +93,11 @@ test("wallet limits browser privileges and supports accessible system settings",
   assert.doesNotMatch(html, /http:\/\/localhost/);
   assert.match(html, /aria-live="polite"/);
   assert.deepEqual(extensionManifest.permissions, []);
+  assert.equal(extensionManifest.action.default_popup, undefined);
+  assert.deepEqual(extensionManifest.background, { service_worker: "extension-background.js" });
+  assert.match(extensionBackground, /chrome\.action\.onClicked\.addListener/);
+  assert.match(extensionBackground, /chrome\.tabs\.create\(\{ url: chrome\.runtime\.getURL\("index\.html"\) \}\)/);
+  assert.doesNotMatch(extensionBackground, /storage|sessionToken|password/);
   assert.deepEqual(extensionManifest.host_permissions, ["http://127.0.0.1/*"]);
   assert.match(extensionManifest.key, /^[A-Za-z0-9+/]+=*$/);
   assert.match(extensionManifest.content_security_policy.extension_pages, /object-src 'none'/);
@@ -102,6 +109,20 @@ test("wallet limits browser privileges and supports accessible system settings",
   assert.match(styles, /forced-colors: active/);
   assert.match(styles, /@media \(max-width: 370px\)/);
   assert.match(styles, /@media \(min-width: 760px\)/);
+});
+
+test("extension action opens the pinned wallet page in a persistent tab", () => {
+  let onClicked;
+  const opened = [];
+  runInNewContext(extensionBackground, {
+    chrome: {
+      action: { onClicked: { addListener: (listener) => { onClicked = listener; } } },
+      runtime: { getURL: (path) => `chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm/${path}` },
+      tabs: { create: (options) => opened.push(options.url) },
+    },
+  });
+  onClicked();
+  assert.deepEqual(opened, ["chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm/index.html"]);
 });
 
 test("wallet renders only locally verified transaction history", () => {
@@ -119,7 +140,7 @@ test("wallet exposes native resource staking and delegation controls", () => {
     "stake-form", "delegation-form", "unstake-form", "claim-unstake"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(script, /bridgeRequest\("\/v1\/sign-resource"/);
+  assert.match(script, /signWithRecovery\("\/v1\/sign-resource"/);
   assert.match(script, /type: "credit-stake"/);
   assert.match(script, /type: "credit-delegation"/);
   assert.match(script, /type: "credit-unstake-request"/);
@@ -164,7 +185,7 @@ test("wallet pairs with a local bridge without exposing or persisting secrets", 
   assert.doesNotMatch(script, /localStorage\.setItem\([^,]*(password|private|seed)/i);
   assert.doesNotMatch(html + script, /privateKey/);
   assert.doesNotMatch(html, /<input[^>]+type="password"/);
-  assert.match(bridgeCli, /readSecret\("Wallet password: "\)/);
+  assert.match(bridgeCli, /readSecret\("Wallet password: ", \{ signal \}\)/);
   assert.doesNotMatch(bridgeCli, /console\.(?:log|error)\([^\n]*sessionToken/);
   assert.doesNotMatch(bridgeSource, /localStorage|sessionStorage|document\.|window\./);
   assert.doesNotMatch(bridgeSource, /password\s*:\s*(?:request|body)/);
@@ -178,9 +199,10 @@ test("wallet requires a proof-backed simulation before a separate testnet-only b
   assert.match(script, /decodeVerifiedSimulation/);
   assert.match(script, /recheckSimulation/);
   assert.match(script, /assertSignedMatchesIntent/);
-  assert.match(script, /simulationId: refreshed\.simulationId/);
+  assert.match(script, /signWithRecovery\("\/v1\/sign", pendingIntent, refreshed\.simulationId/);
   assert.match(script, /Симуляция недоступна: состояние не подтверждено кворумом/);
-  assert.match(script, /bridgeRequest\("\/v1\/sign"/);
+  assert.match(script, /signWithRecovery\("\/v1\/sign"/);
+  assert.match(script, /\/v1\/sign-result\/\$\{requestId\}/);
   assert.match(script, /signButton\.disabled = true/);
   assert.match(script, /signButton\.disabled = false/);
   assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
@@ -211,7 +233,7 @@ test("wallet creates and verifies signed payment requests before filling a trans
     "verify-payment-request", "verified-request-note"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(script, /bridgeRequest\("\/v1\/sign-payment-request"/);
+  assert.match(script, /signWithRecovery\("\/v1\/sign-payment-request"/);
   assert.match(script, /bridgeRequest\("\/v1\/verify-payment-request"/);
   assert.match(script, /send-recipient"\)\.value = result\.request\.recipient/);
   assert.match(script, /send-amount"\)\.value = formatAtomic\(result\.request\.amount\)/);

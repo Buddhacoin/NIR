@@ -11,7 +11,7 @@ const [upstreamOrigin, tlsCertificateSha256, expectedNetworkId, portText, host =
 
 try {
   if (process.argv.length < 6 || process.argv.length > 8) {
-    throw new Error("usage: network:transaction-ingress <loopback-https-validator-origin> <tls-sha256-pin> <network-id> <listen-port> [127.0.0.1|::1] [exact-wallet-origin]");
+    throw new Error("usage: network:transaction-ingress <loopback-https-validator-origin> <tls-sha256-pin> <network-id> <listen-port> [127.0.0.1|::1] [exact-http-wallet-or-pinned-extension-origin]");
   }
   const port = Number(portText);
   const server = createValidatorTransactionIngressServer({

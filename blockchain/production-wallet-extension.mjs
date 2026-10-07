@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { parseConsensusJson } from "./consensus-json.mjs";
 
 const FILES = Object.freeze([
-  "address-book.js", "app.js", "index.html", "manifest.json", "manifest.webmanifest",
+  "address-book.js", "app.js", "extension-background.js", "index.html", "manifest.json", "manifest.webmanifest",
   "nir-coin-icon.png", "nir-coin-icon.svg", "node-selection.js", "nodes.json",
   "offline-signing.js", "qr.js", "style.css", "submission-status.js", "sw.js",
   "transaction-decoder.js",
@@ -37,10 +37,11 @@ function localReference(value, files) {
 
 function validateManifest(text, files) {
   const manifest = parseConsensusJson(text);
-  exact(manifest, ["action", "content_security_policy", "description", "host_permissions",
+  exact(manifest, ["action", "background", "content_security_policy", "description", "host_permissions",
     "icons", "key", "manifest_version", "name", "permissions", "version"],
     "extension manifest");
-  exact(manifest.action, ["default_icon", "default_popup", "default_title"], "extension action");
+  exact(manifest.action, ["default_icon", "default_title"], "extension action");
+  exact(manifest.background, ["service_worker"], "extension background");
   exact(manifest.icons, ["16", "48", "128"], "extension icons");
   exact(manifest.content_security_policy, ["extension_pages"], "extension CSP");
   if (manifest.manifest_version !== 3 || manifest.name !== "NIR Wallet" ||
@@ -53,7 +54,10 @@ function validateManifest(text, files) {
       manifest.content_security_policy.extension_pages !== CSP) {
     throw new Error("extension permissions or CSP exceed the production policy");
   }
-  localReference(manifest.action.default_popup, files);
+  if (manifest.background.service_worker !== "extension-background.js") {
+    throw new Error("extension background worker is invalid");
+  }
+  localReference(manifest.background.service_worker, files);
   localReference(manifest.action.default_icon, files);
   for (const icon of Object.values(manifest.icons)) localReference(icon, files);
 }

@@ -8,6 +8,9 @@ import {
 import { requestJson } from "./http-client.mjs";
 
 const TRANSACTION_PATH = "/v1/transactions";
+// The sole extension identity pinned by wallet-ui/manifest.json's public key.
+export const WALLET_EXTENSION_ORIGIN =
+  "chrome-extension://ojfgigpdjamebbiiihianbcjpabgdhnm";
 const HASH = /^[0-9a-f]{64}$/;
 const BODY_LIMIT = 64 * 1024;
 const RESPONSE_LIMIT = 256 * 1024;
@@ -41,14 +44,14 @@ export function validateValidatorTransactionIngressConfig({
       url.search || url.hash || url.origin !== upstreamOrigin) {
     throw new Error("transaction ingress requires an exact loopback HTTPS upstream origin");
   }
-  if (walletOrigin !== null) {
+  if (walletOrigin !== null && walletOrigin !== WALLET_EXTENSION_ORIGIN) {
     let browser;
     try { browser = new URL(walletOrigin); }
     catch { throw new Error("transaction ingress wallet origin is invalid"); }
     if (browser.protocol !== "http:" || browser.hostname !== "127.0.0.1" ||
         !browser.port || Number(browser.port) < 1 || browser.username || browser.password || browser.pathname !== "/" ||
         browser.search || browser.hash || browser.origin !== walletOrigin) {
-      throw new Error("transaction ingress requires an exact local wallet origin");
+      throw new Error("transaction ingress requires an exact local wallet or pinned extension origin");
     }
   }
   return { expectedNetworkId, tlsCertificateSha256, upstreamOrigin: url.origin, walletOrigin };
