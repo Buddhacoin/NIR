@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
+import { createServer as createHttpsServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
 import {
   mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync,
@@ -49,6 +50,8 @@ import {
 } from "../blockchain/genesis-ceremony-store.mjs";
 import { verifyCeremonyBoundTransactionIngressConfig }
   from "../blockchain/validator-transaction-ingress-ceremony.mjs";
+import { certificateSha256 } from "../blockchain/http-client.mjs";
+import { createValidatorLiveIdentity } from "../blockchain/validator-live-identity.mjs";
 
 function digest(label) {
   return createHash("sha256").update(label).digest("hex");
@@ -345,10 +348,34 @@ test("v2 compiled genesis can activate sequential protocol v24 through v28", () 
 
 test("ceremony-bound ingress startup derives its upstream only from an anchored v2 registry", async () => {
   const root = mkdtempSync(join(tmpdir(), "nir-ceremony-bound-ingress-"));
+  let upstream;
   try {
     const values = v2Fixture("ingress-startup");
-    const upstreamOrigin = "https://127.0.0.1:8791";
-    const tlsCertificateSha256 = "a".repeat(64);
+    const keyPath = join(root, "validator-key.pem");
+    const certPath = join(root, "validator-cert.pem");
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+      "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost"],
+    { stdio: "ignore" });
+    const key = readFileSync(keyPath);
+    const cert = readFileSync(certPath);
+    const tlsCertificateSha256 = certificateSha256(new X509Certificate(cert).raw);
+    let genesisHash;
+    let wrongSigner = false;
+    const foreignWallet = generateWallet();
+    upstream = createHttpsServer({ key, cert }, async (request, response) => {
+      let encoded = "";
+      for await (const chunk of request) encoded += chunk;
+      const { nonce } = JSON.parse(encoded);
+      const attestation = createValidatorLiveIdentity({
+        chainIdentityGenesisHash: genesisHash, height: 0, networkId: values.input.networkId,
+        nonce, tipHash: genesisHash, tlsCertificateSha256,
+        wallet: wrongSigner ? foreignWallet : values.validators[0],
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(attestation));
+    });
+    await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const upstreamOrigin = `https://127.0.0.1:${upstream.address().port}`;
     values.input.validators[0].endpoint = upstreamOrigin;
     values.input.validators[0].tlsCertificateSha256 = tlsCertificateSha256;
     const { plan, envelope } = approved(values);
@@ -361,7 +388,7 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
       signCeremonyRegistryAnchor(payload, plan, wallet, values.releaseOptions));
     const anchor = assembleCeremonyRegistryAnchor(payload, plan, approvals,
       values.releaseOptions);
-    const genesisHash = compileGenesis(plan, envelope, values.releaseOptions).genesisHash;
+    genesisHash = compileGenesis(plan, envelope, values.releaseOptions).genesisHash;
     const options = { anchor, expectedGenesisHash: genesisHash,
       expectedNetworkId: plan.networkId, expectedTlsCertificateSha256: tlsCertificateSha256,
       expectedUpstreamOrigin: upstreamOrigin, registryDirectory,
@@ -425,6 +452,20 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
         await exited;
       }
     }
+    wrongSigner = true;
+    const forged = spawn(process.execPath, [cli, "--ceremony", registryDirectory,
+      anchorPath, values.releaseOptions.trustedAddress, genesisHash,
+      values.validators[0].address, upstreamOrigin, tlsCertificateSha256,
+      plan.networkId, String(port)], { stdio: ["ignore", "ignore", "pipe"] });
+    let forgedError = "";
+    forged.stderr.on("data", (chunk) => { forgedError += chunk.toString(); });
+    const forgedExit = await new Promise((resolve) => forged.once("exit", resolve));
+    assert.equal(forgedExit, 1);
+    assert.match(forgedError, /live identity signature or binding/);
+    const afterForged = createTcpServer();
+    await new Promise((resolve) => afterForged.listen(port, "127.0.0.1", resolve));
+    await new Promise((resolve) => afterForged.close(resolve));
+    wrongSigner = false;
     for (const changed of [
       { anchor: null }, { expectedGenesisHash: "f".repeat(64) },
       { trustedReleaseSignerAddress: values.operators[0].address },
@@ -465,7 +506,14 @@ test("ceremony-bound ingress startup derives its upstream only from an anchored 
     const afterForeign = createTcpServer();
     await new Promise((resolve) => afterForeign.listen(port, "127.0.0.1", resolve));
     await new Promise((resolve) => afterForeign.close(resolve));
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    if (upstream?.listening) {
+      const closed = new Promise((resolve) => upstream.close(resolve));
+      upstream.closeAllConnections?.();
+      await closed;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("legacy v1 ceremony genesis cannot acquire the v27 environment retroactively", () => {

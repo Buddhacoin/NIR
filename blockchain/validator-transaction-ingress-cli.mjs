@@ -3,8 +3,9 @@ import process from "node:process";
 
 import { listenOnLoopback } from "./loopback-listener.mjs";
 import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
-import { verifyCeremonyBoundTransactionIngressConfig }
+import { verifyCeremonyBoundTransactionIngressEvidence }
   from "./validator-transaction-ingress-ceremony.mjs";
+import { probeValidatorLiveIdentity } from "./validator-live-identity.mjs";
 import { createValidatorTransactionIngressServer }
   from "./validator-transaction-ingress.mjs";
 
@@ -21,12 +22,20 @@ try {
       expectedTlsCertificateSha256, expectedNetworkId, selectedPort,
       selectedHost = "127.0.0.1", selectedWalletOrigin = null] = args;
     portText = selectedPort; host = selectedHost; walletOrigin = selectedWalletOrigin;
-    config = verifyCeremonyBoundTransactionIngressConfig({
+    const verified = verifyCeremonyBoundTransactionIngressEvidence({
       anchor: readBoundedPublicJsonFile(anchorPath, {
         label: "external ceremony anchor", maximumBytes: 1024 * 1024,
       }), expectedGenesisHash, expectedNetworkId,
       expectedTlsCertificateSha256, expectedUpstreamOrigin, registryDirectory,
       trustedReleaseSignerAddress, validatorAddress, walletOrigin,
+    });
+    config = verified.config;
+    await probeValidatorLiveIdentity({
+      chainIdentityGenesisHash: expectedGenesisHash,
+      networkId: config.expectedNetworkId,
+      tlsCertificateSha256: config.tlsCertificateSha256,
+      upstreamOrigin: config.upstreamOrigin,
+      validator: verified.validator,
     });
   } else {
     if (args.length < 4 || args.length > 6) {

@@ -6,7 +6,7 @@ const HASH = /^[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 
 /** Verify all ceremony evidence before constructing or listening on an ingress server. */
-export function verifyCeremonyBoundTransactionIngressConfig({
+export function verifyCeremonyBoundTransactionIngressEvidence({
   anchor, expectedGenesisHash, expectedNetworkId, expectedTlsCertificateSha256,
   expectedUpstreamOrigin, registryDirectory, trustedReleaseSignerAddress,
   validatorAddress, walletOrigin = null,
@@ -48,10 +48,15 @@ export function verifyCeremonyBoundTransactionIngressConfig({
       peer.tlsCertificateSha256 !== selected.tlsCertificateSha256) {
     throw new Error("ceremony-bound transaction ingress validator endpoint or TLS pin is invalid");
   }
-  return validateValidatorTransactionIngressConfig({
+  return { config: validateValidatorTransactionIngressConfig({
     expectedNetworkId: record.plan.networkId,
     tlsCertificateSha256: selected.tlsCertificateSha256,
     upstreamOrigin: selected.endpoint,
     walletOrigin,
-  });
+  }), validator: { address: selected.address, algorithm: selected.algorithm,
+    publicKey: selected.publicKey } };
+}
+
+export function verifyCeremonyBoundTransactionIngressConfig(options) {
+  return verifyCeremonyBoundTransactionIngressEvidence(options).config;
 }

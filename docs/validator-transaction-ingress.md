@@ -38,11 +38,16 @@ npm run network:transaction-ingress -- --ceremony \
   http://127.0.0.1:8765
 ```
 
-Missing or mismatched ceremony evidence exits before the listener opens. This
-checks startup metadata only. This does not prove the running upstream belongs
-to the pinned genesis or is live. It does not verify certificate lifecycle,
-current finality, or economic claims about the network. The listener remains
-loopback only.
+Missing or mismatched ceremony evidence exits before the listener opens. The
+gateway then sends a fresh nonce-bound challenge to the selected validator
+before opening its listener. It verifies the response against the validator
+consensus public key in the signed ceremony, the pinned genesis and network,
+and the TLS certificate presented on that connection. A silent or offline
+upstream cannot pass startup; an upstream without the key can pass only by
+relaying the challenge to a genuine signer. This is a startup liveness and
+key-possession check, not continuing proof of the upstream process. It does
+not verify certificate lifecycle, current finality, or economic claims about
+the network. The listener remains loopback only.
 
 In local/dev mode, the optional fifth argument is the listen address, limited
 to `127.0.0.1` or `::1`. The optional sixth argument enables browser submission for one exact
@@ -98,3 +103,20 @@ or present it as a public-network service. A separately designed TLS edge,
 client abuse controls, trusted pin distribution, independent operators, and
 multi-host evidence are still required for a public deployment. This command
 is only a valueless, resettable developer-testnet integration rehearsal.
+
+The validator also has a loopback-only, TLS-protected live-identity challenge.
+The caller supplies a fresh random nonce; the response binds it to the
+validator's consensus key, local genesis hash, network ID and serving TLS
+certificate fingerprint from that exact connection, including after a TLS
+context reload. A caller must compare the signature with the
+validator public key from an independently verified ceremony, not with a key
+reported by the endpoint. This check can reject a substitute process that
+reuses the certificate but lacks that key. It does **not** prove that a
+transaction will be accepted by the same process: a malicious gateway could
+proxy the challenge to a genuine validator while routing the transaction
+elsewhere. It also does not prove the current tip is finalized, establish a
+certificate's lifecycle, or make this local service publicly deployable.
+Only the ceremony-bound startup mode requires this challenge; positional
+local/dev mode remains unchanged. The challenge is not repeated for each
+transfer, so a later upstream replacement is not detected by this startup
+check alone.

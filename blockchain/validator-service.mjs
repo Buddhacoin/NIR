@@ -8,7 +8,7 @@ import {
   verifyAdmissionInclusionCertificate,
 } from "./admission-inclusion.mjs";
 import { selectHighestCertifiedProposal } from "./consensus-view.mjs";
-import { requestJson } from "./http-client.mjs";
+import { certificateSha256, requestJson } from "./http-client.mjs";
 import {
   VALIDATOR_ADMISSION_READINESS_OBSERVER_CONTEXT_PATH,
   VALIDATOR_ADMISSION_READINESS_OBSERVER_RECEIPT_PATH,
@@ -27,6 +27,7 @@ import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { MAX_TOPOLOGY_STORE_BYTES } from "./validator-topology-history.mjs";
 import { MAX_CERTIFICATE_STORE_BYTES } from "./certificate-lifecycle-store.mjs";
 import { CERTIFICATE_MODE_LIFECYCLE } from "./certificate-runtime.mjs";
+import { VALIDATOR_LIVE_IDENTITY_PATH } from "./validator-live-identity.mjs";
 import { createCanonicalIpcFrameDecoder, encodeCanonicalIpcFrame }
   from "./canonical-ipc-framing.mjs";
 import { CONTROL_REQUEST_FRAME, CONTROL_RESPONSE_FRAME }
@@ -467,6 +468,29 @@ export function createValidatorHttpServer(validator, options = {}) {
         peerReputation.assertAllowed(identity);
         return await verificationScheduler.run(identity, () =>
           send(response, 200, validator.peerAnnouncement()));
+      }
+      if (request.method === "POST" && url.pathname === VALIDATOR_LIVE_IDENTITY_PATH) {
+        identity = "local:validator-live-identity";
+        consumeIngress(identity); peerReputation.assertAllowed(identity);
+        const remote = request.socket.remoteAddress;
+        if (!request.socket.encrypted || url.search !== "" ||
+            !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remote) ||
+            request.headers["content-type"] !== "application/json") {
+          throw new Error("validator live identity probe is unavailable");
+        }
+        const challenge = await readBoundedConsensusJson(request,
+          { ...httpIngressOptions, maxBodyBytes: 256, maxJsonNodes: 4 });
+        exact(challenge, ["nonce"], "validator live identity challenge");
+        if (typeof challenge.nonce !== "string" ||
+            !/^[0-9a-f]{64}$/.test(challenge.nonce)) {
+          throw new Error("validator live identity nonce is invalid");
+        }
+        // Read the certificate presented on this accepted TLS connection, not
+        // the constructor material: SIGHUP may have replaced the server context.
+        const localCertificate = request.socket.getCertificate?.();
+        const tlsCertificateSha256 = certificateSha256(localCertificate?.raw);
+        return await verificationScheduler.run(identity, () => send(response, 200,
+          validator.liveIdentity(challenge.nonce, tlsCertificateSha256)));
       }
       if (request.method === "GET" && url.pathname === "/v1/public/validator-candidate-context") {
         identity = "public:validator-candidate-context";

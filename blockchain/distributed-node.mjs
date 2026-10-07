@@ -113,6 +113,7 @@ import {
   verifyAssetProofCandidate,
 } from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
+import { createValidatorLiveIdentity } from "./validator-live-identity.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { boundedAllSettled, ReplayNonceCache } from "./operator-defense.mjs";
 import {
@@ -517,6 +518,14 @@ export class ValidatorReplica {
   get peerCount() { return this.#transportView.length; }
   get validatorCount() { return this.#validators.length; }
   get validatorMembers() { return this.#chain.validatorMembers; }
+
+  liveIdentity(nonce, tlsCertificateSha256) {
+    return createValidatorLiveIdentity({
+      chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash,
+      height: this.height, networkId: this.networkId, nonce, tipHash: this.tipHash,
+      tlsCertificateSha256, wallet: this.#wallet,
+    });
+  }
 
   validatorCountForHeight(height) {
     return this.#chain.validatorMembersForHeight(height).length;
