@@ -203,6 +203,14 @@ export function verifyFinalityProofChain(proofs, {
       !Array.isArray(handoffs) || handoffs.length > MAX_VALIDATORS) {
     throw new Error("light client proof chain envelope is invalid");
   }
+  if (expectedChainIdentityGenesisHash !== null && checkpoint.height === 0 &&
+      checkpoint.tipHash !== expectedChainIdentityGenesisHash) {
+    throw new Error("light client checkpoint does not match pinned genesis identity");
+  }
+  if (expectedChainIdentityGenesisHash !== null && checkpoint.height > 0 &&
+      (checkpoint.protocolVersion ?? PROTOCOL_VERSION) < CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION) {
+    throw new Error("light client legacy checkpoint is not anchored to pinned genesis identity");
+  }
   let current = normalizeValidators(trustedValidators);
   let previousHash = checkpoint.tipHash;
   let previousHeight = checkpoint.height;
@@ -252,6 +260,7 @@ export function verifyFinalityProofChain(proofs, {
     const header = validateProof(proof, expectedNetworkId, supportedProtocolVersions,
       authorizationContext);
     if (expectedChainIdentityGenesisHash !== null &&
+        header.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
         header.chainIdentityGenesisHash !== expectedChainIdentityGenesisHash) {
       throw new Error("light client proof belongs to another chain identity");
     }
