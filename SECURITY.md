@@ -7,8 +7,8 @@ Operator launch gates, commands, artifacts, machine-verifiable evidence, and
 external manual criteria are indexed in
 [`docs/public-testnet-gates.md`](docs/public-testnet-gates.md).
 
-Report a suspected NIR vulnerability through a
-[private GitHub security advisory](https://github.com/Buddhacoin/NIR/security/advisories/new),
+Report a suspected NIR vulnerability through
+[private GitHub security advisories](https://github.com/Buddhacoin/NIR/security/advisories/new),
 not a public issue or a wallet/mining feedback form. If that private channel is
 unavailable, do not post exploit details publicly; request a private contact
 through a non-sensitive GitHub issue first. Share only the minimum reproducible
