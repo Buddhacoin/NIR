@@ -29,6 +29,8 @@ import {
   voteForBlock,
 } from "./chain.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
+import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import {
   initializeBlockStore,
   installBlockStoreSnapshot,
@@ -222,7 +224,10 @@ function persistOperatorEvents(path, value) {
 }
 
 function removeOperatorEvents(path, expected) {
-  if (!existsSync(path) || canonicalJson(readJson(path)) !== canonicalJson(expected)) {
+  if (!lstatSync(path, { throwIfNoEntry: false }) ||
+      canonicalJson(readBoundedPublicJsonFile(path, {
+        label: "operator consensus event journal", maximumBytes: MAX_OPERATOR_EVENTS_BYTES,
+      })) !== canonicalJson(expected)) {
     throw new Error("operator consensus event journal changed or disappeared");
   }
   rmSync(path);
@@ -457,6 +462,7 @@ export class ValidatorReplica {
   #validators;
   #mempool = new TransactionMempool();
   #operatorEvents = null;
+  #releaseOperatorEventLock = null;
   #admissionReceipts = new Map();
   #peerUrls;
   #peerTransports;
@@ -586,25 +592,29 @@ export class ValidatorReplica {
     }
     this.#pruneInvalidValidatorAdmissions();
     const operatorEventsPath = join(this.#directory, OPERATOR_EVENTS_FILE);
-    if (existsSync(operatorEventsPath)) {
-      const metadata = lstatSync(operatorEventsPath);
-      if (!metadata.isFile() || metadata.isSymbolicLink() ||
-          metadata.size > MAX_OPERATOR_EVENTS_BYTES) {
-        throw new Error("durable operator consensus events file is invalid");
+    try {
+      if (lstatSync(operatorEventsPath, { throwIfNoEntry: false })) {
+        this.#acquireOperatorEventLock();
+        const stored = readBoundedPublicJsonFile(operatorEventsPath, {
+          label: "durable operator consensus events", maximumBytes: MAX_OPERATOR_EVENTS_BYTES,
+        });
+        const events = normalizeOperatorEvents(stored.events);
+        if (stored.format !== "nir-operator-events-v1" ||
+            stored.networkId !== this.networkId ||
+            !Number.isSafeInteger(stored.expectedHeight) ||
+            typeof stored.previousHash !== "string" ||
+            Object.keys(stored).sort().join("\0") !==
+              ["events", "expectedHeight", "format", "networkId", "previousHash"].sort().join("\0")) {
+          throw new Error("durable operator consensus events envelope is invalid");
+        }
+        this.#operatorEvents = { ...stored, events };
+        this.#pruneOperatorEvents();
+        if (this.#operatorEvents !== null) this.#validateOperatorEvents(events);
       }
-      const stored = readJson(operatorEventsPath);
-      const events = normalizeOperatorEvents(stored.events);
-      if (stored.format !== "nir-operator-events-v1" ||
-          stored.networkId !== this.networkId ||
-          !Number.isSafeInteger(stored.expectedHeight) ||
-          typeof stored.previousHash !== "string" ||
-          Object.keys(stored).sort().join("\0") !==
-            ["events", "expectedHeight", "format", "networkId", "previousHash"].sort().join("\0")) {
-        throw new Error("durable operator consensus events envelope is invalid");
-      }
-      this.#operatorEvents = { ...stored, events };
-      this.#pruneOperatorEvents();
-      if (this.#operatorEvents !== null) this.#validateOperatorEvents(events);
+    } catch (error) {
+      this.#releaseOperatorEventLock?.();
+      this.#releaseOperatorEventLock = null;
+      throw error;
     }
   }
 
@@ -620,22 +630,42 @@ export class ValidatorReplica {
   get mempoolSize() { return this.#mempool.size; }
   get pendingOperatorEvents() { return this.#operatorEvents === null ? null : structuredClone(this.#operatorEvents); }
 
+  #acquireOperatorEventLock() {
+    if (this.#releaseOperatorEventLock !== null) return;
+    this.#releaseOperatorEventLock = acquireDataDirectoryLock(
+      join(this.#directory, ".operator-event-owner"));
+  }
+
   #pruneOperatorEvents() {
     if (this.#operatorEvents === null) return;
+    if (this.#releaseOperatorEventLock === null) {
+      throw new Error("operator consensus event ownership was released");
+    }
     if (this.#operatorEvents.expectedHeight === this.height + 1 &&
         this.#operatorEvents.previousHash === this.tipHash) return;
     removeOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), this.#operatorEvents);
     this.#operatorEvents = null;
+    this.#releaseOperatorEventLock?.();
+    this.#releaseOperatorEventLock = null;
   }
 
   #assertOperatorEventsJournal() {
-    if (this.#operatorEvents === null) return;
     const path = join(this.#directory, OPERATOR_EVENTS_FILE);
-    if (!existsSync(path)) throw new Error("operator consensus event journal disappeared");
-    const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink() ||
-        metadata.size > MAX_OPERATOR_EVENTS_BYTES ||
-        canonicalJson(readJson(path)) !== canonicalJson(this.#operatorEvents)) {
+    if (this.#operatorEvents === null) {
+      if (lstatSync(path, { throwIfNoEntry: false })) {
+        throw new Error("operator consensus event journal is owned by another instance");
+      }
+      return;
+    }
+    if (this.#releaseOperatorEventLock === null) {
+      throw new Error("operator consensus event ownership was released");
+    }
+    if (!lstatSync(path, { throwIfNoEntry: false })) {
+      throw new Error("operator consensus event journal disappeared");
+    }
+    if (canonicalJson(readBoundedPublicJsonFile(path, {
+      label: "operator consensus event journal", maximumBytes: MAX_OPERATOR_EVENTS_BYTES,
+    })) !== canonicalJson(this.#operatorEvents)) {
       throw new Error("operator consensus event journal changed");
     }
   }
@@ -663,7 +693,14 @@ export class ValidatorReplica {
       events, expectedHeight: this.height + 1, format: "nir-operator-events-v1",
       networkId: this.networkId, previousHash: this.tipHash,
     };
-    persistOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), envelope);
+    this.#acquireOperatorEventLock();
+    try {
+      persistOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), envelope);
+    } catch (error) {
+      this.#releaseOperatorEventLock?.();
+      this.#releaseOperatorEventLock = null;
+      throw error;
+    }
     this.#operatorEvents = envelope;
     return { expectedHeight: envelope.expectedHeight, status: "queued" };
   }
@@ -930,9 +967,14 @@ export class ValidatorReplica {
   }
 
   closeSecurityState() {
-    this.#seenNonces.close();
-    for (const cache of this.#validatorNonces.values()) cache.close();
-    this.#validatorNonces.clear();
+    try {
+      this.#seenNonces.close();
+      for (const cache of this.#validatorNonces.values()) cache.close();
+      this.#validatorNonces.clear();
+    } finally {
+      this.#releaseOperatorEventLock?.();
+      this.#releaseOperatorEventLock = null;
+    }
   }
 
   createValidatorRequest(path, body) {
@@ -1204,6 +1246,7 @@ export class ValidatorReplica {
   }
 
   installStateSnapshotCandidates(candidates) {
+    if (this.#operatorEvents === null) this.#assertOperatorEventsJournal();
     const rootTrustAnchor = {
       expectedNetworkId: this.networkId,
       trustedValidators: this.#genesis.validators,
@@ -1661,6 +1704,7 @@ export class ValidatorReplica {
   }
 
   commit(block) {
+    if (this.#operatorEvents === null) this.#assertOperatorEventsJournal();
     if (block.height <= this.height) {
       const existing = this.#chain.blocks().find(({ height }) => height === block.height);
       if (existing?.hash === block.hash) return { height: this.height, status: "known" };

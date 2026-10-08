@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync,
+  symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -46,11 +47,19 @@ test("local operator event survives restart, enters an event-only proposal, and 
     const journal = join(directory, "OPERATOR-EVENTS.json");
     assert.equal(readFileSync(journal, "utf8"), `${canonicalJson(replica.pendingOperatorEvents)}\n`);
     assert.equal(statSync(journal).size, Buffer.byteLength(canonicalJson(replica.pendingOperatorEvents)) + 1);
-    assert.throws(() => competing.stageOperatorEvents(events), /EEXIST/);
-    assert.equal(competing.pendingOperatorEvents, null);
+    assert.throws(() => competing.stageOperatorEvents(events), /already open by process/);
+    assert.throws(() => competing.buildProposal(), /owned by another instance/);
     competing.closeSecurityState();
     competing = null;
+    assert.throws(() => new ValidatorReplica(directory), /already open by process/);
     assert.deepEqual(replica.stageOperatorEvents(events), { expectedHeight: 1, status: "known" });
+    replica.closeSecurityState();
+    replica = null;
+    competing = new ValidatorReplica(directory);
+    assert.deepEqual(competing.pendingOperatorEvents.events.epochRandomnessCommits, [commit]);
+    competing.closeSecurityState();
+    competing = null;
+    replica = new ValidatorReplica(directory);
     assert.throws(() => replica.stageOperatorEvents({ epochRandomnessCommits: [] }),
       /empty or too large/);
     assert.throws(() => replica.stageOperatorEvents({ epochRandomnessCommits: Array(5).fill(commit) }),
@@ -119,6 +128,47 @@ test("snapshot installation immediately prunes a height-bound operator queue", (
     assert.equal(replicas[3].pendingOperatorEvents, null);
   } finally {
     replicas.forEach((replica) => replica.closeSecurityState());
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("prune refuses a substituted journal and restart safely removes the original stale event", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-operator-prune-"));
+  const beacons = Array.from({ length: 4 }, generateWallet);
+  const layout = initializeDistributedDevnet(join(temporary, "network"), { beaconWallets: beacons });
+  const directory = layout.validatorDirectories[0];
+  const journal = join(directory, "OPERATOR-EVENTS.json");
+  const outside = join(temporary, "outside.json");
+  let replica = new ValidatorReplica(directory);
+  try {
+    const genesis = JSON.parse(readFileSync(join(directory, "genesis.json")));
+    const chain = new NirChain(genesis);
+    const status = chain.epochRandomnessStatus();
+    const wallet = beacons.find(({ address }) => address === status.committee[0]);
+    const commit = createEpochRandomnessCommit({
+      wallet, networkId: chain.networkId, round: status.round, secret: "d".repeat(64),
+    });
+    replica.stageOperatorEvents({ epochRandomnessCommits: [commit] });
+    const original = readFileSync(journal, "utf8");
+    writeFileSync(outside, original, { mode: 0o600 });
+    rmSync(journal);
+    symlinkSync(outside, journal);
+    const validators = layout.validatorDirectories.map((path) =>
+      JSON.parse(readFileSync(join(path, "VALIDATOR-KEY.json"))));
+    const empty = finalizeBlock(chain.buildBlock({ transactions: [], timestamp: Date.now() }), validators);
+    assert.throws(() => replica.commit(empty), /file is unsafe/);
+    assert.equal(readFileSync(outside, "utf8"), original);
+    assert.equal(existsSync(journal), true);
+    replica.closeSecurityState();
+    assert.throws(() => new ValidatorReplica(directory), /file is unsafe/);
+    rmSync(journal);
+    writeFileSync(journal, original, { mode: 0o600 });
+    replica = new ValidatorReplica(directory);
+    assert.equal(replica.height, 1);
+    assert.equal(replica.pendingOperatorEvents, null);
+    assert.equal(existsSync(journal), false);
+  } finally {
+    replica?.closeSecurityState();
     rmSync(temporary, { recursive: true, force: true });
   }
 });
