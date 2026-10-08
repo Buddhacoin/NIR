@@ -19,7 +19,7 @@ What makes the design different:
 - **Post-quantum foundations:** ML-DSA-65 accounts, signatures, and verifiable ledger proofs are implemented locally.
 - **A role for more than AI labs:** developers, challenge authors, evaluators, safety researchers, validators, and everyday users can help shape the network.
 
-**Join the beginning:** explore the [working code](#what-is-implemented-now), try the [local network](#start-using-the-local-prototype), [contribute](CONTRIBUTING.md) a challenge or security finding, or help prepare the first independently operated network. The history of NIR is being written now.
+**Join the beginning:** explore the [working code](#what-is-implemented-now), try the [local network](#start-using-the-local-prototype), [test the wallet without an invitation](docs/open-wallet-testing.md), [contribute](CONTRIBUTING.md) a challenge or security finding, or help prepare the first independently operated network. The history of NIR is being written now.
 
 ## NIR Wallet: download and installation
 

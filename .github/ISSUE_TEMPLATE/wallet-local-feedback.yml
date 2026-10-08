@@ -1,0 +1,58 @@
+name: NIR Wallet local test feedback
+description: Report a reproducible problem in the published browser preview or a local Mac prototype.
+title: "[Wallet test] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is open to everyone; no invitation is needed. The Mac app is not publicly downloadable yet, and there is no public NIR testnet or real-value wallet. Do not include keys, passwords, recovery/pairing codes, vault or backup files, personal data, or a working security exploit. Report vulnerabilities privately using SECURITY.md.
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: What were you trying to do?
+      options:
+        - Run the browser preview from the repository
+        - Install or start the Mac preview
+        - Create or unlock an account
+        - Back up or restore an account
+        - Pair the browser and Mac app
+        - Receive or send local test units
+        - Try the local mining practice
+        - Update the Mac app
+        - Other local wallet task
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App/source version and operating system
+      description: Give the version or source revision if known; never include a secret.
+      placeholder: "Source revision or NIR Wallet version, operating system…"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from a new or existing local-test wallet; use example addresses only.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed all passwords, keys, recovery/pairing codes, vault files, personal data, and private security details.
+          required: true
