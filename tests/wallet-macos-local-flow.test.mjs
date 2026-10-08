@@ -5,7 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
-import { createLocalTestWallet, listLocalTestWallets, openLocalTestWallet } from
+import { createLocalTestWallet, listLocalTestWallets, openLocalTestWallet,
+  renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode } from
   "../blockchain/wallet-onboarding.mjs";
 
 test("local rehearsal creates a backed-up vault, reopens it and pairs the same address", async () => {
@@ -60,4 +61,26 @@ test("local rehearsal creates a backed-up vault, reopens it and pairs the same a
     }
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("password-based recovery renewal gives a usable new backup without revoking the old pair", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-mac-recovery-renew-"));
+  const password = "local-rehearsal-password-2026";
+  try {
+    const created = createLocalTestWallet({ storageRoot: root, password });
+    const renewed = renewLocalTestRecoveryCode({ storageRoot: root,
+      walletPath: created.walletPath, password });
+    assert.notEqual(renewed.recoveryCode, created.recoveryCode);
+    assert.notEqual(renewed.backupPath, created.backupPath);
+    assert.equal(renewed.address, created.address);
+    const old = restoreLocalTestWalletWithRecoveryCode({ storageRoot: root,
+      backupPath: created.backupPath, expectedAddress: created.address,
+      recoveryCode: created.recoveryCode, newPassword: "old-backup-restored-password" });
+    const replacement = restoreLocalTestWalletWithRecoveryCode({ storageRoot: root,
+      backupPath: renewed.backupPath, expectedAddress: created.address,
+      recoveryCode: renewed.recoveryCode, newPassword: "new-backup-restored-password" });
+    assert.equal(old.address, created.address);
+    assert.equal(replacement.address, created.address);
+    assert.equal(listLocalTestWallets(root).length, 3);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

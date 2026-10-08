@@ -271,7 +271,12 @@ After that one-time source build, the native setup window creates a personal
 encrypted vault, opens an existing vault, or restores one from a backup and
 recovery code without asking the user to use Terminal. New keys and backups
 remain in `~/Library/Application Support/NIR Wallet/`, outside the app bundle.
-The app starts a loopback-only browser interface and signing bridge. Clicking
+If the first recovery-code window fails or the code was not saved, reopen the
+same local vault with its password and choose **Новый код восстановления**.
+This creates a new backup/code pair; it does not revoke any older pair. If an
+older pair may have leaked, use a new address and migrate any funds instead.
+The app starts a loopback-only browser interface on a fresh port for each
+launch, without a persistent service worker, and a signing bridge. Clicking
 **Connect** brings a native eight-digit pairing code to the front; the code is
 never returned to the browser. Multiple vault files, including restored copies
 of one address, remain distinct selectable entries. Creating another vault in

@@ -60,7 +60,8 @@ function route(request, files) {
   if (!pathname.startsWith("/") || !files.has(name) || raw.split("?").length > 2) {
     return { status: 404 };
   }
-  if (query && !(name === "index.html" && query === "local-demo=1") &&
+  if (query && !(name === "index.html" &&
+      ["local-demo=1", "local-demo=1&local-app=1"].includes(query)) &&
       !/^v=[A-Za-z0-9._-]{1,128}$/.test(query)) return { status: 400 };
   const body = files.get(name);
   const extension = name.slice(name.lastIndexOf("."));

@@ -33,6 +33,7 @@
 @property NSButton *back;
 @property NSButton *createLink;
 @property NSButton *restoreLink;
+@property NSButton *renewButton;
 @property NSButton *cancelButton;
 @property NSString *selectedPath;
 @property BOOL submitted;
@@ -178,6 +179,11 @@
     self.restoreLink.frame = NSMakeRect(270, 12, 180, 27);
     self.restoreLink.contentTintColor = NSColor.secondaryLabelColor;
     [content addSubview:self.restoreLink];
+    self.renewButton = [NSButton buttonWithTitle:@"Новый код восстановления"
+                                            target:self action:@selector(renewCode:)];
+    self.renewButton.bordered = NO;
+    self.renewButton.contentTintColor = NSColor.secondaryLabelColor;
+    [content addSubview:self.renewButton];
 
     [self.accountMenu removeAllItems];
     for (NSUInteger index = 0; index < self.wallets.count; index++) {
@@ -215,7 +221,7 @@
     }
     [self refresh];
     [self.window center];
-#if !defined(NIR_ONBOARDING_SMOKE_TEST) && !defined(NIR_ONBOARDING_SMOKE_RESTORE_TEST) && !defined(NIR_ONBOARDING_SMOKE_OPEN_TEST)
+#if !defined(NIR_ONBOARDING_SMOKE_TEST) && !defined(NIR_ONBOARDING_SMOKE_RESTORE_TEST) && !defined(NIR_ONBOARDING_SMOKE_OPEN_TEST) && !defined(NIR_ONBOARDING_SMOKE_RENEW_TEST)
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
 #endif
@@ -260,6 +266,8 @@
     self.restoreLink.hidden = !opening;
     self.createLink.frame = NSMakeRect(28, 22, 156, 28);
     self.restoreLink.frame = NSMakeRect(206, 22, 156, 28);
+    self.renewButton.hidden = !opening || self.createOnly || self.wallets.count == 0;
+    self.renewButton.frame = NSMakeRect(28, 239, 334, 28);
     self.pathLabel.frame = NSMakeRect(28, 228, 334, 20);
     self.accountMenu.frame = NSMakeRect(28, 185, 334, 38);
     self.passwordLabel.frame = NSMakeRect(28, restoring ? 335 : 353, 334, 20);
@@ -399,6 +407,27 @@
         result[@"recoveryCode"] = self.recoveryCode.stringValue;
         result[@"newPassword"] = self.password.stringValue;
     }
+    [self submitResult:result];
+}
+
+- (void)renewCode:(id)sender {
+    if (!self.selectedPath || self.password.stringValue.length == 0) {
+        [self showError:@"Выберите кошелёк и введите его пароль."];
+        return;
+    }
+#if !defined(NIR_ONBOARDING_SMOKE_RENEW_TEST)
+    NSAlert *warning = [NSAlert new];
+    warning.messageText = @"Создать новый код восстановления?";
+    warning.informativeText = @"Понадобится сохранить новую резервную копию отдельно от нового кода. Старые копия и код продолжат работать. Если они могли попасть к посторонним, создайте новый адрес и переведите на него средства.";
+    [warning addButtonWithTitle:@"Продолжить"];
+    [warning addButtonWithTitle:@"Отмена"];
+    if ([warning runModal] != NSAlertFirstButtonReturn) return;
+#endif
+    [self submitResult:@{ @"mode": @"renew", @"path": self.selectedPath,
+                          @"password": self.password.stringValue }];
+}
+
+- (void)submitResult:(NSDictionary *)result {
     NSData *bytes = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
     if (!bytes) exit(1);
     fwrite(bytes.bytes, 1, bytes.length, stdout);
@@ -599,6 +628,11 @@ int main(int argc, const char *argv[]) {
         [delegate refresh];
         delegate.password.stringValue = @"selected-account-test-password";
         [delegate submit:nil];
+#elif defined(NIR_ONBOARDING_SMOKE_RENEW_TEST)
+        [delegate applicationDidFinishLaunching:nil];
+        [delegate refresh];
+        delegate.password.stringValue = @"selected-account-test-password";
+        [delegate renewCode:nil];
 #else
         [app run];
 #endif

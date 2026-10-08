@@ -13,9 +13,7 @@ import { listLocalTestWallets } from "./wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
 
 const execFileAsync = promisify(execFile);
-const UI_PORT = 8765;
 const BRIDGE_PORT = 8788;
-const ORIGIN = `http://127.0.0.1:${UI_PORT}`;
 
 function noTrailingNewline(value) { return value.replace(/\r?\n$/, ""); }
 
@@ -114,30 +112,34 @@ async function main() {
 
   const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
   const ui = createWalletPreviewServer();
-  const bridge = createWalletBridgeServer({
-    accounts: listLocalTestWallets(storageRoot),
-    authorize: authorizeSigning,
-    createAccount,
-    origin: ORIGIN,
-    pairingCode,
-    pairingLifetimeMs: 300_000,
-    presentPairingCode: () => { void showPairingCode(pairingCode).catch(() => {}); },
-    sessionToken: randomBytes(32).toString("hex"),
-    vaultPath: selected.walletPath,
-  });
+  // A fresh loopback origin per launch cannot be controlled by an older
+  // cache-first service worker left behind by a prior preview installation.
+  await listen(ui, 0);
+  const origin = `http://127.0.0.1:${ui.address().port}`;
+  let bridge;
   try {
-    await listen(ui, UI_PORT);
+    bridge = createWalletBridgeServer({
+      accounts: listLocalTestWallets(storageRoot),
+      authorize: authorizeSigning,
+      createAccount,
+      origin,
+      pairingCode,
+      pairingLifetimeMs: 300_000,
+      presentPairingCode: () => { void showPairingCode(pairingCode).catch(() => {}); },
+      sessionToken: randomBytes(32).toString("hex"),
+      vaultPath: selected.walletPath,
+    });
     await listen(bridge, BRIDGE_PORT);
   } catch (error) {
     if (ui.listening) ui.close();
-    if (bridge.listening) bridge.close();
+    if (bridge?.listening) bridge.close();
     throw error;
   }
   for (const event of ["SIGINT", "SIGTERM"]) {
     process.once(event, () => { bridge.close(); ui.close(); process.exitCode = 0; });
   }
   try {
-    await execFileAsync("/usr/bin/open", [`${ORIGIN}/?local-demo=1`]);
+    await execFileAsync("/usr/bin/open", [`${origin}/?local-demo=1&local-app=1`]);
   } catch (error) {
     bridge.close(); ui.close();
     throw error;
@@ -146,7 +148,7 @@ async function main() {
 
 main().catch(async (error) => {
   try {
-    await notify("NIR не запущен", "Не удалось открыть тестовый кошелёк. Проверьте, что другая копия NIR не заняла порты 8765 или 8788. Файлы кошелька не удалены.");
+    await notify("NIR не запущен", "Не удалось открыть тестовый кошелёк. Проверьте, что другая копия NIR не заняла порт 8788. Файлы кошелька не удалены.");
   } catch { /* Native UI can also be unavailable. */ }
   process.stderr.write(`NIR wallet failed: ${error?.message ?? "unknown error"}\n`);
   process.exitCode = 1;

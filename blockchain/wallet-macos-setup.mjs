@@ -5,7 +5,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { createLocalTestWallet, listLocalTestBackups, listLocalTestWallets, openLocalTestWallet, restoreLocalTestWalletWithRecoveryCode } from "./wallet-onboarding.mjs";
+import { createLocalTestWallet, listLocalTestBackups, listLocalTestWallets, openLocalTestWallet, renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode } from "./wallet-onboarding.mjs";
 
 const ONBOARDING = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
 const STORAGE_ROOT = join(homedir(), "Library", "Application Support", "NIR Wallet");
@@ -29,6 +29,7 @@ if (process.platform !== "darwin") {
       [title, message]);
   }
 
+  let unseenRecoveryAddress = null;
   try {
     const createOnly = process.argv[2] === "--create-only";
     if (process.argv.length > (createOnly ? 3 : 2)) throw new Error("unsupported wallet setup arguments");
@@ -44,7 +45,7 @@ if (process.platform !== "darwin") {
         stdio: ["pipe", "pipe", "pipe"],
       });
       const choice = JSON.parse(output);
-      if (!choice || !["create", "restore", "open"].includes(choice.mode)) {
+      if (!choice || !["create", "restore", "open", "renew"].includes(choice.mode)) {
         throw new Error("invalid onboarding selection");
       }
       if (createOnly && choice.mode !== "create") {
@@ -54,12 +55,28 @@ if (process.platform !== "darwin") {
         result = createLocalTestWallet({
           storageRoot: STORAGE_ROOT, password: choice.password,
         });
+        unseenRecoveryAddress = result.address;
         execFileSync(ONBOARDING, ["--show-secret"], {
           input: JSON.stringify({ kind: "recovery", secret: result.recoveryCode,
             backupPath: result.backupPath }),
           encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
           stdio: ["pipe", "pipe", "pipe"],
         });
+        unseenRecoveryAddress = null;
+      } else if (choice.mode === "renew") {
+        const opened = openLocalTestWallet({ wallets: availableWallets,
+          path: choice.path, password: choice.password });
+        const renewed = renewLocalTestRecoveryCode({ storageRoot: STORAGE_ROOT,
+          walletPath: opened.walletPath, password: choice.password });
+        unseenRecoveryAddress = opened.address;
+        execFileSync(ONBOARDING, ["--show-secret"], {
+          input: JSON.stringify({ kind: "recovery", secret: renewed.recoveryCode,
+            backupPath: renewed.backupPath }),
+          encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        unseenRecoveryAddress = null;
+        result = opened;
       } else if (choice.mode === "restore") {
         const listed = availableBackups.find((backup) => backup.path === choice.path);
         if (listed && listed.address !== choice.address) {
@@ -87,8 +104,11 @@ if (process.platform !== "darwin") {
     const cancelled = error?.status === 2 || String(error?.stderr ?? "").includes("User canceled") ||
       String(error?.stderr ?? "").includes("-128") ||
       String(error?.message ?? "").includes("User canceled");
-    if (!cancelled) {
-      try { notice("Настройка не завершена", String(error?.message ?? "unknown error").slice(0, 500)); }
+    if (!cancelled || unseenRecoveryAddress) {
+      const message = unseenRecoveryAddress
+        ? `Кошелёк ${unseenRecoveryAddress} сохранён, но показ кода не завершился. Откройте этот адрес с паролем и нажмите «Новый код восстановления». Не используйте адрес для средств до сохранения резервной копии и кода.`
+        : String(error?.message ?? "unknown error").slice(0, 500);
+      try { notice("Настройка не завершена", message); }
       catch { /* The user may have closed all dialogs. */ }
       process.stderr.write("NIR test wallet setup did not complete.\n");
       process.exitCode = 1;
