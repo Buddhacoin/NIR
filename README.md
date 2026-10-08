@@ -1,36 +1,46 @@
-# NIR Protocol
+<p align="center">
+  <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
+</p>
 
-NIR is a monetary protocol in which new currency is issued for
-**verified progress in machine intelligence**, not for raw computation alone.
+# NIR — the currency of verifiable progress
 
-This repository contains the executable protocol, local network, command-line
-tools, and wallet preview. It does not represent a launched public mainnet or a
-tradable asset.
+**AI will change the world. NIR is being built so the world can verify that change — and share in it.**
 
-The source code and documentation are available under the
-[Apache License 2.0](LICENSE). Private keys, passwords, recovery material, and
-operator secrets are never part of the licensed public repository.
+AI is advancing fast, but the world still lacks a shared way to prove that a new capability is real, reproducible, and safe. NIR is an independent blockchain designed to turn verified progress into public evidence and, eventually, a native digital currency that people and AI services can use.
 
-NIR is an independent layer-one blockchain, not a token issued by another
-network. It requires a native wallet for its addresses, ML-DSA-65 signatures,
-network rules, encrypted vaults, and multisignature recovery. The repository
-already contains the cryptographic vault core; a reviewed desktop/mobile wallet
-and hardware-key integration are still future work.
+Imagine a developer presenting a breakthrough. Independent participants test it against fresh challenges. Safety researchers can challenge it. The network records the result, and its monetary rules determine whether a reward is earned. That is the idea behind NIR: **reward demonstrated progress, not a claim or raw computing power.**
+
+Our ambition is a currency people can hold, send, and receive, supported by an open network that helps measure progress in intelligence. If a real market develops after launch, people may also trade NIR; no market or price is promised. NIR is its own layer-one blockchain, not a token on someone else's chain.
+
+What makes the design different:
+
+- **A native currency:** a 21-million-unit cap, independent ledger, payments, and public monetary rules.
+- **Proof before reward:** fresh tests, independent reproduction, and safety checks gate intelligence-mining rewards in the local prototype.
+- **Post-quantum foundations:** ML-DSA-65 accounts, signatures, and verifiable ledger proofs are implemented locally.
+- **A role for more than AI labs:** developers, challenge authors, evaluators, safety researchers, validators, and everyday users can help shape the network.
+
+**Join the beginning:** explore the [working code](#what-is-implemented-now), try the [local network](#start-using-the-local-prototype), [test the wallet without an invitation](docs/open-wallet-testing.md), [contribute](CONTRIBUTING.md) a challenge or security finding, or help prepare the first independently operated network. The history of NIR is being written now.
+
+**Where are we today?** The [public roadmap](docs/roadmap.md) separates working local code from the next launch gates and future features, including user-created tokens. Its [mining status](docs/roadmap.md#куда-сейчас-могут-майнить-тестеры) explains why no tester can earn NIR into a public wallet yet.
+
+## NIR Wallet: download and installation
+
+| Device | Available now? |
+|---|---|
+| Mac | No public installer yet. The desktop app shown in demos is a locally built test prototype; its release package has not been published here. |
+| Windows / Linux | No desktop wallet release yet. |
+| iPhone / iPad | No App Store or TestFlight release yet. |
+| Android | No official APK or Play Store release yet. |
+
+For now, developers can explore the [local browser preview and safety guide](docs/wallet.md). It is **not** a downloadable wallet for real funds. Do not install purported NIR Wallet apps from third-party sites. Official installation links will appear here only after builds and distribution checks are ready.
 
 ## Current status
 
-NIR is an open-source, valueless local developer network preparing for a public
-developer testnet. The ledger, consensus, post-quantum accounts, encrypted
-vaults, wallet preview, validator processes, protocol upgrades, recovery tools,
-release verification and launch-evidence workflow are implemented and tested in
-this repository. There is no public NIR network, sale, exchange market or
-monetary promise today.
+NIR is open-source under [Apache License 2.0](LICENSE). The repository contains a running **local test network** with its own ledger, consensus, post-quantum accounts, encrypted vaults, wallet preview, validator processes, and tools for verifying AI progress. These components have automated tests. A public network, real-value NIR, exchange market, and independently reviewed wallet do **not** exist yet. Local test balances will not automatically become future mainnet NIR.
 
-The next milestone is operational rather than promotional: independent
-operators must run the existing validator, beacon and archive roles on separate
-machines, execute the published failure and recovery drills, and retain signed
-evidence for external review. A local multi-process rehearsal cannot establish
-that independence.
+Transfers in the current design are publicly auditable, **not anonymous**. Selective privacy is a research direction, not a feature available today. AI-agent payment controls are also prototype work, not an active trading system.
+
+The next milestone is independent operators running validator, beacon, and archive roles on separate machines, with failure-and-recovery drills and external review. That is how the vision becomes a network people can trust.
 
 ## Start here
 
@@ -38,7 +48,7 @@ that independence.
 |---|---|
 | Understand the idea in five minutes | [Why NIR exists](#why-nir-exists) and [Core idea](#core-idea) |
 | See what is actually implemented | [What is implemented now](#what-is-implemented-now) |
-| Run the valueless local network | [Start using the local prototype](#start-using-the-local-prototype) |
+| Run the local test network | [Start using the local prototype](#start-using-the-local-prototype) |
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
@@ -107,7 +117,7 @@ The intended advantages are:
 | Transfer Credits from locked NIR | Protocol-v19 stake, block-epoch renewal, exact-payment sponsorship, revocable delegation, delayed unstaking, per-block capacity limit, account RPC state and local wallet controls implemented; production calibration remains |
 | ML-DSA-65 wallets and signed transfers | Implemented |
 | Encrypted wallet files and 2-of-3 recovery vault | Implemented; external audit still required |
-| Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, multi-node finalized-view selection and failover, fee/transfer/resource review, terminal-confirmed signing without browser key access, and valueless-testnet-only submission; implemented locally |
+| Local wallet signing bridge and UI pairing | Expiring one-use pairing code, exact-origin in-memory session, multi-node finalized-view selection and failover, fee/transfer/resource review, terminal-confirmed signing without browser key access, and test-network-only submission; implemented locally |
 | Signed payment requests | Exact recipient, amount, network, expiry, memo and request identifier are post-quantum signed; wallet creation, local verification and safe transfer prefill implemented |
 | Cryptographic account proofs and light client | Protocol-v21 sparse account proofs bind balance, nonce, stake, credits, delegations and pending exits to the account root in every finalized header; the wallet also verifies every hash link, post-quantum prepare/commit quorum and validator rotation before advancing persisted trust |
 | Finalized transaction inclusion proofs | Protocol-v22 headers commit to ordered transaction count and Merkle root; a durable identifier locator serves archived bodies and proofs without scanning blocks, while the wallet matches each proof to its verified finalized header |
@@ -225,7 +235,7 @@ dependency order and measurable exit conditions are defined by the
    npm run test:chain
    ```
 
-3. Start the persistent valueless node and wallet preview:
+3. Start the persistent local test node and wallet preview:
 
    ```bash
    npm run node:init-dev -- .nir-devnet
@@ -244,7 +254,7 @@ dependency order and measurable exit conditions are defined by the
    npm run mine:demo
    ```
 
-   This is a valueless local simulation, not a public mining connection.
+   This is a local simulation with test units, not a public mining connection.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),
@@ -457,7 +467,7 @@ candidate runs are committed.
 - `blockchain/release-manifest.mjs` — deterministic source manifests and ML-DSA-65 release verification.
 - `blockchain/release-artifact.mjs` — byte-reproducible wallet and node package containers bound to signed sources.
 - `blockchain/beacon-service.mjs` — separately deployable post-quantum beacon authority.
-- `blockchain/node-service.mjs` — localhost RPC for the persistent valueless devnet.
+- `blockchain/node-service.mjs` — localhost RPC for the persistent local test network.
 - `blockchain/node-store.mjs` — atomic block files and verified restart replay.
 - `blockchain/block-store.mjs` — fsync-backed redundant journals, checkpoints, and public backups.
 - `blockchain/account-history-index.mjs` — redundant append-only history and transaction archive, direct identifier lookup, and cached proof trees.
@@ -511,7 +521,7 @@ npm run demo:chain
 
 ## Run the persistent local node
 
-Create a new valueless development network once, then start its localhost RPC:
+Create a new local test network once, then start its localhost RPC:
 
 ```bash
 npm run node:init-dev -- .nir-devnet
@@ -523,7 +533,7 @@ and exposes account, fee, transaction, and faucet endpoints at
 `http://127.0.0.1:8787`. Its four development validators currently run inside
 one process, so this is a persistence and wallet-integration milestone rather
 than a distributed public network. The generated `DEVNET-KEYS.json` contains
-unencrypted, valueless test keys and must never be funded or exposed.
+unencrypted test keys and must never be funded or exposed.
 
 Open the wallet preview in a second terminal:
 
@@ -547,7 +557,7 @@ npm run mine:preflight
 npm run mine:demo
 ```
 
-These commands use valueless local units. They do not mine tradeable NIR or join
+These commands use local test units without market value. They do not mine tradeable NIR or join
 a public network. The seven production roles and their intended one-screen user
 flow are explained in `docs/miner-quickstart-macos.md`; the model/application
 adapter boundary is documented in `docs/intelligence-verification-flow.md`.

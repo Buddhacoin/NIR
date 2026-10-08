@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="NIR">
-  <circle cx="128" cy="128" r="120" fill="#fff" stroke="#111" stroke-width="8"/>
-  <path d="M73 184V72h25l60 72V72h25v112h-24l-61-73v73z" fill="#111"/>
+  <circle cx="128" cy="128" r="120" fill="#ff890a"/>
+  <path d="M73 183V73h25l60 72V73h25v110h-24l-61-73v73z" fill="#fff"/>
+  <path d="M58 119h28v18H58zm112 0h28v18h-28z" fill="#fff"/>
 </svg>

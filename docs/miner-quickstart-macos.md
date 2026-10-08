@@ -152,6 +152,11 @@ They do not execute ChatGPT, Ollama, MLX, a Python training program, or another
 AI application, and a high example score is not a production intelligence
 certificate.
 
+A separate [trained Iris classifier rehearsal](real-model-rehearsal.md) now runs
+real computed outputs through the experimental application adapter and verifies
+an evaluation bundle. Its public labels and unisolated process make it a local
+developer test only; it does not change the mining demo or credit a wallet.
+
 ## 5. Connecting a model or AI application
 
 There is no general "Connect app" button or production connector today. An
