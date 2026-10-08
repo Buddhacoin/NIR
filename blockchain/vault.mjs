@@ -22,7 +22,7 @@ const PASSWORD_MAXIMUM_BYTES = 1_024;
 const MAX_SERIALIZED_VAULT_BYTES = 64 * 1024;
 const DISPLAY_CONTROL = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
-function validPassword(password, { creation = false } = {}) {
+export function validPassword(password, { creation = false } = {}) {
   if (!creation && Buffer.isBuffer(password)) {
     if (password.length < 12 || password.length > PASSWORD_MAXIMUM_BYTES) return false;
     for (const byte of password) {
@@ -35,6 +35,14 @@ function validPassword(password, { creation = false } = {}) {
       Buffer.byteLength(password) > PASSWORD_MAXIMUM_BYTES || DISPLAY_CONTROL.test(password)) return false;
   if (!creation) return true;
   return password.normalize("NFKC") === password && new Set(password).size >= 6 &&
+    !/^(.)\1+$/u.test(password);
+}
+
+// Personal test wallets may use a shorter password. Founder, protocol, validator,
+// and all other vault creation keeps the stricter default policy above.
+export function validPersonalWalletPassword(password) {
+  return typeof password === "string" && validPassword(password) &&
+    password.normalize("NFKC") === password && new Set(password).size >= 4 &&
     !/^(.)\1+$/u.test(password);
 }
 
@@ -112,9 +120,10 @@ function vaultMetadata(wallet, label) {
   };
 }
 
-export function encryptWallet(wallet, password, { label = "NIR vault" } = {}) {
-  if (!validPassword(password, { creation: true })) {
-    throw new Error("vault password must be canonical, non-trivial, and contain at least 16 characters");
+export function encryptWallet(wallet, password, { label = "NIR vault", personalWallet = false } = {}) {
+  if (!(personalWallet ? validPersonalWalletPassword(password)
+    : validPassword(password, { creation: true }))) {
+    throw new Error(`vault password must be canonical, non-trivial, and contain at least ${personalWallet ? 12 : 16} characters`);
   }
   validateMetadata(vaultMetadata(wallet, label));
   decodeBase64(wallet.privateKey, "wallet private key", 1, 8_192);
