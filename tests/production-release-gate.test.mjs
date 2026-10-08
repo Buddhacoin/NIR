@@ -1141,7 +1141,10 @@ test("production wallet bridge and UI verify anchored generations before bind on
     });
     assert.throws(() => validateProductionWalletExtensionArtifact(cspArtifact), /permissions or CSP/);
     const traversalArtifact = mutateArtifactText(walletArtifact, "index.html",
-      (text) => text.replace("app.js?v=34", "../app.js"));
+      (text) => {
+        assert.match(text, /app\.js\?v=[0-9]+/);
+        return text.replace(/app\.js\?v=[0-9]+/, "../app.js");
+      });
     assert.throws(() => validateProductionWalletExtensionArtifact(traversalArtifact), /unsafe|unverified/);
     const packageValue = createProductionReleasePackage(walletArtifact, { now: NOW,
       productionReport: evidence.productionReport, productionTarget: evidence.productionTarget,
