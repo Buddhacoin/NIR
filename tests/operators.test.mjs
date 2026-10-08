@@ -51,12 +51,20 @@ test("tampered operator credentials are rejected", () => {
 });
 
 test("committee selection is deterministic, unique, and context-bound", () => {
-  const { registry } = fixture();
+  // Fixed public identities make this ranking test independent of random keygen.
+  const registry = new Map(Array.from({ length: 6 }, (_, index) => {
+    const address = `nir1${fingerprint(`operator-${index}`)}`;
+    return [address, { address, operatorId: `evaluator-${index}` }];
+  }));
   const args = { context: { artifact: fingerprint("model-a"), epoch: 12 }, randomness: fingerprint("future"), registry, size: 3 };
   const first = selectOperatorCommittee(args);
   assert.deepEqual(first, selectOperatorCommittee(args));
   assert.equal(new Set(first.map(({ address }) => address)).size, 3);
-  assert.notDeepEqual(first, selectOperatorCommittee({ ...args, context: { artifact: fingerprint("model-b"), epoch: 12 } }));
+  assert.deepEqual(first.map(({ operatorId }) => operatorId),
+    ["evaluator-4", "evaluator-1", "evaluator-0"]);
+  assert.deepEqual(selectOperatorCommittee({ ...args,
+    context: { artifact: fingerprint("model-b"), epoch: 12 },
+  }).map(({ operatorId }) => operatorId), ["evaluator-2", "evaluator-0", "evaluator-3"]);
 });
 
 test("distributed randomness requires a quorum of matching committed reveals", () => {
