@@ -64,6 +64,12 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(nativeSource, /if \(!self\.submitted\) exit\(2\)/);
     assert.match(nativeSource, /pairingWindow\.level = NSFloatingWindowLevel/);
     assert.match(nativeSource, /NSWindowCollectionBehaviorMoveToActiveSpace/);
+    const renewal = nativeSource.match(/self\.renewButton\.frame = NSMakeRect\(28, (\d+), 334, (\d+)\)/);
+    const addressLabel = nativeSource.match(/self\.pathLabel\.frame = NSMakeRect\(28, (\d+), 334, (\d+)\)/);
+    const openingPassword = nativeSource.match(/self\.password\.frame = opening \? NSMakeRect\(28, (\d+), 334, (\d+)\)/);
+    assert.ok(renewal && addressLabel && openingPassword);
+    assert.ok(Number(renewal[1]) >= Number(addressLabel[1]) + Number(addressLabel[2]));
+    assert.ok(Number(renewal[1]) + Number(renewal[2]) <= Number(openingPassword[1]));
     assert.throws(() => buildMacWallet(app, { sign: false }), /new NIR Wallet\.app/);
     const linkDir = join(directory, "other");
     mkdirSync(linkDir);

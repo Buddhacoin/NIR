@@ -267,7 +267,7 @@
     self.createLink.frame = NSMakeRect(28, 22, 156, 28);
     self.restoreLink.frame = NSMakeRect(206, 22, 156, 28);
     self.renewButton.hidden = !opening || self.createOnly || self.wallets.count == 0;
-    self.renewButton.frame = NSMakeRect(28, 239, 334, 28);
+    self.renewButton.frame = NSMakeRect(28, 250, 334, 24);
     self.pathLabel.frame = NSMakeRect(28, 228, 334, 20);
     self.accountMenu.frame = NSMakeRect(28, 185, 334, 38);
     self.passwordLabel.frame = NSMakeRect(28, restoring ? 335 : 353, 334, 20);
