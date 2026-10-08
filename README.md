@@ -2,12 +2,18 @@
   <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
 </p>
 
-> **Wallet (valueless local preview):** [setup and safety guide](docs/wallet.md) ·
-> [browser-extension files](wallet-ui/) ·
-> [local browser demo](#start-using-the-local-prototype).
-> There is no browser-store listing or ready-to-download desktop installer yet.
-
 # NIR Protocol
+
+## NIR Wallet: download and installation
+
+| Device | Available now? |
+|---|---|
+| Mac | No public installer yet. The desktop app shown in demos is a locally built, valueless prototype; its release package has not been published here. |
+| Windows / Linux | No desktop wallet release yet. |
+| iPhone / iPad | No App Store or TestFlight release yet. |
+| Android | No official APK or Play Store release yet. |
+
+For now, developers can explore the [local browser preview and safety guide](docs/wallet.md). It is **not** a downloadable wallet for real funds. Do not install purported NIR Wallet apps from third-party sites. Official installation links will appear here only after builds and distribution checks are ready.
 
 NIR is a monetary protocol in which new currency is issued for
 **verified progress in machine intelligence**, not for raw computation alone.
