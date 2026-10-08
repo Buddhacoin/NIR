@@ -6,7 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  createCandidateBond, createProgressClaim, createProgressCommitment, NirChain,
+  allocateProgressRewards, createCandidateBond, createProgressClaim,
+  createProgressCommitment, NirChain,
 } from "../blockchain/chain.mjs";
 import { INITIAL_EPOCH_REWARD, SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
@@ -23,6 +24,19 @@ const hash = (label) => createHash("sha256").update(label).digest("hex");
 const sha = (label) => `sha256:${hash(label)}`;
 const blockPath = (directory, height) =>
   join(directory, "blocks", `${String(height).padStart(12, "0")}.json`);
+
+test("progress claim allocation accepts 256 distinct claims but rejects 257", () => {
+  const recipient = generateWallet().address;
+  const claims = Array.from({ length: 256 }, (_, index) => ({
+    fingerprint: index.toString(16).padStart(64, "0"), recipient, score: "1",
+  }));
+  const rewards = allocateProgressRewards(0, claims);
+  assert.equal(rewards.length, 256);
+  assert.ok(rewards.every(({ amount }) => BigInt(amount) > 0n));
+  assert.throws(() => allocateProgressRewards(0, [
+    ...claims, { fingerprint: "f".repeat(64), recipient, score: "1" },
+  ]), /too many progress rewards/);
+});
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -137,12 +151,24 @@ test("operator-only distributed progress claim is recomputed, escrowed, and rest
       rewardClaims: [{ ...claim, score: "0" }],
     }));
     assert.equal(coordinator.height, mirror.height);
+    assert.deepEqual(replicas.map((replica) => replica.height), Array(4).fill(mirror.height));
     await coordinator.produceBlock({ rewardClaims: [claim] });
     sync();
     assert.equal(coordinator.account(owner.address).atomicBalance, "0");
     assert.equal(coordinator.account(owner.address).resources.pendingProgressReward.amount,
       INITIAL_EPOCH_REWARD.toString());
     assert.deepEqual(replicas.map((replica) => replica.height), Array(4).fill(mirror.height));
+    const rewardBlock = JSON.parse(readFileSync(blockPath(layout.coordinatorDirectory, mirror.height)));
+    await close(servers[0]);
+    replicas[0].closeSecurityState();
+    replicas[0] = new ValidatorReplica(layout.validatorDirectories[0]);
+    assert.equal(replicas[0].height, mirror.height);
+    assert.equal(replicas[0].account(owner.address).atomicBalance, "0");
+    assert.equal(replicas[0].account(owner.address).resources.pendingProgressReward.amount,
+      INITIAL_EPOCH_REWARD.toString());
+    assert.deepEqual(replicas[0].commit(rewardBlock), { height: mirror.height, status: "known" });
+    assert.equal(replicas[0].account(owner.address).resources.pendingProgressReward.amount,
+      INITIAL_EPOCH_REWARD.toString());
     coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
     assert.equal(coordinator.account(owner.address).atomicBalance, "0");
     assert.equal(coordinator.account(owner.address).resources.pendingProgressReward.amount,
