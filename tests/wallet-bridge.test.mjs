@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -8,6 +8,7 @@ import test from "node:test";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
+import { decryptWallet, encryptWallet } from "../blockchain/vault.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
 import { createAssetProof } from "../blockchain/asset-proof.mjs";
 import { createValidatorHandoff } from "../blockchain/validator-handoff.mjs";
@@ -66,6 +67,104 @@ function validatorMembers(wallets) {
     ...publicWallet(wallet), operatorId: `validator-${wallet.address.slice(4, 16)}`,
   }));
 }
+
+test("paired bridge keeps distinct same-address vault copies selectable without exposing paths", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-vault-ids-"));
+  const firstPath = join(directory, "first.nirvault.json");
+  const secondPath = join(directory, "second.nirvault.json");
+  const thirdPath = join(directory, "third.nirvault.json");
+  const first = createWalletFile({ path: firstPath, password: "first-vault-password-2026" });
+  const copiedKey = decryptWallet(JSON.parse(readFileSync(firstPath, "utf8")),
+    "first-vault-password-2026");
+  try {
+    writeFileSync(secondPath, `${JSON.stringify(encryptWallet(copiedKey,
+      "second-vault-password-2026", { label: "Recovered copy" }))}\n`, { mode: 0o600, flag: "wx" });
+  } finally { copiedKey.privateKey = ""; }
+  const third = createWalletFile({ path: thirdPath, password: "third-vault-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "e".repeat(64);
+  const server = createWalletBridgeServer({
+    accounts: [{ address: first.address, path: firstPath },
+      { address: first.address, path: secondPath }],
+    authorize: async () => null,
+    createAccount: async () => ({ address: third.address, path: thirdPath }),
+    origin, sessionToken: token, vaultPath: firstPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const listResponse = await request(`${base}/v1/accounts`, origin, token);
+    assert.equal(listResponse.status, 200);
+    const listText = await listResponse.text();
+    assert.equal(listText.includes(directory), false);
+    const list = JSON.parse(listText);
+    assert.equal(list.accounts.length, 2);
+    assert.equal(list.accounts[0].address, list.accounts[1].address);
+    assert.notEqual(list.accounts[0].id, list.accounts[1].id);
+    assert.match(list.accounts[0].id, /^[0-9a-f]{32}$/);
+    assert.equal(list.activeId, list.accounts[0].id);
+    assert.equal((await request(`${base}/v1/select-account`, origin, "0".repeat(64), {
+      method: "POST", body: JSON.stringify({ id: list.accounts[1].id }),
+    })).status, 401);
+    const switched = await request(`${base}/v1/select-account`, origin, token, {
+      method: "POST", body: JSON.stringify({ id: list.accounts[1].id }),
+    });
+    assert.equal(switched.status, 200);
+    assert.deepEqual(await switched.json(), { id: list.accounts[1].id, address: first.address });
+    assert.equal((await (await request(`${base}/v1/wallet`, origin, token)).json()).label,
+      "Recovered copy");
+    assert.equal((await (await request(`${base}/v1/accounts`, origin, token)).json()).activeId,
+      list.accounts[1].id);
+    assert.equal((await request(`${base}/v1/select-account`, origin, token, {
+      method: "POST", body: JSON.stringify({ id: "f".repeat(32) }),
+    })).status, 400);
+    const added = await request(`${base}/v1/create-account`, origin, token, {
+      method: "POST", body: "{}",
+    });
+    assert.equal(added.status, 200);
+    const newAccount = await added.json();
+    assert.equal(newAccount.address, third.address);
+    assert.equal(JSON.stringify(newAccount).includes(directory), false);
+    assert.equal((await (await request(`${base}/v1/accounts`, origin, token)).json()).accounts.length, 3);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("disconnect during account creation cannot activate a new vault in the revoked session", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-create-race-"));
+  const firstPath = join(directory, "first.nirvault.json");
+  const nextPath = join(directory, "next.nirvault.json");
+  createWalletFile({ path: firstPath, password: "first-account-password-2026" });
+  const next = createWalletFile({ path: nextPath, password: "next-account-password-2026" });
+  let complete;
+  const origin = "http://127.0.0.1:8765";
+  const token = "d".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    createAccount: () => new Promise((resolve) => { complete = resolve; }),
+    origin, sessionToken: token, vaultPath: firstPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const creation = request(`${base}/v1/create-account`, origin, token,
+      { method: "POST", body: "{}" });
+    for (let attempt = 0; attempt < 100 && !complete; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(typeof complete, "function");
+    assert.equal((await request(`${base}/v1/session`, origin, token,
+      { method: "DELETE" })).status, 200);
+    complete({ address: next.address, path: nextPath });
+    assert.equal((await creation).status, 400);
+    assert.equal((await request(`${base}/v1/accounts`, origin, token)).status, 401);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("wallet checkpoint advances only through a verified finality header chain", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-light-client-test-"));
@@ -401,6 +500,11 @@ test("wallet checkpoint advances only through a verified finality header chain",
       }), method: "POST",
     });
     await started;
+    const current = await (await request(`${base}/v1/accounts`, origin, token)).json();
+    const switchDuringSigning = await request(`${base}/v1/select-account`, origin, token, {
+      body: JSON.stringify({ id: current.activeId }), method: "POST",
+    });
+    assert.equal(switchDuringSigning.status, 409);
     const disconnected = await request(`${base}/v1/session`, origin, token, { method: "DELETE" });
     assert.equal(disconnected.status, 200);
     releaseAuthorization();

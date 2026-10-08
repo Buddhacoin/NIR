@@ -294,7 +294,9 @@ function simulationForSigning({ body, intent, pathname, simulations, verifiedAcc
 }
 
 export function createWalletBridgeServer({
+  accounts,
   authorize,
+  createAccount,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -306,6 +308,10 @@ export function createWalletBridgeServer({
   vaultPath,
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
+      (createAccount !== undefined && typeof createAccount !== "function") ||
+      (accounts !== undefined && (!Array.isArray(accounts) || accounts.length < 1 ||
+        accounts.length > 100 || accounts.some((account) =>
+          typeof account?.path !== "string" || !ADDRESS.test(account?.address ?? "")))) ||
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
       (trustAnchor !== undefined &&
@@ -373,7 +379,22 @@ export function createWalletBridgeServer({
       validatorSetId: validatorSetId(activeTrust.trustedValidators),
     };
   }
-  const walletAddress = walletPublicInfo(vaultPath).address;
+  let activeVaultPath = vaultPath;
+  let walletAddress = walletPublicInfo(vaultPath).address;
+  const accountEntries = new Map();
+  const accountPaths = new Set();
+  const addAccount = ({ address, path }) => {
+    if (accountPaths.has(path) || walletPublicInfo(path).address !== address) {
+      throw new Error("wallet account list has a duplicate path or mismatched address");
+    }
+    const id = randomBytes(16).toString("hex");
+    accountEntries.set(id, { address, path });
+    accountPaths.add(path);
+    return id;
+  };
+  for (const account of accounts ?? []) addAccount(account);
+  let activeAccountId = [...accountEntries].find(([, entry]) => entry.path === vaultPath)?.[0];
+  if (!activeAccountId) activeAccountId = addAccount({ address: walletAddress, path: vaultPath });
   const verifiedAccountStates = new Map();
   const verifiedAssetStates = new Map();
   const simulations = new Map();
@@ -397,8 +418,31 @@ export function createWalletBridgeServer({
   let pairingPending = false;
   let sessionActive = pairingCode === undefined;
   let sessionGeneration = 0;
+  let accountActionPending = false;
+  const activateAccount = (id) => {
+    if (id === activeAccountId) return;
+    const entry = accountEntries.get(id);
+    if (!entry) throw new Error("selected account is unavailable");
+    activeAccountId = id;
+    activeVaultPath = entry.path;
+    walletAddress = entry.address;
+    sessionGeneration += 1;
+    verifiedAccountState = null;
+    verifiedAccountStates.clear();
+    verifiedAssetStates.clear();
+    simulations.clear();
+    signResults.clear();
+  };
   const pairingDeadline = Date.now() + pairingLifetimeMs;
   const server = createServer(async (request, response) => {
+    const requestGeneration = sessionGeneration;
+    const readAuthenticatedBody = async (limit) => {
+      const body = await readBody(request, limit);
+      if (!sessionActive || requestGeneration !== sessionGeneration) {
+        throw new Error("wallet account changed during the request");
+      }
+      return body;
+    };
     const requestOrigin = request.headers.origin;
     const host = request.headers.host ?? "";
     const remoteAddress = request.socket.remoteAddress ?? "";
@@ -461,6 +505,65 @@ export function createWalletBridgeServer({
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
+      if (accountActionPending) {
+        return send(response, 409, { error: "finish creating the new account first" }, origin);
+      }
+      if (request.method === "GET" && url.pathname === "/v1/accounts") {
+        return send(response, 200, {
+          activeId: activeAccountId,
+          accounts: [...accountEntries].map(([id, entry], index) => ({
+            id, address: entry.address, label: `Кошелёк ${index + 1}`,
+          })),
+        }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/select-account") {
+        if (pending) return send(response, 409, { error: "finish signing before switching" }, origin);
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("account selection requires application/json");
+        }
+        const body = await readAuthenticatedBody(128);
+        if (!body || Object.keys(body).length !== 1 ||
+            !/^[0-9a-f]{32}$/.test(body.id ?? "") || !accountEntries.has(body.id)) {
+          throw new Error("selected account is invalid");
+        }
+        if (pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action before switching" }, origin);
+        }
+        activateAccount(body.id);
+        return send(response, 200, { id: activeAccountId, address: walletAddress }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/create-account") {
+        if (!createAccount) return send(response, 404, { error: "account creation is unavailable" }, origin);
+        if (pending || accountEntries.size >= 100) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("account creation requires application/json");
+        }
+        const body = await readAuthenticatedBody(16);
+        if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
+          throw new Error("account creation body is invalid");
+        }
+        if (pending || accountActionPending || accountEntries.size >= 100) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        accountActionPending = true;
+        const creatingGeneration = sessionGeneration;
+        try {
+          const created = await createAccount();
+          if (!sessionActive || sessionGeneration !== creatingGeneration) {
+            throw new Error("wallet session ended while the account was created");
+          }
+          if (!ADDRESS.test(created?.address ?? "") || typeof created?.path !== "string" ||
+              accountPaths.has(created.path) ||
+              walletPublicInfo(created.path).address !== created.address) {
+            throw new Error("new wallet account is invalid or duplicated");
+          }
+          const id = addAccount(created);
+          activateAccount(id);
+          return send(response, 200, { id, address: walletAddress }, origin);
+        } finally { accountActionPending = false; }
+      }
       if (request.method === "GET" && /^\/v1\/sign-result\/[0-9a-f]{64}$/.test(url.pathname)) {
         pruneSignResults();
         const entry = signResults.get(url.pathname.slice("/v1/sign-result/".length));
@@ -469,13 +572,13 @@ export function createWalletBridgeServer({
         return send(response, entry.status, entry.value, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
-        return send(response, 200, walletPublicInfo(vaultPath), origin);
+        return send(response, 200, walletPublicInfo(activeVaultPath), origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("asset id derivation requires application/json");
         }
-        const body = await readBody(request, 1_024);
+        const body = await readAuthenticatedBody(1_024);
         if (!body || Object.keys(body).length !== 2 ||
             !Object.hasOwn(body, "networkId") || !Object.hasOwn(body, "nonce") ||
             body.networkId !== accountTrust?.expectedNetworkId ||
@@ -500,7 +603,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("payment request verification requires application/json");
         }
-        const body = await readBody(request);
+        const body = await readAuthenticatedBody();
         if (typeof body?.networkId !== "string" || body.networkId.length > 128) {
           throw new Error("payment request network is invalid");
         }
@@ -513,7 +616,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("validator trust updates require application/json");
         }
-        const body = await readBody(request, MAX_HANDOFF_STORE_BYTES);
+        const body = await readAuthenticatedBody(MAX_HANDOFF_STORE_BYTES);
         if (!Array.isArray(body?.handoffs) || body.handoffs.length > 128 ||
             body.handoffs.length < accountTrust.handoffs.length ||
             accountTrust.handoffs.some(({ handoffHash }, index) =>
@@ -548,7 +651,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("finality proof verification requires application/json");
         }
-        const body = await readBody(request, MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
+        const body = await readAuthenticatedBody(MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
         const persistedBase = trustCheckpoint ?? genesisCheckpoint;
         const restartsFromPersisted = body?.proofs?.[0]?.header?.height === persistedBase.height + 1 &&
           body.proofs[0].header.previousHash === persistedBase.tipHash;
@@ -582,7 +685,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("transaction proof verification requires application/json");
         }
-        const body = await readBody(request, MAX_TRANSACTION_PROOF_BYTES + 96 * 1024);
+        const body = await readAuthenticatedBody(MAX_TRANSACTION_PROOF_BYTES + 96 * 1024);
         const envelope = body?.proof;
         if (!envelope || !Number.isSafeInteger(envelope.height) || envelope.height < 1 ||
             !/^[0-9a-f]{64}$/.test(envelope.blockHash ?? "") ||
@@ -619,7 +722,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("account history verification requires application/json");
         }
-        const body = await readBody(request, MAX_ACCOUNT_HISTORY_PROOF_BYTES + 1_024);
+        const body = await readAuthenticatedBody(MAX_ACCOUNT_HISTORY_PROOF_BYTES + 1_024);
         const commitment = verifyAccountHistory(body?.transactionIds, verifiedAccountState.history);
         return send(response, 200, { ...commitment, verified: true }, origin);
       }
@@ -630,7 +733,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("account history page verification requires application/json");
         }
-        const body = await readBody(request, 512 * 1024);
+        const body = await readAuthenticatedBody(512 * 1024);
         const { before, limit, page } = body ?? {};
         const count = verifiedAccountState.history.count;
         if (!Number.isSafeInteger(before) || before < 0 || before > count ||
@@ -659,7 +762,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("account proof verification requires application/json");
         }
-        const body = await readBody(request);
+        const body = await readAuthenticatedBody();
         if (!ADDRESS.test(body?.address ?? "") || !Number.isSafeInteger(body?.minimumHeight) ||
             body.minimumHeight < 0) {
           throw new Error("account proof request is invalid");
@@ -718,7 +821,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("asset proof verification requires application/json");
         }
-        const body = await readBody(request, MAX_ASSET_PROOF_BYTES + 1_024);
+        const body = await readAuthenticatedBody(MAX_ASSET_PROOF_BYTES + 1_024);
         if (!/^[0-9a-f]{64}$/.test(body?.assetId ?? "") || !ADDRESS.test(body?.holder ?? "") ||
             !Number.isSafeInteger(body?.minimumHeight) || body.minimumHeight < 0) {
           throw new Error("asset proof request is invalid");
@@ -744,7 +847,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("transaction simulation requires application/json");
         }
-        const body = await readBody(request);
+        const body = await readAuthenticatedBody();
         const intent = simulationIntent(body, walletAddress);
         const stateEvidence = bridgeSimulationEvidence({
           body, intent, verifiedAccountStates, verifiedAssetStates, walletAddress,
@@ -771,7 +874,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("offline signing package requires application/json");
         }
-        const body = await readBody(request);
+        const body = await readAuthenticatedBody();
         // The browser is deliberately not allowed to choose a checkpoint, or to
         // stretch a package lifetime.  Both values are derived from the bridge's
         // protected finality state and its short-lived reviewed simulation.
@@ -804,7 +907,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("offline signed package requires application/json");
         }
-        const body = await readBody(request, 160 * 1024);
+        const body = await readAuthenticatedBody(160 * 1024);
         if (!NETWORK.test(body?.networkId ?? "") || body.networkId !== accountTrust?.expectedNetworkId) {
           throw new Error("offline signed package network is invalid");
         }
@@ -820,7 +923,7 @@ export function createWalletBridgeServer({
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("bridge signing requests require application/json");
         }
-        const body = await readBody(request, 16 * 1024);
+        const body = await readAuthenticatedBody(16 * 1024);
         const { simulationId: _simulationId, ...unsignedBody } = body ?? {};
         const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(unsignedBody)
           : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(unsignedBody)
@@ -855,12 +958,12 @@ export function createWalletBridgeServer({
           }
           const { requestId, ...payload } = intent;
           const transaction = url.pathname === "/v1/sign-resource"
-            ? signWalletResourceOperation({ path: vaultPath, password, operation: payload })
+            ? signWalletResourceOperation({ path: activeVaultPath, password, operation: payload })
             : url.pathname === "/v1/sign-payment-request"
               ? signWalletPaymentRequest({
-                path: vaultPath, password, intent: { ...payload, requestId },
+                path: activeVaultPath, password, intent: { ...payload, requestId },
               })
-              : signWalletTransfer({ path: vaultPath, password, ...payload });
+              : signWalletTransfer({ path: activeVaultPath, password, ...payload });
           const value = {
             requestId,
             ...(reviewedSimulationId ? { simulationId: reviewedSimulationId } : {}),

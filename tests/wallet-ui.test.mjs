@@ -28,6 +28,18 @@ test("wallet navigation has five interactive destinations", () => {
   assert.match(script, /aria-current/);
 });
 
+test("wallet selects separate vault copies by opaque ID, including one shared address", () => {
+  for (const id of ["account-open", "accounts-panel", "account-list", "add-account"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /bridgeRequest\("\/v1\/accounts"\)/);
+  assert.match(script, /bridgeRequest\("\/v1\/select-account"/);
+  assert.match(script, /JSON\.stringify\(\{ id \}\)/);
+  assert.match(script, /account\.id === activeId/);
+  assert.match(script, /resetAccountView/);
+  assert.doesNotMatch(html.split('id="accounts-panel"')[1].split('</dialog>')[0], /\.nirvault\.json/);
+});
+
 test("visible secondary controls have actions", () => {
   assert.match(html, /class="network" data-action="network"/);
   assert.match(html, /data-action="history">Все/);
@@ -57,13 +69,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=31/);
-  assert.match(serviceWorker, /style\.css\?v=31/);
+  assert.match(html, /style\.css\?v=32/);
+  assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=34/);
-  assert.match(serviceWorker, /app\.js\?v=34/);
-  assert.match(serviceWorker, /nir-wallet-shell-v36/);
+  assert.match(html, /app\.js\?v=35/);
+  assert.match(serviceWorker, /app\.js\?v=35/);
+  assert.match(serviceWorker, /nir-wallet-shell-v37/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
