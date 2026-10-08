@@ -4,6 +4,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -203,24 +204,27 @@ function syncDirectory(path) {
 }
 
 function persistOperatorEvents(path, value) {
-  const temporary = `${path}.next`;
-  if (existsSync(temporary)) {
-    const metadata = lstatSync(temporary);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error("operator event temporary file is invalid");
-    }
-    rmSync(temporary);
+  const serialized = `${canonicalJson(value)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_OPERATOR_EVENTS_BYTES) {
+    throw new Error("operator consensus event journal is too large");
   }
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+  const temporary = `${path}.${randomBytes(16).toString("hex")}.next`;
+  writeFileSync(temporary, serialized, {
     encoding: "utf8", flag: "wx", flush: true, mode: 0o600,
   });
-  chmodSync(temporary, 0o600);
-  renameSync(temporary, path);
-  syncDirectory(path);
+  try {
+    // A hard link installs the journal only if no other instance installed one first.
+    linkSync(temporary, path);
+    syncDirectory(path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
-function removeOperatorEvents(path) {
-  if (!existsSync(path)) return;
+function removeOperatorEvents(path, expected) {
+  if (!existsSync(path) || canonicalJson(readJson(path)) !== canonicalJson(expected)) {
+    throw new Error("operator consensus event journal changed or disappeared");
+  }
   rmSync(path);
   syncDirectory(path);
 }
@@ -585,7 +589,7 @@ export class ValidatorReplica {
     if (existsSync(operatorEventsPath)) {
       const metadata = lstatSync(operatorEventsPath);
       if (!metadata.isFile() || metadata.isSymbolicLink() ||
-          metadata.size > MAX_OPERATOR_EVENTS_BYTES + 512) {
+          metadata.size > MAX_OPERATOR_EVENTS_BYTES) {
         throw new Error("durable operator consensus events file is invalid");
       }
       const stored = readJson(operatorEventsPath);
@@ -620,8 +624,20 @@ export class ValidatorReplica {
     if (this.#operatorEvents === null) return;
     if (this.#operatorEvents.expectedHeight === this.height + 1 &&
         this.#operatorEvents.previousHash === this.tipHash) return;
-    removeOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE));
+    removeOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), this.#operatorEvents);
     this.#operatorEvents = null;
+  }
+
+  #assertOperatorEventsJournal() {
+    if (this.#operatorEvents === null) return;
+    const path = join(this.#directory, OPERATOR_EVENTS_FILE);
+    if (!existsSync(path)) throw new Error("operator consensus event journal disappeared");
+    const metadata = lstatSync(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() ||
+        metadata.size > MAX_OPERATOR_EVENTS_BYTES ||
+        canonicalJson(readJson(path)) !== canonicalJson(this.#operatorEvents)) {
+      throw new Error("operator consensus event journal changed");
+    }
   }
 
   #validateOperatorEvents(events) {
@@ -636,6 +652,7 @@ export class ValidatorReplica {
     this.#pruneOperatorEvents();
     const events = normalizeOperatorEvents(value);
     if (this.#operatorEvents !== null) {
+      this.#assertOperatorEventsJournal();
       if (canonicalJson(this.#operatorEvents.events) === canonicalJson(events)) {
         return { expectedHeight: this.#operatorEvents.expectedHeight, status: "known" };
       }
@@ -1211,6 +1228,7 @@ export class ValidatorReplica {
     );
     this.#chain = installed.chain;
     this.#refreshTransportView();
+    this.#pruneOperatorEvents();
     return {
       height: this.height,
       snapshotHash: installed.snapshotHash,
@@ -1237,6 +1255,7 @@ export class ValidatorReplica {
     }
     this.#pruneInvalidValidatorAdmissions();
     this.#pruneOperatorEvents();
+    this.#assertOperatorEventsJournal();
     const transactions = this.#mempool.take();
     const events = this.#operatorEvents?.events ?? null;
     if (transactions.length === 0 && events === null) throw new Error("validator mempool is empty");
@@ -1366,6 +1385,7 @@ export class ValidatorReplica {
 
   submitTransaction(transaction) {
     this.#pruneInvalidValidatorAdmissions();
+    this.#assertOperatorEventsJournal();
     const id = transactionId(transaction);
     if (this.#mempool.has(id)) return {
       ...(this.#admissionReceipts.has(id) ? { receipt: this.#admissionReceipts.get(id) } : {}),

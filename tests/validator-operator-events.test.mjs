@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
-import { generateWallet } from "../blockchain/crypto.mjs";
+import { createTransfer, finalizeBlock, NirChain } from "../blockchain/chain.mjs";
+import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
+import { canonicalJson, generateWallet } from "../blockchain/crypto.mjs";
 import { initializeDistributedDevnet, ValidatorReplica } from "../blockchain/distributed-node.mjs";
 import { createEpochRandomnessCommit } from "../blockchain/operators.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
@@ -28,8 +29,10 @@ test("local operator event survives restart, enters an event-only proposal, and 
   const layout = initializeDistributedDevnet(join(temporary, "network"), { beaconWallets: beacons });
   const directory = layout.validatorDirectories[0];
   let replica;
+  let competing;
   try {
     replica = new ValidatorReplica(directory);
+    competing = new ValidatorReplica(directory);
     const genesis = JSON.parse(readFileSync(join(directory, "genesis.json")));
     const chain = new NirChain(genesis);
     const status = chain.epochRandomnessStatus();
@@ -40,6 +43,13 @@ test("local operator event survives restart, enters an event-only proposal, and 
     });
     const events = { epochRandomnessCommits: [commit] };
     assert.deepEqual(replica.stageOperatorEvents(events), { expectedHeight: 1, status: "queued" });
+    const journal = join(directory, "OPERATOR-EVENTS.json");
+    assert.equal(readFileSync(journal, "utf8"), `${canonicalJson(replica.pendingOperatorEvents)}\n`);
+    assert.equal(statSync(journal).size, Buffer.byteLength(canonicalJson(replica.pendingOperatorEvents)) + 1);
+    assert.throws(() => competing.stageOperatorEvents(events), /EEXIST/);
+    assert.equal(competing.pendingOperatorEvents, null);
+    competing.closeSecurityState();
+    competing = null;
     assert.deepEqual(replica.stageOperatorEvents(events), { expectedHeight: 1, status: "known" });
     assert.throws(() => replica.stageOperatorEvents({ epochRandomnessCommits: [] }),
       /empty or too large/);
@@ -69,7 +79,46 @@ test("local operator event survives restart, enters an event-only proposal, and 
     assert.equal(replica.pendingOperatorEvents, null);
     assert.throws(() => replica.buildProposal(), /mempool is empty/);
   } finally {
+    competing?.closeSecurityState();
     replica?.closeSecurityState();
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("snapshot installation immediately prunes a height-bound operator queue", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-operator-snapshot-"));
+  const beacons = Array.from({ length: 4 }, generateWallet);
+  const layout = initializeDistributedDevnet(join(temporary, "network"), { beaconWallets: beacons });
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  try {
+    const genesis = JSON.parse(readFileSync(join(layout.validatorDirectories[0], "genesis.json")));
+    const chain = new NirChain(genesis);
+    const status = chain.epochRandomnessStatus();
+    const wallet = beacons.find(({ address }) => address === status.committee[0]);
+    const commit = createEpochRandomnessCommit({
+      wallet, networkId: chain.networkId, round: status.round, secret: "c".repeat(64),
+    });
+    replicas[3].stageOperatorEvents({ epochRandomnessCommits: [commit] });
+    const validators = layout.validatorDirectories.map((path) =>
+      JSON.parse(readFileSync(join(path, "VALIDATOR-KEY.json"))));
+    const empty = finalizeBlock(chain.buildBlock({ transactions: [], timestamp: Date.now() }), validators);
+    for (const replica of replicas.slice(0, 3)) replica.commit(empty);
+    const installed = replicas[3].installStateSnapshotCandidates(
+      replicas.slice(0, 3).map((replica) => replica.stateSnapshotCandidate()));
+    assert.equal(installed.height, 1);
+    assert.equal(replicas[3].pendingOperatorEvents, null);
+    assert.throws(() => replicas[3].buildProposal(), /mempool is empty/);
+    assert.equal(statSync(join(layout.validatorDirectories[3], "OPERATOR-EVENTS.json"),
+      { throwIfNoEntry: false }), undefined);
+    const treasury = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "TREASURY-DEV-KEY.json")));
+    const transfer = createTransfer({ wallet: treasury, networkId: chain.networkId,
+      recipient: generateWallet().address, amount: ATOMIC_UNITS.toString(), nonce: 0 });
+    assert.equal(replicas[3].submitTransaction(transfer).status, "queued");
+    replicas[3].closeSecurityState();
+    replicas[3] = new ValidatorReplica(layout.validatorDirectories[3]);
+    assert.equal(replicas[3].pendingOperatorEvents, null);
+  } finally {
+    replicas.forEach((replica) => replica.closeSecurityState());
     rmSync(temporary, { recursive: true, force: true });
   }
 });
