@@ -2,9 +2,9 @@
   <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
 </p>
 
-# NIR — a blockchain for verifiable intelligence
+# NIR — the currency of verifiable progress
 
-**The next chapter of AI should be built in public, and everyone should be able to take part.**
+**AI will change the world. NIR is being built so the world can verify that change — and share in it.**
 
 AI is advancing fast, but the world still lacks a shared way to prove that a new capability is real, reproducible, and safe. NIR is an independent blockchain designed to turn verified progress into public evidence and, eventually, a native digital currency that people and AI services can use.
 
