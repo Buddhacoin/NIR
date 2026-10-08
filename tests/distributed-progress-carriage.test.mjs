@@ -50,7 +50,7 @@ async function close(server) {
   await done;
 }
 
-test("operator-only distributed progress claim is recomputed, escrowed, and restored", async () => {
+test("operator-only claim survives failed proposer round and validator replay", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-progress-carriage-"));
   const beacons = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -148,26 +148,40 @@ test("operator-only distributed progress claim is recomputed, escrowed, and rest
       progressRewards: [{ ...proposed.progressRewards[0], amount: "1" }],
     }), /not deterministic|invalid|mismatch/);
     await assert.rejects(() => coordinator.produceBlock({
+      rewardClaims: Array(257).fill(claim),
+    }), /progress reward claims proposal is invalid or too large/);
+    await assert.rejects(() => coordinator.produceBlock({
+      rewardClaims: Array(256).fill(claim),
+    }), /duplicate proof claim/);
+    // This malformed receipt fails in the coordinator before remote voting.
+    await assert.rejects(() => coordinator.produceBlock({
       rewardClaims: [{ ...claim, score: "0" }],
     }));
     assert.equal(coordinator.height, mirror.height);
     assert.deepEqual(replicas.map((replica) => replica.height), Array(4).fill(mirror.height));
+    const offlineIndex = replicas.findIndex((replica) =>
+      replica.address === mirror.expectedProposer(mirror.height + 1));
+    assert.ok(offlineIndex >= 0);
+    await close(servers[offlineIndex]);
     await coordinator.produceBlock({ rewardClaims: [claim] });
     sync();
     assert.equal(coordinator.account(owner.address).atomicBalance, "0");
     assert.equal(coordinator.account(owner.address).resources.pendingProgressReward.amount,
       INITIAL_EPOCH_REWARD.toString());
-    assert.deepEqual(replicas.map((replica) => replica.height), Array(4).fill(mirror.height));
     const rewardBlock = JSON.parse(readFileSync(blockPath(layout.coordinatorDirectory, mirror.height)));
-    await close(servers[0]);
-    replicas[0].closeSecurityState();
-    replicas[0] = new ValidatorReplica(layout.validatorDirectories[0]);
-    assert.equal(replicas[0].height, mirror.height);
-    assert.equal(replicas[0].account(owner.address).atomicBalance, "0");
-    assert.equal(replicas[0].account(owner.address).resources.pendingProgressReward.amount,
+    assert.ok(rewardBlock.round > 0, "an offline elected proposer requires a timeout round");
+    assert.equal(replicas[offlineIndex].height, mirror.height - 1);
+    replicas[offlineIndex].closeSecurityState();
+    replicas[offlineIndex] = new ValidatorReplica(layout.validatorDirectories[offlineIndex]);
+    assert.equal(replicas[offlineIndex].height, mirror.height - 1);
+    assert.equal(replicas[offlineIndex].commit(rewardBlock).status, "committed");
+    assert.equal(replicas[offlineIndex].height, mirror.height);
+    assert.equal(replicas[offlineIndex].account(owner.address).atomicBalance, "0");
+    assert.equal(replicas[offlineIndex].account(owner.address).resources.pendingProgressReward.amount,
       INITIAL_EPOCH_REWARD.toString());
-    assert.deepEqual(replicas[0].commit(rewardBlock), { height: mirror.height, status: "known" });
-    assert.equal(replicas[0].account(owner.address).resources.pendingProgressReward.amount,
+    assert.deepEqual(replicas[offlineIndex].commit(rewardBlock),
+      { height: mirror.height, status: "known" });
+    assert.equal(replicas[offlineIndex].account(owner.address).resources.pendingProgressReward.amount,
       INITIAL_EPOCH_REWARD.toString());
     coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
     assert.equal(coordinator.account(owner.address).atomicBalance, "0");
