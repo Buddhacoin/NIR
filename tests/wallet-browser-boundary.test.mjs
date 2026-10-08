@@ -91,7 +91,9 @@ async function evaluate(send, expression) {
   const result = await send("Runtime.evaluate", {
     awaitPromise: true, expression, returnByValue: true,
   });
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+  }
   return result.result.value;
 }
 
@@ -139,10 +141,18 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     const send = cdp(socket);
     await send("Runtime.enable");
     await send("Page.enable");
-    await evaluate(send, `new Promise(resolve => {
-      const done = () => resolve(document.readyState);
-      if (document.readyState === "complete") done(); else addEventListener("load", done, { once: true });
-    })`);
+    // Chrome can expose the target URL before its first document commits.
+    // The transient about:blank page is also "complete"; wait for our origin.
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      try {
+        const loaded = await evaluate(send,
+          `location.origin === ${JSON.stringify(origin)} && document.readyState === "complete"`);
+        if (loaded) break;
+      } catch { /* Navigation can replace the current execution context. */ }
+      if (Date.now() >= deadline) throw new Error("Chromium wallet document did not load");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
 
     const direct = await evaluate(send, `({
       balancePresent: Boolean(document.querySelector("#balance-value")),
