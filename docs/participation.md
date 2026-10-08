@@ -1,8 +1,21 @@
 # Participation and incentives
 
+## Open wallet testing — no invitation required
+
+Ordinary users should not need a personal invitation, whitelist, or manual
+account approval to test NIR. Today, anyone can inspect the source and report
+problems with the local wallet preview. The self-service path for a shared
+public testnet is **not live yet**; it must include a verified download,
+automatic network configuration, a rate-limited test faucet, a guided first
+transaction and recovery drill, and a simple feedback route before it is
+advertised as ready. See the [open tester plan](open-wallet-testing.md) and
+[wallet guide](wallet.md). Never send anyone a private key, password, or backup.
+
 ## Public developer-testnet operator pilot
 
-NIR is preparing a closed, valueless multi-host rehearsal before any public
+This separate infrastructure rehearsal needs named, independently controlled
+validator, beacon, and archive operators. It is **not** a gate on ordinary
+wallet testers. NIR is preparing a closed, test-only multi-host rehearsal before any public
 developer-testnet endpoint is announced. Expressing interest does not require
 buying NIR, sending funds, exposing a private key or operating a real-value
 service. Test units have no monetary value.
