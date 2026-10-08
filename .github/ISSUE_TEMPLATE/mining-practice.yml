@@ -1,0 +1,64 @@
+name: NIR local mining practice feedback
+description: Report a result or usability problem from the local, valueless mining simulation.
+title: "[Mining practice] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a public manual report. Local practice uses in-memory participants: it does not mine for your wallet, submit to a public network, or credit a reward. Do not include secrets, private model data, personal data, unreviewed logs, or exploit details. Report vulnerabilities privately using SECURITY.md.
+  - type: dropdown
+    id: path
+    attributes:
+      label: What did you run?
+      options:
+        - Wallet → Mining → Start practice
+        - npm run mine:demo
+        - npm run mine:wizard or mine:preflight
+        - Other local test
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NIR source revision or local test app version
+      placeholder: Git commit or version, if known
+  - type: input
+    id: environment
+    attributes:
+      label: Test environment
+      description: macOS version, Apple Silicon/Intel, and Node/Python versions if using Terminal; no private endpoints.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: A simulated block hash is not a reward receipt. Do not submit a wallet address or raw logs.
+    validations:
+      required: true
+  - type: textarea
+    id: safe-evidence
+    attributes:
+      label: Optional safe evidence
+      description: Paste only nonsecret visible error text or a fully redacted screenshot.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed all secrets, private model data, personal data, unreviewed logs, and exploit details.
+          required: true
+        - label: I understand this is local practice with no wallet credit or monetary value.
+          required: true
