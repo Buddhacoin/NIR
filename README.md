@@ -2,6 +2,11 @@
   <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
 </p>
 
+> **Wallet (valueless local preview):** [setup and safety guide](docs/wallet.md) ·
+> [browser-extension files](wallet-ui/) ·
+> [local browser demo](#start-using-the-local-prototype).
+> There is no browser-store listing or ready-to-download desktop installer yet.
+
 # NIR Protocol
 
 NIR is a monetary protocol in which new currency is issued for
