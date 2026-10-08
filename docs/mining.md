@@ -50,6 +50,12 @@ delta cannot be rewarded twice, while semantically equivalent but genuinely
 different representations remain an explicit limitation of the bounded
 canonicalizer and evaluator policy.
 
+Current testnet parameters exhaust the 18.48 million NIR mining pool after
+rewarded epoch 646,799 if every earlier epoch is rewarded. There is no reward
+from epoch 646,800 onward under those conditions, although the nominal
+halving era continues. See [the emission schedule](protocol.md#2-monetary-constants) for
+the calculation; mainnet economics are not yet ratified.
+
 ### 2. Reproduction operator
 
 Provide compatible compute, lock an operator bond, receive randomly assigned

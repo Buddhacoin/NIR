@@ -44,6 +44,15 @@ currency nor advance the reduction counter. Rewarded blocks must be separated
 by at least ten minutes, so faster hardware or a fast block producer cannot
 compress the entire issuance schedule into a short interval.
 
+**Current testnet economics are provisional.** The 12% genesis allocation
+leaves an 18.48 million NIR mining pool. At the current 50 NIR / 210,000
+rewarded-epoch schedule, the first three eras spend 18.375 million NIR; only
+105,000 NIR remains. If every eligible epoch is rewarded, the fourth era pays
+6.25 NIR for just 16,800 epochs, and no reward can be issued from epoch
+646,800 onward, despite the nominal fourth era lasting 210,000 epochs. The
+21 million cap is still enforced. Mainnet must separately ratify the emission
+schedule; this implementation does not promise a long multi-era reward tail.
+
 ## 3. Proof of Intelligence Progress
 
 A submission contains a content-addressed artifact, a frozen baseline, an
@@ -405,6 +414,9 @@ cannot increase the epoch budget. A non-empty rewarded block consumes exactly
 `min(scheduled_epoch_budget, remaining_mining_pool)`; an empty block consumes no
 issuance epoch. The ten-minute consensus interval still applies between
 rewarded blocks, and the 21 million NIR cap truncates the last budget.
+With the current parameters the remaining pool is exactly divisible by the
+fourth-era budget, so exhaustion follows a full reward rather than a partial
+last reward.
 
 Consensus additionally caps evaluator-reported positive gain at
 `100 × novelty_bps`, where `novelty_bps` is recomputed from the state-rooted
