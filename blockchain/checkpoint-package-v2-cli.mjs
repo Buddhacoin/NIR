@@ -141,8 +141,8 @@ try {
     }
     writeExclusive(outputPath, bytes);
     console.log(`Checkpoint v2 package ${packageValue.packageHash} assembled.`);
-  } else if (command === "verify" && args.length === 5) {
-    const [contextPath, packagePath, heightText, sequenceText, nowText] = args;
+  } else if (command === "verify" && args.length === 4) {
+    const [contextPath, packagePath, heightText, sequenceText] = args;
     const config = readContext(contextPath);
     const { commitment, context, genesis } = trustedInputs(config);
     const packageValue = readCanonical(packagePath, "checkpoint v2 package",
@@ -154,7 +154,7 @@ try {
       maxAgeMs: config.maxWitnessAgeMs, maxFutureSkewMs: 5_000,
       minimumCheckpointHeight: nonnegative(heightText, "minimum checkpoint height"),
       minimumSequence: nonnegative(sequenceText, "minimum sequence"),
-      now: nonnegative(nowText, "observation time"),
+      now: Date.now(),
     });
     if (verified.certificateHistoryHead !== commitment.certificateHistoryHead ||
         verified.certificateRecordCount !== commitment.certificateRecordCount) {
@@ -163,7 +163,7 @@ try {
     assertTransactionIngressValidatorSet(verified, genesis.validators, context);
     console.log(`Checkpoint v2 package ${verified.packageHash} verified.`);
   } else {
-    throw new Error("usage: checkpoint:package-v2 assemble <context.json> <finality-proof.json> <sequence> <attestations.json> <new-package.json> | verify <context.json> <package.json> <minimum-height> <minimum-sequence> <now-ms>");
+    throw new Error("usage: checkpoint:package-v2 assemble <context.json> <finality-proof.json> <sequence> <attestations.json> <new-package.json> | verify <context.json> <package.json> <minimum-height> <minimum-sequence>");
   }
 } catch (error) {
   console.error(`Checkpoint v2 package ${command ?? "command"} failed: ${error.message}`);

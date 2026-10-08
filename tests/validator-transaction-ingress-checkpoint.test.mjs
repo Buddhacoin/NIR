@@ -436,7 +436,7 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
     const cli = fileURLToPath(new URL("../blockchain/checkpoint-package-v2-cli.mjs",
       import.meta.url));
     const paths = Object.fromEntries(["context", "genesis", "policy", "proof",
-      "attestations", "package", "wrong-package", "forged-package"].map((name) =>
+      "attestations", "package", "stale-package", "wrong-package", "forged-package"].map((name) =>
       [name, join(values.root, `${name}.json`)]));
     const writeCanonical = (path, value) => writeFileSync(path, `${canonicalJson(value)}\n`);
     writeCanonical(paths.genesis, values.genesis);
@@ -461,8 +461,21 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
     assert.equal(JSON.parse(readFileSync(paths.package)).packageHash, signed.packageHash);
     const verified = spawnSync(process.execPath,
       [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
-        "8", String(Date.now())], { encoding: "utf8" });
+        "8"], { encoding: "utf8" });
     assert.equal(verified.status, 0, verified.stderr);
+    const stale = values.packageFor(8, Date.now() - 60_000);
+    writeCanonical(paths["stale-package"], stale);
+    const staleVerify = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths["stale-package"],
+        String(values.checkpoint.height), "8"], { encoding: "utf8" });
+    assert.equal(staleVerify.status, 1);
+    assert.match(staleVerify.stderr, /witness time policy failed/);
+    const staleWithForgedTime = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths["stale-package"],
+        String(values.checkpoint.height), "8", String(Date.now() - 60_000)],
+      { encoding: "utf8" });
+    assert.equal(staleWithForgedTime.status, 1);
+    assert.match(staleWithForgedTime.stderr, /usage:/);
     const replacements = Array.from({ length: 3 }, generateWallet);
     const fakeWallets = [values.validatorWallets[0], ...replacements];
     const fakeValidators = [values.genesis.validators.find(({ address }) =>
@@ -477,7 +490,7 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
     writeCanonical(paths["forged-package"], forged);
     const forgedVerify = spawnSync(process.execPath,
       [cli, "verify", paths.context, paths["forged-package"],
-        String(values.checkpoint.height), "8", String(Date.now())], { encoding: "utf8" });
+        String(values.checkpoint.height), "8"], { encoding: "utf8" });
     assert.equal(forgedVerify.status, 1);
     assert.match(forgedVerify.stderr, /validator set does not match verified topology/);
     writeCanonical(paths.proof, forgedProof);
@@ -512,7 +525,7 @@ test("offline V2 assemble and verify use anchored full history and write exclusi
       certificateHeadAnchorPath: insideAnchor });
     const misplacedAnchor = spawnSync(process.execPath,
       [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
-        "8", String(Date.now())], { encoding: "utf8" });
+        "8"], { encoding: "utf8" });
     assert.equal(misplacedAnchor.status, 1);
     assert.match(misplacedAnchor.stderr, /outside node state/);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
@@ -584,7 +597,7 @@ test("offline V2 CLI rejects a substitute activation block despite a new-set quo
       import.meta.url));
     const verify = spawnSync(process.execPath,
       [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
-        "8", String(Date.now())], { encoding: "utf8" });
+        "8"], { encoding: "utf8" });
     assert.equal(verify.status, 1);
     assert.match(verify.stderr, /handoff activation requires a full finality chain proof/);
     const assemble = spawnSync(process.execPath,

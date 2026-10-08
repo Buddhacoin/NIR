@@ -92,8 +92,12 @@ one proof only after independently checking its height and finality.
 
 ```bash
 npm run checkpoint:package-v2 -- assemble /absolute/context.json /absolute/finality-proof.json 9 /absolute/attestations.json /absolute/checkpoint-9.json
-npm run checkpoint:package-v2 -- verify /absolute/context.json /absolute/checkpoint-9.json 1 9 <current-epoch-ms>
+npm run checkpoint:package-v2 -- verify /absolute/context.json /absolute/checkpoint-9.json 1 9
 ```
+
+`verify` checks witness freshness against the local machine's current clock;
+it does not accept a caller-supplied historical time. Keep that clock
+synchronized before relying on a fresh result.
 
 Witness signing and durable per-witness anti-equivocation custody are not yet
 provided by this CLI. There is therefore no complete unattended operator
