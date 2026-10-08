@@ -142,6 +142,12 @@ test("operator-only claim survives failed proposer round and validator replay", 
       evaluatorWallets: challenge.committee.map((address) =>
         evaluators.find((wallet) => wallet.address === address)),
     });
+    assert.throws(() => replicas[0].stageOperatorEvents({
+      rewardClaims: [{ ...claim, attestations: [] }],
+    }), /quorum not reached/);
+    assert.deepEqual(replicas[0].stageOperatorEvents({ rewardClaims: [claim] }),
+      { expectedHeight: mirror.height + 1, status: "queued" });
+    assert.equal(replicas[0].buildProposal().progressRewards.length, 1);
     const proposed = mirror.buildBlock({ rewardClaims: [claim], timestamp: Date.now() });
     assert.throws(() => replicas[0].vote({
       ...proposed,
@@ -183,6 +189,7 @@ test("operator-only claim survives failed proposer round and validator replay", 
       { height: mirror.height, status: "known" });
     assert.equal(replicas[offlineIndex].account(owner.address).resources.pendingProgressReward.amount,
       INITIAL_EPOCH_REWARD.toString());
+    assert.ok(replicas.every((replica) => replica.pendingOperatorEvents === null));
     coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
     assert.equal(coordinator.account(owner.address).atomicBalance, "0");
     assert.equal(coordinator.account(owner.address).resources.pendingProgressReward.amount,

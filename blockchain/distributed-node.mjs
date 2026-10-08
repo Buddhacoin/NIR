@@ -1,16 +1,19 @@
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
   blockHash,
@@ -127,6 +130,36 @@ import { installCertificateHistory } from "./certificate-lifecycle-store.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
+const OPERATOR_EVENTS_FILE = "OPERATOR-EVENTS.json";
+const MAX_OPERATOR_EVENTS_BYTES = 64 * 1024;
+
+function normalizeOperatorEvents(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some((key) => ![
+        "epochRandomnessCommits", "epochRandomnessReveals", "progressBeacons", "rewardClaims",
+      ].includes(key))) {
+    throw new Error("operator consensus events are invalid");
+  }
+  const events = {
+    epochRandomnessCommits: value.epochRandomnessCommits ?? [],
+    epochRandomnessReveals: value.epochRandomnessReveals ?? [],
+    progressBeacons: value.progressBeacons ?? [],
+    rewardClaims: value.rewardClaims ?? [],
+  };
+  for (const [name, maximum] of [
+    ["epochRandomnessCommits", 4], ["epochRandomnessReveals", 4],
+    ["progressBeacons", 1], ["rewardClaims", 1],
+  ]) {
+    if (!Array.isArray(events[name]) || events[name].length > maximum) {
+      throw new Error(`operator ${name} count is invalid`);
+    }
+  }
+  if (Object.values(events).every((entries) => entries.length === 0) ||
+      Buffer.byteLength(canonicalJson(events)) > MAX_OPERATOR_EVENTS_BYTES) {
+    throw new Error("operator consensus events are empty or too large");
+  }
+  return events;
+}
 
 function accountResources(chain, address) {
   const pendingUnstake = chain.creditUnstake(address);
@@ -152,7 +185,7 @@ function writeExclusive(path, value, mode = 0o600) {
 
 function writeAtomic(path, value, mode = 0o600) {
   const temporary = `${path}.next`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+  writeFileSync(temporary, `${canonicalJson(value)}\n`, {
     encoding: "utf8", flag: "w", mode,
   });
   chmodSync(temporary, mode);
@@ -161,6 +194,35 @@ function writeAtomic(path, value, mode = 0o600) {
 
 function readJson(path) {
   return parseConsensusJson(readFileSync(path, "utf8"));
+}
+
+function syncDirectory(path) {
+  const descriptor = openSync(dirname(path), "r");
+  try { fsyncSync(descriptor); }
+  finally { closeSync(descriptor); }
+}
+
+function persistOperatorEvents(path, value) {
+  const temporary = `${path}.next`;
+  if (existsSync(temporary)) {
+    const metadata = lstatSync(temporary);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error("operator event temporary file is invalid");
+    }
+    rmSync(temporary);
+  }
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: "utf8", flag: "wx", flush: true, mode: 0o600,
+  });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, path);
+  syncDirectory(path);
+}
+
+function removeOperatorEvents(path) {
+  if (!existsSync(path)) return;
+  rmSync(path);
+  syncDirectory(path);
 }
 
 function members(wallets, prefix) {
@@ -390,6 +452,7 @@ export class ValidatorReplica {
   #authNotBefore;
   #validators;
   #mempool = new TransactionMempool();
+  #operatorEvents = null;
   #admissionReceipts = new Map();
   #peerUrls;
   #peerTransports;
@@ -518,6 +581,27 @@ export class ValidatorReplica {
       }
     }
     this.#pruneInvalidValidatorAdmissions();
+    const operatorEventsPath = join(this.#directory, OPERATOR_EVENTS_FILE);
+    if (existsSync(operatorEventsPath)) {
+      const metadata = lstatSync(operatorEventsPath);
+      if (!metadata.isFile() || metadata.isSymbolicLink() ||
+          metadata.size > MAX_OPERATOR_EVENTS_BYTES + 512) {
+        throw new Error("durable operator consensus events file is invalid");
+      }
+      const stored = readJson(operatorEventsPath);
+      const events = normalizeOperatorEvents(stored.events);
+      if (stored.format !== "nir-operator-events-v1" ||
+          stored.networkId !== this.networkId ||
+          !Number.isSafeInteger(stored.expectedHeight) ||
+          typeof stored.previousHash !== "string" ||
+          Object.keys(stored).sort().join("\0") !==
+            ["events", "expectedHeight", "format", "networkId", "previousHash"].sort().join("\0")) {
+        throw new Error("durable operator consensus events envelope is invalid");
+      }
+      this.#operatorEvents = { ...stored, events };
+      this.#pruneOperatorEvents();
+      if (this.#operatorEvents !== null) this.#validateOperatorEvents(events);
+    }
   }
 
   get address() { return this.#wallet.address; }
@@ -530,6 +614,42 @@ export class ValidatorReplica {
   get tipHash() { return this.#chain.tipHash; }
 
   get mempoolSize() { return this.#mempool.size; }
+  get pendingOperatorEvents() { return this.#operatorEvents === null ? null : structuredClone(this.#operatorEvents); }
+
+  #pruneOperatorEvents() {
+    if (this.#operatorEvents === null) return;
+    if (this.#operatorEvents.expectedHeight === this.height + 1 &&
+        this.#operatorEvents.previousHash === this.tipHash) return;
+    removeOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE));
+    this.#operatorEvents = null;
+  }
+
+  #validateOperatorEvents(events) {
+    const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
+    this.#chain.validateProposal(this.#chain.buildBlock({
+      ...events, transactions: this.#mempool.take(), timestamp,
+    }));
+  }
+
+  /** Local operator-only rehearsal input. No HTTP route or public gossip is attached. */
+  stageOperatorEvents(value) {
+    this.#pruneOperatorEvents();
+    const events = normalizeOperatorEvents(value);
+    if (this.#operatorEvents !== null) {
+      if (canonicalJson(this.#operatorEvents.events) === canonicalJson(events)) {
+        return { expectedHeight: this.#operatorEvents.expectedHeight, status: "known" };
+      }
+      throw new Error("operator consensus events are already staged for this height");
+    }
+    this.#validateOperatorEvents(events);
+    const envelope = {
+      events, expectedHeight: this.height + 1, format: "nir-operator-events-v1",
+      networkId: this.networkId, previousHash: this.tipHash,
+    };
+    persistOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), envelope);
+    this.#operatorEvents = envelope;
+    return { expectedHeight: envelope.expectedHeight, status: "queued" };
+  }
   get peerUrls() { return [...this.#peerUrls]; }
   get peerCount() { return this.#transportView.length; }
   get validatorCount() { return this.#validators.length; }
@@ -1116,10 +1236,12 @@ export class ValidatorReplica {
       throw new Error("disabled local validator cannot propose");
     }
     this.#pruneInvalidValidatorAdmissions();
+    this.#pruneOperatorEvents();
     const transactions = this.#mempool.take();
-    if (transactions.length === 0) throw new Error("validator mempool is empty");
+    const events = this.#operatorEvents?.events ?? null;
+    if (transactions.length === 0 && events === null) throw new Error("validator mempool is empty");
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
-    return this.#chain.buildBlock({ transactions, timestamp });
+    return this.#chain.buildBlock({ ...(events ?? {}), transactions, timestamp });
   }
 
   #pruneInvalidValidatorAdmissions() {
@@ -1253,7 +1375,7 @@ export class ValidatorReplica {
     try {
       const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
       this.#chain.validateProposal(this.#chain.buildBlock({
-        transactions: this.#mempool.take(), timestamp,
+        ...(this.#operatorEvents?.events ?? {}), transactions: this.#mempool.take(), timestamp,
       }));
       if (isProtectedBeaconAdmission(transaction)) {
         assertAdmissionReceiptGenerationWindow({
@@ -1533,6 +1655,7 @@ export class ValidatorReplica {
     this.#chain = verified;
     this.#refreshTransportView();
     this.#mempool.remove(block.transactions);
+    this.#pruneOperatorEvents();
     if (recovery) {
       for (const id of this.#admissionReceipts.keys()) {
         const pending = this.#mempool.values().find((entry) => transactionId(entry) === id);
