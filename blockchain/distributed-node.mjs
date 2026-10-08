@@ -34,6 +34,7 @@ import {
 import {
   ATOMIC_UNITS,
   MAX_CONSENSUS_ROUND,
+  MAX_PROGRESS_REWARDS_PER_BLOCK,
   MAX_TRANSACTIONS_PER_BLOCK,
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
@@ -196,6 +197,8 @@ export function initializeDistributedDevnet(
   directory,
   {
     beaconWallets = null,
+    evaluatorWallets = null,
+    capabilityReferences = null,
     networkId = "nir-distributed-devnet",
     firstValidatorPort = 8791,
     tlsCertificateSha256 = null,
@@ -209,6 +212,15 @@ export function initializeDistributedDevnet(
         typeof wallet?.privateKey !== "string"))) {
     throw new Error("development beacon wallet fixture is invalid");
   }
+  if (evaluatorWallets !== null && (!Array.isArray(evaluatorWallets) || evaluatorWallets.length !== 4 ||
+      evaluatorWallets.some((wallet) => typeof wallet?.publicKey !== "string" ||
+        typeof wallet?.privateKey !== "string"))) {
+    throw new Error("development evaluator wallet fixture is invalid");
+  }
+  if (capabilityReferences !== null && (!Array.isArray(capabilityReferences) ||
+      capabilityReferences.length !== 1)) {
+    throw new Error("development capability reference fixture is invalid");
+  }
   const root = resolve(directory);
   const coordinatorDirectory = join(root, "coordinator");
   mkdirSync(root, { mode: 0o700 });
@@ -216,7 +228,7 @@ export function initializeDistributedDevnet(
   mkdirSync(join(coordinatorDirectory, "blocks"), { mode: 0o700 });
   const validators = Array.from({ length: 4 }, generateWallet);
   const validatorTransports = Array.from({ length: 4 }, generateWallet);
-  const evaluators = Array.from({ length: 4 }, generateWallet);
+  const evaluators = evaluatorWallets ?? Array.from({ length: 4 }, generateWallet);
   const beacons = beaconWallets ?? Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const coordinator = generateWallet();
@@ -236,7 +248,7 @@ export function initializeDistributedDevnet(
   }, validators);
   const genesis = {
     beaconAuthorities: members(beacons, "beacon"),
-    capabilityReferences: [referenceCapability()],
+    capabilityReferences: capabilityReferences ?? [referenceCapability()],
     evaluators: members(evaluators, "evaluator"),
     genesisTimestamp: 0,
     networkId,
@@ -341,6 +353,9 @@ export function invalidValidatorAdmissionsForNextBlock(transactions, {
 }
 
 function proposalFields(block) {
+  if (!Array.isArray(block.progressRewards)) {
+    throw new Error("proposal progress rewards are invalid");
+  }
   return {
     epochRandomnessCommits: block.epochRandomnessCommits,
     epochRandomnessReveals: block.epochRandomnessReveals,
@@ -352,7 +367,8 @@ function proposalFields(block) {
     randomnessReveals: block.randomnessReveals,
     round: block.round,
     roundCertificate: block.roundCertificate,
-    rewardClaims: [],
+    // The amount is a consensus-computed allocation, never an input claim.
+    rewardClaims: block.progressRewards.map(({ amount, ...claim }) => claim),
     safetyClaims: [],
     stateRoot: block.stateRoot,
     timestamp: block.timestamp,
@@ -1850,13 +1866,31 @@ export class DistributedCoordinator {
     return added;
   }
 
-  async produceBlock({ protocolUpgrade = null } = {}) {
+  async produceBlock({
+    protocolUpgrade = null,
+    rewardClaims = [],
+    epochRandomnessCommits = [],
+    epochRandomnessReveals = [],
+    progressBeacons = [],
+  } = {}) {
     if (protocolUpgrade !== null && (!protocolUpgrade || typeof protocolUpgrade !== "object" ||
         Array.isArray(protocolUpgrade))) throw new Error("protocol upgrade proposal is invalid");
+    for (const [label, events, limit] of [
+      ["progress reward claims", rewardClaims, MAX_PROGRESS_REWARDS_PER_BLOCK],
+      ["epoch randomness commits", epochRandomnessCommits, 4],
+      ["epoch randomness reveals", epochRandomnessReveals, 4],
+      ["progress beacons", progressBeacons, MAX_PROGRESS_REWARDS_PER_BLOCK],
+    ]) {
+      if (!Array.isArray(events) || events.length > limit) {
+        throw new Error(`${label} proposal is invalid or too large`);
+      }
+    }
     await this.#recoverPeerTransactions();
     this.#pruneInvalidValidatorAdmissions({ protocolUpgrade });
     const transactions = this.#mempool.take();
-    if (transactions.length === 0) throw new Error("mempool is empty");
+    if (transactions.length === 0 && rewardClaims.length === 0 &&
+        epochRandomnessCommits.length === 0 && epochRandomnessReveals.length === 0 &&
+        progressBeacons.length === 0) throw new Error("mempool is empty");
     const syncResults = await boundedAllSettled(this.#peers, (_, index) =>
       this.#synchronizePeer(index));
     const available = syncResults.map((result, index) => result.status === "fulfilled" ? index : -1)
@@ -1868,7 +1902,8 @@ export class DistributedCoordinator {
     while (round <= MAX_CONSENSUS_ROUND) {
       proposal = this.#chain.buildBlock({
         transactions, timestamp: proposal?.timestamp ?? Date.now(), round, roundCertificate,
-        protocolUpgrade,
+        protocolUpgrade, rewardClaims, epochRandomnessCommits, epochRandomnessReveals,
+        progressBeacons,
       });
       const results = await boundedAllSettled(available, (index) =>
         this.#request(index, "/v1/proposals", proposal));
