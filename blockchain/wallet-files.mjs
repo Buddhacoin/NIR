@@ -224,12 +224,13 @@ function readVault(path) {
   return readPrivateJson(path, "wallet vault");
 }
 
-export function createWalletFile({ path, password, label = "NIR wallet", _beforeActivate }) {
+export function createWalletFile({ path, password, label = "NIR wallet", personalWallet = false,
+  _beforeActivate }) {
   const target = resolve(path);
   const wallet = generateWallet();
   let vault;
   try {
-    vault = encryptWallet(wallet, password, { label });
+    vault = encryptWallet(wallet, password, { label, personalWallet });
   } finally {
     wallet.privateKey = "";
   }
@@ -324,6 +325,113 @@ export function createVerifiedWalletBackup({
       throw new Error("wallet backup verification failed");
     }
     return { address: wallet.address, generation, networkId, path: target, verified: true };
+  } catch (error) {
+    if (created !== null) {
+      try { removePrivateActivation(created); }
+      catch (cleanupError) { error.activationCleanupError = cleanupError.message; }
+    }
+    throw error;
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+function canonicalRecoveryCode(value) {
+  if (typeof value !== "string" || !/^[0-9A-Fa-f -]{40,64}$/.test(value)) {
+    throw new Error("recovery code is invalid");
+  }
+  const compact = value.replace(/[ -]/g, "").toUpperCase();
+  if (!/^[0-9A-F]{40}$/.test(compact)) throw new Error("recovery code is invalid");
+  return compact;
+}
+
+export function createRecoveryCodeWalletBackup({
+  sourcePath, targetPath, password, recoveryCode, networkId, generation,
+}) {
+  if (!NETWORK_ID.test(networkId ?? "") || !Number.isSafeInteger(generation) || generation < 1) {
+    throw new Error("wallet recovery backup requires an exact network and positive generation");
+  }
+  const code = canonicalRecoveryCode(recoveryCode);
+  if (resolve(sourcePath) === resolve(targetPath)) throw new Error("backup must use a new file");
+  const wallet = decryptWallet(readVault(sourcePath), password);
+  let created = null;
+  try {
+    const recoveryVault = encryptWallet(wallet, code, { label: "NIR recovery-only vault" });
+    const backup = {
+      address: wallet.address,
+      format: "nir-wallet-recovery-backup-v2",
+      generation,
+      networkId,
+      protection: "independent-recovery-code",
+      vault: recoveryVault,
+      vaultHash: hashObject(recoveryVault, "WALLET_RECOVERY_VAULT"),
+      version: 2,
+    };
+    writePrivateJsonExclusive(targetPath, backup);
+    created = capturePrivateActivation(targetPath);
+    const copied = readPrivateJson(targetPath, "wallet recovery backup");
+    if (hashObject(copied.vault, "WALLET_RECOVERY_VAULT") !== copied.vaultHash) {
+      throw new Error("wallet recovery backup verification failed");
+    }
+    return { address: wallet.address, generation, networkId, path: resolve(targetPath), verified: true };
+  } catch (error) {
+    if (created !== null) {
+      try { removePrivateActivation(created); }
+      catch (cleanupError) { error.activationCleanupError = cleanupError.message; }
+    }
+    throw error;
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function walletRecoveryBackupPublicInfo(path) {
+  const backup = readPrivateJson(path, "wallet recovery backup");
+  if (!exactKeys(backup, ["address", "format", "generation", "networkId", "protection",
+    "vault", "vaultHash", "version"]) ||
+      backup.format !== "nir-wallet-recovery-backup-v2" || backup.version !== 2 ||
+      backup.protection !== "independent-recovery-code" ||
+      !Number.isSafeInteger(backup.generation) || backup.generation < 1 ||
+      !NETWORK_ID.test(backup.networkId ?? "") ||
+      hashObject(backup.vault, "WALLET_RECOVERY_VAULT") !== backup.vaultHash ||
+      addressFromPublicKey(backup.vault?.publicKey) !== backup.address) {
+    throw new Error("wallet recovery backup is invalid");
+  }
+  return { address: backup.address, generation: backup.generation,
+    networkId: backup.networkId };
+}
+
+export function restoreRecoveryCodeWalletBackup({
+  sourcePath, targetPath, recoveryCode, newPassword, networkId,
+  expectedAddress, minimumGeneration = 1,
+}) {
+  if (!NETWORK_ID.test(networkId ?? "") || !/^nir1[0-9a-f]{64}$/.test(expectedAddress ?? "") ||
+      !Number.isSafeInteger(minimumGeneration) || minimumGeneration < 1) {
+    throw new Error("wallet recovery requires network, address, and generation anchors");
+  }
+  const code = canonicalRecoveryCode(recoveryCode);
+  const backup = readPrivateJson(sourcePath, "wallet recovery backup");
+  if (!exactKeys(backup, ["address", "format", "generation", "networkId", "protection",
+    "vault", "vaultHash", "version"]) ||
+      backup.format !== "nir-wallet-recovery-backup-v2" || backup.version !== 2 ||
+      backup.protection !== "independent-recovery-code" ||
+      backup.networkId !== networkId || backup.address !== expectedAddress ||
+      !Number.isSafeInteger(backup.generation) || backup.generation < minimumGeneration ||
+      hashObject(backup.vault, "WALLET_RECOVERY_VAULT") !== backup.vaultHash) {
+    throw new Error("wallet recovery backup context, generation, or integrity is invalid");
+  }
+  const wallet = decryptWallet(backup.vault, code);
+  let created = null;
+  try {
+    if (wallet.address !== expectedAddress) throw new Error("wallet recovery address is invalid");
+    const newVault = encryptWallet(wallet, newPassword, {
+      label: "NIR test wallet", personalWallet: true,
+    });
+    writePrivateJsonExclusive(targetPath, newVault);
+    created = capturePrivateActivation(targetPath);
+    const verified = verifyWalletFile({ path: targetPath, password: newPassword });
+    if (verified.address !== expectedAddress) throw new Error("wallet recovery verification failed");
+    return { ...verified, generation: backup.generation, networkId, path: resolve(targetPath) };
   } catch (error) {
     if (created !== null) {
       try { removePrivateActivation(created); }
