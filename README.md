@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
+</p>
+
 # NIR Protocol
 
 NIR is a monetary protocol in which new currency is issued for
