@@ -44,33 +44,44 @@ export function createWalletWithRecoveryDrill({ walletPath, backupPath, networkI
   // Check both destinations before creating the wallet. The file layer still
   // performs exclusive, no-follow writes to defend against races.
   const created = createWalletFile({ path: wallet, password, label: "NIR test wallet", personalWallet });
-  const verified = verifyWalletFile({ path: wallet, password });
-  if (created.address !== verified.address) throw new Error("created wallet identity changed");
-  const copy = recoveryCode === undefined ? createVerifiedWalletBackup({
-    sourcePath: wallet, targetPath: backup, password, networkId, generation: 1,
-  }) : createRecoveryCodeWalletBackup({
-    sourcePath: wallet, targetPath: backup, password, recoveryCode, networkId, generation: 1,
-  });
-  const drillDirectory = mkdtempSync(join(tmpdir(), "nir-wallet-recovery-drill-"));
   try {
-    const recovered = recoveryCode === undefined ? restoreVerifiedWalletBackup({
-      sourcePath: backup, targetPath: join(drillDirectory, "recovered.nirvault.json"),
-      password, networkId, expectedAddress: created.address, minimumGeneration: 1,
-    }) : restoreRecoveryCodeWalletBackup({
-      sourcePath: backup, targetPath: join(drillDirectory, "recovered.nirvault.json"),
-      recoveryCode, newPassword: randomBytes(20).toString("hex"), networkId,
-      expectedAddress: created.address, minimumGeneration: 1,
+    const verified = verifyWalletFile({ path: wallet, password });
+    if (created.address !== verified.address) throw new Error("created wallet identity changed");
+    const copy = recoveryCode === undefined ? createVerifiedWalletBackup({
+      sourcePath: wallet, targetPath: backup, password, networkId, generation: 1,
+    }) : createRecoveryCodeWalletBackup({
+      sourcePath: wallet, targetPath: backup, password, recoveryCode, networkId, generation: 1,
     });
-    if (recovered.address !== created.address || copy.address !== created.address) {
-      throw new Error("recovery drill address differs from the created wallet");
+    const drillDirectory = mkdtempSync(join(tmpdir(), "nir-wallet-recovery-drill-"));
+    try {
+      const recovered = recoveryCode === undefined ? restoreVerifiedWalletBackup({
+        sourcePath: backup, targetPath: join(drillDirectory, "recovered.nirvault.json"),
+        password, networkId, expectedAddress: created.address, minimumGeneration: 1,
+      }) : restoreRecoveryCodeWalletBackup({
+        sourcePath: backup, targetPath: join(drillDirectory, "recovered.nirvault.json"),
+        recoveryCode, newPassword: randomBytes(20).toString("hex"), networkId,
+        expectedAddress: created.address, minimumGeneration: 1,
+      });
+      if (recovered.address !== created.address || copy.address !== created.address) {
+        throw new Error("recovery drill address differs from the created wallet");
+      }
+    } finally {
+      rmSync(drillDirectory, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(drillDirectory, { recursive: true, force: true });
+    return { address: created.address, backupPath: backup, networkId, walletPath: wallet,
+      backupGeneration: 1, recoveryDrillPassed: true,
+      ...(recoveryCode === undefined ? {} : { recoveryCode }),
+    };
+  } catch (cause) {
+    // The primary file exists. Never delete the only copy of the new private key
+    // merely because backup or drill failed; expose a precise recovery path.
+    const error = new Error(`Кошелёк создан, но резервная копия не проверена. Адрес: ${created.address}. Файл: ${wallet}. Не удаляйте файл. Откройте этот адрес с тем же паролем и создайте новую резервную копию и код. Не используйте адрес для средств до проверки копии.`, { cause });
+    error.code = "NIR_WALLET_RECOVERY_INCOMPLETE";
+    error.address = created.address;
+    error.walletPath = wallet;
+    error.backupPath = backup;
+    throw error;
   }
-  return { address: created.address, backupPath: backup, networkId, walletPath: wallet,
-    backupGeneration: 1, recoveryDrillPassed: true,
-    ...(recoveryCode === undefined ? {} : { recoveryCode }),
-  };
 }
 
 function privateDirectory(path) {
@@ -100,12 +111,10 @@ export function listLocalTestWallets(storageRoot) {
     });
   candidates.sort((left, right) => right.modifiedAt - left.modifiedAt ||
     left.path.localeCompare(right.path));
-  const seen = new Set();
-  return candidates.filter(({ address }) => {
-    if (seen.has(address)) return false;
-    seen.add(address);
-    return true;
-  }).map(({ address, path }) => ({ address, path }));
+  // A restored copy can use a different password for the same address. Keep
+  // each private file selectable; address de-duplication could hide the only
+  // copy whose password its owner still knows.
+  return candidates.map(({ address, path }) => ({ address, path }));
 }
 
 export function openLocalTestWallet({ wallets, path, password }) {

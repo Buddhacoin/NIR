@@ -24,6 +24,12 @@ offline storage and keep its recovery code separately. Creating a new backup
 and code does **not** revoke older pairs: anyone with an old backup and its code
 can still restore the same private key. If such a pair may be compromised, only
 a new key/address and transfer of any future real-value funds can replace it.
+If backup creation or its recovery drill fails after the wallet file exists, the
+library reports a partial-creation error with the public address and exact wallet
+file path. Keep that file, open it with the same password, and create and verify
+a new backup before using the address. Restoring into a new file with a new
+password keeps both copies selectable; a shared address does not make their
+passwords interchangeable.
 
 ```bash
 npm run wallet:create -- /absolute/path/personal.nirvault.json
