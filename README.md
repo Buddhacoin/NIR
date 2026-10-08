@@ -21,6 +21,8 @@ What makes the design different:
 
 **Join the beginning:** explore the [working code](#what-is-implemented-now), try the [local network](#start-using-the-local-prototype), [test the wallet without an invitation](docs/open-wallet-testing.md), [contribute](CONTRIBUTING.md) a challenge or security finding, or help prepare the first independently operated network. The history of NIR is being written now.
 
+**Where are we today?** The [public roadmap](docs/roadmap.md) separates working local code from the next launch gates and future features, including user-created tokens. Its [mining status](docs/roadmap.md#куда-сейчас-могут-майнить-тестеры) explains why no tester can earn NIR into a public wallet yet.
+
 ## NIR Wallet: download and installation
 
 | Device | Available now? |
