@@ -56,6 +56,40 @@ const MAX_SIMULATIONS = 128;
 const SIMULATION_LIFETIME_MS = 120_000;
 const SIGN_CONFIRMATION_TIMEOUT_MS = 120_000;
 const SIGN_RESULT_LIFETIME_MS = 180_000;
+const SAFE_CLIENT_ERRORS = new Set([
+  "bridge request is too large", "pairing code is invalid",
+  "pairing is unavailable; restart the bridge",
+  "another pairing request is already in progress",
+  "pairing requests require application/json",
+  "selected account is invalid", "account selection requires application/json",
+  "account creation requires application/json", "account creation body is invalid",
+  "new wallet account could not be created; check the local application",
+  "new wallet account is invalid or duplicated",
+  "new wallet account could not be verified; check the local application",
+  "wallet session ended while the account was created",
+  "bridge resource intent is invalid", "bridge signing intent is invalid",
+  "bridge payment request intent is invalid",
+  "simulation requires a verified account proof and network checkpoint",
+  "a fresh verified simulation is required before signing",
+  "simulation reference is invalid", "simulation is missing or expired; re-simulate before signing",
+  "signing intent differs from the reviewed simulation",
+  "verified account state changed; re-simulate before signing",
+  "account proof has no matching verified finality chain",
+  "account proof does not match the validator activation block",
+  "account history page range is incomplete",
+  "account history is incomplete or reordered",
+  "account proof trust anchor does not match",
+  "signing was rejected by the user",
+  "bridge session ended before signing authorization completed",
+  "wallet account changed during the request",
+]);
+
+function publicBridgeError(error) {
+  // Native filesystem and cryptography errors may contain absolute paths or
+  // private context. Only hand-authored, fixed bridge messages cross HTTP.
+  return SAFE_CLIENT_ERRORS.has(error?.message)
+    ? error.message : "wallet request could not be completed; retry or check the local application";
+}
 
 function send(response, status, value, origin) {
   const body = JSON.stringify(value);
@@ -485,7 +519,7 @@ export function createWalletBridgeServer({
         sessionActive = true;
         return send(response, 200, { sessionToken }, origin);
       } catch (error) {
-        return send(response, 400, { error: error.message }, origin);
+        return send(response, 400, { error: publicBridgeError(error) }, origin);
       } finally {
         pairingPending = false;
       }
@@ -511,6 +545,7 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/accounts") {
         return send(response, 200, {
           activeId: activeAccountId,
+          canCreate: Boolean(createAccount),
           accounts: [...accountEntries].map(([id, entry], index) => ({
             id, address: entry.address, label: `Кошелёк ${index + 1}`,
           })),
@@ -550,16 +585,24 @@ export function createWalletBridgeServer({
         accountActionPending = true;
         const creatingGeneration = sessionGeneration;
         try {
-          const created = await createAccount();
+          let created;
+          try { created = await createAccount(); }
+          catch { throw new Error("new wallet account could not be created; check the local application"); }
           if (!sessionActive || sessionGeneration !== creatingGeneration) {
             throw new Error("wallet session ended while the account was created");
           }
-          if (!ADDRESS.test(created?.address ?? "") || typeof created?.path !== "string" ||
-              accountPaths.has(created.path) ||
-              walletPublicInfo(created.path).address !== created.address) {
+          let valid = false;
+          try {
+            valid = ADDRESS.test(created?.address ?? "") && typeof created?.path === "string" &&
+              !accountPaths.has(created.path) &&
+              walletPublicInfo(created.path).address === created.address;
+          } catch { /* Never send a native file path from verification errors to the browser. */ }
+          if (!valid) {
             throw new Error("new wallet account is invalid or duplicated");
           }
-          const id = addAccount(created);
+          let id;
+          try { id = addAccount(created); }
+          catch { throw new Error("new wallet account could not be verified; check the local application"); }
           activateAccount(id);
           return send(response, 200, { id, address: walletAddress }, origin);
         } finally { accountActionPending = false; }
@@ -976,7 +1019,7 @@ export function createWalletBridgeServer({
           return send(response, 200, value, origin);
         } catch (error) {
           resultEntry.status = 400;
-          resultEntry.value = { error: error.message };
+          resultEntry.value = { error: publicBridgeError(error) };
           resultEntry.completedAt = Date.now();
           throw error;
         } finally {
@@ -985,7 +1028,7 @@ export function createWalletBridgeServer({
       }
       return send(response, 404, { error: "not found" }, origin);
     } catch (error) {
-      return send(response, 400, { error: error.message }, origin);
+      return send(response, 400, { error: publicBridgeError(error) }, origin);
     }
   });
   server.maxConnections = 8;

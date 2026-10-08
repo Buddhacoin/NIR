@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { randomBytes, randomInt } from "node:crypto";
 import { lstatSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 
 import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
+import { listLocalTestWallets } from "./wallet-onboarding.mjs";
 import { MAX_HANDOFF_STORE_BYTES } from "./validator-handoff-store.mjs";
 import { NirChain } from "./chain.mjs";
 import { createProductionRuntimePolicyGuard,
@@ -110,6 +112,14 @@ try {
     throw new Error("usage: wallet:bridge <vault> [port] [exact-browser-origin] [genesis.json] [validator-handoffs.json]");
   }
   const wallet = walletPublicInfo(vaultPath);
+  // Only the local rehearsal bridge discovers sibling vaults. Production keeps
+  // its explicit, release-bound single-vault selection until reviewed separately.
+  const selectedVaultPath = resolve(vaultPath);
+  const localAccounts = !productionMode && basename(dirname(selectedVaultPath)) === "Wallets"
+    ? listLocalTestWallets(dirname(dirname(selectedVaultPath))) : null;
+  if (localAccounts && !localAccounts.some(({ path }) => path === selectedVaultPath)) {
+    throw new Error("selected wallet is not in the private local account list");
+  }
   const genesis = genesisPath ? JSON.parse(readFileSync(genesisPath, "utf8")) : null;
   if (genesis && (typeof genesis.networkId !== "string" ||
       !Array.isArray(genesis.validators) || genesis.validators.length < 4)) {
@@ -127,6 +137,7 @@ try {
   const genesisChain = genesis ? new NirChain(genesis) : null;
   const genesisBlock = genesisChain?.blocks()[0] ?? null;
   const server = createWalletBridgeServer({
+    ...(localAccounts?.length ? { accounts: localAccounts } : {}),
     origin,
     pairingCode,
     sessionToken,
@@ -145,7 +156,7 @@ try {
     ...(genesis ? { trustCheckpointPath: `${vaultPath}.trust.json` } : {}),
     ...(genesis ? { headerHistoryPath: `${vaultPath}.headers.json` } : {}),
     ...(genesis ? { trustHistoryPath } : {}),
-    vaultPath,
+    vaultPath: productionMode ? vaultPath : selectedVaultPath,
     authorize: async (intent, { signal } = {}) => {
       if (runtimePolicyGuard !== null) runtimePolicyGuard.verifyBeforeSensitiveAction();
       console.error("\nNIR signing request");

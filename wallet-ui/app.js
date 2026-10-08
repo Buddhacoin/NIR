@@ -675,12 +675,23 @@ async function verifyAssetState(assetId, holder) {
   if (!ASSET_ID.test(assetId ?? "") || assetId === "0".repeat(64) || !NIR_ADDRESS.test(holder ?? "")) {
     throw new Error("Asset ID или адрес holder неверен.");
   }
+  const epoch = accountEpoch;
+  const address = walletInfo?.address;
+  const assertCurrent = () => {
+    if (epoch !== accountEpoch || walletInfo?.address !== address) {
+      throw new Error("Кошелёк изменился во время проверки актива.");
+    }
+  };
   const response = await fetch(nodeUrl(`/v1/assets/${encodeURIComponent(assetId)}/proof?holder=${encodeURIComponent(holder)}`),
     { cache: "no-store" });
+  assertCurrent();
   if (!response.ok) throw new Error("Узел не предоставил кворумное доказательство актива.");
+  const proof = await response.json();
+  assertCurrent();
   const verified = await bridgeRequest("/v1/verify-asset-proof", { method: "POST", body: JSON.stringify({
-    assetId, holder, minimumHeight: networkInfo.height, proof: await response.json(),
+    assetId, holder, minimumHeight: networkInfo.height, proof,
   }) });
+  assertCurrent();
   const statement = checkedAssetStatement(verified, assetId, holder);
   verifiedAssetStatements.set(`${assetId}:${holder}`, statement);
   if (holder === walletInfo.address && statement.asset !== null) knownAssetIds.add(assetId);
@@ -708,6 +719,9 @@ function renderVerifiedAssets(statements) {
 }
 
 async function refreshAssets() {
+  const epoch = accountEpoch;
+  const address = walletInfo?.address;
+  const isCurrent = () => epoch === accountEpoch && walletInfo?.address === address;
   const list = document.querySelector("#asset-list");
   const checkpoint = document.querySelector("#asset-checkpoint");
   const loading = document.createElement("p"); loading.className = "contact-empty";
@@ -716,10 +730,14 @@ async function refreshAssets() {
   assetsStatus.textContent = "";
   try {
     const account = await readAccount();
+    if (!isCurrent()) return;
     if (!account.proofVerified) throw new Error("Список недоступен: account state не подтверждён кворумом.");
     for (const id of assetIdsFromVerifiedHistory(account)) knownAssetIds.add(id);
     const statements = [];
-    for (const assetId of [...knownAssetIds].sort()) statements.push(await verifyAssetState(assetId, walletInfo.address));
+    for (const assetId of [...knownAssetIds].sort()) {
+      statements.push(await verifyAssetState(assetId, address));
+      if (!isCurrent()) return;
+    }
     renderVerifiedAssets(statements);
     const state = statements[0];
     checkpoint.textContent = state
@@ -727,6 +745,7 @@ async function refreshAssets() {
       : `Проверено · блок ${account.proofHeight} · root ${account.proofStateRoot.slice(0, 16)}… · ${networkInfo.networkId} · доказанных asset ID не обнаружено`;
     checkpoint.dataset.state = "verified"; checkpoint.dataset.height = String(state?.height ?? account.proofHeight);
   } catch (error) {
+    if (!isCurrent()) return;
     const unavailable = document.createElement("p"); unavailable.className = "contact-empty";
     unavailable.textContent = "Доказанный список временно недоступен."; list.replaceChildren(unavailable);
     checkpoint.textContent = networkInfo ? `Устарело или ошибка доказательства · текущий блок ${networkInfo.height}` : "Checkpoint недоступен";
@@ -968,7 +987,7 @@ function openBridgePanel() {
 }
 
 async function renderAccounts() {
-  const { accounts, activeId } = await bridgeRequest("/v1/accounts");
+  const { accounts, activeId, canCreate } = await bridgeRequest("/v1/accounts");
   if (!Array.isArray(accounts) || !accounts.some((account) => account.id === activeId)) {
     throw new Error("Не удалось проверить список кошельков.");
   }
@@ -991,6 +1010,7 @@ async function renderAccounts() {
   }
   accountOpen.textContent = `${accounts.find((account) => account.id === activeId).label} ▾`;
   accountOpen.dataset.activeId = activeId;
+  document.querySelector("#add-account").hidden = canCreate !== true;
 }
 
 async function completeAccountChange() {
