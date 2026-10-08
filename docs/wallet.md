@@ -255,3 +255,33 @@ connection have been independently audited.
 The interface includes persistent dark and light themes. The orange circular
 `N` is the single wallet, extension, application, and listing icon at every
 size, preventing competing visual identities.
+
+### macOS local rehearsal app (source build, not a public installer)
+
+On a Mac with Node.js 26 and Apple Command Line Tools, developers can build a
+local app from a reviewed checkout:
+
+```bash
+mkdir -p dist
+npm run wallet:macos-build -- "$PWD/dist/NIR Wallet.app"
+open "$PWD/dist/NIR Wallet.app"
+```
+
+After that one-time source build, the native setup window creates a personal
+encrypted vault, opens an existing vault, or restores one from a backup and
+recovery code without asking the user to use Terminal. New keys and backups
+remain in `~/Library/Application Support/NIR Wallet/`, outside the app bundle.
+The app starts a loopback-only browser interface and signing bridge. Clicking
+**Connect** brings a native eight-digit pairing code to the front; the code is
+never returned to the browser. Multiple vault files, including restored copies
+of one address, remain distinct selectable entries. Creating another vault in
+the browser opens the same native setup flow. The password stays in the native
+process and local child pipe; it is not sent to the browser.
+
+The builder packages only an explicit reviewed file list and refuses
+secret-named files in the source tree. It refuses to overwrite an app. This
+local rehearsal uses an ad-hoc signature and an external Node.js installation;
+it is **not** notarized, downloadable, a public installer, a mainnet wallet, or
+a source of real-value NIR. It intentionally excludes local auto-update,
+cloud sync and mining rewards. Back up the recovery file to a separate medium
+and keep its recovery code separately; a copy on the same Mac is not enough.

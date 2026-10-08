@@ -1,0 +1,7 @@
+{
+  "minimumAgreement": 1,
+  "submissionOrigin": "http://127.0.0.1:8787",
+  "nodes": [
+    "http://127.0.0.1:8787"
+  ]
+}

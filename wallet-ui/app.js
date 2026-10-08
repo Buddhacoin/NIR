@@ -984,6 +984,9 @@ function openBridgePanel() {
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
   bridgePanel.showModal();
+  // Native Mac app brings its pairing code above the browser. The standalone
+  // CLI has no such endpoint; its terminal code remains the fallback.
+  void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
 }
 
 async function renderAccounts() {
