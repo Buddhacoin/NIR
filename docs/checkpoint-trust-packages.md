@@ -54,6 +54,59 @@ v2 provides a witness attestation associated with a finalized checkpoint,
 not an on-chain inclusion proof. Witness operation and history freshness remain
 independent trust requirements.
 
+### Public-only v2 package CLI for a valueless rehearsal
+
+`npm run checkpoint:package-v2` has `assemble` and `verify` commands. It does
+not create witness keys or signatures. Assemble requires a threshold of
+separately supplied, already signed v2 attestations. It recomputes the complete
+certificate history head and count from the lifecycle store under an external
+anchor, checks the pinned genesis and policy, verifies the finality proof and
+witness quorum, and requires the proof's complete validator set to match the
+genesis set or the verified handoff active at its checkpoint height. A
+substitute signer quorum cannot supply its own validator topology. Assemble
+writes a new mode-`0600` package without overwriting a
+previous file. Verify repeats these checks against the current anchored
+history. Inputs must be bounded canonical JSON with one trailing newline;
+symlinks and group-writable public inputs are refused.
+
+At a verified handoff's exact activation height, both commands fail closed.
+The standalone v2 package proof cannot establish the handoff-pinned activation
+block hash and state root together with the required old- and new-set finality
+quorums. Use a checkpoint after the activation height for this rehearsal;
+accepting the activation block itself needs a verified handoff-aware finality
+chain proof.
+
+The canonical operator context has exactly these fields:
+`format: "nir-checkpoint-v2-operator-context-v1"`, `version: 1`,
+`genesisPath`, `policyPath`, `certificateDirectory`,
+`certificateHeadAnchorPath`, `expectedGenesisHash`, `expectedNetworkId`,
+`expectedPolicyId`, and `maxWitnessAgeMs` (1–120000). Paths must be absolute.
+The expected hashes and policy ID must be reviewed and retained outside the
+context itself. The anchor must be outside the certificate state directory.
+The proof file contains one exact v5 finality proof; the attestations file
+contains a JSON array of signed v2 attestations for that proof, sequence, and
+certificate commitment. For a fixed validator set rehearsal, a local read
+node can export a proof in the `proofs` array from
+`GET /v1/finality-proofs?fromHeight=<height-minus-one>&limit=1`; select that
+one proof only after independently checking its height and finality.
+
+```bash
+npm run checkpoint:package-v2 -- assemble /absolute/context.json /absolute/finality-proof.json 9 /absolute/attestations.json /absolute/checkpoint-9.json
+npm run checkpoint:package-v2 -- verify /absolute/context.json /absolute/checkpoint-9.json 1 9
+```
+
+`verify` checks witness freshness against the local machine's current clock;
+it does not accept a caller-supplied historical time. Keep that clock
+synchronized before relying on a fresh result.
+
+Witness signing and durable per-witness anti-equivocation custody are not yet
+provided by this CLI. There is therefore no complete unattended operator
+command sequence to refresh v2 packages. Test fixtures with multiple keys in
+one process validate the format but do not establish independent witness
+operators. Distinct operators must review the pinned genesis, policy, proof,
+and certificate head independently and keep their vaults on separate hosts or
+under separate custody before their signatures can support a deployment claim.
+
 ## Replay and equivocation
 
 Every verifier supplies both `minimumSequence` and `minimumCheckpointHeight`.

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync,
+  writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
 import { certificateHistoryHead, createCertificateRecord,
@@ -17,7 +20,7 @@ import { assembleCheckpointTrustPackageV2, createCheckpointWitnessAttestationV2 
 import { CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
   EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS }
   from "../blockchain/constants.mjs";
-import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { canonicalJson, generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { initializeDistributedDevnet } from "../blockchain/distributed-node.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
@@ -27,8 +30,8 @@ import { createValidatorHandoff, verifyValidatorHandoff }
   from "../blockchain/validator-handoff.mjs";
 import { installValidatorHandoff } from "../blockchain/validator-handoff-store.mjs";
 import { createValidatorOnboarding } from "../blockchain/validator-onboarding.mjs";
-import { installValidatorTopology } from "../blockchain/validator-topology-history.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
+import { installValidatorTopology } from "../blockchain/validator-topology-history.mjs";
 import { advanceTransactionIngressFloor, initializeTransactionIngressFloor,
   loadTransactionIngressFloor }
   from "../blockchain/validator-transaction-ingress-floor.mjs";
@@ -52,6 +55,8 @@ function fixture() {
   };
   const validatorWallets = layout.validatorDirectories.map((directory) =>
     JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"))));
+  const validatorTransports = layout.validatorDirectories.map((directory) =>
+    JSON.parse(readFileSync(join(directory, "TRANSPORT-KEY.json"))));
   const chain = new NirChain(genesis);
   const append = (options = {}) => {
     const proposal = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1,
@@ -135,8 +140,9 @@ function fixture() {
     minimumSequence: 8, now: () => NOW, tlsCertificateSha256: PIN_A,
     validatorAddress: address };
   return { address, alternateFinalityProof, certificateDirectory, checkpoint,
-    context, floorIdentity, genesis, issue,
-    layout, options, packageFor, root, v1PackageFor, validatorWallets, writeAnchor, writePackage };
+    context, finalityProof, floorIdentity, genesis, issue, policy,
+    layout, options, packageFor, root, v1PackageFor, validatorTransports, validatorWallets,
+    writeAnchor, writePackage };
 }
 
 test("a new-set checkpoint at handoff activation cannot substitute another finalized block", () => {
@@ -421,5 +427,184 @@ test("V2 head and count must exactly match all externally anchored lifecycle rec
     assert.throws(gate, /certificate head or count/);
     values.writePackage(values.packageFor(10));
     assert.equal(gate().checkpointSequence, 10);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("offline V2 assemble and verify use anchored full history and write exclusively", () => {
+  const values = fixture();
+  try {
+    const cli = fileURLToPath(new URL("../blockchain/checkpoint-package-v2-cli.mjs",
+      import.meta.url));
+    const paths = Object.fromEntries(["context", "genesis", "policy", "proof",
+      "attestations", "package", "stale-package", "wrong-package", "forged-package"].map((name) =>
+      [name, join(values.root, `${name}.json`)]));
+    const writeCanonical = (path, value) => writeFileSync(path, `${canonicalJson(value)}\n`);
+    writeCanonical(paths.genesis, values.genesis);
+    writeCanonical(paths.policy, values.policy);
+    writeCanonical(paths.proof, values.finalityProof);
+    const signed = values.packageFor(8, Date.now() - 100);
+    writeCanonical(paths.attestations, signed.attestations);
+    const config = { certificateDirectory: values.certificateDirectory,
+      certificateHeadAnchorPath: values.options.certificateHeadAnchorPath,
+      expectedGenesisHash: values.options.expectedGenesisHash,
+      expectedNetworkId: values.options.expectedNetworkId,
+      expectedPolicyId: values.options.expectedPolicyId,
+      format: "nir-checkpoint-v2-operator-context-v1", genesisPath: paths.genesis,
+      maxWitnessAgeMs: 30_000, policyPath: paths.policy, version: 1 };
+    writeCanonical(paths.context, config);
+    const assemble = (attestationsPath, outputPath) => spawnSync(process.execPath,
+      [cli, "assemble", paths.context, paths.proof, "8", attestationsPath, outputPath],
+      { encoding: "utf8" });
+    const created = assemble(paths.attestations, paths.package);
+    assert.equal(created.status, 0, created.stderr);
+    assert.equal(statSync(paths.package).mode & 0o777, 0o600);
+    assert.equal(JSON.parse(readFileSync(paths.package)).packageHash, signed.packageHash);
+    const verified = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
+        "8"], { encoding: "utf8" });
+    assert.equal(verified.status, 0, verified.stderr);
+    const stale = values.packageFor(8, Date.now() - 60_000);
+    writeCanonical(paths["stale-package"], stale);
+    const staleVerify = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths["stale-package"],
+        String(values.checkpoint.height), "8"], { encoding: "utf8" });
+    assert.equal(staleVerify.status, 1);
+    assert.match(staleVerify.stderr, /witness time policy failed/);
+    const staleWithForgedTime = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths["stale-package"],
+        String(values.checkpoint.height), "8", String(Date.now() - 60_000)],
+      { encoding: "utf8" });
+    assert.equal(staleWithForgedTime.status, 1);
+    assert.match(staleWithForgedTime.stderr, /usage:/);
+    const replacements = Array.from({ length: 3 }, generateWallet);
+    const fakeWallets = [values.validatorWallets[0], ...replacements];
+    const fakeValidators = [values.genesis.validators.find(({ address }) =>
+      address === values.address), ...replacements.map((wallet, index) =>
+      ({ ...publicWallet(wallet), operatorId: `fabricated-${index}` }))]
+      .sort((left, right) => left.address.localeCompare(right.address));
+    const forgedBlock = finalizeBlock({ ...values.checkpoint,
+      validatorSetId: validatorSetId(fakeValidators) }, fakeWallets.slice(0, 3));
+    const forgedProof = createFinalityProof(forgedBlock);
+    const forged = values.packageFor(8, Date.now() - 100, forgedProof,
+      undefined, null, fakeValidators);
+    writeCanonical(paths["forged-package"], forged);
+    const forgedVerify = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths["forged-package"],
+        String(values.checkpoint.height), "8"], { encoding: "utf8" });
+    assert.equal(forgedVerify.status, 1);
+    assert.match(forgedVerify.stderr, /validator set does not match verified topology/);
+    writeCanonical(paths.proof, forgedProof);
+    writeCanonical(paths.attestations, forged.attestations);
+    const forgedAssemble = assemble(paths.attestations, paths["wrong-package"]);
+    assert.equal(forgedAssemble.status, 1);
+    assert.equal(existsSync(paths["wrong-package"]), false);
+    writeCanonical(paths.proof, values.finalityProof);
+    writeCanonical(paths.attestations, signed.attestations);
+    const repeated = assemble(paths.attestations, paths.package);
+    assert.equal(repeated.status, 1);
+    assert.match(repeated.stderr, /EEXIST/);
+    const wrongSigned = values.packageFor(8, Date.now() - 100, undefined, undefined,
+      { certificateHistoryHead: "f".repeat(64), certificateRecordCount: 1 });
+    writeCanonical(paths.attestations, wrongSigned.attestations);
+    const mismatch = assemble(paths.attestations, paths["wrong-package"]);
+    assert.equal(mismatch.status, 1);
+    assert.match(mismatch.stderr, /context|hash/);
+    assert.equal(existsSync(paths["wrong-package"]), false);
+    writeFileSync(paths.attestations, JSON.stringify(signed.attestations, null, 2));
+    const noncanonical = assemble(paths.attestations, paths["wrong-package"]);
+    assert.equal(noncanonical.status, 1);
+    assert.match(noncanonical.stderr, /canonical JSON/);
+    writeCanonical(paths.attestations, values.v1PackageFor(8,
+      Date.now() - 100).attestations);
+    const v1Witnesses = assemble(paths.attestations, paths["wrong-package"]);
+    assert.equal(v1Witnesses.status, 1);
+    assert.match(v1Witnesses.stderr, /attestation/);
+    const insideAnchor = join(values.certificateDirectory, "inside-anchor.json");
+    writeFileSync(insideAnchor, readFileSync(values.options.certificateHeadAnchorPath));
+    writeCanonical(paths.context, { ...config,
+      certificateHeadAnchorPath: insideAnchor });
+    const misplacedAnchor = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
+        "8"], { encoding: "utf8" });
+    assert.equal(misplacedAnchor.status, 1);
+    assert.match(misplacedAnchor.stderr, /outside node state/);
+  } finally { rmSync(values.root, { recursive: true, force: true }); }
+});
+
+test("offline V2 CLI rejects a substitute activation block despite a new-set quorum", () => {
+  const values = fixture();
+  try {
+    const nextWallets = [values.validatorWallets[0], values.validatorWallets[1],
+      generateWallet(), generateWallet()];
+    const nextValidators = [
+      ...nextWallets.slice(0, 2).map((wallet) => values.genesis.validators.find(
+        ({ address }) => address === wallet.address)),
+      ...nextWallets.slice(2).map((wallet, index) =>
+        ({ ...publicWallet(wallet), operatorId: `rotated-${index}` }))];
+    const handoff = createValidatorHandoff({
+      activationBlockHash: "c".repeat(64), activationHeight: values.checkpoint.height,
+      activationStateRoot: "d".repeat(64), networkId: values.genesis.networkId,
+      nextValidators, previousValidators: values.genesis.validators,
+    }, values.validatorWallets.slice(0, 3), nextWallets.slice(0, 3));
+    const transportWallets = [values.validatorTransports[0],
+      values.validatorTransports[1], generateWallet(), generateWallet()];
+    const previousPeers = new Map(values.genesis.peerRegistry.peers.map((peer) =>
+      [peer.validatorAddress, peer]));
+    const onboarding = createValidatorOnboarding({
+      activationHeight: values.checkpoint.height,
+      currentValidators: values.genesis.validators, networkId: values.genesis.networkId,
+      nextValidators,
+      peers: nextWallets.map((wallet, index) => index < 2
+        ? previousPeers.get(wallet.address) : {
+          tlsCertificateSha256: PIN_A,
+          transport: publicWallet(transportWallets[index]),
+          url: `https://rotated-${index}.example`, validatorAddress: wallet.address,
+        }),
+    }, values.validatorWallets.slice(0, 3), nextWallets, transportWallets);
+    installValidatorHandoff(join(values.certificateDirectory, "handoffs"), handoff, {
+      expectedNetworkId: values.genesis.networkId,
+      trustedValidators: values.genesis.validators,
+    });
+    installValidatorTopology(join(values.certificateDirectory, "topologies"), onboarding, {
+      genesisPeerRegistry: values.genesis.peerRegistry,
+      genesisValidators: values.genesis.validators, handoffs: [handoff],
+      networkId: values.genesis.networkId,
+    });
+    const substitute = finalizeBlock({ ...values.checkpoint,
+      validatorSetId: validatorSetId(nextValidators) }, nextWallets.slice(0, 3));
+    const substituteProof = createFinalityProof(substitute);
+    const signed = values.packageFor(8, Date.now() - 100, substituteProof,
+      undefined, null, nextValidators);
+    const paths = Object.fromEntries(["context", "genesis", "policy", "proof",
+      "attestations", "package", "output"].map((name) =>
+      [name, join(values.root, `activation-${name}.json`)]));
+    const writeCanonical = (path, value) => writeFileSync(path, `${canonicalJson(value)}\n`);
+    writeCanonical(paths.genesis, values.genesis);
+    writeCanonical(paths.policy, values.policy);
+    writeCanonical(paths.proof, substituteProof);
+    writeCanonical(paths.attestations, signed.attestations);
+    writeCanonical(paths.package, signed);
+    writeCanonical(paths.context, {
+      certificateDirectory: values.certificateDirectory,
+      certificateHeadAnchorPath: values.options.certificateHeadAnchorPath,
+      expectedGenesisHash: values.options.expectedGenesisHash,
+      expectedNetworkId: values.options.expectedNetworkId,
+      expectedPolicyId: values.options.expectedPolicyId,
+      format: "nir-checkpoint-v2-operator-context-v1", genesisPath: paths.genesis,
+      maxWitnessAgeMs: 30_000, policyPath: paths.policy, version: 1,
+    });
+    const cli = fileURLToPath(new URL("../blockchain/checkpoint-package-v2-cli.mjs",
+      import.meta.url));
+    const verify = spawnSync(process.execPath,
+      [cli, "verify", paths.context, paths.package, String(values.checkpoint.height),
+        "8"], { encoding: "utf8" });
+    assert.equal(verify.status, 1);
+    assert.match(verify.stderr, /handoff activation requires a full finality chain proof/);
+    const assemble = spawnSync(process.execPath,
+      [cli, "assemble", paths.context, paths.proof, "8", paths.attestations,
+        paths.output], { encoding: "utf8" });
+    assert.equal(assemble.status, 1);
+    assert.match(assemble.stderr, /handoff activation requires a full finality chain proof/);
+    assert.equal(existsSync(paths.output), false);
   } finally { rmSync(values.root, { recursive: true, force: true }); }
 });
