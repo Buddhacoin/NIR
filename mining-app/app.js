@@ -5,6 +5,10 @@ const error = document.querySelector("#error");
 const errorMessage = document.querySelector("#error-message");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
+const catalogModel = document.querySelector("#catalog-model");
+const catalogVersion = document.querySelector("#catalog-version");
+const catalogState = document.querySelector("#catalog-state");
+const catalogRefresh = document.querySelector("#catalog-refresh");
 
 const copy = {
   ru: {
@@ -24,6 +28,17 @@ const copy = {
     invalid: "Результат локальной проверки не подтверждён. Награда не начислена.",
     score: (baseline, candidate, count) => `Точность: исходная модель ${baseline} %, улучшенная ${candidate} % · ${count} примеров.`,
     hash: (value) => `Хеш проверенного набора: ${value}`,
+    catalogTitle: "Каталог открытых моделей", catalogIntro: "Можно посмотреть замеченные ревизии открытых моделей; запускать их здесь пока нельзя. Встроенная Iris выше — единственная доступная проверка.",
+    catalogModel: "Модель", catalogVersion: "Замеченная ревизия (точный commit SHA)",
+    catalogPlaceholder: "Выберите модель", catalogVersionPlaceholder: "Сначала выберите модель", catalogChooseRevision: "Выберите ревизию",
+    catalogRefresh: "Обновить сведения", catalogLoading: "Загружаем сведения о версиях…",
+    catalogFresh: "Сведения доступны. Выбранная ревизия не меняется автоматически; запросы ограничены разом в 30 секунд.",
+    catalogStale: "Не удалось обновить все сведения. Показаны ранее загруженные версии; они могут устареть.",
+    catalogUnavailable: "Сведения о моделях недоступны. Проверьте соединение и повторите позже.",
+    catalogNoVersion: "Для этой модели пока нет сведений о замеченных ревизиях.",
+    catalogSelected: (repo, sha) => `${repo} · ${sha}. Только просмотр: запуск и награда недоступны.`,
+    catalogOlderSelection: "Это ранее замеченная ревизия; её уже нет в кратком списке.",
+    catalogNote: "Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Ничего не скачивается, не исполняется и не даёт права на награду.",
   },
   en: {
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
@@ -42,6 +57,17 @@ const copy = {
     invalid: "The local result could not be verified. No reward was credited.",
     score: (baseline, candidate, count) => `Accuracy: baseline ${baseline}%, candidate ${candidate}% · ${count} examples.`,
     hash: (value) => `Verified bundle hash: ${value}`,
+    catalogTitle: "Open model catalog", catalogIntro: "Browse observed revisions of open models; they cannot run here yet. The built-in Iris example above is the only available check.",
+    catalogModel: "Model", catalogVersion: "Observed revision (exact commit SHA)",
+    catalogPlaceholder: "Choose a model", catalogVersionPlaceholder: "Choose a model first", catalogChooseRevision: "Choose a revision",
+    catalogRefresh: "Refresh metadata", catalogLoading: "Loading version metadata…",
+    catalogFresh: "Metadata is available. The selected revision does not change automatically; requests are limited to once per 30 seconds.",
+    catalogStale: "Some metadata could not be refreshed. Previously seen versions are shown and may be outdated.",
+    catalogUnavailable: "Model metadata is unavailable. Check your connection and try again later.",
+    catalogNoVersion: "No observed revision metadata is available for this model yet.",
+    catalogSelected: (repo, sha) => `${repo} · ${sha}. View only: execution and rewards are unavailable.`,
+    catalogOlderSelection: "This revision was observed earlier and is no longer in the short list.",
+    catalogNote: "Metadata comes from public Hugging Face records. A SHA identifies a repository revision; it does not verify the model files. Nothing is downloaded, executed, or made reward-eligible.",
   },
 };
 
@@ -52,6 +78,65 @@ let checking = false;
 let statusRequestRunning = false;
 let errorKind = null;
 let lastResult = null;
+let catalogData = null;
+let catalogLoading = false;
+
+function option(value, label) {
+  const node = document.createElement("option");
+  node.value = value;
+  node.textContent = label;
+  return node;
+}
+
+function renderCatalog() {
+  if (!catalogModel) return;
+  const t = copy[locale];
+  const previousModel = catalogModel.value;
+  const previousVersion = catalogVersion.value;
+  catalogModel.replaceChildren(option("", t.catalogPlaceholder));
+  for (const entry of catalogData?.entries ?? []) {
+    catalogModel.append(option(entry.repo, `${entry.provider} · ${entry.name}`));
+  }
+  catalogModel.value = catalogData?.entries.some((entry) => entry.repo === previousModel) ? previousModel : "";
+  const selected = catalogData?.entries.find((entry) => entry.repo === catalogModel.value);
+  catalogVersion.replaceChildren(option("", selected ? t.catalogChooseRevision : t.catalogVersionPlaceholder));
+  const olderSelection = selected && /^[a-f0-9]{40}$/.test(previousVersion) &&
+    !selected.versions.includes(previousVersion);
+  if (olderSelection) catalogVersion.append(option(previousVersion, `${previousVersion} · ${t.catalogOlderSelection}`));
+  for (const sha of selected?.versions ?? []) catalogVersion.append(option(sha, sha));
+  catalogVersion.value = (selected?.versions.includes(previousVersion) || olderSelection) ? previousVersion : "";
+  catalogModel.disabled = !catalogData || catalogLoading;
+  catalogVersion.disabled = !(selected?.versions.length || olderSelection) || catalogLoading;
+  catalogRefresh.disabled = catalogLoading;
+  if (catalogLoading) catalogState.textContent = t.catalogLoading;
+  else if (catalogVersion.value) catalogState.textContent = `${t.catalogSelected(selected.repo, catalogVersion.value)} ${olderSelection ? t.catalogOlderSelection : ""} ${catalogData.stale ? t.catalogStale : ""}`.trim();
+  else if (selected && !selected.versions.length) catalogState.textContent = t.catalogNoVersion;
+  else if (!catalogData || catalogData.entries.every((entry) => !entry.versions.length)) catalogState.textContent = t.catalogUnavailable;
+  else catalogState.textContent = t[catalogData.stale ? "catalogStale" : "catalogFresh"];
+}
+
+async function loadCatalog(refresh = false) {
+  if (!catalogModel || catalogLoading) return;
+  catalogLoading = true;
+  renderCatalog();
+  try {
+    const response = await fetch(refresh ? "/catalog/refresh" : "/catalog", {
+      method: refresh ? "POST" : "GET", ...(refresh ? { body: "" } : {}), cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "read-only-open-model-catalog" ||
+        data.rewardEligible !== false || data.runnableRepo !== null ||
+        !Array.isArray(data.entries) || data.entries.length > 8 ||
+        data.entries.some((entry) => !/^[\w.-]+\/[\w.-]+$/.test(entry.repo) ||
+          entry.runnable !== false || !Array.isArray(entry.versions) ||
+          entry.versions.some((sha) => !/^[a-f0-9]{40}$/.test(sha)))) {
+      throw new Error("invalid catalog");
+    }
+    catalogData = data;
+  } catch {
+    if (catalogData) catalogData = { ...catalogData, stale: true };
+  } finally { catalogLoading = false; renderCatalog(); }
+}
 
 function render() {
   const t = copy[locale];
@@ -108,7 +193,15 @@ languageButton.addEventListener("click", () => {
   locale = locale === "ru" ? "en" : "ru";
   try { localStorage.setItem("nir-mining-locale", locale); } catch {}
   render();
+  renderCatalog();
 });
+if (catalogModel) {
+  catalogModel.addEventListener("change", () => { catalogVersion.value = ""; renderCatalog(); });
+  catalogVersion.addEventListener("change", renderCatalog);
+  catalogRefresh.addEventListener("click", () => { void loadCatalog(true); });
+  void loadCatalog();
+  setInterval(() => { if (document.visibilityState !== "hidden") void loadCatalog(); }, 5 * 60_000);
+}
 
 start.addEventListener("click", async () => {
   if (!connected) { showOffline(); return; }
