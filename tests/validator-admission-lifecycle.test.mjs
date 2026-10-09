@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { NirChain, blockHeader, computeChainStateRoot, createBeaconBond, createTransfer,
+import { NirChain, blockHeader, computeChainStateRoot, createBeaconBond, createProgressClaim, createTransfer,
   createValidatorBond, finalizeBlock, finalizeValidatorRecoveryBlock, prepareCertificateHash,
   transactionId }
   from "../blockchain/chain.mjs";
@@ -100,6 +100,7 @@ function authorizedUpgrade(chain, set, wallets, targetVersion, activationHeight)
 function fixture(targetProtocolVersion = 31, legacyReserves = []) {
   const validators = Array.from({ length: 4 }, generateWallet);
   const validatorTransports = Array.from({ length: 4 }, generateWallet);
+  const evaluatorWallets = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
   const releases = Array.from({ length: 4 }, generateWallet);
   const set = createReleaseAuthoritySet({ authorities: members(releases, "release"), generation: 1,
@@ -116,7 +117,7 @@ function fixture(targetProtocolVersion = 31, legacyReserves = []) {
     evaluationEnvironment: { adapter_protocol: "nir-application-adapter-v1", cpu_limit: 2,
       format: "nir-evaluation-environment-v1", image_digest: `sha256:${"3".repeat(64)}`,
       memory_limit_bytes: 1 << 30, runner_digest: `sha256:${"4".repeat(64)}`,
-      timeout_seconds: 60 }, evaluators: members(Array.from({ length: 4 }, generateWallet), "eval"),
+      timeout_seconds: 60 }, evaluators: members(evaluatorWallets, "eval"),
     genesisProtocolVersion: 27, genesisTimestamp: 0, networkId,
     protocolUpgradeReleaseAnchor: createReleaseTransparencyAnchor({ initialSet: set,
       logId: "nir-protocol-releases", networkId }),
@@ -135,7 +136,7 @@ function fixture(targetProtocolVersion = 31, legacyReserves = []) {
       operatorId: `legacy-reserve-${index}`, wallet,
     })) }, validators);
   }
-  for (const version of [28, 29, 30, 31, 32, 33, 34]
+  for (const version of [28, 29, 30, 31, 32, 33, 34, 35]
     .filter((version) => version <= targetProtocolVersion)) {
     const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
     append(chain, { protocolUpgrade: version === 28
@@ -143,8 +144,47 @@ function fixture(targetProtocolVersion = 31, legacyReserves = []) {
       : authorizedUpgrade(chain, set, releases, version, activationHeight) }, validators);
     while (chain.height < activationHeight) append(chain, {}, validators);
   }
-  return { chain, genesis, releases, set, treasury, validators, validatorTransports };
+  return { chain, evaluatorWallets, genesis, releases, set, treasury, validators, validatorTransports };
 }
+
+test("v35 rejects unverified progress claims while still accepting empty blocks", () => {
+  const { chain, evaluatorWallets, genesis, validators } = fixture(35);
+  assert.equal(chain.protocolVersion, 35);
+  const recipient = generateWallet().address;
+  const heightBefore = chain.height;
+  const balanceBefore = chain.balance(recipient);
+  const claim = createProgressClaim({ networkId: chain.networkId, epoch: chain.height + 1,
+    recipient, evaluatorWallets, evaluation: {
+      artifactHash: `sha256:${"5".repeat(64)}`,
+      baselineContentHash: `sha256:${"6".repeat(64)}`,
+      baselineHash: `sha256:${"1".repeat(64)}`,
+      contentHash: `sha256:${"7".repeat(64)}`,
+      candidateId: "8".repeat(64), executionBundleHash: "9".repeat(64),
+      suiteCommitment: "a".repeat(64), parents: [],
+      gainPpm: 10_000, generalityBps: 10_000,
+      reproducibilityBps: 10_000, safetyBps: 10_000,
+      criticalSafetyPass: true, safetyPolicyHash: SAFETY_POLICY_V1_COMMITMENT,
+      noveltyBps: 10_000, candidateEnergyWh: 100, baselineEnergyWh: 100,
+      energyAttested: true,
+    } });
+  assert.equal(claim.attestations.length, evaluatorWallets.length);
+  assert.throws(() => chain.buildBlock({ rewardClaims: [claim],
+    timestamp: chain.blocks().at(-1).timestamp + 1 }),
+  /verifiable execution proof/);
+  const emptyProposal = chain.buildBlock({ timestamp: chain.blocks().at(-1).timestamp + 1 });
+  const forgedProposal = { ...emptyProposal, issuanceEpoch: 0,
+    progressRewards: [{ ...claim, amount: "1" }] };
+  const forgedBlock = finalizeBlock(forgedProposal, quorumFor(forgedProposal, validators));
+  assert.throws(() => chain.appendBlock(forgedBlock), /verifiable execution proof/);
+  assert.equal(chain.height, heightBefore);
+  assert.equal(chain.balance(recipient), balanceBefore);
+  append(chain, {}, validators);
+  assert.equal(chain.protocolVersion, 35);
+  const restarted = restore(chain, genesis);
+  assert.equal(restarted.protocolVersion, 35);
+  assert.throws(() => restarted.buildBlock({ rewardClaims: [claim],
+    timestamp: restarted.blocks().at(-1).timestamp + 1 }), /verifiable execution proof/);
+});
 
 function readinessTransaction({ candidate, chain, endpoint, nonce, tlsCertificateSha256,
   transport, validators, observedHeight = chain.height }) {

@@ -598,6 +598,16 @@ Before any public testnet, the project must specify:
 
 ## 7. First realistic milestone
 
+Protocol v35 is an optional, fail-closed reward pause: once activated, nodes
+reject new progress-reward claims because consensus has no verifier for real
+model execution and measured energy. It does not turn model execution into
+mining or make the network launch-ready. Older protocol versions still replay
+their historical rules, including signed claims without independently
+verifiable execution; operators must not deploy them as an incentivized public
+network. Rewards already escrowed before activation may mature afterward under
+their existing rules. A future reward-enabling protocol must specify and test
+the evidence verifier before activation.
+
 The first testnet should reward progress on one open, inexpensive benchmark
 family. It should use valueless test units. Only after adversarial trials show
 that duplicate submissions, evaluator collusion, energy falsification, and
