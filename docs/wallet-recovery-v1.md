@@ -32,11 +32,17 @@ The BIP-39 English list and its upstream attribution are recorded in
 `blockchain/bip39-english-LICENSE` under the MIT license. This mnemonic uses BIP-39 words but **NIR-specific
 account derivation**; it is not a MetaMask or Trust Wallet account.
 
+An experimental internal profile now keeps the phrase encrypted on this device
+with the local password, so adding an address does not ask for the phrase again.
+This is not cloud sync, and its test API does not yet serialize concurrent
+account creation. On a new device, the phrase restores address 0; further
+indexed addresses must currently be added explicitly.
+
 Before enabling this in any downloadable app: independently review the
-derivation and word-list provenance, test create/restore on a clean Mac and a
-different operating system, verify account 0/1/2 addresses and signing against
-separate implementations, add explicit phrase-confirmation and local encrypted
-storage, define account discovery after restore, and complete loss-of-device and
-wrong-phrase tests. Existing randomly generated local-test addresses cannot be
+derivation, word-list provenance, and phrase-store cryptography; test
+create/restore on a clean Mac and another operating system; verify indexed
+addresses and signing against separate implementations; add explicit
+phrase-confirmation; define account discovery after restore; and complete
+loss-of-device and wrong-phrase tests. Existing randomly generated local-test addresses cannot be
 regenerated from a new phrase; no code may silently claim to migrate them or
 delete their local files.

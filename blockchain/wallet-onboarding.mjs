@@ -1,16 +1,18 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   createVerifiedWalletBackup,
   createRecoveryCodeWalletBackup,
   createPhraseWalletFile,
+  createPhraseStoreFile,
   createWalletFile,
   restoreRecoveryCodeWalletBackup,
   restoreVerifiedWalletBackup,
   verifyWalletFile,
+  openPhraseStoreFile,
   walletPublicInfo,
   walletRecoveryBackupPublicInfo,
 } from "./wallet-files.mjs";
@@ -185,9 +187,13 @@ export function createLocalPhraseWallet({ storageRoot, password }) {
   }
   const root = resolve(storageRoot);
   const walletDirectory = join(root, "Wallets");
+  const profileDirectory = join(root, "Profiles");
   privateDirectory(root);
   privateDirectory(walletDirectory);
+  privateDirectory(profileDirectory);
   const phrase = mnemonicFromEntropy();
+  const profilePath = join(profileDirectory, `${randomUUID()}.nirphrase.json`);
+  createPhraseStoreFile({ path: profilePath, password, phrase });
   const walletPath = join(walletDirectory, `${randomUUID()}.nirvault.json`);
   const created = createPhraseWalletFile({ path: walletPath, password, phrase });
   const drill = walletFromMnemonic(phrase);
@@ -198,11 +204,10 @@ export function createLocalPhraseWallet({ storageRoot, password }) {
     throw new Error("phrase wallet recovery drill changed the address");
   }
   return { address: created.address, phrase, networkId: "nir-local-rehearsal",
-    walletPath };
+    profilePath, walletPath };
 }
 
-export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
-  accountIndex = 0 }) {
+export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword }) {
   if (!validPersonalWalletPassword(newPassword)) {
     throw new Error("wallet password does not meet creation requirements");
   }
@@ -210,7 +215,7 @@ export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
     throw new Error("wallet storage root must be absolute");
   }
   // Reject an invalid phrase before creating any local storage directory.
-  const derived = walletFromMnemonic(phrase, accountIndex);
+  const derived = walletFromMnemonic(phrase, 0);
   const expected = derived.address;
   derived.privateKey = "";
   const root = resolve(storageRoot);
@@ -218,17 +223,57 @@ export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
     throw new Error("this NIR address already exists on this device");
   }
   const walletDirectory = join(root, "Wallets");
+  const profileDirectory = join(root, "Profiles");
   privateDirectory(root);
   privateDirectory(walletDirectory);
+  privateDirectory(profileDirectory);
+  const profilePath = join(profileDirectory, `${randomUUID()}.nirphrase.json`);
+  createPhraseStoreFile({ path: profilePath, password: newPassword, phrase });
   const walletPath = join(walletDirectory, `${randomUUID()}.nirvault.json`);
   const restored = createPhraseWalletFile({ path: walletPath, password: newPassword,
-    phrase, accountIndex });
+    phrase, accountIndex: 0 });
   if (restored.address !== expected ||
       verifyWalletFile({ path: walletPath, password: newPassword }).address !== expected) {
     throw new Error("restored phrase wallet address changed");
   }
-  return { address: expected, accountIndex, networkId: "nir-local-rehearsal",
-    walletPath };
+  return { address: expected, accountIndex: 0, networkId: "nir-local-rehearsal",
+    profilePath, walletPath };
+}
+
+export function addLocalPhraseAccount({ storageRoot, profilePath, password }) {
+  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/") ||
+      typeof profilePath !== "string" || !profilePath.startsWith("/")) {
+    throw new Error("wallet storage and profile paths must be absolute");
+  }
+  const root = resolve(storageRoot);
+  const profiles = join(root, "Profiles");
+  const selected = resolve(profilePath);
+  if (selected !== join(profiles, basename(selected)) ||
+      !/^[0-9a-f-]{36}\.nirphrase\.json$/.test(basename(selected))) {
+    throw new Error("phrase profile is outside local wallet storage");
+  }
+  const { phrase, address: profileAddress } = openPhraseStoreFile({ path: selected, password });
+  const existing = new Set(listLocalTestWallets(root).map(({ address }) => address));
+  for (let accountIndex = 0; accountIndex < 100; accountIndex += 1) {
+    const derived = walletFromMnemonic(phrase, accountIndex);
+    const address = derived.address;
+    derived.privateKey = "";
+    if (accountIndex === 0 && address !== profileAddress) {
+      throw new Error("phrase profile identity changed");
+    }
+    if (existing.has(address)) continue;
+    const walletDirectory = join(root, "Wallets");
+    privateDirectory(walletDirectory);
+    const walletPath = join(walletDirectory, `${randomUUID()}.nirvault.json`);
+    const created = createPhraseWalletFile({ path: walletPath, password, phrase,
+      accountIndex });
+    if (created.address !== address ||
+        verifyWalletFile({ path: walletPath, password }).address !== address) {
+      throw new Error("new phrase account address changed");
+    }
+    return { accountIndex, address, networkId: "nir-local-rehearsal", walletPath };
+  }
+  throw new Error("local phrase profile account limit reached");
 }
 
 export function restoreLocalTestWalletWithRecoveryCode({ storageRoot, backupPath,
