@@ -52,21 +52,21 @@ cd NIR
 
 No `npm install` is required for the current local demo.
 
-## 2. Try the local mining flow with one command
+## 2. Open the local mining practice app
 
 From the repository root, run:
 
 ```bash
-npm run mine:try
+npm run mine:app
 ```
 
-This checks the Mac and runs one in-memory practice round. It requires no
-wallet, password, model download, role selection, or second command. The
-result disappears when the command ends; no NIR is earned. If a check fails,
-it prints the missing requirement instead of starting the demo. For the old
-technical example, `npm run mine:try -- --details` prints its raw output;
-that legacy v1–v4 example uses 50 **test** NIR, while the future v5 schedule
-starts at 44 NIR. Neither number is a live payout.
+The command checks the Mac and opens a small local app in your browser. Press
+**Start practice** once. It requires no wallet, password, model download, role
+selection, or second command. The app listens only on this Mac; close the
+Terminal window to stop it. The result disappears when the app stops; no NIR
+is earned. If you prefer no app, `npm run mine:try` runs the same round directly
+in Terminal. `npm run mine:try -- --details` prints the technical local result,
+which now uses the v5 schedule of 44 **test** NIR. This is not a live payout.
 
 ### Advanced role wizard
 

@@ -55,7 +55,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | See what is actually implemented | [What is implemented now](#what-is-implemented-now) |
 | Run the local test network | [Start using the local prototype](#start-using-the-local-prototype) |
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
-| Try a local, valueless mining round on a Mac | `npm run mine:try` after cloning; [beginner guide](docs/miner-quickstart-macos.md) |
+| Try a local, valueless mining round on a Mac | `npm run mine:app` opens a one-button practice app after cloning; [beginner guide](docs/miner-quickstart-macos.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
 | Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
@@ -253,16 +253,17 @@ dependency order and measurable exit conditions are defined by the
 
 4. For four independent validator processes, follow
    [`docs/network.md`](docs/network.md).
-5. On macOS, try the local mining rules with one checked command:
+5. On macOS, open the local one-button mining practice app:
 
    ```bash
-   npm run mine:try
+   npm run mine:app
    ```
 
    This is a local simulation with temporary test units, not a public mining
-   connection or a payout. Its v5 genesis uses the 44 NIR first-epoch budget;
-   historical 50 NIR is retained only to replay older test chains. Advanced
-   roles remain in `npm run mine:wizard`.
+   connection or a payout. It does not use your wallet or a real AI model.
+   Its v5 genesis uses the 44 NIR first-epoch budget; historical 50 NIR is
+   retained only to replay older test chains. For a terminal-only check use
+   `npm run mine:try`; advanced roles remain in `npm run mine:wizard`.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),

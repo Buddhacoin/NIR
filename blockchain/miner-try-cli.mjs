@@ -9,7 +9,7 @@ if (args.length > 1 || (args.length === 1 && args[0] !== "--details" && args[0] 
   process.exitCode = 2;
 } else if (args[0] === "--help") {
   console.log("npm run mine:try — одна локальная тренировка без монет и подключения к сети.");
-  console.log("npm run mine:try -- --details — показать технический результат старого тестового сценария.");
+  console.log("npm run mine:try -- --details — показать технический результат локального сценария v5.");
 } else {
   console.log("NIR · локальная тренировка майнинга");
   console.log("Не подключается к сети, не создаёт кошелёк и не начисляет NIR.");
@@ -26,7 +26,7 @@ if (args.length > 1 || (args.length === 1 && args[0] !== "--details" && args[0] 
     console.log("✓ Пример заявки, проверки и ожидания награды выполнен на временной локальной цепочке.");
     console.log("Результат исчез после завершения команды. Реальных наград нет.");
     if (args[0] === "--details") {
-      console.log("Технические данные ниже — старый сценарий v1–v4 с 50 тестовыми NIR, не правило будущего v5 (44 NIR):");
+      console.log("Технические данные ниже — локальный сценарий v5 с 44 тестовыми NIR, не реальная награда:");
       console.log(result.details);
     }
   }
