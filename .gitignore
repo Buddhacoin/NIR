@@ -18,3 +18,4 @@ rust/**/target/
 browser-wallet/dist/
 browser-wallet/dist-firefox/
 browser-wallet/node_modules/
+browser-wallet/artifacts/
