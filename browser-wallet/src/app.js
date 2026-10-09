@@ -233,7 +233,9 @@ $("#copy-revealed").addEventListener("click", () => run(async () => {
   await copy(revealed, "Фраза");
 }));
 
-await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+if (chrome.storage.local.setAccessLevel) {
+  await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+}
 const stored = (await chrome.storage.local.get(STORE_KEY))[STORE_KEY];
 if (stored !== undefined) {
   if (!stored || typeof stored !== "object" || !stored.vault ||
