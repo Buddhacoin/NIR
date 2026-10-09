@@ -11,7 +11,8 @@ MAX_SUPPLY = 21_000_000 * ATOMIC_UNITS
 TREASURY_BPS = 1_200
 TREASURY_ALLOCATION = MAX_SUPPLY * TREASURY_BPS // 10_000
 MINING_POOL = MAX_SUPPLY - TREASURY_ALLOCATION
-INITIAL_EPOCH_REWARD = 50 * ATOMIC_UNITS
+INITIAL_EPOCH_REWARD = 44 * ATOMIC_UNITS
+LEGACY_INITIAL_EPOCH_REWARD = 50 * ATOMIC_UNITS
 HALVING_INTERVAL = 210_000
 BPS = 10_000
 
@@ -90,7 +91,10 @@ class ProgressProof:
 class EmissionLedger:
     """Minimal capped ledger for settling intelligence-progress epochs."""
 
-    def __init__(self) -> None:
+    def __init__(self, initial_reward: int = LEGACY_INITIAL_EPOCH_REWARD) -> None:
+        if type(initial_reward) is not int or initial_reward <= 0 or initial_reward > MAX_SUPPLY:
+            raise ProtocolError("initial epoch reward is invalid")
+        self.initial_reward = initial_reward
         self.treasury_locked = TREASURY_ALLOCATION
         self.mined = 0
         self._accepted_fingerprints: set[str] = set()
@@ -104,11 +108,15 @@ class EmissionLedger:
         return MINING_POOL - self.mined
 
     @staticmethod
-    def scheduled_epoch_budget(epoch: int) -> int:
+    def scheduled_epoch_budget(
+        epoch: int, initial_reward: int = LEGACY_INITIAL_EPOCH_REWARD
+    ) -> int:
         if epoch < 0:
             raise ProtocolError("epoch cannot be negative")
+        if type(initial_reward) is not int or initial_reward <= 0 or initial_reward > MAX_SUPPLY:
+            raise ProtocolError("initial epoch reward is invalid")
         halvings = epoch // HALVING_INTERVAL
-        return INITIAL_EPOCH_REWARD >> halvings
+        return initial_reward >> halvings
 
     def settle_epoch(
         self, epoch: int, proofs: list[ProgressProof]
@@ -131,7 +139,9 @@ class EmissionLedger:
                 raise ProtocolError("proof score must be positive")
             scored.append((proof, score))
 
-        budget = min(self.scheduled_epoch_budget(epoch), self.mining_remaining)
+        budget = min(
+            self.scheduled_epoch_budget(epoch, self.initial_reward), self.mining_remaining
+        )
         if budget <= 0:
             return {}
 

@@ -3,6 +3,7 @@ import unittest
 from nir.model import (
     ATOMIC_UNITS,
     INITIAL_EPOCH_REWARD,
+    LEGACY_INITIAL_EPOCH_REWARD,
     MAX_SUPPLY,
     EmissionLedger,
     ProgressProof,
@@ -45,7 +46,7 @@ class ProgressProofTests(unittest.TestCase):
 
 class EmissionTests(unittest.TestCase):
     def test_epoch_distributes_exact_budget(self):
-        ledger = EmissionLedger()
+        ledger = EmissionLedger(initial_reward=INITIAL_EPOCH_REWARD)
         rewards = ledger.settle_epoch(
             0,
             [valid_proof(), valid_proof("lab-b", "candidate-b")],
@@ -53,7 +54,7 @@ class EmissionTests(unittest.TestCase):
         self.assertEqual(sum(rewards.values()), INITIAL_EPOCH_REWARD)
 
     def test_one_contributor_can_receive_multiple_proof_allocations(self):
-        ledger = EmissionLedger()
+        ledger = EmissionLedger(initial_reward=INITIAL_EPOCH_REWARD)
         rewards = ledger.settle_epoch(
             0,
             [valid_proof(), valid_proof("lab-a", "candidate-b")],
@@ -61,7 +62,7 @@ class EmissionTests(unittest.TestCase):
         self.assertEqual(rewards["lab-a"], INITIAL_EPOCH_REWARD)
 
     def test_duplicate_cannot_be_rewarded_twice(self):
-        ledger = EmissionLedger()
+        ledger = EmissionLedger(initial_reward=INITIAL_EPOCH_REWARD)
         proof = valid_proof()
         ledger.settle_epoch(0, [proof])
         with self.assertRaises(ProtocolError):
@@ -69,12 +70,12 @@ class EmissionTests(unittest.TestCase):
 
     def test_halving(self):
         self.assertEqual(
-            EmissionLedger.scheduled_epoch_budget(210_000),
+            EmissionLedger.scheduled_epoch_budget(210_000, INITIAL_EPOCH_REWARD),
             INITIAL_EPOCH_REWARD // 2,
         )
 
     def test_hard_cap_wins(self):
-        ledger = EmissionLedger()
+        ledger = EmissionLedger(initial_reward=INITIAL_EPOCH_REWARD)
         ledger.mined = ledger.mining_remaining - 7
         rewards = ledger.settle_epoch(0, [valid_proof()])
         self.assertEqual(sum(rewards.values()), 7)
@@ -83,6 +84,16 @@ class EmissionTests(unittest.TestCase):
 
     def test_precision(self):
         self.assertEqual(ATOMIC_UNITS, 100_000_000)
+
+    def test_legacy_default_and_explicit_v5_reward(self):
+        self.assertEqual(EmissionLedger.scheduled_epoch_budget(0),
+                         LEGACY_INITIAL_EPOCH_REWARD)
+        legacy = EmissionLedger()
+        self.assertEqual(sum(legacy.settle_epoch(0, [valid_proof()]).values()),
+                         LEGACY_INITIAL_EPOCH_REWARD)
+        v5 = EmissionLedger(initial_reward=INITIAL_EPOCH_REWARD)
+        self.assertEqual(sum(v5.settle_epoch(0, [valid_proof()]).values()),
+                         INITIAL_EPOCH_REWARD)
 
 
 if __name__ == "__main__":
