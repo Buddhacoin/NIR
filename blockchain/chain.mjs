@@ -44,7 +44,6 @@ import {
   FOUNDER_IMMEDIATE_BPS,
   FOUNDER_VESTED_ALLOCATION,
   INITIAL_EPOCH_REWARD,
-  LEGACY_INITIAL_EPOCH_REWARD,
   PROTOCOL_TREASURY_ALLOCATION,
   PROTOCOL_TREASURY_VESTED_ALLOCATION,
   TESTER_REWARD_RESERVE_BPS,
@@ -1378,7 +1377,7 @@ export function finalizeValidatorRecoveryBlock(block, reserveSigners, plan, {
 }
 
 export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL,
-  initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
+  initialReward = INITIAL_EPOCH_REWARD) {
   if (!Array.isArray(claims) || claims.length === 0) return [];
   if (claims.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
     throw new Error("too many progress rewards in one block");
@@ -3496,8 +3495,7 @@ export class NirChain {
   }
 
   #initialEpochReward() {
-    return this.#treasuryImmediateBps === Number(TESTER_REWARD_RESERVE_BPS)
-      ? INITIAL_EPOCH_REWARD : LEGACY_INITIAL_EPOCH_REWARD;
+    return INITIAL_EPOCH_REWARD;
   }
 
   randomnessFault(candidateId) {

@@ -358,6 +358,10 @@ def read_static_model_content_receipt(
     accepts JSON answers only, so importing this module never executes artifact
     code on the evaluator host.
     """
+    if not isinstance(energy_attested, bool) or energy_attested:
+        raise ProtocolError(
+            "static evaluation cannot claim hardware energy attestation"
+        )
     _require_digest(artifact_hash, "artifact hash", artifact=True)
     inspected = inspect_model_content(model_content_path, expected_role=role)
     if inspected.commitment != expected_content_hash:
@@ -769,6 +773,10 @@ def _create_bundle(
     adapters = {item.adapter for item in all_items}
     if len(adapters) != 1:
         raise ProtocolError("execution bundle cannot mix adapter protocols")
+    if STATIC_ADAPTER_FORMAT in adapters and any(
+        item.run.energy_attested for item in all_items
+    ):
+        raise ProtocolError("static evaluation cannot claim hardware energy attestation")
     if APPLICATION_ADAPTER_FORMAT in adapters:
         if environment.adapter_protocol != APPLICATION_ADAPTER_FORMAT:
             raise ProtocolError("application execution uses another environment protocol")

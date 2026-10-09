@@ -9,6 +9,12 @@ from .evaluator import BenchmarkSuite, RunRecord, evaluate_progress
 from .model import ATOMIC_UNITS, EmissionLedger, ProtocolError
 
 
+SIMULATION_WARNING = (
+    "This CLI calculates a local simulation only; it does not verify model execution "
+    "or metering provenance and does not issue spendable NIR."
+)
+
+
 def _load_runs(paths: list[str]) -> list[RunRecord]:
     return [RunRecord.load(path) for path in paths]
 
@@ -40,11 +46,7 @@ def _evaluate(args: argparse.Namespace) -> dict:
             "proof_fingerprint": proof.fingerprint,
             "proof_score": proof.score(),
             "test_reward_nir": rewards[args.contributor] / ATOMIC_UNITS,
-            "warning": (
-                "Energy is not hardware-attested; reward is simulation-only."
-                if not report.energy_attested
-                else None
-            ),
+            "warning": SIMULATION_WARNING,
         }
     )
     return result
