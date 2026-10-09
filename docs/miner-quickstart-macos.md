@@ -52,15 +52,26 @@ cd NIR
 
 No `npm install` is required for the current local demo.
 
-## 2. Use the beginner setup wizard
+## 2. Try the local mining flow with one command
 
 From the repository root, run:
 
 ```bash
-npm run mine:wizard
+npm run mine:try
 ```
 
-The wizard lists all seven roles and labels each one either `local demo
+This checks the Mac and runs one in-memory practice round. It requires no
+wallet, password, model download, role selection, or second command. The
+result disappears when the command ends; no NIR is earned. If a check fails,
+it prints the missing requirement instead of starting the demo. For the old
+technical example, `npm run mine:try -- --details` prints its raw output;
+that legacy v1–v4 example uses 50 **test** NIR, while the future v5 schedule
+starts at 44 NIR. Neither number is a live payout.
+
+### Advanced role wizard
+
+If you need a different role or developer transport check, run
+`npm run mine:wizard`. The wizard lists all seven roles and labels each one either `local demo
 available` or `planned only`. An eighth, clearly separate developer option
 prepares a local adapter transport check; it is not a mining role. Enter a
 number. The wizard then runs the read-only Mac
@@ -98,13 +109,13 @@ The refusal is expected until the project publishes and supports a signed
 network manifest. A URL pasted into a chat is not a substitute for that trust
 root.
 
-## 3. Try one simulated intelligence-mining round
+## 3. Run the underlying demo directly (optional)
 
 ```bash
 npm run mine:demo
 ```
 
-The script creates temporary in-memory participants, commits a candidate,
+This is the demo that `mine:try` runs after its checks. The script creates temporary in-memory participants, commits a candidate,
 assigns a simulated evaluator committee, accepts signed evaluation evidence,
 and places a simulated reward in the mandatory challenge-window escrow. Output
 such as `height`, `issued`, available and pending balances, the unlock height, a
