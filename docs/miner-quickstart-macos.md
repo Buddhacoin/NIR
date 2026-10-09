@@ -114,9 +114,8 @@ ends. Nothing was downloaded from a job service and nothing was submitted to a
 public network.
 
 This new local example uses the v5 genesis rules and shows **44 test NIR** in
-escrow. The older 50 NIR schedule remains in the protocol only so previously
-signed v1-v4 test-chain blocks can still be verified; it is not another option
-for a new miner.
+escrow. Earlier valueless test-chain reward blocks made under the discarded
+rule will not replay in this pre-launch version.
 
 To verify the code paths rather than trust one successful printout:
 

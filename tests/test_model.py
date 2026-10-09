@@ -3,7 +3,6 @@ import unittest
 from nir.model import (
     ATOMIC_UNITS,
     INITIAL_EPOCH_REWARD,
-    LEGACY_INITIAL_EPOCH_REWARD,
     MAX_SUPPLY,
     EmissionLedger,
     ProgressProof,
@@ -85,15 +84,12 @@ class EmissionTests(unittest.TestCase):
     def test_precision(self):
         self.assertEqual(ATOMIC_UNITS, 100_000_000)
 
-    def test_v5_default_and_explicit_legacy_reward(self):
+    def test_default_reward_is_44(self):
         self.assertEqual(EmissionLedger.scheduled_epoch_budget(0),
                          INITIAL_EPOCH_REWARD)
         v5 = EmissionLedger()
         self.assertEqual(sum(v5.settle_epoch(0, [valid_proof()]).values()),
                          INITIAL_EPOCH_REWARD)
-        legacy = EmissionLedger(initial_reward=LEGACY_INITIAL_EPOCH_REWARD)
-        self.assertEqual(sum(legacy.settle_epoch(0, [valid_proof()]).values()),
-                         LEGACY_INITIAL_EPOCH_REWARD)
 
 
 if __name__ == "__main__":

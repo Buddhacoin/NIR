@@ -261,8 +261,8 @@ dependency order and measurable exit conditions are defined by the
    ```
 
    This is a local simulation with test units, not a public mining connection.
-   Its v5 genesis uses the 44 NIR first-epoch budget; the historical 50 NIR
-   rule is retained only for replay of older test chains.
+   Every local genesis format now uses the 44 NIR first-epoch budget. Earlier
+   test-chain reward blocks made under the discarded rule are incompatible.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),
@@ -401,7 +401,8 @@ vulnerabilities cannot become a minting strategy.
   not advance this counter. Rewarded blocks must be at least ten minutes apart,
   and the hard cap always wins. Atomic-unit rounding leaves 0.0189 NIR of the
   mining pool unissued even if every possible epoch is rewarded.
-  Older v1-v4 genesis plans retain the original 50 NIR schedule for replay.
+  Earlier local test-chain reward blocks made under the discarded rule are
+  incompatible and must not be reused for a launch.
 - Holding NIR does not automatically grant protocol governance power.
 
 The genesis allocation is assigned to explicit post-quantum NIR addresses. The

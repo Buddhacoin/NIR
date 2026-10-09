@@ -62,10 +62,9 @@ unissued; it is not reassigned or silently minted. Empty epochs and insufficient
 verified progress may leave more of the pool unissued. A future real-value
 network must separately ratify its exact genesis and emission rules.
 
-Legacy v1-v4 genesis plans keep their original 50 NIR initial budget and
-replay it unchanged. If every eligible epoch is rewarded, those networks
-exhaust their 18.48 million NIR pool after zero-based epoch 646,799, early
-in the fourth halving era; a v5 plan cannot retroactively change that history.
+All locally supported genesis formats now use the same 44 NIR issuance rule.
+Pre-launch test-chain reward blocks issued under the discarded rule will not
+replay under this version; those valueless chains must not be reused for launch.
 
 ## 3. Proof of Intelligence Progress
 
@@ -166,8 +165,8 @@ the reward schedule does not reinterpret signed earlier genesis plans.
 
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
-whole reward block is invalid. A lone claim in the first v5 issuance epoch must
-therefore have 44 NIR locked (50 NIR on legacy plans), while several claims
+whole reward block is invalid. A lone claim in the first issuance epoch must
+therefore have 44 NIR locked, while several claims
 may lock their smaller exact
 allocations. The bond and reward remain unavailable through the objective fraud
 window. Full assigned-committee equivocation burns both plus every equivocating
@@ -431,9 +430,8 @@ cannot increase the epoch budget. A non-empty rewarded block consumes exactly
 `min(scheduled_epoch_budget, remaining_mining_pool)`; an empty block consumes no
 issuance epoch. The ten-minute consensus interval still applies between
 rewarded blocks, and the 21 million NIR cap can truncate a final budget.
-Under a v5 genesis the full halving series approaches but does not exhaust
-the pool because every era uses integer atomic units. Legacy genesis plans
-retain the capped 50 NIR schedule described above.
+The full halving series approaches but does not exhaust the pool because every
+era uses integer atomic units, regardless of the local genesis format.
 
 Consensus additionally caps evaluator-reported positive gain at
 `100 × novelty_bps`, where `novelty_bps` is recomputed from the state-rooted
