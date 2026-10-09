@@ -214,6 +214,9 @@ export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
   const expected = derived.address;
   derived.privateKey = "";
   const root = resolve(storageRoot);
+  if (listLocalTestWallets(root).some(({ address }) => address === expected)) {
+    throw new Error("this NIR address already exists on this device");
+  }
   const walletDirectory = join(root, "Wallets");
   privateDirectory(root);
   privateDirectory(walletDirectory);

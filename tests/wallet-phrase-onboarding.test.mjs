@@ -31,6 +31,10 @@ test("words restore a local test wallet on a clean device with a new password an
     assert.notEqual(secondAccount.address, first.address);
     assert.equal(listLocalTestWallets(secondRoot).length, 2);
     assert.equal(existsSync(join(secondRoot, "Backups")), false);
+    assert.throws(() => restoreLocalPhraseWallet({ storageRoot: secondRoot,
+      phrase: first.phrase, newPassword: "test-password-two" }),
+    /already exists/);
+    assert.equal(listLocalTestWallets(secondRoot).length, 2);
     assert.throws(() => verifyWalletFile({ path: restored.walletPath,
       password: "test-password-one" }), /password|decrypt|authentication|invalid/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
