@@ -255,6 +255,19 @@ test("v5 ceremony commits tester reserve without rewriting v4", () => {
   assert.equal(approved(old).plan.treasury.vestingPolicy.model, "linear-from-genesis");
 });
 
+test("v5 ceremony rejects shared founder and treasury guardian keys", () => {
+  const values = v5Fixture("independent-guardian-sets");
+  for (const sharedCount of [1, 2]) {
+    const input = structuredClone(values.input);
+    input.founder.memberPublicKeys.splice(0, sharedCount,
+      ...input.treasury.memberPublicKeys.slice(0, sharedCount));
+    input.founder.address = multisigAddress(input.founder.memberPublicKeys, 2);
+    assert.notEqual(input.founder.address, input.treasury.address);
+    assert.throws(() => createGenesisPlan(input, values.releaseOptions),
+      /guardian keys must be disjoint/);
+  }
+});
+
 test("v4 ceremony commits one-percent founder release without rewriting v3", () => {
   const values = v4Fixture("founder-genesis-release");
   const { plan, envelope } = approved(values);

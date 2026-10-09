@@ -352,6 +352,12 @@ function planPayload(input, withHeader, release) {
       occupiedAddresses.includes(founder.address) || occupiedAddresses.includes(treasury.address))) {
     throw new Error("founder, treasury, and operator addresses must be distinct");
   }
+  // Do not alter verification of already signed v3/v4 ceremonies. New v5 plans
+  // must use independent guardian sets so one compromised key cannot span both.
+  if (version === 5 && founder && founder.memberPublicKeys.some((key) =>
+    treasury.memberPublicKeys.includes(key))) {
+    throw new Error("founder and treasury guardian keys must be disjoint");
+  }
   const validatorIdentities = validators.map(
     ({ endpoint: _endpoint, tlsCertificateSha256: _tls, transport: _transport, ...identity }) =>
       identity,
