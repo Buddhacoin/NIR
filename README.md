@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
+  <img src="wallet-ui/nir-coin-icon.png" alt="NIR orange coin logo" width="128" height="128">
 </p>
 
 # NIR — the currency of verifiable progress
