@@ -252,6 +252,8 @@ export function addLocalPhraseAccount({ storageRoot, profilePath, password }) {
       !/^[0-9a-f-]{36}\.nirphrase\.json$/.test(basename(selected))) {
     throw new Error("phrase profile is outside local wallet storage");
   }
+  privateDirectory(root);
+  privateDirectory(profiles);
   const { phrase, address: profileAddress } = openPhraseStoreFile({ path: selected, password });
   const existing = new Set(listLocalTestWallets(root).map(({ address }) => address));
   for (let accountIndex = 0; accountIndex < 100; accountIndex += 1) {

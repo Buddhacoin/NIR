@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -36,6 +36,11 @@ test("words restore a local test wallet on a clean device with a new password an
     assert.throws(() => addLocalPhraseAccount({ storageRoot: secondRoot,
       profilePath: first.profilePath, password: "test-password-one" }),
     /outside local wallet storage/);
+    chmodSync(join(firstRoot, "Profiles"), 0o755);
+    assert.throws(() => addLocalPhraseAccount({ storageRoot: firstRoot,
+      profilePath: first.profilePath, password: "test-password-one" }),
+    /not private/);
+    chmodSync(join(firstRoot, "Profiles"), 0o700);
     const restored = restoreLocalPhraseWallet({ storageRoot: secondRoot,
       phrase: first.phrase, newPassword: "test-password-two" });
     assert.equal(restored.address, first.address);
