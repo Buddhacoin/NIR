@@ -23,7 +23,7 @@ export const PROTOCOL_TREASURY_BUDGET_BPS = Object.freeze({
   reserve: 50,
 });
 export const MINING_POOL = MAX_SUPPLY - TREASURY_ALLOCATION;
-export const INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
+export const INITIAL_EPOCH_REWARD = 44n * ATOMIC_UNITS;
 export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
 export const MULTISIG_ALGORITHM = "ml-dsa-65-multisig";
@@ -57,7 +57,8 @@ export const MAX_BLOCK_BYTES = 2_000_000;
 export const MAX_FUTURE_DRIFT_MS = 120_000;
 export const EPOCH_REVEAL_TIMEOUT_BLOCKS = 8;
 export const MIN_BEACON_BOND = 1_000n * ATOMIC_UNITS;
-export const MIN_EVALUATOR_BOND = INITIAL_EPOCH_REWARD;
+// Keep the existing evaluator-bond rule independent of the reward schedule.
+export const MIN_EVALUATOR_BOND = 50n * ATOMIC_UNITS;
 export const EVALUATOR_ACTIVATION_DELAY_BLOCKS = 64;
 export const EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS = 1_024;
 export const BEACON_NON_REVEAL_SLASH_BPS = 100n;

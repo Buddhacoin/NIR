@@ -44,7 +44,8 @@ artifacts behind the digests independently. The other input is public JSON conta
   vests linearly. This is one treasury address; consensus does not restrict
   the liquid tranche to tester payments. They must be distinct from
   each other and from genesis operator addresses. Evaluator bootstrap bonds
-  come from the 5% protocol treasury, never the founder allocation;
+  come from the 5% protocol treasury, never the founder allocation, and cannot
+  consume the 0.1% genesis-liquid tranche;
 - three or more public ceremony-operator identities, unique 256-bit contributions,
   and unique public nonces.
 

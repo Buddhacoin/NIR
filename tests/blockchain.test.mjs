@@ -469,7 +469,7 @@ test("fresh genesis can reach its first reward with the committed evaluator bond
   assert.equal(chain.balance(miner.address), 0n);
   assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
   advanceEmptyBlocks(chain, validators, 1);
-  assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
+  assert.equal(formatNir(chain.balance(miner.address)), "44.00000000 NIR");
   assert.equal(chain.balance(treasury.address), sponsorBalanceBefore);
   assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
   assert.equal(
@@ -3118,6 +3118,26 @@ test("v5 protocol treasury may spend only the tester reserve at genesis", () => 
     BigInt(base.evaluators.length) * MIN_EVALUATOR_BOND);
   assert.equal(chain.balance(recipient.address),
     TESTER_REWARD_RESERVE_ALLOCATION - MIN_TRANSFER_FEE);
+});
+
+test("v5 evaluator bootstrap bonds cannot consume the liquid treasury reserve", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const perEvaluatorLimit = PROTOCOL_TREASURY_VESTED_ALLOCATION /
+    BigInt(base.evaluators.length);
+  const genesis = { ...base.genesisConfig,
+    founderAddress: founder.address,
+    founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+    treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+  };
+  assert.throws(() => new NirChain({ ...genesis,
+    evaluatorBondAmount: (perEvaluatorLimit + 1n).toString(),
+  }), /genesis evaluator bonds exceed the vested treasury allocation/);
+  const chain = new NirChain({ ...genesis,
+    evaluatorBondAmount: perEvaluatorLimit.toString(),
+  });
+  assert.equal(chain.balance(base.treasury.address), TESTER_REWARD_RESERVE_ALLOCATION);
+  assert.equal(chain.balance(founder.address), FOUNDER_ALLOCATION);
 });
 
 test("v5 snapshot restart preserves both locked genesis allocations", () => {

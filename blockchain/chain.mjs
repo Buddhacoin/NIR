@@ -1703,9 +1703,11 @@ export class NirChain {
       throw new Error("genesis evaluator bond is below the protocol minimum");
     }
     const genesisEvaluatorBonds = genesisEvaluatorBond * BigInt(this.#evaluators.size);
-    if (genesisEvaluatorBonds > (founderAddress === null
-      ? TREASURY_ALLOCATION : PROTOCOL_TREASURY_ALLOCATION)) {
-      throw new Error("genesis evaluator bonds exceed the treasury allocation");
+    const evaluatorBondLimit = treasuryImmediateBps === Number(TESTER_REWARD_RESERVE_BPS)
+      ? PROTOCOL_TREASURY_VESTED_ALLOCATION
+      : founderAddress === null ? TREASURY_ALLOCATION : PROTOCOL_TREASURY_ALLOCATION;
+    if (genesisEvaluatorBonds > evaluatorBondLimit) {
+      throw new Error("genesis evaluator bonds exceed the vested treasury allocation");
     }
     this.#genesisConfig.evaluatorBondAmount = genesisEvaluatorBond.toString();
     this.#genesisEvaluatorBondAllocation = genesisEvaluatorBonds;

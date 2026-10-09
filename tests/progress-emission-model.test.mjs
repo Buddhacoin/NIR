@@ -134,7 +134,7 @@ test("funded keys and candidate splitting cannot enlarge one epoch budget", () =
     amountsByFingerprint(oneRecipientRewards),
     "adding funded keys changed per-candidate allocation",
   );
-  assert.equal(sumRewards(manyRecipients), 50n * ATOMIC_UNITS);
+  assert.equal(sumRewards(manyRecipients), 44n * ATOMIC_UNITS);
   assert.ok(sumRewards(manyRecipients) < MINING_POOL);
 });
 
@@ -175,30 +175,26 @@ test("hard-cap tail is exact and duplicate lineage fingerprints cannot share it"
   );
 });
 
-test("current treasury allocation exhausts the mining pool early in the fourth halving era", () => {
-  const firstThreeEras = Array.from({ length: 3 }, (_, era) =>
-    scheduledEpochBudget(era * HALVING_INTERVAL) * BigInt(HALVING_INTERVAL))
-    .reduce((total, amount) => total + amount, 0n);
-  const remainingAtFourthEra = MINING_POOL - firstThreeEras;
-  const fourthEraStart = 3 * HALVING_INTERVAL;
-  const fourthEraBudget = scheduledEpochBudget(fourthEraStart);
-  const fullFourthEraRewards = remainingAtFourthEra / fourthEraBudget;
-  const firstUnrewardableEpoch = fourthEraStart + Number(fullFourthEraRewards);
-  const claim = coalitionClaims(firstUnrewardableEpoch, 1, 1, "exhaustion");
-
+test("44 NIR halvings approach the mining pool with exact atomic dust", () => {
+  let scheduleTotal = 0n;
+  let eras = 0;
+  while (scheduledEpochBudget(eras * HALVING_INTERVAL) > 0n) {
+    const start = eras * HALVING_INTERVAL;
+    const budget = scheduledEpochBudget(start);
+    assert.equal(scheduledEpochBudget(start + HALVING_INTERVAL - 1), budget);
+    scheduleTotal += budget * BigInt(HALVING_INTERVAL);
+    eras += 1;
+  }
+  const dust = MINING_POOL - scheduleTotal;
   assert.equal(MINING_POOL / ATOMIC_UNITS, 18_480_000n);
-  assert.equal(firstThreeEras / ATOMIC_UNITS, 18_375_000n);
-  assert.equal(remainingAtFourthEra / ATOMIC_UNITS, 105_000n);
-  assert.equal(fourthEraBudget, 625_000_000n);
-  assert.equal(remainingAtFourthEra % fourthEraBudget, 0n);
-  assert.equal(fullFourthEraRewards, 16_800n);
-  assert.equal(firstUnrewardableEpoch, 646_800);
-
-  const lastReward = allocateProgressRewards(firstUnrewardableEpoch - 1, claim,
-    fourthEraBudget);
-  assert.equal(sumRewards(lastReward), fourthEraBudget);
+  assert.equal(INITIAL_EPOCH_REWARD, 44n * ATOMIC_UNITS);
+  assert.equal(eras, 33);
+  assert.equal(scheduleTotal, 1_847_999_998_110_000n);
+  assert.equal(dust, 1_890_000n); // 0.01890000 NIR, never silently minted.
+  assert.equal(scheduledEpochBudget(eras * HALVING_INTERVAL), 0n);
   assert.equal(TREASURY_ALLOCATION + MINING_POOL, MAX_SUPPLY);
-  assert.equal(scheduledEpochBudget(firstUnrewardableEpoch), fourthEraBudget);
-  assert.throws(() => allocateProgressRewards(firstUnrewardableEpoch, claim, 0n),
+  assert.equal(TREASURY_ALLOCATION + scheduleTotal + dust, MAX_SUPPLY);
+  const claim = coalitionClaims(eras * HALVING_INTERVAL, 1, 1, "exhaustion");
+  assert.throws(() => allocateProgressRewards(eras * HALVING_INTERVAL, claim, dust),
     /no mining budget remains/);
 });
