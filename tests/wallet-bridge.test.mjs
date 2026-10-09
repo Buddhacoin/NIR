@@ -202,6 +202,42 @@ test("removed selected vault never exposes its absolute path over the bridge", a
   }
 });
 
+test("native pairing prompt shows the code only on the device, never over HTTP", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-pairing-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "native-pairing-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "1".repeat(64);
+  let shown = 0;
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, pairingCode: "12345678",
+    presentPairingCode: () => { shown += 1; }, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const prompt = await request(`${base}/v1/pairing-prompt`, origin, "", { method: "POST" });
+    assert.equal(prompt.status, 202);
+    const body = await prompt.text();
+    assert.deepEqual(JSON.parse(body), { shownOnDevice: true });
+    assert.equal(body.includes("12345678"), false);
+    assert.equal(body.includes(token), false);
+    assert.equal(shown, 1);
+    const wrongOrigin = await request(`${base}/v1/pairing-prompt`, "http://evil.invalid", "",
+      { method: "POST" });
+    assert.equal(wrongOrigin.status, 403);
+    assert.equal(shown, 1);
+    const paired = await request(`${base}/v1/pair`, origin, "",
+      { method: "POST", body: JSON.stringify({ code: "12345678" }) });
+    assert.equal(paired.status, 200);
+    assert.equal((await request(`${base}/v1/pairing-prompt`, origin, "",
+      { method: "POST" })).status, 409);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("rehearsal CLI exposes sibling vault copies and disables unsupported creation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-cli-accounts-"));
   const walletDirectory = join(directory, "Wallets");
