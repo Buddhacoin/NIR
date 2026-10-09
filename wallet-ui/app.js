@@ -984,6 +984,9 @@ function openBridgePanel() {
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
   bridgePanel.showModal();
+  // Native Mac app brings its pairing code above the browser. The standalone
+  // CLI has no such endpoint; its terminal code remains the fallback.
+  void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
 }
 
 async function renderAccounts() {
@@ -1582,5 +1585,13 @@ refreshNodeStatus();
 renderWalletConnection();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  navigator.serviceWorker.register("./sw.js");
+  if (new URLSearchParams(location.search).get("local-app") === "1") {
+    // The native launcher uses an ephemeral origin. Never keep a cache-first
+    // worker for a later build that might reuse this port.
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((entry) => entry.unregister())))
+      .catch(() => {});
+  } else {
+    navigator.serviceWorker.register("./sw.js");
+  }
 }

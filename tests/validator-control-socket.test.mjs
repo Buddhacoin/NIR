@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync,
   symlinkSync, writeFileSync } from "node:fs";
 import { createConnection, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { encodeCanonicalIpcFrame } from "../blockchain/canonical-ipc-framing.mjs";
 import { CONTROL_REQUEST_FRAME, listenOnPrivateValidatorControlSocket,
   requestValidatorControl } from "../blockchain/validator-control-socket.mjs";
 import { createValidatorControlServer, createValidatorHttpServer }
   from "../blockchain/validator-service.mjs";
+
+const execFileAsync = promisify(execFile);
+const controlCli = new URL("../blockchain/validator-control-cli.mjs", import.meta.url).pathname;
 
 async function raw(path, bytes) {
   await new Promise((resolve, reject) => {
@@ -80,16 +85,23 @@ test("oversize, truncated, and extra control frames cause no operation", async (
   try {
     channel = await listenOnPrivateValidatorControlSocket(control.server, base);
     control.enable();
-    await raw(channel.path, Buffer.from([0, 0, 1, 1])); // Declares 257 > 256.
+    await raw(channel.path, Buffer.from([0, 1, 0, 1])); // Declares 65537 > 65536.
     await raw(channel.path, Buffer.from([0, 0, 0, 20, 0x7b])); // Truncated frame.
     await raw(channel.path, encodeCanonicalIpcFrame({ operation: "shutdown" }, CONTROL_REQUEST_FRAME));
     await raw(channel.path, encodeCanonicalIpcFrame({ operation: "sync", extra: true }, CONTROL_REQUEST_FRAME));
+    await raw(channel.path, encodeCanonicalIpcFrame({ operation: "stageRewardClaim",
+      claim: {}, expectedHeight: 1, networkId: "test", previousHash: "a".repeat(64),
+      extra: true }, CONTROL_REQUEST_FRAME));
     await raw(channel.path, Buffer.concat([
       encodeCanonicalIpcFrame({ operation: "sync" }, CONTROL_REQUEST_FRAME),
       encodeCanonicalIpcFrame({ operation: "produce" }, CONTROL_REQUEST_FRAME),
     ]));
     assert.equal(consulted, 0);
     await assert.rejects(requestValidatorControl(channel.path, "other"), /operation is invalid/);
+    await assert.rejects(requestValidatorControl(channel.path, "stageRewardClaim", {}),
+      /operation is invalid/);
+    await assert.rejects(requestValidatorControl(channel.path, "rewardClaimStatus",
+      { claimDigest: "a".repeat(64), extra: true }), /operation is invalid/);
   } finally {
     await channel?.close();
     rmSync(base, { recursive: true, force: true });
@@ -167,6 +179,49 @@ test("two complete operator requests cannot execute concurrently", async () => {
     assert.equal(calls, 2);
   } finally {
     release();
+    await channel?.close();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("operator CLI stages only a bounded signed-claim file and queries its digest", async () => {
+  const base = mkdtempSync(join(tmpdir(), "nvc-cli-"));
+  const claimPath = join(base, "signed-claim.json");
+  const digest = "a".repeat(64);
+  let staged = 0;
+  const control = createValidatorControlServer({
+    stageRewardClaim(request) {
+      assert.deepEqual(request.claim, { attestations: [] });
+      assert.equal(request.expectedHeight, 7);
+      assert.equal(request.networkId, "nir-local");
+      assert.equal(request.previousHash, "b".repeat(64));
+      staged += 1;
+      return { claimDigest: digest, expectedHeight: 7, status: "queued" };
+    },
+    rewardClaimStatus(value) {
+      assert.equal(value, digest);
+      return { claimDigest: digest, status: "queued" };
+    },
+  });
+  let channel;
+  try {
+    writeFileSync(claimPath, '{"attestations":[]}\n', { mode: 0o600 });
+    channel = await listenOnPrivateValidatorControlSocket(control.server, base);
+    control.enable();
+    const stagedOutput = await execFileAsync(process.execPath, [controlCli,
+      "stage-reward", channel.path, claimPath, "nir-local", "7", "b".repeat(64)]);
+    assert.equal(JSON.parse(stagedOutput.stdout).body.claimDigest, digest);
+    const statusOutput = await execFileAsync(process.execPath, [controlCli,
+      "reward-status", channel.path, digest]);
+    assert.equal(JSON.parse(statusOutput.stdout).body.status, "queued");
+    assert.equal(staged, 1);
+    const link = join(base, "linked-claim.json");
+    symlinkSync(claimPath, link);
+    await assert.rejects(execFileAsync(process.execPath, [controlCli,
+      "stage-reward", channel.path, link, "nir-local", "7", "b".repeat(64)]),
+    /signed progress claim file is unsafe/);
+    assert.equal(staged, 1);
+  } finally {
     await channel?.close();
     rmSync(base, { recursive: true, force: true });
   }

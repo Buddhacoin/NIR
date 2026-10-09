@@ -334,6 +334,7 @@ export function createWalletBridgeServer({
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
+  presentPairingCode,
   sessionToken,
   trustAnchor,
   trustCheckpointPath,
@@ -343,6 +344,8 @@ export function createWalletBridgeServer({
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       (createAccount !== undefined && typeof createAccount !== "function") ||
+      (presentPairingCode !== undefined &&
+        (typeof presentPairingCode !== "function" || pairingCode === undefined)) ||
       (accounts !== undefined && (!Array.isArray(accounts) || accounts.length < 1 ||
         accounts.length > 100 || accounts.some((account) =>
           typeof account?.path !== "string" || !ADDRESS.test(account?.address ?? "")))) ||
@@ -497,6 +500,18 @@ export function createWalletBridgeServer({
     const url = new URL(request.url, "http://bridge.local");
     if (url.search) {
       return send(response, 404, { error: "bridge endpoint query is not allowed" }, origin);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/pairing-prompt") {
+      if (!presentPairingCode || !pairingAvailable || sessionActive ||
+          Date.now() > pairingDeadline || pairingAttempts >= 5) {
+        return send(response, 409, { error: "pairing is unavailable; restart the bridge" }, origin);
+      }
+      try {
+        presentPairingCode();
+        return send(response, 202, { shownOnDevice: true }, origin);
+      } catch {
+        return send(response, 503, { error: "pairing window could not be opened" }, origin);
+      }
     }
     if (request.method === "POST" && url.pathname === "/v1/pair") {
       try {
