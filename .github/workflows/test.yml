@@ -35,12 +35,14 @@ jobs:
           retention-days: 7
       - name: Install isolated Chromium test browser
         working-directory: browser-wallet
-        run: npx playwright install --with-deps chromium webkit
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Test extension in Chromium
         working-directory: browser-wallet
         run: npm run test:browser
-      - name: Test one-link web wallet in Chromium and WebKit
+      - name: Test one-link web wallet in Chromium, Firefox and WebKit
         working-directory: browser-wallet
+        env:
+          NIR_TEST_FIREFOX: "1"
         run: npm run test:web
       - name: Attach developer-preview extension
         uses: actions/upload-artifact@v4

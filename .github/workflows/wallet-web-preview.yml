@@ -37,9 +37,11 @@ jobs:
           npm run build:web
       - name: Install isolated test browsers
         working-directory: browser-wallet
-        run: npx playwright install --with-deps chromium webkit
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Test static wallet before deployment
         working-directory: browser-wallet
+        env:
+          NIR_TEST_FIREFOX: "1"
         run: npm run test:web
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

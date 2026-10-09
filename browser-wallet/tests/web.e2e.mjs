@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
-import { chromium, webkit } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 
 const root = resolve(import.meta.dirname, "../dist-web");
 const allowed = new Map([
@@ -13,7 +13,8 @@ const allowed = new Map([
   ["/nir-icon.png", ["nir-icon.png", "image/png"]],
 ]);
 
-for (const browserType of [chromium, webkit]) test(`${browserType.name()} web preview creates, locks, unlocks and restores local test addresses`, async () => {
+const browserTypes = [chromium, webkit, ...(process.env.NIR_TEST_FIREFOX ? [firefox] : [])];
+for (const browserType of browserTypes) test(`${browserType.name()} web preview creates, locks, unlocks and restores local test addresses`, async () => {
   const server = createServer((request, response) => {
     const asset = allowed.get(new URL(request.url, "http://localhost").pathname);
     if (!asset) { response.writeHead(404).end(); return; }
