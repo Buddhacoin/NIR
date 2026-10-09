@@ -1,0 +1,11 @@
+# Open-model catalog in the local NIR mining lab
+
+The catalog is read-only discovery, not a miner. The only runnable action in this app remains the bundled, pinned Iris rehearsal. Selecting a Hugging Face repository or revision does not download weights, execute code, submit a claim, create a wallet, or earn NIR.
+
+The first curated entries are `Qwen/Qwen3-0.6B` and `TinyLlama/TinyLlama-1.1B-Chat-v1.0`. The local server requests only `id`, `sha`, `private`, and `gated` from the public Hugging Face metadata API. It accepts only an exact allowlisted repository ID, a 40-character lowercase Git commit SHA, and explicit `private: false` / `gated: false`. These entries are examples for browsing, not endorsements or publisher verification. The SHA identifies the repository revision; it is **not** a verification of downloaded file bytes or a reproducible execution environment.
+
+Metadata refreshes when the page opens and every five minutes while visible; the user may also refresh manually. The server limits outbound refreshes to once per 30 seconds. Up to 12 previously observed HEAD commit SHAs per repo remain in memory when an alias points to a newer commit; this is **not** a complete release/version history. The UI never switches the selected revision automatically; if it drops out of the short server list, the current page retains and labels it as an earlier observed revision. If a refresh fails, the previously seen metadata is marked stale even when a revision is selected. Restarting the app clears this in-memory list; offline with no prior successful request means no revisions are shown. Nothing is persisted to the user's wallet or sent to the NIR network.
+
+This cannot be upgraded to reward eligibility by adding a model to the list. Before arbitrary models can be checked, NIR needs a separately reviewed pinned artifact format with file digests, license and safety policy, an isolated deterministic runner, a challenge suite, independent evaluators, and an end-to-end finality path. The catalog intentionally has no “mine” or “check this model” button.
+
+Source for the metadata shape: [Hugging Face Hub API](https://huggingface.co/docs/hub/en/api) and [HfApi model info](https://huggingface.co/docs/huggingface_hub/main/package_reference/hf_api).

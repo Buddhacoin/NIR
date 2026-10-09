@@ -18,6 +18,17 @@
       <button id="start" type="button"><span data-i18n="start">Проверить модель Iris</span><span aria-hidden="true">→</span></button>
       <p class="safety" data-i18n="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
     </section>
+    <section class="catalog" aria-labelledby="catalog-heading">
+      <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>
+      <p data-i18n="catalogIntro">Можно посмотреть замеченные ревизии открытых моделей; запускать их здесь пока нельзя. Встроенная Iris выше — единственная доступная проверка.</p>
+      <label for="catalog-model" data-i18n="catalogModel">Модель</label>
+      <select id="catalog-model" disabled><option value="" data-i18n="catalogPlaceholder">Выберите модель</option></select>
+      <label for="catalog-version" data-i18n="catalogVersion">Замеченная ревизия (точный commit SHA)</label>
+      <select id="catalog-version" disabled><option value="" data-i18n="catalogVersionPlaceholder">Сначала выберите модель</option></select>
+      <p id="catalog-state" role="status" aria-live="polite"></p>
+      <button id="catalog-refresh" class="secondary" type="button" data-i18n="catalogRefresh">Обновить сведения</button>
+      <p class="catalog-note" data-i18n="catalogNote">Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Ничего не скачивается, не исполняется и не даёт права на награду.</p>
+    </section>
     <section id="progress" class="result" hidden aria-live="polite">
       <div class="spinner" aria-hidden="true"></div>
       <h2 data-i18n="runningTitle">Модель выполняется на этом Mac…</h2>

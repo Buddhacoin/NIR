@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { createOpenModelCatalog } from "./open-model-catalog.mjs";
 
 const execFileAsync = promisify(execFile);
 const assets = new Map([
@@ -75,7 +76,7 @@ export async function runPinnedModel(root) {
   return publicModelResult(result);
 }
 
-export function createMiningPracticeApp({ root, runModel = runPinnedModel } = {}) {
+export function createMiningPracticeApp({ root, runModel = runPinnedModel, catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
   const server = createServer(async (request, response) => {
@@ -107,6 +108,19 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel } = {}
     }
     if (request.method === "GET" && path === "/status") {
       send(200, "application/json; charset=utf-8", JSON.stringify({ status: "local-model-service-ready" }));
+      return;
+    }
+    if (request.method === "GET" && path === "/catalog" && request.url === "/catalog") {
+      send(200, "application/json; charset=utf-8", JSON.stringify(await catalog.get()));
+      return;
+    }
+    if (request.method === "POST" && path === "/catalog/refresh" && request.url === "/catalog/refresh") {
+      if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+          request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      send(200, "application/json; charset=utf-8", JSON.stringify(await catalog.refresh()));
       return;
     }
     if (request.method === "POST" && path === "/model-check") {
