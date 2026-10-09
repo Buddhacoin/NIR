@@ -175,7 +175,10 @@ $("#restore-form").addEventListener("submit", (event) => {
       throw new Error("Это фраза другого кошелька. Существующий кошелёк не заменён.");
     }
     phrase = await decryptPhrase(record, password);
-    accountCount = profile?.accountCount ?? 1;
+    // A phrase reproduces all first 16 addresses, but the old device's
+    // accountCount is not part of the phrase. Expose them all on clean restore
+    // so an existing secondary address cannot appear to be lost.
+    accountCount = profile?.accountCount ?? 16;
     selectedIndex = profile?.selectedIndex ?? 0;
     await saveProfile({ vault: record, accountCount, selectedIndex });
     form.reset();

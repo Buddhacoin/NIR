@@ -55,7 +55,8 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     await page.getByRole("button", { name: "+ Добавить адрес" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
     assert.equal(await page.locator("#account-label").textContent(), "Адрес 2");
-    assert.notEqual(await page.locator("#full-address").textContent(), firstAddress);
+    const secondAddress = await page.locator("#full-address").textContent();
+    assert.notEqual(secondAddress, firstAddress);
     await page.getByRole("button", { name: "Настройки" }).click();
     await page.getByRole("button", { name: "Показать фразу" }).click();
     await page.locator("#reveal-form [name=password]").fill("wrong password 123");
@@ -83,6 +84,13 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     await page.getByRole("button", { name: "Восстановить" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
     assert.equal(await page.locator("#full-address").textContent(), firstAddress);
+    await page.getByRole("button", { name: "Выбрать адрес" }).click();
+    await page.waitForFunction(() => document.querySelectorAll("#account-list button").length === 16);
+    assert.equal(await page.locator("#account-list button").count(), 16);
+    await page.locator("#account-list button").nth(1).click();
+    await page.waitForFunction((expected) => document.querySelector("#full-address")?.textContent === expected,
+      secondAddress);
+    assert.equal(await page.locator("#full-address").textContent(), secondAddress);
     assert.deepEqual(failures, []);
   } finally {
     await context?.close();

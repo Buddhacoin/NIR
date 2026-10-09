@@ -79,6 +79,11 @@ def create_wallet(browser):
     visible(browser, "#home")
     address = browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent")
     assert address.startswith("nir1") and len(address) == 68
+    click(browser, "#open-accounts")
+    click(browser, "#add-account")
+    visible(browser, "#home")
+    second_address = browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent")
+    assert second_address != address
     click(browser, "#nav-settings")
     click(browser, "#lock-wallet")
     visible(browser, "#unlock")
@@ -91,11 +96,11 @@ def create_wallet(browser):
     fill(browser, "#unlock-form [name=password]", PASSWORD)
     click(browser, "#unlock-form button[type=submit]")
     visible(browser, "#home")
-    assert browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent") == address
-    return words, address
+    assert browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent") == second_address
+    return words, address, second_address
 
 
-def restore_on_clean_device(browser, words, expected_address):
+def restore_on_clean_device(browser, words, expected_address, expected_second_address):
     browser.install_addon(str(PACKAGE), temporary=True)
     wallet_tab(browser)
     visible(browser, "#welcome")
@@ -106,18 +111,22 @@ def restore_on_clean_device(browser, words, expected_address):
     click(browser, "#restore-form button[type=submit]")
     visible(browser, "#home")
     assert browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent") == expected_address
+    click(browser, "#open-accounts")
+    assert len(browser.find_elements(By.CSS_SELECTOR, "#account-list button")) == 16
+    click(browser, "#account-list button:nth-child(2)")
+    assert browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent") == expected_second_address
 
 
 def main():
     assert PACKAGE.is_file(), "run npm run package:firefox first"
     first = driver()
     try:
-        words, address = create_wallet(first)
+        words, address, second_address = create_wallet(first)
     finally:
         first.quit()
     second = driver()
     try:
-        restore_on_clean_device(second, words, address)
+        restore_on_clean_device(second, words, address, second_address)
     finally:
         second.quit()
     print("Firefox extension onboarding, unlock, and clean-profile restoration passed")
