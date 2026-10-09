@@ -72,6 +72,10 @@ for (const browserType of browserTypes) test(`${browserType.name()} web preview 
     assert.equal(await page.locator("#full-address").textContent(), address);
     assert.deepEqual(errors, []);
     assert.deepEqual(externalRequests, []);
+    const embedded = await browser.newPage();
+    await embedded.setContent(`<iframe src="${origin}/"></iframe>`);
+    await embedded.frameLocator("iframe").getByText("Откройте NIR Wallet напрямую, а не внутри другого сайта.").waitFor();
+    await embedded.close();
   } finally {
     await browser?.close();
     await new Promise((resolveClose) => server.close(resolveClose));
