@@ -83,6 +83,7 @@ const NETWORK = "nir-production-release-gate-testnet";
 const CHECKPOINT = `sha3-256:${"7".repeat(64)}`;
 const GENESIS = "8".repeat(64);
 const TIP = "a".repeat(64);
+const PHRASE_ASSETS = ["blockchain/bip39-english.txt", "blockchain/bip39-english-LICENSE"];
 
 function identity(wallet, operatorId) { return { ...publicWallet(wallet), operatorId }; }
 
@@ -913,8 +914,9 @@ test("installed launcher verifies its release and activates the exact cohort", a
   let reservation = null; let reservationReleased = false; let cohort = null;
   try {
     const sourceRoot = fileURLToPath(new URL("../", import.meta.url));
-    const paths = ["package.json", ...readdirSync(join(sourceRoot, "blockchain"))
-      .filter((name) => name.endsWith(".mjs")).map((name) => `blockchain/${name}`)];
+    const paths = ["package.json", ...PHRASE_ASSETS,
+      ...readdirSync(join(sourceRoot, "blockchain"))
+        .filter((name) => name.endsWith(".mjs")).map((name) => `blockchain/${name}`)];
     const manifest = createReleaseManifest(sourceRoot, paths, {
       releaseVersion: "1.2.3", sourceRevision: "d".repeat(40),
     });
@@ -1078,6 +1080,10 @@ test("production wallet bridge and UI verify anchored generations before bind on
     for (const name of runtimeFiles) {
       copyFileSync(join(sourceBlockchain, name), join(values.root, "blockchain", name));
     }
+    for (const relative of PHRASE_ASSETS) {
+      copyFileSync(join(sourceBlockchain, relative.split("/").at(-1)),
+        join(values.root, relative));
+    }
     copyFileSync(new URL("../package.json", import.meta.url), join(values.root, "package.json"));
     const sourceWalletUi = new URL("../wallet-ui/", import.meta.url).pathname;
     const walletFiles = readdirSync(sourceWalletUi);
@@ -1085,7 +1091,8 @@ test("production wallet bridge and UI verify anchored generations before bind on
     for (const name of walletFiles) {
       copyFileSync(join(sourceWalletUi, name), join(values.root, "wallet-ui", name));
     }
-    const paths = ["package.json", ...walletFiles.map((name) => `wallet-ui/${name}`),
+    const paths = ["package.json", ...PHRASE_ASSETS,
+      ...walletFiles.map((name) => `wallet-ui/${name}`),
       ...runtimeFiles.map((name) => `blockchain/${name}`)];
     const manifest = createReleaseManifest(values.root, paths, {
       releaseVersion: "2.0.0", sourceRevision: values.manifest.sourceRevision,
