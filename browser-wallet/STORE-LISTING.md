@@ -20,4 +20,4 @@ Privacy policy URL after the containing branch is merged: https://github.com/Bud
 
 Support contact: nir.blockchain@gmail.com
 
-Before submitting: verify the store ZIP matches reviewed source, complete security review and full CI, add a current screenshot of the actual preview UI, confirm listing and privacy disclosures, and publish only from the owner's registered developer account. Do not describe this build as a live payment wallet.
+Before submitting: verify the store ZIP matches reviewed source, complete security review and full CI, capture a current screenshot of the actual preview UI with `npm run screenshot:store -- /absolute/output.png`, confirm listing and privacy disclosures, and publish only from the owner's registered developer account. Do not describe this build as a live payment wallet.
