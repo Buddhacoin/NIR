@@ -23,6 +23,7 @@ header, .title { display: flex; align-items: center; justify-content: space-betw
 .brand-logo { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; }
 .header-actions { display: flex; align-items: center; gap: 7px; }
 .header-actions button, .title button { min-height: 40px; border: 1px solid var(--border); background: #ffffffd9; color: var(--text); border-radius: 20px; padding: 8px 13px; box-shadow: 0 3px 12px #0000000a; backdrop-filter: blur(16px); }
+#account-open { max-width: 135px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
 .network.connected { color: #157542; }
 .network.offline { color: var(--muted); }
 #theme { width: 40px; padding: 0; font-size: 16px; }
@@ -80,6 +81,11 @@ dialog::backdrop { background: #0008; backdrop-filter: blur(5px); }
 .primary { width: 100%; padding: 14px; border: 0; border-radius: 14px; background: var(--text); color: var(--inverse); font-weight: 800; }
 dialog > p, dialog section > p { color: var(--muted); font-size: 14px; line-height: 1.5; }
 dialog form { display: grid; gap: 15px; margin-top: 20px; }
+.account-list { display: grid; gap: 8px; margin-top: 16px; }
+.account-list button { width: 100%; padding: 12px; text-align: left; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); }
+.account-list button[aria-current="true"] { border-color: var(--text); background: var(--surface); }
+.account-list strong, .account-list small { display: block; }
+.account-list small { margin-top: 4px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
 dialog label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weight: 650; }
 dialog input, dialog textarea { width: 100%; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-soft); color: var(--text); font: inherit; }
 dialog input { min-height: 48px; padding: 11px 13px; }
@@ -179,6 +185,11 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
   .contact-controls { justify-content: flex-start; }
   .asset-row { padding: 10px; }
   nav span { font-size: 10px; }
+}
+
+@media (max-width: 520px) {
+  header { flex-wrap: wrap; gap: 8px; }
+  #account-open { max-width: 110px; }
 }
 
 @media (min-width: 760px) {
