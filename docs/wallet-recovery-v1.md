@@ -25,8 +25,8 @@ The experimental derivation is frozen by `tests/wallet-seed.test.mjs`:
    SPKI public key and the ordinary NIR address from it. No new address or
    signature algorithm is introduced.
 
-The BIP-39 English list is from the [Bitcoin BIPs repository](https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt)
-under the BIP-39 MIT license. This mnemonic uses BIP-39 words but **NIR-specific
+The BIP-39 English list and its upstream attribution are recorded in
+`blockchain/bip39-english-LICENSE` under the MIT license. This mnemonic uses BIP-39 words but **NIR-specific
 account derivation**; it is not a MetaMask or Trust Wallet account.
 
 Before enabling this in any downloadable app: independently review the
