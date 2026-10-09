@@ -78,6 +78,12 @@ no NIR is earned. `npm run mine:try` is the older **separate** ledger demo,
 not the same model check. Its `--details` output uses 44 **test** NIR on a
 temporary local chain. That is not a live payout.
 
+Keep the Terminal process running while using the page. If the page shows that
+the local service is disconnected, run `npm run mine:app` again and use the
+**new tab/address** it opens; refreshing an old random-port URL is not a fix.
+The page has a RU/EN switch. It defaults to the browser language and remembers
+your choice only for that particular local browser address, not across ports.
+
 ### Advanced role wizard
 
 If you need a different role or developer transport check, run

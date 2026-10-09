@@ -9,28 +9,29 @@
 </head>
 <body>
   <main class="app">
-    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MINING LAB</small></span><b>ТЕСТ</b></header>
+    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MINING LAB</small></span><div class="header-actions"><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
+    <p id="connection" class="connection" role="status" aria-live="polite">Проверяем подключение к локальному сервису…</p>
     <section class="hero">
-      <span class="eyebrow">Локальная тренировка</span>
-      <h1>Проверьте реальную модель локально</h1>
-      <p>Закреплённый пример Iris обучает два классификатора на 120 строках и проверяет их на 30 отложенных примерах. Приложение повторяет запуск, собирает и проверяет свидетельства. Данные публичны; это ещё не независимая проверка и не майнинг с наградой.</p>
-      <button id="start" type="button">Проверить модель Iris <span aria-hidden="true">→</span></button>
-      <p class="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
+      <span class="eyebrow" data-i18n="eyebrow">Локальная тренировка</span>
+      <h1 data-i18n="headline">Проверка модели Iris</h1>
+      <p data-i18n="description">Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.</p>
+      <button id="start" type="button"><span data-i18n="start">Проверить модель Iris</span><span aria-hidden="true">→</span></button>
+      <p class="safety" data-i18n="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
     </section>
     <section id="progress" class="result" hidden aria-live="polite">
       <div class="spinner" aria-hidden="true"></div>
-      <h2>Модель выполняется на этом Mac…</h2>
-      <p>Проверяем исходную и улучшенную модель, затем целостность набора свидетельств.</p>
+      <h2 data-i18n="runningTitle">Модель выполняется на этом Mac…</h2>
+      <p data-i18n="runningBody">Проверяем исходную и улучшенную модель, затем целостность набора свидетельств.</p>
     </section>
     <section id="result" class="result" hidden aria-live="polite">
       <span class="result-icon" aria-hidden="true">✓</span>
-      <h2>Локальная проверка завершена</h2>
+      <h2 data-i18n="doneTitle">Локальная проверка завершена</h2>
       <p id="score"></p>
-      <p>Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.</p>
-      <details><summary>Технический результат</summary><p id="technical"></p></details>
+      <p data-i18n="doneBody">Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.</p>
+      <details><summary data-i18n="technicalTitle">Технический результат</summary><p id="technical"></p></details>
     </section>
-    <p id="error" class="error" role="alert" hidden></p>
-    <footer>Публичный майнинг и реальные NIR недоступны. Запускается только встроенный пример из доверенной копии NIR; программа не является песочницей и не принимает произвольный код.</footer>
+    <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
+    <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Запускается только встроенный пример из доверенной копии NIR; программа не является песочницей и не принимает произвольный код.</footer>
   </main>
 </body>
 </html>
