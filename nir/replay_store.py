@@ -432,6 +432,12 @@ class DurableAssignmentReceiptReplayGuard:
             expected_safety_policy_hash=expected_safety_policy_hash,
             exact_chain_anchor=exact_chain_anchor,
         )
+        return self._consume_verified(assignment=assignment, receipts=receipts)
+
+    def _consume_verified(
+        self, *, assignment: object, receipts: tuple[object, ...],
+    ) -> tuple[str, ...]:
+        """Consume keys after an enclosing verifier; not an in-process security boundary."""
         replay_keys = tuple(
             sorted(assignment_transcript_replay_key(assignment, receipt) for receipt in receipts)
         )

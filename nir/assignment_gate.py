@@ -210,16 +210,18 @@ def verify_assignment_package(
     with ConsumedEvaluationStore(replay_store, expected_checkpoint=expected_checkpoint) as store:
         previous = store.checkpoint
         guard = DurableAssignmentReceiptReplayGuard(store)
-        replay_keys = guard.consume(
-            assignment=assignment,
-            bundle=bundle,
-            receipts=receipts,
-            trusted_authorities=None, exact_chain_anchor=anchor,
-            expected_network_id=policy["expectedNetworkId"],
-            expected_genesis_hash=policy["expectedGenesisHash"],
+        # This file-gate is the atomic V2 trust boundary: it verified the raw
+        # V3/V4 proof above. The general receipt API rejects a caller-supplied
+        # anchor result because that dataclass is constructible.
+        from .execution_receipt import _verify_execution_receipt_bindings
+        _verify_execution_receipt_bindings(
+            assignment=assignment, bundle=bundle, receipts=receipts,
+            observed_height=policy["observedHeight"],
             expected_adapter_protocol=policy["expectedAdapterProtocol"],
             expected_safety_policy_hash=policy["expectedSafetyPolicyHash"],
-            observed_height=policy["observedHeight"],
+        )
+        replay_keys = guard._consume_verified(
+            assignment=assignment, receipts=receipts,
         )
         current = store.checkpoint
 

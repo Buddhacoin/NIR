@@ -494,25 +494,9 @@ def verify_finalized_assignment(
     if assignment.network_id != expected_network_id or assignment.genesis_hash != expected_genesis_hash:
         raise ProtocolError("assignment belongs to another network or genesis")
     if isinstance(assignment, FinalizedEvaluationAssignmentV2):
-        if trusted_authorities not in (None, {}) or (
-            not isinstance(observed_height, int) or isinstance(observed_height, bool) or
-            observed_height < assignment.decision_height or
-            observed_height > assignment.expires_at_height
-        ):
-            raise ProtocolError("assignment v2 is not finalized or has expired")
-        if (
-            exact_chain_anchor is None
-            or getattr(exact_chain_anchor, "exact_assignment_included", None) is not True
-            or getattr(exact_chain_anchor, "chain_assignment_included", None) is not True
-            or getattr(exact_chain_anchor, "candidate_commitment_included", None) is not True
-            or getattr(exact_chain_anchor, "assignment_hash", None) != assignment.assignment_hash
-            or getattr(exact_chain_anchor, "finalized_height", None) !=
-                assignment.source_finality_height
-            or getattr(exact_chain_anchor, "finalized_state_root", None) !=
-                assignment.source_finality_state_root
-        ):
-            raise ProtocolError("assignment v2 lacks a matching exact chain anchor")
-        return
+        raise ProtocolError(
+            "assignment v2 requires atomic chain-proof verification"
+        )
     if not isinstance(assignment, FinalizedEvaluationAssignment) or trusted_authorities is None:
         raise ProtocolError("legacy assignment trust inputs are invalid")
     if not isinstance(observed_height, int) or isinstance(observed_height, bool) or (
@@ -671,12 +655,36 @@ def verify_execution_receipts(
     expected_genesis_hash: str, expected_adapter_protocol: str,
     expected_safety_policy_hash: str, exact_chain_anchor: object | None = None,
 ) -> None:
+    if isinstance(assignment, FinalizedEvaluationAssignmentV2):
+        raise ProtocolError(
+            "assignment v2 receipts require atomic chain-proof verification"
+        )
     verify_finalized_assignment(
         assignment, trusted_authorities=trusted_authorities,
         expected_network_id=expected_network_id, expected_genesis_hash=expected_genesis_hash,
         observed_height=observed_height,
         exact_chain_anchor=exact_chain_anchor,
     )
+    _verify_execution_receipt_bindings(
+        assignment=assignment, bundle=bundle, receipts=receipts,
+        observed_height=observed_height,
+        expected_adapter_protocol=expected_adapter_protocol,
+        expected_safety_policy_hash=expected_safety_policy_hash,
+    )
+
+
+def _verify_execution_receipt_bindings(
+    *, assignment: FinalizedEvaluationAssignment | FinalizedEvaluationAssignmentV2,
+    bundle: EvaluationBundle, receipts: tuple[SignedExecutionTranscript, ...],
+    observed_height: int, expected_adapter_protocol: str,
+    expected_safety_policy_hash: str,
+) -> None:
+    """Verify bindings after the caller has cryptographically established finality.
+
+    This is intentionally private, not an in-process security boundary. Public V2 callers must use the atomic
+    assignment-package verifier, which validates the raw V3/V4 chain proof
+    before reaching this helper.
+    """
     verify_bundle(bundle, expected_hash=bundle.bundle_hash)
     if (
         assignment.adapter_protocol != expected_adapter_protocol

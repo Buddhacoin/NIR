@@ -392,9 +392,12 @@ Checkpoint, validator history, ожидаемые network/genesis не беру�
 получает их из своей конфигурации/light-client store. Для checkpoint на genesis
 проверяется точный genesis hash. Для `FinalizedEvaluationAssignmentV2` внешние
 authority attestations удалены: его поля точно совпадают с protocol-v27 leaf, а
-финальность даёт сама проверенная цепочка. `verify_execution_receipts()` принимает
-v2 только вместе с matching exact-chain result и в диапазоне
-`decisionHeight..expiresAtHeight`.
+финальность даёт сама проверенная цепочка. Публичные
+`verify_finalized_assignment()` и `verify_execution_receipts()` не принимают
+v2 с готовым exact-chain result: этот dataclass может сконструировать вызывающий
+код. Текущий v2 путь — атомарный file-based assignment gate, который сам
+проверяет raw V3/V4 proof и operator trust pins, затем receipt bindings и только
+после этого меняет replay state. Общий v2 API должен сохранить ту же атомарность.
 
 ### Точная граница chain inclusion
 
