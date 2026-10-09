@@ -26,6 +26,14 @@ jobs:
       - name: Package Firefox submission candidate
         working-directory: browser-wallet
         run: npm run package:firefox
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: browser-actions/setup-firefox@v1
+      - name: Test actual Firefox extension onboarding and restoration
+        run: |
+          python3 -m pip install selenium==4.51.0
+          python3 browser-wallet/tests/firefox.e2e.py
       - name: Attach unsigned Firefox submission candidate
         uses: actions/upload-artifact@v4
         with:
