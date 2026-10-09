@@ -1,13 +1,6 @@
 name: wallet-web-preview
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - browser-wallet/**
-      - blockchain/bip39-english.txt
-      - wallet-ui/nir-coin-icon.png
-      - .github/workflows/wallet-web-preview.yml
   workflow_dispatch:
 
 permissions:

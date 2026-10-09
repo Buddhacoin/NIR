@@ -4,7 +4,7 @@
 
 # NIR — the currency of verifiable progress
 
-**[Open NIR Wallet web preview](https://buddhacoin.github.io/NIR/)** on a laptop in one click—no ZIP, installer, or developer account. This is a test-only web page, **not** an installed app or a wallet for real funds. The link goes live after the preview deployment succeeds. A separate free Firefox Add-ons listing is in preparation; [see wallet availability](#nir-wallet-availability).
+**NIR Wallet is not yet available as a one-click install or public web wallet.** A browser-only test preview is being reviewed; no public link should be used until deployment, origin isolation, and a live security check are complete. A separate free Firefox Add-ons listing is in preparation; [see wallet availability](#nir-wallet-availability).
 
 **AI will change the world. NIR is being built so the world can verify that change — and share in it.**
 
@@ -27,16 +27,16 @@ What makes the design different:
 
 ## NIR Wallet availability
 
-**[Open the free web preview](https://buddhacoin.github.io/NIR/)** in a desktop browser. It creates and restores local test addresses, but cannot send, mine, or show real balances. Its encrypted browser storage is specific to that browser on that device; write down the 24 words offline to restore on another device. Never enter a phrase from another wallet here. This is one-click **access**, not an installed or independently audited wallet.
+The desktop web preview is under review and has no public entry point yet. It creates and restores local test addresses, but cannot send, mine, or show real balances. Its encrypted browser storage remains on that browser origin and device; write down the 24 words offline to restore on another device. Never enter a phrase from another wallet into an unreviewed preview. A GitHub Pages project path does not isolate browser storage from other pages on the same origin, so publication needs a dedicated origin or another reviewed isolation design.
 
 One-click **installation** as a Firefox extension still requires Mozilla signing and publication. A signed Mac desktop installer would require Apple Developer ID and notarization; neither is available yet.
 
 | Browser / device | Status |
 |---|---|
-| Chrome on Mac, Windows, Linux | Web preview tested in Chromium; no Chrome Web Store listing planned for this first release. |
-| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | Web preview expected to open; each browser has not been separately verified. No extension-store listing. |
-| Firefox on desktop | Web preview tested in Firefox; Firefox extension package prepared but not yet signed or published by Mozilla. |
-| Safari on Mac | Web preview tested in WebKit; no signed Safari extension or Mac installer. |
+| Chrome on Mac, Windows, Linux | Web preview tested in Chromium locally, but not publicly released; no Chrome Web Store listing planned for this first release. |
+| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | Not separately verified and no public browser-wallet link or extension-store listing. |
+| Firefox on desktop | Web preview tested in Firefox locally; Firefox extension package prepared but not yet signed or published by Mozilla. |
+| Safari on Mac | Web preview tested in WebKit locally; no public web wallet, signed Safari extension, or Mac installer. |
 | iPhone/iPad | No official wallet app or verified mobile web experience. |
 | Android browsers | No verified browser-wallet installation. |
 
