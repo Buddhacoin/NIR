@@ -28,6 +28,7 @@ What makes the design different:
 | Device | Available now? |
 |---|---|
 | Mac | No public installer yet. The desktop app shown in demos is a locally built test prototype; its release package has not been published here. |
+| Chrome / Edge | A [local test extension](browser-wallet/README.md) can be built from source and loaded in developer mode. It creates and restores addresses without the Mac app or pairing code, but is not yet a store release or a network-connected wallet. |
 | Windows / Linux | No desktop wallet release yet. |
 | iPhone / iPad | No App Store or TestFlight release yet. |
 | Android | No official APK or Play Store release yet. |

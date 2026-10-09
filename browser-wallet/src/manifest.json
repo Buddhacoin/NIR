@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "NIR Wallet (test)",
+  "version": "0.1.0",
+  "description": "Локальный тестовый кошелёк NIR. Не используйте для реальных средств.",
+  "action": {
+    "default_title": "NIR Wallet",
+    "default_popup": "wallet.html",
+    "default_icon": "nir-icon.png"
+  },
+  "icons": {
+    "16": "nir-icon.png",
+    "48": "nir-icon.png",
+    "128": "nir-icon.png"
+  },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}
