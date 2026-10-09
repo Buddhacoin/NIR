@@ -1,22 +1,33 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import process from "node:process";
+import { promisify } from "node:util";
 
-import { runMacMinerPreflight } from "./miner-macos-preflight.mjs";
-import { createMiningPracticeApp } from "./mining-practice-app.mjs";
+import { createMiningPracticeApp, miningModelAppPreflight } from "./mining-practice-app.mjs";
 
 const root = process.cwd();
-const report = runMacMinerPreflight({ root, mode: "local-demo", role: "capability-author" });
+const execFileAsync = promisify(execFile);
+const report = miningModelAppPreflight({ root });
 if (!report.ready) {
-  for (const item of report.checks.filter((check) => !check.ok)) console.error(item.message);
+  for (const [ok, message] of report.checks) if (!ok) console.error(message);
   process.exitCode = 2;
 } else {
-  const server = createMiningPracticeApp({ root });
-  server.listen(0, "127.0.0.1", () => {
-    const url = `http://127.0.0.1:${server.address().port}/`;
-    console.log(`Открываю локальное приложение: ${url}`);
-    console.log("Это только тренировка без реальных наград. Закройте терминал, чтобы остановить приложение.");
-    const opener = spawn("/usr/bin/open", [url], { stdio: "ignore" });
-    opener.on("error", () => console.error(`Не удалось открыть браузер автоматически. Откройте ${url}`));
-  });
+  try {
+    const { stdout } = await execFileAsync("python3", ["-m", "nir.iris_rehearsal", "--check"], {
+      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8", timeout: 5_000, maxBuffer: 2048,
+    });
+    if (JSON.parse(stdout).status !== "pinned-iris-ready") throw new Error("invalid model preflight");
+    const server = createMiningPracticeApp({ root });
+    server.listen(0, "127.0.0.1", () => {
+      const url = `http://127.0.0.1:${server.address().port}/`;
+      console.log(`Открываю локальную проверку модели Iris: ${url}`);
+      console.log("Модель выполняется локально. Это не публичный майнинг и не начисляет NIR. Закройте терминал, чтобы остановить приложение.");
+      const opener = spawn("/usr/bin/open", [url], { stdio: "ignore" });
+      opener.on("error", () => console.error(`Не удалось открыть браузер автоматически. Откройте ${url}`));
+    });
+  } catch {
+    console.error("Для локальной проверки нужна Python 3.11+ и неизменённые встроенные Iris-файлы из доверенной копии NIR. Проверьте `python3 --version` и переустановите исходный код; приложение не запускалось.");
+    process.exitCode = 2;
+  }
 }

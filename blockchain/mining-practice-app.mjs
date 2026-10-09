@@ -1,10 +1,8 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-
-import { runMacMinerPreflight } from "./miner-macos-preflight.mjs";
 
 const execFileAsync = promisify(execFile);
 const assets = new Map([
@@ -13,23 +11,71 @@ const assets = new Map([
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
   ["/nir-icon.png", ["../wallet-ui/nir-coin-icon.png", "image/png"]],
 ]);
+const APP_FILES = Object.freeze([
+  "mining-app/index.html", "mining-app/app.js", "mining-app/style.css",
+  "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
+  "examples/iris_model_adapter.py", "examples/iris.data",
+]);
 
-export async function runPractice(root) {
-  const preflight = runMacMinerPreflight({ root, mode: "local-demo", role: "capability-author" });
-  if (!preflight.ready) throw new Error("Этот Mac не прошёл проверку локальной тренировки.");
-  const { stdout } = await execFileAsync(process.execPath, [join(root, "blockchain/demo.mjs")], {
-    cwd: root, env: {}, encoding: "utf8", timeout: 30_000, maxBuffer: 8192,
+export function miningModelAppPreflight({ root, platform = process.platform, nodeVersion = process.versions.node } = {}) {
+  if (!root) throw new Error("repository root is required");
+  let packageValid = false;
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    packageValid = pkg.name === "nir-protocol" && pkg.private === true;
+  } catch {}
+  const major = Number.parseInt(String(nodeVersion).split(".")[0], 10);
+  const missing = APP_FILES.filter((name) => {
+    try { return !lstatSync(join(root, name)).isFile(); } catch { return true; }
   });
-  const height = /^height: ([0-9]+)$/mu.exec(stdout);
-  const tip = /^final block: ([0-9a-f]{64})$/mu.exec(stdout);
-  if (!height || !tip || !Number.isSafeInteger(Number(height[1])) ||
-      Number(height[1]) < 1 || !/^signature suite: ML-DSA-65$/mu.test(stdout)) {
-    throw new Error("Локальная проверка вернула неожиданный результат.");
-  }
-  return { blockHeight: Number(height[1]), tipHash: tip[1] };
+  return {
+    ready: platform === "darwin" && Number.isInteger(major) && major >= 26 &&
+      packageValid && missing.length === 0,
+    checks: [
+      [platform === "darwin", "Для этого локального приложения нужен macOS."],
+      [Number.isInteger(major) && major >= 26, "Для приложения нужен Node.js 26+."],
+      [packageValid, "Запустите команду из корня доверенной копии исходного кода NIR."],
+      [missing.length === 0, `Отсутствуют файлы локальной модели или интерфейса: ${missing.join(", ")}.`],
+    ],
+  };
 }
 
-export function createMiningPracticeApp({ root, run = runPractice } = {}) {
+function validModelResult(result) {
+  return result?.status === "pinned-local-model-evaluation" &&
+    result.scope === "local-public-iris-example-only" &&
+    result.caseCount === 30 &&
+    Number.isSafeInteger(result.baselineAccuracyBps) &&
+    Number.isSafeInteger(result.candidateAccuracyBps) &&
+    result.baselineAccuracyBps >= 0 && result.baselineAccuracyBps <= 10_000 &&
+    result.candidateAccuracyBps >= 0 && result.candidateAccuracyBps <= 10_000 &&
+    /^[0-9a-f]{64}$/.test(result.bundleHash) && result.bundleVerified === true &&
+    result.independentOperators === false && result.hiddenChallenges === false &&
+    result.energyAttested === false && result.networkSubmitted === false &&
+    result.rewardCredited === false && result.walletChanged === false;
+}
+
+function publicModelResult(result) {
+  if (!validModelResult(result)) throw new Error("invalid pinned model evaluation result");
+  return {
+    status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
+    baselineAccuracyBps: result.baselineAccuracyBps,
+    candidateAccuracyBps: result.candidateAccuracyBps,
+    caseCount: 30, bundleHash: result.bundleHash, bundleVerified: true,
+    independentOperators: false, hiddenChallenges: false, energyAttested: false,
+    networkSubmitted: false, rewardCredited: false, walletChanged: false,
+  };
+}
+
+export async function runPinnedModel(root) {
+  const { stdout } = await execFileAsync("python3", ["-m", "nir.iris_rehearsal"], {
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    timeout: 30_000, maxBuffer: 16_384,
+  });
+  const result = JSON.parse(stdout);
+  return publicModelResult(result);
+}
+
+export function createMiningPracticeApp({ root, runModel = runPinnedModel } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
   const server = createServer(async (request, response) => {
@@ -59,7 +105,7 @@ export function createMiningPracticeApp({ root, run = runPractice } = {}) {
       catch { send(500, "text/plain; charset=utf-8", "App asset unavailable"); }
       return;
     }
-    if (request.method === "POST" && path === "/practice") {
+    if (request.method === "POST" && path === "/model-check") {
       if (request.headers.origin !== origin ||
           request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
@@ -71,19 +117,11 @@ export function createMiningPracticeApp({ root, run = runPractice } = {}) {
       }
       running = true;
       try {
-        const result = await run(root);
-        if (!Number.isSafeInteger(result.blockHeight) || result.blockHeight < 1 ||
-            !/^[0-9a-f]{64}$/.test(result.tipHash)) {
-          throw new Error("invalid local practice result");
-        }
-        send(200, "application/json; charset=utf-8", JSON.stringify({
-          status: "local-practice-complete", scope: "local-valueless-demo-only",
-          blockHeight: result.blockHeight, tipHash: result.tipHash,
-          walletChanged: false, networkSubmitted: false, rewardCredited: false,
-        }));
+        const result = publicModelResult(await runModel(root));
+        send(200, "application/json; charset=utf-8", JSON.stringify(result));
       } catch {
         send(500, "application/json; charset=utf-8", JSON.stringify({
-          error: "Локальная тренировка не завершилась. Баланс кошелька не менялся.",
+          error: "Проверка модели не завершилась. Заявка не отправлена, награда не начислена.",
         }));
       } finally { running = false; }
       return;

@@ -28,13 +28,14 @@ or **Payment node** to explore the local ledger. Neither role earns real value.
 
 ## 1. Prepare the Mac
 
-For the one-command practice you need Terminal, Git, and Node.js 26 or newer.
-Python is needed only for optional advanced checks. Open
+For the local model check you need Terminal, Git, Node.js 26 or newer, and
+Python 3.11 or newer. Open
 Terminal with Spotlight (`Command` + `Space`, type `Terminal`) and check:
 
 ```bash
 git --version
 node --version
+python3 --version
 ```
 
 The Node result must start with `v26` or a larger number. Install missing tools
@@ -61,12 +62,21 @@ npm run mine:app
 ```
 
 The command checks the Mac and opens a small local app in your browser. Press
-**Start practice** once. It requires no wallet, password, model download, role
-selection, or second command. The app listens only on this Mac; close the
-Terminal window to stop it. The result disappears when the app stops; no NIR
-is earned. If you prefer no app, `npm run mine:try` runs the same round directly
-in Terminal. `npm run mine:try -- --details` prints the technical local result,
-which now uses the v5 schedule of 44 **test** NIR. This is not a live payout.
+**Проверить модель Iris**. The app runs its bundled, digest-pinned Iris baseline
+and candidate on 30 held-out examples, creates six local transcripts, rebuilds
+and verifies the evaluation bundle, then displays both accuracy scores and the
+bundle hash. This is real local model execution, but the data and answers are
+public and the three named verifiers are repeat runs on one Mac, not independent
+operators. The adapter runs without an OS sandbox or enforced CPU/memory
+limits; use only a trusted source checkout. The app pins its example adapter
+and dataset, but does not attest the Python interpreter, NIR libraries, or
+the checkout itself. It accepts no user code, uploaded model, path, or wallet
+secret. It requires no wallet, password, model
+download, role selection, or second command. The app listens only on this Mac;
+close the Terminal window to stop it. The result disappears when the app stops;
+no NIR is earned. `npm run mine:try` is the older **separate** ledger demo,
+not the same model check. Its `--details` output uses 44 **test** NIR on a
+temporary local chain. That is not a live payout.
 
 ### Advanced role wizard
 
