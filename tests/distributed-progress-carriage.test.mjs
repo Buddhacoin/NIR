@@ -7,7 +7,7 @@ import test from "node:test";
 
 import {
   allocateProgressRewards, createCandidateBond, createProgressClaim,
-  createProgressCommitment, NirChain,
+  createProgressCommitment, finalizeBlock, NirChain,
 } from "../blockchain/chain.mjs";
 import { INITIAL_EPOCH_REWARD, SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
@@ -201,7 +201,9 @@ test("operator-only claim survives failed proposer round and validator replay", 
   }
 });
 
-test("elected validator alone finalizes a staged signed claim into pending balances", async () => {
+for (const expire of [false, true]) test(expire
+  ? "competing block expires a staged signed claim with durable re-evaluation status"
+  : "elected validator alone finalizes a staged signed claim into pending balances", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-validator-progress-reward-"));
   const beacons = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -306,11 +308,39 @@ test("elected validator alone finalizes a staged signed claim into pending balan
     assert.equal(replicas[proposerIndex].pendingOperatorEvents.events.rewardClaims.length, 1);
     servers[proposerIndex] = createValidatorHttpServer(replicas[proposerIndex], { peerUrls: () => urls });
     urls[proposerIndex] = await listen(servers[proposerIndex]);
+    if (expire) {
+      const validators = layout.validatorDirectories.map((directory) =>
+        JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"))));
+      const competing = finalizeBlock(mirror.buildBlock({ transactions: [], timestamp: Date.now() }),
+        validators);
+      for (const replica of replicas) replica.commit(competing);
+      const outcome = replicas[proposerIndex].localOperatorEventStatus;
+      assert.equal(outcome.status, "expired");
+      assert.equal(outcome.action, "re-evaluation-required");
+      assert.equal(outcome.expectedHeight, competing.height);
+      assert.equal(outcome.finalizedBlockHash, competing.hash);
+      assert.equal(replicas[proposerIndex].pendingOperatorEvents, null);
+      assert.equal(replicas[proposerIndex].account(owner.address).resources.pendingProgressReward,
+        null);
+      assert.deepEqual(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }), {
+        accepted: false, action: "re-evaluation-required", eventDigest: outcome.eventDigest,
+        expectedHeight: competing.height, status: "expired",
+      });
+      assert.equal(replicas[proposerIndex].pendingOperatorEvents, null);
+      await Promise.all(servers.map(close));
+      replicas[proposerIndex].closeSecurityState();
+      replicas[proposerIndex] = new ValidatorReplica(layout.validatorDirectories[proposerIndex]);
+      assert.deepEqual(replicas[proposerIndex].localOperatorEventStatus, outcome);
+      assert.equal(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }).status,
+        "expired");
+      return;
+    }
     const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
     assert.equal(produced.status, 202);
     assert.equal((await produced.json()).committedPeers, 4);
     const rewardHeight = mirror.height + 1;
     assert.deepEqual(replicas.map(({ height }) => height), Array(4).fill(rewardHeight));
+    assert.equal(replicas[proposerIndex].localOperatorEventStatus.status, "included");
     for (const replica of replicas) {
       const account = replica.account(owner.address);
       assert.equal(account.atomicBalance, "0", "reward stays locked during challenge window");
@@ -325,6 +355,9 @@ test("elected validator alone finalizes a staged signed claim into pending balan
       assert.equal(replicas[index].height, rewardHeight);
       assert.equal(replicas[index].account(owner.address).resources.pendingProgressReward.amount,
         INITIAL_EPOCH_REWARD.toString());
+      if (index === proposerIndex) {
+        assert.equal(replicas[index].localOperatorEventStatus.status, "included");
+      }
     }
   } finally {
     await Promise.all(servers.map(close));
