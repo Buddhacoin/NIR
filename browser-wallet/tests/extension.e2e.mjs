@@ -36,6 +36,10 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     }
     await page.getByRole("button", { name: "Создать кошелёк" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
+    if (process.env.NIR_BROWSER_WALLET_SCREENSHOT) {
+      await page.setViewportSize({ width: 390, height: 640 });
+      await page.screenshot({ path: process.env.NIR_BROWSER_WALLET_SCREENSHOT });
+    }
     const stored = await page.evaluate(() => chrome.storage.local.get("nirTestWallet"));
     assert.equal(JSON.stringify(stored).includes(words.map((word) => word.replace(/^\d+\./, "")).join(" ")), false);
     const firstAddress = await page.locator("#full-address").textContent();
