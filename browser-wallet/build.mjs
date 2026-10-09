@@ -5,7 +5,9 @@ import sharp from "sharp";
 
 const root = resolve(import.meta.dirname);
 const firefox = process.argv.includes("--firefox");
-const output = join(root, firefox ? "dist-firefox" : "dist");
+const web = process.argv.includes("--web");
+if (firefox && web) throw new Error("Choose one build target");
+const output = join(root, web ? "dist-web" : firefox ? "dist-firefox" : "dist");
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 await build({
@@ -20,22 +22,36 @@ await build({
   sourcemap: false,
   minify: false,
 });
-for (const name of ["wallet.html", "style.css", "background.js"]) {
+for (const name of web ? ["style.css"] : ["wallet.html", "style.css", "background.js"]) {
   copyFileSync(join(root, "src", name), join(output, name));
 }
-const manifest = JSON.parse(readFileSync(join(root, "src/manifest.json"), "utf8"));
-if (firefox) {
-  manifest.background = { scripts: ["background.js"] };
-  manifest.browser_specific_settings = {
-    gecko: {
-      id: "{f6c10a9d-98f5-4f3f-9ee7-6c43986f472a}",
-      strict_min_version: "142.0",
-      data_collection_permissions: { required: ["none"] },
-    },
-    gecko_android: { strict_min_version: "142.0" },
-  };
+if (web) {
+  const html = readFileSync(join(root, "src/wallet.html"), "utf8")
+    .replace("<body>", '<body class="web">')
+    .replace("Локальная тестовая версия · без реальных средств",
+      "Веб-версия для ноутбука · только тестовые адреса · без реальных средств")
+    .replace("Кошелёк прямо в браузере. Пароль и фраза остаются на вашем устройстве.",
+      "Открывайте только с официальной ссылки NIR. Зашифрованная фраза хранится в этом браузере; для другого устройства нужны 24 слова.")
+    .replace("Переводы, баланс и майнинг появятся только после подключения проверенной сети.",
+      "В этой версии нет переводов, баланса и майнинга. Не используйте её для реальных средств.")
+    .replace("Любой, кто знает эту фразу, сможет управлять кошельком. Мы не сможем её восстановить.",
+      "Любой, кто знает эту фразу, сможет управлять кошельком. Мы не сможем её восстановить. Не вводите здесь фразы других кошельков.");
+  writeFileSync(join(output, "index.html"), html);
+} else {
+  const manifest = JSON.parse(readFileSync(join(root, "src/manifest.json"), "utf8"));
+  if (firefox) {
+    manifest.background = { scripts: ["background.js"] };
+    manifest.browser_specific_settings = {
+      gecko: {
+        id: "{f6c10a9d-98f5-4f3f-9ee7-6c43986f472a}",
+        strict_min_version: "142.0",
+        data_collection_permissions: { required: ["none"] },
+      },
+      gecko_android: { strict_min_version: "142.0" },
+    };
+  }
+  writeFileSync(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 }
-writeFileSync(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 const iconSource = join(root, "../wallet-ui/nir-coin-icon.png");
 copyFileSync(iconSource, join(output, "nir-icon.png"));
 for (const size of [16, 48]) {
