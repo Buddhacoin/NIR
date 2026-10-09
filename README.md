@@ -19,7 +19,7 @@ What makes the design different:
 - **Post-quantum foundations:** ML-DSA-65 accounts, signatures, and verifiable ledger proofs are implemented locally.
 - **A role for more than AI labs:** developers, challenge authors, evaluators, safety researchers, validators, and everyday users can help shape the network.
 
-**Join the beginning:** explore the [working code](#what-is-implemented-now), try the [local network](#start-using-the-local-prototype), [test the wallet without an invitation](docs/open-wallet-testing.md), [contribute](CONTRIBUTING.md) a challenge or security finding, or help prepare the first independently operated network. The history of NIR is being written now.
+**Join the beginning:** explore the [working code](#what-is-implemented-now), try the [local network](#start-using-the-local-prototype), [test the wallet without an invitation](docs/open-wallet-testing.md), [contribute](CONTRIBUTING.md) a challenge or security finding, or [express interest in operating an independent testnet role](docs/volunteer-operator-intake.md). The history of NIR is being written now.
 
 **Where are we today?** The [public roadmap](docs/roadmap.md) separates working local code from the next launch gates and future features, including user-created tokens. Its [mining status](docs/roadmap.md#куда-сейчас-могут-майнить-тестеры) explains why no tester can earn NIR into a public wallet yet.
 
@@ -56,6 +56,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | Follow every user feature step by step | [`docs/user-journeys.md`](docs/user-journeys.md) |
 | Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |
 | Operate a test validator | [`docs/network.md`](docs/network.md) |
+| Express interest in a future independent operator role | [`docs/volunteer-operator-intake.md`](docs/volunteer-operator-intake.md) |
 | Deploy a ceremony-approved validator on Mac/Linux | [`docs/validator-deployment.md`](docs/validator-deployment.md) |
 | Join the protocol-v31 validator candidate queue | [`docs/validator-admission.md`](docs/validator-admission.md) |
 | Prepare identities, sign offline, and submit admission without claiming finality (testnet A/B1/B2a/B2b1) | [`docs/validator-join.md`](docs/validator-join.md) |
