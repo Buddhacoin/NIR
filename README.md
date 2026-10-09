@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="wallet-ui/nir-coin-icon.png" alt="NIR — круглый оранжевый знак N" width="128" height="128">
+  <img src="wallet-ui/nir-coin-icon.png" alt="NIR orange coin logo" width="128" height="128">
 </p>
 
 # NIR — the currency of verifiable progress
 
-**Установить NIR Wallet (тестовая версия для Chrome/Chromium): [скачать ZIP](https://github.com/Buddhacoin/NIR/releases/download/browser-wallet-preview-0.1.0/NIR-Wallet-browser-preview-0.1.0.zip) · [инструкция ниже](#nir-wallet-download-and-installation).** Это расширение для проверки интерфейса, фразы восстановления и адресов; реальная сеть, майнинг, переводы и монеты пока недоступны.
+**NIR Wallet:** We are preparing a free Firefox Add-ons listing for the browser-wallet preview. One-click installation is **not available yet**; [see wallet availability](#nir-wallet-availability). No public network, transfers, mining rewards, or real-value NIR are available in this preview.
 
 **AI will change the world. NIR is being built so the world can verify that change — and share in it.**
 
@@ -25,23 +25,19 @@ What makes the design different:
 
 **Where are we today?** The [public roadmap](docs/roadmap.md) separates working local code from the next launch gates and future features, including user-created tokens. Its [mining status](docs/roadmap.md#куда-сейчас-могут-майнить-тестеры) explains why no tester can earn NIR into a public wallet yet.
 
-## NIR Wallet: download and installation
+## NIR Wallet availability
 
-**[Download NIR Wallet browser preview ZIP](https://github.com/Buddhacoin/NIR/releases/download/browser-wallet-preview-0.1.0/NIR-Wallet-browser-preview-0.1.0.zip)** ([release notes](https://github.com/Buddhacoin/NIR/releases/tag/browser-wallet-preview-0.1.0)). This is an experimental extension, not a store-listed or audited wallet. Do not use it for real funds.
-
-1. Unzip the download. Keep the extracted folder somewhere you can find it.
-2. In Chrome, open `chrome://extensions` (in Edge, `edge://extensions`). Turn on **Developer mode**.
-3. Click **Load unpacked** and select the extracted folder containing `manifest.json`. Pin the NIR icon and open it from the browser toolbar.
+The one-click experience requires an official browser-store listing or a signed desktop/mobile app. **NIR has neither yet.** We are prioritizing Firefox Add-ons; users will not need a developer account or ZIP once Mozilla publishes a signed listing. Clicking an already installed app is not the same as installing it.
 
 | Browser / device | Status |
 |---|---|
-| Chrome on Mac, Windows, Linux | Chromium build tested; manual installation above. |
-| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | Chromium-family build intended to be compatible, but each browser has **not** been separately verified. The extension is not in their stores. |
-| Firefox on desktop | Not supported by this download yet; a separately packaged and signed Firefox add-on is needed. |
-| Safari on Mac or iPhone/iPad | Not available; distribution requires a Safari app extension and Apple signing. |
-| Android browsers | No verified browser-wallet installation yet. |
+| Chrome on Mac, Windows, Linux | No Chrome Web Store listing planned for this first release. |
+| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | No verified one-click install. Chromium compatibility has not been tested separately in each browser. |
+| Firefox on desktop | Firefox submission package prepared; Mozilla has not signed or published it yet. No one-click installation link yet. |
+| Safari on Mac or iPhone/iPad | No signed Safari app extension or installer. |
+| Android browsers | No verified browser-wallet installation. |
 
-The earlier Mac desktop demo is a local prototype, not a public installer. There is no Windows/Linux desktop package or official phone app. Do not install purported NIR Wallet apps from third-party sites. The [wallet safety guide](docs/wallet.md) explains the current limits.
+Existing developer ZIPs require manual installation and are **not** one-click installers, audited wallets, or automatically updated releases. General users should wait for the official Firefox Add-ons listing and must not install purported NIR Wallet apps from third-party sites. The earlier Mac desktop demo is a local prototype, not a public installer. See the [wallet safety guide](docs/wallet.md).
 
 ## Current status
 
