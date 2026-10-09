@@ -55,7 +55,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | See what is actually implemented | [What is implemented now](#what-is-implemented-now) |
 | Run the local test network | [Start using the local prototype](#start-using-the-local-prototype) |
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
-| Try a local, valueless mining round on a Mac | `npm run mine:app` opens a one-button practice app after cloning; [beginner guide](docs/miner-quickstart-macos.md) |
+| Run a pinned model check on a Mac | `npm run mine:app` runs local Iris classifiers and verifies a bundle; no network or reward; [beginner guide](docs/miner-quickstart-macos.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
 | Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
@@ -253,18 +253,18 @@ dependency order and measurable exit conditions are defined by the
 
 4. For four independent validator processes, follow
    [`docs/network.md`](docs/network.md).
-5. On macOS, open the local one-button mining practice app:
+5. On macOS, open the local pinned-model check (Python 3.11+ required):
 
    ```bash
    npm run mine:app
    ```
 
-   This is a local simulation with temporary test units, not a public mining
-   connection or a payout. It does not use your wallet or a real AI model.
-   Every local genesis format now uses the 44 NIR first-epoch budget; earlier
-   test-chain reward blocks made under the discarded rule are incompatible.
-   For a terminal-only check use `npm run mine:try`; advanced roles remain in
-   `npm run mine:wizard`.
+   This requires a trusted source checkout; it is not an installable public
+   miner. It runs bundled Iris classifiers, checks their local evaluation bundle,
+   and shows both accuracy scores. It is not a public mining connection or a
+   payout; the data are public and there are no independent operators. It does
+   not use your wallet. The separate terminal-only ledger demo is
+   `npm run mine:try`; advanced roles remain in `npm run mine:wizard`.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),

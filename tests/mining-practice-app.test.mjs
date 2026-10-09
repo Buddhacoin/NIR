@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { createMiningPracticeApp, runPractice } from "../blockchain/mining-practice-app.mjs";
+import { createMiningPracticeApp, miningModelAppPreflight, runPinnedModel } from "../blockchain/mining-practice-app.mjs";
 
 const root = join(import.meta.dirname, "..");
-async function serve(run) {
-  const server = createMiningPracticeApp({ root, run });
+async function serve(runModel) {
+  const server = createMiningPracticeApp({ root, runModel });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
@@ -15,7 +17,28 @@ async function stop(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
-test("mining practice app serves a single-button UI with no secret field", async () => {
+test("app preflight requires model files but not unrelated demo or wallet files", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-model-app-test-"));
+  try {
+    writeFileSync(join(temporary, "package.json"), '{"name":"nir-protocol","private":true}');
+    for (const name of [
+      "mining-app/index.html", "mining-app/app.js", "mining-app/style.css",
+      "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
+      "examples/iris_model_adapter.py", "examples/iris.data",
+    ]) {
+      mkdirSync(join(temporary, name, ".."), { recursive: true });
+      writeFileSync(join(temporary, name), "test");
+    }
+    const options = { root: temporary, platform: "darwin", nodeVersion: "26.0.0" };
+    assert.equal(miningModelAppPreflight(options).ready, true);
+    assert.equal(miningModelAppPreflight({ ...options, platform: "linux" }).ready, false);
+    assert.equal(miningModelAppPreflight({ ...options, nodeVersion: "25.9.0" }).ready, false);
+    rmSync(join(temporary, "examples/iris.data"));
+    assert.equal(miningModelAppPreflight(options).ready, false);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("mining lab serves a pinned-model UI with no secret or code input", async () => {
   const { server, base } = await serve(async () => ({}));
   try {
     const response = await fetch(base);
@@ -24,22 +47,25 @@ test("mining practice app serves a single-button UI with no secret field", async
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
     assert.doesNotMatch(html, /<input|<textarea|<form/i);
-    assert.match(html, /без реальной модели и без начисления монет/);
+    assert.match(html, /Проверьте реальную модель локально/);
+    assert.match(html, /Независимых операторов, скрытых заданий/);
   } finally { await stop(server); }
 });
 
-test("practice endpoint refuses cross-origin requests and overlapping runs", async () => {
+test("model endpoint refuses cross-origin, input bodies, and concurrent runs", async () => {
   let finish;
   let calls = 0;
-  const { server, base } = await serve(() => {
+  const model = () => {
     calls++;
     return new Promise((resolve) => { finish = resolve; });
-  });
-  const request = (origin) => fetch(`${base}/practice`, {
-    method: "POST", body: "", headers: { origin },
+  };
+  const { server, base } = await serve(model);
+  const request = (origin, body = "") => fetch(`${base}/model-check`, {
+    method: "POST", body, headers: { origin },
   });
   try {
     assert.equal((await request("https://other.example")).status, 403);
+    assert.equal((await request(base, "python-code")).status, 403);
     assert.equal(calls, 0);
     const first = request(base);
     for (let index = 0; index < 100 && !finish; index++) {
@@ -47,34 +73,57 @@ test("practice endpoint refuses cross-origin requests and overlapping runs", asy
     }
     assert.equal(calls, 1);
     assert.equal((await request(base)).status, 409);
-    finish({ blockHeight: 6, tipHash: "a".repeat(64) });
-    const response = await first;
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      status: "local-practice-complete", scope: "local-valueless-demo-only",
-      blockHeight: 6, tipHash: "a".repeat(64), walletChanged: false,
-      networkSubmitted: false, rewardCredited: false,
+    finish({
+      status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
+      baselineAccuracyBps: 9000, candidateAccuracyBps: 9666, caseCount: 30,
+      bundleHash: "a".repeat(64), bundleVerified: true, independentOperators: false,
+      hiddenChallenges: false, energyAttested: false, networkSubmitted: false,
+      rewardCredited: false, walletChanged: false,
     });
+    assert.equal((await first).status, 200);
   } finally { await stop(server); }
 });
 
-test("real practice returns only a local block and no payout or wallet data", async () => {
-  if (process.platform !== "darwin" || Number.parseInt(process.versions.node, 10) < 26) return;
-  const result = await runPractice(root);
-  assert.ok(result.blockHeight > 0);
-  assert.match(result.tipHash, /^[0-9a-f]{64}$/);
-  assert.doesNotMatch(JSON.stringify(result), /reward|address|private|password|seed/i);
+test("pinned Iris endpoint runs trained classifiers and never reports a reward", async () => {
+  const { server, base } = await serve();
+  try {
+    const response = await fetch(`${base}/model-check`, {
+      method: "POST", body: "", headers: { origin: base },
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(result, await runPinnedModel(root));
+    assert.equal(result.baselineAccuracyBps, 9000);
+    assert.equal(result.candidateAccuracyBps, 9666);
+    assert.equal(result.bundleVerified, true);
+    assert.equal(result.networkSubmitted, false);
+    assert.equal(result.rewardCredited, false);
+  } finally { await stop(server); }
 });
 
-test("invalid practice output is never presented as a successful reward", async () => {
-  const { server, base } = await serve(async () => ({ blockHeight: 0, tipHash: "bad" }));
+test("forged model success cannot be presented as verified or reward eligible", async () => {
+  const { server, base } = await serve(async () => ({
+    status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
+    baselineAccuracyBps: 9000, candidateAccuracyBps: 9666, caseCount: 30,
+    bundleHash: "a".repeat(64), bundleVerified: true, independentOperators: false,
+    hiddenChallenges: false, energyAttested: false, networkSubmitted: false,
+    rewardCredited: true, walletChanged: false,
+  }));
+  try {
+    const response = await fetch(`${base}/model-check`, {
+      method: "POST", body: "", headers: { origin: base },
+    });
+    assert.equal(response.status, 500);
+    assert.match((await response.json()).error, /награда не начислена/);
+  } finally { await stop(server); }
+});
+
+test("old demo endpoint is absent from the model app", async () => {
+  const { server, base } = await serve(async () => ({}));
   try {
     const response = await fetch(`${base}/practice`, {
       method: "POST", body: "", headers: { origin: base },
     });
-    assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), {
-      error: "Локальная тренировка не завершилась. Баланс кошелька не менялся.",
-    });
+    assert.equal(response.status, 404);
   } finally { await stop(server); }
 });
