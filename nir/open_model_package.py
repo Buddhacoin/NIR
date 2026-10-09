@@ -226,4 +226,5 @@ def verify_package(root: str | Path, manifest: object) -> str:
     except (OSError, TypeError, NotImplementedError, RecursionError) as error:
         raise PackageError("package could not be measured safely") from error
     canonical = json.dumps(checked, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("ascii")
-    return f"sha256:{sha256(b'NIR_OPEN_MODEL_PACKAGE_V2\x00' + canonical).hexdigest()}"
+    digest = sha256(b"NIR_OPEN_MODEL_PACKAGE_V2\x00" + canonical).hexdigest()
+    return f"sha256:{digest}"
