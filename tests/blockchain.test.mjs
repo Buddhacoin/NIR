@@ -43,6 +43,15 @@ import {
   CREDIT_UNSTAKE_DELAY_BLOCKS,
   EPOCH_REVEAL_TIMEOUT_BLOCKS,
   EVALUATOR_ACTIVATION_DELAY_BLOCKS,
+  FOUNDER_ALLOCATION,
+  FOUNDER_IMMEDIATE_ALLOCATION,
+  FOUNDER_IMMEDIATE_BPS,
+  FOUNDER_VESTED_ALLOCATION,
+  INITIAL_EPOCH_REWARD as V5_INITIAL_EPOCH_REWARD,
+  PROTOCOL_TREASURY_ALLOCATION,
+  PROTOCOL_TREASURY_VESTED_ALLOCATION,
+  TESTER_REWARD_RESERVE_ALLOCATION,
+  TESTER_REWARD_RESERVE_BPS,
   MAX_CREDIT_TRANSFERS_PER_BLOCK,
   MAX_FUTURE_DRIFT_MS,
   MIN_REWARD_INTERVAL_MS,
@@ -53,7 +62,7 @@ import {
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
-  INITIAL_EPOCH_REWARD,
+  LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_ALLOCATION,
   TREASURY_VESTING_MS,
@@ -468,6 +477,41 @@ test("fresh genesis can reach its first reward with the committed evaluator bond
     chain.capabilityMemoryRoot,
     block.progressRewards[0].evaluation.frontierRootAfter,
   );
+});
+
+test("legacy 50 NIR and v5 44 NIR reward blocks replay under their genesis", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const cases = [
+    { genesis: base.genesisConfig, reward: INITIAL_EPOCH_REWARD, label: "v1-v2-replay" },
+    { genesis: { ...base.genesisConfig, founderAddress: founder.address },
+      reward: INITIAL_EPOCH_REWARD, label: "v3-replay" },
+    { genesis: { ...base.genesisConfig, founderAddress: founder.address,
+      founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS) },
+      reward: INITIAL_EPOCH_REWARD, label: "v4-replay" },
+    { genesis: { ...base.genesisConfig,
+      founderAddress: founder.address,
+      founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+      treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+    }, reward: V5_INITIAL_EPOCH_REWARD, label: "v5-replay" },
+  ];
+  for (const { genesis, reward, label } of cases) {
+    const chain = new NirChain(genesis);
+    TEST_BEACON_WALLETS.set(chain, base.beaconAuthorities);
+    TEST_TREASURY_WALLETS.set(chain, base.treasury);
+    const miner = generateWallet();
+    const claim = progressClaim(chain, base.evaluators, base.validators, miner,
+      label, miner.address, `artifact-${label}`, reward);
+    const proposal = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
+    const finalized = finalizeBlock(proposal, quorumFor(proposal, base.validators));
+    assert.equal(BigInt(finalized.progressRewards[0].amount), reward);
+    const replayed = new NirChain(genesis);
+    for (const prior of chain.blocks().slice(1)) replayed.appendBlock(prior);
+    replayed.appendBlock(finalized);
+    chain.appendBlock(finalized);
+    assert.equal(replayed.stateRoot, chain.stateRoot);
+    assert.equal(replayed.issued, chain.issued);
+  }
 });
 
 test("progress issuance cannot exceed the exact candidate bond at risk", () => {
@@ -3012,6 +3056,162 @@ test("treasury vesting unlocks only the elapsed linear share", () => {
     second.chain.balance(recipient.address),
     TREASURY_ALLOCATION / 2n - MIN_TRANSFER_FEE,
   );
+});
+
+test("split genesis founder and protocol allocations vest independently", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const recipient = generateWallet();
+  const genesis = { ...base.genesisConfig, founderAddress: founder.address };
+  const chain = new NirChain(genesis);
+  assert.equal(chain.balance(founder.address), FOUNDER_ALLOCATION);
+  assert.equal(chain.balance(base.treasury.address),
+    PROTOCOL_TREASURY_ALLOCATION - BigInt(base.evaluators.length) * MIN_EVALUATOR_BOND);
+  const midpoint = Math.floor(TREASURY_VESTING_MS / 2);
+  const premature = createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: (FOUNDER_ALLOCATION / 2n).toString(), nonce: 0,
+  });
+  const rejected = chain.buildBlock({ transactions: [premature], timestamp: midpoint });
+  assert.throws(() => chain.appendBlock(finalizeBlock(rejected,
+    quorumFor(rejected, base.validators))), /still vesting/);
+  assert.equal(chain.balance(founder.address), FOUNDER_ALLOCATION);
+  const valid = createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: (FOUNDER_ALLOCATION / 2n - MIN_TRANSFER_FEE).toString(), nonce: 0,
+  });
+  const accepted = chain.buildBlock({ transactions: [valid], timestamp: midpoint });
+  chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, base.validators)));
+  assert.equal(chain.balance(recipient.address), FOUNDER_ALLOCATION / 2n - MIN_TRANSFER_FEE);
+  assert.equal(chain.balance(base.treasury.address),
+    PROTOCOL_TREASURY_ALLOCATION - BigInt(base.evaluators.length) * MIN_EVALUATOR_BOND);
+});
+
+test("founder v4 may spend only the one-percent genesis tranche immediately", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const recipient = generateWallet();
+  const chain = new NirChain({ ...base.genesisConfig,
+    founderAddress: founder.address,
+    founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+  });
+  const premature = createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: FOUNDER_IMMEDIATE_ALLOCATION.toString(), nonce: 0,
+  });
+  const rejected = chain.buildBlock({ transactions: [premature], timestamp: 0 });
+  assert.throws(() => chain.appendBlock(finalizeBlock(rejected,
+    quorumFor(rejected, base.validators))), /still vesting/);
+  const spendable = createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: (FOUNDER_IMMEDIATE_ALLOCATION - MIN_TRANSFER_FEE).toString(), nonce: 0,
+  });
+  const accepted = chain.buildBlock({ transactions: [spendable], timestamp: 0 });
+  chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, base.validators)));
+  assert.equal(chain.balance(founder.address), FOUNDER_VESTED_ALLOCATION);
+  assert.equal(chain.balance(recipient.address), FOUNDER_IMMEDIATE_ALLOCATION - MIN_TRANSFER_FEE);
+  const treasurySpend = createTransfer({
+    wallet: base.treasury, networkId: chain.networkId, recipient: recipient.address,
+    amount: "1", nonce: 0,
+  });
+  const treasuryAttempt = chain.buildBlock({ transactions: [treasurySpend], timestamp: 0 });
+  assert.throws(() => chain.appendBlock(finalizeBlock(treasuryAttempt,
+    quorumFor(treasuryAttempt, base.validators))), /still vesting/);
+  const midpoint = Math.floor(TREASURY_VESTING_MS / 2);
+  const vestedSpend = createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: (FOUNDER_VESTED_ALLOCATION / 2n - MIN_TRANSFER_FEE).toString(), nonce: 1,
+  });
+  const later = chain.buildBlock({ transactions: [vestedSpend], timestamp: midpoint });
+  chain.appendBlock(finalizeBlock(later, quorumFor(later, base.validators)));
+  assert.equal(chain.balance(founder.address), FOUNDER_VESTED_ALLOCATION / 2n);
+});
+
+test("v5 protocol treasury may spend only the tester reserve at genesis", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const recipient = generateWallet();
+  const chain = new NirChain({ ...base.genesisConfig,
+    founderAddress: founder.address,
+    founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+    treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+  });
+  const overLimit = createTransfer({
+    wallet: base.treasury, networkId: chain.networkId, recipient: recipient.address,
+    amount: TESTER_REWARD_RESERVE_ALLOCATION.toString(), nonce: 0,
+  });
+  const rejected = chain.buildBlock({ transactions: [overLimit], timestamp: 0 });
+  assert.throws(() => chain.appendBlock(finalizeBlock(rejected,
+    quorumFor(rejected, base.validators))), /still vesting/);
+  const spendable = createTransfer({
+    wallet: base.treasury, networkId: chain.networkId, recipient: recipient.address,
+    amount: (TESTER_REWARD_RESERVE_ALLOCATION - MIN_TRANSFER_FEE).toString(), nonce: 0,
+  });
+  const accepted = chain.buildBlock({ transactions: [spendable], timestamp: 0 });
+  chain.appendBlock(finalizeBlock(accepted, quorumFor(accepted, base.validators)));
+  assert.equal(chain.balance(base.treasury.address),
+    PROTOCOL_TREASURY_VESTED_ALLOCATION -
+    BigInt(base.evaluators.length) * MIN_EVALUATOR_BOND);
+  assert.equal(chain.balance(recipient.address),
+    TESTER_REWARD_RESERVE_ALLOCATION - MIN_TRANSFER_FEE);
+});
+
+test("v5 evaluator bootstrap bonds cannot consume the liquid treasury reserve", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const perEvaluatorLimit = PROTOCOL_TREASURY_VESTED_ALLOCATION /
+    BigInt(base.evaluators.length);
+  const genesis = { ...base.genesisConfig,
+    founderAddress: founder.address,
+    founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+    treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+  };
+  assert.throws(() => new NirChain({ ...genesis,
+    evaluatorBondAmount: (perEvaluatorLimit + 1n).toString(),
+  }), /genesis evaluator bonds exceed the vested treasury allocation/);
+  const chain = new NirChain({ ...genesis,
+    evaluatorBondAmount: perEvaluatorLimit.toString(),
+  });
+  assert.equal(chain.balance(base.treasury.address), TESTER_REWARD_RESERVE_ALLOCATION);
+  assert.equal(chain.balance(founder.address), FOUNDER_ALLOCATION);
+});
+
+test("v5 snapshot restart preserves both locked genesis allocations", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const recipient = generateWallet();
+  const genesis = { ...base.genesisConfig,
+    founderAddress: founder.address,
+    founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+    treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+  };
+  const chain = new NirChain(genesis);
+  const first = chain.buildBlock({ transactions: [createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: (FOUNDER_IMMEDIATE_ALLOCATION - MIN_TRANSFER_FEE).toString(), nonce: 0,
+  })], timestamp: 0 });
+  chain.appendBlock(finalizeBlock(first, quorumFor(first, base.validators)));
+  const exported = chain.consensusSnapshot();
+  const restored = NirChain.fromVerifiedSnapshot(genesis, {
+    capabilityMemory: exported.capabilityMemory,
+    checkpoint: chain.blocks().at(-1),
+    height: chain.height, networkId: chain.networkId,
+    state: exported.state, stateRoot: chain.stateRoot, tipHash: chain.tipHash,
+  });
+  assert.equal(restored.stateRoot, chain.stateRoot);
+  assert.equal(restored.balance(founder.address), FOUNDER_VESTED_ALLOCATION);
+  const extraFounder = restored.buildBlock({ transactions: [createTransfer({
+    wallet: founder, networkId: chain.networkId, recipient: recipient.address,
+    amount: "1", nonce: 1,
+  })], timestamp: 0 });
+  assert.throws(() => restored.appendBlock(finalizeBlock(extraFounder,
+    quorumFor(extraFounder, base.validators))), /still vesting/);
+  const extraTreasury = restored.buildBlock({ transactions: [createTransfer({
+    wallet: base.treasury, networkId: chain.networkId, recipient: recipient.address,
+    amount: TESTER_REWARD_RESERVE_ALLOCATION.toString(), nonce: 0,
+  })], timestamp: 0 });
+  assert.throws(() => restored.appendBlock(finalizeBlock(extraTreasury,
+    quorumFor(extraTreasury, base.validators))), /still vesting/);
 });
 
 test("blocks too far in the future are rejected", () => {

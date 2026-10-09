@@ -103,8 +103,15 @@ and a neutral way to license or sell verified improvements without publishing
 private weights. These incentives only become meaningful if users and AI
 services actually demand NIR; protocol design alone cannot create that demand.
 
-The genesis builder/protocol allocation is 12 percent of the fixed supply and
-vests linearly for ten years. It does not depend on the founder personally
-mining intelligence rewards. Before mainnet, the allocation should be split
-between a disclosed founder address and a transparent protocol multisignature
-treasury.
+In a v4/v5 genesis, the founder receives 7 percent and the separate public
+protocol treasury 5 percent of fixed supply. The founder's first 1 percent of
+total supply is spendable at genesis; the other 6 percent vests linearly for
+ten years. V5 also makes 0.1 percent of total supply from the treasury
+available at genesis for a possible future tester program and vests the other
+4.9 percent. This does not activate or promise any payout. V4 keeps all 5 percent
+treasury vesting linearly. Neither depends on the founder
+personally mining intelligence rewards. V3 keeps its older fully linear
+founder schedule.
+The founder has no automatic share of transaction fees. Both permanent
+multisignature addresses still need offline creation, recovery testing, and
+publication in a signed genesis before a real-value network can launch.
