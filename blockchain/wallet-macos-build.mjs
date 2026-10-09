@@ -43,7 +43,7 @@ const ASSETS = Object.freeze(["demo/wallet-nodes.local-demo.json", "package.json
   "blockchain/bip39-english.txt", "blockchain/bip39-english-LICENSE",
   ...UI_FILES]);
 const PACKAGE_FILES = Object.freeze([...new Set([...MODULES, ...ASSETS])]);
-const SECRET_NAME = /\.nirvault(?:\.json)?$|\.nirkey$|\.pem$|\.key$|^\.env(?:\.|$)|(?:^|[-_.])(?:seed|secret|private)(?:[-_.].*)?\.(?:json|txt|bin|dat)$|(?:^|[-_.])(?:devnet-keys|treasury-dev-key|validator-key|coordinator-key)(?:[-_.]|$)/i;
+const SECRET_NAME = /\.nir(?:vault(?:\.json)?|phrase\.json)$|\.nirkey$|\.pem$|\.key$|^\.env(?:\.|$)|(?:^|[-_.])(?:seed|secret|private)(?:[-_.].*)?\.(?:json|txt|bin|dat)$|(?:^|[-_.])(?:devnet-keys|treasury-dev-key|validator-key|coordinator-key)(?:[-_.]|$)/i;
 
 function checkedSource(relative) {
   if (typeof relative !== "string" || relative.startsWith("/") ||

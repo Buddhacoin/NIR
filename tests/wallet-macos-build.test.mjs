@@ -18,13 +18,20 @@ test("local wallet bundle uses a strict source allowlist and refuses secret-name
   assert.doesNotMatch(app, /wallet-mining-practice|wallet-macos-local-update|wallet-sync/);
   // The executable build is macOS-only; keep the source checks on Linux CI.
   if (process.platform !== "darwin") return;
-  const secret = new URL("../blockchain/pr3-fixture.nirvault.json", import.meta.url).pathname;
+  const secrets = ["pr3-fixture.nirvault.json", "pr3-fixture.nirphrase.json"]
+    .map((name) => new URL(`../blockchain/${name}`, import.meta.url).pathname);
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-secret-rejection-"));
   try {
-    writeFileSync(secret, "fixture, not a key\n", { flag: "wx" });
-    assert.throws(() => buildMacWallet(join(directory, "NIR Wallet.app"), { sign: false }),
-      /secret-named path/);
-  } finally { unlinkSync(secret); rmSync(directory, { recursive: true, force: true }); }
+    for (const secret of secrets) {
+      writeFileSync(secret, "fixture, not a key\n", { flag: "wx" });
+      assert.throws(() => buildMacWallet(join(directory, "NIR Wallet.app"), { sign: false }),
+        /secret-named path/);
+      unlinkSync(secret);
+    }
+  } finally {
+    for (const secret of secrets) rmSync(secret, { force: true });
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("macOS wallet package includes code, UI, demo policy, and icon without overwriting", () => {

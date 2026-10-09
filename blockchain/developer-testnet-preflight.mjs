@@ -24,7 +24,7 @@ const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^(?:sha3-256:)?[0-9a-f]{64}$/;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SECRET_NAME = /(?:^|[._-])(?:private(?:key)?|secret|seed|mnemonic|password)(?:$|[._-])/i;
-const SECRET_FILE = /(?:^|\/)(?:\.env(?:\..*)?|DEVNET-KEYS\.json|[^/]+\.(?:key|pem|p12|pfx|jks|keystore)|[^/]*\.nirvault(?:\.json)?)(?:$|\/)/i;
+const SECRET_FILE = /(?:^|\/)(?:\.env(?:\..*)?|DEVNET-KEYS\.json|[^/]+\.(?:key|pem|p12|pfx|jks|keystore)|[^/]*\.nir(?:vault(?:\.json)?|phrase\.json))(?:$|\/)/i;
 
 function exact(value, fields, label) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
