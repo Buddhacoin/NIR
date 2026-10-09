@@ -10,7 +10,8 @@ import {
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import {
-  INITIAL_EPOCH_REWARD, SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
+  LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
+  SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "./constants.mjs";
 import {
   createEpochRandomnessCommit,

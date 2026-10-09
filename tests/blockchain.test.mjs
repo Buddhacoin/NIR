@@ -47,6 +47,7 @@ import {
   FOUNDER_IMMEDIATE_ALLOCATION,
   FOUNDER_IMMEDIATE_BPS,
   FOUNDER_VESTED_ALLOCATION,
+  INITIAL_EPOCH_REWARD as V5_INITIAL_EPOCH_REWARD,
   PROTOCOL_TREASURY_ALLOCATION,
   PROTOCOL_TREASURY_VESTED_ALLOCATION,
   TESTER_REWARD_RESERVE_ALLOCATION,
@@ -61,7 +62,7 @@ import {
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
-  INITIAL_EPOCH_REWARD,
+  LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_ALLOCATION,
   TREASURY_VESTING_MS,
@@ -469,13 +470,48 @@ test("fresh genesis can reach its first reward with the committed evaluator bond
   assert.equal(chain.balance(miner.address), 0n);
   assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
   advanceEmptyBlocks(chain, validators, 1);
-  assert.equal(formatNir(chain.balance(miner.address)), "44.00000000 NIR");
+  assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
   assert.equal(chain.balance(treasury.address), sponsorBalanceBefore);
   assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
   assert.equal(
     chain.capabilityMemoryRoot,
     block.progressRewards[0].evaluation.frontierRootAfter,
   );
+});
+
+test("legacy 50 NIR and v5 44 NIR reward blocks replay under their genesis", () => {
+  const base = fixture();
+  const founder = generateWallet();
+  const cases = [
+    { genesis: base.genesisConfig, reward: INITIAL_EPOCH_REWARD, label: "v1-v2-replay" },
+    { genesis: { ...base.genesisConfig, founderAddress: founder.address },
+      reward: INITIAL_EPOCH_REWARD, label: "v3-replay" },
+    { genesis: { ...base.genesisConfig, founderAddress: founder.address,
+      founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS) },
+      reward: INITIAL_EPOCH_REWARD, label: "v4-replay" },
+    { genesis: { ...base.genesisConfig,
+      founderAddress: founder.address,
+      founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+      treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+    }, reward: V5_INITIAL_EPOCH_REWARD, label: "v5-replay" },
+  ];
+  for (const { genesis, reward, label } of cases) {
+    const chain = new NirChain(genesis);
+    TEST_BEACON_WALLETS.set(chain, base.beaconAuthorities);
+    TEST_TREASURY_WALLETS.set(chain, base.treasury);
+    const miner = generateWallet();
+    const claim = progressClaim(chain, base.evaluators, base.validators, miner,
+      label, miner.address, `artifact-${label}`, reward);
+    const proposal = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
+    const finalized = finalizeBlock(proposal, quorumFor(proposal, base.validators));
+    assert.equal(BigInt(finalized.progressRewards[0].amount), reward);
+    const replayed = new NirChain(genesis);
+    for (const prior of chain.blocks().slice(1)) replayed.appendBlock(prior);
+    replayed.appendBlock(finalized);
+    chain.appendBlock(finalized);
+    assert.equal(replayed.stateRoot, chain.stateRoot);
+    assert.equal(replayed.issued, chain.issued);
+  }
 });
 
 test("progress issuance cannot exceed the exact candidate bond at risk", () => {

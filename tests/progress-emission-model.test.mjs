@@ -7,6 +7,7 @@ import {
   ATOMIC_UNITS,
   HALVING_INTERVAL,
   INITIAL_EPOCH_REWARD,
+  LEGACY_INITIAL_EPOCH_REWARD,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
   MAX_SUPPLY,
   MINING_POOL,
@@ -197,4 +198,19 @@ test("44 NIR halvings approach the mining pool with exact atomic dust", () => {
   const claim = coalitionClaims(eras * HALVING_INTERVAL, 1, 1, "exhaustion");
   assert.throws(() => allocateProgressRewards(eras * HALVING_INTERVAL, claim, dust),
     /no mining budget remains/);
+});
+
+test("legacy 50 NIR schedule still exhausts the pool in the fourth era", () => {
+  const firstThree = [0, 1, 2].reduce((total, era) => total +
+    scheduledEpochBudget(era * HALVING_INTERVAL, LEGACY_INITIAL_EPOCH_REWARD) *
+    BigInt(HALVING_INTERVAL), 0n);
+  const remaining = MINING_POOL - firstThree;
+  const fourth = scheduledEpochBudget(3 * HALVING_INTERVAL,
+    LEGACY_INITIAL_EPOCH_REWARD);
+  assert.equal(LEGACY_INITIAL_EPOCH_REWARD, 50n * ATOMIC_UNITS);
+  assert.equal(firstThree, 18_375_000n * ATOMIC_UNITS);
+  assert.equal(remaining, 105_000n * ATOMIC_UNITS);
+  assert.equal(fourth, 625_000_000n);
+  assert.equal(remaining / fourth, 16_800n);
+  assert.equal(remaining % fourth, 0n);
 });

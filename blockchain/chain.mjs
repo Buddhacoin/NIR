@@ -43,6 +43,8 @@ import {
   FOUNDER_ALLOCATION,
   FOUNDER_IMMEDIATE_BPS,
   FOUNDER_VESTED_ALLOCATION,
+  INITIAL_EPOCH_REWARD,
+  LEGACY_INITIAL_EPOCH_REWARD,
   PROTOCOL_TREASURY_ALLOCATION,
   PROTOCOL_TREASURY_VESTED_ALLOCATION,
   TESTER_REWARD_RESERVE_BPS,
@@ -1375,7 +1377,8 @@ export function finalizeValidatorRecoveryBlock(block, reserveSigners, plan, {
   return { ...block, certificate, hash: context.blockHash, prepareCertificate };
 }
 
-export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) {
+export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL,
+  initialReward = INITIAL_EPOCH_REWARD) {
   if (!Array.isArray(claims) || claims.length === 0) return [];
   if (claims.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
     throw new Error("too many progress rewards in one block");
@@ -1395,7 +1398,7 @@ export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) 
     return { ...claim, score: score.toString() };
   });
 
-  const budget = [scheduledEpochBudget(epoch), remaining].reduce((a, b) =>
+  const budget = [scheduledEpochBudget(epoch, initialReward), remaining].reduce((a, b) =>
     a < b ? a : b,
   );
   if (budget === 0n) throw new Error("no mining budget remains for this epoch");
@@ -3492,6 +3495,11 @@ export class NirChain {
     return this.#allocationLockedFloor(this.#treasuryAddress, timestamp);
   }
 
+  #initialEpochReward() {
+    return this.#treasuryImmediateBps === Number(TESTER_REWARD_RESERVE_BPS)
+      ? INITIAL_EPOCH_REWARD : LEGACY_INITIAL_EPOCH_REWARD;
+  }
+
   randomnessFault(candidateId) {
     const fault = this.#randomnessFaults.get(candidateId);
     return fault ? structuredClone(fault) : null;
@@ -3797,6 +3805,7 @@ export class NirChain {
       this.#rewardEpoch,
       rewardClaims,
       remaining,
+      this.#initialEpochReward(),
     );
     if (
       progressRewards.length > 0 &&
@@ -5843,6 +5852,7 @@ export class NirChain {
       this.#rewardEpoch,
       block.progressRewards.map(({ amount: _amount, ...claim }) => claim),
       MINING_POOL - this.#mined,
+      this.#initialEpochReward(),
     );
     if (
       hashObject(expectedRewards, "REWARD_ALLOCATION") !==
