@@ -134,6 +134,44 @@ test("paired bridge keeps distinct same-address vault copies selectable without 
   }
 });
 
+test("adding an address derives from the currently selected wallet", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-selected-parent-"));
+  const firstPath = join(directory, "first.nirvault.json");
+  const secondPath = join(directory, "second.nirvault.json");
+  const thirdPath = join(directory, "third.nirvault.json");
+  const first = createWalletFile({ path: firstPath, password: "first-selected-parent-2026" });
+  const second = createWalletFile({ path: secondPath, password: "second-selected-parent-2026" });
+  const third = createWalletFile({ path: thirdPath, password: "third-selected-parent-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "b".repeat(64);
+  const parents = [];
+  const server = createWalletBridgeServer({
+    accounts: [{ address: first.address, path: firstPath },
+      { address: second.address, path: secondPath }],
+    authorize: async () => null,
+    createAccount: async (address) => {
+      parents.push(address);
+      return { address: third.address, path: thirdPath };
+    },
+    origin, sessionToken: token, vaultPath: firstPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const listed = await (await request(`${base}/v1/accounts`, origin, token)).json();
+    assert.equal((await request(`${base}/v1/select-account`, origin, token, {
+      method: "POST", body: JSON.stringify({ id: listed.accounts[1].id }),
+    })).status, 200);
+    assert.equal((await request(`${base}/v1/create-account`, origin, token, {
+      method: "POST", body: "{}",
+    })).status, 200);
+    assert.deepEqual(parents, [second.address]);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("account creation errors never disclose a native vault path", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-create-path-"));
   const vaultPath = join(directory, "first.nirvault.json");
