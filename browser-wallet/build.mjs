@@ -1,6 +1,7 @@
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
+import sharp from "sharp";
 
 const root = resolve(import.meta.dirname);
 const firefox = process.argv.includes("--firefox");
@@ -25,7 +26,6 @@ for (const name of ["wallet.html", "style.css", "background.js"]) {
 const manifest = JSON.parse(readFileSync(join(root, "src/manifest.json"), "utf8"));
 if (firefox) {
   manifest.background = { scripts: ["background.js"] };
-  manifest.icons = { "256": "nir-icon.png" };
   manifest.browser_specific_settings = {
     gecko: {
       id: "{f6c10a9d-98f5-4f3f-9ee7-6c43986f472a}",
@@ -36,7 +36,15 @@ if (firefox) {
   };
 }
 writeFileSync(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-copyFileSync(join(root, "../wallet-ui/nir-coin-icon.png"), join(output, "nir-icon.png"));
+const iconSource = join(root, "../wallet-ui/nir-coin-icon.png");
+copyFileSync(iconSource, join(output, "nir-icon.png"));
+for (const size of [16, 48]) {
+  await sharp(iconSource).resize(size, size).png().toFile(join(output, `nir-icon-${size}.png`));
+}
+await sharp(iconSource).resize(114, 114).extend({
+  top: 7, bottom: 7, left: 7, right: 7,
+  background: { r: 0, g: 0, b: 0, alpha: 0 },
+}).png().toFile(join(output, "nir-icon-128.png"));
 const license = ["@noble/hashes", "@noble/post-quantum"].map((name) => {
   const pkg = JSON.parse(readFileSync(join(root, "node_modules", name, "package.json"), "utf8"));
   const notice = readFileSync(join(root, "node_modules", name, "LICENSE"), "utf8");

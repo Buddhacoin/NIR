@@ -6,12 +6,16 @@
   "action": {
     "default_title": "NIR Wallet",
     "default_popup": "wallet.html",
-    "default_icon": "nir-icon.png"
+    "default_icon": {
+      "16": "nir-icon-16.png",
+      "48": "nir-icon-48.png",
+      "128": "nir-icon-128.png"
+    }
   },
   "icons": {
-    "16": "nir-icon.png",
-    "48": "nir-icon.png",
-    "128": "nir-icon.png"
+    "16": "nir-icon-16.png",
+    "48": "nir-icon-48.png",
+    "128": "nir-icon-128.png"
   },
   "background": { "service_worker": "background.js" },
   "permissions": ["storage"],
