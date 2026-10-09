@@ -652,14 +652,24 @@ int main(int argc, const char *argv[]) {
                 });
             }
             [app activateIgnoringOtherApps:YES];
+            NSInteger phraseClipboardChangeCount = -1;
             while (YES) {
                 NSModalResponse choice = [alert runModal];
                 if (choice == NSModalResponseCancel && recovery) return 2;
                 if (choice == NSAlertFirstButtonReturn && !recovery) break;
                 if (choice == NSAlertSecondButtonReturn) {
+                    if (phrase) {
+                        NSAlert *copyWarning = [NSAlert new];
+                        copyWarning.messageText = @"Копировать секретную фразу?";
+                        copyWarning.informativeText = @"Другие приложения и менеджеры буфера обмена могут прочитать и сохранить фразу. После вставки нажмите «Готово»: NIR очистит буфер, если он не изменился. Надёжнее записать слова офлайн.";
+                        [copyWarning addButtonWithTitle:@"Не копировать"];
+                        [copyWarning addButtonWithTitle:@"Копировать"];
+                        if ([copyWarning runModal] != NSAlertSecondButtonReturn) continue;
+                    }
                     NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
                     [clipboard clearContents];
                     [clipboard setString:secret forType:NSPasteboardTypeString];
+                    if (phrase) phraseClipboardChangeCount = clipboard.changeCount;
                 } else if (choice == NSAlertThirdButtonReturn && recovery) {
                     // The vault already exists. Do not emit a success receipt or
                     // launch it as a completed wallet without an exported copy.
@@ -735,6 +745,13 @@ int main(int argc, const char *argv[]) {
                             break;
                         }
                     } else return 2;
+                }
+            }
+            if (phrase && phraseClipboardChangeCount >= 0) {
+                NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
+                if (clipboard.changeCount == phraseClipboardChangeCount &&
+                    [[clipboard stringForType:NSPasteboardTypeString] isEqualToString:secret]) {
+                    [clipboard clearContents];
                 }
             }
             return 0;

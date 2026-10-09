@@ -269,6 +269,45 @@ test("phrase-display failures never disclose native secrets or paths", async () 
   }
 });
 
+test("disconnect aborts a pending native phrase display", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-phrase-cancel-"));
+  const vaultPath = join(directory, "first.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "phrase-cancel-test-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "d".repeat(64);
+  let started;
+  const prompted = new Promise((resolve) => { started = resolve; });
+  let wasAborted = false;
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    revealRecoveryPhrase: (_address, { signal }) => new Promise((_resolve, reject) => {
+      started();
+      signal.addEventListener("abort", () => {
+        wasAborted = true;
+        reject(new Error("native prompt cancelled"));
+      }, { once: true });
+    }),
+    origin, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const reveal = request(`${base}/v1/reveal-recovery-phrase`, origin, token,
+      { method: "POST", body: "{}" });
+    await prompted;
+    const disconnected = await request(`${base}/v1/session`, origin, token,
+      { method: "DELETE" });
+    assert.equal(disconnected.status, 200);
+    assert.equal(wasAborted, true);
+    const result = await reveal;
+    assert.notEqual(result.status, 200);
+    assert.equal((await result.text()).includes("phrase-cancel-test-2026"), false);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("removed selected vault never exposes its absolute path over the bridge", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-removed-path-"));
   const firstPath = join(directory, "first.nirvault.json");

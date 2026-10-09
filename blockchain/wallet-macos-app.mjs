@@ -109,10 +109,10 @@ async function main() {
     }
     return { address: created.address, path: created.walletPath };
   };
-  const revealRecoveryPhrase = async (address) => {
+  const revealRecoveryPhrase = async (address, { signal } = {}) => {
     const helper = fileURLToPath(new URL("./wallet-macos-reveal-phrase.mjs", import.meta.url));
     await execFileAsync(process.execPath, [helper, address], {
-      encoding: "utf8", maxBuffer: 8 * 1024, timeout: 360_000,
+      encoding: "utf8", maxBuffer: 8 * 1024, timeout: 360_000, signal,
     });
   };
 

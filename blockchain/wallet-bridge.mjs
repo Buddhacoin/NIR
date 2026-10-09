@@ -458,6 +458,7 @@ export function createWalletBridgeServer({
   let sessionActive = pairingCode === undefined;
   let sessionGeneration = 0;
   let accountActionPending = false;
+  let activeRevealController = null;
   const activateAccount = (id) => {
     if (id === activeAccountId) return;
     const entry = accountEntries.get(id);
@@ -546,6 +547,8 @@ export function createWalletBridgeServer({
     }
     try {
       if (request.method === "DELETE" && url.pathname === "/v1/session") {
+        activeRevealController?.abort();
+        activeRevealController = null;
         sessionActive = false;
         sessionGeneration += 1;
         pairingAvailable = false;
@@ -638,15 +641,24 @@ export function createWalletBridgeServer({
         }
         accountActionPending = true;
         const revealGeneration = sessionGeneration;
+        const revealController = new AbortController();
+        const cancelOnDisconnect = () => revealController.abort();
+        response.once("close", cancelOnDisconnect);
+        activeRevealController = revealController;
         try {
           const address = walletAddress;
-          try { await revealRecoveryPhrase(address); }
+          try { await revealRecoveryPhrase(address, { signal: revealController.signal }); }
           catch { throw new Error("phrase could not be displayed; check the local application"); }
-          if (!sessionActive || sessionGeneration !== revealGeneration) {
+          if (revealController.signal.aborted || !sessionActive ||
+              sessionGeneration !== revealGeneration) {
             throw new Error("wallet account changed during the request");
           }
           return send(response, 200, { shownOnDevice: true }, origin);
-        } finally { accountActionPending = false; }
+        } finally {
+          response.off("close", cancelOnDisconnect);
+          if (activeRevealController === revealController) activeRevealController = null;
+          accountActionPending = false;
+        }
       }
       if (request.method === "GET" && /^\/v1\/sign-result\/[0-9a-f]{64}$/.test(url.pathname)) {
         pruneSignResults();
