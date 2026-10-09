@@ -1,6 +1,7 @@
 import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from "./crypto.js";
 
 const STORE_KEY = "nirTestWallet";
+const extensionApi = globalThis.browser ?? globalThis.chrome;
 const $ = (selector) => document.querySelector(selector);
 let profile = null;
 let phrase = null;
@@ -48,7 +49,7 @@ async function currentAccount() {
 }
 
 async function saveProfile(next) {
-  await chrome.storage.local.set({ [STORE_KEY]: next });
+  await extensionApi.storage.local.set({ [STORE_KEY]: next });
   profile = next;
 }
 
@@ -233,10 +234,10 @@ $("#copy-revealed").addEventListener("click", () => run(async () => {
   await copy(revealed, "Фраза");
 }));
 
-if (chrome.storage.local.setAccessLevel) {
-  await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+if (extensionApi.storage.local.setAccessLevel) {
+  await extensionApi.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 }
-const stored = (await chrome.storage.local.get(STORE_KEY))[STORE_KEY];
+const stored = (await extensionApi.storage.local.get(STORE_KEY))[STORE_KEY];
 if (stored !== undefined) {
   if (!stored || typeof stored !== "object" || !stored.vault ||
       !Number.isInteger(stored.accountCount) || stored.accountCount < 1 || stored.accountCount > 16 ||
