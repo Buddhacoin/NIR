@@ -31,6 +31,7 @@ import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { createValidatorAdmission } from "./validator-admission.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 import { walletFromMnemonic } from "./wallet-seed.mjs";
+import { decryptRecoveryPhrase, encryptRecoveryPhrase } from "./wallet-phrase-vault.mjs";
 
 const MAX_PRIVATE_JSON_BYTES = 64 * 1024;
 const NETWORK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -251,6 +252,20 @@ export function createPhraseWalletFile({ path, password, phrase, accountIndex = 
   }
   writePrivateJsonExclusive(target, vault, { _beforeActivate });
   return { address: vault.address, algorithm: vault.algorithm, path: target };
+}
+
+export function createPhraseStoreFile({ path, password, phrase }) {
+  const target = resolve(path);
+  if (!target.endsWith(".nirphrase.json")) throw new Error("phrase store path is invalid");
+  const record = encryptRecoveryPhrase(phrase, password);
+  writePrivateJsonExclusive(target, record);
+  return { address: record.address, path: target };
+}
+
+export function openPhraseStoreFile({ path, password }) {
+  const target = resolve(path);
+  if (!target.endsWith(".nirphrase.json")) throw new Error("phrase store path is invalid");
+  return decryptRecoveryPhrase(readPrivateJson(target, "wallet phrase store"), password);
 }
 
 export function walletPublicInfo(path) {

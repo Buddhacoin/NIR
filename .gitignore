@@ -12,6 +12,7 @@ VALIDATOR-KEY.json
 COORDINATOR-KEY.json
 *.nirvault
 *.nirvault.json
+*.nirphrase.json
 *.nirkey
 release-key.nir
 rust/**/target/
