@@ -16,6 +16,8 @@ test("local wallet bundle uses a strict source allowlist and refuses secret-name
   assert.match(source, /rejectSecretPaths\(\)/);
   const app = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(app, /wallet-mining-practice|wallet-macos-local-update|wallet-sync/);
+  // The executable build is macOS-only; keep the source checks on Linux CI.
+  if (process.platform !== "darwin") return;
   const secret = new URL("../blockchain/pr3-fixture.nirvault.json", import.meta.url).pathname;
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-secret-rejection-"));
   try {
