@@ -396,7 +396,7 @@ vulnerabilities cannot become a minting strategy.
 - Founder: **7%** (1% of total supply available at genesis, 6% vesting over ten
   years); separate protocol treasury: **5%** (0.1% of total supply available at
   genesis, 4.9% vesting). These v5 rules require a new signed genesis.
-- In a v5 genesis, a successful intelligence epoch starts at 44 NIR and its
+- Under the current rule, a successful intelligence epoch starts at 44 NIR and its
   budget is cut in half after every 210,000 rewarded epochs. Empty blocks issue nothing and do
   not advance this counter. Rewarded blocks must be at least ten minutes apart,
   and the hard cap always wins. Atomic-unit rounding leaves 0.0189 NIR of the

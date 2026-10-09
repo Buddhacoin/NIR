@@ -50,7 +50,7 @@ delta cannot be rewarded twice, while semantically equivalent but genuinely
 different representations remain an explicit limitation of the bounded
 canonicalizer and evaluator policy.
 
-V5 genesis parameters begin at 44 NIR per rewarded epoch, halve every
+The current rule begins at 44 NIR per rewarded epoch, halves every
 210,000 rewarded epochs, and never exceed the 18.48 million NIR mining pool.
 Even if every possible nonzero epoch is rewarded, atomic-unit rounding leaves
 0.01890000 NIR unissued. Older valueless test-chain reward blocks made under
