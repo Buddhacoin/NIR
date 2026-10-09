@@ -30,6 +30,7 @@ blockchain/validator-rotation.mjs blockchain/validator-staking.mjs blockchain/va
 blockchain/wallet-backup-export-check.mjs blockchain/wallet-bridge.mjs blockchain/wallet-files.mjs blockchain/wallet-header-store.mjs
 blockchain/wallet-macos-app.mjs blockchain/wallet-macos-setup.mjs
 blockchain/wallet-onboarding.mjs blockchain/wallet-preview-cli.mjs
+blockchain/wallet-seed.mjs
 blockchain/wallet-trust-store.mjs wallet-ui/node-selection.js
 `.trim().split(/\s+/));
 const UI_FILES = Object.freeze(`
@@ -38,6 +39,7 @@ nir-coin-icon.png nir-coin-icon.svg node-selection.js nodes.json offline-signing
 style.css submission-status.js sw.js transaction-decoder.js
 `.trim().split(/\s+/).map((name) => `wallet-ui/${name}`));
 const ASSETS = Object.freeze(["demo/wallet-nodes.local-demo.json", "package.json",
+  "blockchain/bip39-english.txt", "blockchain/bip39-english-LICENSE",
   ...UI_FILES]);
 const PACKAGE_FILES = Object.freeze([...new Set([...MODULES, ...ASSETS])]);
 const SECRET_NAME = /\.nirvault(?:\.json)?$|\.nirkey$|\.pem$|\.key$|^\.env(?:\.|$)|(?:^|[-_.])(?:seed|secret|private)(?:[-_.].*)?\.(?:json|txt|bin|dat)$|(?:^|[-_.])(?:devnet-keys|treasury-dev-key|validator-key|coordinator-key)(?:[-_.]|$)/i;

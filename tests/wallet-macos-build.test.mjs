@@ -42,6 +42,8 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
       "Contents/Resources/app/blockchain/wallet-macos-app.mjs",
       "Contents/Resources/app/blockchain/wallet-preview-cli.mjs",
       "Contents/Resources/app/blockchain/wallet-macos-setup.mjs",
+      "Contents/Resources/app/blockchain/wallet-seed.mjs",
+      "Contents/Resources/app/blockchain/bip39-english.txt",
       "Contents/Resources/app/demo/wallet-nodes.local-demo.json",
       "Contents/Resources/app/wallet-ui/index.html",
       "Contents/Resources/app/wallet-ui/nir-coin-icon.png",

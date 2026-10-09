@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import {
   createVerifiedWalletBackup,
   createRecoveryCodeWalletBackup,
+  createPhraseWalletFile,
   createWalletFile,
   restoreRecoveryCodeWalletBackup,
   restoreVerifiedWalletBackup,
@@ -14,6 +15,7 @@ import {
   walletRecoveryBackupPublicInfo,
 } from "./wallet-files.mjs";
 import { validPersonalWalletPassword } from "./vault.mjs";
+import { mnemonicFromEntropy, walletFromMnemonic } from "./wallet-seed.mjs";
 
 const NETWORK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -170,6 +172,60 @@ export function createLocalTestWallet({ storageRoot, password }) {
     backupPath: join(backupDirectory, `${id}.nirvault.json`),
     networkId: "nir-local-rehearsal", password, recoveryCode, personalWallet: true,
   });
+}
+
+// New test-only flow: the user writes down words, never selects a vault file.
+// Internal encrypted files remain an implementation detail of this Mac.
+export function createLocalPhraseWallet({ storageRoot, password }) {
+  if (!validPersonalWalletPassword(password)) {
+    throw new Error("wallet password does not meet creation requirements");
+  }
+  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+    throw new Error("wallet storage root must be absolute");
+  }
+  const root = resolve(storageRoot);
+  const walletDirectory = join(root, "Wallets");
+  privateDirectory(root);
+  privateDirectory(walletDirectory);
+  const phrase = mnemonicFromEntropy();
+  const walletPath = join(walletDirectory, `${randomUUID()}.nirvault.json`);
+  const created = createPhraseWalletFile({ path: walletPath, password, phrase });
+  const drill = walletFromMnemonic(phrase);
+  const drillAddress = drill.address;
+  drill.privateKey = "";
+  if (created.address !== drillAddress ||
+      verifyWalletFile({ path: walletPath, password }).address !== created.address) {
+    throw new Error("phrase wallet recovery drill changed the address");
+  }
+  return { address: created.address, phrase, networkId: "nir-local-rehearsal",
+    walletPath };
+}
+
+export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
+  accountIndex = 0 }) {
+  if (!validPersonalWalletPassword(newPassword)) {
+    throw new Error("wallet password does not meet creation requirements");
+  }
+  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+    throw new Error("wallet storage root must be absolute");
+  }
+  // Reject an invalid phrase before creating any local storage directory.
+  const derived = walletFromMnemonic(phrase, accountIndex);
+  const expected = derived.address;
+  derived.privateKey = "";
+  const root = resolve(storageRoot);
+  const walletDirectory = join(root, "Wallets");
+  privateDirectory(root);
+  privateDirectory(walletDirectory);
+  const walletPath = join(walletDirectory, `${randomUUID()}.nirvault.json`);
+  const restored = createPhraseWalletFile({ path: walletPath, password: newPassword,
+    phrase, accountIndex });
+  if (restored.address !== expected ||
+      verifyWalletFile({ path: walletPath, password: newPassword }).address !== expected) {
+    throw new Error("restored phrase wallet address changed");
+  }
+  return { address: expected, accountIndex, networkId: "nir-local-rehearsal",
+    walletPath };
 }
 
 export function restoreLocalTestWalletWithRecoveryCode({ storageRoot, backupPath,
