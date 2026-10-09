@@ -36,6 +36,11 @@ for (const browserType of browserTypes) test(`${browserType.name()} web preview 
     await page.goto(origin);
     await page.locator("#welcome").waitFor({ state: "visible" });
     assert.match(await page.locator(".notice").textContent(), /без реальных средств/);
+    await page.locator("#language-switch").selectOption("en");
+    assert.equal(await page.locator("html").getAttribute("lang"), "en");
+    assert.equal(await page.locator("#welcome h1").textContent(), "Your NIR starts here");
+    assert.match(await page.locator(".notice").textContent(), /no real funds/);
+    await page.locator("#language-switch").selectOption("ru");
     await page.getByRole("button", { name: "Создать кошелёк" }).click();
     await page.locator("#create-form [name=password]").fill("correct horse battery staple");
     await page.locator("#create-form [name=confirmation]").fill("correct horse battery staple");
@@ -45,6 +50,9 @@ for (const browserType of browserTypes) test(`${browserType.name()} web preview 
       .map((word) => word.replace(/^\d+\./, ""));
     assert.equal(words.length, 24);
     await page.getByRole("button", { name: "Я сохранил слова" }).click();
+    await page.locator("#language-switch").selectOption("en");
+    assert.equal(await page.locator("#confirm-fields label").first().innerText(), "Word # 4");
+    await page.locator("#language-switch").selectOption("ru");
     for (const position of [3, 11, 19]) {
       await page.locator(`#confirm-fields [name=word${position}]`).fill(words[position]);
     }
@@ -68,6 +76,22 @@ for (const browserType of browserTypes) test(`${browserType.name()} web preview 
     await page.locator("#restore-form [name=password]").fill("another device password 123");
     await page.locator("#restore-form [name=confirmation]").fill("another device password 123");
     await page.getByRole("button", { name: "Восстановить" }).click();
+    await page.locator("#home").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#full-address").textContent(), address);
+    await page.locator("#language-switch").selectOption("en");
+    assert.equal(await page.locator("#account-label").textContent(), "Address 1");
+    assert.equal(await page.locator("#home .balance p").textContent(), "Balance");
+    await page.getByRole("button", { name: "Settings" }).click();
+    assert.equal(await page.locator("#settings h1").textContent(), "Settings");
+    await page.reload();
+    await page.locator("#unlock").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#language-switch").inputValue(), "en");
+    assert.equal(await page.locator("#unlock h1").textContent(), "Welcome back!");
+    await page.locator("#unlock-form [name=password]").fill("wrong password 123");
+    await page.getByRole("button", { name: "Unlock" }).click();
+    await page.getByRole("status").getByText("Wrong password or damaged wallet data").waitFor();
+    await page.locator("#unlock-form [name=password]").fill("another device password 123");
+    await page.getByRole("button", { name: "Unlock" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
     assert.equal(await page.locator("#full-address").textContent(), address);
     assert.deepEqual(errors, []);

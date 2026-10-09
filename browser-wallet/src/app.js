@@ -1,7 +1,9 @@
 import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from "./crypto.js";
+import { hasEnglishTranslation, supportedLanguages, translate } from "./i18n.js";
 
 const extensionStorage = globalThis.browser?.storage?.local ?? globalThis.chrome?.storage?.local;
 const STORE_KEY = extensionStorage ? "nirTestWallet" : "nirTestWalletWeb";
+const LANGUAGE_KEY = "nirWalletLanguage";
 const storage = extensionStorage ?? {
   async get(key) {
     const value = localStorage.getItem(key);
@@ -16,6 +18,38 @@ if (!extensionStorage && window.top !== window.self) {
   throw new Error("Embedded wallet refused");
 }
 const $ = (selector) => document.querySelector(selector);
+let language = "ru";
+const t = (source) => translate(source, language);
+const translatedNodes = [];
+const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+while (walker.nextNode()) {
+  const node = walker.currentNode;
+  const source = node.textContent.trim();
+  if (hasEnglishTranslation(source)) translatedNodes.push([node, node.textContent, source]);
+}
+const translatedAttributes = [];
+for (const element of document.querySelectorAll("[title], [aria-label]")) {
+  for (const name of ["title", "aria-label"]) {
+    const source = element.getAttribute(name);
+    if (source && hasEnglishTranslation(source)) translatedAttributes.push([element, name, source]);
+  }
+}
+function applyLanguage(next) {
+  language = next;
+  document.documentElement.lang = next;
+  $("#language-switch").value = next;
+  for (const [node, original, source] of translatedNodes) node.textContent = original.replace(source, t(source));
+  for (const [element, name, source] of translatedAttributes) element.setAttribute(name, t(source));
+  if ($("#account-label")) $("#account-label").textContent = `${t("Адрес")} ${selectedIndex + 1}`;
+  for (const label of document.querySelectorAll("#confirm-fields label")) {
+    const position = Number(label.querySelector("input")?.name.slice(4));
+    if (Number.isInteger(position)) label.firstChild.textContent = `${t("Слово №")} ${position + 1}`;
+  }
+  document.querySelectorAll("#account-list button strong").forEach((title, index) => {
+    title.textContent = `${t("Адрес")} ${index + 1}${index === selectedIndex ? " ✓" : ""}`;
+  });
+  $("#status").textContent = "";
+}
 let profile = null;
 let phrase = null;
 let pending = null;
@@ -68,7 +102,7 @@ async function saveProfile(next) {
 
 async function renderHome() {
   const account = await currentAccount();
-  $("#account-label").textContent = `Адрес ${selectedIndex + 1}`;
+  $("#account-label").textContent = `${t("Адрес")} ${selectedIndex + 1}`;
   $("#short-address").textContent = shortAddress(account.address);
   $("#full-address").textContent = account.address;
   screen("home");
@@ -80,7 +114,7 @@ async function renderAccounts() {
     const account = await accountFromPhrase(phrase, index);
     const button = document.createElement("button");
     const title = document.createElement("strong");
-    title.textContent = `Адрес ${index + 1}${index === selectedIndex ? " ✓" : ""}`;
+    title.textContent = `${t("Адрес")} ${index + 1}${index === selectedIndex ? " ✓" : ""}`;
     const detail = document.createElement("small");
     detail.textContent = shortAddress(account.address);
     button.append(title, detail);
@@ -96,16 +130,16 @@ async function renderAccounts() {
   screen("accounts");
 }
 
-async function copy(value, label) {
+async function copy(value, kind) {
   await navigator.clipboard.writeText(value);
-  status(`${label} скопирован. Очистите буфер обмена после использования.`, true);
+  status(t(kind === "phrase" ? "Фраза скопирована. Очистите буфер обмена после использования." : "Адрес скопирован. Очистите буфер обмена после использования."), true);
 }
 
 async function run(action) {
   if (busy) return;
   busy = true;
   try { await action(); }
-  catch (error) { status(error instanceof Error ? error.message : "Не удалось выполнить действие"); }
+  catch (error) { status(t(error instanceof Error ? error.message : "Не удалось выполнить действие")); }
   finally { busy = false; }
 }
 
@@ -117,6 +151,12 @@ function credentials(form) {
 
 $("#start-create").addEventListener("click", () => screen("create"));
 $("#start-restore").addEventListener("click", () => screen("restore"));
+$("#language-switch").addEventListener("change", (event) => {
+  const next = event.currentTarget.value;
+  if (!supportedLanguages.includes(next)) return;
+  applyLanguage(next);
+  storage.set({ [LANGUAGE_KEY]: next }).catch(() => status(t("Не удалось выполнить действие")));
+});
 for (const button of document.querySelectorAll("[data-back]")) {
   button.addEventListener("click", () => screen(button.dataset.back));
 }
@@ -138,14 +178,14 @@ $("#create-form").addEventListener("submit", (event) => {
 
 $("#copy-phrase").addEventListener("click", () => run(async () => {
   if (!pending) throw new Error("Создание кошелька прервано");
-  await copy(pending.phrase, "Фраза");
+  await copy(pending.phrase, "phrase");
 }));
 
 $("#backup-next").addEventListener("click", () => {
   if (!pending) return;
   const fields = [3, 11, 19].map((position) => {
     const label = document.createElement("label");
-    label.textContent = `Слово № ${position + 1}`;
+    label.textContent = `${t("Слово №")} ${position + 1}`;
     const input = document.createElement("input");
     input.name = `word${position}`;
     input.autocomplete = "off";
@@ -166,7 +206,7 @@ $("#confirm-form").addEventListener("submit", (event) => {
     const words = pending.phrase.split(" ");
     for (const position of [3, 11, 19]) {
       if (form.elements[`word${position}`].value.trim().toLowerCase() !== words[position]) {
-        throw new Error(`Проверьте слово № ${position + 1}`);
+        throw new Error(`${t("Проверьте слово №")} ${position + 1}`);
       }
     }
     await saveProfile({ vault: pending.record, accountCount: 1, selectedIndex: 0 });
@@ -218,9 +258,9 @@ $("#add-account").addEventListener("click", () => run(async () => {
   await saveProfile({ ...profile, accountCount, selectedIndex });
   await renderHome();
 }));
-$("#copy-address").addEventListener("click", () => run(async () => copy((await currentAccount()).address, "Адрес")));
+$("#copy-address").addEventListener("click", () => run(async () => copy((await currentAccount()).address, "address")));
 $("#receive").addEventListener("click", () => screen("receive-view"));
-$("#copy-full-address").addEventListener("click", () => run(async () => copy((await currentAccount()).address, "Адрес")));
+$("#copy-full-address").addEventListener("click", () => run(async () => copy((await currentAccount()).address, "address")));
 $("#nav-home").addEventListener("click", () => screen("home"));
 $("#nav-settings").addEventListener("click", () => screen("settings"));
 $("#show-phrase-form").addEventListener("click", () => screen("reveal"));
@@ -239,22 +279,26 @@ $("#reveal-form").addEventListener("submit", (event) => {
     form.reset();
     phraseGrid($("#reveal-grid"), revealed);
     $("#reveal-result").hidden = false;
-    status("Не показывайте эти слова никому.", true);
+    status(t("Не показывайте эти слова никому."), true);
   });
 });
 $("#copy-revealed").addEventListener("click", () => run(async () => {
   if (!revealed) throw new Error("Сначала введите пароль");
-  await copy(revealed, "Фраза");
+  await copy(revealed, "phrase");
 }));
 
 if (storage.setAccessLevel) {
   await storage.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 }
+try {
+  const savedLanguage = (await storage.get(LANGUAGE_KEY))[LANGUAGE_KEY];
+  if (supportedLanguages.includes(savedLanguage)) applyLanguage(savedLanguage);
+} catch { /* Keep the default language if preferences are unavailable. */ }
 let stored;
 try { stored = (await storage.get(STORE_KEY))[STORE_KEY]; }
 catch {
   screen("unlock");
-  status("Не удалось прочитать локальные данные. Не удаляйте их; попробуйте открыть кошелёк в этом же браузере.");
+  status(t("Не удалось прочитать локальные данные. Не удаляйте их; попробуйте открыть кошелёк в этом же браузере."));
   throw new Error("Wallet storage is unavailable or invalid");
 }
 if (stored !== undefined) {
@@ -263,7 +307,7 @@ if (stored !== undefined) {
       !Number.isInteger(stored.selectedIndex) || stored.selectedIndex < 0 ||
       stored.selectedIndex >= stored.accountCount) {
     screen("unlock");
-    status("Данные кошелька повреждены. Обратитесь за помощью, не удаляйте расширение.");
+    status(t("Данные кошелька повреждены. Обратитесь за помощью, не удаляйте расширение."));
   } else {
     profile = stored;
     screen("unlock");
