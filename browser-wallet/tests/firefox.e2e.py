@@ -112,7 +112,10 @@ def restore_on_clean_device(browser, words, expected_address, expected_second_ad
     visible(browser, "#home")
     assert browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent") == expected_address
     click(browser, "#open-accounts")
-    assert len(browser.find_elements(By.CSS_SELECTOR, "#account-list button")) == 16
+    WebDriverWait(browser, 20).until(
+        lambda current: len(current.find_elements(By.CSS_SELECTOR, "#account-list button")) == 16
+    )
+    visible(browser, "#accounts")
     click(browser, "#account-list button:nth-child(2)")
     assert browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent") == expected_second_address
 
