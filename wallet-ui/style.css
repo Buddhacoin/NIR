@@ -8,6 +8,8 @@
   --text: #111;
   --muted: #717171;
   --inverse: #fff;
+  --shell-width: 470px;
+  --page-gutter: 20px;
   background: var(--bg);
   color: var(--text);
 }
@@ -17,26 +19,27 @@ button { color: inherit; font: inherit; cursor: pointer; touch-action: manipulat
 button:active { transform: scale(.96); }
 button:disabled { cursor: wait; opacity: .55; transform: none; }
 button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-.shell { width: min(470px, 100%); min-height: 100vh; margin: auto; padding: 20px 20px 116px; }
+.shell { width: min(var(--shell-width), 100%); min-height: 100vh; margin: auto; padding: 20px var(--page-gutter) 116px; }
 header, .title { display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; gap: 10px; align-items: center; font-size: 19px; letter-spacing: 3px; }
 .brand-logo { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; }
 .header-actions { display: flex; align-items: center; gap: 7px; }
 .header-actions button, .title button { min-height: 40px; border: 1px solid var(--border); background: #ffffffd9; color: var(--text); border-radius: 20px; padding: 8px 13px; box-shadow: 0 3px 12px #0000000a; backdrop-filter: blur(16px); }
-#account-open { max-width: 135px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
+#account-open { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
 .network.connected { color: #157542; }
 .network.offline { color: var(--muted); }
 #theme { width: 40px; padding: 0; font-size: 16px; }
-.balance { padding: 30px 0 26px; text-align: center; }
-.balance p, .balance span, .empty p { color: var(--muted); }
-.balance h1 { margin: 9px 0; font-size: 40px; font-weight: 480; letter-spacing: -1.7px; line-height: 1; }
+.balance { padding: 26px 0 24px; text-align: center; }
+.balance > p, #wallet-state, .empty p { color: var(--muted); }
+.balance h1 { margin: 8px 0 10px; color: var(--text); font-size: clamp(34px, 9vw, 42px); font-weight: 450; letter-spacing: -1.6px; line-height: 1.08; font-variant-numeric: tabular-nums; }
 .balance small { color: var(--muted); font-size: 15px; letter-spacing: 0; }
-.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; }
-.actions button { padding: 15px 6px 14px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); box-shadow: 0 8px 24px #0000000a; font-size: 14px; font-weight: 650; }
+.actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; }
+.actions button { min-width: 0; min-height: 96px; padding: 14px 6px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); box-shadow: 0 8px 24px #00000008; font-size: 14px; font-weight: 600; }
 .actions button:hover { border-color: #d4d4d6; box-shadow: 0 12px 28px #00000010; }
 .actions i { display: grid; place-items: center; width: 42px; height: 42px; margin: 0 auto 9px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-soft); color: var(--text); font-style: normal; }
 .actions svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.card { min-height: 218px; margin-top: 18px; padding: 20px; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: 0 14px 40px #0000000a; }
+.card { min-height: 0; width: 100%; margin-top: 16px; padding: 20px; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); box-shadow: 0 10px 30px #00000008; }
+#history { min-height: 214px; }
 .onboarding { min-height: 0; }
 .onboarding[hidden] { display: none; }
 .onboarding .title { align-items: flex-start; gap: 16px; }
@@ -50,12 +53,12 @@ header, .title { display: flex; align-items: center; justify-content: space-betw
 .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .onboarding-actions button { padding-top: 11px; padding-bottom: 11px; }
 .onboarding-actions .secondary { margin: 0; }
-h2 { font-size: 18px; }
+h2 { font-size: 18px; font-weight: 650; letter-spacing: -.025em; }
 .title button span { font-size: 18px; vertical-align: -1px; }
-.empty { padding: 24px 10px 12px; text-align: center; }
-.empty div { display: grid; place-items: center; width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 15px; background: var(--surface-soft); color: var(--muted); }
+.empty { padding: 19px 8px 4px; text-align: center; }
+.empty div { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto 11px; border-radius: 14px; background: var(--surface-soft); color: var(--muted); }
 .empty svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.empty p { font-size: 14px; line-height: 1.5; }
+.empty p { margin: 8px 0 0; font-size: 13px; line-height: 1.45; }
 .transaction-list { margin-top: 8px; }
 .transaction-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 13px 0; border-top: 1px solid var(--border); }
 .transaction-row:first-child { border-top: 0; }
@@ -65,7 +68,7 @@ h2 { font-size: 18px; }
 .transaction-row b { font-size: 14px; }
 .transaction-row span { margin-top: 4px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .transaction-row strong { font-size: 12px; font-weight: 650; white-space: nowrap; }
-nav { position: fixed; z-index: 5; bottom: max(14px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: repeat(5, 1fr); width: min(422px, calc(100% - 24px)); padding: 7px 8px; border: 1px solid #e5e5e7; border-radius: 25px; background: #fffffff2; box-shadow: 0 12px 34px #0000001c; backdrop-filter: blur(24px) saturate(160%); }
+nav { position: fixed; z-index: 5; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); width: min(calc(var(--shell-width) - var(--page-gutter) - var(--page-gutter)), calc(100% - var(--page-gutter) - var(--page-gutter))); padding: 6px; border: 1px solid var(--border); border-radius: 22px; background: #fffffff2; box-shadow: 0 12px 36px #00000012; backdrop-filter: blur(24px) saturate(160%); }
 nav button { min-width: 0; min-height: 66px; padding: 5px 2px 4px; border: 0; border-radius: 18px; background: transparent; color: #8a8a8e; font-size: 11px; line-height: 1; }
 nav button i { display: grid; place-items: center; width: 40px; height: 40px; margin: 0 auto; border-radius: 14px; background: transparent; font-style: normal; }
 nav button svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -173,8 +176,16 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 :root[data-theme="dark"] .danger { border-color: #693c3c; color: #e7a2a2; }
 :root[data-theme="dark"] .qr-card canvas { filter: none; }
 
+@media (max-width: 520px) {
+  header { display: grid; grid-template-columns: minmax(0, 1fr) 40px minmax(0, 135px); gap: 8px; }
+  .header-actions { display: contents; }
+  #account-open { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; max-width: none; }
+  #theme { grid-column: 2; grid-row: 1; }
+  .network { grid-column: 3; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
 @media (max-width: 370px) {
-  .shell { padding-right: 13px; padding-left: 13px; }
+  :root { --page-gutter: 13px; }
   .network { max-width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .onboarding-actions { grid-template-columns: 1fr; }
   .actions { gap: 7px; }
@@ -187,13 +198,9 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
   nav span { font-size: 10px; }
 }
 
-@media (max-width: 520px) {
-  header { flex-wrap: wrap; gap: 8px; }
-  #account-open { max-width: 110px; }
-}
-
 @media (min-width: 760px) {
-  .shell { width: min(560px, 100%); padding-top: 28px; }
+  :root { --shell-width: 560px; }
+  .shell { padding-top: 28px; }
   dialog { width: min(440px, calc(100% - 40px)); }
   .onboarding ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-left: 0; list-style-position: inside; }
   .onboarding li, .onboarding li + li { margin: 0; }
