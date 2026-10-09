@@ -24,6 +24,19 @@ import {
 } from "../blockchain/operators.mjs";
 
 const fingerprint = (label) => createHash("sha256").update(label).digest("hex");
+const packageE2e = process.env.NIR_ASSIGNMENT_PACKAGE_E2E === "1";
+const suite = { name: "package-e2e", cases: [
+  { expected: "42", family: "reasoning", id: "math", safety_critical: false },
+  { expected: "refuse", family: "safety", id: "safe", safety_critical: true },
+] };
+const suiteSalt = "package-e2e-suite-salt";
+const entrypointPath = "bin/app";
+const entrypointDigest = (role) => `sha256:${fingerprint(`${role}-entrypoint`)}`;
+const applicationContentHash = (role) => `sha256:${createHash("sha256")
+  .update(`NIR_APPLICATION_CONTENT_V1\0${JSON.stringify({
+    adapter: "nir-application-adapter-v1", entrypoint_digest: entrypointDigest(role),
+    entrypoint_path: entrypointPath, role,
+  })}`).digest("hex")}`;
 const members = (wallets, prefix) => wallets.map((wallet, index) => ({
   ...publicWallet(wallet), operatorId: `${prefix}-${index}`,
 }));
@@ -35,7 +48,7 @@ const treasury = generateWallet();
 const submitter = generateWallet();
 const validatorMembers = members(validators, "validator");
 const v4 = process.env.NIR_ASSIGNMENT_FIXTURE_V4 === "1";
-const v3 = v4 || process.env.NIR_ASSIGNMENT_FIXTURE_V3 === "1";
+const v3 = v4 || packageE2e || process.env.NIR_ASSIGNMENT_FIXTURE_V3 === "1";
 const protocolVersion = v3 ? EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION
   : EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION;
 const evaluationEnvironment = {
@@ -51,7 +64,8 @@ const chain = new NirChain({
   beaconAuthorities: members(beacons, "beacon"),
   capabilityReferences: [{
     artifactHash: `sha256:${fingerprint("baseline")}`,
-    contentHash: `sha256:${fingerprint("baseline-content")}`,
+    contentHash: packageE2e ? applicationContentHash("baseline")
+      : `sha256:${fingerprint("baseline-content")}`,
     behaviorCommitment: fingerprint("baseline-behavior"),
     capabilitiesBps: { "reasoning-v1": 100 },
   }],
@@ -108,10 +122,14 @@ if (v4) {
   checkpointTrustPolicyId = policy.policyId;
 }
 const artifactHash = `sha256:${fingerprint("candidate")}`;
-const contentHash = `sha256:${fingerprint("candidate-content")}`;
+const contentHash = packageE2e ? applicationContentHash("candidate")
+  : `sha256:${fingerprint("candidate-content")}`;
 const baselineHash = `sha256:${fingerprint("baseline")}`;
-const baselineContentHash = `sha256:${fingerprint("baseline-content")}`;
-const suiteCommitment = fingerprint("suite");
+const baselineContentHash = packageE2e ? applicationContentHash("baseline")
+  : `sha256:${fingerprint("baseline-content")}`;
+const suiteCommitment = packageE2e ? createHash("sha256")
+  .update(JSON.stringify({ cases: suite.cases, name: suite.name, salt: suiteSalt }))
+  .digest("hex") : fingerprint("suite");
 const admission = createProgressCommitment({
   wallet: submitter, networkId: chain.networkId, recipient: submitter.address,
   artifactHash, baselineHash, baselineContentHash, contentHash, suiteCommitment,
@@ -184,6 +202,11 @@ process.stdout.write(JSON.stringify({
   commitmentTransaction: admission,
   evaluators: challenge.committee.map((address) =>
     publicWallet(evaluators.find((wallet) => wallet.address === address))),
+  // Only the in-memory integration test requests ephemeral signers; never write these to fixture files.
+  ...(packageE2e ? {
+    testEvaluatorWallets: challenge.committee.map((address) =>
+      evaluators.find((wallet) => wallet.address === address)),
+  } : {}),
   finalityProofs: [
     createFinalityProof(bondBlock), createFinalityProof(admissionBlock),
     createFinalityProof(epochCommitBlock), createFinalityProof(epochRevealBlock),

@@ -1,6 +1,7 @@
 import io
 import json
 import os
+from hashlib import sha256
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,11 +18,16 @@ from nir.assignment_gate import (
     main,
     verify_assignment_package,
 )
-from nir.replay_store import ConsumedEvaluationStore
+from nir.replay_store import ChallengeAlreadyConsumed, ConsumedEvaluationStore
 from nir.assignment_chain_proof import AssignmentChainProofV3, FinalityAnchor, PROOF_V3_FORMAT
 from nir.execution_receipt import AssignedEvaluator, FinalizedEvaluationAssignmentV2
+from nir.execution_receipt import create_signed_execution_transcript
+from nir.evaluator import BenchmarkSuite, RunRecord
 from nir.model import ProtocolError
-from nir.runner import CandidateCommitment
+from nir.runner import (
+    CandidateCommitment, EnvironmentManifest, ExecutionTranscript,
+    create_application_bundle,
+)
 
 
 class AssignmentGateTests(unittest.TestCase):
@@ -98,11 +104,12 @@ class AssignmentGateTests(unittest.TestCase):
             )),
         )
 
-    def real_chain_inputs(self):
+    def real_chain_inputs(self, *, package_e2e=False):
         helper = Path(__file__).parent / "assignment_chain_fixture.mjs"
         completed = subprocess.run(
             ["node", str(helper)], check=True, stdout=subprocess.PIPE,
-            env={**os.environ, "NIR_ASSIGNMENT_FIXTURE_V3": "1"},
+            env={**os.environ, "NIR_ASSIGNMENT_FIXTURE_V3": "1",
+                 **({"NIR_ASSIGNMENT_PACKAGE_E2E": "1"} if package_e2e else {})},
         )
         value = json.loads(completed.stdout)
         transaction = value["commitmentTransaction"]
@@ -163,7 +170,129 @@ class AssignmentGateTests(unittest.TestCase):
             "trustedValidators": value["trustedValidators"],
         })
         self.write_inputs()
+        self.chain_fixture = value
         return assignment
+
+    def test_real_chain_bundle_signatures_and_durable_replay(self):
+        """No verifier mocks; synthetic transcripts are not actual model execution."""
+        assignment = self.real_chain_inputs(package_e2e=True)
+        fixture = self.chain_fixture
+        suite = BenchmarkSuite.from_dict({
+            "name": "package-e2e", "cases": [
+                {"id": "math", "family": "reasoning", "expected": "42"},
+                {"id": "safe", "family": "safety", "expected": "refuse",
+                 "safety_critical": True},
+            ],
+        })
+        suite_salt = "package-e2e-suite-salt"
+        self.assertEqual(suite.commitment(suite_salt), assignment.suite_commitment)
+        environment = EnvironmentManifest.from_dict({
+            "format": "nir-evaluation-environment-v1",
+            "image_digest": f"sha256:{sha256(b'evaluation-image').hexdigest()}",
+            "runner_digest": f"sha256:{sha256(b'evaluation-runner').hexdigest()}",
+            "adapter_protocol": assignment.adapter_protocol, "cpu_limit": 2,
+            "memory_limit_bytes": 1 << 30, "timeout_seconds": 60,
+        })
+        self.assertEqual(environment.commitment, assignment.environment_commitment)
+        wallets = {item["address"]: item for item in fixture.pop("testEvaluatorWallets")}
+        self.assertEqual(set(wallets), {item.evaluator_id for item in assignment.evaluators})
+        transcripts = {"baseline": [], "candidate": []}
+        for role, answers, energy in (
+            ("baseline", {"math": "41", "safe": "refuse"}, 100),
+            ("candidate", {"math": "42", "safe": "refuse"}, 80),
+        ):
+            for evaluator in assignment.evaluators:
+                transcript = ExecutionTranscript(
+                    role=role, challenge_seed=assignment.challenge_seed,
+                    challenge_epoch=assignment.challenge_epoch,
+                    environment_hash=environment.commitment,
+                    content_hash=(assignment.baseline_content_hash if role == "baseline"
+                                  else assignment.candidate_content_hash),
+                    entrypoint_digest=f"sha256:{sha256(f'{role}-entrypoint'.encode()).hexdigest()}",
+                    entrypoint_path="bin/app", adapter=assignment.adapter_protocol,
+                    run=RunRecord.from_dict({
+                        "run_id": f"{role}-{evaluator.evaluator_id[-8:]}",
+                        "verifier_id": evaluator.evaluator_id,
+                        "artifact_hash": (assignment.baseline_artifact_hash if role == "baseline"
+                                          else assignment.candidate_artifact_hash),
+                        "energy_wh": energy, "energy_attested": False, "answers": answers,
+                    }),
+                )
+                transcripts[role].append(transcript)
+        bundle = create_application_bundle(
+            commitment=CandidateCommitment.from_dict({
+                "artifact_hash": fixture["commitmentTransaction"]["artifactHash"],
+                "baseline_hash": fixture["commitmentTransaction"]["baselineHash"],
+                "baseline_content_hash": fixture["commitmentTransaction"]["baselineContentHash"],
+                "candidate_id": fixture["commitmentTransaction"]["candidateId"],
+                "committed_epoch": fixture["transactionBlockHeight"],
+                "content_hash": fixture["commitmentTransaction"]["contentHash"],
+                "network_id": fixture["networkId"],
+                "parents": fixture["commitmentTransaction"]["parents"],
+                "recipient": fixture["commitmentTransaction"]["recipient"],
+                "suite_commitment": fixture["commitmentTransaction"]["suiteCommitment"],
+            }),
+            challenge_seed=assignment.challenge_seed,
+            challenge_epoch=assignment.challenge_epoch,
+            environment=environment, suite=suite, suite_salt=suite_salt,
+            baseline=transcripts["baseline"], candidate=transcripts["candidate"],
+        )
+        helper = Path(__file__).parent / "pq_signature_helper.mjs"
+        receipts = []
+        for transcript in bundle.baseline + bundle.candidate:
+            wallet = wallets[transcript.run.verifier_id]
+
+            def sign(domain, payload, *, wallet=wallet):
+                result = subprocess.run(
+                    ["node", str(helper), "sign"], check=True, text=True,
+                    input=json.dumps({"wallet": wallet, "domain": domain, "payload": payload}),
+                    stdout=subprocess.PIPE,
+                )
+                return json.loads(result.stdout)["signature"]
+
+            receipts.append(create_signed_execution_transcript(
+                assignment=assignment, bundle=bundle, transcript=transcript,
+                evaluator_id=transcript.run.verifier_id, signer=sign,
+            ))
+        self.package["bundle"] = bundle.as_dict()
+        self.package["receipts"] = [item.as_dict() for item in receipts]
+        self.write_inputs()
+        result = verify_assignment_package(
+            package_path=self.package_path, policy_path=self.policy_path,
+            replay_store=self.store,
+        )
+        self.assertTrue(result["chainInclusionVerified"])
+        self.assertEqual(result["receiptCount"], len(receipts))
+        self.assertEqual(result["replayCheckpoint"]["generation"], 1)
+        self.assertFalse(result["chainMutation"])
+        self.policy["replayCheckpoint"] = result["replayCheckpoint"]
+        self.write_inputs()
+        with self.assertRaises(ChallengeAlreadyConsumed):
+            verify_assignment_package(package_path=self.package_path,
+                                      policy_path=self.policy_path, replay_store=self.store)
+        self.assertEqual(current_replay_checkpoint(self.store), result["replayCheckpoint"])
+
+        # Fresh stores isolate each rejection from the successful replay checkpoint.
+        for label, change in (
+            ("tampered", lambda: self.package["receipts"][0].update({
+                "signature": receipts[1].signature,
+            })),
+            ("expired", lambda: self.policy.update({
+                "observedHeight": assignment.expires_at_height + 1,
+            })),
+        ):
+            self.package["receipts"] = [item.as_dict() for item in receipts]
+            self.policy["observedHeight"] = assignment.decision_height
+            change()
+            self.write_inputs()
+            fresh_store = self.root / label
+            before = current_replay_checkpoint(fresh_store)
+            self.policy["replayCheckpoint"] = before
+            self.write_inputs()
+            with self.assertRaises(ProtocolError):
+                verify_assignment_package(package_path=self.package_path,
+                                          policy_path=self.policy_path, replay_store=fresh_store)
+            self.assertEqual(current_replay_checkpoint(fresh_store), before)
 
     def test_real_exact_proof_is_required_before_replay_consumption(self):
         assignment = self.real_chain_inputs()
