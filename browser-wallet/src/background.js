@@ -1,2 +1,7 @@
 // The background worker has no access to the decrypted recovery phrase.
-(globalThis.browser ?? globalThis.chrome).runtime.onInstalled.addListener(() => {});
+const extensionApi = globalThis.browser ?? globalThis.chrome;
+extensionApi.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === "install") {
+    void extensionApi.tabs.create({ url: extensionApi.runtime.getURL("wallet.html") });
+  }
+});

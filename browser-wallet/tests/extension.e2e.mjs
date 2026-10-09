@@ -19,6 +19,13 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 15000 });
     const workerUrl = new URL(worker.url());
     const extensionOrigin = `${workerUrl.protocol}//${workerUrl.host}`;
+    let onboarding;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      onboarding = context.pages().find((candidate) => candidate.url() === `${extensionOrigin}/wallet.html`);
+      if (onboarding) break;
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    assert.ok(onboarding, "installation should open the wallet onboarding screen");
     const page = await context.newPage();
     const failures = [];
     page.on("pageerror", (error) => failures.push(error.message));
