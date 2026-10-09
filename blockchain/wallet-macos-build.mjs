@@ -28,7 +28,7 @@ blockchain/validator-onboarding.mjs blockchain/validator-recovery-store.mjs
 blockchain/validator-recovery-trust-store.mjs blockchain/validator-recovery.mjs
 blockchain/validator-rotation.mjs blockchain/validator-staking.mjs blockchain/vault.mjs
 blockchain/wallet-backup-export-check.mjs blockchain/wallet-bridge.mjs blockchain/wallet-files.mjs blockchain/wallet-header-store.mjs
-blockchain/wallet-macos-app.mjs blockchain/wallet-macos-setup.mjs
+blockchain/wallet-macos-app.mjs blockchain/wallet-macos-reveal-phrase.mjs blockchain/wallet-macos-setup.mjs
 blockchain/wallet-onboarding.mjs blockchain/wallet-preview-cli.mjs
 blockchain/wallet-phrase-vault.mjs
 blockchain/wallet-seed.mjs

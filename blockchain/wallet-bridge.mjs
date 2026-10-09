@@ -331,6 +331,7 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  revealRecoveryPhrase,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -344,6 +345,7 @@ export function createWalletBridgeServer({
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       (createAccount !== undefined && typeof createAccount !== "function") ||
+      (revealRecoveryPhrase !== undefined && typeof revealRecoveryPhrase !== "function") ||
       (presentPairingCode !== undefined &&
         (typeof presentPairingCode !== "function" || pairingCode === undefined)) ||
       (accounts !== undefined && (!Array.isArray(accounts) || accounts.length < 1 ||
@@ -456,6 +458,7 @@ export function createWalletBridgeServer({
   let sessionActive = pairingCode === undefined;
   let sessionGeneration = 0;
   let accountActionPending = false;
+  let activeRevealController = null;
   const activateAccount = (id) => {
     if (id === activeAccountId) return;
     const entry = accountEntries.get(id);
@@ -507,7 +510,7 @@ export function createWalletBridgeServer({
         return send(response, 409, { error: "pairing is unavailable; restart the bridge" }, origin);
       }
       try {
-        presentPairingCode();
+        await presentPairingCode();
         return send(response, 202, { shownOnDevice: true }, origin);
       } catch {
         return send(response, 503, { error: "pairing window could not be opened" }, origin);
@@ -544,6 +547,8 @@ export function createWalletBridgeServer({
     }
     try {
       if (request.method === "DELETE" && url.pathname === "/v1/session") {
+        activeRevealController?.abort();
+        activeRevealController = null;
         sessionActive = false;
         sessionGeneration += 1;
         pairingAvailable = false;
@@ -622,6 +627,39 @@ export function createWalletBridgeServer({
           return send(response, 200, { id, address: walletAddress }, origin);
         } finally { accountActionPending = false; }
       }
+      if (request.method === "POST" && url.pathname === "/v1/reveal-recovery-phrase") {
+        if (!revealRecoveryPhrase) return send(response, 404, { error: "phrase display is unavailable" }, origin);
+        if (pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("phrase display requires application/json");
+        }
+        const body = await readAuthenticatedBody(16);
+        if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
+          throw new Error("phrase display body is invalid");
+        }
+        accountActionPending = true;
+        const revealGeneration = sessionGeneration;
+        const revealController = new AbortController();
+        const cancelOnDisconnect = () => revealController.abort();
+        response.once("close", cancelOnDisconnect);
+        activeRevealController = revealController;
+        try {
+          const address = walletAddress;
+          try { await revealRecoveryPhrase(address, { signal: revealController.signal }); }
+          catch { throw new Error("phrase could not be displayed; check the local application"); }
+          if (revealController.signal.aborted || !sessionActive ||
+              sessionGeneration !== revealGeneration) {
+            throw new Error("wallet account changed during the request");
+          }
+          return send(response, 200, { shownOnDevice: true }, origin);
+        } finally {
+          response.off("close", cancelOnDisconnect);
+          if (activeRevealController === revealController) activeRevealController = null;
+          accountActionPending = false;
+        }
+      }
       if (request.method === "GET" && /^\/v1\/sign-result\/[0-9a-f]{64}$/.test(url.pathname)) {
         pruneSignResults();
         const entry = signResults.get(url.pathname.slice("/v1/sign-result/".length));
@@ -630,7 +668,8 @@ export function createWalletBridgeServer({
         return send(response, entry.status, entry.value, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
-        return send(response, 200, walletPublicInfo(activeVaultPath), origin);
+        return send(response, 200, { ...walletPublicInfo(activeVaultPath),
+          canRevealRecoveryPhrase: Boolean(revealRecoveryPhrase) }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {

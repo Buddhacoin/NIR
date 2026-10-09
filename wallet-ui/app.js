@@ -75,6 +75,8 @@ function renderWalletConnection() {
   accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
   document.querySelector("#settings-connect").hidden = connected;
+  document.querySelector("#settings-reveal-phrase").hidden =
+    !connected || walletInfo.canRevealRecoveryPhrase !== true;
   document.querySelector("#security-state").textContent = connected
     ? `Vault подключён · ${walletInfo.address.slice(0, 16)}…`
     : "Vault не подключён";
@@ -979,14 +981,23 @@ document.querySelector("#claim-unstake").onclick = async (event) => {
   finally { event.currentTarget.disabled = false; }
 };
 
-function openBridgePanel() {
+async function openBridgePanel() {
   bridgeStatus.textContent = "";
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
   bridgePanel.showModal();
   // Native Mac app brings its pairing code above the browser. The standalone
   // CLI has no such endpoint; its terminal code remains the fallback.
-  void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
+  try {
+    const response = await fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" });
+    if (!response.ok) {
+      bridgeStatus.textContent = response.status === 409
+        ? "Код подключения истёк или уже использован. Закройте и снова откройте NIR Wallet."
+        : "Не удалось показать код. Закройте и снова откройте NIR Wallet.";
+    }
+  } catch {
+    bridgeStatus.textContent = "Приложение NIR Wallet не запущено. Откройте его на Mac и повторите подключение.";
+  }
 }
 
 async function renderAccounts() {
@@ -1462,6 +1473,18 @@ document.querySelector("#settings-connect").onclick = () => {
   openBridgePanel();
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
+document.querySelector("#settings-reveal-phrase").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#settings-reveal-status");
+  button.disabled = true;
+  status.textContent = "Подтвердите просмотр фразы паролем в окне NIR Wallet на Mac…";
+  try {
+    await bridgeRequest("/v1/reveal-recovery-phrase", { method: "POST", body: "{}" }, 360_000);
+    status.textContent = "Фраза была показана только в приложении на Mac.";
+  } catch {
+    status.textContent = "Не удалось показать фразу. Проверьте пароль или восстановите этот адрес по сохранённой фразе.";
+  } finally { button.disabled = false; }
+};
 document.querySelector("#setup-connect").onclick = () => {
   setupPanel.close();
   openBridgePanel();

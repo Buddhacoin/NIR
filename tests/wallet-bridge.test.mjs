@@ -207,6 +207,107 @@ test("account creation errors never disclose a native vault path", async () => {
   }
 });
 
+test("phrase display requires an authorized session and never returns the secret", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-phrase-display-"));
+  const vaultPath = join(directory, "first.nirvault.json");
+  const wallet = createWalletFile({ path: vaultPath, password: "phrase-display-test-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "d".repeat(64);
+  const phrase = "private phrase must never reach the browser";
+  const seen = [];
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    revealRecoveryPhrase: async (address) => { seen.push(address); void phrase; },
+    origin, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    assert.equal((await (await request(`${base}/v1/wallet`, origin, token)).json())
+      .canRevealRecoveryPhrase, true);
+    assert.equal((await request(`${base}/v1/reveal-recovery-phrase`, origin,
+      "0".repeat(64), { method: "POST", body: "{}" })).status, 401);
+    assert.equal((await request(`${base}/v1/reveal-recovery-phrase`, origin,
+      token, { method: "POST", body: JSON.stringify({ phrase }) })).status, 400);
+    const result = await request(`${base}/v1/reveal-recovery-phrase`, origin,
+      token, { method: "POST", body: "{}" });
+    assert.equal(result.status, 200);
+    const body = await result.text();
+    assert.deepEqual(JSON.parse(body), { shownOnDevice: true });
+    assert.equal(body.includes(phrase), false);
+    assert.equal(body.includes(directory), false);
+    assert.deepEqual(seen, [wallet.address]);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("phrase-display failures never disclose native secrets or paths", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-phrase-error-"));
+  const vaultPath = join(directory, "first.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "phrase-display-test-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "d".repeat(64);
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    revealRecoveryPhrase: async () => { throw new Error(`private phrase at ${directory}`); },
+    origin, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const result = await request(`${base}/v1/reveal-recovery-phrase`, origin,
+      token, { method: "POST", body: "{}" });
+    assert.equal(result.status, 400);
+    const body = await result.text();
+    assert.equal(body.includes(directory), false);
+    assert.equal(body.includes("private phrase"), false);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("disconnect aborts a pending native phrase display", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-phrase-cancel-"));
+  const vaultPath = join(directory, "first.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "phrase-cancel-test-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "d".repeat(64);
+  let started;
+  const prompted = new Promise((resolve) => { started = resolve; });
+  let wasAborted = false;
+  const server = createWalletBridgeServer({
+    authorize: async () => null,
+    revealRecoveryPhrase: (_address, { signal }) => new Promise((_resolve, reject) => {
+      started();
+      signal.addEventListener("abort", () => {
+        wasAborted = true;
+        reject(new Error("native prompt cancelled"));
+      }, { once: true });
+    }),
+    origin, sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const reveal = request(`${base}/v1/reveal-recovery-phrase`, origin, token,
+      { method: "POST", body: "{}" });
+    await prompted;
+    const disconnected = await request(`${base}/v1/session`, origin, token,
+      { method: "DELETE" });
+    assert.equal(disconnected.status, 200);
+    assert.equal(wasAborted, true);
+    const result = await reveal;
+    assert.notEqual(result.status, 200);
+    assert.equal((await result.text()).includes("phrase-cancel-test-2026"), false);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("removed selected vault never exposes its absolute path over the bridge", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-removed-path-"));
   const firstPath = join(directory, "first.nirvault.json");
@@ -270,6 +371,28 @@ test("native pairing prompt shows the code only on the device, never over HTTP",
     assert.equal(paired.status, 200);
     assert.equal((await request(`${base}/v1/pairing-prompt`, origin, "",
       { method: "POST" })).status, 409);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("failed native pairing prompt is reported to the browser", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-pairing-failure-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "pairing-failure-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, pairingCode: "12345678",
+    presentPairingCode: async () => { throw new Error("native helper failed"); },
+    sessionToken: "1".repeat(64), vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const response = await request(`${base}/v1/pairing-prompt`, origin, "", { method: "POST" });
+    assert.equal(response.status, 503);
+    assert.equal((await response.text()).includes("12345678"), false);
   } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });

@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://[::1]:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="nir-coin-icon.png?v=24">
-  <link rel="stylesheet" href="style.css?v=32"><title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css?v=33"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
@@ -159,6 +159,8 @@
     <p>Пароль и приватный ключ никогда не вводятся в браузере. Закрытие или отключение удаляет session token из памяти страницы.</p>
     <button class="primary" id="settings-connect" type="button">Подключить vault</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>
+    <button class="secondary" id="settings-reveal-phrase" type="button" hidden>Показать фразу восстановления</button>
+    <p class="form-status" id="settings-reveal-status" role="status" aria-live="polite"></p>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить vault</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">

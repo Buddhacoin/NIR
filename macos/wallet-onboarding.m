@@ -581,6 +581,7 @@ int main(int argc, const char *argv[]) {
                     activateWithOptions:0];
                 [pairingWindow makeKeyAndOrderFront:nil];
                 [pairingWindow orderFrontRegardless];
+                (void)write(STDOUT_FILENO, "READY\n", 6);
             });
             while (YES) {
                 NSModalResponse choice = [alert runModal];
@@ -600,17 +601,20 @@ int main(int argc, const char *argv[]) {
             NSString *secret = [payload isKindOfClass:NSDictionary.class] ? payload[@"secret"] : nil;
             NSString *backupPath = [payload isKindOfClass:NSDictionary.class] ? payload[@"backupPath"] : nil;
             if (![secret isKindOfClass:NSString.class] || secret.length == 0 ||
-                ![@[@"recovery", @"private-key"] containsObject:kind]) return 1;
+                ![@[@"recovery", @"private-key", @"phrase"] containsObject:kind]) return 1;
             if (backupPath && (![backupPath isKindOfClass:NSString.class] ||
                 ![backupPath hasPrefix:@"/"])) return 1;
             NSApplication *app = [NSApplication sharedApplication];
             [app setActivationPolicy:NSApplicationActivationPolicyRegular];
             NSAlert *alert = [NSAlert new];
             BOOL recovery = [kind isEqualToString:@"recovery"];
-            alert.messageText = recovery ? @"Код восстановления" : @"Приватный ключ";
+            BOOL phrase = [kind isEqualToString:@"phrase"];
+            alert.messageText = recovery ? @"Код восстановления" :
+                (phrase ? @"Фраза восстановления NIR" : @"Приватный ключ");
             alert.informativeText = recovery ?
                 @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." :
-                @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.";
+                (phrase ? @"Эта фраза восстанавливает все связанные с ней адреса NIR. Любой, кто её узнает, сможет распоряжаться этими адресами. Никому её не отправляйте." :
+                @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.");
             NSString *shown = secret;
             if (recovery) {
                 NSArray *groups = [secret componentsSeparatedByString:@"-"];
@@ -634,15 +638,39 @@ int main(int argc, const char *argv[]) {
             [alert addButtonWithTitle:@"Копировать"];
             if (recovery) [alert addButtonWithTitle:@"Отложить настройку"];
             if (recovery && !backupPath) return 1;
+            if (phrase) {
+                // This dialog is requested from Safari settings. Keep the
+                // recovery words visible above that browser, not behind it.
+                NSWindow *phraseWindow = alert.window;
+                phraseWindow.level = NSFloatingWindowLevel;
+                phraseWindow.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
+                [phraseWindow orderFrontRegardless];
+                [phraseWindow makeKeyAndOrderFront:nil];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSRunningApplication currentApplication] activateWithOptions:0];
+                    [phraseWindow makeKeyAndOrderFront:nil];
+                    [phraseWindow orderFrontRegardless];
+                });
+            }
             [app activateIgnoringOtherApps:YES];
+            NSInteger phraseClipboardChangeCount = -1;
             while (YES) {
                 NSModalResponse choice = [alert runModal];
                 if (choice == NSModalResponseCancel && recovery) return 2;
                 if (choice == NSAlertFirstButtonReturn && !recovery) break;
                 if (choice == NSAlertSecondButtonReturn) {
+                    if (phrase) {
+                        NSAlert *copyWarning = [NSAlert new];
+                        copyWarning.messageText = @"Копировать секретную фразу?";
+                        copyWarning.informativeText = @"Другие приложения и менеджеры буфера обмена могут прочитать и сохранить фразу. После вставки нажмите «Готово»: NIR очистит буфер, если он не изменился. Надёжнее записать слова офлайн.";
+                        [copyWarning addButtonWithTitle:@"Не копировать"];
+                        [copyWarning addButtonWithTitle:@"Копировать"];
+                        if ([copyWarning runModal] != NSAlertSecondButtonReturn) continue;
+                    }
                     NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
                     [clipboard clearContents];
                     [clipboard setString:secret forType:NSPasteboardTypeString];
+                    if (phrase) phraseClipboardChangeCount = clipboard.changeCount;
                 } else if (choice == NSAlertThirdButtonReturn && recovery) {
                     // The vault already exists. Do not emit a success receipt or
                     // launch it as a completed wallet without an exported copy.
@@ -718,6 +746,13 @@ int main(int argc, const char *argv[]) {
                             break;
                         }
                     } else return 2;
+                }
+            }
+            if (phrase && phraseClipboardChangeCount >= 0) {
+                NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
+                if (clipboard.changeCount == phraseClipboardChangeCount &&
+                    [[clipboard stringForType:NSPasteboardTypeString] isEqualToString:secret]) {
+                    [clipboard clearContents];
                 }
             }
             return 0;

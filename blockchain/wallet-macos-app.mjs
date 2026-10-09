@@ -68,15 +68,28 @@ function showPairingCode(code) {
   const executable = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
   return new Promise((resolve, reject) => {
     if (pairingPrompt && pairingPrompt.exitCode === null) pairingPrompt.kill("SIGTERM");
-    const child = spawn(executable, ["--show-pairing"], { stdio: ["pipe", "ignore", "ignore"] });
+    const child = spawn(executable, ["--show-pairing"], { stdio: ["pipe", "pipe", "ignore"] });
     pairingPrompt = child;
-    child.once("error", reject);
-    child.once("close", (status) => {
-      if (pairingPrompt === child) pairingPrompt = null;
-      if (status === 0 || child.killed) resolve();
-      else reject(new Error("pairing window failed"));
+    let ready = false;
+    const timeout = setTimeout(() => {
+      if (!ready) {
+        child.kill("SIGTERM");
+        reject(new Error("pairing window timed out"));
+      }
+    }, 15_000);
+    child.stdout.once("data", (chunk) => {
+      if (chunk.toString("utf8").trim() !== "READY") return;
+      ready = true;
+      clearTimeout(timeout);
+      resolve();
     });
-    child.stdin.on("error", reject);
+    child.once("error", (error) => { clearTimeout(timeout); if (!ready) reject(error); });
+    child.once("close", () => {
+      clearTimeout(timeout);
+      if (pairingPrompt === child) pairingPrompt = null;
+      if (!ready) reject(new Error("pairing window failed"));
+    });
+    child.stdin.on("error", (error) => { if (!ready) reject(error); });
     child.stdin.end(JSON.stringify({ code }));
   });
 }
@@ -109,6 +122,12 @@ async function main() {
     }
     return { address: created.address, path: created.walletPath };
   };
+  const revealRecoveryPhrase = async (address, { signal } = {}) => {
+    const helper = fileURLToPath(new URL("./wallet-macos-reveal-phrase.mjs", import.meta.url));
+    await execFileAsync(process.execPath, [helper, address], {
+      encoding: "utf8", maxBuffer: 8 * 1024, timeout: 360_000, signal,
+    });
+  };
 
   const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
   const ui = createWalletPreviewServer();
@@ -122,10 +141,11 @@ async function main() {
       accounts: listLocalTestWallets(storageRoot),
       authorize: authorizeSigning,
       createAccount,
+      revealRecoveryPhrase,
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,
-      presentPairingCode: () => { void showPairingCode(pairingCode).catch(() => {}); },
+      presentPairingCode: () => showPairingCode(pairingCode),
       sessionToken: randomBytes(32).toString("hex"),
       vaultPath: selected.walletPath,
     });

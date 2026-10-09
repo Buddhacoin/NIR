@@ -28,6 +28,16 @@ test("wallet navigation has five interactive destinations", () => {
   assert.match(script, /aria-current/);
 });
 
+test("local Mac wallet exposes recovery phrase in settings without a browser secret field", () => {
+  const settings = html.split('id="settings-panel"')[1].split('</dialog>')[0];
+  assert.match(settings, /id="settings-reveal-phrase"/);
+  assert.doesNotMatch(settings, /type="password"|name="phrase"|id="recovery-phrase"/);
+  assert.match(script, /#settings-reveal-phrase/);
+  assert.match(script, /walletInfo\.canRevealRecoveryPhrase !== true/);
+  assert.match(script, /bridgeRequest\("\/v1\/reveal-recovery-phrase", \{ method: "POST", body: "\{\}" \}/);
+  assert.doesNotMatch(script, /result\.phrase|response\.phrase/);
+});
+
 test("wallet selects separate vault copies by opaque ID, including one shared address", () => {
   for (const id of ["account-open", "accounts-panel", "account-list", "add-account"]) {
     assert.match(html, new RegExp(`id="${id}"`));
@@ -102,8 +112,8 @@ test("visible secondary controls have actions", () => {
 
 test("bottom navigation is a compact readable dock", () => {
   assert.match(styles, /nav \{ position: fixed/);
-  assert.match(styles, /grid-template-columns: repeat\(5, 1fr\)/);
-  assert.match(styles, /width: min\(422px, calc\(100% - 24px\)\)/);
+  assert.match(styles, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /width: min\(calc\(var\(--shell-width\) - var\(--page-gutter\) - var\(--page-gutter\)\)/);
   assert.match(styles, /nav button \{[^}]*min-height: 66px/s);
   assert.match(styles, /nav button svg \{[^}]*width: 25px/s);
   assert.match(styles, /nav \.active i \{ background: transparent; color: #111/);
@@ -116,18 +126,19 @@ test("wallet uses a neutral monochrome interface", () => {
   assert.match(styles, /--bg: #080808/);
   assert.doesNotMatch(styles, /#f47b19|#ff9138|#e76300/);
   assert.match(html, /class="brand-logo" src="nir-coin-icon\.png\?v=24"/);
-  assert.match(styles, /\.balance h1 \{[^}]*font-weight: 480/s);
-  assert.match(styles, /\.balance \{ padding: 30px 0 26px; text-align: center/);
+  assert.match(styles, /\.balance h1 \{[^}]*font-weight: 450/s);
+  assert.match(styles, /\.balance \{ padding: 26px 0 24px; text-align: center/);
+  assert.match(styles, /@media \(max-width: 520px\) \{[\s\S]*header \{ display: grid/);
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=32/);
-  assert.match(serviceWorker, /style\.css\?v=32/);
+  assert.match(html, /style\.css\?v=33/);
+  assert.match(serviceWorker, /style\.css\?v=33/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
   assert.match(html, /app\.js\?v=37/);
   assert.match(serviceWorker, /app\.js\?v=37/);
-  assert.match(serviceWorker, /nir-wallet-shell-v39/);
+  assert.match(serviceWorker, /nir-wallet-shell-v40/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
