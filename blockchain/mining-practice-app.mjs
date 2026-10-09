@@ -105,6 +105,10 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel } = {}
       catch { send(500, "text/plain; charset=utf-8", "App asset unavailable"); }
       return;
     }
+    if (request.method === "GET" && path === "/status") {
+      send(200, "application/json; charset=utf-8", JSON.stringify({ status: "local-model-service-ready" }));
+      return;
+    }
     if (request.method === "POST" && path === "/model-check") {
       if (request.headers.origin !== origin ||
           request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {

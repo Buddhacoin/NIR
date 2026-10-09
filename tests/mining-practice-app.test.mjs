@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 import { createMiningPracticeApp, miningModelAppPreflight, runPinnedModel } from "../blockchain/mining-practice-app.mjs";
 
@@ -47,9 +48,122 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
     assert.doesNotMatch(html, /<input|<textarea|<form/i);
-    assert.match(html, /Проверьте реальную модель локально/);
+    assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
+    assert.match(html, /id="connection"/);
+    assert.match(html, /id="error-message"/);
+    const status = await (await fetch(`${base}/status`)).json();
+    assert.deepEqual(status, { status: "local-model-service-ready" });
   } finally { await stop(server); }
+});
+
+test("portrait layout stays narrow and a stopped service explains the new-tab requirement", async () => {
+  const css = readFileSync(join(root, "mining-app/style.css"), "utf8");
+  assert.match(css, /width:min\(100%,390px\)/);
+  assert.match(css, /min-height:680px/);
+  assert.match(css, /@media \(max-width:460px\)/);
+
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
+    nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {} });
+  }
+  let onClick;
+  nodes.get("#start").addEventListener = (_, listener) => { onClick = listener; };
+  let onLanguage;
+  nodes.get("#language").addEventListener = (_, listener) => { onLanguage = listener; };
+  let online = true;
+  let lastMethod;
+  const code = readFileSync(join(root, "mining-app/app.js"), "utf8");
+  runInNewContext(code, {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id), querySelectorAll: () => [] },
+    navigator: { language: "ru-RU" }, AbortController,
+    fetch: async (path, options) => {
+      lastMethod = options?.method ?? "GET";
+      if (!online) throw new TypeError("Load failed");
+      assert.equal(path, "/status");
+      return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
+    },
+    setInterval: () => 0, setTimeout, clearTimeout,
+    TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nodes.get("#connection").dataset.state, "online");
+  onLanguage();
+  assert.equal(nodes.get("#connection").textContent, "● Local service connected");
+  online = false;
+  await onClick();
+  assert.equal(lastMethod, "POST");
+  assert.equal(nodes.get("#connection").dataset.state, "offline");
+  assert.equal(nodes.get("#start").disabled, true);
+  assert.equal(nodes.get("#error").hidden, false);
+  assert.match(nodes.get("#error-message").textContent, /npm run mine:app/);
+  assert.match(nodes.get("#error-message").textContent, /new browser tab/);
+  assert.doesNotMatch(nodes.get("#error-message").textContent, /Load failed/);
+  onLanguage();
+  assert.match(nodes.get("#error-message").textContent, /новую вкладку/);
+});
+
+test("RU/EN switch translates the active model result without changing its values", async () => {
+  const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
+  const keys = [...html.matchAll(/data-i18n="([^"]+)"/g)].map((match) => match[1]);
+  const labels = keys.map((key) => ({ dataset: { i18n: key }, textContent: "" }));
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
+    nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {} });
+  }
+  let onStart;
+  let onLanguage;
+  nodes.get("#start").addEventListener = (_, listener) => { onStart = listener; };
+  nodes.get("#language").addEventListener = (_, listener) => { onLanguage = listener; };
+  const document = {
+    documentElement: { lang: "ru" },
+    querySelector: (id) => nodes.get(id),
+    querySelectorAll: () => labels,
+  };
+  const model = {
+    status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
+    baselineAccuracyBps: 9000, candidateAccuracyBps: 9666, caseCount: 30,
+    bundleHash: "a".repeat(64), bundleVerified: true, independentOperators: false,
+    hiddenChallenges: false, energyAttested: false, networkSubmitted: false,
+    rewardCredited: false, walletChanged: false,
+  };
+  const code = readFileSync(join(root, "mining-app/app.js"), "utf8");
+  runInNewContext(code, {
+    document,
+    navigator: { language: "ru-RU" }, AbortController,
+    fetch: async (path) => ({
+      ok: true, json: async () => path === "/status" ? { status: "local-model-service-ready" } : model,
+    }),
+    setInterval: () => 0, setTimeout, clearTimeout,
+    TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await onStart();
+  assert.equal(nodes.get("#result").hidden, false);
+  assert.match(nodes.get("#score").textContent, /90\.00.*96\.66/);
+  assert.ok(labels.every((label) => label.textContent.length > 0));
+  onLanguage();
+  assert.equal(document.documentElement.lang, "en");
+  assert.match(nodes.get("#score").textContent, /Accuracy: baseline 90\.00%, candidate 96\.66%/);
+  assert.match(nodes.get("#technical").textContent, /Verified bundle hash/);
+  assert.ok(labels.every((label) => label.textContent.length > 0));
+  assert.equal(labels[keys.indexOf("footer")].textContent.includes("Public mining and real NIR are unavailable"), true);
+});
+
+test("a reused loopback port with a different service is not presented as NIR", async () => {
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
+    nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {}, addEventListener() {} });
+  }
+  runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id), querySelectorAll: () => [] },
+    navigator: { language: "ru-RU" }, AbortController,
+    fetch: async () => ({ ok: true, json: async () => ({ status: "another-service" }) }),
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nodes.get("#connection").dataset.state, "offline");
+  assert.equal(nodes.get("#start").disabled, true);
 });
 
 test("model endpoint refuses cross-origin, input bodies, and concurrent runs", async () => {
