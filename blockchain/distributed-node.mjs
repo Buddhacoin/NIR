@@ -1,16 +1,20 @@
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
   blockHash,
@@ -25,6 +29,8 @@ import {
   voteForBlock,
 } from "./chain.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
+import { readBoundedPublicJsonFile } from "./secure-public-json.mjs";
 import {
   initializeBlockStore,
   installBlockStoreSnapshot,
@@ -39,7 +45,7 @@ import {
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
 } from "./constants.mjs";
-import { canonicalJson, generateWallet, publicWallet, verifyObject } from "./crypto.mjs";
+import { canonicalJson, generateWallet, hashObject, publicWallet, verifyObject } from "./crypto.mjs";
 import {
   assertAdmissionReceiptGenerationWindow,
   assertAdmissionInclusionObligations,
@@ -127,6 +133,136 @@ import { installCertificateHistory } from "./certificate-lifecycle-store.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
+const OPERATOR_EVENTS_FILE = "OPERATOR-EVENTS.json";
+const OPERATOR_EVENT_OUTCOME_FILE = "OPERATOR-EVENT-OUTCOME.json";
+const MAX_OPERATOR_EVENTS_BYTES = 64 * 1024;
+const MAX_OPERATOR_EVENT_OUTCOME_BYTES = 4 * 1024;
+
+function operatorEventDigest(events) {
+  return hashObject(events, "NIR_OPERATOR_EVENT_BATCH_V1");
+}
+
+function operatorEventEntryDigest(type, entry) {
+  return hashObject({ type, entry }, "NIR_OPERATOR_EVENT_ENTRY_V1");
+}
+
+function operatorEventEntryOutcomes(staged, finalized) {
+  const fields = finalized === null ? null : proposalFields(finalized);
+  return Object.fromEntries(Object.entries(staged).map(([type, entries]) => {
+    const available = new Map();
+    for (const entry of fields?.[type] ?? []) {
+      const key = canonicalJson(entry);
+      available.set(key, (available.get(key) ?? 0) + 1);
+    }
+    return [type, entries.map((entry) => {
+      const key = canonicalJson(entry);
+      const included = (available.get(key) ?? 0) > 0;
+      if (included) available.set(key, available.get(key) - 1);
+      return { digest: operatorEventEntryDigest(type, entry),
+        status: fields === null ? "unknown" : included ? "included" : "expired" };
+    })];
+  }));
+}
+
+function operatorEventSummary(entries) {
+  const statuses = Object.values(entries).flat().map(({ status }) => status);
+  if (statuses.length === 0) throw new Error("operator event outcome is empty");
+  if (statuses.includes("unknown")) return "unknown";
+  if (statuses.every((status) => status === "included")) return "included";
+  if (statuses.every((status) => status === "expired")) return "expired";
+  return "partial";
+}
+
+function readOperatorEventOutcome(path, networkId) {
+  if (!lstatSync(path, { throwIfNoEntry: false })) return null;
+  const outcome = readBoundedPublicJsonFile(path, {
+    label: "local operator event outcome", maximumBytes: MAX_OPERATOR_EVENT_OUTCOME_BYTES,
+  });
+  if (!["nir-local-operator-event-outcome-v1", "nir-local-operator-event-outcome-v2"]
+    .includes(outcome?.format) ||
+      outcome.networkId !== networkId ||
+      !["included", "expired", "partial", "unknown"].includes(outcome.status) ||
+      (outcome.format === "nir-local-operator-event-outcome-v1" &&
+        !["included", "expired"].includes(outcome.status)) ||
+      outcome.action !== (outcome.status === "included" ? "none"
+        : outcome.status === "unknown" ? "verification-required" : "re-evaluation-required") ||
+      !/^[0-9a-f]{64}$/.test(outcome.eventDigest ?? "") ||
+      !Number.isSafeInteger(outcome.expectedHeight) || outcome.expectedHeight < 1 ||
+      !Number.isSafeInteger(outcome.observedHeight) ||
+      outcome.observedHeight < outcome.expectedHeight ||
+      (outcome.finalizedBlockHash !== null &&
+        !/^[0-9a-f]{64}$/.test(outcome.finalizedBlockHash ?? "")) ||
+      Object.keys(outcome).sort().join("\0") !== [
+        "action", "eventDigest", "expectedHeight", "finalizedBlockHash", "format",
+        "networkId", "observedHeight", "status",
+        ...(outcome.format === "nir-local-operator-event-outcome-v2" ? ["entries"] : []),
+      ].sort().join("\0")) {
+    throw new Error("local operator event outcome is invalid");
+  }
+  if (outcome.format === "nir-local-operator-event-outcome-v2") {
+    const types = ["epochRandomnessCommits", "epochRandomnessReveals", "progressBeacons", "rewardClaims"];
+    if (!outcome.entries || typeof outcome.entries !== "object" ||
+        Object.keys(outcome.entries).sort().join("\0") !== types.sort().join("\0") ||
+        types.some((type) => !Array.isArray(outcome.entries[type]) ||
+          outcome.entries[type].length > (type.startsWith("epochRandomness") ? 4 : 1) ||
+          outcome.entries[type].some((entry) =>
+            Object.keys(entry ?? {}).sort().join("\0") !== "digest\0status" ||
+            !/^[0-9a-f]{64}$/.test(entry.digest ?? "") ||
+            !["included", "expired", "unknown"].includes(entry.status)))) {
+      throw new Error("local operator event outcome entries are invalid");
+    }
+    if (outcome.status !== operatorEventSummary(outcome.entries) ||
+        (outcome.status === "unknown") !== (outcome.finalizedBlockHash === null)) {
+      throw new Error("local operator event outcome summary is invalid");
+    }
+  }
+  return outcome;
+}
+
+function persistOperatorEventOutcome(path, outcome) {
+  const serialized = `${canonicalJson(outcome)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_OPERATOR_EVENT_OUTCOME_BYTES) {
+    throw new Error("local operator event outcome is too large");
+  }
+  const temporary = `${path}.${randomBytes(16).toString("hex")}.next`;
+  writeFileSync(temporary, serialized, {
+    encoding: "utf8", flag: "wx", flush: true, mode: 0o600,
+  });
+  try {
+    renameSync(temporary, path);
+    syncDirectory(path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+function normalizeOperatorEvents(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some((key) => ![
+        "epochRandomnessCommits", "epochRandomnessReveals", "progressBeacons", "rewardClaims",
+      ].includes(key))) {
+    throw new Error("operator consensus events are invalid");
+  }
+  const events = {
+    epochRandomnessCommits: value.epochRandomnessCommits ?? [],
+    epochRandomnessReveals: value.epochRandomnessReveals ?? [],
+    progressBeacons: value.progressBeacons ?? [],
+    rewardClaims: value.rewardClaims ?? [],
+  };
+  for (const [name, maximum] of [
+    ["epochRandomnessCommits", 4], ["epochRandomnessReveals", 4],
+    ["progressBeacons", 1], ["rewardClaims", 1],
+  ]) {
+    if (!Array.isArray(events[name]) || events[name].length > maximum) {
+      throw new Error(`operator ${name} count is invalid`);
+    }
+  }
+  if (Object.values(events).every((entries) => entries.length === 0) ||
+      Buffer.byteLength(canonicalJson(events)) > MAX_OPERATOR_EVENTS_BYTES) {
+    throw new Error("operator consensus events are empty or too large");
+  }
+  return events;
+}
 
 function accountResources(chain, address) {
   const pendingUnstake = chain.creditUnstake(address);
@@ -152,7 +288,7 @@ function writeExclusive(path, value, mode = 0o600) {
 
 function writeAtomic(path, value, mode = 0o600) {
   const temporary = `${path}.next`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+  writeFileSync(temporary, `${canonicalJson(value)}\n`, {
     encoding: "utf8", flag: "w", mode,
   });
   chmodSync(temporary, mode);
@@ -161,6 +297,41 @@ function writeAtomic(path, value, mode = 0o600) {
 
 function readJson(path) {
   return parseConsensusJson(readFileSync(path, "utf8"));
+}
+
+function syncDirectory(path) {
+  const descriptor = openSync(dirname(path), "r");
+  try { fsyncSync(descriptor); }
+  finally { closeSync(descriptor); }
+}
+
+function persistOperatorEvents(path, value) {
+  const serialized = `${canonicalJson(value)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_OPERATOR_EVENTS_BYTES) {
+    throw new Error("operator consensus event journal is too large");
+  }
+  const temporary = `${path}.${randomBytes(16).toString("hex")}.next`;
+  writeFileSync(temporary, serialized, {
+    encoding: "utf8", flag: "wx", flush: true, mode: 0o600,
+  });
+  try {
+    // A hard link installs the journal only if no other instance installed one first.
+    linkSync(temporary, path);
+    syncDirectory(path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+function removeOperatorEvents(path, expected) {
+  if (!lstatSync(path, { throwIfNoEntry: false }) ||
+      canonicalJson(readBoundedPublicJsonFile(path, {
+        label: "operator consensus event journal", maximumBytes: MAX_OPERATOR_EVENTS_BYTES,
+      })) !== canonicalJson(expected)) {
+    throw new Error("operator consensus event journal changed or disappeared");
+  }
+  rmSync(path);
+  syncDirectory(path);
 }
 
 function members(wallets, prefix) {
@@ -390,6 +561,9 @@ export class ValidatorReplica {
   #authNotBefore;
   #validators;
   #mempool = new TransactionMempool();
+  #operatorEvents = null;
+  #operatorEventOutcome = null;
+  #releaseOperatorEventLock = null;
   #admissionReceipts = new Map();
   #peerUrls;
   #peerTransports;
@@ -518,6 +692,33 @@ export class ValidatorReplica {
       }
     }
     this.#pruneInvalidValidatorAdmissions();
+    this.#operatorEventOutcome = readOperatorEventOutcome(
+      join(this.#directory, OPERATOR_EVENT_OUTCOME_FILE), this.networkId);
+    const operatorEventsPath = join(this.#directory, OPERATOR_EVENTS_FILE);
+    try {
+      if (lstatSync(operatorEventsPath, { throwIfNoEntry: false })) {
+        this.#acquireOperatorEventLock();
+        const stored = readBoundedPublicJsonFile(operatorEventsPath, {
+          label: "durable operator consensus events", maximumBytes: MAX_OPERATOR_EVENTS_BYTES,
+        });
+        const events = normalizeOperatorEvents(stored.events);
+        if (stored.format !== "nir-operator-events-v1" ||
+            stored.networkId !== this.networkId ||
+            !Number.isSafeInteger(stored.expectedHeight) ||
+            typeof stored.previousHash !== "string" ||
+            Object.keys(stored).sort().join("\0") !==
+              ["events", "expectedHeight", "format", "networkId", "previousHash"].sort().join("\0")) {
+          throw new Error("durable operator consensus events envelope is invalid");
+        }
+        this.#operatorEvents = { ...stored, events };
+        this.#pruneOperatorEvents();
+        if (this.#operatorEvents !== null) this.#validateOperatorEvents(events);
+      }
+    } catch (error) {
+      this.#releaseOperatorEventLock?.();
+      this.#releaseOperatorEventLock = null;
+      throw error;
+    }
   }
 
   get address() { return this.#wallet.address; }
@@ -530,6 +731,129 @@ export class ValidatorReplica {
   get tipHash() { return this.#chain.tipHash; }
 
   get mempoolSize() { return this.#mempool.size; }
+  get pendingOperatorEvents() { return this.#operatorEvents === null ? null : structuredClone(this.#operatorEvents); }
+  get localOperatorEventStatus() {
+    if (this.#operatorEvents !== null) return {
+      status: "queued", expectedHeight: this.#operatorEvents.expectedHeight,
+      eventDigest: operatorEventDigest(this.#operatorEvents.events),
+    };
+    return this.#operatorEventOutcome === null ? { status: "idle" }
+      : structuredClone(this.#operatorEventOutcome);
+  }
+
+  #acquireOperatorEventLock() {
+    if (this.#releaseOperatorEventLock !== null) return;
+    this.#releaseOperatorEventLock = acquireDataDirectoryLock(
+      join(this.#directory, ".operator-event-owner"));
+  }
+
+  #pruneOperatorEvents() {
+    if (this.#operatorEvents === null) return;
+    if (this.#releaseOperatorEventLock === null) {
+      throw new Error("operator consensus event ownership was released");
+    }
+    if (this.#operatorEvents.expectedHeight === this.height + 1 &&
+        this.#operatorEvents.previousHash === this.tipHash) return;
+    let finalized = null;
+    if (this.#operatorEvents.expectedHeight <= this.height) {
+      try {
+        finalized = this.#chain.blockAtHeight(this.#operatorEvents.expectedHeight);
+      } catch (error) {
+        if (error.message !== "block height is unavailable") throw error;
+      }
+    }
+    const entries = operatorEventEntryOutcomes(this.#operatorEvents.events, finalized);
+    const status = operatorEventSummary(entries);
+    const outcome = {
+      action: status === "included" ? "none"
+        : status === "unknown" ? "verification-required" : "re-evaluation-required",
+      entries,
+      eventDigest: operatorEventDigest(this.#operatorEvents.events),
+      expectedHeight: this.#operatorEvents.expectedHeight,
+      finalizedBlockHash: finalized?.hash ?? null,
+      format: "nir-local-operator-event-outcome-v2",
+      networkId: this.networkId,
+      observedHeight: this.height,
+      status,
+    };
+    persistOperatorEventOutcome(join(this.#directory, OPERATOR_EVENT_OUTCOME_FILE), outcome);
+    removeOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), this.#operatorEvents);
+    this.#operatorEventOutcome = outcome;
+    this.#operatorEvents = null;
+    this.#releaseOperatorEventLock?.();
+    this.#releaseOperatorEventLock = null;
+  }
+
+  #assertOperatorEventsJournal() {
+    const path = join(this.#directory, OPERATOR_EVENTS_FILE);
+    if (this.#operatorEvents === null) {
+      if (lstatSync(path, { throwIfNoEntry: false })) {
+        throw new Error("operator consensus event journal is owned by another instance");
+      }
+      return;
+    }
+    if (this.#releaseOperatorEventLock === null) {
+      throw new Error("operator consensus event ownership was released");
+    }
+    if (!lstatSync(path, { throwIfNoEntry: false })) {
+      throw new Error("operator consensus event journal disappeared");
+    }
+    if (canonicalJson(readBoundedPublicJsonFile(path, {
+      label: "operator consensus event journal", maximumBytes: MAX_OPERATOR_EVENTS_BYTES,
+    })) !== canonicalJson(this.#operatorEvents)) {
+      throw new Error("operator consensus event journal changed");
+    }
+  }
+
+  #validateOperatorEvents(events) {
+    const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
+    this.#chain.validateProposal(this.#chain.buildBlock({
+      ...events, transactions: this.#mempool.take(), timestamp,
+    }));
+  }
+
+  /** Local operator-only rehearsal input. No HTTP route or public gossip is attached. */
+  stageOperatorEvents(value) {
+    this.#pruneOperatorEvents();
+    const events = normalizeOperatorEvents(value);
+    const unresolved = this.#operatorEventOutcome?.format === "nir-local-operator-event-outcome-v2"
+      ? Object.entries(events).flatMap(([type, entries]) => entries.map((entry) => ({
+        type, digest: operatorEventEntryDigest(type, entry),
+      }))).map(({ type, digest }) => this.#operatorEventOutcome.entries[type]
+        .find((result) => result.digest === digest && result.status !== "included"))
+        .find(Boolean)
+      : null;
+    if (unresolved || (this.#operatorEventOutcome?.status === "expired" &&
+        this.#operatorEventOutcome.eventDigest === operatorEventDigest(events))) {
+      const status = unresolved?.status ?? "expired";
+      return { accepted: false, action: status === "unknown"
+        ? "verification-required" : "re-evaluation-required",
+        eventDigest: operatorEventDigest(events),
+        expectedHeight: this.#operatorEventOutcome.expectedHeight, status };
+    }
+    if (this.#operatorEvents !== null) {
+      this.#assertOperatorEventsJournal();
+      if (canonicalJson(this.#operatorEvents.events) === canonicalJson(events)) {
+        return { expectedHeight: this.#operatorEvents.expectedHeight, status: "known" };
+      }
+      throw new Error("operator consensus events are already staged for this height");
+    }
+    this.#validateOperatorEvents(events);
+    const envelope = {
+      events, expectedHeight: this.height + 1, format: "nir-operator-events-v1",
+      networkId: this.networkId, previousHash: this.tipHash,
+    };
+    this.#acquireOperatorEventLock();
+    try {
+      persistOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), envelope);
+    } catch (error) {
+      this.#releaseOperatorEventLock?.();
+      this.#releaseOperatorEventLock = null;
+      throw error;
+    }
+    this.#operatorEvents = envelope;
+    return { expectedHeight: envelope.expectedHeight, status: "queued" };
+  }
   get peerUrls() { return [...this.#peerUrls]; }
   get peerCount() { return this.#transportView.length; }
   get validatorCount() { return this.#validators.length; }
@@ -793,9 +1117,14 @@ export class ValidatorReplica {
   }
 
   closeSecurityState() {
-    this.#seenNonces.close();
-    for (const cache of this.#validatorNonces.values()) cache.close();
-    this.#validatorNonces.clear();
+    try {
+      this.#seenNonces.close();
+      for (const cache of this.#validatorNonces.values()) cache.close();
+      this.#validatorNonces.clear();
+    } finally {
+      this.#releaseOperatorEventLock?.();
+      this.#releaseOperatorEventLock = null;
+    }
   }
 
   createValidatorRequest(path, body) {
@@ -1067,6 +1396,7 @@ export class ValidatorReplica {
   }
 
   installStateSnapshotCandidates(candidates) {
+    if (this.#operatorEvents === null) this.#assertOperatorEventsJournal();
     const rootTrustAnchor = {
       expectedNetworkId: this.networkId,
       trustedValidators: this.#genesis.validators,
@@ -1091,6 +1421,7 @@ export class ValidatorReplica {
     );
     this.#chain = installed.chain;
     this.#refreshTransportView();
+    this.#pruneOperatorEvents();
     return {
       height: this.height,
       snapshotHash: installed.snapshotHash,
@@ -1116,10 +1447,13 @@ export class ValidatorReplica {
       throw new Error("disabled local validator cannot propose");
     }
     this.#pruneInvalidValidatorAdmissions();
+    this.#pruneOperatorEvents();
+    this.#assertOperatorEventsJournal();
     const transactions = this.#mempool.take();
-    if (transactions.length === 0) throw new Error("validator mempool is empty");
+    const events = this.#operatorEvents?.events ?? null;
+    if (transactions.length === 0 && events === null) throw new Error("validator mempool is empty");
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
-    return this.#chain.buildBlock({ transactions, timestamp });
+    return this.#chain.buildBlock({ ...(events ?? {}), transactions, timestamp });
   }
 
   #pruneInvalidValidatorAdmissions() {
@@ -1244,6 +1578,7 @@ export class ValidatorReplica {
 
   submitTransaction(transaction) {
     this.#pruneInvalidValidatorAdmissions();
+    this.#assertOperatorEventsJournal();
     const id = transactionId(transaction);
     if (this.#mempool.has(id)) return {
       ...(this.#admissionReceipts.has(id) ? { receipt: this.#admissionReceipts.get(id) } : {}),
@@ -1253,7 +1588,7 @@ export class ValidatorReplica {
     try {
       const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
       this.#chain.validateProposal(this.#chain.buildBlock({
-        transactions: this.#mempool.take(), timestamp,
+        ...(this.#operatorEvents?.events ?? {}), transactions: this.#mempool.take(), timestamp,
       }));
       if (isProtectedBeaconAdmission(transaction)) {
         assertAdmissionReceiptGenerationWindow({
@@ -1519,6 +1854,7 @@ export class ValidatorReplica {
   }
 
   commit(block) {
+    if (this.#operatorEvents === null) this.#assertOperatorEventsJournal();
     if (block.height <= this.height) {
       const existing = this.#chain.blocks().find(({ height }) => height === block.height);
       if (existing?.hash === block.hash) return { height: this.height, status: "known" };
@@ -1533,6 +1869,7 @@ export class ValidatorReplica {
     this.#chain = verified;
     this.#refreshTransportView();
     this.#mempool.remove(block.transactions);
+    this.#pruneOperatorEvents();
     if (recovery) {
       for (const id of this.#admissionReceipts.keys()) {
         const pending = this.#mempool.values().find((entry) => transactionId(entry) === id);
