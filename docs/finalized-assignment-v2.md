@@ -48,10 +48,18 @@ candidate commitment hash, evaluator key witnesses, all three anchors, transacti
 membership, Merkle membership, network identity, genesis ancestry, and continuous
 finality have been verified. Any v26 leaf or v1 assignment remains non-exact.
 
-Execution-receipt creation accepts both assignment versions. Verification of v2
-receipts requires the matching preverified V3 anchor result, checks execution at
-`decisionHeight..expiresAtHeight` (inclusive), and does not accept a legacy
-authority-attestation map. The experimental file-based assignment gate now
-requires a v2 assignment and its matching V3 or V4 chain proof, with independent
-operator trust pins, before it consumes receipt replay state. Its result does
-not authorize adapter launch or award a chain reward.
+Execution-receipt creation accepts both assignment versions. The public
+`verify_finalized_assignment()` and `verify_execution_receipts()` APIs verify
+legacy authority-finalized v1 objects only and fail closed for v2: a caller can
+construct an `AssignmentChainAnchorResult`, so that result is not a trust input.
+V2 package verification is available only through the experimental file-based
+assignment gate. It atomically verifies the raw matching V3 or V4 chain proof
+with independent operator trust pins, then checks receipt bindings and consumes
+replay state. Its result does not authorize adapter launch or award a chain
+reward. A future general-purpose V2 API must likewise accept and verify the raw
+chain proof rather than a preconstructed result object.
+
+The underscore-prefixed binding and replay helpers inside that gate are
+code-organization details, not an in-process security boundary. Code executing
+inside the verifier process is trusted; external callers must use the public
+atomic package gate.

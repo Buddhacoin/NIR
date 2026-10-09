@@ -209,7 +209,7 @@ class ExecutionReceiptTests(unittest.TestCase):
             expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
         )
 
-    def test_v2_exact_chain_anchor_and_receipts_verify_without_external_attestations(self):
+    def test_v2_receipts_reject_a_caller_constructed_anchor_result(self):
         assignment = FinalizedEvaluationAssignmentV2(
             network_id=self.assignment.network_id, genesis_hash=self.assignment.genesis_hash,
             candidate_commitment_hash=self.assignment.candidate_commitment_hash,
@@ -241,14 +241,21 @@ class ExecutionReceiptTests(unittest.TestCase):
             signer=lambda domain, payload, wallet=self.wallet_by_id[transcript.run.verifier_id]:
                 sign(wallet, domain, payload),
         ) for transcript in self.bundle.baseline + self.bundle.candidate)
-        verify_execution_receipts(
-            assignment=assignment, bundle=self.bundle, receipts=receipts, observed_height=10,
-            trusted_authorities=None, exact_chain_anchor=anchor,
-            expected_network_id="nir-test", expected_genesis_hash=digest("genesis"),
-            expected_adapter_protocol=APPLICATION_FORMAT,
-            expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
-        )
-        with self.assertRaisesRegex(ProtocolError, "exact chain anchor"):
+        with self.assertRaisesRegex(ProtocolError, "atomic chain-proof verification"):
+            verify_finalized_assignment(
+                assignment, trusted_authorities=None,
+                expected_network_id="nir-test", expected_genesis_hash=digest("genesis"),
+                observed_height=10, exact_chain_anchor=anchor,
+            )
+        with self.assertRaisesRegex(ProtocolError, "atomic chain-proof verification"):
+            verify_execution_receipts(
+                assignment=assignment, bundle=self.bundle, receipts=receipts,
+                observed_height=10, trusted_authorities=None, exact_chain_anchor=anchor,
+                expected_network_id="nir-test", expected_genesis_hash=digest("genesis"),
+                expected_adapter_protocol=APPLICATION_FORMAT,
+                expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
+            )
+        with self.assertRaisesRegex(ProtocolError, "atomic chain-proof verification"):
             verify_execution_receipts(
                 assignment=assignment, bundle=self.bundle, receipts=receipts,
                 observed_height=10, trusted_authorities=None, exact_chain_anchor=None,
@@ -256,7 +263,7 @@ class ExecutionReceiptTests(unittest.TestCase):
                 expected_adapter_protocol=APPLICATION_FORMAT,
                 expected_safety_policy_hash=DEFAULT_SAFETY_POLICY_HASH,
             )
-        with self.assertRaisesRegex(ProtocolError, "expired"):
+        with self.assertRaisesRegex(ProtocolError, "atomic chain-proof verification"):
             verify_execution_receipts(
                 assignment=assignment, bundle=self.bundle, receipts=receipts,
                 observed_height=21, trusted_authorities=None, exact_chain_anchor=anchor,

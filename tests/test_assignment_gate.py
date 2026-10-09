@@ -180,7 +180,7 @@ class AssignmentGateTests(unittest.TestCase):
                             safety_policy_hash=assignment.safety_policy_hash,
                             evaluator_id=assignment.evaluators[0].evaluator_id,
                             role="baseline")
-        ), patch("nir.execution_receipt.verify_execution_receipts") as verify:
+        ), patch("nir.execution_receipt._verify_execution_receipt_bindings") as verify:
             # A missing proof and a foreign trusted genesis both fail before receipt verification.
             proof = self.package.pop("chainProof")
             self.write_inputs()
@@ -202,12 +202,13 @@ class AssignmentGateTests(unittest.TestCase):
                                                policy_path=self.policy_path, replay_store=self.store)
             self.assertTrue(result["chainInclusionVerified"])
             self.assertEqual(result["replayCheckpoint"]["generation"], 1)
-            self.assertTrue(verify.call_args.kwargs["exact_chain_anchor"].exact_assignment_included)
+            self.assertEqual(verify.call_args.kwargs["assignment"].assignment_hash,
+                             assignment.assignment_hash)
 
     def test_verified_package_advances_replay_state_and_returns_only_public_metadata(self):
         assignment, receipts, patches = self.parser_patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
-            "nir.execution_receipt.verify_execution_receipts",
+            "nir.execution_receipt._verify_execution_receipt_bindings",
         ) as verify:
             result = verify_assignment_package(
                 package_path=self.package_path, policy_path=self.policy_path,
@@ -235,7 +236,7 @@ class AssignmentGateTests(unittest.TestCase):
     def test_failed_verification_does_not_advance_replay_state(self):
         _assignment, _receipts, patches = self.parser_patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
-            "nir.execution_receipt.verify_execution_receipts",
+            "nir.execution_receipt._verify_execution_receipt_bindings",
             side_effect=ValueError("signature rejected"),
         ):
             with self.assertRaises(ValueError):
@@ -250,7 +251,7 @@ class AssignmentGateTests(unittest.TestCase):
             store.consume("a" * 64)
         _assignment, _receipts, patches = self.parser_patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
-            "nir.execution_receipt.verify_execution_receipts",
+            "nir.execution_receipt._verify_execution_receipt_bindings",
         ) as verify:
             with self.assertRaisesRegex(Exception, "rollback"):
                 verify_assignment_package(
@@ -303,7 +304,7 @@ class AssignmentGateTests(unittest.TestCase):
         _assignment, _receipts, patches = self.parser_patches()
         output = io.StringIO()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patch(
-            "nir.execution_receipt.verify_execution_receipts",
+            "nir.execution_receipt._verify_execution_receipt_bindings",
             side_effect=RuntimeError("secret subprocess diagnostic"),
         ), patch("sys.stdout", output):
             code = main([
