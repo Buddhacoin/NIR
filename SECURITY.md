@@ -10,9 +10,11 @@ external manual criteria are indexed in
 Report a suspected NIR vulnerability through
 [private GitHub security advisories](https://github.com/Buddhacoin/NIR/security/advisories/new),
 not a public issue or a wallet/mining feedback form. If that private channel is
-unavailable, do not post exploit details publicly; request a private contact
-through a non-sensitive GitHub issue first. Share only the minimum reproducible
-evidence, and never include private keys, vault or backup files, passwords,
+unavailable, do not post exploit details publicly; use the
+[private security contact request form](.github/ISSUE_TEMPLATE/security-contact.yml)
+only to request another private channel. Share minimum reproducible evidence
+only through that private channel, and never include private keys, vault or
+backup files, passwords,
 recovery codes, pairing/session tokens, personal data, or third-party secrets.
 Do not test an exploit against a live third-party system.
 
