@@ -1,11 +1,17 @@
-# Volunteer Operator Intake Preparation Draft
+# Volunteer Operator Expressions of Interest
 
-This is a preparation draft for a possible private NIR developer-testnet
-rehearsal, **not open recruitment** or an invitation to start a service. The
-network is valueless and resettable: test units have no represented monetary
-value, and participation carries no promised pay or reimbursement. A human
-maintainer must first choose and announce a private contact channel; none is
-designated here. Do not send an intake response until that happens.
+NIR is collecting **expressions of interest** from people who may help run a
+future, valueless developer-testnet rehearsal. This is not approval to start a
+service or an announcement that a public network is live. Test units have no
+represented monetary value, and participation carries no promised pay or
+reimbursement. The maintainer will review responses manually and contact
+candidates before sharing any deployment instructions or network commitment.
+
+To express interest, email [nir.blockchain@gmail.com](mailto:nir.blockchain@gmail.com)
+with the short template below. Use the subject `NIR volunteer operator interest`.
+This address is for operator coordination, **not** for private keys, passwords,
+recovery phrases, identity documents, or vulnerability details. Report security
+issues through [private vulnerability reporting](../SECURITY.md) instead.
 
 Read the [participation overview](participation.md) and the
 [canonical Gate matrix](public-testnet-gates.md) before considering a role.
@@ -29,16 +35,15 @@ credentials. Role-specific procedures are in the
 Never put a vault, seed, private key, password, recovery phrase, remote-access
 credential, personal contact details, or other personally identifying
 information in a public issue, pull request, or reply. Do not post private
-host or network details publicly. After a human maintainer selects a private
-channel, responses will be reviewed manually; no role is approved by sending
-this template. Public operator fields such as identity, endpoint, public key,
-or certificate fingerprint may be published only after review and the
-operator's explicit consent to the specific fields.
+host or network details publicly. Do not email secrets to the maintainer either.
+No role is approved by sending this template. Public operator fields such as
+identity, endpoint, public key, or certificate fingerprint may be published
+only after review and the operator's explicit consent to the specific fields.
 
-## Blank private intake template
+## Short private intake template
 
-Use only through a future maintainer-designated private channel. Do not attach
-keys, credentials, vaults, identity documents, or host configuration files.
+Send only to the contact above. Do not attach keys, credentials, vaults,
+identity documents, or host configuration files.
 
 - Preferred role: [validator / beacon / archive]
 - Can you administer your own host, account, and role keys? [yes / no / discuss privately]
