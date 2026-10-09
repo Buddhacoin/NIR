@@ -120,7 +120,7 @@ class RunnerTests(unittest.TestCase):
                     challenge_epoch=8,
                     environment=self.environment,
                     energy_wh=100 + index,
-                    energy_attested=True,
+                    energy_attested=False,
                 )
             )
             candidate.append(
@@ -136,7 +136,7 @@ class RunnerTests(unittest.TestCase):
                     challenge_epoch=8,
                     environment=self.environment,
                     energy_wh=80 + index,
-                    energy_attested=True,
+                    energy_attested=False,
                 )
             )
         return baseline, candidate
@@ -167,8 +167,48 @@ class RunnerTests(unittest.TestCase):
             candidate_content_path=self.candidate_content_path,
         )
         self.assertGreater(bundle.report.gain_ppm, 0)
-        self.assertTrue(bundle.report.energy_attested)
+        self.assertFalse(bundle.report.energy_attested)
         self.assertEqual(len(bundle.bundle_hash), 64)
+
+    def test_static_adapter_rejects_claimed_energy_attestation(self):
+        with self.assertRaisesRegex(ProtocolError, "static evaluation cannot claim"):
+            read_static_model_content_receipt(
+                model_content_path=self.candidate_content_path,
+                artifact_hash=self.commitment.artifact_hash,
+                expected_content_hash=self.commitment.content_hash,
+                suite=self.suite,
+                role="candidate",
+                verifier_id="verifier-a",
+                run_id="forged-energy",
+                challenge_seed=self.seed,
+                challenge_epoch=8,
+                environment=self.environment,
+                energy_wh=80,
+                energy_attested=True,
+            )
+
+    def test_static_bundle_rejects_forged_energy_attestation(self):
+        baseline, candidate = self.transcripts()
+        candidate[0] = replace(candidate[0], run=replace(
+            candidate[0].run, energy_attested=True,
+        ))
+        with self.assertRaisesRegex(ProtocolError, "static evaluation cannot claim"):
+            create_bundle(
+                commitment=self.commitment,
+                baseline_content_path=self.baseline_content_path,
+                candidate_content_path=self.candidate_content_path,
+                challenge_seed=self.seed, challenge_epoch=8,
+                environment=self.environment, suite=self.suite, suite_salt=self.salt,
+                baseline=baseline, candidate=candidate,
+            )
+
+    def test_loaded_static_bundle_rejects_forged_energy_attestation(self):
+        bundle = self.bundle().as_dict()
+        bundle["candidate"][0]["run"]["energy_attested"] = True
+        path = Path(self.temporary.name) / "forged-energy-bundle.json"
+        path.write_text(json.dumps(bundle), encoding="utf-8")
+        with self.assertRaisesRegex(ProtocolError, "static evaluation cannot claim"):
+            load_bundle(path)
 
     def test_candidate_commitment_binds_canonical_content_and_lineage(self):
         changed_content = CandidateCommitment.from_dict(
