@@ -278,6 +278,34 @@ export function addLocalPhraseAccount({ storageRoot, profilePath, password }) {
   throw new Error("local phrase profile account limit reached");
 }
 
+export function findLocalPhraseProfile({ storageRoot, address, password }) {
+  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/") ||
+      !/^nir1[0-9a-f]{64}$/.test(address ?? "")) {
+    throw new Error("local phrase profile lookup is invalid");
+  }
+  const root = resolve(storageRoot);
+  const profiles = join(root, "Profiles");
+  if (!existsSync(profiles)) return null;
+  const stat = lstatSync(profiles);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
+    throw new Error("phrase profile directory is not private");
+  }
+  for (const name of readdirSync(profiles).filter((item) =>
+    /^[0-9a-f-]{36}\.nirphrase\.json$/.test(item)).sort()) {
+    const path = join(profiles, name);
+    let opened;
+    try { opened = openPhraseStoreFile({ path, password }); }
+    catch { continue; }
+    for (let accountIndex = 0; accountIndex < 100; accountIndex += 1) {
+      const wallet = walletFromMnemonic(opened.phrase, accountIndex);
+      const derivedAddress = wallet.address;
+      wallet.privateKey = "";
+      if (derivedAddress === address) return { accountIndex, path };
+    }
+  }
+  return null;
+}
+
 export function restoreLocalTestWalletWithRecoveryCode({ storageRoot, backupPath,
   expectedAddress, recoveryCode, newPassword }) {
   if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {

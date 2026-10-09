@@ -601,7 +601,7 @@ export function createWalletBridgeServer({
         const creatingGeneration = sessionGeneration;
         try {
           let created;
-          try { created = await createAccount(); }
+          try { created = await createAccount(walletAddress); }
           catch { throw new Error("new wallet account could not be created; check the local application"); }
           if (!sessionActive || sessionGeneration !== creatingGeneration) {
             throw new Error("wallet session ended while the account was created");

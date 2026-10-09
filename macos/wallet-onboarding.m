@@ -16,6 +16,8 @@
 @property NSSecureTextField *password;
 @property NSSecureTextField *confirmation;
 @property NSTextField *recoveryCode;
+@property NSScrollView *phraseScroll;
+@property NSTextView *phraseInput;
 @property NSTextField *address;
 @property NSTextField *pathLabel;
 @property NSPopUpButton *accountMenu;
@@ -104,6 +106,19 @@
     self.recoveryCode = [self input:NSMakeRect(28, 266, 434, 30) secure:NO];
     self.recoveryCode.placeholderString = @"Код, записанный при создании кошелька";
     [content addSubview:self.recoveryCode];
+    self.phraseScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(28, 378, 334, 160)];
+    self.phraseScroll.borderType = NSBezelBorder;
+    self.phraseScroll.hasVerticalScroller = YES;
+    self.phraseInput = [[NSTextView alloc] initWithFrame:self.phraseScroll.bounds];
+    self.phraseInput.font = [NSFont systemFontOfSize:15];
+    self.phraseInput.textContainer.widthTracksTextView = YES;
+    self.phraseInput.automaticSpellingCorrectionEnabled = NO;
+    self.phraseInput.automaticTextReplacementEnabled = NO;
+    self.phraseInput.automaticQuoteSubstitutionEnabled = NO;
+    self.phraseInput.automaticDashSubstitutionEnabled = NO;
+    self.phraseInput.string = @"";
+    self.phraseScroll.documentView = self.phraseInput;
+    [content addSubview:self.phraseScroll];
 
     self.passwordLabel = [self label:@"Пароль" frame:NSMakeRect(28, 234, 434, 20)
                                     size:13 color:NSColor.secondaryLabelColor];
@@ -256,7 +271,7 @@
     self.logo.frame = NSMakeRect(163, opening ? 440 : (creation ? 522 : 655), 64, 64);
     self.titleLabel.frame = NSMakeRect(28, opening ? 387 : (creation ? 468 : 606), 334, 40);
     self.titleLabel.stringValue = opening ? @"С возвращением!" :
-        (creation ? (self.createOnly ? @"Новый адрес NIR" : @"Создайте кошелёк") :
+        (creation ? (self.createOnly ? @"Добавьте адрес" : @"Создайте кошелёк") :
          @"Восстановление");
     self.subtitleLabel.frame = NSMakeRect(28, opening ? 359 : (creation ? 440 : 577), 334, 24);
     self.subtitleLabel.stringValue = @"NIR Wallet · локальная тестовая сеть";
@@ -267,7 +282,7 @@
     self.restoreLink.hidden = !opening;
     self.createLink.frame = NSMakeRect(28, 22, 156, 28);
     self.restoreLink.frame = NSMakeRect(206, 22, 156, 28);
-    self.renewButton.hidden = !opening || self.createOnly || self.wallets.count == 0;
+    self.renewButton.hidden = YES;
     self.renewButton.frame = NSMakeRect(28, 250, 334, 24);
     self.pathLabel.frame = NSMakeRect(28, 228, 334, 20);
     self.accountMenu.frame = NSMakeRect(28, 185, 334, 38);
@@ -275,8 +290,10 @@
     self.password.frame = NSMakeRect(28, restoring ? 295 : 313, 334, 36);
     self.secondLabel.frame = NSMakeRect(28, restoring ? 252 : 276, 334, 20);
     self.confirmation.frame = NSMakeRect(28, restoring ? 212 : 236, 334, 36);
-    self.recoveryLabel.frame = NSMakeRect(28, 418, 334, 20);
+    self.recoveryLabel.frame = NSMakeRect(28, 546, 334, 20);
+    self.recoveryLabel.stringValue = @"Фраза восстановления · 24 слова";
     self.recoveryCode.frame = NSMakeRect(28, 378, 334, 36);
+    self.phraseScroll.frame = NSMakeRect(28, 374, 334, 160);
     self.backupLabel.frame = NSMakeRect(28, 505, 334, 20);
     self.backupMenu.frame = NSMakeRect(28, 466, 210, 36);
     self.importBackup.frame = NSMakeRect(245, 466, 117, 36);
@@ -285,36 +302,38 @@
     self.hint.frame = NSMakeRect(28, opening ? 142 : 169, 334, opening ? 32 : 45);
     self.hint.alignment = NSTextAlignmentCenter;
     self.action.frame = NSMakeRect(28, restoring ? 48 : (opening ? 78 : 99), 334, 46);
-    self.backupLabel.hidden = !restoring;
-    self.backupMenu.hidden = !restoring || self.backups.count == 0;
-    self.importBackup.hidden = !restoring;
+    self.backupLabel.hidden = YES;
+    self.backupMenu.hidden = YES;
+    self.importBackup.hidden = YES;
     self.passwordLabel.hidden = NO;
     self.secondLabel.hidden = opening;
     self.secondLabel.stringValue = creation ? @"Повторите пароль" : @"Повторите новый пароль";
     self.passwordLabel.stringValue = [[self mode] isEqualToString:@"restore"] ? @"Новый пароль" : @"Пароль";
     self.recoveryLabel.hidden = ![[self mode] isEqualToString:@"restore"];
-    self.recoveryCode.hidden = self.recoveryLabel.hidden;
+    self.recoveryCode.hidden = YES;
+    self.phraseScroll.hidden = !restoring;
     self.password.hidden = NO;
     self.password.frame = opening ? NSMakeRect(28, 281, 334, 36) : self.password.frame;
     self.passwordLabel.frame = opening ? NSMakeRect(28, 321, 334, 20) : self.passwordLabel.frame;
     self.password.placeholderString = opening ? @"Введите пароль кошелька" : @"От 12 символов";
     self.confirmation.hidden = opening;
-    self.address.hidden = ![[self mode] isEqualToString:@"restore"];
+    self.address.hidden = YES;
     self.addressLabel.hidden = self.address.hidden;
     self.pathLabel.hidden = creation || !opening;
     self.pathLabel.stringValue = self.wallets.count ? @"Ваш адрес" : @"На этом Mac ещё нет кошелька";
     self.accountMenu.hidden = !opening || self.wallets.count == 0;
-    self.action.title = creation ? @"Создать кошелёк" :
+    self.action.title = creation ? (self.createOnly ? @"Добавить адрес" : @"Создать кошелёк") :
         (opening ? @"Открыть NIR Wallet" : @"Восстановить кошелёк");
     self.action.attributedTitle = [[NSAttributedString alloc] initWithString:self.action.title
         attributes:@{NSForegroundColorAttributeName:NSColor.whiteColor,
                      NSFontAttributeName:[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold]}];
     self.hint.hidden = restoring;
     self.hint.stringValue = creation ?
-        @"Код восстановления покажем после создания. Сохраните его отдельно." :
+        (self.createOnly ? @"Новый адрес будет создан из вашей существующей фразы NIR." :
+            @"Перед созданием запишите и подтвердите 24 слова. Фраза восстановит ваши адреса.") :
         (opening ? (self.wallets.count ? @"Пароль откроет выбранный кошелёк. Для операций он потребуется снова." :
             @"Создайте кошелёк, чтобы начать работу.") :
-         @"Нужны копия, код восстановления и ранее записанный адрес.");
+         @"Введите 24 слова по порядку и задайте новый пароль для этого Mac.");
 }
 
 - (void)openMode:(id)sender {
@@ -356,14 +375,11 @@
     self.selectedPath = [[self mode] isEqualToString:@"open"] && self.wallets.count ?
         self.wallets[0][@"path"] : nil;
     if (self.selectedPath) [self.accountMenu selectItemAtIndex:0];
-    if ([[self mode] isEqualToString:@"restore"] && self.backups.count) {
-        [self.backupMenu selectItemAtIndex:0];
-        [self selectBackup:nil];
-    }
     self.password.stringValue = @"";
     self.confirmation.stringValue = @"";
     if (![[self mode] isEqualToString:@"restore"]) self.address.stringValue = @"";
     self.recoveryCode.stringValue = @"";
+    self.phraseInput.string = @"";
     [self refresh];
 }
 
@@ -377,10 +393,6 @@
         [self showError:@"Введите пароль выбранного кошелька."];
         return;
     }
-    if ([mode isEqualToString:@"restore"] && !self.selectedPath) {
-        [self showError:@"Выберите копию из списка или нажмите «Другой файл…»."];
-        return;
-    }
     if (![mode isEqualToString:@"open"]) {
         if (self.password.stringValue.length < 12) {
             [self showError:@"Пароль слишком короткий: нужно от 12 символов."];
@@ -391,12 +403,8 @@
             return;
         }
     }
-    if ([mode isEqualToString:@"restore"] && self.address.stringValue.length == 0) {
-        [self showError:@"Введите полный адрес, записанный при создании кошелька."];
-        return;
-    }
-    if ([mode isEqualToString:@"restore"] && self.recoveryCode.stringValue.length == 0) {
-        [self showError:@"Введите код восстановления."];
+    if ([mode isEqualToString:@"restore"] && self.phraseInput.string.length == 0) {
+        [self showError:@"Введите фразу восстановления из 24 слов."];
         return;
     }
     NSMutableDictionary *result = [@{@"mode": mode} mutableCopy];
@@ -404,8 +412,7 @@
     if ([mode isEqualToString:@"open"]) result[@"password"] = self.password.stringValue;
     if (self.selectedPath) result[@"path"] = self.selectedPath;
     if ([mode isEqualToString:@"restore"]) {
-        result[@"address"] = self.address.stringValue;
-        result[@"recoveryCode"] = self.recoveryCode.stringValue;
+        result[@"phrase"] = self.phraseInput.string;
         result[@"newPassword"] = self.password.stringValue;
     }
     [self submitResult:result];
@@ -449,8 +456,93 @@
 - (void)windowWillClose:(NSNotification *)notification { if (!self.submitted) exit(2); }
 @end
 
+static int NIRShowAndConfirmPhrase(NSString *phrase) {
+    NSArray<NSString *> *words = [phrase componentsSeparatedByString:@" "];
+    if (words.count != 24) return 1;
+    for (NSString *word in words) {
+        if (word.length < 3 || word.length > 8) return 1;
+        for (NSUInteger index = 0; index < word.length; index++) {
+            unichar letter = [word characterAtIndex:index];
+            if (letter < 'a' || letter > 'z') return 1;
+        }
+    }
+    NSApplication *app = [NSApplication sharedApplication];
+    [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+    NSAlert *show = [NSAlert new];
+    show.messageText = @"Запишите фразу восстановления";
+    show.informativeText = @"Эти 24 слова восстановят ваши адреса NIR на другом устройстве. Запишите их по порядку и храните отдельно. Никому не отправляйте. Кошелёк ещё не создан.";
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 470, 280)];
+    scroll.hasVerticalScroller = YES;
+    scroll.borderType = NSBezelBorder;
+    NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
+    NSMutableString *listed = [NSMutableString string];
+    for (NSUInteger index = 0; index < words.count; index++) {
+        [listed appendFormat:@"%2lu. %@%@", (unsigned long)(index + 1), words[index],
+            index + 1 == words.count ? @"" : @"\n"];
+    }
+    view.string = listed;
+    view.editable = NO;
+    view.selectable = YES;
+    view.font = [NSFont monospacedSystemFontOfSize:17 weight:NSFontWeightRegular];
+    scroll.documentView = view;
+    show.accessoryView = scroll;
+    [show addButtonWithTitle:@"Я записал фразу"];
+    [show addButtonWithTitle:@"Отмена"];
+    [app activateIgnoringOtherApps:YES];
+    if ([show runModal] != NSAlertFirstButtonReturn) return 2;
+
+    // Ask for words after hiding the original list. This catches skipped or
+    // incomplete backups without sending the phrase to stdout or the browser.
+    NSUInteger positions[] = { 2, 10, 21 };
+    NSAlert *check = [NSAlert new];
+    check.messageText = @"Проверьте запись";
+    check.informativeText = @"Введите три слова из вашей записи. Только после проверки кошелёк будет создан.";
+    NSView *fields = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 470, 132)];
+    NSMutableArray<NSTextField *> *answers = [NSMutableArray array];
+    for (NSUInteger index = 0; index < 3; index++) {
+        CGFloat y = 92 - index * 44;
+        NSTextField *label = [NSTextField labelWithString:
+            [NSString stringWithFormat:@"Слово №%lu", (unsigned long)(positions[index] + 1)]];
+        label.frame = NSMakeRect(0, y + 5, 130, 28);
+        [fields addSubview:label];
+        NSTextField *answer = [[NSTextField alloc] initWithFrame:NSMakeRect(140, y, 320, 32)];
+        answer.placeholderString = @"Слово из записи";
+        [fields addSubview:answer];
+        [answers addObject:answer];
+    }
+    check.accessoryView = fields;
+    [check addButtonWithTitle:@"Проверить"];
+    [check addButtonWithTitle:@"Отмена"];
+    if ([check runModal] != NSAlertFirstButtonReturn) return 2;
+    for (NSUInteger index = 0; index < 3; index++) {
+        NSString *answer = [answers[index].stringValue stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+        if (![answer isEqualToString:words[positions[index]]]) {
+            NSAlert *error = [NSAlert new];
+            error.messageText = @"Слова не совпали";
+            error.informativeText = @"Кошелёк не создан. Начните заново и внимательно запишите фразу.";
+            [error runModal];
+            return 2;
+        }
+    }
+    NSData *receipt = [NSJSONSerialization dataWithJSONObject:@{ @"phraseConfirmed": @YES }
+        options:0 error:nil];
+    if (!receipt) return 1;
+    fwrite(receipt.bytes, 1, receipt.length, stdout);
+    fputc('\n', stdout);
+    fflush(stdout);
+    return 0;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        if (argc == 2 && strcmp(argv[1], "--show-phrase") == 0) {
+            NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
+            NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
+            NSString *phrase = [payload isKindOfClass:NSDictionary.class] ? payload[@"phrase"] : nil;
+            if (![phrase isKindOfClass:NSString.class]) return 1;
+            return NIRShowAndConfirmPhrase(phrase);
+        }
         if (argc == 2 && strcmp(argv[1], "--show-pairing") == 0) {
             NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
             NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
@@ -664,12 +756,11 @@ int main(int argc, const char *argv[]) {
 #elif defined(NIR_ONBOARDING_SMOKE_RESTORE_TEST)
         [delegate applicationDidFinishLaunching:nil];
         delegate.modes.selectedSegment = 2;
-        delegate.selectedPath = @"/tmp/test-backup.nirvault.json";
         [delegate refresh];
         delegate.password.stringValue = @"new-test-123";
         delegate.confirmation.stringValue = @"new-test-123";
-        delegate.recoveryCode.stringValue = @"ABCDE-ABCDE-ABCDE-ABCDE-ABCDE-ABCDE-ABCDE-ABCDE";
-        delegate.address.stringValue = [@"nir1" stringByAppendingString:[@"a" stringByPaddingToLength:64 withString:@"a" startingAtIndex:0]];
+        delegate.phraseInput.string = [NSString stringWithFormat:@"%@art",
+            [@"abandon " stringByPaddingToLength:184 withString:@"abandon " startingAtIndex:0]];
         [delegate submit:nil];
 #elif defined(NIR_ONBOARDING_SMOKE_OPEN_TEST)
         [delegate applicationDidFinishLaunching:nil];

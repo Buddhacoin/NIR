@@ -1,9 +1,10 @@
 # Wallet recovery v1: experimental key derivation
 
 This is an internal design and test implementation for a **valueless** NIR
-wallet. The library can create and restore account 0 on a clean device without
-asking the user to select a file; its encrypted local vault remains private to
-the app. It is not enabled in the Mac onboarding UI and has not been
+wallet. The development Mac onboarding UI now offers creation with a 24-word
+display and three-word check before persistence, and restoration on a clean
+device without asking the user to select a file. Its encrypted local vault
+remains private to the app. This is not a published installer and has not been
 independently audited.
 Do not use it to secure assets of real value or import another wallet's phrase.
 
@@ -41,8 +42,8 @@ indexed addresses must currently be added explicitly.
 Before enabling this in any downloadable app: independently review the
 derivation, word-list provenance, and phrase-store cryptography; test
 create/restore on a clean Mac and another operating system; verify indexed
-addresses and signing against separate implementations; add explicit
-phrase-confirmation; define account discovery after restore; and complete
+addresses and signing against separate implementations; exercise the native
+phrase-confirmation and cancellation path end to end; define account discovery after restore; and complete
 loss-of-device and wrong-phrase tests. Existing randomly generated local-test addresses cannot be
 regenerated from a new phrase; no code may silently claim to migrate them or
 delete their local files.

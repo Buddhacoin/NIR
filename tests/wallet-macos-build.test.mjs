@@ -69,8 +69,8 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(launcher, /\[app run\]/);
     assert.doesNotMatch(launcher, /\.\.\/\.\.\/\.\.\/\.\./);
     const nativeSource = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
-    assert.match(nativeSource, /self\.backupMenu\.hidden = !restoring/);
-    assert.match(nativeSource, /if \(!\[\[self mode\] isEqualToString:@"restore"\]\) return;/);
+    assert.match(nativeSource, /self\.backupMenu\.hidden = YES/);
+    assert.match(nativeSource, /self\.phraseScroll\.hidden = !restoring/);
     assert.match(nativeSource, /self\.submitted = YES;\s*\[NSApp terminate:nil\]/);
     assert.match(nativeSource, /if \(!self\.submitted\) exit\(2\)/);
     assert.match(nativeSource, /pairingWindow\.level = NSFloatingWindowLevel/);
@@ -113,7 +113,18 @@ test("native app uses a fresh UI origin and disables persistent service-worker c
   }
 });
 
-test("Mac recovery onboarding requires a verified exported copy for each address", () => {
+test("new Mac wallet requires phrase confirmation before persistence", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  const setup = readFileSync(new URL("../blockchain/wallet-macos-setup.mjs", import.meta.url), "utf8");
+  assert.match(native, /NIRShowAndConfirmPhrase/);
+  assert.match(native, /Слова не совпали/);
+  assert.match(setup, /\["--show-phrase"\]/);
+  assert.match(setup, /phraseConfirmed !== true/);
+  assert.match(setup, /result = restoreLocalPhraseWallet/);
+  assert.doesNotMatch(setup, /result = createLocalTestWallet/);
+});
+
+test("legacy backup renewal still checks exported copy for existing test wallets", () => {
   const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
   const setup = readFileSync(new URL("../blockchain/wallet-macos-setup.mjs", import.meta.url), "utf8");
   assert.match(native, /Один код не спасёт при потере Mac/);
@@ -147,7 +158,7 @@ test("native onboarding submits a selection instead of silently treating it as c
   }
 });
 
-test("native restore submits backup, recovery code, address, and new password", () => {
+test("native restore submits phrase and new local password without a file path", () => {
   if (process.platform !== "darwin") return;
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-restore-"));
   try {
@@ -161,14 +172,34 @@ test("native restore submits backup, recovery code, address, and new password", 
     assert.equal(run.status, 0, run.stderr);
     const selection = JSON.parse(run.stdout);
     assert.equal(selection.mode, "restore");
-    assert.equal(selection.path, "/tmp/test-backup.nirvault.json");
     assert.equal(selection.newPassword, "new-test-123");
-    assert.match(selection.recoveryCode, /^ABCDE-/);
-    assert.match(selection.address, /^nir1a{64}$/);
+    assert.equal(selection.phrase.split(" ").length, 24);
+    assert.equal(selection.phrase.endsWith("art"), true);
+    assert.equal(Object.hasOwn(selection, "path"), false);
+    assert.equal(Object.hasOwn(selection, "recoveryCode"), false);
+    assert.equal(Object.hasOwn(selection, "address"), false);
     assert.equal(Object.hasOwn(selection, "password"), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("native phrase display rejects malformed input before opening a dialog", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-phrase-"));
+  try {
+    const binary = join(directory, "onboarding-phrase-smoke");
+    const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit",
+      "-framework", "Foundation", source, "-o", binary], { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const run = spawnSync(binary, ["--show-phrase"], {
+      input: JSON.stringify({ phrase: "abandon ".repeat(23).trim() }),
+      encoding: "utf8", timeout: 10_000,
+    });
+    assert.equal(run.status, 1, run.stderr);
+    assert.equal(run.stdout, "");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("native opening selects an account by address without a file chooser", () => {

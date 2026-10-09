@@ -1059,7 +1059,7 @@ document.querySelector("#add-account").onclick = async (event) => {
   accountTransitionPending = true;
   const button = event.currentTarget;
   button.disabled = true;
-  accountsStatus.textContent = "Создайте ключ и сохраните его резервную копию в приложении…";
+  accountsStatus.textContent = "Подтвердите добавление адреса в приложении NIR Wallet…";
   try {
     await bridgeRequest("/v1/create-account", { method: "POST", body: "{}" }, 600_000);
     await completeAccountChange();
@@ -1582,6 +1582,24 @@ async function refreshNodeStatus() {
   }
 }
 refreshNodeStatus();
+if (new URLSearchParams(location.search).get("local-app") === "1") {
+  onboarding.querySelector("p").textContent =
+    "Ваши ключи остаются зашифрованными на этом Mac. На другом устройстве кошелёк восстанавливается по 24 словам; пароль задаётся заново.";
+  const steps = onboarding.querySelector("ol");
+  steps.replaceChildren(...[
+    "Откройте приложение NIR Wallet и создайте или восстановите кошелёк.",
+    "Запишите фразу восстановления и проверьте три слова при создании.",
+    "Введите одноразовый код подключения, показанный приложением."
+  ].map((copy) => { const item = document.createElement("li"); item.textContent = copy; return item; }));
+  document.querySelector('[data-action="setup"]').textContent = "Как восстановить";
+  document.querySelector("#accounts-panel > p").textContent =
+    "Адреса этого кошелька создаются из одной фразы восстановления. Пароль защищает её только на этом Mac.";
+  document.querySelector("#setup-panel > p").textContent =
+    "Для восстановления установите NIR Wallet на устройстве, выберите «Восстановить», введите 24 слова по порядку и задайте новый пароль. Никому не отправляйте фразу.";
+  document.querySelector("#setup-panel .setup-steps").replaceChildren();
+  document.querySelector("#setup-panel .warning").textContent =
+    "Фраза открывает все адреса этого кошелька. Храните её офлайн; один пароль без фразы не восстановит кошелёк после потери устройства.";
+}
 renderWalletConnection();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
