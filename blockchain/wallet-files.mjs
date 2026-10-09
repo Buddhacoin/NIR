@@ -30,6 +30,7 @@ import { createSignedHistoryArchive } from "./archive-sync.mjs";
 import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { createValidatorAdmission } from "./validator-admission.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
+import { walletFromMnemonic } from "./wallet-seed.mjs";
 
 const MAX_PRIVATE_JSON_BYTES = 64 * 1024;
 const NETWORK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -231,6 +232,20 @@ export function createWalletFile({ path, password, label = "NIR wallet", persona
   let vault;
   try {
     vault = encryptWallet(wallet, password, { label, personalWallet });
+  } finally {
+    wallet.privateKey = "";
+  }
+  writePrivateJsonExclusive(target, vault, { _beforeActivate });
+  return { address: vault.address, algorithm: vault.algorithm, path: target };
+}
+
+export function createPhraseWalletFile({ path, password, phrase, accountIndex = 0,
+  label = "NIR phrase wallet", _beforeActivate }) {
+  const target = resolve(path);
+  const wallet = walletFromMnemonic(phrase, accountIndex);
+  let vault;
+  try {
+    vault = encryptWallet(wallet, password, { label, personalWallet: true });
   } finally {
     wallet.privateKey = "";
   }

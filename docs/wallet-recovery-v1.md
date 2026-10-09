@@ -1,7 +1,10 @@
 # Wallet recovery v1: experimental key derivation
 
 This is an internal design and test implementation for a **valueless** NIR
-wallet. It is not enabled in the Mac app and has not been independently audited.
+wallet. The library can create and restore account 0 on a clean device without
+asking the user to select a file; its encrypted local vault remains private to
+the app. It is not enabled in the Mac onboarding UI and has not been
+independently audited.
 Do not use it to secure assets of real value or import another wallet's phrase.
 
 The intended user flow is: install the official app, create a new wallet, write
