@@ -27,6 +27,9 @@ const panel = document.querySelector("#panel");
 const panelTitle = document.querySelector("#panel-title");
 const panelCopy = document.querySelector("#panel-copy");
 const bridgePanel = document.querySelector("#bridge-panel");
+const accountsPanel = document.querySelector("#accounts-panel");
+const accountOpen = document.querySelector("#account-open");
+const accountsStatus = document.querySelector("#accounts-status");
 const receivePanel = document.querySelector("#receive-panel");
 const sendPanel = document.querySelector("#send-panel");
 const resourcesPanel = document.querySelector("#resources-panel");
@@ -43,6 +46,8 @@ const resourcesStatus = document.querySelector("#resources-status");
 const assetsStatus = document.querySelector("#assets-status");
 let bridgeSession = null;
 let walletInfo = null;
+let accountEpoch = 0;
+let accountTransitionPending = false;
 let networkInfo = null;
 let activeNodeUrl = null;
 let nodePolicy = null;
@@ -67,6 +72,7 @@ let offlinePackageQrIndex = 0;
 function renderWalletConnection() {
   const connected = Boolean(walletInfo && bridgeSession);
   onboarding.hidden = connected;
+  accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
   document.querySelector("#settings-connect").hidden = connected;
   document.querySelector("#security-state").textContent = connected
@@ -74,9 +80,8 @@ function renderWalletConnection() {
     : "Vault не подключён";
 }
 
-function clearWalletSession(message = "Vault отключён · ключи и session token отсутствуют в странице") {
-  bridgeSession = null;
-  walletInfo = null;
+function resetAccountView(message) {
+  accountEpoch += 1;
   pendingIntent = null;
   signedTransaction = null;
   signedResourceTransaction = null;
@@ -97,6 +102,32 @@ function clearWalletSession(message = "Vault отключён · ключи и s
   document.querySelector("#signed-result").hidden = true;
   document.querySelector("#transfer-simulation").hidden = true;
   document.querySelector("#resource-signed").hidden = true;
+  document.querySelector("#receive-address").textContent = "";
+  document.querySelector("#receive-network").textContent = "";
+  document.querySelector("#payment-request-json").value = "";
+  document.querySelector("#payment-request-result").hidden = true;
+  document.querySelector("#transaction-list").replaceChildren();
+  document.querySelector("#transaction-list").hidden = true;
+  document.querySelector("#history-empty").hidden = false;
+  document.querySelector("#history-empty b").textContent = "Операций пока нет";
+  document.querySelector("#history-empty p").textContent = "Ожидаем проверки выбранного адреса.";
+  messages.history = ["История операций", "История выбранного адреса ещё не проверена."];
+  document.querySelector("#resource-stake").textContent = "0.00000000 NIR";
+  document.querySelector("#resource-credits").textContent = "0 переводов";
+  document.querySelector("#resource-unstake").textContent = "Нет";
+  document.querySelector("#claim-unstake").hidden = true;
+  document.querySelector("#asset-list").replaceChildren();
+  document.querySelector("#asset-checkpoint").dataset.state = "stale";
+  document.querySelector("#asset-checkpoint").textContent = "Доказательства ещё не проверены";
+  networkInfo = null;
+  activeNodeUrl = null;
+}
+
+function clearWalletSession(message = "Vault отключён · ключи и session token отсутствуют в странице") {
+  bridgeSession = null;
+  walletInfo = null;
+  resetAccountView(message);
+  if (accountsPanel.open) accountsPanel.close();
   renderWalletConnection();
 }
 
@@ -448,8 +479,11 @@ function renderTransactions(account) {
 
 async function refreshAccount() {
   if (!walletInfo || !networkInfo) return;
+  const expectedAddress = walletInfo.address;
+  const epoch = accountEpoch;
   try {
     const account = await readAccount();
+    if (epoch !== accountEpoch || walletInfo?.address !== expectedAddress) return;
     document.querySelector("#balance-value").textContent = formatAtomic(account.atomicBalance);
     const resources = account.resources ?? {};
     document.querySelector("#resource-stake").textContent = `${formatAtomic(resources.atomicStake ?? "0")} NIR`;
@@ -467,6 +501,7 @@ async function refreshAccount() {
       : `Подключён ${walletInfo.address.slice(0, 12)}… · данные одного узла`;
     renderTransactions(account);
   } catch {
+    if (epoch !== accountEpoch || walletInfo?.address !== expectedAddress) return;
     document.querySelector("#wallet-state").textContent = "Vault подключён · локальный узел недоступен";
   }
 }
@@ -640,12 +675,23 @@ async function verifyAssetState(assetId, holder) {
   if (!ASSET_ID.test(assetId ?? "") || assetId === "0".repeat(64) || !NIR_ADDRESS.test(holder ?? "")) {
     throw new Error("Asset ID или адрес holder неверен.");
   }
+  const epoch = accountEpoch;
+  const address = walletInfo?.address;
+  const assertCurrent = () => {
+    if (epoch !== accountEpoch || walletInfo?.address !== address) {
+      throw new Error("Кошелёк изменился во время проверки актива.");
+    }
+  };
   const response = await fetch(nodeUrl(`/v1/assets/${encodeURIComponent(assetId)}/proof?holder=${encodeURIComponent(holder)}`),
     { cache: "no-store" });
+  assertCurrent();
   if (!response.ok) throw new Error("Узел не предоставил кворумное доказательство актива.");
+  const proof = await response.json();
+  assertCurrent();
   const verified = await bridgeRequest("/v1/verify-asset-proof", { method: "POST", body: JSON.stringify({
-    assetId, holder, minimumHeight: networkInfo.height, proof: await response.json(),
+    assetId, holder, minimumHeight: networkInfo.height, proof,
   }) });
+  assertCurrent();
   const statement = checkedAssetStatement(verified, assetId, holder);
   verifiedAssetStatements.set(`${assetId}:${holder}`, statement);
   if (holder === walletInfo.address && statement.asset !== null) knownAssetIds.add(assetId);
@@ -673,6 +719,9 @@ function renderVerifiedAssets(statements) {
 }
 
 async function refreshAssets() {
+  const epoch = accountEpoch;
+  const address = walletInfo?.address;
+  const isCurrent = () => epoch === accountEpoch && walletInfo?.address === address;
   const list = document.querySelector("#asset-list");
   const checkpoint = document.querySelector("#asset-checkpoint");
   const loading = document.createElement("p"); loading.className = "contact-empty";
@@ -681,10 +730,14 @@ async function refreshAssets() {
   assetsStatus.textContent = "";
   try {
     const account = await readAccount();
+    if (!isCurrent()) return;
     if (!account.proofVerified) throw new Error("Список недоступен: account state не подтверждён кворумом.");
     for (const id of assetIdsFromVerifiedHistory(account)) knownAssetIds.add(id);
     const statements = [];
-    for (const assetId of [...knownAssetIds].sort()) statements.push(await verifyAssetState(assetId, walletInfo.address));
+    for (const assetId of [...knownAssetIds].sort()) {
+      statements.push(await verifyAssetState(assetId, address));
+      if (!isCurrent()) return;
+    }
     renderVerifiedAssets(statements);
     const state = statements[0];
     checkpoint.textContent = state
@@ -692,6 +745,7 @@ async function refreshAssets() {
       : `Проверено · блок ${account.proofHeight} · root ${account.proofStateRoot.slice(0, 16)}… · ${networkInfo.networkId} · доказанных asset ID не обнаружено`;
     checkpoint.dataset.state = "verified"; checkpoint.dataset.height = String(state?.height ?? account.proofHeight);
   } catch (error) {
+    if (!isCurrent()) return;
     const unavailable = document.createElement("p"); unavailable.className = "contact-empty";
     unavailable.textContent = "Доказанный список временно недоступен."; list.replaceChildren(unavailable);
     checkpoint.textContent = networkInfo ? `Устарело или ошибка доказательства · текущий блок ${networkInfo.height}` : "Checkpoint недоступен";
@@ -932,6 +986,87 @@ function openBridgePanel() {
   bridgePanel.showModal();
 }
 
+async function renderAccounts() {
+  const { accounts, activeId, canCreate } = await bridgeRequest("/v1/accounts");
+  if (!Array.isArray(accounts) || !accounts.some((account) => account.id === activeId)) {
+    throw new Error("Не удалось проверить список кошельков.");
+  }
+  const list = document.querySelector("#account-list");
+  list.replaceChildren();
+  for (const account of accounts) {
+    if (!/^[0-9a-f]{32}$/.test(account.id ?? "") || !NIR_ADDRESS.test(account.address ?? "")) {
+      throw new Error("Список кошельков содержит некорректную запись.");
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-current", account.id === activeId ? "true" : "false");
+    const title = document.createElement("strong");
+    title.textContent = `${account.label}${account.id === activeId ? " · выбран" : ""}`;
+    const detail = document.createElement("small");
+    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный vault`;
+    button.append(title, detail);
+    button.onclick = () => changeAccount(account.id);
+    list.append(button);
+  }
+  accountOpen.textContent = `${accounts.find((account) => account.id === activeId).label} ▾`;
+  accountOpen.dataset.activeId = activeId;
+  document.querySelector("#add-account").hidden = canCreate !== true;
+}
+
+async function completeAccountChange() {
+  resetAccountView("Кошелёк выбран · проверяем баланс заново");
+  walletInfo = await bridgeRequest("/v1/wallet");
+  renderWalletConnection();
+  await renderAccounts();
+  if (accountsPanel.open) accountsPanel.close();
+  await refreshNodeStatus();
+}
+
+async function reconcileAccountAfterError() {
+  resetAccountView("Проверяем выбранный кошелёк заново");
+  walletInfo = await bridgeRequest("/v1/wallet");
+  renderWalletConnection();
+  await renderAccounts();
+  await refreshNodeStatus();
+}
+
+async function changeAccount(id) {
+  if (accountTransitionPending) return;
+  if (id === accountOpen.dataset.activeId) { accountsPanel.close(); return; }
+  accountTransitionPending = true;
+  accountsStatus.textContent = "Переключаем кошелёк…";
+  try {
+    await bridgeRequest("/v1/select-account", { method: "POST", body: JSON.stringify({ id }) });
+    await completeAccountChange();
+  } catch (error) {
+    accountsStatus.textContent = error.message;
+    try { await reconcileAccountAfterError(); }
+    catch { clearWalletSession("Не удалось сверить выбранный кошелёк · подключитесь снова"); }
+  } finally { accountTransitionPending = false; }
+}
+
+accountOpen.onclick = async () => {
+  accountsStatus.textContent = "";
+  try { await renderAccounts(); accountsPanel.showModal(); }
+  catch (error) { showMessage("settings", error.message); }
+};
+
+document.querySelector("#add-account").onclick = async (event) => {
+  if (accountTransitionPending) return;
+  accountTransitionPending = true;
+  const button = event.currentTarget;
+  button.disabled = true;
+  accountsStatus.textContent = "Создайте ключ и сохраните его резервную копию в приложении…";
+  try {
+    await bridgeRequest("/v1/create-account", { method: "POST", body: "{}" }, 600_000);
+    await completeAccountChange();
+  } catch (error) {
+    accountsStatus.textContent = error.message;
+    try { await reconcileAccountAfterError(); }
+    catch { clearWalletSession("Не удалось сверить созданный кошелёк · подключитесь снова"); }
+  } finally { button.disabled = false; accountTransitionPending = false; }
+};
+
 function openSetupPanel() {
   if (settingsPanel.open) settingsPanel.close();
   setupPanel.showModal();
@@ -953,6 +1088,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     const token = await pairBridge(url, code);
     bridgeSession = { token, url };
     walletInfo = await bridgeRequest("/v1/wallet");
+    await renderAccounts();
     codeInput.value = "";
     bridgeStatus.textContent = `Подключён ${walletInfo.address.slice(0, 16)}…`;
     renderWalletConnection();
@@ -1378,6 +1514,7 @@ async function loadNodePolicy() {
 }
 
 async function selectActiveNode() {
+  const epoch = accountEpoch;
   const policy = await loadNodePolicy();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2_500);
@@ -1401,6 +1538,7 @@ async function selectActiveNode() {
         trustedTipHash: trust.tipHash,
       },
     );
+    if (epoch !== accountEpoch) throw new Error("wallet changed during node selection");
     activeNodeUrl = selected.url;
     networkInfo = {
       ...selected.health,
@@ -1414,8 +1552,10 @@ async function selectActiveNode() {
 }
 
 async function refreshNodeStatus() {
+  const epoch = accountEpoch;
   try {
     await selectActiveNode();
+    if (epoch !== accountEpoch) return;
     const assetCheckpoint = document.querySelector("#asset-checkpoint");
     if (assetCheckpoint.dataset.state === "verified" &&
         Number(assetCheckpoint.dataset.height) !== networkInfo.height) {
@@ -1429,6 +1569,7 @@ async function refreshNodeStatus() {
     messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
     await refreshAccount();
   } catch {
+    if (epoch !== accountEpoch) return;
     networkInfo = null;
     activeNodeUrl = null;
     networkButton.textContent = "○ Nodes offline";
