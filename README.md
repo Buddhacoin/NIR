@@ -4,6 +4,8 @@
 
 # NIR — the currency of verifiable progress
 
+**Установить NIR Wallet (тестовая версия для Chrome/Chromium): [скачать ZIP](https://github.com/Buddhacoin/NIR/releases/download/browser-wallet-preview-0.1.0/NIR-Wallet-browser-preview-0.1.0.zip) · [инструкция ниже](#nir-wallet-download-and-installation).** Это расширение для проверки интерфейса, фразы восстановления и адресов; реальная сеть, майнинг, переводы и монеты пока недоступны.
+
 **AI will change the world. NIR is being built so the world can verify that change — and share in it.**
 
 AI is advancing fast, but the world still lacks a shared way to prove that a new capability is real, reproducible, and safe. NIR is an independent blockchain designed to turn verified progress into public evidence and, eventually, a native digital currency that people and AI services can use.
@@ -25,14 +27,21 @@ What makes the design different:
 
 ## NIR Wallet: download and installation
 
-| Device | Available now? |
-|---|---|
-| Mac | No public installer yet. The desktop app shown in demos is a locally built test prototype; its release package has not been published here. |
-| Windows / Linux | No desktop wallet release yet. |
-| iPhone / iPad | No App Store or TestFlight release yet. |
-| Android | No official APK or Play Store release yet. |
+**[Download NIR Wallet browser preview ZIP](https://github.com/Buddhacoin/NIR/releases/download/browser-wallet-preview-0.1.0/NIR-Wallet-browser-preview-0.1.0.zip)** ([release notes](https://github.com/Buddhacoin/NIR/releases/tag/browser-wallet-preview-0.1.0)). This is an experimental extension, not a store-listed or audited wallet. Do not use it for real funds.
 
-For now, developers can explore the [local browser preview and safety guide](docs/wallet.md). It is **not** a downloadable wallet for real funds. Do not install purported NIR Wallet apps from third-party sites. Official installation links will appear here only after builds and distribution checks are ready.
+1. Unzip the download. Keep the extracted folder somewhere you can find it.
+2. In Chrome, open `chrome://extensions` (in Edge, `edge://extensions`). Turn on **Developer mode**.
+3. Click **Load unpacked** and select the extracted folder containing `manifest.json`. Pin the NIR icon and open it from the browser toolbar.
+
+| Browser / device | Status |
+|---|---|
+| Chrome on Mac, Windows, Linux | Chromium build tested; manual installation above. |
+| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | Chromium-family build intended to be compatible, but each browser has **not** been separately verified. The extension is not in their stores. |
+| Firefox on desktop | Not supported by this download yet; a separately packaged and signed Firefox add-on is needed. |
+| Safari on Mac or iPhone/iPad | Not available; distribution requires a Safari app extension and Apple signing. |
+| Android browsers | No verified browser-wallet installation yet. |
+
+The earlier Mac desktop demo is a local prototype, not a public installer. There is no Windows/Linux desktop package or official phone app. Do not install purported NIR Wallet apps from third-party sites. The [wallet safety guide](docs/wallet.md) explains the current limits.
 
 ## Current status
 
