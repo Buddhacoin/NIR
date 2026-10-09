@@ -113,6 +113,11 @@ that the local rules executed. The wallets and balances vanish when the command
 ends. Nothing was downloaded from a job service and nothing was submitted to a
 public network.
 
+This new local example uses the v5 genesis rules and shows **44 test NIR** in
+escrow. The older 50 NIR schedule remains in the protocol only so previously
+signed v1-v4 test-chain blocks can still be verified; it is not another option
+for a new miner.
+
 To verify the code paths rather than trust one successful printout:
 
 ```bash

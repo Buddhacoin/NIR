@@ -261,6 +261,8 @@ dependency order and measurable exit conditions are defined by the
    ```
 
    This is a local simulation with test units, not a public mining connection.
+   Its v5 genesis uses the 44 NIR first-epoch budget; the historical 50 NIR
+   rule is retained only for replay of older test chains.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),
