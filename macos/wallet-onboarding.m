@@ -637,6 +637,20 @@ int main(int argc, const char *argv[]) {
             [alert addButtonWithTitle:@"Копировать"];
             if (recovery) [alert addButtonWithTitle:@"Отложить настройку"];
             if (recovery && !backupPath) return 1;
+            if (phrase) {
+                // This dialog is requested from Safari settings. Keep the
+                // recovery words visible above that browser, not behind it.
+                NSWindow *phraseWindow = alert.window;
+                phraseWindow.level = NSFloatingWindowLevel;
+                phraseWindow.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
+                [phraseWindow orderFrontRegardless];
+                [phraseWindow makeKeyAndOrderFront:nil];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSRunningApplication currentApplication] activateWithOptions:0];
+                    [phraseWindow makeKeyAndOrderFront:nil];
+                    [phraseWindow orderFrontRegardless];
+                });
+            }
             [app activateIgnoringOtherApps:YES];
             while (YES) {
                 NSModalResponse choice = [alert runModal];
