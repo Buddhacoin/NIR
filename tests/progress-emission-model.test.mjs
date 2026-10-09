@@ -223,11 +223,14 @@ test("legacy 50 NIR schedule still exhausts the pool in the fourth era", () => {
   assert.equal(remaining % fourth, 0n);
 });
 
-test("exported emission helpers keep the legacy 50 NIR default", () => {
+test("exported emission helpers default to the v5 44 NIR schedule", () => {
   const claim = coalitionClaims(0, 1, 1, "legacy-default");
-  assert.equal(budgetFor(0), LEGACY_INITIAL_EPOCH_REWARD);
-  assert.equal(sumRewards(allocateRewards(0, claim)), LEGACY_INITIAL_EPOCH_REWARD);
+  assert.equal(budgetFor(0), INITIAL_EPOCH_REWARD);
+  assert.equal(sumRewards(allocateRewards(0, claim)), INITIAL_EPOCH_REWARD);
   assert.equal(budgetFor(0, INITIAL_EPOCH_REWARD), INITIAL_EPOCH_REWARD);
   assert.equal(sumRewards(allocateRewards(0, claim, MINING_POOL, INITIAL_EPOCH_REWARD)),
     INITIAL_EPOCH_REWARD);
+  assert.equal(budgetFor(0, LEGACY_INITIAL_EPOCH_REWARD), LEGACY_INITIAL_EPOCH_REWARD);
+  assert.equal(sumRewards(allocateRewards(0, claim, MINING_POOL,
+    LEGACY_INITIAL_EPOCH_REWARD)), LEGACY_INITIAL_EPOCH_REWARD);
 });
