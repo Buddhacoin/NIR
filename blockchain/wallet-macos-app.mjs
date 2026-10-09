@@ -100,7 +100,7 @@ async function main() {
 
   const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
   const createAccount = async () => {
-    const { stdout } = await execFileAsync(process.execPath, [setup, "--create-only"], {
+    const { stdout } = await execFileAsync(process.execPath, [setup, "--create-only", selected.address], {
       encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
     });
     const created = JSON.parse(noTrailingNewline(stdout));

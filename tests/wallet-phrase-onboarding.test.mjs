@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { addLocalPhraseAccount, listLocalTestWallets, createLocalPhraseWallet,
+import { addLocalPhraseAccount, findLocalPhraseProfile, listLocalTestWallets, createLocalPhraseWallet,
   restoreLocalPhraseWallet } from "../blockchain/wallet-onboarding.mjs";
 import { verifyWalletFile } from "../blockchain/wallet-files.mjs";
 import { encryptRecoveryPhrase, decryptRecoveryPhrase } from "../blockchain/wallet-phrase-vault.mjs";
@@ -27,6 +27,8 @@ test("words restore a local test wallet on a clean device with a new password an
       profilePath: first.profilePath, password: "test-password-one" });
     assert.equal(added.accountIndex, 1);
     assert.notEqual(added.address, first.address);
+    assert.deepEqual(findLocalPhraseProfile({ storageRoot: firstRoot, address: added.address,
+      password: "test-password-one" }), { accountIndex: 1, path: first.profilePath });
     assert.equal(verifyWalletFile({ path: added.walletPath,
       password: "test-password-one" }).address, added.address);
     assert.throws(() => addLocalPhraseAccount({ storageRoot: firstRoot,

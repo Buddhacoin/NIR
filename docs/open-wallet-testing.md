@@ -36,7 +36,7 @@ Use the [wallet feedback issue form](https://github.com/Buddhacoin/NIR/issues/ne
 for non-sensitive bugs or confusing steps. Search existing reports first.
 Include the scenario, app/source version, device/OS, exact reproduction steps,
 expected and actual behavior, and a redacted screenshot or log only if needed.
-Never post a password, pairing/recovery code, private key, vault or backup file,
+Never post a password, pairing/recovery code, recovery phrase, private key, vault or backup file,
 personal data, or a full exploit. Report security flaws privately through
 [SECURITY.md](../SECURITY.md), not a public issue.
 
