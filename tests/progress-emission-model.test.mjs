@@ -5,6 +5,7 @@ import test from "node:test";
 import { allocateProgressRewards } from "../blockchain/chain.mjs";
 import {
   ATOMIC_UNITS,
+  HALVING_INTERVAL,
   INITIAL_EPOCH_REWARD,
   MAX_PROGRESS_REWARDS_PER_BLOCK,
   MAX_SUPPLY,
@@ -172,4 +173,32 @@ test("hard-cap tail is exact and duplicate lineage fingerprints cannot share it"
     () => allocateProgressRewards(epoch, claims, 0n),
     /no mining budget remains/,
   );
+});
+
+test("current treasury allocation exhausts the mining pool early in the fourth halving era", () => {
+  const firstThreeEras = Array.from({ length: 3 }, (_, era) =>
+    scheduledEpochBudget(era * HALVING_INTERVAL) * BigInt(HALVING_INTERVAL))
+    .reduce((total, amount) => total + amount, 0n);
+  const remainingAtFourthEra = MINING_POOL - firstThreeEras;
+  const fourthEraStart = 3 * HALVING_INTERVAL;
+  const fourthEraBudget = scheduledEpochBudget(fourthEraStart);
+  const fullFourthEraRewards = remainingAtFourthEra / fourthEraBudget;
+  const firstUnrewardableEpoch = fourthEraStart + Number(fullFourthEraRewards);
+  const claim = coalitionClaims(firstUnrewardableEpoch, 1, 1, "exhaustion");
+
+  assert.equal(MINING_POOL / ATOMIC_UNITS, 18_480_000n);
+  assert.equal(firstThreeEras / ATOMIC_UNITS, 18_375_000n);
+  assert.equal(remainingAtFourthEra / ATOMIC_UNITS, 105_000n);
+  assert.equal(fourthEraBudget, 625_000_000n);
+  assert.equal(remainingAtFourthEra % fourthEraBudget, 0n);
+  assert.equal(fullFourthEraRewards, 16_800n);
+  assert.equal(firstUnrewardableEpoch, 646_800);
+
+  const lastReward = allocateProgressRewards(firstUnrewardableEpoch - 1, claim,
+    fourthEraBudget);
+  assert.equal(sumRewards(lastReward), fourthEraBudget);
+  assert.equal(TREASURY_ALLOCATION + MINING_POOL, MAX_SUPPLY);
+  assert.equal(scheduledEpochBudget(firstUnrewardableEpoch), fourthEraBudget);
+  assert.throws(() => allocateProgressRewards(firstUnrewardableEpoch, claim, 0n),
+    /no mining budget remains/);
 });
