@@ -7,6 +7,10 @@ import {
   PROTOCOL_VERSION,
   SAFETY_POLICY_V1_COMMITMENT,
   SIGNATURE_ALGORITHM,
+  FOUNDER_BPS,
+  FOUNDER_IMMEDIATE_BPS,
+  PROTOCOL_TREASURY_BPS,
+  TESTER_REWARD_RESERVE_BPS,
   TREASURY_BPS,
   TREASURY_VESTING_MS,
 } from "./constants.mjs";
@@ -32,6 +36,12 @@ const INPUT_FIELDS = PLAN_FIELDS.filter((field) =>
     "sourceRelease", "validatorSetCommitment"].includes(field));
 const PLAN_FIELDS_V2 = [...PLAN_FIELDS, "evaluationEnvironment"];
 const INPUT_FIELDS_V2 = [...INPUT_FIELDS, "evaluationEnvironment", "format"];
+const PLAN_FIELDS_V3 = [...PLAN_FIELDS_V2, "founder"];
+const INPUT_FIELDS_V3 = [...INPUT_FIELDS_V2, "founder"];
+const PLAN_FIELDS_V4 = PLAN_FIELDS_V3;
+const INPUT_FIELDS_V4 = INPUT_FIELDS_V3;
+const PLAN_FIELDS_V5 = PLAN_FIELDS_V4;
+const INPUT_FIELDS_V5 = INPUT_FIELDS_V4;
 const ROLE_FIELDS = ["address", "algorithm", "endpoint", "operatorId", "publicKey"];
 const VALIDATOR_FIELDS = [
   "address", "algorithm", "endpoint", "operatorId", "publicKey", "tlsCertificateSha256",
@@ -45,6 +55,7 @@ const TREASURY_FIELDS = [
   "address", "algorithm", "memberPublicKeys", "threshold", "vestingPolicy",
 ];
 const VESTING_FIELDS = ["allocationBps", "durationMs", "model"];
+const VESTING_FIELDS_V4 = [...VESTING_FIELDS, "immediateBps"];
 const ENVELOPE_FIELDS = ["approvals", "commitment", "format", "peerRegistryApprovals"];
 const APPROVAL_FIELDS = ["operatorId", "signature"];
 const REGISTRY_APPROVAL_FIELDS = ["signature", "validator"];
@@ -55,8 +66,17 @@ const FORMAT = "nir-public-genesis-plan-v1";
 const ENVELOPE_FORMAT = "nir-public-genesis-approvals-v1";
 const FORMAT_V2 = "nir-public-genesis-plan-v2";
 const ENVELOPE_FORMAT_V2 = "nir-public-genesis-approvals-v2";
+const FORMAT_V3 = "nir-public-genesis-plan-v3";
+const ENVELOPE_FORMAT_V3 = "nir-public-genesis-approvals-v3";
+const FORMAT_V4 = "nir-public-genesis-plan-v4";
+const ENVELOPE_FORMAT_V4 = "nir-public-genesis-approvals-v4";
+const FORMAT_V5 = "nir-public-genesis-plan-v5";
+const ENVELOPE_FORMAT_V5 = "nir-public-genesis-approvals-v5";
 
 function planVersion(value, withHeader) {
+  if (value?.format === FORMAT_V5) return 5;
+  if (value?.format === FORMAT_V4) return 4;
+  if (value?.format === FORMAT_V3) return 3;
   if (value?.format === FORMAT_V2) return 2;
   if (withHeader && value?.format !== FORMAT) {
     throw new Error("genesis plan format is invalid");
@@ -65,11 +85,17 @@ function planVersion(value, withHeader) {
 }
 
 function planCommitmentDomain(version) {
-  return version === 2 ? "PUBLIC_GENESIS_CEREMONY_V2" : "PUBLIC_GENESIS_CEREMONY_V1";
+  return `PUBLIC_GENESIS_CEREMONY_V${version}`;
 }
 
 function approvalDomain(version) {
-  return version === 2 ? "PUBLIC_GENESIS_APPROVAL_V2" : "PUBLIC_GENESIS_APPROVAL_V1";
+  return `PUBLIC_GENESIS_APPROVAL_V${version}`;
+}
+
+function envelopeFormat(version) {
+  return version === 5 ? ENVELOPE_FORMAT_V5
+    : version === 4 ? ENVELOPE_FORMAT_V4 : version === 3 ? ENVELOPE_FORMAT_V3
+    : version === 2 ? ENVELOPE_FORMAT_V2 : ENVELOPE_FORMAT;
 }
 
 function exactObject(value, fields, label) {
@@ -235,29 +261,33 @@ function ceremonyOperators(entries) {
   }).sort((left, right) => left.operatorId.localeCompare(right.operatorId));
 }
 
-function treasuryPolicy(treasury) {
-  exactObject(treasury, TREASURY_FIELDS, "treasury");
-  exactObject(treasury.vestingPolicy, VESTING_FIELDS, "treasury vesting policy");
-  if (treasury.algorithm !== "ml-dsa-65-multisig" || treasury.threshold !== 2 ||
-      !Array.isArray(treasury.memberPublicKeys) || treasury.memberPublicKeys.length !== 3 ||
-      new Set(treasury.memberPublicKeys).size !== 3 ||
-      treasury.memberPublicKeys.some((key) =>
+function allocationPolicy(value, allocationBps, label, immediateBps = 0) {
+  exactObject(value, TREASURY_FIELDS, label);
+  exactObject(value.vestingPolicy, immediateBps === 0 ? VESTING_FIELDS : VESTING_FIELDS_V4,
+    `${label} vesting policy`);
+  if (value.algorithm !== "ml-dsa-65-multisig" || value.threshold !== 2 ||
+      !Array.isArray(value.memberPublicKeys) || value.memberPublicKeys.length !== 3 ||
+      new Set(value.memberPublicKeys).size !== 3 ||
+      value.memberPublicKeys.some((key) =>
         typeof key !== "string" || key.length > 4_000 || !validPublicKey(key)) ||
-      multisigAddress(treasury.memberPublicKeys, 2) !== treasury.address ||
-      treasury.vestingPolicy.model !== "linear-from-genesis" ||
-      treasury.vestingPolicy.durationMs !== TREASURY_VESTING_MS ||
-      treasury.vestingPolicy.allocationBps !== Number(TREASURY_BPS)) {
-    throw new Error("treasury must be the public protocol 2-of-3 address and vesting policy");
+      multisigAddress(value.memberPublicKeys, 2) !== value.address ||
+      value.vestingPolicy.model !== (immediateBps === 0
+        ? "linear-from-genesis" : "genesis-release-plus-linear") ||
+      value.vestingPolicy.durationMs !== TREASURY_VESTING_MS ||
+      (immediateBps !== 0 && value.vestingPolicy.immediateBps !== immediateBps) ||
+      value.vestingPolicy.allocationBps !== Number(allocationBps)) {
+    throw new Error(`${label} must be the public protocol 2-of-3 address and vesting policy`);
   }
   return {
-    address: treasury.address,
-    algorithm: treasury.algorithm,
-    memberPublicKeys: [...treasury.memberPublicKeys].sort(),
+    address: value.address,
+    algorithm: value.algorithm,
+    memberPublicKeys: [...value.memberPublicKeys].sort(),
     threshold: 2,
     vestingPolicy: {
-      allocationBps: Number(TREASURY_BPS),
+      allocationBps: Number(allocationBps),
       durationMs: TREASURY_VESTING_MS,
-      model: "linear-from-genesis",
+      model: immediateBps === 0 ? "linear-from-genesis" : "genesis-release-plus-linear",
+      ...(immediateBps === 0 ? {} : { immediateBps }),
     },
   };
 }
@@ -266,8 +296,12 @@ function planPayload(input, withHeader, release) {
   rejectSecrets(input);
   const version = planVersion(input, withHeader);
   exactObject(input, withHeader
-    ? (version === 2 ? PLAN_FIELDS_V2 : PLAN_FIELDS)
-    : (version === 2 ? INPUT_FIELDS_V2 : INPUT_FIELDS), "genesis plan");
+    ? (version === 5 ? PLAN_FIELDS_V5 : version === 4 ? PLAN_FIELDS_V4
+      : version === 3 ? PLAN_FIELDS_V3
+      : version === 2 ? PLAN_FIELDS_V2 : PLAN_FIELDS)
+    : (version === 5 ? INPUT_FIELDS_V5 : version === 4 ? INPUT_FIELDS_V4
+      : version === 3 ? INPUT_FIELDS_V3
+      : version === 2 ? INPUT_FIELDS_V2 : INPUT_FIELDS), "genesis plan");
   if (withHeader && input.purpose !== PURPOSE) {
     throw new Error("genesis plan is not a valueless developer testnet plan");
   }
@@ -282,7 +316,7 @@ function planPayload(input, withHeader, release) {
   if (input.evaluatorBondAmount !== MIN_EVALUATOR_BOND.toString()) {
     throw new Error("genesis evaluator bond must equal the protocol bootstrap amount");
   }
-  const evaluationEnvironment = version === 2
+  const evaluationEnvironment = version >= 2
     ? normalizeEvaluationEnvironment(input.evaluationEnvironment) : null;
   exactObject(release, RELEASE_FIELDS, "genesis source release provenance");
   if (input.sourceReleaseManifestHash !== release.manifestHash ||
@@ -308,6 +342,16 @@ function planPayload(input, withHeader, release) {
       transportAddresses.some((address) => occupiedAddresses.includes(address))) {
     throw new Error("validator, evaluator, and beacon identities and endpoints must be disjoint");
   }
+  const treasury = allocationPolicy(input.treasury,
+    version >= 3 ? PROTOCOL_TREASURY_BPS : TREASURY_BPS, "treasury",
+    version === 5 ? Number(TESTER_REWARD_RESERVE_BPS) : 0);
+  const founder = version >= 3
+    ? allocationPolicy(input.founder, FOUNDER_BPS, "founder",
+      version >= 4 ? Number(FOUNDER_IMMEDIATE_BPS) : 0) : null;
+  if (founder && (founder.address === treasury.address ||
+      occupiedAddresses.includes(founder.address) || occupiedAddresses.includes(treasury.address))) {
+    throw new Error("founder, treasury, and operator addresses must be distinct");
+  }
   const validatorIdentities = validators.map(
     ({ endpoint: _endpoint, tlsCertificateSha256: _tls, transport: _transport, ...identity }) =>
       identity,
@@ -324,8 +368,11 @@ function planPayload(input, withHeader, release) {
     beaconAuthorities,
     ceremonyOperators: ceremonyOperators(input.ceremonyOperators),
     evaluatorBondAmount: input.evaluatorBondAmount,
-    format: version === 2 ? FORMAT_V2 : FORMAT,
-    ...(version === 2 ? { evaluationEnvironment } : {}),
+    format: version === 5 ? FORMAT_V5 : version === 4 ? FORMAT_V4
+      : version === 3 ? FORMAT_V3
+      : version === 2 ? FORMAT_V2 : FORMAT,
+    ...(version >= 2 ? { evaluationEnvironment } : {}),
+    ...(founder === null ? {} : { founder }),
     genesisTimestamp: input.genesisTimestamp,
     networkId: input.networkId,
     protocolVersion: input.protocolVersion,
@@ -334,7 +381,7 @@ function planPayload(input, withHeader, release) {
     peerRegistryCommitment,
     sourceReleaseManifestHash: input.sourceReleaseManifestHash,
     sourceRelease: structuredClone(release),
-    treasury: treasuryPolicy(input.treasury),
+    treasury,
     validatorSetCommitment,
     validators,
     evaluators,
@@ -387,10 +434,10 @@ export function signGenesisPeerRegistry(planValue, wallet, options = {}) {
   }
   const registrySignature = signObject(peerRegistryPayload(plan), wallet,
     "PEER_REGISTRY_APPROVAL");
-  if (plan.format === FORMAT_V2) {
+  if (planVersion(plan, true) >= 2) {
     return { registrySignature,
       signature: signObject(peerRegistryApprovalPayloadV2(plan), wallet,
-        "PUBLIC_GENESIS_PEER_REGISTRY_APPROVAL_V2"),
+        `PUBLIC_GENESIS_PEER_REGISTRY_APPROVAL_V${planVersion(plan, true)}`),
       validator: validator.address };
   }
   return { signature: registrySignature, validator: validator.address };
@@ -405,7 +452,7 @@ export function createGenesisApprovalEnvelope(
     approvals: approvals.map((approval) => structuredClone(approval))
       .sort((left, right) => String(left.operatorId).localeCompare(String(right.operatorId))),
     commitment: plan.commitment,
-    format: plan.format === FORMAT_V2 ? ENVELOPE_FORMAT_V2 : ENVELOPE_FORMAT,
+    format: envelopeFormat(planVersion(plan, true)),
     peerRegistryApprovals: peerRegistryApprovals.map((approval) => structuredClone(approval))
       .sort((left, right) => String(left.validator).localeCompare(String(right.validator))),
   };
@@ -436,7 +483,7 @@ export function verifyGenesisCeremony(planValue, envelope, options = {}) {
   const plan = verifyGenesisPlan(planValue, options);
   checkReuse(plan, priorPlans);
   exactObject(envelope, ENVELOPE_FIELDS, "genesis approval envelope");
-  if (envelope.format !== (plan.format === FORMAT_V2 ? ENVELOPE_FORMAT_V2 : ENVELOPE_FORMAT) ||
+  if (envelope.format !== envelopeFormat(planVersion(plan, true)) ||
       envelope.commitment !== plan.commitment ||
       !Array.isArray(envelope.approvals) || envelope.approvals.length > plan.ceremonyOperators.length) {
     throw new Error("genesis approval envelope is invalid or for another commitment");
@@ -463,18 +510,19 @@ export function verifyGenesisCeremony(planValue, envelope, options = {}) {
   const validators = new Map(plan.validators.map((validator) => [validator.address, validator]));
   const registryVoters = new Set();
   for (const approval of envelope.peerRegistryApprovals) {
-    exactObject(approval, plan.format === FORMAT_V2
+    exactObject(approval, planVersion(plan, true) >= 2
       ? REGISTRY_APPROVAL_FIELDS_V2 : REGISTRY_APPROVAL_FIELDS,
     "genesis peer-registry approval");
     const validator = validators.get(approval.validator);
     if (!validator || registryVoters.has(approval.validator) ||
         typeof approval.signature !== "string" || approval.signature.length > 7_000 ||
-        (plan.format === FORMAT_V2 &&
+        (planVersion(plan, true) >= 2 &&
           (!verifyObject(peerRegistryApprovalPayloadV2(plan), approval.signature,
-            validator.publicKey, "PUBLIC_GENESIS_PEER_REGISTRY_APPROVAL_V2") ||
+            validator.publicKey,
+            `PUBLIC_GENESIS_PEER_REGISTRY_APPROVAL_V${planVersion(plan, true)}`) ||
            typeof approval.registrySignature !== "string" ||
            approval.registrySignature.length > 7_000)) ||
-        !verifyObject(peerRegistryPayload(plan), plan.format === FORMAT_V2
+        !verifyObject(peerRegistryPayload(plan), planVersion(plan, true) >= 2
           ? approval.registrySignature : approval.signature,
         validator.publicKey, "PEER_REGISTRY_APPROVAL")) {
       throw new Error("genesis peer-registry approval is unknown, duplicated, or invalid");
@@ -509,16 +557,21 @@ export function compileGenesis(planValue, envelope, options = {}) {
       capabilitiesBps: { "developer-test-v1": 0 },
     }],
     evaluators: plan.evaluators.map(({ endpoint: _endpoint, ...identity }) => identity),
-    ...(plan.format === FORMAT_V2 ? {
+    ...(planVersion(plan, true) >= 2 ? {
       evaluationEnvironment: structuredClone(plan.evaluationEnvironment),
     } : {}),
+    ...(planVersion(plan, true) >= 3 ? { founderAddress: plan.founder.address } : {}),
+    ...(planVersion(plan, true) >= 4
+      ? { founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS) } : {}),
+    ...(plan.format === FORMAT_V5
+      ? { treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS) } : {}),
     evaluatorBondAmount: plan.evaluatorBondAmount,
     genesisTimestamp: plan.genesisTimestamp,
     networkId: plan.networkId,
     peerRegistry: {
       ...peerRegistryPayload(plan),
       signatures: envelope.peerRegistryApprovals.map((approval) =>
-        plan.format === FORMAT_V2
+        planVersion(plan, true) >= 2
           ? { signature: approval.registrySignature, validator: approval.validator }
           : structuredClone(approval))
         .sort((left, right) => left.validator.localeCompare(right.validator)),

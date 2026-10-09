@@ -87,10 +87,20 @@ and operator-independence proofs remain open before testnet.
 
 ## Creator custody
 
-The current code assigns the combined 12 percent builder/protocol allocation to
-one genesis `treasuryAddress` and enforces ten-year linear vesting. The demo
-address is temporary. A production genesis must name permanent post-quantum NIR
-vault addresses and publish their allocation before launch.
+New v5 developer-testnet genesis plans commit 7 percent of the capped supply to
+`founderAddress` and 5 percent to a distinct `treasuryAddress`. The founder can
+spend 1 percent of total supply at genesis; its other 6 percent vests linearly
+over ten years. The protocol treasury can spend 0.1 percent of total supply
+(21,000 NIR) at genesis; its other 4.9 percent vests linearly. This is one
+treasury address: consensus enforces the release schedule, not who receives a
+payment or why. No tester payment program is active merely because the tranche
+is unlocked. The founder receives no automatic share of transaction fees.
+
+Legacy v1/v2 signed genesis plans retain their original combined 12 percent
+treasury and cannot be silently rewritten. V3 and v4 plans retain their signed
+intermediate schedules. The demo addresses are temporary. Permanent addresses
+must be created offline, tested for recovery, independently reviewed, and
+published in a final signed genesis before any real-value network launch.
 
 Founder custody must use the native NIR ML-DSA address format and an offline threshold vault;
 the protocol treasury should use a separate transparent multisignature with

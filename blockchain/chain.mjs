@@ -40,6 +40,12 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
+  FOUNDER_ALLOCATION,
+  FOUNDER_IMMEDIATE_BPS,
+  FOUNDER_VESTED_ALLOCATION,
+  PROTOCOL_TREASURY_ALLOCATION,
+  PROTOCOL_TREASURY_VESTED_ALLOCATION,
+  TESTER_REWARD_RESERVE_BPS,
   TRANSFER_CREDIT_STAKE_UNIT,
   VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION,
   VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
@@ -48,6 +54,7 @@ import {
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
+  vestedAllocationAtTimestamp,
 } from "./constants.mjs";
 import {
   addressFromPublicKey,
@@ -1588,6 +1595,9 @@ export class NirChain {
   #safetyEvidence;
   #safetyPolicies;
   #treasuryAddress;
+  #founderAddress;
+  #founderImmediateBps;
+  #treasuryImmediateBps;
   #genesisTimestamp;
   #genesisEvaluatorBondAllocation;
   #genesisEvaluatorCount;
@@ -1601,6 +1611,9 @@ export class NirChain {
     validators,
     evaluators,
     treasuryAddress,
+    founderAddress = null,
+    founderImmediateBps = 0,
+    treasuryImmediateBps = 0,
     capabilityReferences,
     safetyPolicyCommitments,
     beaconAuthorities,
@@ -1638,6 +1651,20 @@ export class NirChain {
     }
     const normalizedEvaluationEnvironment = evaluationEnvironment === null
       ? null : normalizeEvaluationEnvironment(evaluationEnvironment);
+    if (founderImmediateBps !== 0 && founderImmediateBps !== Number(FOUNDER_IMMEDIATE_BPS)) {
+      throw new Error("unsupported founder immediate release policy");
+    }
+    if (founderAddress === null && founderImmediateBps !== 0) {
+      throw new Error("founder release policy requires founder address");
+    }
+    if (treasuryImmediateBps !== 0 &&
+        treasuryImmediateBps !== Number(TESTER_REWARD_RESERVE_BPS)) {
+      throw new Error("unsupported protocol treasury immediate release policy");
+    }
+    if (treasuryImmediateBps !== 0 &&
+        (founderAddress === null || founderImmediateBps !== Number(FOUNDER_IMMEDIATE_BPS))) {
+      throw new Error("tester reserve requires the split founder release policy");
+    }
     if (genesisProtocolVersion >= EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION &&
         normalizedEvaluationEnvironment === null) {
       throw new Error("extended assignment protocol requires a genesis evaluation environment");
@@ -1659,10 +1686,16 @@ export class NirChain {
       protocolUpgradeReleaseAnchor,
       safetyPolicyCommitments,
       treasuryAddress,
+      ...(founderAddress === null ? {} : { founderAddress }),
+      ...(founderImmediateBps === 0 ? {} : { founderImmediateBps }),
+      ...(treasuryImmediateBps === 0 ? {} : { treasuryImmediateBps }),
       validators,
     });
     this.#genesisTimestamp = genesisTimestamp;
     this.#treasuryAddress = treasuryAddress;
+    this.#founderAddress = founderAddress;
+    this.#founderImmediateBps = founderImmediateBps;
+    this.#treasuryImmediateBps = treasuryImmediateBps;
     this.#validators = operatorRegistry(validators, "validator");
     this.#evaluators = operatorRegistry(evaluators, "evaluator");
     const genesisEvaluatorBond = parseAtomic(evaluatorBondAmount, "genesis evaluator bond");
@@ -1670,7 +1703,8 @@ export class NirChain {
       throw new Error("genesis evaluator bond is below the protocol minimum");
     }
     const genesisEvaluatorBonds = genesisEvaluatorBond * BigInt(this.#evaluators.size);
-    if (genesisEvaluatorBonds > TREASURY_ALLOCATION) {
+    if (genesisEvaluatorBonds > (founderAddress === null
+      ? TREASURY_ALLOCATION : PROTOCOL_TREASURY_ALLOCATION)) {
       throw new Error("genesis evaluator bonds exceed the treasury allocation");
     }
     this.#genesisConfig.evaluatorBondAmount = genesisEvaluatorBond.toString();
@@ -1717,10 +1751,20 @@ export class NirChain {
       generation: this.#beaconGeneration,
     });
     assertAddress(treasuryAddress, "treasury address");
+    if (founderAddress !== null) {
+      assertAddress(founderAddress, "founder address");
+      if (founderAddress === treasuryAddress) {
+        throw new Error("founder and protocol treasury addresses must be distinct");
+      }
+    }
     this.#accountHistories = new Map();
     this.#assetBalances = new Map();
     this.#assets = new Map();
-    this.#balances = new Map([[treasuryAddress, TREASURY_ALLOCATION - genesisEvaluatorBonds]]);
+    this.#balances = new Map([
+      [treasuryAddress, (founderAddress === null
+        ? TREASURY_ALLOCATION : PROTOCOL_TREASURY_ALLOCATION) - genesisEvaluatorBonds],
+      ...(founderAddress === null ? [] : [[founderAddress, FOUNDER_ALLOCATION]]),
+    ]);
     this.#beaconBondingActive = false;
     this.#beaconBonds = new Map();
     this.#beaconFaults = new Map();
@@ -1794,7 +1838,11 @@ export class NirChain {
     });
     const genesis = {
       accountStateRoot,
-      balances: { [treasuryAddress]: (TREASURY_ALLOCATION - genesisEvaluatorBonds).toString() },
+      balances: {
+        [treasuryAddress]: ((founderAddress === null
+          ? TREASURY_ALLOCATION : PROTOCOL_TREASURY_ALLOCATION) - genesisEvaluatorBonds).toString(),
+        ...(founderAddress === null ? {} : { [founderAddress]: FOUNDER_ALLOCATION.toString() }),
+      },
       beaconAuthorities: [...this.#beaconAuthorities.values()].map(({ address, operatorId }) => ({ address, operatorId })),
       capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
       evaluators: this.#evaluatorOrder.map((address) => ({
@@ -3417,10 +3465,29 @@ export class NirChain {
       (evaluatorBonds.get(address) ?? 0n) >= MIN_EVALUATOR_BOND));
   }
 
-  #treasuryLockedFloor(timestamp) {
-    const floor = TREASURY_ALLOCATION - this.#genesisEvaluatorBondAllocation -
-      vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp);
+  #allocationLockedFloor(address, timestamp) {
+    if (address === null ||
+        (address !== this.#treasuryAddress && address !== this.#founderAddress)) return 0n;
+    const allocation = address === this.#founderAddress
+      ? FOUNDER_ALLOCATION
+      : (this.#founderAddress === null ? TREASURY_ALLOCATION : PROTOCOL_TREASURY_ALLOCATION);
+    const lockedAllocation = address === this.#founderAddress &&
+      this.#founderImmediateBps === Number(FOUNDER_IMMEDIATE_BPS)
+      ? FOUNDER_VESTED_ALLOCATION
+      : address === this.#treasuryAddress &&
+        this.#treasuryImmediateBps === Number(TESTER_REWARD_RESERVE_BPS)
+        ? PROTOCOL_TREASURY_VESTED_ALLOCATION : allocation;
+    const initial = address === this.#treasuryAddress
+      ? lockedAllocation - this.#genesisEvaluatorBondAllocation : lockedAllocation;
+    const vested = this.#founderAddress === null
+      ? vestedTreasuryAtTimestamp(this.#genesisTimestamp, timestamp)
+      : vestedAllocationAtTimestamp(lockedAllocation, this.#genesisTimestamp, timestamp);
+    const floor = initial - vested;
     return floor > 0n ? floor : 0n;
+  }
+
+  #treasuryLockedFloor(timestamp) {
+    return this.#allocationLockedFloor(this.#treasuryAddress, timestamp);
   }
 
   randomnessFault(candidateId) {
@@ -6915,6 +6982,13 @@ export class NirChain {
     const rewardEpochAfter = this.#rewardEpoch + (block.progressRewards.length > 0 ? 1 : 0);
     const lastRewardTimestampAfter = block.progressRewards.length > 0
       ? block.timestamp : this.#lastRewardTimestamp;
+    // Every transition, including newly added transaction types, must preserve genesis vesting.
+    for (const address of [this.#treasuryAddress, this.#founderAddress]) {
+      if (address !== null &&
+          (balances.get(address) ?? 0n) < this.#allocationLockedFloor(address, block.timestamp)) {
+        throw new Error("genesis allocation funds are still vesting");
+      }
+    }
     const expectedStateRoot = this.#stateRoot({
       accountHistories,
       assetBalances,

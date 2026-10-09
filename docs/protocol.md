@@ -28,16 +28,25 @@ from minting currency.
 | Maximum supply | 21,000,000 NIR |
 | Atomic units per NIR | 100,000,000 |
 | Intelligence-mining pool | 18,480,000 NIR (88%) |
-| Builder/protocol treasury | 2,520,000 NIR (12%) |
+| Founder allocation (v3/v4/v5 genesis) | 1,470,000 NIR (7%) |
+| Protocol treasury (v3/v4/v5 genesis) | 1,050,000 NIR (5%) |
 | Initial epoch budget | 50 NIR |
 | Halving interval | 210,000 epochs |
 
-The treasury allocation is part of the fixed cap and must be time-locked. No
+Both genesis allocations are part of the fixed cap and must be time-locked. No
 administrator may mint beyond the cap.
 
-The builder/protocol treasury exists at genesis but is linearly spendable over
-ten years according to bounded block time, with no cliff and no administrator
-override. Intelligence-mining supply does not unlock with ordinary blocks or
+The v4/v5 founder and protocol treasury balances exist at separate addresses at
+genesis. The founder can spend 1 percent of total supply immediately; its
+remaining 6 percent vests over ten years. V5 makes 0.1 percent of total supply
+in the protocol treasury immediately spendable for a possible future tester
+program, not an automatic or promised payout. Its remaining 4.9 percent vests
+over ten years. V4 keeps the entire treasury
+on its original linear schedule. These schedules follow bounded block time,
+with no administrator override.
+V3 retains ten-year linear vesting for both addresses. Legacy v1/v2
+chains keep the combined 12% treasury under their original signed genesis.
+Intelligence-mining supply does not unlock with ordinary blocks or
 elapsed time. The first accepted progress epoch has a 50 NIR budget; after each
 210,000 rewarded epochs the budget is divided by two. Empty blocks neither mint
 currency nor advance the reduction counter. Rewarded blocks must be separated
