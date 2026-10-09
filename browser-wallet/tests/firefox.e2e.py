@@ -85,8 +85,14 @@ def create_wallet(browser):
     second_address = browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent")
     assert second_address != address
     click(browser, "#nav-settings")
-    click(browser, "#lock-wallet")
+    click(browser, "#show-phrase-form")
+    fill(browser, "#reveal-form [name=password]", PASSWORD)
+    click(browser, "#reveal-form button[type=submit]")
+    visible(browser, "#reveal-result")
+    assert len(browser.find_elements(By.CSS_SELECTOR, "#reveal-grid span")) == 24
+    browser.execute_script("window.dispatchEvent(new Event('blur'))")
     visible(browser, "#unlock")
+    assert len(browser.find_elements(By.CSS_SELECTOR, "#reveal-grid span")) == 0
     browser.refresh()
     visible(browser, "#unlock")
     fill(browser, "#unlock-form [name=password]", "wrong password 123")
@@ -105,6 +111,10 @@ def restore_on_clean_device(browser, words, expected_address, expected_second_ad
     wallet_tab(browser)
     visible(browser, "#welcome")
     click(browser, "#start-restore")
+    fill(browser, "#restore-form [name=phrase]", "sensitive words must not persist")
+    click(browser, "#restore [data-back=welcome]")
+    click(browser, "#start-restore")
+    assert browser.find_element(By.CSS_SELECTOR, "#restore-form [name=phrase]").get_attribute("value") == ""
     fill(browser, "#restore-form [name=phrase]", " ".join(words))
     fill(browser, "#restore-form [name=password]", NEW_PASSWORD)
     fill(browser, "#restore-form [name=confirmation]", NEW_PASSWORD)

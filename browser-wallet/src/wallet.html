@@ -27,6 +27,7 @@
 
     <section id="backup" hidden>
       <h1>Сохраните 24 слова</h1><p>Запишите их по порядку и храните отдельно. Любой, кто знает эту фразу, сможет управлять кошельком. Мы не сможем её восстановить.</p>
+      <p class="warning">Если вы переключитесь на другое окно или не будете действовать 5 минут, фраза исчезнет. Создание придётся начать заново.</p>
       <div class="phrase-grid" id="phrase-grid"></div>
       <button class="secondary" id="copy-phrase">Скопировать фразу</button>
       <button class="primary" id="backup-next">Я сохранил слова</button>
@@ -35,12 +36,14 @@
     <section id="confirm" hidden>
       <button class="back" data-back="backup">← Назад</button>
       <h1>Проверьте фразу</h1><p>Введите указанные слова, чтобы убедиться, что вы сохранили их верно.</p>
+      <p class="warning">При переключении окна или после 5 минут бездействия проверка начнётся заново.</p>
       <form id="confirm-form"><div id="confirm-fields"></div><button class="primary" type="submit">Создать кошелёк</button></form>
     </section>
 
     <section id="restore" hidden>
       <button class="back" data-back="welcome">← Назад</button>
       <h1>Восстановить кошелёк</h1><p>Введите 24 слова в правильном порядке. На этом устройстве задайте новый пароль.</p>
+      <p class="warning">При переключении окна или после 5 минут бездействия введённые слова очистятся.</p>
       <p>После восстановления будут доступны первые 16 адресов этой фразы. Выберите нужный в списке адресов.</p>
       <form id="restore-form"><label>Секретная фраза<textarea name="phrase" rows="5" autocapitalize="off" spellcheck="false" autocomplete="off" required></textarea></label><label>Новый пароль<input name="password" type="password" autocomplete="new-password" minlength="12" required></label><label>Повторите пароль<input name="confirmation" type="password" autocomplete="new-password" minlength="12" required></label><button class="primary" type="submit">Восстановить</button></form>
     </section>

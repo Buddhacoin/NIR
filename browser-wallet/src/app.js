@@ -1,4 +1,5 @@
 import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from "./crypto.js";
+import { createSessionGuard, reloadAfterPendingWrite } from "./session-guard.js";
 
 const STORE_KEY = "nirTestWallet";
 const extensionApi = globalThis.browser ?? globalThis.chrome;
@@ -10,8 +11,40 @@ let accountCount = 1;
 let selectedIndex = 0;
 let busy = false;
 let revealed = null;
+let sessionGeneration = 0;
+let sessionExpired = false;
+let profileWrite = null;
+
+function assertSession(generation) {
+  if (sessionExpired || generation !== sessionGeneration) throw new Error("Сеанс кошелька завершён");
+}
+
+function clearSensitiveFields() {
+  phrase = null;
+  pending = null;
+  revealed = null;
+  for (const form of document.querySelectorAll("form")) form.reset();
+  for (const selector of ["#phrase-grid", "#confirm-fields", "#reveal-grid", "#account-list"]) {
+    $(selector).replaceChildren();
+  }
+  for (const selector of ["#full-address", "#short-address"]) $(selector).textContent = "";
+  $("#reveal-result").hidden = true;
+}
+
+function expireSession() {
+  if (sessionExpired) return;
+  sessionExpired = true;
+  sessionGeneration++;
+  clearSensitiveFields();
+  screen(profile ? "unlock" : "welcome");
+  // Storage writes cannot be cancelled. Keep the UI locked, then reload from
+  // the committed encrypted profile rather than racing an in-flight write.
+  void reloadAfterPendingWrite(profileWrite, () => window.location.reload());
+}
 
 function screen(name) {
+  if (sessionExpired && name !== "unlock" && name !== "welcome") return;
+  if (name !== "restore") $("#restore-form").reset();
   for (const section of document.querySelectorAll("main > section")) section.hidden = section.id !== name;
   $("#status").textContent = "";
   $("#status").classList.remove("ok");
@@ -45,16 +78,26 @@ function shortAddress(address) { return `${address.slice(0, 10)}…${address.sli
 
 async function currentAccount() {
   if (!phrase) throw new Error("Кошелёк заблокирован");
-  return accountFromPhrase(phrase, selectedIndex);
+  const generation = sessionGeneration;
+  const account = await accountFromPhrase(phrase, selectedIndex);
+  assertSession(generation);
+  return account;
 }
 
 async function saveProfile(next) {
-  await extensionApi.storage.local.set({ [STORE_KEY]: next });
+  const generation = sessionGeneration;
+  const write = extensionApi.storage.local.set({ [STORE_KEY]: next });
+  profileWrite = write;
+  try { await write; }
+  finally { if (profileWrite === write) profileWrite = null; }
+  assertSession(generation);
   profile = next;
 }
 
 async function renderHome() {
+  const generation = sessionGeneration;
   const account = await currentAccount();
+  assertSession(generation);
   $("#account-label").textContent = `Адрес ${selectedIndex + 1}`;
   $("#short-address").textContent = shortAddress(account.address);
   $("#full-address").textContent = account.address;
@@ -62,20 +105,22 @@ async function renderHome() {
 }
 
 async function renderAccounts() {
+  const generation = sessionGeneration;
   const rows = [];
   for (let index = 0; index < accountCount; index++) {
     const account = await accountFromPhrase(phrase, index);
+    assertSession(generation);
     const button = document.createElement("button");
     const title = document.createElement("strong");
     title.textContent = `Адрес ${index + 1}${index === selectedIndex ? " ✓" : ""}`;
     const detail = document.createElement("small");
     detail.textContent = shortAddress(account.address);
     button.append(title, detail);
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => run(async () => {
       selectedIndex = index;
       await saveProfile({ ...profile, selectedIndex });
       await renderHome();
-    });
+    }));
     rows.push(button);
   }
   $("#account-list").replaceChildren(...rows);
@@ -84,15 +129,20 @@ async function renderAccounts() {
 }
 
 async function copy(value, label) {
+  const generation = sessionGeneration;
   await navigator.clipboard.writeText(value);
+  assertSession(generation);
   status(`${label} скопирован. Очистите буфер обмена после использования.`, true);
 }
 
 async function run(action) {
-  if (busy) return;
+  if (busy || sessionExpired) return;
+  const generation = sessionGeneration;
   busy = true;
-  try { await action(); }
-  catch (error) { status(error instanceof Error ? error.message : "Не удалось выполнить действие"); }
+  try { await action(() => assertSession(generation)); assertSession(generation); }
+  catch (error) {
+    if (!sessionExpired) status(error instanceof Error ? error.message : "Не удалось выполнить действие");
+  }
   finally { busy = false; }
 }
 
@@ -105,17 +155,25 @@ function credentials(form) {
 $("#start-create").addEventListener("click", () => screen("create"));
 $("#start-restore").addEventListener("click", () => screen("restore"));
 for (const button of document.querySelectorAll("[data-back]")) {
-  button.addEventListener("click", () => screen(button.dataset.back));
+  button.addEventListener("click", () => {
+    if (busy) {
+      status("Подождите завершения текущего действия");
+      return;
+    }
+    screen(button.dataset.back);
+  });
 }
 
 $("#create-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  run(async () => {
+  run(async (assertCurrent) => {
     if (profile) throw new Error("На этом устройстве уже есть кошелёк");
     const password = credentials(form);
     const createdPhrase = await createPhrase();
+    assertCurrent();
     const record = await encryptPhrase(createdPhrase, password);
+    assertCurrent();
     pending = { phrase: createdPhrase, record };
     form.reset();
     phraseGrid($("#phrase-grid"), createdPhrase);
@@ -148,7 +206,7 @@ $("#backup-next").addEventListener("click", () => {
 $("#confirm-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  run(async () => {
+  run(async (assertCurrent) => {
     if (!pending || profile) throw new Error("Создание кошелька прервано");
     const words = pending.phrase.split(" ");
     for (const position of [3, 11, 19]) {
@@ -157,6 +215,7 @@ $("#confirm-form").addEventListener("submit", (event) => {
       }
     }
     await saveProfile({ vault: pending.record, accountCount: 1, selectedIndex: 0 });
+    assertCurrent();
     phrase = pending.phrase;
     pending = null;
     $("#phrase-grid").replaceChildren();
@@ -168,19 +227,23 @@ $("#confirm-form").addEventListener("submit", (event) => {
 $("#restore-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  run(async () => {
+  run(async (assertCurrent) => {
     const password = credentials(form);
     const record = await encryptPhrase(form.elements.phrase.value, password);
+    assertCurrent();
     if (profile && profile.vault.address !== record.address) {
       throw new Error("Это фраза другого кошелька. Существующий кошелёк не заменён.");
     }
-    phrase = await decryptPhrase(record, password);
+    const restoredPhrase = await decryptPhrase(record, password);
+    assertCurrent();
+    phrase = restoredPhrase;
     // A phrase reproduces all first 16 addresses, but the old device's
     // accountCount is not part of the phrase. Expose them all on clean restore
     // so an existing secondary address cannot appear to be lost.
     accountCount = profile?.accountCount ?? 16;
     selectedIndex = profile?.selectedIndex ?? 0;
     await saveProfile({ vault: record, accountCount, selectedIndex });
+    assertCurrent();
     form.reset();
     await renderHome();
   });
@@ -189,9 +252,11 @@ $("#restore-form").addEventListener("submit", (event) => {
 $("#unlock-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  run(async () => {
+  run(async (assertCurrent) => {
     if (!profile) throw new Error("На устройстве нет кошелька");
-    phrase = await decryptPhrase(profile.vault, form.elements.password.value);
+    const unlockedPhrase = await decryptPhrase(profile.vault, form.elements.password.value);
+    assertCurrent();
+    phrase = unlockedPhrase;
     accountCount = profile.accountCount;
     selectedIndex = profile.selectedIndex;
     form.reset();
@@ -214,18 +279,15 @@ $("#copy-full-address").addEventListener("click", () => run(async () => copy((aw
 $("#nav-home").addEventListener("click", () => screen("home"));
 $("#nav-settings").addEventListener("click", () => screen("settings"));
 $("#show-phrase-form").addEventListener("click", () => screen("reveal"));
-$("#lock-wallet").addEventListener("click", () => {
-  phrase = null;
-  pending = null;
-  hideRevealed();
-  screen("unlock");
-});
+$("#lock-wallet").addEventListener("click", expireSession);
 
 $("#reveal-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  run(async () => {
-    revealed = await decryptPhrase(profile.vault, form.elements.password.value);
+  run(async (assertCurrent) => {
+    const revealedPhrase = await decryptPhrase(profile.vault, form.elements.password.value);
+    assertCurrent();
+    revealed = revealedPhrase;
     form.reset();
     phraseGrid($("#reveal-grid"), revealed);
     $("#reveal-result").hidden = false;
@@ -253,3 +315,19 @@ if (stored !== undefined) {
     screen("unlock");
   }
 } else screen("welcome");
+
+const sessionGuard = createSessionGuard({ idleMs: 5 * 60_000, onLock: expireSession });
+for (const name of ["pointerdown", "keydown"]) {
+  window.addEventListener(name, (event) => {
+    if (event.isTrusted && !sessionGuard.activity()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+}
+window.addEventListener("blur", () => sessionGuard.background());
+window.addEventListener("focus", () => sessionGuard.resume());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) sessionGuard.background();
+  else sessionGuard.resume();
+});
