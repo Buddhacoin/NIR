@@ -7,9 +7,16 @@ Operator launch gates, commands, artifacts, machine-verifiable evidence, and
 external manual criteria are indexed in
 [`docs/public-testnet-gates.md`](docs/public-testnet-gates.md).
 
-Security reports may be opened as private GitHub security advisories once the
-repository is public. Do not include private keys, seed material, personal data,
-or an exploit against a live third-party system in a public issue.
+Report a suspected NIR vulnerability through
+[private GitHub security advisories](https://github.com/Buddhacoin/NIR/security/advisories/new),
+not a public issue or a wallet/mining feedback form. If that private channel is
+unavailable, do not post exploit details publicly; use the
+[private security contact request form](.github/ISSUE_TEMPLATE/security-contact.yml)
+only to request another private channel. Share minimum reproducible evidence
+only through that private channel, and never include private keys, vault or
+backup files, passwords,
+recovery codes, pairing/session tokens, personal data, or third-party secrets.
+Do not test an exploit against a live third-party system.
 
 ## Security properties implemented
 
