@@ -113,6 +113,10 @@ that the local rules executed. The wallets and balances vanish when the command
 ends. Nothing was downloaded from a job service and nothing was submitted to a
 public network.
 
+This new local example uses the v5 genesis rules and shows **44 test NIR** in
+escrow. Earlier valueless test-chain reward blocks made under the discarded
+rule will not replay in this pre-launch version.
+
 To verify the code paths rather than trust one successful printout:
 
 ```bash

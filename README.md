@@ -261,6 +261,8 @@ dependency order and measurable exit conditions are defined by the
    ```
 
    This is a local simulation with test units, not a public mining connection.
+   Every local genesis format now uses the 44 NIR first-epoch budget. Earlier
+   test-chain reward blocks made under the discarded rule are incompatible.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),
@@ -394,12 +396,13 @@ vulnerabilities cannot become a minting strategy.
 - Founder: **7%** (1% of total supply available at genesis, 6% vesting over ten
   years); separate protocol treasury: **5%** (0.1% of total supply available at
   genesis, 4.9% vesting). These v5 rules require a new signed genesis.
-- In a v5 genesis, a successful intelligence epoch starts at 44 NIR and its
+- Under the current rule, a successful intelligence epoch starts at 44 NIR and its
   budget is cut in half after every 210,000 rewarded epochs. Empty blocks issue nothing and do
   not advance this counter. Rewarded blocks must be at least ten minutes apart,
   and the hard cap always wins. Atomic-unit rounding leaves 0.0189 NIR of the
   mining pool unissued even if every possible epoch is rewarded.
-  Older v1-v4 genesis plans retain the original 50 NIR schedule for replay.
+  Earlier local test-chain reward blocks made under the discarded rule are
+  incompatible and must not be reused for a launch.
 - Holding NIR does not automatically grant protocol governance power.
 
 The genesis allocation is assigned to explicit post-quantum NIR addresses. The

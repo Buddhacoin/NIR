@@ -47,7 +47,7 @@ import {
   FOUNDER_IMMEDIATE_ALLOCATION,
   FOUNDER_IMMEDIATE_BPS,
   FOUNDER_VESTED_ALLOCATION,
-  INITIAL_EPOCH_REWARD as V5_INITIAL_EPOCH_REWARD,
+  INITIAL_EPOCH_REWARD,
   PROTOCOL_TREASURY_ALLOCATION,
   PROTOCOL_TREASURY_VESTED_ALLOCATION,
   TESTER_REWARD_RESERVE_ALLOCATION,
@@ -62,7 +62,6 @@ import {
   MIN_TRANSFER_FEE,
   MAX_SUPPLY,
   MAX_TRANSACTIONS_PER_BLOCK,
-  LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_ALLOCATION,
   TREASURY_VESTING_MS,
@@ -470,7 +469,7 @@ test("fresh genesis can reach its first reward with the committed evaluator bond
   assert.equal(chain.balance(miner.address), 0n);
   assert.equal(chain.capabilityMemoryRoot, memoryRootBefore);
   advanceEmptyBlocks(chain, validators, 1);
-  assert.equal(formatNir(chain.balance(miner.address)), "50.00000000 NIR");
+  assert.equal(formatNir(chain.balance(miner.address)), "44.00000000 NIR");
   assert.equal(chain.balance(treasury.address), sponsorBalanceBefore);
   assert.notEqual(chain.capabilityMemoryRoot, memoryRootBefore);
   assert.equal(
@@ -479,7 +478,7 @@ test("fresh genesis can reach its first reward with the committed evaluator bond
   );
 });
 
-test("legacy 50 NIR and v5 44 NIR reward blocks replay under their genesis", () => {
+test("all local genesis formats use the same 44 NIR reward schedule", () => {
   const base = fixture();
   const founder = generateWallet();
   const cases = [
@@ -493,7 +492,7 @@ test("legacy 50 NIR and v5 44 NIR reward blocks replay under their genesis", () 
       founderAddress: founder.address,
       founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
       treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
-    }, reward: V5_INITIAL_EPOCH_REWARD, label: "v5-replay" },
+    }, reward: INITIAL_EPOCH_REWARD, label: "v5-replay" },
   ];
   for (const { genesis, reward, label } of cases) {
     const chain = new NirChain(genesis);
@@ -505,6 +504,13 @@ test("legacy 50 NIR and v5 44 NIR reward blocks replay under their genesis", () 
     const proposal = chain.buildBlock({ rewardClaims: [claim], timestamp: currentTimestamp(chain) });
     const finalized = finalizeBlock(proposal, quorumFor(proposal, base.validators));
     assert.equal(BigInt(finalized.progressRewards[0].amount), reward);
+    const formerReward = structuredClone(proposal);
+    formerReward.progressRewards[0].amount = (50n * 100_000_000n).toString();
+    const rejectingChain = new NirChain(genesis);
+    for (const prior of chain.blocks().slice(1)) rejectingChain.appendBlock(prior);
+    assert.throws(() => rejectingChain.appendBlock(
+      finalizeBlock(formerReward, quorumFor(formerReward, base.validators))),
+    /invalid progress reward allocation/);
     const replayed = new NirChain(genesis);
     for (const prior of chain.blocks().slice(1)) replayed.appendBlock(prior);
     replayed.appendBlock(finalized);
