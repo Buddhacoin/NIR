@@ -28,6 +28,16 @@ test("wallet navigation has five interactive destinations", () => {
   assert.match(script, /aria-current/);
 });
 
+test("local Mac wallet exposes recovery phrase in settings without a browser secret field", () => {
+  const settings = html.split('id="settings-panel"')[1].split('</dialog>')[0];
+  assert.match(settings, /id="settings-reveal-phrase"/);
+  assert.doesNotMatch(settings, /type="password"|name="phrase"|id="recovery-phrase"/);
+  assert.match(script, /#settings-reveal-phrase/);
+  assert.match(script, /local-app.*=== "1"/);
+  assert.match(script, /bridgeRequest\("\/v1\/reveal-recovery-phrase", \{ method: "POST", body: "\{\}" \}/);
+  assert.doesNotMatch(script, /result\.phrase|response\.phrase/);
+});
+
 test("wallet selects separate vault copies by opaque ID, including one shared address", () => {
   for (const id of ["account-open", "accounts-panel", "account-list", "add-account"]) {
     assert.match(html, new RegExp(`id="${id}"`));
