@@ -28,6 +28,70 @@ test("wallet navigation has five interactive destinations", () => {
   assert.match(script, /aria-current/);
 });
 
+test("wallet selects separate vault copies by opaque ID, including one shared address", () => {
+  for (const id of ["account-open", "accounts-panel", "account-list", "add-account"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /bridgeRequest\("\/v1\/accounts"\)/);
+  assert.match(script, /bridgeRequest\("\/v1\/select-account"/);
+  assert.match(script, /JSON\.stringify\(\{ id \}\)/);
+  assert.match(script, /account\.id === activeId/);
+  assert.match(script, /resetAccountView/);
+  assert.match(script, /canCreate !== true/);
+  assert.match(bridgeCli, /listLocalTestWallets\(dirname\(dirname\(selectedVaultPath\)\)\)/);
+  assert.match(bridgeCli, /!productionMode && basename\(dirname\(selectedVaultPath\)\) === "Wallets"/);
+  assert.doesNotMatch(html.split('id="accounts-panel"')[1].split('</dialog>')[0], /\.nirvault\.json/);
+});
+
+test("asset proof refresh discards old-wallet responses before touching account state", () => {
+  assert.match(script, /async function refreshAssets\(\) \{\s*const epoch = accountEpoch;/);
+  assert.match(script, /const account = await readAccount\(\);\s*if \(!isCurrent\(\)\) return;/);
+  assert.match(script, /statements\.push\(await verifyAssetState\(assetId, address\)\);\s*if \(!isCurrent\(\)\) return;/);
+  assert.match(script, /\} catch \(error\) \{\s*if \(!isCurrent\(\)\) return;/);
+  assert.match(script.split('const verified = await bridgeRequest("/v1/verify-asset-proof"')[1]
+    .split("const statement = checkedAssetStatement")[0], /assertCurrent\(\);/);
+});
+
+test("delayed asset refresh cannot restore prior-account assets after switching vaults", async () => {
+  const source = script.slice(script.indexOf("async function refreshAssets()"),
+    script.indexOf("async function openAssets()"));
+  const assetId = "a".repeat(64);
+  const list = { children: [], replaceChildren(...children) { this.children = children; } };
+  const checkpoint = { dataset: {}, textContent: "" };
+  const knownAssetIds = new Set();
+  let resolveProof;
+  let rendered = 0;
+  const context = {
+    accountEpoch: 0, walletInfo: { address: `nir1${"b".repeat(64)}` },
+    assetsStatus: { textContent: "" }, knownAssetIds,
+    document: {
+      createElement: () => ({ className: "", textContent: "" }),
+      querySelector: (selector) => selector === "#asset-list" ? list : checkpoint,
+    },
+    readAccount: async () => ({ proofVerified: true, proofHeight: 1,
+      proofStateRoot: "c".repeat(64) }),
+    assetIdsFromVerifiedHistory: () => [assetId],
+    verifyAssetState: () => new Promise((resolve) => { resolveProof = resolve; }),
+    renderVerifiedAssets: () => { rendered += 1; },
+    networkInfo: { networkId: "test", height: 1 },
+  };
+  runInNewContext(`${source}\nglobalThis.refreshAssets = refreshAssets;`, context);
+  const pending = context.refreshAssets();
+  for (let attempt = 0; attempt < 10 && !resolveProof; attempt++) await Promise.resolve();
+  assert.equal(typeof resolveProof, "function");
+  context.accountEpoch += 1;
+  context.walletInfo = { address: `nir1${"d".repeat(64)}` };
+  knownAssetIds.clear();
+  list.replaceChildren();
+  checkpoint.dataset.state = "stale";
+  resolveProof({ asset: null, height: 1, stateRoot: "c".repeat(64), networkId: "test" });
+  await pending;
+  assert.equal(knownAssetIds.size, 0);
+  assert.equal(rendered, 0);
+  assert.equal(list.children.length, 0);
+  assert.equal(checkpoint.dataset.state, "stale");
+});
+
 test("visible secondary controls have actions", () => {
   assert.match(html, /class="network" data-action="network"/);
   assert.match(html, /data-action="history">Все/);
@@ -57,13 +121,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=31/);
-  assert.match(serviceWorker, /style\.css\?v=31/);
+  assert.match(html, /style\.css\?v=32/);
+  assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=34/);
-  assert.match(serviceWorker, /app\.js\?v=34/);
-  assert.match(serviceWorker, /nir-wallet-shell-v36/);
+  assert.match(html, /app\.js\?v=36/);
+  assert.match(serviceWorker, /app\.js\?v=36/);
+  assert.match(serviceWorker, /nir-wallet-shell-v38/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);

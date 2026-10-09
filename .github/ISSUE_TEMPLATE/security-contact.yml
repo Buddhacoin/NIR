@@ -1,0 +1,25 @@
+name: Private security contact request
+description: Use only if GitHub private security advisories are unavailable. Do not report the vulnerability here.
+title: "[Private security contact] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue is PUBLIC. First try the [private security advisory](https://github.com/Buddhacoin/NIR/security/advisories/new). If that channel is unavailable, use this form only to ask the maintainers for another private reporting channel. Do not describe the vulnerability, affected code, reproduction steps, exploit, impact, or proof of concept here. Never include keys, passwords, recovery codes, wallet files, logs, personal data, or third-party secrets.
+  - type: dropdown
+    id: advisory-blocker
+    attributes:
+      label: Why could you not use the private advisory?
+      options:
+        - The private advisory page is unavailable to me
+        - The private advisory submission failed
+        - Another access problem (do not describe the vulnerability)
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting
+      options:
+        - label: This public issue contains only a request for a private contact channel; it contains no vulnerability details, exploit, secrets, or personal data.
+          required: true

@@ -9,6 +9,28 @@ It does not synchronize a chain, broadcast transactions, display a live balance,
 use QR codes, or protect keys with a hardware device. It must not custody assets
 of real value.
 
+## Personal local-test recovery primitives
+
+The repository also contains a library for creating distinct local-test wallet
+addresses with separate encrypted backups and recovery codes. It verifies each
+backup by restoring it into a temporary file before reporting success. This is
+not yet a downloadable wallet app, a cloud account, or a public mining address.
+The personal-wallet creation policy accepts at least 12 characters; the default
+high-value vault creation policy remains at least 16 characters.
+
+The initial backup is stored in a separate folder on the **same Mac**, so it
+does not protect against loss of that computer. Copy the backup to independent
+offline storage and keep its recovery code separately. Creating a new backup
+and code does **not** revoke older pairs: anyone with an old backup and its code
+can still restore the same private key. If such a pair may be compromised, only
+a new key/address and transfer of any future real-value funds can replace it.
+If backup creation or its recovery drill fails after the wallet file exists, the
+library reports a partial-creation error with the public address and exact wallet
+file path. Keep that file, open it with the same password, and create and verify
+a new backup before using the address. Restoring into a new file with a new
+password keeps both copies selectable; a shared address does not make their
+passwords interchangeable.
+
 ```bash
 npm run wallet:create -- /absolute/path/personal.nirvault.json
 npm run wallet:address -- /absolute/path/personal.nirvault.json

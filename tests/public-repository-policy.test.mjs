@@ -51,3 +51,13 @@ test("public contribution policy requires protocol and secret-safety evidence", 
   assert.match(contributing, /author is not the sole evidence source/u);
   assert.match(security, /private GitHub security advisories/u);
 });
+
+test("security-reporting fallback is a public contact request without exploit details", () => {
+  const form = read(".github/ISSUE_TEMPLATE/security-contact.yml");
+  const config = read(".github/ISSUE_TEMPLATE/config.yml");
+  assert.match(security, /\.github\/ISSUE_TEMPLATE\/security-contact\.yml/u);
+  assert.match(form, /This issue is PUBLIC/u);
+  assert.match(form, /Do not describe the vulnerability/u);
+  assert.match(form, /no vulnerability details, exploit, secrets, or personal data/u);
+  assert.match(config, /security\/advisories\/new/u);
+});
