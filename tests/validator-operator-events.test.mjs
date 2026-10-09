@@ -55,6 +55,10 @@ test("local operator event survives restart, enters an event-only proposal, and 
     assert.deepEqual(replica.stageOperatorEvents(events), { expectedHeight: 1, status: "known" });
     replica.closeSecurityState();
     replica = null;
+    // Simulate a crash after lock publication but before graceful release.
+    const ownerLock = join(directory, ".operator-event-owner", ".nir-writer-lock");
+    writeFileSync(ownerLock, JSON.stringify({ format: "nir-data-directory-lock-v1",
+      pid: 2_147_483_647, startedAt: 1, token: "d".repeat(64) }), { mode: 0o600 });
     competing = new ValidatorReplica(directory);
     assert.deepEqual(competing.pendingOperatorEvents.events.epochRandomnessCommits, [commit]);
     competing.closeSecurityState();
