@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { allocateProgressRewards } from "../blockchain/chain.mjs";
+import { allocateProgressRewards as allocateRewards } from "../blockchain/chain.mjs";
 import {
   ATOMIC_UNITS,
   HALVING_INTERVAL,
@@ -12,8 +12,16 @@ import {
   MAX_SUPPLY,
   MINING_POOL,
   TREASURY_ALLOCATION,
-  scheduledEpochBudget,
+  scheduledEpochBudget as budgetFor,
 } from "../blockchain/constants.mjs";
+
+function scheduledEpochBudget(epoch, initialReward = INITIAL_EPOCH_REWARD) {
+  return budgetFor(epoch, initialReward);
+}
+
+function allocateProgressRewards(epoch, claims, remaining = MINING_POOL) {
+  return allocateRewards(epoch, claims, remaining, INITIAL_EPOCH_REWARD);
+}
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -213,4 +221,13 @@ test("legacy 50 NIR schedule still exhausts the pool in the fourth era", () => {
   assert.equal(fourth, 625_000_000n);
   assert.equal(remaining / fourth, 16_800n);
   assert.equal(remaining % fourth, 0n);
+});
+
+test("exported emission helpers keep the legacy 50 NIR default", () => {
+  const claim = coalitionClaims(0, 1, 1, "legacy-default");
+  assert.equal(budgetFor(0), LEGACY_INITIAL_EPOCH_REWARD);
+  assert.equal(sumRewards(allocateRewards(0, claim)), LEGACY_INITIAL_EPOCH_REWARD);
+  assert.equal(budgetFor(0, INITIAL_EPOCH_REWARD), INITIAL_EPOCH_REWARD);
+  assert.equal(sumRewards(allocateRewards(0, claim, MINING_POOL, INITIAL_EPOCH_REWARD)),
+    INITIAL_EPOCH_REWARD);
 });

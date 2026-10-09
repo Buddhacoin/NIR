@@ -1378,7 +1378,7 @@ export function finalizeValidatorRecoveryBlock(block, reserveSigners, plan, {
 }
 
 export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL,
-  initialReward = INITIAL_EPOCH_REWARD) {
+  initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
   if (!Array.isArray(claims) || claims.length === 0) return [];
   if (claims.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
     throw new Error("too many progress rewards in one block");
