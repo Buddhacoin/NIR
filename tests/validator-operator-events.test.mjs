@@ -136,6 +136,56 @@ test("snapshot installation immediately prunes a height-bound operator queue", (
   }
 });
 
+for (const includedAtPrunedHeight of [true, false]) test(includedAtPrunedHeight
+  ? "snapshot catch-up does not falsely expire a staged event included in pruned history"
+  : "snapshot catch-up leaves an absent event unverified when history is pruned", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-operator-snapshot-outcome-"));
+  const beacons = Array.from({ length: 4 }, generateWallet);
+  const layout = initializeDistributedDevnet(join(temporary, "network"), { beaconWallets: beacons });
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  try {
+    const genesis = JSON.parse(readFileSync(join(layout.validatorDirectories[0], "genesis.json")));
+    const chain = new NirChain(genesis);
+    const status = chain.epochRandomnessStatus();
+    const commit = createEpochRandomnessCommit({
+      wallet: beacons.find(({ address }) => address === status.committee[0]),
+      networkId: chain.networkId, round: status.round, secret: "e".repeat(64),
+    });
+    replicas[3].stageOperatorEvents({ epochRandomnessCommits: [commit] });
+    const validators = layout.validatorDirectories.map((directory) =>
+      JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"))));
+    const first = finalizeBlock(chain.buildBlock({
+      ...(includedAtPrunedHeight ? { epochRandomnessCommits: [commit] } : {}),
+      transactions: [], timestamp: Date.now(),
+    }), validators);
+    chain.appendBlock(first);
+    const second = finalizeBlock(chain.buildBlock({ transactions: [], timestamp: Date.now() }),
+      validators);
+    for (const replica of replicas.slice(0, 3)) {
+      replica.commit(first);
+      replica.commit(second);
+    }
+    const installed = replicas[3].installStateSnapshotCandidates(
+      replicas.slice(0, 3).map((replica) => replica.stateSnapshotCandidate()));
+    assert.equal(installed.height, 2);
+    const outcome = replicas[3].localOperatorEventStatus;
+    assert.equal(outcome.status, "unknown");
+    assert.equal(outcome.action, "verification-required");
+    assert.equal(outcome.finalizedBlockHash, null);
+    assert.equal(outcome.entries.epochRandomnessCommits[0].status, "unknown");
+    assert.equal(replicas[3].pendingOperatorEvents, null);
+    const retry = replicas[3].stageOperatorEvents({ epochRandomnessCommits: [commit] });
+    assert.equal(retry.status, "unknown");
+    assert.equal(retry.action, "verification-required");
+    replicas[3].closeSecurityState();
+    replicas[3] = new ValidatorReplica(layout.validatorDirectories[3]);
+    assert.deepEqual(replicas[3].localOperatorEventStatus, outcome);
+  } finally {
+    replicas.forEach((replica) => replica.closeSecurityState());
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 for (const extraFinalizedEntry of [true, false]) test(extraFinalizedEntry
   ? "operator receipt recognizes staged event inside a larger finalized event list"
   : "operator receipt records partial inclusion per event and rejects expired retry", () => {

@@ -158,9 +158,19 @@ function operatorEventEntryOutcomes(staged, finalized) {
       const key = canonicalJson(entry);
       const included = (available.get(key) ?? 0) > 0;
       if (included) available.set(key, available.get(key) - 1);
-      return { digest: operatorEventEntryDigest(type, entry), status: included ? "included" : "expired" };
+      return { digest: operatorEventEntryDigest(type, entry),
+        status: fields === null ? "unknown" : included ? "included" : "expired" };
     })];
   }));
+}
+
+function operatorEventSummary(entries) {
+  const statuses = Object.values(entries).flat().map(({ status }) => status);
+  if (statuses.length === 0) throw new Error("operator event outcome is empty");
+  if (statuses.includes("unknown")) return "unknown";
+  if (statuses.every((status) => status === "included")) return "included";
+  if (statuses.every((status) => status === "expired")) return "expired";
+  return "partial";
 }
 
 function readOperatorEventOutcome(path, networkId) {
@@ -171,9 +181,11 @@ function readOperatorEventOutcome(path, networkId) {
   if (!["nir-local-operator-event-outcome-v1", "nir-local-operator-event-outcome-v2"]
     .includes(outcome?.format) ||
       outcome.networkId !== networkId ||
-      !["included", "expired", "partial"].includes(outcome.status) ||
-      (outcome.format === "nir-local-operator-event-outcome-v1" && outcome.status === "partial") ||
-      outcome.action !== (outcome.status === "included" ? "none" : "re-evaluation-required") ||
+      !["included", "expired", "partial", "unknown"].includes(outcome.status) ||
+      (outcome.format === "nir-local-operator-event-outcome-v1" &&
+        !["included", "expired"].includes(outcome.status)) ||
+      outcome.action !== (outcome.status === "included" ? "none"
+        : outcome.status === "unknown" ? "verification-required" : "re-evaluation-required") ||
       !/^[0-9a-f]{64}$/.test(outcome.eventDigest ?? "") ||
       !Number.isSafeInteger(outcome.expectedHeight) || outcome.expectedHeight < 1 ||
       !Number.isSafeInteger(outcome.observedHeight) ||
@@ -196,13 +208,11 @@ function readOperatorEventOutcome(path, networkId) {
           outcome.entries[type].some((entry) =>
             Object.keys(entry ?? {}).sort().join("\0") !== "digest\0status" ||
             !/^[0-9a-f]{64}$/.test(entry.digest ?? "") ||
-            !["included", "expired"].includes(entry.status)))) {
+            !["included", "expired", "unknown"].includes(entry.status)))) {
       throw new Error("local operator event outcome entries are invalid");
     }
-    const statuses = Object.values(outcome.entries).flat().map(({ status }) => status);
-    const aggregate = statuses.every((status) => status === "included") ? "included"
-      : statuses.every((status) => status === "expired") ? "expired" : "partial";
-    if (statuses.length === 0 || outcome.status !== aggregate) {
+    if (outcome.status !== operatorEventSummary(outcome.entries) ||
+        (outcome.status === "unknown") !== (outcome.finalizedBlockHash === null)) {
       throw new Error("local operator event outcome summary is invalid");
     }
   }
@@ -753,11 +763,10 @@ export class ValidatorReplica {
       }
     }
     const entries = operatorEventEntryOutcomes(this.#operatorEvents.events, finalized);
-    const statuses = Object.values(entries).flat().map(({ status }) => status);
-    const status = statuses.every((value) => value === "included") ? "included"
-      : statuses.every((value) => value === "expired") ? "expired" : "partial";
+    const status = operatorEventSummary(entries);
     const outcome = {
-      action: status === "included" ? "none" : "re-evaluation-required",
+      action: status === "included" ? "none"
+        : status === "unknown" ? "verification-required" : "re-evaluation-required",
       entries,
       eventDigest: operatorEventDigest(this.#operatorEvents.events),
       expectedHeight: this.#operatorEvents.expectedHeight,
@@ -807,17 +816,20 @@ export class ValidatorReplica {
   stageOperatorEvents(value) {
     this.#pruneOperatorEvents();
     const events = normalizeOperatorEvents(value);
-    const expired = this.#operatorEventOutcome?.format === "nir-local-operator-event-outcome-v2"
+    const unresolved = this.#operatorEventOutcome?.format === "nir-local-operator-event-outcome-v2"
       ? Object.entries(events).flatMap(([type, entries]) => entries.map((entry) => ({
         type, digest: operatorEventEntryDigest(type, entry),
-      }))).find(({ type, digest }) => this.#operatorEventOutcome.entries[type]
-        .some((result) => result.digest === digest && result.status === "expired"))
+      }))).map(({ type, digest }) => this.#operatorEventOutcome.entries[type]
+        .find((result) => result.digest === digest && result.status !== "included"))
+        .find(Boolean)
       : null;
-    if (expired || (this.#operatorEventOutcome?.status === "expired" &&
+    if (unresolved || (this.#operatorEventOutcome?.status === "expired" &&
         this.#operatorEventOutcome.eventDigest === operatorEventDigest(events))) {
-      return { accepted: false, action: "re-evaluation-required",
+      const status = unresolved?.status ?? "expired";
+      return { accepted: false, action: status === "unknown"
+        ? "verification-required" : "re-evaluation-required",
         eventDigest: operatorEventDigest(events),
-        expectedHeight: this.#operatorEventOutcome.expectedHeight, status: "expired" };
+        expectedHeight: this.#operatorEventOutcome.expectedHeight, status };
     }
     if (this.#operatorEvents !== null) {
       this.#assertOperatorEventsJournal();
