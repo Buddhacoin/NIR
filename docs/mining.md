@@ -50,11 +50,13 @@ delta cannot be rewarded twice, while semantically equivalent but genuinely
 different representations remain an explicit limitation of the bounded
 canonicalizer and evaluator policy.
 
-Current testnet parameters exhaust the 18.48 million NIR mining pool after
-rewarded epoch 646,799 if every earlier epoch is rewarded. There is no reward
-from epoch 646,800 onward under those conditions, although the nominal
-halving era continues. See [the emission schedule](protocol.md#2-monetary-constants) for
-the calculation; mainnet economics are not yet ratified.
+V5 genesis parameters begin at 44 NIR per rewarded epoch, halve every
+210,000 rewarded epochs, and never exceed the 18.48 million NIR mining pool.
+Even if every possible nonzero epoch is rewarded, atomic-unit rounding leaves
+0.01890000 NIR unissued. Legacy v1-v4 plans retain the original 50 NIR
+schedule and can exhaust the pool early in the fourth era.
+See [the emission schedule](protocol.md#2-monetary-constants)
+for the calculation; mainnet economics are not yet ratified.
 
 ### 2. Reproduction operator
 

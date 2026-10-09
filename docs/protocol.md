@@ -28,30 +28,44 @@ from minting currency.
 | Maximum supply | 21,000,000 NIR |
 | Atomic units per NIR | 100,000,000 |
 | Intelligence-mining pool | 18,480,000 NIR (88%) |
-| Builder/protocol treasury | 2,520,000 NIR (12%) |
-| Initial epoch budget | 50 NIR |
+| Founder allocation (v3/v4/v5 genesis) | 1,470,000 NIR (7%) |
+| Protocol treasury (v3/v4/v5 genesis) | 1,050,000 NIR (5%) |
+| Initial epoch budget | 44 NIR |
 | Halving interval | 210,000 epochs |
 
-The treasury allocation is part of the fixed cap and must be time-locked. No
+Both genesis allocations are part of the fixed cap and must be time-locked. No
 administrator may mint beyond the cap.
 
-The builder/protocol treasury exists at genesis but is linearly spendable over
-ten years according to bounded block time, with no cliff and no administrator
-override. Intelligence-mining supply does not unlock with ordinary blocks or
-elapsed time. The first accepted progress epoch has a 50 NIR budget; after each
+The v4/v5 founder and protocol treasury balances exist at separate addresses at
+genesis. The founder can spend 1 percent of total supply immediately; its
+remaining 6 percent vests over ten years. V5 makes 0.1 percent of total supply
+in the protocol treasury immediately spendable for a possible future tester
+program, not an automatic or promised payout. Its remaining 4.9 percent vests
+over ten years. V4 keeps the entire treasury
+on its original linear schedule. These schedules follow bounded block time,
+with no administrator override.
+V3 retains ten-year linear vesting for both addresses. Legacy v1/v2
+chains keep the combined 12% treasury under their original signed genesis.
+Intelligence-mining supply does not unlock with ordinary blocks or
+elapsed time. Under v5, the first accepted progress epoch has a 44 NIR budget; after each
 210,000 rewarded epochs the budget is divided by two. Empty blocks neither mint
 currency nor advance the reduction counter. Rewarded blocks must be separated
 by at least ten minutes, so faster hardware or a fast block producer cannot
 compress the entire issuance schedule into a short interval.
 
-**Current testnet economics are provisional.** The 12% genesis allocation
-leaves an 18.48 million NIR mining pool. At the current 50 NIR / 210,000
-rewarded-epoch schedule, the first three eras spend 18.375 million NIR; only
-105,000 NIR remains. If every eligible epoch is rewarded, the fourth era pays
-6.25 NIR for just 16,800 epochs, and no reward can be issued from epoch
-646,800 onward, despite the nominal fourth era lasting 210,000 epochs. The
-21 million cap is still enforced. Mainnet must separately ratify the emission
-schedule; this implementation does not promise a long multi-era reward tail.
+**Current testnet economics are provisional.** The 12% combined genesis
+allocation leaves an 18.48 million NIR mining pool. For v5 genesis plans,
+the budget starts at 44 NIR and halves every 210,000 rewarded epochs. The sum
+of every nonzero scheduled budget
+is 18,479,999.98110000 NIR. Integer atomic-unit halving leaves 0.01890000 NIR
+unissued; it is not reassigned or silently minted. Empty epochs and insufficient
+verified progress may leave more of the pool unissued. A future real-value
+network must separately ratify its exact genesis and emission rules.
+
+Legacy v1-v4 genesis plans keep their original 50 NIR initial budget and
+replay it unchanged. If every eligible epoch is rewarded, those networks
+exhaust their 18.48 million NIR pool after zero-based epoch 646,799, early
+in the fourth halving era; a v5 plan cannot retroactively change that history.
 
 ## 3. Proof of Intelligence Progress
 
@@ -146,12 +160,15 @@ path but does not make the protocol Sybil-proof: capital can still buy multiple
 samples. Candidate collateral still requires vested or circulating NIR. Evaluator
 eligibility has no circular first-reward dependency: genesis deducts one fixed
 minimum bond per evaluator from the existing treasury allocation and commits the
-locked balances in state and in the public ceremony plan.
+locked balances in state and in the public ceremony plan. That evaluator
+minimum remains 50 NIR independently of the 44 NIR initial reward; changing
+the reward schedule does not reinterpret signed earlier genesis plans.
 
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
-whole reward block is invalid. A lone claim in the first issuance epoch must
-therefore have 50 NIR locked, while several claims may lock their smaller exact
+whole reward block is invalid. A lone claim in the first v5 issuance epoch must
+therefore have 44 NIR locked (50 NIR on legacy plans), while several claims
+may lock their smaller exact
 allocations. The bond and reward remain unavailable through the objective fraud
 window. Full assigned-committee equivocation burns both plus every equivocating
 committee member's entire evaluator bond, disables those keys exactly once, and
@@ -413,10 +430,10 @@ fingerprint. Thus claim order, recipient-key count, and candidate count
 cannot increase the epoch budget. A non-empty rewarded block consumes exactly
 `min(scheduled_epoch_budget, remaining_mining_pool)`; an empty block consumes no
 issuance epoch. The ten-minute consensus interval still applies between
-rewarded blocks, and the 21 million NIR cap truncates the last budget.
-With the current parameters the remaining pool is exactly divisible by the
-fourth-era budget, so exhaustion follows a full reward rather than a partial
-last reward.
+rewarded blocks, and the 21 million NIR cap can truncate a final budget.
+Under a v5 genesis the full halving series approaches but does not exhaust
+the pool because every era uses integer atomic units. Legacy genesis plans
+retain the capped 50 NIR schedule described above.
 
 Consensus additionally caps evaluator-reported positive gain at
 `100 × novelty_bps`, where `novelty_bps` is recomputed from the state-rooted

@@ -120,7 +120,9 @@ test("capacity-neutral full-balance transfer remains possible at the balance-ent
   exported.state.balances = [...balances].sort(([left], [right]) => left.localeCompare(right));
   exported.state.recoveryStateCommitment = base.recoveryStateCommitment;
   const stateRoot = computeChainStateRoot(exported.state);
+  // The synthetic funded state is valid only after the genesis treasury has vested.
   const checkpoint = { ...base.blocks().at(-1), protocolVersion: 25,
+    timestamp: TREASURY_VESTING_MS,
     recoveryStateCommitment: base.recoveryStateCommitment, stateRoot };
   const chain = NirChain.fromVerifiedSnapshot(context.genesis, { capabilityMemory: exported.capabilityMemory,
     checkpoint, height: 0, networkId: base.networkId, state: exported.state,
@@ -129,7 +131,7 @@ test("capacity-neutral full-balance transfer remains possible at the balance-ent
   const recipient = generateWallet();
   const transaction = createNativeAssetTransfer({ amount: "1", assetId,
     networkId: chain.networkId, nonce: 0, recipient: recipient.address, wallet: creator });
-  append(chain, context.validators, [transaction], 1);
+  append(chain, context.validators, [transaction], TREASURY_VESTING_MS + 1);
   assert.equal(chain.nativeAssetBalance(assetId, creator.address), 0n);
   assert.equal(chain.nativeAssetBalance(assetId, recipient.address), 1n);
   assert.equal(chain.consensusSnapshot().state.assetBalances.length, MAX_NATIVE_ASSET_BALANCES);

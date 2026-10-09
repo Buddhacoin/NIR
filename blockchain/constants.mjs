@@ -2,8 +2,29 @@ export const ATOMIC_UNITS = 100_000_000n;
 export const MAX_SUPPLY = 21_000_000n * ATOMIC_UNITS;
 export const TREASURY_BPS = 1_200n;
 export const TREASURY_ALLOCATION = (MAX_SUPPLY * TREASURY_BPS) / 10_000n;
+export const FOUNDER_BPS = 700n;
+export const FOUNDER_ALLOCATION = (MAX_SUPPLY * FOUNDER_BPS) / 10_000n;
+export const FOUNDER_IMMEDIATE_BPS = 100n;
+export const FOUNDER_IMMEDIATE_ALLOCATION =
+  (MAX_SUPPLY * FOUNDER_IMMEDIATE_BPS) / 10_000n;
+export const FOUNDER_VESTED_ALLOCATION =
+  FOUNDER_ALLOCATION - FOUNDER_IMMEDIATE_ALLOCATION;
+export const PROTOCOL_TREASURY_BPS = TREASURY_BPS - FOUNDER_BPS;
+export const PROTOCOL_TREASURY_ALLOCATION = TREASURY_ALLOCATION - FOUNDER_ALLOCATION;
+export const TESTER_REWARD_RESERVE_BPS = 10n;
+export const TESTER_REWARD_RESERVE_ALLOCATION =
+  (MAX_SUPPLY * TESTER_REWARD_RESERVE_BPS) / 10_000n;
+export const PROTOCOL_TREASURY_VESTED_ALLOCATION =
+  PROTOCOL_TREASURY_ALLOCATION - TESTER_REWARD_RESERVE_ALLOCATION;
+export const PROTOCOL_TREASURY_BUDGET_BPS = Object.freeze({
+  development: 200,
+  security: 150,
+  grants: 100,
+  reserve: 50,
+});
 export const MINING_POOL = MAX_SUPPLY - TREASURY_ALLOCATION;
-export const INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
+export const LEGACY_INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
+export const INITIAL_EPOCH_REWARD = 44n * ATOMIC_UNITS;
 export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
 export const MULTISIG_ALGORITHM = "ml-dsa-65-multisig";
@@ -37,7 +58,8 @@ export const MAX_BLOCK_BYTES = 2_000_000;
 export const MAX_FUTURE_DRIFT_MS = 120_000;
 export const EPOCH_REVEAL_TIMEOUT_BLOCKS = 8;
 export const MIN_BEACON_BOND = 1_000n * ATOMIC_UNITS;
-export const MIN_EVALUATOR_BOND = INITIAL_EPOCH_REWARD;
+// Keep the existing evaluator-bond rule independent of the reward schedule.
+export const MIN_EVALUATOR_BOND = LEGACY_INITIAL_EPOCH_REWARD;
 export const EVALUATOR_ACTIVATION_DELAY_BLOCKS = 64;
 export const EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS = 1_024;
 export const BEACON_NON_REVEAL_SLASH_BPS = 100n;
@@ -55,8 +77,9 @@ export const MIN_PROGRESS_CANDIDATE_BOND = 1n * ATOMIC_UNITS;
 export const MAX_DECIMAL_DIGITS = 32;
 export const TREASURY_VESTING_MS = 315_576_000_000;
 
-export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
+export function vestedAllocationAtTimestamp(allocation, genesisTimestamp, timestamp) {
   if (
+    typeof allocation !== "bigint" || allocation < 0n ||
     !Number.isSafeInteger(genesisTimestamp) ||
     !Number.isSafeInteger(timestamp) ||
     genesisTimestamp < 0 ||
@@ -65,16 +88,24 @@ export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
     throw new Error("treasury vesting timestamps are invalid");
   }
   const elapsed = timestamp - genesisTimestamp;
-  if (elapsed >= TREASURY_VESTING_MS) return TREASURY_ALLOCATION;
+  if (elapsed >= TREASURY_VESTING_MS) return allocation;
   return (
-    TREASURY_ALLOCATION * BigInt(elapsed)
+    allocation * BigInt(elapsed)
   ) / BigInt(TREASURY_VESTING_MS);
 }
 
-export function scheduledEpochBudget(epoch) {
+export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
+  return vestedAllocationAtTimestamp(TREASURY_ALLOCATION, genesisTimestamp, timestamp);
+}
+
+export function scheduledEpochBudget(epoch, initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
   if (!Number.isSafeInteger(epoch) || epoch < 0) {
     throw new Error("epoch must be a non-negative safe integer");
   }
+  if (typeof initialReward !== "bigint" || initialReward <= 0n ||
+      initialReward > MAX_SUPPLY) {
+    throw new Error("initial epoch reward is invalid");
+  }
   const halvings = Math.floor(epoch / HALVING_INTERVAL);
-  return halvings >= 64 ? 0n : INITIAL_EPOCH_REWARD >> BigInt(halvings);
+  return halvings >= 64 ? 0n : initialReward >> BigInt(halvings);
 }
