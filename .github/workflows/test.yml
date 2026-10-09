@@ -10,6 +10,26 @@ permissions:
   contents: read
 
 jobs:
+  browser-wallet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      - name: Install browser wallet dependencies
+        working-directory: browser-wallet
+        run: npm ci
+      - name: Build and test browser wallet cryptography
+        working-directory: browser-wallet
+        run: npm run build && npm test
+      - name: Install isolated Chromium test browser
+        working-directory: browser-wallet
+        run: npx playwright install --with-deps chromium
+      - name: Test extension in Chromium
+        working-directory: browser-wallet
+        run: npm run test:browser
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
