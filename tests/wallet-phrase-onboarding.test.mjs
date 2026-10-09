@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,8 @@ test("words restore a local test wallet on a clean device with a new password an
       password: "test-password-one" }).address);
     assert.equal(existsSync(join(firstRoot, "Backups")), false);
     assert.equal(existsSync(first.profilePath), true);
+    assert.equal(lstatSync(realpathSync(first.profilePath)).mode & 0o077, 0);
+    assert.equal(readFileSync(first.profilePath, "utf8").includes(first.phrase), false);
     const added = addLocalPhraseAccount({ storageRoot: firstRoot,
       profilePath: first.profilePath, password: "test-password-one" });
     assert.equal(added.accountIndex, 1);
@@ -30,6 +32,10 @@ test("words restore a local test wallet on a clean device with a new password an
     assert.throws(() => addLocalPhraseAccount({ storageRoot: firstRoot,
       profilePath: first.profilePath, password: "wrong-password-one" }),
     /invalid/);
+    assert.equal(listLocalTestWallets(firstRoot).length, 2);
+    assert.throws(() => addLocalPhraseAccount({ storageRoot: secondRoot,
+      profilePath: first.profilePath, password: "test-password-one" }),
+    /outside local wallet storage/);
     const restored = restoreLocalPhraseWallet({ storageRoot: secondRoot,
       phrase: first.phrase, newPassword: "test-password-two" });
     assert.equal(restored.address, first.address);
