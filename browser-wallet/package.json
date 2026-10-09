@@ -1,0 +1,23 @@
+{
+  "name": "nir-browser-wallet",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:firefox": "node build.mjs --firefox",
+    "package:firefox": "npm run build:firefox && node scripts/package-firefox.mjs",
+    "test": "npm run build && npm run build:firefox && node --test tests/*.test.mjs",
+    "test:browser": "node --test tests/extension.e2e.mjs",
+    "screenshot:store": "node scripts/capture-store-screenshot.mjs"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "@noble/post-quantum": "0.7.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright": "^1.64.0",
+    "sharp": "0.35.5"
+  }
+}

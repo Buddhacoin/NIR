@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "NIR Wallet (Test Preview)",
+  "version": "0.1.0",
+  "description": "Create and restore local NIR test addresses. No public network or real funds.",
+  "action": {
+    "default_title": "NIR Wallet",
+    "default_popup": "wallet.html",
+    "default_icon": {
+      "16": "nir-icon-16.png",
+      "48": "nir-icon-48.png",
+      "128": "nir-icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "nir-icon-16.png",
+    "48": "nir-icon-48.png",
+    "128": "nir-icon-128.png"
+  },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}

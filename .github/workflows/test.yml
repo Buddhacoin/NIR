@@ -10,6 +10,51 @@ permissions:
   contents: read
 
 jobs:
+  browser-wallet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      - name: Install browser wallet dependencies
+        working-directory: browser-wallet
+        run: npm ci
+      - name: Build and test browser wallet cryptography
+        working-directory: browser-wallet
+        run: npm test
+      - name: Package Firefox submission candidate
+        working-directory: browser-wallet
+        run: npm run package:firefox
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: browser-actions/setup-firefox@v1
+      - name: Test actual Firefox extension onboarding and restoration
+        run: |
+          python3 -m pip install selenium==4.51.0
+          python3 browser-wallet/tests/firefox.e2e.py
+      - name: Attach unsigned Firefox submission candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: nir-firefox-wallet-unsigned-submission-candidate
+          path: browser-wallet/artifacts/firefox/*.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Install isolated Chromium test browser
+        working-directory: browser-wallet
+        run: npx playwright install --with-deps chromium
+      - name: Test extension in Chromium
+        working-directory: browser-wallet
+        run: npm run test:browser
+      - name: Attach developer-preview extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: nir-browser-wallet-developer-preview
+          path: browser-wallet/dist/
+          if-no-files-found: error
+          retention-days: 7
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
