@@ -123,7 +123,20 @@ leave an inert stale socket in its old private subdirectory; a restart uses a
 new path and never removes that old or another process's path. After confirming
 the old process is gone, the operator may inspect and clean up its stale files.
 Use `npm run validator:control -- produce <current-socket-path>` or `sync` for
-the two local operator actions. Incomplete requests have a fixed 30-second
+local block operations. A reviewed, already signed progress claim can be staged
+for the elected proposer only through the same private socket:
+
+```sh
+npm run validator:control -- stage-reward <current-socket-path> <signed-claim.json> <network-id> <next-height> <current-tip-hash>
+npm run validator:control -- reward-status <current-socket-path> <claim-digest-from-ack>
+```
+
+The claim file is bounded and safely read, but this command does not establish
+that the evaluator actually ran an AI model. The returned `queued` status means
+only local one-height storage, not a reward. After `produce`, an `included`
+local status must still be checked against a finalized block; `expired` requires
+fresh evaluation and `unknown` requires independent finality verification. No
+public HTTP claim-intake route exists. Incomplete requests have a fixed 30-second
 deadline, and the socket runs at most one control operation at a time. The
 ceremony HTTPS listener rejects both
 unauthenticated control routes before invoking peers or changing state.

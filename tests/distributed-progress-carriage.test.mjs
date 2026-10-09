@@ -14,7 +14,10 @@ import { generateWallet } from "../blockchain/crypto.mjs";
 import {
   DistributedCoordinator, initializeDistributedDevnet, ValidatorReplica,
 } from "../blockchain/distributed-node.mjs";
-import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
+import { createValidatorControlServer, createValidatorHttpServer }
+  from "../blockchain/validator-service.mjs";
+import { listenOnPrivateValidatorControlSocket, requestValidatorControl }
+  from "../blockchain/validator-control-socket.mjs";
 import {
   createEpochRandomnessCommit, createEpochRandomnessReveal,
   createProgressBeacon, createProgressBeaconShare,
@@ -220,6 +223,14 @@ for (const mode of ["included", "expired", "partial"]) test({
   const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
   let urls = [];
   const servers = replicas.map((replica) => createValidatorHttpServer(replica, { peerUrls: () => urls }));
+  let controlChannel = null;
+  const controlBase = mkdtempSync(join(tmpdir(), "nvc-"));
+  const openControl = async (replica) => {
+    const local = createValidatorControlServer(replica, { peerUrls: () => urls });
+    controlChannel = await listenOnPrivateValidatorControlSocket(local.server, controlBase);
+    local.enable();
+    return controlChannel.path;
+  };
   try {
     urls = await Promise.all(servers.map(listen));
     const coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
@@ -307,17 +318,63 @@ for (const mode of ["included", "expired", "partial"]) test({
     }) : null;
     const stagedEvents = { rewardClaims: [claim],
       ...(extraCommit === null ? {} : { epochRandomnessCommits: [extraCommit] }) };
-    assert.deepEqual(replicas[proposerIndex].stageOperatorEvents(stagedEvents),
-      { expectedHeight: mirror.height + 1, status: "queued" });
+    let claimDigest = null;
+    if (mode === "partial") {
+      assert.deepEqual(replicas[proposerIndex].stageOperatorEvents(stagedEvents),
+        { expectedHeight: mirror.height + 1, status: "queued" });
+    } else {
+      const path = await openControl(replicas[proposerIndex]);
+      const handoff = { claim, expectedHeight: mirror.height + 1,
+        networkId: mirror.networkId, previousHash: mirror.tipHash };
+      const other = replicas.findIndex((_, index) => index !== proposerIndex);
+      assert.throws(() => replicas[other].stageRewardClaim(handoff),
+        /elected proposer and tip/);
+      for (const invalid of [
+        { ...handoff, networkId: "foreign-network" },
+        { ...handoff, expectedHeight: handoff.expectedHeight + 1 },
+      ]) {
+        const rejected = await requestValidatorControl(path, "stageRewardClaim", invalid);
+        assert.equal(rejected.ok, false);
+      }
+      const wrongTip = await requestValidatorControl(path, "stageRewardClaim",
+        { ...handoff, previousHash: "f".repeat(64) });
+      assert.equal(wrongTip.ok, false);
+      await assert.rejects(requestValidatorControl(path, "stageRewardClaim",
+        { ...handoff, claim: { padding: "x".repeat(64 * 1024) } }),
+      /outside the bounded limit/);
+      const unsigned = await requestValidatorControl(path, "stageRewardClaim",
+        { ...handoff, claim: { ...claim, attestations: [] } });
+      assert.equal(unsigned.ok, false);
+      assert.equal(replicas[proposerIndex].pendingOperatorEvents, null);
+      const queued = await requestValidatorControl(path, "stageRewardClaim", handoff);
+      assert.equal(queued.status, 202);
+      assert.equal(queued.body.status, "queued");
+      assert.equal(queued.body.expectedHeight, mirror.height + 1);
+      claimDigest = queued.body.claimDigest;
+      assert.match(claimDigest, /^[0-9a-f]{64}$/);
+      const duplicate = await requestValidatorControl(path, "stageRewardClaim", handoff);
+      assert.equal(duplicate.body.status, "known");
+      assert.equal((await requestValidatorControl(path, "rewardClaimStatus",
+        { claimDigest: "g".repeat(64) })).ok, false);
+      assert.equal((await requestValidatorControl(path, "rewardClaimStatus",
+        { claimDigest })).body.status, "queued");
+      const publicAttempt = await fetch(`${urls[proposerIndex]}/v1/operator/reward-claims`,
+        { method: "POST", body: "{}" });
+      assert.equal(publicAttempt.status, 404);
+    }
     assert.equal(replicas[proposerIndex].buildProposal().progressRewards.length, 1);
 
     // The journal must survive a proposer restart before any block is produced.
+    await controlChannel?.close();
+    controlChannel = null;
     await close(servers[proposerIndex]);
     replicas[proposerIndex].closeSecurityState();
     replicas[proposerIndex] = new ValidatorReplica(layout.validatorDirectories[proposerIndex]);
     assert.equal(replicas[proposerIndex].pendingOperatorEvents.events.rewardClaims.length, 1);
     servers[proposerIndex] = createValidatorHttpServer(replicas[proposerIndex], { peerUrls: () => urls });
     urls[proposerIndex] = await listen(servers[proposerIndex]);
+    const restartedControl = mode === "partial" ? null
+      : await openControl(replicas[proposerIndex]);
     if (mode !== "included") {
       const validators = layout.validatorDirectories.map((directory) =>
         JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"))));
@@ -333,6 +390,12 @@ for (const mode of ["included", "expired", "partial"]) test({
       assert.equal(outcome.finalizedBlockHash, competing.hash);
       assert.equal(outcome.entries.rewardClaims[0].status,
         mode === "partial" ? "included" : "expired");
+      if (restartedControl) {
+        const local = await requestValidatorControl(restartedControl, "rewardClaimStatus",
+          { claimDigest });
+        assert.equal(local.body.status, "expired");
+        assert.equal(local.body.finalizedBlockHash, competing.hash);
+      }
       assert.equal(replicas[proposerIndex].pendingOperatorEvents, null);
       assert.equal(replicas[proposerIndex].account(owner.address).resources.pendingProgressReward
         === null, mode === "expired");
@@ -358,12 +421,14 @@ for (const mode of ["included", "expired", "partial"]) test({
       }
       return;
     }
-    const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
+    const produced = await requestValidatorControl(restartedControl, "produce");
     assert.equal(produced.status, 202);
-    assert.equal((await produced.json()).committedPeers, 4);
+    assert.equal(produced.body.committedPeers, 4);
     const rewardHeight = mirror.height + 1;
     assert.deepEqual(replicas.map(({ height }) => height), Array(4).fill(rewardHeight));
     assert.equal(replicas[proposerIndex].localOperatorEventStatus.status, "included");
+    assert.equal((await requestValidatorControl(restartedControl, "rewardClaimStatus",
+      { claimDigest })).body.status, "included");
     for (const replica of replicas) {
       const account = replica.account(owner.address);
       assert.equal(account.atomicBalance, "0", "reward stays locked during challenge window");
@@ -383,8 +448,10 @@ for (const mode of ["included", "expired", "partial"]) test({
       }
     }
   } finally {
+    await controlChannel?.close();
     await Promise.all(servers.map(close));
     replicas.forEach((replica) => replica.closeSecurityState());
+    rmSync(controlBase, { recursive: true, force: true });
     rmSync(temporary, { recursive: true, force: true });
   }
 });

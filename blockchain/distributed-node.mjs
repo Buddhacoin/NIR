@@ -854,6 +854,38 @@ export class ValidatorReplica {
     this.#operatorEvents = envelope;
     return { expectedHeight: envelope.expectedHeight, status: "queued" };
   }
+
+  /** Same-UID operator handoff of an already signed claim; not evaluator intake. */
+  stageRewardClaim({ claim, expectedHeight, networkId, previousHash } = {}) {
+    if (networkId !== this.networkId || expectedHeight !== this.height + 1 ||
+        previousHash !== this.tipHash ||
+        this.expectedProposer(expectedHeight) !== this.address) {
+      throw new Error("reward claim handoff does not match the elected proposer and tip");
+    }
+    const staged = this.stageOperatorEvents({ rewardClaims: [claim] });
+    return { ...staged, claimDigest: operatorEventEntryDigest("rewardClaims", claim) };
+  }
+
+  /** A local status hint only; finalized block proof remains authoritative. */
+  rewardClaimStatus(claimDigest) {
+    if (!/^[0-9a-f]{64}$/.test(claimDigest ?? "")) {
+      throw new Error("reward claim digest is invalid");
+    }
+    if (this.#operatorEvents?.events.rewardClaims.some((claim) =>
+      operatorEventEntryDigest("rewardClaims", claim) === claimDigest)) {
+      return { claimDigest, expectedHeight: this.#operatorEvents.expectedHeight,
+        status: "queued" };
+    }
+    const outcome = this.#operatorEventOutcome;
+    const entry = outcome?.entries?.rewardClaims.find(({ digest }) => digest === claimDigest);
+    if (entry) return {
+      action: entry.status === "included" ? "none" : entry.status === "unknown"
+        ? "verification-required" : "re-evaluation-required",
+      claimDigest, expectedHeight: outcome.expectedHeight,
+      finalizedBlockHash: outcome.finalizedBlockHash, status: entry.status,
+    };
+    return { claimDigest, status: "not-found" };
+  }
   get peerUrls() { return [...this.#peerUrls]; }
   get peerCount() { return this.#transportView.length; }
   get validatorCount() { return this.#validators.length; }

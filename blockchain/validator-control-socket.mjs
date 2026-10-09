@@ -6,7 +6,9 @@ import { isAbsolute, join, dirname } from "node:path";
 import { createCanonicalIpcFrameDecoder, encodeCanonicalIpcFrame }
   from "./canonical-ipc-framing.mjs";
 
-export const CONTROL_REQUEST_FRAME = { label: "validator control request", maximumBytes: 256 };
+// One signed progress claim may contain several post-quantum signatures. This
+// remains a private operator socket, never a public/evaluator ingress.
+export const CONTROL_REQUEST_FRAME = { label: "validator control request", maximumBytes: 64 * 1024 };
 export const CONTROL_RESPONSE_FRAME = { label: "validator control response", maximumBytes: 64 * 1024 };
 
 function same(left, right) { return left.dev === right.dev && left.ino === right.ino; }
@@ -95,10 +97,20 @@ export async function listenOnPrivateValidatorControlSocket(server, baseDirector
 }
 
 /** Same-UID local operator only; Node does not expose peer credentials for this socket. */
-export function requestValidatorControl(path, operation) {
-  if (operation !== "sync" && operation !== "produce") {
+export function requestValidatorControl(path, operation, details = {}) {
+  const simple = operation === "sync" || operation === "produce";
+  const stage = operation === "stageRewardClaim";
+  const status = operation === "rewardClaimStatus";
+  if (!simple && !stage && !status || !details || typeof details !== "object" ||
+      Array.isArray(details) ||
+      Object.keys(details).sort().join("\0") !== (simple ? "" : stage
+        ? "claim\0expectedHeight\0networkId\0previousHash" : "claimDigest")) {
     return Promise.reject(new Error("validator control operation is invalid"));
   }
+  const request = { operation, ...details };
+  let frame;
+  try { frame = encodeCanonicalIpcFrame(request, CONTROL_REQUEST_FRAME); }
+  catch (error) { return Promise.reject(error); }
   try { privateSocket(path); }
   catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
@@ -107,7 +119,7 @@ export function requestValidatorControl(path, operation) {
     let response = null; let finished = false;
     const fail = (error) => { if (!finished) { finished = true; socket.destroy(); reject(error); } };
     socket.setTimeout(30_000, () => fail(new Error("validator control request timed out")));
-    socket.on("connect", () => socket.end(encodeCanonicalIpcFrame({ operation }, CONTROL_REQUEST_FRAME)));
+    socket.on("connect", () => socket.end(frame));
     socket.on("data", (chunk) => {
       try {
         const messages = decoder.push(chunk);
