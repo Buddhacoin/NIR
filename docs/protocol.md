@@ -160,8 +160,10 @@ samples. Candidate collateral still requires vested or circulating NIR. Evaluato
 eligibility has no circular first-reward dependency: genesis deducts one fixed
 minimum bond per evaluator from the existing treasury allocation and commits the
 locked balances in state and in the public ceremony plan. That evaluator
-minimum remains 50 NIR independently of the 44 NIR initial reward; changing
-the reward schedule does not reinterpret signed earlier genesis plans.
+minimum remains 50 NIR independently of the 44 NIR initial reward. This does
+not preserve old reward history: valueless test chains that issued 50 NIR
+blocks cannot replay under the current rule. Back up test data before replacing it;
+there is no automatic conversion.
 
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
