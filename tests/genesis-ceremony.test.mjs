@@ -16,6 +16,9 @@ import { createTransfer, finalizeBlock, NirChain, multisigAddress } from "../blo
 import {
   MIN_EVALUATOR_BOND, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   PROTOCOL_VERSION,
+  FOUNDER_ALLOCATION, FOUNDER_BPS, PROTOCOL_TREASURY_ALLOCATION,
+  PROTOCOL_TREASURY_BPS, MINING_POOL, FOUNDER_IMMEDIATE_BPS,
+  TESTER_REWARD_RESERVE_BPS,
   TREASURY_BPS,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
@@ -192,6 +195,119 @@ function v2Fixture(label = "v2") {
   values.input.evaluationEnvironment = structuredClone(evaluationEnvironment);
   return values;
 }
+
+function v3Fixture(label = "v3") {
+  const values = v2Fixture(label);
+  const founderMembers = Array.from({ length: 3 }, generateWallet)
+    .map(({ publicKey }) => publicKey);
+  values.input.format = "nir-public-genesis-plan-v3";
+  values.input.treasury.vestingPolicy.allocationBps = Number(PROTOCOL_TREASURY_BPS);
+  values.input.founder = {
+    address: multisigAddress(founderMembers, 2),
+    algorithm: "ml-dsa-65-multisig",
+    memberPublicKeys: founderMembers,
+    threshold: 2,
+    vestingPolicy: {
+      allocationBps: Number(FOUNDER_BPS),
+      durationMs: TREASURY_VESTING_MS,
+      model: "linear-from-genesis",
+    },
+  };
+  return values;
+}
+
+function v4Fixture(label = "v4") {
+  const values = v3Fixture(label);
+  values.input.format = "nir-public-genesis-plan-v4";
+  values.input.founder.vestingPolicy = {
+    ...values.input.founder.vestingPolicy,
+    immediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+    model: "genesis-release-plus-linear",
+  };
+  return values;
+}
+
+function v5Fixture(label = "v5") {
+  const values = v4Fixture(label);
+  values.input.format = "nir-public-genesis-plan-v5";
+  values.input.treasury.vestingPolicy = {
+    ...values.input.treasury.vestingPolicy,
+    immediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+    model: "genesis-release-plus-linear",
+  };
+  return values;
+}
+
+test("v5 ceremony commits tester reserve without rewriting v4", () => {
+  const values = v5Fixture("tester-reward-reserve");
+  const { plan, envelope } = approved(values);
+  assert.equal(envelope.format, "nir-public-genesis-approvals-v5");
+  const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  assert.equal(compiled.genesis.treasuryImmediateBps, Number(TESTER_REWARD_RESERVE_BPS));
+  assert.equal(new NirChain(compiled.genesis).blocks()[0].hash, compiled.genesisHash);
+  assert.throws(() => verifyGenesisCeremony(plan, {
+    ...envelope, format: "nir-public-genesis-approvals-v4",
+  }, values.releaseOptions), /envelope/);
+  const wrong = structuredClone(values.input);
+  wrong.treasury.vestingPolicy.immediateBps = 20;
+  assert.throws(() => createGenesisPlan(wrong, values.releaseOptions), /treasury/);
+  const old = v4Fixture("unchanged-v4");
+  assert.equal(approved(old).plan.treasury.vestingPolicy.model, "linear-from-genesis");
+});
+
+test("v5 ceremony rejects shared founder and treasury guardian keys", () => {
+  const values = v5Fixture("independent-guardian-sets");
+  for (const sharedCount of [1, 2]) {
+    const input = structuredClone(values.input);
+    input.founder.memberPublicKeys.splice(0, sharedCount,
+      ...input.treasury.memberPublicKeys.slice(0, sharedCount));
+    input.founder.address = multisigAddress(input.founder.memberPublicKeys, 2);
+    assert.notEqual(input.founder.address, input.treasury.address);
+    assert.throws(() => createGenesisPlan(input, values.releaseOptions),
+      /guardian keys must be disjoint/);
+  }
+});
+
+test("v4 ceremony commits one-percent founder release without rewriting v3", () => {
+  const values = v4Fixture("founder-genesis-release");
+  const { plan, envelope } = approved(values);
+  assert.equal(envelope.format, "nir-public-genesis-approvals-v4");
+  const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  assert.equal(compiled.genesis.founderImmediateBps, Number(FOUNDER_IMMEDIATE_BPS));
+  assert.equal(new NirChain(compiled.genesis).blocks()[0].hash, compiled.genesisHash);
+  assert.throws(() => verifyGenesisCeremony(plan, {
+    ...envelope, format: "nir-public-genesis-approvals-v3",
+  }, values.releaseOptions), /envelope/);
+  const wrong = structuredClone(values.input);
+  wrong.founder.vestingPolicy.immediateBps = 200;
+  assert.throws(() => createGenesisPlan(wrong, values.releaseOptions), /founder/);
+  const old = v3Fixture("unchanged-v3");
+  assert.equal(approved(old).plan.founder.vestingPolicy.model, "linear-from-genesis");
+});
+
+test("v3 ceremony binds separate founder and protocol multisig allocations", () => {
+  const values = v3Fixture("split-allocation");
+  const { plan, envelope } = approved(values);
+  assert.equal(plan.format, "nir-public-genesis-plan-v3");
+  assert.equal(envelope.format, "nir-public-genesis-approvals-v3");
+  const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  assert.equal(compiled.genesis.founderAddress, plan.founder.address);
+  const chain = new NirChain(compiled.genesis);
+  assert.equal(chain.blocks()[0].hash, compiled.genesisHash);
+  assert.equal(chain.balance(plan.founder.address), FOUNDER_ALLOCATION);
+  assert.equal(chain.balance(plan.treasury.address),
+    PROTOCOL_TREASURY_ALLOCATION - MIN_EVALUATOR_BOND * 4n);
+  assert.equal(FOUNDER_ALLOCATION + PROTOCOL_TREASURY_ALLOCATION + MINING_POOL,
+    21_000_000n * 100_000_000n);
+
+  const forged = structuredClone(values.input);
+  forged.founder = structuredClone(forged.treasury);
+  forged.founder.vestingPolicy.allocationBps = Number(FOUNDER_BPS);
+  assert.throws(() => createGenesisPlan(forged, values.releaseOptions), /distinct/);
+  const wrongBps = structuredClone(values.input);
+  wrongBps.founder.vestingPolicy.allocationBps = Number(TREASURY_BPS);
+  assert.throws(() => createGenesisPlan(wrongBps, values.releaseOptions), /founder/);
+});
 
 test("frozen pre-v2 public ceremony artifacts retain their v1 hashes", () => {
   const vector = JSON.parse(readFileSync(new URL("./vectors/genesis-ceremony-v1.json",

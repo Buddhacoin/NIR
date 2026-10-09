@@ -9,8 +9,8 @@ This is gate 2 in the canonical
 contributions, approvals, registry anchor, and compiled genesis is an external
 operator responsibility.
 
-For a new ceremony, use the **v2** public input schema: set
-`"format": "nir-public-genesis-plan-v2"` and include a complete
+For a new ceremony, use the **v5** public input schema: set
+`"format": "nir-public-genesis-plan-v5"` and include a complete
 `evaluationEnvironment` object. The exact environment schema is
 `nir-evaluation-environment-v1`: `adapter_protocol`, `cpu_limit`, `image_digest`,
 `memory_limit_bytes`, `runner_digest`, and `timeout_seconds` alongside `format`.
@@ -31,9 +31,21 @@ artifacts behind the digests independently. The other input is public JSON conta
 - `evaluatorBondAmount`, exactly the protocol bootstrap minimum for every listed
   evaluator. Compilation deducts the aggregate from the existing treasury
   allocation and commits the locked bonds in genesis, so this creates no supply;
-- a public treasury descriptor whose address is exactly the protocol 2-of-3
-  multisignature address and whose policy is the protocol's 12% allocation with
-  linear vesting from genesis over `TREASURY_VESTING_MS`;
+- separate public `founder` and `treasury` descriptors. Each address must be
+  the 2-of-3 multisignature derived from its own three member public keys.
+  `founder` commits 7% of total supply with `vestingPolicy` fields
+  `allocationBps: 700`, `immediateBps: 100`,
+  `model: "genesis-release-plus-linear"`, and
+  `durationMs: TREASURY_VESTING_MS`: 1% of total supply is spendable at
+  genesis, the other 6% vests linearly. `treasury` commits 5% with
+  `allocationBps: 500`, `immediateBps: 10`,
+  `model: "genesis-release-plus-linear"`, and the same duration: 0.1% of
+  total supply is available from genesis as a possible tester reserve, while 4.9%
+  vests linearly. This is one treasury address; consensus does not restrict
+  the liquid tranche to tester payments. They must be distinct from
+  each other and from genesis operator addresses. Evaluator bootstrap bonds
+  come from the 5% protocol treasury, never the founder allocation, and cannot
+  consume the 0.1% genesis-liquid tranche;
 - three or more public ceremony-operator identities, unique 256-bit contributions,
   and unique public nonces.
 
@@ -41,6 +53,15 @@ Every object has an exact schema. Unknown fields and fields named like private k
 secrets, seeds, passwords, or mnemonics are rejected. The tool never generates an
 address or private key. Contributions and nonces must be generated independently by
 operators and must not be reused.
+
+The v5 plan, ceremony approvals, peer-registry approvals and approval envelope
+use separate versioned domains/formats, so signatures cannot be replayed from
+v1/v2/v3/v4. Earlier plan formats retain their exact signed schedules. A real-value
+founder address is **not** created by running this ceremony;
+create and recover-test each guardian vault offline before inserting only its
+public address and member keys into the plan. Two independent vault sets are
+needed: one for the founder and one for the protocol treasury. Do not place
+passwords, private keys, or complete backup sets in this repository.
 
 The v1 plan and approval formats remain verifiable with their original hash and
 signature domains, including in mixed-version registries and `prior-plans.json`.
