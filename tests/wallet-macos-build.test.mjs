@@ -102,6 +102,22 @@ test("native app uses a fresh UI origin and disables persistent service-worker c
   }
 });
 
+test("Mac recovery onboarding requires a verified exported copy for each address", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  const setup = readFileSync(new URL("../blockchain/wallet-macos-setup.mjs", import.meta.url), "utf8");
+  assert.match(native, /Один код не спасёт при потере Mac/);
+  assert.match(native, /Каждый новый адрес требует своей копии/);
+  assert.match(native, /sourceInfo\.st_dev == directoryInfo\.st_dev/);
+  assert.match(native, /Копия остаётся на том же диске/);
+  assert.match(native, /\[written isEqualToData:backup\]/);
+  assert.match(native, /pread\(descriptor/);
+  assert.doesNotMatch(native, /unlink\(destination\.fileSystemRepresentation\)/);
+  assert.match(native, /NSModalResponseCancel && recovery\) return 2/);
+  assert.match(native, /else return 2;/);
+  assert.match(native, /if \(saved\) \{\s*NSData \*confirmation/);
+  assert.match(setup, /verifyRecoveryExportReceipt\(JSON\.parse\(exportReceipt\)/g);
+});
+
 test("native onboarding submits a selection instead of silently treating it as cancel", () => {
   if (process.platform !== "darwin") return;
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-smoke-"));

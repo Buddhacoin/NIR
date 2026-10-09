@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { createLocalTestWallet, listLocalTestBackups, listLocalTestWallets, openLocalTestWallet, renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode } from "./wallet-onboarding.mjs";
+import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 
 const ONBOARDING = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
 const STORAGE_ROOT = join(homedir(), "Library", "Application Support", "NIR Wallet");
@@ -56,26 +57,38 @@ if (process.platform !== "darwin") {
           storageRoot: STORAGE_ROOT, password: choice.password,
         });
         unseenRecoveryAddress = result.address;
-        execFileSync(ONBOARDING, ["--show-secret"], {
+        const fingerprint = recoveryBackupFingerprint(result.backupPath, result.address);
+        const exportReceipt = execFileSync(ONBOARDING, ["--show-secret"], {
           input: JSON.stringify({ kind: "recovery", secret: result.recoveryCode,
             backupPath: result.backupPath }),
           encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
           stdio: ["pipe", "pipe", "pipe"],
         });
+        const verification = verifyRecoveryExportReceipt(JSON.parse(exportReceipt), result.backupPath,
+          fingerprint, result.address);
         unseenRecoveryAddress = null;
+        try { notice("Резервная копия проверена",
+          `Для восстановления этого адреса нужны зашифрованная копия и отдельный код. Для каждого нового адреса нужна своя копия. Приложение не подтверждает физическую независимость носителя.${verification.unsafePermissions ? " Внимание: выбранный носитель допускает чтение файла другими пользователями; храните копию в безопасном месте." : ""}`); }
+        catch { /* The verified export is complete even if this notice is closed. */ }
       } else if (choice.mode === "renew") {
         const opened = openLocalTestWallet({ wallets: availableWallets,
           path: choice.path, password: choice.password });
         const renewed = renewLocalTestRecoveryCode({ storageRoot: STORAGE_ROOT,
           walletPath: opened.walletPath, password: choice.password });
         unseenRecoveryAddress = opened.address;
-        execFileSync(ONBOARDING, ["--show-secret"], {
+        const fingerprint = recoveryBackupFingerprint(renewed.backupPath, renewed.address);
+        const exportReceipt = execFileSync(ONBOARDING, ["--show-secret"], {
           input: JSON.stringify({ kind: "recovery", secret: renewed.recoveryCode,
             backupPath: renewed.backupPath }),
           encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
           stdio: ["pipe", "pipe", "pipe"],
         });
+        const verification = verifyRecoveryExportReceipt(JSON.parse(exportReceipt), renewed.backupPath,
+          fingerprint, renewed.address);
         unseenRecoveryAddress = null;
+        try { notice("Резервная копия проверена",
+          `Для восстановления этого адреса нужны зашифрованная копия и отдельный код. Старые копия и код продолжают действовать. Приложение не подтверждает физическую независимость хранилища.${verification.unsafePermissions ? " Внимание: выбранный носитель допускает чтение файла другими пользователями; храните копию в безопасном месте." : ""}`); }
+        catch { /* The verified export is complete even if this notice is closed. */ }
         result = opened;
       } else if (choice.mode === "restore") {
         const listed = availableBackups.find((backup) => backup.path === choice.path);
@@ -106,7 +119,7 @@ if (process.platform !== "darwin") {
       String(error?.message ?? "").includes("User canceled");
     if (!cancelled || unseenRecoveryAddress) {
       const message = unseenRecoveryAddress
-        ? `Кошелёк ${unseenRecoveryAddress} сохранён, но показ кода не завершился. Откройте этот адрес с паролем и нажмите «Новый код восстановления». Не используйте адрес для средств до сохранения резервной копии и кода.`
+        ? `Кошелёк ${unseenRecoveryAddress} сохранён, но настройка резервной копии не завершена или не прошла проверку. Откройте этот адрес с паролем и нажмите «Новый код восстановления». Не используйте адрес для средств до сохранения зашифрованной копии и отдельного кода.`
         : String(error?.message ?? "unknown error").slice(0, 500);
       try { notice("Настройка не завершена", message); }
       catch { /* The user may have closed all dialogs. */ }

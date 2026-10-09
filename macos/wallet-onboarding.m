@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 // Local-test onboarding. Passwords leave this process only through the private
 // stdout pipe to the vault process, never through argv, URLs or browser storage.
@@ -516,7 +517,7 @@ int main(int argc, const char *argv[]) {
             BOOL recovery = [kind isEqualToString:@"recovery"];
             alert.messageText = recovery ? @"Код восстановления" : @"Приватный ключ";
             alert.informativeText = recovery ?
-                @"Запишите или скопируйте код целиком. Храните его отдельно от резервной копии. Для восстановления нужны оба. Не отправляйте код никому." :
+                @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." :
                 @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.";
             NSString *shown = secret;
             if (recovery) {
@@ -537,27 +538,47 @@ int main(int argc, const char *argv[]) {
             view.textContainer.widthTracksTextView = YES;
             scroll.documentView = view;
             alert.accessoryView = scroll;
-            [alert addButtonWithTitle:@"Готово"];
+            [alert addButtonWithTitle:recovery ? @"Сохранить копию" : @"Готово"];
             [alert addButtonWithTitle:@"Копировать"];
-            if (recovery && backupPath) [alert addButtonWithTitle:@"Сохранить копию"];
+            if (recovery) [alert addButtonWithTitle:@"Отложить настройку"];
+            if (recovery && !backupPath) return 1;
             [app activateIgnoringOtherApps:YES];
             while (YES) {
                 NSModalResponse choice = [alert runModal];
-                if (choice == NSAlertFirstButtonReturn) break;
+                if (choice == NSModalResponseCancel && recovery) return 2;
+                if (choice == NSAlertFirstButtonReturn && !recovery) break;
                 if (choice == NSAlertSecondButtonReturn) {
                     NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
                     [clipboard clearContents];
                     [clipboard setString:secret forType:NSPasteboardTypeString];
-                } else if (choice == NSAlertThirdButtonReturn && backupPath) {
+                } else if (choice == NSAlertThirdButtonReturn && recovery) {
+                    // The vault already exists. Do not emit a success receipt or
+                    // launch it as a completed wallet without an exported copy.
+                    return 2;
+                } else if (choice == NSAlertFirstButtonReturn && recovery) {
                     NSSavePanel *panel = [NSSavePanel savePanel];
-                    panel.nameFieldStringValue = @"NIR-recovery.nirvault.json";
+                    panel.nameFieldStringValue = @"NIR-address-recovery.nirvault.json";
                     panel.prompt = @"Сохранить копию";
                     if ([panel runModal] == NSModalResponseOK) {
                         NSData *backup = [NSData dataWithContentsOfFile:backupPath];
                         NSString *destination = panel.URL.path;
-                        int descriptor = destination ? open(destination.fileSystemRepresentation,
-                            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600) : -1;
-                        BOOL saved = backup && descriptor >= 0;
+                        struct stat sourceInfo, directoryInfo;
+                        BOOL sameDisk = destination &&
+                            stat(backupPath.fileSystemRepresentation, &sourceInfo) == 0 &&
+                            stat(destination.stringByDeletingLastPathComponent.fileSystemRepresentation,
+                                &directoryInfo) == 0 && sourceInfo.st_dev == directoryInfo.st_dev;
+                        if (sameDisk) {
+                            NSAlert *warning = [NSAlert new];
+                            warning.messageText = @"Копия остаётся на том же диске";
+                            warning.informativeText = @"При потере или поломке этого Mac код без копии не восстановит адрес. Лучше выбрать отдельный носитель. Приложение не может проверить, где физически находится выбранное хранилище.";
+                            [warning addButtonWithTitle:@"Выбрать другое место"];
+                            [warning addButtonWithTitle:@"Сохранить всё равно"];
+                            if ([warning runModal] != NSAlertSecondButtonReturn) continue;
+                        }
+                        int descriptor = backup && backup.length >= 2 && backup.length <= 64 * 1024 &&
+                            destination ? open(destination.fileSystemRepresentation,
+                                O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, 0600) : -1;
+                        BOOL saved = descriptor >= 0;
                         if (descriptor >= 0) {
                             const unsigned char *bytes = backup.bytes;
                             NSUInteger offset = 0;
@@ -568,16 +589,43 @@ int main(int argc, const char *argv[]) {
                                 else saved = NO;
                             }
                             if (saved && fsync(descriptor) != 0) saved = NO;
+                            if (saved) {
+                                struct stat ownFile;
+                                if (fstat(descriptor, &ownFile) != 0 || !S_ISREG(ownFile.st_mode) ||
+                                    ownFile.st_nlink != 1 || ownFile.st_size != (off_t)backup.length) saved = NO;
+                                if (saved) {
+                                    NSMutableData *written = [NSMutableData dataWithLength:backup.length];
+                                    NSUInteger readOffset = 0;
+                                    while (saved && readOffset < backup.length) {
+                                        ssize_t count = pread(descriptor,
+                                            (unsigned char *)written.mutableBytes + readOffset,
+                                            backup.length - readOffset, (off_t)readOffset);
+                                        if (count > 0) readOffset += (NSUInteger)count;
+                                        else if (count < 0 && errno == EINTR) continue;
+                                        else saved = NO;
+                                    }
+                                    if (saved && ![written isEqualToData:backup]) saved = NO;
+                                }
+                            }
                             if (close(descriptor) != 0) saved = NO;
-                            if (!saved) unlink(destination.fileSystemRepresentation);
                         }
-                        NSAlert *status = [NSAlert new];
-                        status.messageText = saved ? @"Резервная копия сохранена" : @"Не удалось сохранить копию";
-                        status.informativeText = saved ?
-                            @"Храните код восстановления отдельно от этого файла." :
-                            @"Выберите новый файл в доступной папке и повторите попытку. Существующие файлы не заменяются.";
-                        [status runModal];
-                    }
+                        if (!saved) {
+                            NSAlert *status = [NSAlert new];
+                            status.messageText = @"Не удалось сохранить копию";
+                            status.informativeText = @"Выберите новое имя в доступной папке и повторите. Неудачный частичный файл может остаться — не используйте его как копию. Существующие файлы не заменяются.";
+                            [status runModal];
+                        }
+                        if (saved) {
+                            NSData *confirmation = [NSJSONSerialization dataWithJSONObject:@{ @"backupExported": @YES,
+                                @"backupPath": destination }
+                                options:0 error:nil];
+                            if (!confirmation) return 1;
+                            fwrite(confirmation.bytes, 1, confirmation.length, stdout);
+                            fputc('\n', stdout);
+                            fflush(stdout);
+                            break;
+                        }
+                    } else return 2;
                 }
             }
             return 0;
