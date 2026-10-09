@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "NIR Wallet (test)",
+  "name": "NIR Wallet (Test Preview)",
   "version": "0.1.0",
-  "description": "Локальный тестовый кошелёк NIR. Не используйте для реальных средств.",
+  "description": "Create and restore local NIR test addresses. No public network or real funds.",
   "action": {
     "default_title": "NIR Wallet",
     "default_popup": "wallet.html",
