@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This form is open to everyone; no invitation is needed. The Mac app is not publicly downloadable yet, and there is no public NIR testnet or real-value wallet. Do not include keys, passwords, recovery/pairing codes, vault or backup files, personal data, or a working security exploit. Report vulnerabilities privately using SECURITY.md.
+        This form is open to everyone; no invitation is needed. The Mac app is not publicly downloadable yet, and there is no public NIR testnet or real-value wallet. This is a manual public report, not automatic telemetry. Do not include keys, passwords, recovery/pairing codes, session tokens, vault or backup files, personal data, unreviewed logs, or exploit details. Report vulnerabilities privately using SECURITY.md.
   - type: dropdown
     id: scenario
     attributes:
@@ -17,7 +17,6 @@ body:
         - Back up or restore an account
         - Pair the browser and Mac app
         - Receive or send local test units
-        - Try the local mining practice
         - Update the Mac app
         - Other local wallet task
     validations:
@@ -49,10 +48,15 @@ body:
       label: What happened instead?
     validations:
       required: true
+  - type: textarea
+    id: safe-evidence
+    attributes:
+      label: Optional safe evidence
+      description: Redact screenshots and error text, including browser tabs and background windows. Do not upload raw logs or wallet files.
   - type: checkboxes
     id: safety
     attributes:
       label: Before submitting
       options:
-        - label: I removed all passwords, keys, recovery/pairing codes, vault files, personal data, and private security details.
+        - label: I removed all passwords, keys, recovery/pairing codes, session tokens, vault files, personal data, unreviewed logs, and private security details.
           required: true

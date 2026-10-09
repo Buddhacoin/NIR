@@ -88,6 +88,19 @@ or a future network at risk. Follow [`SECURITY.md`](SECURITY.md) and use a priva
 repository security advisory when that channel is available. Include only the
 minimum reproducible evidence and no third-party secrets or personal data.
 
+## First-tester feedback
+
+Use the [wallet UX issue form](.github/ISSUE_TEMPLATE/wallet-local-feedback.yml)
+for local wallet setup and usability problems, or the
+[mining practice issue form](.github/ISSUE_TEMPLATE/mining-practice.yml) for
+local simulation results. Search existing issues first. These are public,
+manual reports, not automatic telemetry or a reward-claim system. Include a
+version/commit, operating system, expected and actual result, and reproducible
+steps. Redact screenshots and error text before posting. Never upload wallet
+files, recovery material, keys, passwords, pairing codes, session tokens,
+private model data, or unreviewed logs. Security findings belong in the private
+channel above, even if discovered during a test exercise.
+
 ## Review and merge conditions
 
 A change is ready for merge only when:
