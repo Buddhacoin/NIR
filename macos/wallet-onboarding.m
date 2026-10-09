@@ -600,17 +600,20 @@ int main(int argc, const char *argv[]) {
             NSString *secret = [payload isKindOfClass:NSDictionary.class] ? payload[@"secret"] : nil;
             NSString *backupPath = [payload isKindOfClass:NSDictionary.class] ? payload[@"backupPath"] : nil;
             if (![secret isKindOfClass:NSString.class] || secret.length == 0 ||
-                ![@[@"recovery", @"private-key"] containsObject:kind]) return 1;
+                ![@[@"recovery", @"private-key", @"phrase"] containsObject:kind]) return 1;
             if (backupPath && (![backupPath isKindOfClass:NSString.class] ||
                 ![backupPath hasPrefix:@"/"])) return 1;
             NSApplication *app = [NSApplication sharedApplication];
             [app setActivationPolicy:NSApplicationActivationPolicyRegular];
             NSAlert *alert = [NSAlert new];
             BOOL recovery = [kind isEqualToString:@"recovery"];
-            alert.messageText = recovery ? @"Код восстановления" : @"Приватный ключ";
+            BOOL phrase = [kind isEqualToString:@"phrase"];
+            alert.messageText = recovery ? @"Код восстановления" :
+                (phrase ? @"Фраза восстановления NIR" : @"Приватный ключ");
             alert.informativeText = recovery ?
                 @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." :
-                @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.";
+                (phrase ? @"Эта фраза восстанавливает все связанные с ней адреса NIR. Любой, кто её узнает, сможет распоряжаться этими адресами. Никому её не отправляйте." :
+                @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.");
             NSString *shown = secret;
             if (recovery) {
                 NSArray *groups = [secret componentsSeparatedByString:@"-"];

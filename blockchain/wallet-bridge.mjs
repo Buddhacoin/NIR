@@ -331,6 +331,7 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  revealRecoveryPhrase,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -344,6 +345,7 @@ export function createWalletBridgeServer({
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       (createAccount !== undefined && typeof createAccount !== "function") ||
+      (revealRecoveryPhrase !== undefined && typeof revealRecoveryPhrase !== "function") ||
       (presentPairingCode !== undefined &&
         (typeof presentPairingCode !== "function" || pairingCode === undefined)) ||
       (accounts !== undefined && (!Array.isArray(accounts) || accounts.length < 1 ||
@@ -620,6 +622,30 @@ export function createWalletBridgeServer({
           catch { throw new Error("new wallet account could not be verified; check the local application"); }
           activateAccount(id);
           return send(response, 200, { id, address: walletAddress }, origin);
+        } finally { accountActionPending = false; }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/reveal-recovery-phrase") {
+        if (!revealRecoveryPhrase) return send(response, 404, { error: "phrase display is unavailable" }, origin);
+        if (pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("phrase display requires application/json");
+        }
+        const body = await readAuthenticatedBody(16);
+        if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
+          throw new Error("phrase display body is invalid");
+        }
+        accountActionPending = true;
+        const revealGeneration = sessionGeneration;
+        try {
+          const address = walletAddress;
+          try { await revealRecoveryPhrase(address); }
+          catch { throw new Error("phrase could not be displayed; check the local application"); }
+          if (!sessionActive || sessionGeneration !== revealGeneration) {
+            throw new Error("wallet account changed during the request");
+          }
+          return send(response, 200, { shownOnDevice: true }, origin);
         } finally { accountActionPending = false; }
       }
       if (request.method === "GET" && /^\/v1\/sign-result\/[0-9a-f]{64}$/.test(url.pathname)) {

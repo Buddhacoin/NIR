@@ -109,6 +109,12 @@ async function main() {
     }
     return { address: created.address, path: created.walletPath };
   };
+  const revealRecoveryPhrase = async (address) => {
+    const helper = fileURLToPath(new URL("./wallet-macos-reveal-phrase.mjs", import.meta.url));
+    await execFileAsync(process.execPath, [helper, address], {
+      encoding: "utf8", maxBuffer: 8 * 1024, timeout: 360_000,
+    });
+  };
 
   const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
   const ui = createWalletPreviewServer();
@@ -122,6 +128,7 @@ async function main() {
       accounts: listLocalTestWallets(storageRoot),
       authorize: authorizeSigning,
       createAccount,
+      revealRecoveryPhrase,
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,

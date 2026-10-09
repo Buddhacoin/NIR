@@ -159,6 +159,8 @@
     <p>Пароль и приватный ключ никогда не вводятся в браузере. Закрытие или отключение удаляет session token из памяти страницы.</p>
     <button class="primary" id="settings-connect" type="button">Подключить vault</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>
+    <button class="secondary" id="settings-reveal-phrase" type="button" hidden>Показать фразу восстановления</button>
+    <p class="form-status" id="settings-reveal-status" role="status" aria-live="polite"></p>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить vault</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">
