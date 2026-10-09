@@ -53,6 +53,7 @@ import {
   VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
   VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
   RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION,
+  PROGRESS_REWARD_PAUSE_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -3542,6 +3543,9 @@ export class NirChain {
   }
 
   #verifyProgressClaim(claim, epoch, capabilityMemory, progressCommitments, protocolVersion) {
+    if (protocolVersion >= PROGRESS_REWARD_PAUSE_PROTOCOL_VERSION) {
+      throw new Error("progress reward requires verifiable execution proof; verifier is unavailable");
+    }
     if (claim.networkId !== this.#networkId || claim.epoch !== epoch) {
       throw new Error("progress receipt belongs to another network or epoch");
     }
