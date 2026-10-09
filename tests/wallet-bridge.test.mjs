@@ -223,6 +223,8 @@ test("phrase display requires an authorized session and never returns the secret
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    assert.equal((await (await request(`${base}/v1/wallet`, origin, token)).json())
+      .canRevealRecoveryPhrase, true);
     assert.equal((await request(`${base}/v1/reveal-recovery-phrase`, origin,
       "0".repeat(64), { method: "POST", body: "{}" })).status, 401);
     assert.equal((await request(`${base}/v1/reveal-recovery-phrase`, origin,

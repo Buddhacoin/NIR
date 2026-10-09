@@ -75,8 +75,8 @@ function renderWalletConnection() {
   accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
   document.querySelector("#settings-connect").hidden = connected;
-  document.querySelector("#settings-reveal-phrase").hidden = !connected ||
-    new URLSearchParams(location.search).get("local-app") !== "1";
+  document.querySelector("#settings-reveal-phrase").hidden =
+    !connected || walletInfo.canRevealRecoveryPhrase !== true;
   document.querySelector("#security-state").textContent = connected
     ? `Vault подключён · ${walletInfo.address.slice(0, 16)}…`
     : "Vault не подключён";

@@ -33,7 +33,7 @@ test("local Mac wallet exposes recovery phrase in settings without a browser sec
   assert.match(settings, /id="settings-reveal-phrase"/);
   assert.doesNotMatch(settings, /type="password"|name="phrase"|id="recovery-phrase"/);
   assert.match(script, /#settings-reveal-phrase/);
-  assert.match(script, /local-app.*=== "1"/);
+  assert.match(script, /walletInfo\.canRevealRecoveryPhrase !== true/);
   assert.match(script, /bridgeRequest\("\/v1\/reveal-recovery-phrase", \{ method: "POST", body: "\{\}" \}/);
   assert.doesNotMatch(script, /result\.phrase|response\.phrase/);
 });

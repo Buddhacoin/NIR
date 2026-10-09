@@ -656,7 +656,8 @@ export function createWalletBridgeServer({
         return send(response, entry.status, entry.value, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
-        return send(response, 200, walletPublicInfo(activeVaultPath), origin);
+        return send(response, 200, { ...walletPublicInfo(activeVaultPath),
+          canRevealRecoveryPhrase: Boolean(revealRecoveryPhrase) }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
