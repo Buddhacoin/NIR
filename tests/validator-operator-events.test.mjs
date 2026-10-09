@@ -136,6 +136,54 @@ test("snapshot installation immediately prunes a height-bound operator queue", (
   }
 });
 
+for (const extraFinalizedEntry of [true, false]) test(extraFinalizedEntry
+  ? "operator receipt recognizes staged event inside a larger finalized event list"
+  : "operator receipt records partial inclusion per event and rejects expired retry", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-operator-outcome-"));
+  const beacons = Array.from({ length: 4 }, generateWallet);
+  const layout = initializeDistributedDevnet(join(temporary, "network"), { beaconWallets: beacons });
+  const directory = layout.validatorDirectories[0];
+  let replica = new ValidatorReplica(directory);
+  try {
+    const genesis = JSON.parse(readFileSync(join(directory, "genesis.json")));
+    const chain = new NirChain(genesis);
+    const status = chain.epochRandomnessStatus();
+    const commits = status.committee.slice(0, 2).map((address, index) =>
+      createEpochRandomnessCommit({
+        wallet: beacons.find((wallet) => wallet.address === address),
+        networkId: chain.networkId, round: status.round, secret: String(index + 1).repeat(64),
+      }));
+    const staged = extraFinalizedEntry ? [commits[0]] : commits;
+    const finalizedEntries = extraFinalizedEntry ? commits : [commits[0]];
+    replica.stageOperatorEvents({ epochRandomnessCommits: staged });
+    const validators = layout.validatorDirectories.map((path) =>
+      JSON.parse(readFileSync(join(path, "VALIDATOR-KEY.json"))));
+    const finalized = finalizeBlock(chain.buildBlock({
+      epochRandomnessCommits: finalizedEntries, transactions: [], timestamp: Date.now(),
+    }), validators);
+    replica.commit(finalized);
+    const outcome = replica.localOperatorEventStatus;
+    assert.equal(outcome.status, extraFinalizedEntry ? "included" : "partial");
+    assert.equal(outcome.action, extraFinalizedEntry ? "none" : "re-evaluation-required");
+    assert.deepEqual(outcome.entries.epochRandomnessCommits.map(({ status: entryStatus }) => entryStatus),
+      extraFinalizedEntry ? ["included"] : ["included", "expired"]);
+    replica.closeSecurityState();
+    replica = new ValidatorReplica(directory);
+    assert.deepEqual(replica.localOperatorEventStatus, outcome);
+    if (!extraFinalizedEntry) {
+      const retry = replica.stageOperatorEvents({ epochRandomnessCommits: [commits[1]] });
+      assert.equal(retry.accepted, false);
+      assert.equal(retry.action, "re-evaluation-required");
+      assert.equal(retry.status, "expired");
+      assert.equal(retry.expectedHeight, 1);
+      assert.match(retry.eventDigest, /^[0-9a-f]{64}$/);
+    }
+  } finally {
+    replica?.closeSecurityState();
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test("prune refuses a substituted journal and restart safely removes the original stale event", () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-operator-prune-"));
   const beacons = Array.from({ length: 4 }, generateWallet);

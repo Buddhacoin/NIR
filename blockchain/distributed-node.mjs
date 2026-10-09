@@ -142,15 +142,38 @@ function operatorEventDigest(events) {
   return hashObject(events, "NIR_OPERATOR_EVENT_BATCH_V1");
 }
 
+function operatorEventEntryDigest(type, entry) {
+  return hashObject({ type, entry }, "NIR_OPERATOR_EVENT_ENTRY_V1");
+}
+
+function operatorEventEntryOutcomes(staged, finalized) {
+  const fields = finalized === null ? null : proposalFields(finalized);
+  return Object.fromEntries(Object.entries(staged).map(([type, entries]) => {
+    const available = new Map();
+    for (const entry of fields?.[type] ?? []) {
+      const key = canonicalJson(entry);
+      available.set(key, (available.get(key) ?? 0) + 1);
+    }
+    return [type, entries.map((entry) => {
+      const key = canonicalJson(entry);
+      const included = (available.get(key) ?? 0) > 0;
+      if (included) available.set(key, available.get(key) - 1);
+      return { digest: operatorEventEntryDigest(type, entry), status: included ? "included" : "expired" };
+    })];
+  }));
+}
+
 function readOperatorEventOutcome(path, networkId) {
   if (!lstatSync(path, { throwIfNoEntry: false })) return null;
   const outcome = readBoundedPublicJsonFile(path, {
     label: "local operator event outcome", maximumBytes: MAX_OPERATOR_EVENT_OUTCOME_BYTES,
   });
-  if (outcome?.format !== "nir-local-operator-event-outcome-v1" ||
+  if (!["nir-local-operator-event-outcome-v1", "nir-local-operator-event-outcome-v2"]
+    .includes(outcome?.format) ||
       outcome.networkId !== networkId ||
-      !["included", "expired"].includes(outcome.status) ||
-      outcome.action !== (outcome.status === "expired" ? "re-evaluation-required" : "none") ||
+      !["included", "expired", "partial"].includes(outcome.status) ||
+      (outcome.format === "nir-local-operator-event-outcome-v1" && outcome.status === "partial") ||
+      outcome.action !== (outcome.status === "included" ? "none" : "re-evaluation-required") ||
       !/^[0-9a-f]{64}$/.test(outcome.eventDigest ?? "") ||
       !Number.isSafeInteger(outcome.expectedHeight) || outcome.expectedHeight < 1 ||
       !Number.isSafeInteger(outcome.observedHeight) ||
@@ -160,8 +183,28 @@ function readOperatorEventOutcome(path, networkId) {
       Object.keys(outcome).sort().join("\0") !== [
         "action", "eventDigest", "expectedHeight", "finalizedBlockHash", "format",
         "networkId", "observedHeight", "status",
+        ...(outcome.format === "nir-local-operator-event-outcome-v2" ? ["entries"] : []),
       ].sort().join("\0")) {
     throw new Error("local operator event outcome is invalid");
+  }
+  if (outcome.format === "nir-local-operator-event-outcome-v2") {
+    const types = ["epochRandomnessCommits", "epochRandomnessReveals", "progressBeacons", "rewardClaims"];
+    if (!outcome.entries || typeof outcome.entries !== "object" ||
+        Object.keys(outcome.entries).sort().join("\0") !== types.sort().join("\0") ||
+        types.some((type) => !Array.isArray(outcome.entries[type]) ||
+          outcome.entries[type].length > (type.startsWith("epochRandomness") ? 4 : 1) ||
+          outcome.entries[type].some((entry) =>
+            Object.keys(entry ?? {}).sort().join("\0") !== "digest\0status" ||
+            !/^[0-9a-f]{64}$/.test(entry.digest ?? "") ||
+            !["included", "expired"].includes(entry.status)))) {
+      throw new Error("local operator event outcome entries are invalid");
+    }
+    const statuses = Object.values(outcome.entries).flat().map(({ status }) => status);
+    const aggregate = statuses.every((status) => status === "included") ? "included"
+      : statuses.every((status) => status === "expired") ? "expired" : "partial";
+    if (statuses.length === 0 || outcome.status !== aggregate) {
+      throw new Error("local operator event outcome summary is invalid");
+    }
   }
   return outcome;
 }
@@ -701,21 +744,28 @@ export class ValidatorReplica {
     }
     if (this.#operatorEvents.expectedHeight === this.height + 1 &&
         this.#operatorEvents.previousHash === this.tipHash) return;
-    const finalized = this.#chain.blocks()
-      .find(({ height }) => height === this.#operatorEvents.expectedHeight) ?? null;
-    const fields = finalized === null ? null : proposalFields(finalized);
-    const included = fields !== null && Object.entries(this.#operatorEvents.events)
-      .every(([name, entries]) => entries.length === 0 ||
-        canonicalJson(entries) === canonicalJson(fields[name] ?? []));
+    let finalized = null;
+    if (this.#operatorEvents.expectedHeight <= this.height) {
+      try {
+        finalized = this.#chain.blockAtHeight(this.#operatorEvents.expectedHeight);
+      } catch (error) {
+        if (error.message !== "block height is unavailable") throw error;
+      }
+    }
+    const entries = operatorEventEntryOutcomes(this.#operatorEvents.events, finalized);
+    const statuses = Object.values(entries).flat().map(({ status }) => status);
+    const status = statuses.every((value) => value === "included") ? "included"
+      : statuses.every((value) => value === "expired") ? "expired" : "partial";
     const outcome = {
-      action: included ? "none" : "re-evaluation-required",
+      action: status === "included" ? "none" : "re-evaluation-required",
+      entries,
       eventDigest: operatorEventDigest(this.#operatorEvents.events),
       expectedHeight: this.#operatorEvents.expectedHeight,
       finalizedBlockHash: finalized?.hash ?? null,
-      format: "nir-local-operator-event-outcome-v1",
+      format: "nir-local-operator-event-outcome-v2",
       networkId: this.networkId,
       observedHeight: this.height,
-      status: included ? "included" : "expired",
+      status,
     };
     persistOperatorEventOutcome(join(this.#directory, OPERATOR_EVENT_OUTCOME_FILE), outcome);
     removeOperatorEvents(join(this.#directory, OPERATOR_EVENTS_FILE), this.#operatorEvents);
@@ -757,10 +807,16 @@ export class ValidatorReplica {
   stageOperatorEvents(value) {
     this.#pruneOperatorEvents();
     const events = normalizeOperatorEvents(value);
-    if (this.#operatorEventOutcome?.status === "expired" &&
-        this.#operatorEventOutcome.eventDigest === operatorEventDigest(events)) {
+    const expired = this.#operatorEventOutcome?.format === "nir-local-operator-event-outcome-v2"
+      ? Object.entries(events).flatMap(([type, entries]) => entries.map((entry) => ({
+        type, digest: operatorEventEntryDigest(type, entry),
+      }))).find(({ type, digest }) => this.#operatorEventOutcome.entries[type]
+        .some((result) => result.digest === digest && result.status === "expired"))
+      : null;
+    if (expired || (this.#operatorEventOutcome?.status === "expired" &&
+        this.#operatorEventOutcome.eventDigest === operatorEventDigest(events))) {
       return { accepted: false, action: "re-evaluation-required",
-        eventDigest: this.#operatorEventOutcome.eventDigest,
+        eventDigest: operatorEventDigest(events),
         expectedHeight: this.#operatorEventOutcome.expectedHeight, status: "expired" };
     }
     if (this.#operatorEvents !== null) {

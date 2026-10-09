@@ -201,9 +201,11 @@ test("operator-only claim survives failed proposer round and validator replay", 
   }
 });
 
-for (const expire of [false, true]) test(expire
-  ? "competing block expires a staged signed claim with durable re-evaluation status"
-  : "elected validator alone finalizes a staged signed claim into pending balances", async () => {
+for (const mode of ["included", "expired", "partial"]) test({
+  included: "elected validator alone finalizes a staged signed claim into pending balances",
+  expired: "competing block expires a staged signed claim with durable re-evaluation status",
+  partial: "partially included event batch identifies its included reward claim",
+}[mode], async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-validator-progress-reward-"));
   const beacons = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
@@ -297,7 +299,15 @@ for (const expire of [false, true]) test(expire
     const proposerIndex = replicas.findIndex(({ address }) =>
       address === mirror.expectedProposer(mirror.height + 1));
     assert.ok(proposerIndex >= 0);
-    assert.deepEqual(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }),
+    const nextRandomness = mirror.epochRandomnessStatus();
+    const extraCommit = mode === "partial" ? createEpochRandomnessCommit({
+      wallet: beacons.find(({ address }) => address === nextRandomness.committee[0]),
+      networkId: coordinator.networkId, round: nextRandomness.round,
+      secret: hash("partial-claim-batch"),
+    }) : null;
+    const stagedEvents = { rewardClaims: [claim],
+      ...(extraCommit === null ? {} : { epochRandomnessCommits: [extraCommit] }) };
+    assert.deepEqual(replicas[proposerIndex].stageOperatorEvents(stagedEvents),
       { expectedHeight: mirror.height + 1, status: "queued" });
     assert.equal(replicas[proposerIndex].buildProposal().progressRewards.length, 1);
 
@@ -308,31 +318,44 @@ for (const expire of [false, true]) test(expire
     assert.equal(replicas[proposerIndex].pendingOperatorEvents.events.rewardClaims.length, 1);
     servers[proposerIndex] = createValidatorHttpServer(replicas[proposerIndex], { peerUrls: () => urls });
     urls[proposerIndex] = await listen(servers[proposerIndex]);
-    if (expire) {
+    if (mode !== "included") {
       const validators = layout.validatorDirectories.map((directory) =>
         JSON.parse(readFileSync(join(directory, "VALIDATOR-KEY.json"))));
-      const competing = finalizeBlock(mirror.buildBlock({ transactions: [], timestamp: Date.now() }),
-        validators);
+      const competing = finalizeBlock(mirror.buildBlock({
+        ...(mode === "partial" ? { rewardClaims: [claim] } : {}),
+        transactions: [], timestamp: Date.now(),
+      }), validators);
       for (const replica of replicas) replica.commit(competing);
       const outcome = replicas[proposerIndex].localOperatorEventStatus;
-      assert.equal(outcome.status, "expired");
+      assert.equal(outcome.status, mode);
       assert.equal(outcome.action, "re-evaluation-required");
       assert.equal(outcome.expectedHeight, competing.height);
       assert.equal(outcome.finalizedBlockHash, competing.hash);
+      assert.equal(outcome.entries.rewardClaims[0].status,
+        mode === "partial" ? "included" : "expired");
       assert.equal(replicas[proposerIndex].pendingOperatorEvents, null);
-      assert.equal(replicas[proposerIndex].account(owner.address).resources.pendingProgressReward,
-        null);
-      assert.deepEqual(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }), {
-        accepted: false, action: "re-evaluation-required", eventDigest: outcome.eventDigest,
-        expectedHeight: competing.height, status: "expired",
-      });
+      assert.equal(replicas[proposerIndex].account(owner.address).resources.pendingProgressReward
+        === null, mode === "expired");
+      if (mode === "expired") {
+        assert.deepEqual(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }), {
+          accepted: false, action: "re-evaluation-required", eventDigest: outcome.eventDigest,
+          expectedHeight: competing.height, status: "expired",
+        });
+      } else {
+        const retry = replicas[proposerIndex].stageOperatorEvents({
+          epochRandomnessCommits: [extraCommit],
+        });
+        assert.equal(retry.status, "expired");
+      }
       assert.equal(replicas[proposerIndex].pendingOperatorEvents, null);
       await Promise.all(servers.map(close));
       replicas[proposerIndex].closeSecurityState();
       replicas[proposerIndex] = new ValidatorReplica(layout.validatorDirectories[proposerIndex]);
       assert.deepEqual(replicas[proposerIndex].localOperatorEventStatus, outcome);
-      assert.equal(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }).status,
-        "expired");
+      if (mode === "expired") {
+        assert.equal(replicas[proposerIndex].stageOperatorEvents({ rewardClaims: [claim] }).status,
+          "expired");
+      }
       return;
     }
     const produced = await fetch(`${urls[proposerIndex]}/v1/blocks/produce`, { method: "POST" });
