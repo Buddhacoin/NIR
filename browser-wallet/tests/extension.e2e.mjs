@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { chromium } from "playwright-core";
+import { chromium } from "playwright";
 
 const extension = resolve(import.meta.dirname, "../dist");
 
