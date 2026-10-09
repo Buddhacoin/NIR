@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability / Уязвимость
+    url: https://github.com/Buddhacoin/NIR/security/advisories/new
+    about: Report privately; never disclose an exploitable issue in a public issue.
