@@ -1,7 +1,20 @@
 import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from "./crypto.js";
 
-const STORE_KEY = "nirTestWallet";
-const extensionApi = globalThis.browser ?? globalThis.chrome;
+const extensionStorage = globalThis.browser?.storage?.local ?? globalThis.chrome?.storage?.local;
+const STORE_KEY = extensionStorage ? "nirTestWallet" : "nirTestWalletWeb";
+const storage = extensionStorage ?? {
+  async get(key) {
+    const value = localStorage.getItem(key);
+    return { [key]: value === null ? undefined : JSON.parse(value) };
+  },
+  async set(values) {
+    for (const [key, value] of Object.entries(values)) localStorage.setItem(key, JSON.stringify(value));
+  },
+};
+if (!extensionStorage && window.top !== window.self) {
+  document.body.textContent = "Откройте NIR Wallet напрямую, а не внутри другого сайта.";
+  throw new Error("Embedded wallet refused");
+}
 const $ = (selector) => document.querySelector(selector);
 let profile = null;
 let phrase = null;
@@ -49,7 +62,7 @@ async function currentAccount() {
 }
 
 async function saveProfile(next) {
-  await extensionApi.storage.local.set({ [STORE_KEY]: next });
+  await storage.set({ [STORE_KEY]: next });
   profile = next;
 }
 
@@ -234,10 +247,16 @@ $("#copy-revealed").addEventListener("click", () => run(async () => {
   await copy(revealed, "Фраза");
 }));
 
-if (extensionApi.storage.local.setAccessLevel) {
-  await extensionApi.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+if (storage.setAccessLevel) {
+  await storage.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 }
-const stored = (await extensionApi.storage.local.get(STORE_KEY))[STORE_KEY];
+let stored;
+try { stored = (await storage.get(STORE_KEY))[STORE_KEY]; }
+catch {
+  screen("unlock");
+  status("Не удалось прочитать локальные данные. Не удаляйте их; попробуйте открыть кошелёк в этом же браузере.");
+  throw new Error("Wallet storage is unavailable or invalid");
+}
 if (stored !== undefined) {
   if (!stored || typeof stored !== "object" || !stored.vault ||
       !Number.isInteger(stored.accountCount) || stored.accountCount < 1 || stored.accountCount > 16 ||

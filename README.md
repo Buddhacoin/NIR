@@ -4,7 +4,7 @@
 
 # NIR — the currency of verifiable progress
 
-**NIR Wallet:** We are preparing a free Firefox Add-ons listing for the browser-wallet preview. One-click installation is **not available yet**; [see wallet availability](#nir-wallet-availability). No public network, transfers, mining rewards, or real-value NIR are available in this preview.
+**NIR Wallet is not yet available as a one-click install or public web wallet.** A browser-only test preview is being reviewed; no public link should be used until deployment, origin isolation, and a live security check are complete. A separate free Firefox Add-ons listing is in preparation; [see wallet availability](#nir-wallet-availability).
 
 **AI will change the world. NIR is being built so the world can verify that change — and share in it.**
 
@@ -27,14 +27,17 @@ What makes the design different:
 
 ## NIR Wallet availability
 
-The one-click experience requires an official browser-store listing or a signed desktop/mobile app. **NIR has neither yet.** We are prioritizing Firefox Add-ons; users will not need a developer account or ZIP once Mozilla publishes a signed listing. Clicking an already installed app is not the same as installing it.
+The desktop web preview is under review and has no public entry point yet. It creates and restores local test addresses, but cannot send, mine, or show real balances. Its encrypted browser storage remains on that browser origin and device; write down the 24 words offline to restore on another device. Never enter a phrase from another wallet into an unreviewed preview. A GitHub Pages project path does not isolate browser storage from other pages on the same origin, so publication needs a dedicated origin or another reviewed isolation design.
+
+One-click **installation** as a Firefox extension still requires Mozilla signing and publication. A signed Mac desktop installer would require Apple Developer ID and notarization; neither is available yet.
 
 | Browser / device | Status |
 |---|---|
-| Chrome on Mac, Windows, Linux | No Chrome Web Store listing planned for this first release. |
-| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | No verified one-click install. Chromium compatibility has not been tested separately in each browser. |
-| Firefox on desktop | Firefox submission package prepared; Mozilla has not signed or published it yet. No one-click installation link yet. |
-| Safari on Mac or iPhone/iPad | No signed Safari app extension or installer. |
+| Chrome on Mac, Windows, Linux | Web preview tested in Chromium locally, but not publicly released; no Chrome Web Store listing planned for this first release. |
+| Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | Not separately verified and no public browser-wallet link or extension-store listing. |
+| Firefox on desktop | Web preview tested in Firefox locally; Firefox extension package prepared but not yet signed or published by Mozilla. |
+| Safari on Mac | Web preview tested in WebKit locally; no public web wallet, signed Safari extension, or Mac installer. |
+| iPhone/iPad | No official wallet app or verified mobile web experience. |
 | Android browsers | No verified browser-wallet installation. |
 
 Existing developer ZIPs require manual installation and are **not** one-click installers, audited wallets, or automatically updated releases. General users should wait for the official Firefox Add-ons listing and must not install purported NIR Wallet apps from third-party sites. The earlier Mac desktop demo is a local prototype, not a public installer. See the [wallet safety guide](docs/wallet.md).

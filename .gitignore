@@ -17,5 +17,6 @@ release-key.nir
 rust/**/target/
 browser-wallet/dist/
 browser-wallet/dist-firefox/
+browser-wallet/dist-web/
 browser-wallet/node_modules/
 browser-wallet/artifacts/
