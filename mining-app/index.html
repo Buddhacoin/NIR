@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NIR · Майнинг</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="app">
+    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MINING LAB</small></span><b>ТЕСТ</b></header>
+    <section class="hero">
+      <span class="eyebrow">Локальная тренировка</span>
+      <h1>Проверьте, как работает майнинг NIR</h1>
+      <p>Один запуск покажет путь заявки на улучшение ИИ через проверку до ожидания награды. Пока это пример с временными участниками — без реальной модели и без начисления монет.</p>
+      <button id="start" type="button">Запустить тренировку <span aria-hidden="true">→</span></button>
+      <p class="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
+    </section>
+    <section id="progress" class="result" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2>Проверка идёт на этом Mac…</h2>
+      <p>Приложение создаёт временную локальную цепочку и проверяет учебную заявку.</p>
+    </section>
+    <section id="result" class="result" hidden aria-live="polite">
+      <span class="result-icon" aria-hidden="true">✓</span>
+      <h2>Тренировка завершена</h2>
+      <p>Правила выполнились, но сеть не была подключена и на ваш адрес ничего не начислено.</p>
+      <details><summary>Технический результат</summary><p id="technical"></p></details>
+    </section>
+    <p id="error" class="error" role="alert" hidden></p>
+    <footer>Нет публичного майнинга и реальной стоимости. Это безопасное знакомство с текущим прототипом.</footer>
+  </main>
+</body>
+</html>

@@ -28,13 +28,13 @@ or **Payment node** to explore the local ledger. Neither role earns real value.
 
 ## 1. Prepare the Mac
 
-You need Terminal, Git, Node.js 26 or newer, and Python 3.11 or newer. Open
+For the one-command practice you need Terminal, Git, and Node.js 26 or newer.
+Python is needed only for optional advanced checks. Open
 Terminal with Spotlight (`Command` + `Space`, type `Terminal`) and check:
 
 ```bash
 git --version
 node --version
-python3 --version
 ```
 
 The Node result must start with `v26` or a larger number. Install missing tools
@@ -52,15 +52,26 @@ cd NIR
 
 No `npm install` is required for the current local demo.
 
-## 2. Use the beginner setup wizard
+## 2. Open the local mining practice app
 
 From the repository root, run:
 
 ```bash
-npm run mine:wizard
+npm run mine:app
 ```
 
-The wizard lists all seven roles and labels each one either `local demo
+The command checks the Mac and opens a small local app in your browser. Press
+**Start practice** once. It requires no wallet, password, model download, role
+selection, or second command. The app listens only on this Mac; close the
+Terminal window to stop it. The result disappears when the app stops; no NIR
+is earned. If you prefer no app, `npm run mine:try` runs the same round directly
+in Terminal. `npm run mine:try -- --details` prints the technical local result,
+which now uses the v5 schedule of 44 **test** NIR. This is not a live payout.
+
+### Advanced role wizard
+
+If you need a different role or developer transport check, run
+`npm run mine:wizard`. The wizard lists all seven roles and labels each one either `local demo
 available` or `planned only`. An eighth, clearly separate developer option
 prepares a local adapter transport check; it is not a mining role. Enter a
 number. The wizard then runs the read-only Mac
@@ -98,13 +109,13 @@ The refusal is expected until the project publishes and supports a signed
 network manifest. A URL pasted into a chat is not a substitute for that trust
 root.
 
-## 3. Try one simulated intelligence-mining round
+## 3. Run the underlying demo directly (optional)
 
 ```bash
 npm run mine:demo
 ```
 
-The script creates temporary in-memory participants, commits a candidate,
+This is the demo that `mine:try` runs after its checks. The script creates temporary in-memory participants, commits a candidate,
 assigns a simulated evaluator committee, accepts signed evaluation evidence,
 and places a simulated reward in the mandatory challenge-window escrow. Output
 such as `height`, `issued`, available and pending balances, the unlock height, a
