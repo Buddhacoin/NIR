@@ -950,7 +950,7 @@ export function createValidatorHttpServer(validator, options = {}) {
   return hardenHttpServer(server, { ...httpIngressOptions, maxConnections });
 }
 
-/** A single-frame, same-UID operator channel with only sync and produce operations. */
+/** Single-frame, same-UID operator channel; never a public evaluator ingress. */
 export function createValidatorControlServer(validator, options = {}) {
   const peerUrls = options.peerUrls ?? (() => validator.peerUrls);
   const roundTimeoutMs = options.roundTimeoutMs ?? 250;
@@ -989,8 +989,14 @@ export function createValidatorControlServer(validator, options = {}) {
       let ownsOperation = false;
       try {
         decoder.finish();
-        if (!message || Object.keys(message).join() !== "operation" ||
-            !["sync", "produce"].includes(message.operation)) {
+        const fields = Object.keys(message ?? {}).sort().join("\0");
+        const simple = ["sync", "produce"].includes(message?.operation) &&
+          fields === "operation";
+        const stage = message?.operation === "stageRewardClaim" &&
+          fields === "claim\0expectedHeight\0networkId\0operation\0previousHash";
+        const status = message?.operation === "rewardClaimStatus" &&
+          fields === "claimDigest\0operation";
+        if (!simple && !stage && !status) {
           throw new Error("validator control request is invalid");
         }
         if (operationActive) {
@@ -1000,14 +1006,19 @@ export function createValidatorControlServer(validator, options = {}) {
         }
         operationActive = true;
         ownsOperation = true;
-        const urls = executeForTest ? null : typeof peerUrls === "function" ? peerUrls() : peerUrls;
+        const urls = executeForTest || stage || status ? null
+          : typeof peerUrls === "function" ? peerUrls() : peerUrls;
         const body = executeForTest
           ? await executeForTest(message.operation)
+          : stage
+            ? validator.stageRewardClaim(message)
+            : status
+              ? validator.rewardClaimStatus(message.claimDigest)
           : message.operation === "sync"
             ? await synchronizeValidator(validator, urls)
             : await produceValidatorBlock(validator, urls, roundTimeoutMs, maxRoundTimeoutMs);
         socket.end(encodeCanonicalIpcFrame({ ok: true,
-          status: message.operation === "sync" ? 200 : 202, body }, CONTROL_RESPONSE_FRAME));
+          status: message.operation === "sync" || status ? 200 : 202, body }, CONTROL_RESPONSE_FRAME));
       } catch (error) {
         if (!socket.destroyed) socket.end(encodeCanonicalIpcFrame({ ok: false, status: 400,
           body: { error: ingressErrorResponse(error).message } }, CONTROL_RESPONSE_FRAME));
