@@ -581,6 +581,7 @@ int main(int argc, const char *argv[]) {
                     activateWithOptions:0];
                 [pairingWindow makeKeyAndOrderFront:nil];
                 [pairingWindow orderFrontRegardless];
+                (void)write(STDOUT_FILENO, "READY\n", 6);
             });
             while (YES) {
                 NSModalResponse choice = [alert runModal];

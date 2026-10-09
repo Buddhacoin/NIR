@@ -377,6 +377,28 @@ test("native pairing prompt shows the code only on the device, never over HTTP",
   }
 });
 
+test("failed native pairing prompt is reported to the browser", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-pairing-failure-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "pairing-failure-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, pairingCode: "12345678",
+    presentPairingCode: async () => { throw new Error("native helper failed"); },
+    sessionToken: "1".repeat(64), vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const response = await request(`${base}/v1/pairing-prompt`, origin, "", { method: "POST" });
+    assert.equal(response.status, 503);
+    assert.equal((await response.text()).includes("12345678"), false);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("rehearsal CLI exposes sibling vault copies and disables unsupported creation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-cli-accounts-"));
   const walletDirectory = join(directory, "Wallets");

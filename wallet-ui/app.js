@@ -981,14 +981,23 @@ document.querySelector("#claim-unstake").onclick = async (event) => {
   finally { event.currentTarget.disabled = false; }
 };
 
-function openBridgePanel() {
+async function openBridgePanel() {
   bridgeStatus.textContent = "";
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
   bridgePanel.showModal();
   // Native Mac app brings its pairing code above the browser. The standalone
   // CLI has no such endpoint; its terminal code remains the fallback.
-  void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
+  try {
+    const response = await fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" });
+    if (!response.ok) {
+      bridgeStatus.textContent = response.status === 409
+        ? "Код подключения истёк или уже использован. Закройте и снова откройте NIR Wallet."
+        : "Не удалось показать код. Закройте и снова откройте NIR Wallet.";
+    }
+  } catch {
+    bridgeStatus.textContent = "Приложение NIR Wallet не запущено. Откройте его на Mac и повторите подключение.";
+  }
 }
 
 async function renderAccounts() {

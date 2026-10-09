@@ -510,7 +510,7 @@ export function createWalletBridgeServer({
         return send(response, 409, { error: "pairing is unavailable; restart the bridge" }, origin);
       }
       try {
-        presentPairingCode();
+        await presentPairingCode();
         return send(response, 202, { shownOnDevice: true }, origin);
       } catch {
         return send(response, 503, { error: "pairing window could not be opened" }, origin);
