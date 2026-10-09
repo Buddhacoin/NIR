@@ -45,6 +45,11 @@ test("one-step practice never labels a failing or unproven demo successful", () 
     assert.equal(attempt.ok, false);
     assert.equal(attempt.reason, "demo-failed");
   }
+  const crashed = tryLocalMining({
+    root: fixture(), ...setup, runDemo: () => { throw new Error("demo crashed"); },
+  });
+  assert.equal(crashed.ok, false);
+  assert.equal(crashed.detail, "demo crashed");
 });
 
 test("public one-step command finishes without wallet files, network promises or a displayed payout", () => {

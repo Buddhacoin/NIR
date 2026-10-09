@@ -28,13 +28,13 @@ or **Payment node** to explore the local ledger. Neither role earns real value.
 
 ## 1. Prepare the Mac
 
-You need Terminal, Git, Node.js 26 or newer, and Python 3.11 or newer. Open
+For the one-command practice you need Terminal, Git, and Node.js 26 or newer.
+Python is needed only for optional advanced checks. Open
 Terminal with Spotlight (`Command` + `Space`, type `Terminal`) and check:
 
 ```bash
 git --version
 node --version
-python3 --version
 ```
 
 The Node result must start with `v26` or a larger number. Install missing tools

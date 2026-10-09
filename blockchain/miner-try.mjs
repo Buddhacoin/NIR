@@ -24,7 +24,11 @@ export function tryLocalMining({
   });
   if (!preflight.ready) return { ok: false, reason: "preflight", checks: preflight.checks };
 
-  const result = runDemo(root);
+  let result;
+  try { result = runDemo(root); }
+  catch (error) {
+    return { ok: false, reason: "demo-failed", detail: error.message };
+  }
   if (result.error || result.status !== 0 || !/^final block: [0-9a-f]{64}$/mu.test(result.stdout ?? "")) {
     return {
       ok: false,
