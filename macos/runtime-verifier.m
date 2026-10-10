@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -55,13 +56,54 @@ static NSString *lexicalPath(NSString *path) {
     return [@"/" stringByAppendingString:[parts componentsJoinedByString:@"/"]];
 }
 
+static BOOL verifyDependencies(NSArray *dependencies) {
+    if (![dependencies isKindOfClass:NSArray.class] || dependencies.count > 512) return NO;
+    NSMutableSet<NSString *> *paths = [NSMutableSet setWithCapacity:dependencies.count];
+    unsigned long long total = 0;
+    for (NSDictionary *binding in dependencies) {
+        if (![binding isKindOfClass:NSDictionary.class] || !exactKeys(binding,
+            @[@"logicalPath", @"realPath", @"sha256", @"size"])) return NO;
+        NSString *logical = binding[@"logicalPath"], *expectedReal = binding[@"realPath"];
+        NSString *digest = binding[@"sha256"];
+        NSNumber *size = binding[@"size"];
+        if (![logical isKindOfClass:NSString.class] || !logical.isAbsolutePath ||
+            ![expectedReal isKindOfClass:NSString.class] || !expectedReal.isAbsolutePath ||
+            ![digest isKindOfClass:NSString.class] || digest.length != 64 ||
+            ![size isKindOfClass:NSNumber.class] || [paths containsObject:logical] ||
+            ![canonicalRealPath(logical) isEqualToString:expectedReal]) return NO;
+        [paths addObject:logical];
+        if (size.unsignedLongLongValue > 512ULL * 1024 * 1024 ||
+            total + size.unsignedLongLongValue > 2ULL * 1024 * 1024 * 1024) return NO;
+        total += size.unsignedLongLongValue;
+        if (![[fileDigest(expectedReal, size) lowercaseString] isEqualToString:digest]) return NO;
+    }
+    return YES;
+}
+
+static BOOL verifyMissingDependencies(NSArray *paths) {
+    if (![paths isKindOfClass:NSArray.class] || paths.count > 512) return NO;
+    NSMutableSet<NSString *> *seen = [NSMutableSet setWithCapacity:paths.count];
+    for (NSString *path in paths) {
+        if (![path isKindOfClass:NSString.class] || !path.isAbsolutePath ||
+            [seen containsObject:path]) return NO;
+        [seen addObject:path];
+        struct stat status;
+        errno = 0;
+        if (lstat(path.fileSystemRepresentation, &status) == 0 || errno != ENOENT) return NO;
+    }
+    return YES;
+}
+
 static BOOL verifyExecutable(NSDictionary *binding) {
     if (![binding isKindOfClass:NSDictionary.class] || !exactKeys(binding,
-        @[@"logicalPath", @"realPath", @"links", @"sha256", @"size"])) return NO;
+        @[@"logicalPath", @"realPath", @"links", @"dependencies", @"missingDependencies",
+          @"sha256", @"size"])) return NO;
     NSString *logical = binding[@"logicalPath"], *expectedReal = binding[@"realPath"];
     NSArray *links = binding[@"links"];
     NSNumber *size = binding[@"size"];
     NSString *digest = binding[@"sha256"];
+    NSArray *dependencies = binding[@"dependencies"];
+    NSArray *missingDependencies = binding[@"missingDependencies"];
     if (![logical isKindOfClass:NSString.class] || !logical.isAbsolutePath ||
         ![expectedReal isKindOfClass:NSString.class] || !expectedReal.isAbsolutePath ||
         ![links isKindOfClass:NSArray.class] || ![size isKindOfClass:NSNumber.class] ||
@@ -82,7 +124,8 @@ static BOOL verifyExecutable(NSDictionary *binding) {
     }
     if (![canonicalRealPath(logical) isEqualToString:expectedReal] ||
         ![cursor isEqualToString:expectedReal]) return NO;
-    return [[fileDigest(expectedReal, size) lowercaseString] isEqualToString:digest];
+    return [[fileDigest(expectedReal, size) lowercaseString] isEqualToString:digest] &&
+        verifyDependencies(dependencies) && verifyMissingDependencies(missingDependencies);
 }
 
 static NSString *encoded(NSString *value) {
@@ -160,7 +203,7 @@ static BOOL verifyRuntime(NSString *configuration) {
     NSDictionary *runtime = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
     if (![runtime isKindOfClass:NSDictionary.class] || !exactKeys(runtime,
         @[@"format", @"nodeExecutable", @"pythonBaseEnvironment", @"pythonExecutable", @"pythonEnvironment"]) ||
-        ![runtime[@"format"] isEqualToString:@"nir-local-runtime-binding-v1"] ||
+        ![runtime[@"format"] isEqualToString:@"nir-local-runtime-binding-v2"] ||
         !verifyExecutable(runtime[@"nodeExecutable"]) || !verifyExecutable(runtime[@"pythonExecutable"]) ||
         !verifyEnvironment(runtime[@"pythonBaseEnvironment"], runtime[@"pythonExecutable"][@"realPath"])) return NO;
     id environment = runtime[@"pythonEnvironment"];

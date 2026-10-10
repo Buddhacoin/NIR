@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync,
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync,
   symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -149,6 +149,63 @@ test("signed model app pins the selected venv behind a mutable ancestor symlink"
   }
 });
 
+test("native verifier binds non-system dynamic-library bytes used by a runtime", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync("/private/tmp/nir-model-dylib-proof-test-");
+  try {
+    const early = join(directory, "early");
+    const later = join(directory, "later");
+    mkdirSync(later);
+    const library = join(later, "libfixture.dylib");
+    const librarySource = join(directory, "library.c");
+    const executable = join(directory, "fixture-runtime");
+    const executableSource = join(directory, "runtime.c");
+    writeFileSync(executableSource,
+      "#include <stdio.h>\nextern int nir_fixture_value(void);\n" +
+      "int main(void) { printf(\"%d\\n\", nir_fixture_value()); return 0; }\n");
+    const compileLibrary = (path, value) => {
+      writeFileSync(librarySource, `int nir_fixture_value(void) { return ${value}; }\n`);
+      const built = spawnSync("/usr/bin/clang", ["-dynamiclib", librarySource,
+        "-Wl,-install_name,@rpath/libfixture.dylib", "-o", path], { encoding: "utf8" });
+      assert.equal(built.status, 0, built.stderr);
+    };
+    compileLibrary(library, 1);
+    const linked = spawnSync("/usr/bin/clang", [executableSource, "-L" + later, "-lfixture",
+      "-Wl,-rpath," + early, "-Wl,-rpath," + later, "-o", executable],
+      { encoding: "utf8" });
+    assert.equal(linked.status, 0, linked.stderr);
+    assert.equal(spawnSync(executable, [], { encoding: "utf8" }).stdout.trim(), "1");
+
+    const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"), { sign: false });
+    const runtimePath = join(app, "Contents/Resources/NIR-RUNTIME.json");
+    const runtime = JSON.parse(readFileSync(runtimePath));
+    runtime.nodeExecutable = executableBinding(executable);
+    assert.deepEqual(runtime.nodeExecutable.missingDependencies,
+      [join(early, "libfixture.dylib")]);
+    assert.equal(runtime.nodeExecutable.dependencies.some((entry) =>
+      entry.logicalPath === library && entry.realPath === realpathSync(library)), true);
+    writeFileSync(runtimePath, `${JSON.stringify(runtime)}\n`);
+    const verifier = join(app, "Contents/MacOS/runtime-verifier");
+    assert.equal(spawnSync(verifier, [runtimePath], { encoding: "utf8" }).status, 0);
+
+    compileLibrary(library, 2);
+    assert.equal(spawnSync(executable, [], { encoding: "utf8" }).stdout.trim(), "2",
+      "the unchanged executable must demonstrate that substituted dylib bytes change execution");
+    assert.notEqual(spawnSync(verifier, [runtimePath], { encoding: "utf8" }).status, 0,
+      "the native verifier must fail closed when a non-system dependency changes");
+    compileLibrary(library, 1);
+    assert.equal(spawnSync(verifier, [runtimePath], { encoding: "utf8" }).status, 0);
+
+    mkdirSync(early);
+    const earlierLibrary = join(early, "libfixture.dylib");
+    compileLibrary(earlierLibrary, 3);
+    assert.equal(spawnSync(executable, [], { encoding: "utf8" }).stdout.trim(), "3",
+      "dyld must demonstrate that a newly created earlier rpath candidate changes execution");
+    assert.notEqual(spawnSync(verifier, [runtimePath], { encoding: "utf8" }).status, 0,
+      "the native verifier must fail closed when an earlier rpath candidate appears");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("signed model app rejects a changed external Python runtime", () => {
   if (process.platform !== "darwin") return;
   // Keep the lexical /private/tmp prefix used by the real MLX environment.
@@ -170,7 +227,7 @@ test("signed model app rejects a changed external Python runtime", () => {
     const runtimePath = join(app, "Contents/Resources/NIR-RUNTIME.json");
     const originalRuntime = readFileSync(runtimePath);
     const runtime = JSON.parse(originalRuntime);
-    assert.equal(runtime.format, "nir-local-runtime-binding-v1");
+    assert.equal(runtime.format, "nir-local-runtime-binding-v2");
     assert.match(runtime.nodeExecutable.sha256, /^[0-9a-f]{64}$/);
     assert.match(runtime.pythonEnvironment.treeSha256, /^[0-9a-f]{64}$/);
     const launcher = join(app, "Contents/MacOS/launcher");

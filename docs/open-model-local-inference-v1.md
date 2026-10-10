@@ -39,16 +39,25 @@ and Python executables, their exact symlink chains, the virtual environment and
 the external Python base-prefix tree. A signed native verifier repeats these
 checks before external Node.js starts. It rejects changed targets, bytes,
 `pyvenv.cfg`, added or changed `site-packages`, broken-link state, or an
-over-limit tree. At build time it resolves every ancestor directory of each
-runtime and records that canonical launch path while retaining the final
-`bin/python` symlink needed for virtual-environment discovery. Changing a
-convenience alias such as `venv-current` therefore cannot redirect the signed
-app from the selected environment to another one. The launcher also removes Node/Python path-injection variables
+over-limit tree. The builder also reads each runtime's Mach-O load commands with
+the system `otool`, recursively resolves its non-system startup libraries, and
+records each library's logical path, canonical path, size, and digest. The
+manifest also records every absent earlier `@rpath` candidate considered before
+the selected library; the verifier rejects a later file appearing at any such
+path. The native verifier repeats those file, redirect, and absence checks
+before launch. At build
+time it resolves every ancestor directory of each runtime and records that
+canonical launch path while retaining the final `bin/python` symlink needed for
+virtual-environment discovery. Changing a convenience alias such as
+`venv-current` therefore cannot redirect the signed app from the selected
+environment to another one. The launcher also removes Node/Python path-injection variables
 and disables the user site and bytecode writes. This is a fail-closed **local
 consistency guard**, not immutable runtime attestation: verification and exec
-are separate operations, the OS loader and system dynamic libraries are not in
-the measured closure, and a privileged or racing same-user process can still
-change external files after verification. The app is ad-hoc signed, so this
+are separate operations. System libraries under `/usr/lib` and `/System/Library`
+remain trusted OS inputs, and libraries selected later by application-controlled
+`dlopen` or plugin paths are not proven by the startup Mach-O closure. A
+privileged or racing same-user process can still change external files after
+verification. The app is ad-hoc signed, so this
 does not prove publisher identity and an attacker able to rewrite and re-sign
 the app can replace the manifest and verifier. A hostile parent can also inject
 code through loader controls such as `DYLD_INSERT_LIBRARIES` before the first
