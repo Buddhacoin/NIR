@@ -73,7 +73,7 @@ test("rejects unknown roles instead of guessing", () => {
   assert.throws(() => runMacMinerPreflight({ root: fixture(), role: "gpu-miner" }), /unknown role/);
 });
 
-test("the advertised local mining demo completes", () => {
+test("the advertised local demo completes with the approved v5 reward", () => {
   const repository = join(fileURLToPath(new URL("..", import.meta.url)));
   const result = spawnSync(process.execPath, [join(repository, "blockchain", "demo.mjs")], {
     cwd: repository, encoding: "utf8", timeout: 30_000,
@@ -81,7 +81,7 @@ test("the advertised local mining demo completes", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /height: \d+/);
   assert.match(result.stdout, /alice available: 0\.00000000 NIR/);
-  assert.match(result.stdout, /alice pending: 50\.00000000 NIR/);
+  assert.match(result.stdout, /alice pending: 44\.00000000 NIR/);
   assert.match(result.stdout, /reward unlock height: 70/);
   assert.match(result.stdout, /signature suite: ML-DSA-65/);
 });
