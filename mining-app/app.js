@@ -8,6 +8,7 @@ const languageButton = document.querySelector("#language");
 const catalogModel = document.querySelector("#catalog-model");
 const catalogVersion = document.querySelector("#catalog-version");
 const catalogState = document.querySelector("#catalog-state");
+const catalogModelInfo = document.querySelector("#catalog-model-info");
 const catalogRefresh = document.querySelector("#catalog-refresh");
 
 const copy = {
@@ -28,14 +29,19 @@ const copy = {
     invalid: "Результат локальной проверки не подтверждён. Награда не начислена.",
     score: (baseline, candidate, count) => `Точность: исходная модель ${baseline} %, улучшенная ${candidate} % · ${count} примеров.`,
     hash: (value) => `Хеш проверенного набора: ${value}`,
-    catalogTitle: "Каталог открытых моделей", catalogIntro: "Можно посмотреть замеченные ревизии открытых моделей; запускать их здесь пока нельзя. Встроенная Iris выше — единственная доступная проверка.",
-    catalogModel: "Модель", catalogVersion: "Замеченная ревизия (точный commit SHA)",
+    catalogTitle: "Технические образцы моделей", catalogIntro: "Qwen3 0.6B и TinyLlama 1.1B — небольшие открытые языковые модели для изучения формата версий, а не список популярных или установленных моделей. Здесь доступны только сведения о ревизиях; встроенная Iris выше — единственная работающая проверка.",
+    catalogModel: "Образец модели", catalogVersion: "Замеченная ревизия репозитория (commit SHA)",
+    catalogModelPrompt: "Выберите образец, чтобы узнать, что это за модель. Веса не установлены.",
+    catalogModelInfo: {
+      "Qwen/Qwen3-0.6B": "Qwen · небольшая языковая модель Qwen3, около 0,6 млрд параметров. Показаны только метаданные; веса не скачаны и модель не установлена.",
+      "TinyLlama/TinyLlama-1.1B-Chat-v1.0": "TinyLlama · небольшая языковая модель Chat, около 1,1 млрд параметров. Показаны только метаданные; веса не скачаны и модель не установлена.",
+    },
     catalogPlaceholder: "Выберите модель", catalogVersionPlaceholder: "Сначала выберите модель", catalogChooseRevision: "Выберите ревизию",
     catalogRefresh: "Обновить сведения", catalogLoading: "Загружаем сведения о версиях…",
     catalogFresh: "Сведения доступны. Выбранная ревизия не меняется автоматически; запросы ограничены разом в 30 секунд.",
-    catalogStale: "Не удалось обновить все сведения. Показаны ранее загруженные версии; они могут устареть.",
+    catalogStale: "Не удалось обновить все сведения. Если ревизии показаны, это ранее замеченные значения; они могут устареть.",
     catalogUnavailable: "Сведения о моделях недоступны. Проверьте соединение и повторите позже.",
-    catalogNoVersion: "Для этой модели пока нет сведений о замеченных ревизиях.",
+    catalogNoVersion: "Для этой модели нет загруженных ревизий. Это не означает, что модель установлена или проверена.",
     catalogSelected: (repo, sha) => `${repo} · ${sha}. Только просмотр: запуск и награда недоступны.`,
     catalogOlderSelection: "Это ранее замеченная ревизия; её уже нет в кратком списке.",
     catalogNote: "Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Ничего не скачивается, не исполняется и не даёт права на награду.",
@@ -57,14 +63,19 @@ const copy = {
     invalid: "The local result could not be verified. No reward was credited.",
     score: (baseline, candidate, count) => `Accuracy: baseline ${baseline}%, candidate ${candidate}% · ${count} examples.`,
     hash: (value) => `Verified bundle hash: ${value}`,
-    catalogTitle: "Open model catalog", catalogIntro: "Browse observed revisions of open models; they cannot run here yet. The built-in Iris example above is the only available check.",
-    catalogModel: "Model", catalogVersion: "Observed revision (exact commit SHA)",
+    catalogTitle: "Technical model samples", catalogIntro: "Qwen3 0.6B and TinyLlama 1.1B are small open language models used to explore revision metadata, not a list of popular or installed models. Only revision information is available here; the built-in Iris example above is the only runnable check.",
+    catalogModel: "Sample model", catalogVersion: "Observed repository revision (commit SHA)",
+    catalogModelPrompt: "Select a sample to learn what it is. Model weights are not installed.",
+    catalogModelInfo: {
+      "Qwen/Qwen3-0.6B": "Qwen · a small Qwen3 language model with about 0.6 billion parameters. This is metadata only; weights have not been downloaded or installed.",
+      "TinyLlama/TinyLlama-1.1B-Chat-v1.0": "TinyLlama · a small Chat language model with about 1.1 billion parameters. This is metadata only; weights have not been downloaded or installed.",
+    },
     catalogPlaceholder: "Choose a model", catalogVersionPlaceholder: "Choose a model first", catalogChooseRevision: "Choose a revision",
     catalogRefresh: "Refresh metadata", catalogLoading: "Loading version metadata…",
     catalogFresh: "Metadata is available. The selected revision does not change automatically; requests are limited to once per 30 seconds.",
-    catalogStale: "Some metadata could not be refreshed. Previously seen versions are shown and may be outdated.",
+    catalogStale: "Some metadata could not be refreshed. Any shown revisions were observed earlier and may be outdated.",
     catalogUnavailable: "Model metadata is unavailable. Check your connection and try again later.",
-    catalogNoVersion: "No observed revision metadata is available for this model yet.",
+    catalogNoVersion: "No revisions have been loaded for this model. This does not mean the model is installed or verified.",
     catalogSelected: (repo, sha) => `${repo} · ${sha}. View only: execution and rewards are unavailable.`,
     catalogOlderSelection: "This revision was observed earlier and is no longer in the short list.",
     catalogNote: "Metadata comes from public Hugging Face records. A SHA identifies a repository revision; it does not verify the model files. Nothing is downloaded, executed, or made reward-eligible.",
@@ -99,6 +110,7 @@ function renderCatalog() {
   }
   catalogModel.value = catalogData?.entries.some((entry) => entry.repo === previousModel) ? previousModel : "";
   const selected = catalogData?.entries.find((entry) => entry.repo === catalogModel.value);
+  if (catalogModelInfo) catalogModelInfo.textContent = t.catalogModelInfo[selected?.repo] ?? t.catalogModelPrompt;
   catalogVersion.replaceChildren(option("", selected ? t.catalogChooseRevision : t.catalogVersionPlaceholder));
   const olderSelection = selected && /^[a-f0-9]{40}$/.test(previousVersion) &&
     !selected.versions.includes(previousVersion);
@@ -110,7 +122,7 @@ function renderCatalog() {
   catalogRefresh.disabled = catalogLoading;
   if (catalogLoading) catalogState.textContent = t.catalogLoading;
   else if (catalogVersion.value) catalogState.textContent = `${t.catalogSelected(selected.repo, catalogVersion.value)} ${olderSelection ? t.catalogOlderSelection : ""} ${catalogData.stale ? t.catalogStale : ""}`.trim();
-  else if (selected && !selected.versions.length) catalogState.textContent = t.catalogNoVersion;
+  else if (selected && !selected.versions.length) catalogState.textContent = `${t.catalogNoVersion} ${catalogData.stale ? t.catalogStale : ""}`.trim();
   else if (!catalogData || catalogData.entries.every((entry) => !entry.versions.length)) catalogState.textContent = t.catalogUnavailable;
   else catalogState.textContent = t[catalogData.stale ? "catalogStale" : "catalogFresh"];
 }

@@ -19,11 +19,12 @@
       <p class="safety" data-i18n="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
     </section>
     <section class="catalog" aria-labelledby="catalog-heading">
-      <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>
-      <p data-i18n="catalogIntro">Можно посмотреть замеченные ревизии открытых моделей; запускать их здесь пока нельзя. Встроенная Iris выше — единственная доступная проверка.</p>
-      <label for="catalog-model" data-i18n="catalogModel">Модель</label>
+      <h2 id="catalog-heading" data-i18n="catalogTitle">Технические образцы моделей</h2>
+      <p data-i18n="catalogIntro">Qwen3 0.6B и TinyLlama 1.1B — небольшие открытые языковые модели для изучения формата версий, а не список популярных или установленных моделей. Здесь доступны только сведения о ревизиях; встроенная Iris выше — единственная работающая проверка.</p>
+      <label for="catalog-model" data-i18n="catalogModel">Образец модели</label>
       <select id="catalog-model" disabled><option value="" data-i18n="catalogPlaceholder">Выберите модель</option></select>
-      <label for="catalog-version" data-i18n="catalogVersion">Замеченная ревизия (точный commit SHA)</label>
+      <p id="catalog-model-info" data-i18n="catalogModelPrompt">Выберите образец, чтобы узнать, что это за модель. Веса не установлены.</p>
+      <label for="catalog-version" data-i18n="catalogVersion">Замеченная ревизия репозитория (commit SHA)</label>
       <select id="catalog-version" disabled><option value="" data-i18n="catalogVersionPlaceholder">Сначала выберите модель</option></select>
       <p id="catalog-state" role="status" aria-live="polite"></p>
       <button id="catalog-refresh" class="secondary" type="button" data-i18n="catalogRefresh">Обновить сведения</button>
