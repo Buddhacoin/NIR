@@ -267,7 +267,10 @@ npm run wallet:macos-build -- "$PWD/dist/NIR Wallet.app"
 open "$PWD/dist/NIR Wallet.app"
 ```
 
-After that one-time source build, the native setup window creates a personal
+After that one-time source build, `NIR Wallet.app` can be copied to the Desktop
+and opened by double-clicking it on **the same Mac**, while the Node.js runtime
+used for the build remains installed at its recorded absolute path. It is not
+a portable app for another Mac. The native setup window creates a personal
 encrypted vault, opens an existing vault, or restores one from a backup and
 recovery code without asking the user to use Terminal. New keys and backups
 remain in `~/Library/Application Support/NIR Wallet/`, outside the app bundle.
@@ -275,8 +278,10 @@ If the first recovery-code window fails or the code was not saved, reopen the
 same local vault with its password and choose **Новый код восстановления**.
 This creates a new backup/code pair; it does not revoke any older pair. If an
 older pair may have leaked, use a new address and migrate any funds instead.
-The app starts a loopback-only browser interface on a fresh port for each
-launch, without a persistent service worker, and a signing bridge. Clicking
+The app starts a loopback-only interface on a fresh port for each launch and
+displays it in its own nonpersistent macOS WebKit window, not a browser tab.
+Navigation outside that exact local origin is refused. The app does not keep a
+persistent service worker and starts a signing bridge. Clicking
 **Connect** brings a native eight-digit pairing code to the front; the code is
 never returned to the browser. Multiple vault files, including restored copies
 of one address, remain distinct selectable entries. Creating another vault in

@@ -132,7 +132,7 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
   rejectSecretPaths();
   verifyModuleClosure();
   for (const relative of [...PACKAGE_FILES, "macos/Info.plist", "macos/wallet-launcher.m",
-    "macos/wallet-onboarding.m"]) checkedSource(relative);
+    "macos/wallet-runner.c", "macos/wallet-onboarding.m"]) checkedSource(relative);
   const scratch = mkdtempSync(join(parent, ".nir-wallet-build-"));
   try {
     const app = join(scratch, "NIR Wallet.app");
@@ -156,12 +156,14 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
     writeFileSync(join(resources, "NIR-RUNTIME.json"),
       `${JSON.stringify({ nodeExecutable: process.execPath })}\n`);
     writeIcon(resources);
-    for (const [source, name] of [["macos/wallet-launcher.m", "launcher"],
-      ["macos/wallet-onboarding.m", "onboarding"]]) {
-      command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
-        "Foundation", checkedSource(source), "-o", join(contents, "MacOS", name)],
-      `native ${name} build`);
-    }
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
+      "Foundation", "-framework", "WebKit", checkedSource("macos/wallet-launcher.m"),
+      "-o", join(contents, "MacOS/launcher")], "native launcher build");
+    command("/usr/bin/clang", [checkedSource("macos/wallet-runner.c"), "-o",
+      join(contents, "MacOS/wallet-runner")], "native runner build");
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
+      "Foundation", checkedSource("macos/wallet-onboarding.m"), "-o",
+      join(contents, "MacOS/onboarding")], "native onboarding build");
     for (const relative of PACKAGE_FILES) {
       const destination = join(payload, relative);
       mkdirSync(dirname(destination), { recursive: true });

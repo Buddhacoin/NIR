@@ -160,6 +160,7 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 #verified-request-note { margin: 9px 0 0; color: #157542; overflow-wrap: anywhere; }
 .security-state { margin: 17px 0; padding: 12px 13px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 .setup-steps { display: grid; gap: 13px; padding-left: 22px; }
+.setup-steps[hidden] { display: none; }
 .setup-steps li { padding-left: 3px; }
 .setup-steps b, .setup-steps code { display: block; }
 .setup-steps code { margin-top: 6px; padding: 9px; border-radius: 10px; background: var(--surface-soft); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; user-select: all; }

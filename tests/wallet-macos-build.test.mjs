@@ -34,7 +34,8 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     const app = join(directory, "NIR Wallet.app");
     assert.equal(buildMacWallet(app, { sign: false }), app);
     for (const relative of [
-      "Contents/Info.plist", "Contents/MacOS/launcher", "Contents/MacOS/onboarding",
+      "Contents/Info.plist", "Contents/MacOS/launcher", "Contents/MacOS/wallet-runner",
+      "Contents/MacOS/onboarding",
       "Contents/Resources/NIR.icns",
       "Contents/Resources/NIR-LOCAL-BUILD.json",
       "Contents/Resources/NIR-RUNTIME.json",
@@ -54,6 +55,14 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
       assert.equal(existsSync(join(app, relative)), false, relative);
     }
     const launcher = readFileSync(new URL("../macos/wallet-launcher.m", import.meta.url), "utf8");
+    assert.match(launcher, /\[WKWebsiteDataStore nonPersistentDataStore\]/);
+    assert.match(launcher, /\[url\.host isEqualToString:@"127\.0\.0\.1"\]/);
+    assert.match(launcher, /kill\(-leader, SIGTERM\)/);
+    assert.match(launcher, /terminationHandler = [\s\S]*?\[weakSelf stopWalletGroup\]/);
+    assert.match(launcher, /WKNavigationActionPolicyCancel/);
+    const nativeApp = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
+    assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
+    assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
     assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
       { nodeExecutable: process.execPath });
     const info = readFileSync(join(app, "Contents/Info.plist"), "utf8");
@@ -83,6 +92,21 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-url-smoke-"));
+  try {
+    const binary = join(directory, "url-smoke");
+    const source = new URL("../macos/wallet-launcher.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_LAUNCHER_URL_SMOKE_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", "-framework", "WebKit",
+      source, "-o", binary], { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(run.status, 0, run.stderr);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("native app uses a fresh UI origin and disables persistent service-worker caching", async () => {

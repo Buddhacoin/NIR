@@ -9,16 +9,16 @@
 </head>
 <body>
   <main class="shell">
-    <header><div class="brand"><img class="brand-logo" src="nir-coin-icon.png?v=24" alt=""><b>NIR</b></div><div class="header-actions"><button id="account-open" type="button" hidden>Кошелёк 1 ▾</button><button id="theme" aria-label="Сменить тему">☀</button><button class="network" data-action="network" aria-live="polite">● Local testnet</button></div></header>
+    <header><div class="brand"><img class="brand-logo" src="nir-coin-icon.png?v=24" alt=""><b>NIR</b></div><div class="header-actions"><button id="account-open" type="button" hidden>Кошелёк 1 ▾</button><button id="theme" aria-label="Сменить тему">☀</button><button class="network" data-action="network" aria-live="polite">○ Узлы не проверены</button></div></header>
     <section class="balance"><p>Общий баланс</p><h1><span id="balance-value">—</span> <small>NIR</small></h1><span id="wallet-state" role="status" aria-live="polite">Баланс не подтверждён</span></section>
     <section class="actions">
       <button data-action="receive"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14m0 0 5-5m-5 5-5-5"/></svg></i>Получить</button><button data-action="send"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m0 0 5 5m-5-5-5 5"/></svg></i>Отправить</button><button data-action="mine"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="M18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg></i>Майнинг</button>
     </section>
     <section class="card onboarding" id="onboarding" aria-labelledby="onboarding-title">
-      <div class="title"><div><span class="eyebrow">Начало работы</span><h2 id="onboarding-title">Подключите защищённый vault</h2></div><span class="step">1 из 3</span></div>
+      <div class="title"><div><span class="eyebrow">Начало работы</span><h2 id="onboarding-title">Подключите защищённый файл кошелька</h2></div><span class="step">1 из 3</span></div>
       <p>Ключ остаётся в зашифрованном файле на вашем компьютере. Эта страница получает только публичный адрес и подтверждённые вами подписи.</p>
-      <ol><li>Создайте или восстановите vault в терминале.</li><li>Запустите локальный bridge.</li><li>Введите одноразовый код ниже.</li></ol>
-      <div class="onboarding-actions"><button class="primary" data-action="connect">Подключить vault</button><button class="secondary" data-action="setup">Инструкция и резервная копия</button></div>
+      <ol><li>Создайте или восстановите файл кошелька в терминале.</li><li>Запустите локальный bridge.</li><li>Введите одноразовый код ниже.</li></ol>
+      <div class="onboarding-actions"><button class="primary" data-action="connect">Подключить кошелёк</button><button class="secondary" data-action="setup">Инструкция и резервная копия</button></div>
     </section>
     <section class="card" id="history"><div class="title"><h2>Последние операции</h2><button data-action="history">Все <span>›</span></button></div><div class="empty" id="history-empty"><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11m0 0-3-3m3 3-3 3M17 17H6m0 0 3 3m-3-3 3-3"/></svg></div><b>Операций пока нет</b><p>Создайте адрес или подключитесь к тестовой сети.</p></div><div class="transaction-list" id="transaction-list" hidden></div></section>
     <nav aria-label="Основная навигация"><button class="active" data-nav="home" aria-current="page"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4v-9Z"/></svg></i><span>Главная</span></button><button data-nav="history"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8"/></svg></i><span>История</span></button><button data-nav="resources"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7.5h12M6 12h12M6 16.5h8"/><circle cx="18" cy="16.5" r="2.5"/></svg></i><span>Ресурсы</span></button><button data-nav="mine"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="M18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg></i><span>Майнинг</span></button><button data-nav="settings"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10m4 0h2M4 17h2m4 0h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></i><span>Настройки</span></button></nav>
@@ -34,7 +34,7 @@
   </dialog>
   <dialog id="bridge-panel" aria-labelledby="bridge-title">
     <button class="close" data-close="bridge-panel" aria-label="Закрыть">×</button>
-    <h2 id="bridge-title">Подключить vault</h2>
+    <h2 id="bridge-title">Подключить кошелёк</h2>
     <p>Запустите локальный bridge и введите одноразовый восьмизначный код. Пароль кошелька вводится только в терминале.</p>
     <form id="bridge-form">
       <label>Адрес bridge<input id="bridge-url" inputmode="url" value="http://127.0.0.1:8788" required></label>
@@ -155,23 +155,23 @@
   <dialog id="settings-panel" aria-labelledby="settings-title">
     <button class="close" data-close="settings-panel" aria-label="Закрыть">×</button>
     <h2 id="settings-title">Безопасность кошелька</h2>
-    <div class="security-state" id="security-state" role="status" aria-live="polite">Vault не подключён</div>
+    <div class="security-state" id="security-state" role="status" aria-live="polite">Кошелёк не подключён</div>
     <p>Пароль и приватный ключ никогда не вводятся в браузере. Закрытие или отключение удаляет session token из памяти страницы.</p>
-    <button class="primary" id="settings-connect" type="button">Подключить vault</button>
+    <button class="primary" id="settings-connect" type="button">Подключить кошелёк</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>
-    <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить vault</button>
+    <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить кошелёк</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">
     <button class="close" data-close="setup-panel" aria-label="Закрыть">×</button>
     <h2 id="setup-title">Создание и восстановление</h2>
     <p>Команды выполняются в терминале из проверенной установки NIR. Пароль вводится скрыто и не попадает в историю команд.</p>
     <ol class="setup-steps">
-      <li><b>Новый vault</b><code>npm run wallet:create -- /безопасный/путь/personal.nirvault.json</code></li>
+      <li><b>Новый файл кошелька</b><code>npm run wallet:create -- /безопасный/путь/personal.nirvault.json</code></li>
       <li><b>Проверенная копия</b><code>npm run wallet:backup -- personal.nirvault.json /другой/диск/backup.nirvault.json</code></li>
       <li><b>Проверка копии</b><code>npm run wallet:verify -- /другой/диск/backup.nirvault.json</code></li>
       <li><b>Восстановление</b><code>npm run wallet:restore -- backup.nirvault.json /новый/путь/personal.nirvault.json</code></li>
     </ol>
-    <p class="warning">Не храните пароль рядом с vault. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
+    <p class="warning">Не храните пароль рядом с файлом кошелька. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
   <script type="module" src="app.js?v=39"></script>

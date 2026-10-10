@@ -138,12 +138,9 @@ async function main() {
   for (const event of ["SIGINT", "SIGTERM"]) {
     process.once(event, () => { bridge.close(); ui.close(); process.exitCode = 0; });
   }
-  try {
-    await execFileAsync("/usr/bin/open", [`${origin}/?local-demo=1&local-app=1`]);
-  } catch (error) {
-    bridge.close(); ui.close();
-    throw error;
-  }
+  // The native shell embeds this exact fresh loopback origin in a nonpersistent
+  // WKWebView. Do not open a system browser with the wallet session.
+  process.stdout.write(`${origin}/?local-demo=1&local-app=1\n`);
 }
 
 main().catch(async (error) => {
