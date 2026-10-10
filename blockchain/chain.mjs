@@ -37,6 +37,7 @@ import {
   RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
+  PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
@@ -481,6 +482,9 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   ], [
     "algorithm", "amount", "candidateId", "candidateOwner", "fee", "networkId", "nonce",
     "publicKey", "purpose", "sender", "signature", "type",
+  ], [
+    "algorithm", "amount", "candidateId", "candidateOwner", "chainIdentityGenesisHash", "fee",
+    "networkId", "nonce", "publicKey", "purpose", "sender", "signature", "type",
   ]],
   "credit-delegation": [[
     "algorithm", "delegate", "fee", "limit", "networkId", "nonce", "publicKey",
@@ -500,6 +504,10 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "progress-commitment": [[
     "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId", "contentHash", "networkId",
     "nonce", "parents", "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
+  ], [
+    "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId",
+    "chainIdentityGenesisHash", "contentHash", "networkId", "nonce", "parents", "publicKey",
+    "recipient", "sender", "signature", "suiteCommitment", "type",
   ]],
   "evaluator-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -759,20 +767,27 @@ export function createDelegatedCreditTransfer({
 
 export function progressCandidateId({
   networkId, sender, recipient, artifactHash, baselineHash, baselineContentHash, contentHash, parents, suiteCommitment,
+  chainIdentityGenesisHash,
 }) {
-  return hashObject({
+  const payload = {
     artifactHash, baselineContentHash, baselineHash, contentHash, networkId, parents, recipient, sender, suiteCommitment,
-  }, "PROGRESS_CANDIDATE_ID");
+  };
+  if (chainIdentityGenesisHash === undefined) return hashObject(payload, "PROGRESS_CANDIDATE_ID");
+  if (!/^[0-9a-f]{64}$/.test(chainIdentityGenesisHash)) {
+    throw new Error("progress candidate genesis identity is invalid");
+  }
+  return hashObject({ ...payload, chainIdentityGenesisHash }, "PROGRESS_CANDIDATE_ID_V2");
 }
 
 export function createProgressCommitment({
   wallet, networkId, recipient, artifactHash, baselineHash, baselineContentHash, contentHash = artifactHash,
-  parents = [baselineHash], suiteCommitment, nonce,
+  parents = [baselineHash], suiteCommitment, nonce, chainIdentityGenesisHash,
 }) {
   const canonicalParents = [...parents].sort();
   const candidateId = progressCandidateId({
     networkId, sender: wallet.address, recipient, artifactHash, baselineHash, baselineContentHash, contentHash,
     parents: canonicalParents, suiteCommitment,
+    chainIdentityGenesisHash,
   });
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
@@ -780,6 +795,7 @@ export function createProgressCommitment({
     baselineContentHash,
     baselineHash,
     candidateId,
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     contentHash,
     networkId,
     nonce,
@@ -802,6 +818,7 @@ export function createCandidateBond({
   fee = MIN_TRANSFER_FEE.toString(),
   candidateOwner,
   purpose,
+  chainIdentityGenesisHash,
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
@@ -818,6 +835,7 @@ export function createCandidateBond({
     transaction.candidateOwner = candidateOwner;
     transaction.purpose = purpose;
   }
+  if (chainIdentityGenesisHash !== undefined) transaction.chainIdentityGenesisHash = chainIdentityGenesisHash;
   return {
     ...transaction,
     signature: signObject(transaction, wallet, "CANDIDATE_BOND"),
@@ -2257,8 +2275,12 @@ export class NirChain {
             candidate.randomnessReveals.length !== 0 || candidate.committee !== null
           )) ||
           (candidate.purpose === "safety" && (
-            candidate.candidateOwner !== candidate.submitter || candidate.admissionBound
-          ))) {
+            candidate.candidateOwner !== candidate.submitter || candidate.admissionBound ||
+            candidate.chainIdentityGenesisHash !== undefined
+          )) ||
+          (candidate.chainIdentityGenesisHash !== undefined &&
+            candidate.chainIdentityGenesisHash !== chain.#chainIdentityGenesisHash
+          )) {
         throw new Error("candidate bond snapshot is invalid");
       }
       const normalizedCandidate = {
@@ -2340,6 +2362,8 @@ export class NirChain {
         !/^[0-9a-f]{64}$/.test(commitment.suiteCommitment ?? "") ||
         !/^nir1[0-9a-f]{64}$/.test(commitment.sender ?? "") ||
         !/^nir1[0-9a-f]{64}$/.test(commitment.recipient ?? "") ||
+        (commitment.chainIdentityGenesisHash !== undefined &&
+          commitment.chainIdentityGenesisHash !== chain.#chainIdentityGenesisHash) ||
         progressSubmitters.has(commitment.sender) ||
         candidateId !== progressCandidateId({
           ...commitment,
@@ -2762,6 +2786,7 @@ export class NirChain {
     for (const [candidateId, commitment] of progressCommitments) {
       const bond = candidateBonds.get(candidateId);
       if (!bond || bond.purpose !== "progress" || !bond.admissionBound ||
+          bond.chainIdentityGenesisHash !== commitment.chainIdentityGenesisHash ||
           bond.candidateOwner !== commitment.sender ||
           [commitment.sender, commitment.recipient].some((address) =>
             chain.#evaluators.has(address) || registeredBeaconAuthorities.has(address) ||
@@ -4350,11 +4375,20 @@ export class NirChain {
     });
   }
 
-  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp, height) {
+  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp, height,
+    protocolVersion) {
     if (transaction.type !== "candidate-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM) {
       throw new Error("candidate bond transaction is invalid");
     }
     if (transaction.networkId !== this.#networkId) throw new Error("transaction belongs to another network");
+    const progressPurpose = transaction.purpose === "progress";
+    if (progressPurpose && protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION) {
+      if (transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+        throw new Error("progress candidate bond genesis identity mismatch");
+      }
+    } else if (transaction.chainIdentityGenesisHash !== undefined) {
+      throw new Error("candidate bond genesis identity is premature or invalid for purpose");
+    }
     if (!/^[0-9a-f]{64}$/.test(transaction.candidateId ?? "") || candidateBonds.has(transaction.candidateId)) {
       throw new Error("candidate bond id is invalid or duplicated");
     }
@@ -4369,7 +4403,6 @@ export class NirChain {
     if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
     const bond = parseAtomic(transaction.amount, "candidate bond");
     const fee = parseAtomic(transaction.fee, "fee");
-    const progressPurpose = transaction.purpose === "progress";
     if (progressPurpose) {
       assertAddress(transaction.candidateOwner, "progress candidate owner");
       if (bond < MIN_PROGRESS_CANDIDATE_BOND || fee !== 0n) {
@@ -4399,6 +4432,8 @@ export class NirChain {
       submitter: transaction.sender,
       candidateOwner: progressPurpose ? transaction.candidateOwner : transaction.sender,
       purpose: progressPurpose ? "progress" : "safety",
+      ...(progressPurpose && transaction.chainIdentityGenesisHash !== undefined
+        ? { chainIdentityGenesisHash: transaction.chainIdentityGenesisHash } : {}),
       admissionBound: false,
     });
   }
@@ -4408,7 +4443,7 @@ export class NirChain {
     progressEscrows, registeredValidators, evaluatorBonds, disabledEvaluators,
     evaluators, pendingEvaluatorRegistrations, registeredBeaconAuthorities,
     pendingBeaconAdmissions,
-    height, randomnessRound,
+    height, randomnessRound, protocolVersion,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -4428,6 +4463,13 @@ export class NirChain {
     ) {
       throw new Error("progress commitment transaction is invalid");
     }
+    if (protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION) {
+      if (transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+        throw new Error("progress commitment genesis identity mismatch");
+      }
+    } else if (transaction.chainIdentityGenesisHash !== undefined) {
+      throw new Error("progress commitment genesis identity is premature");
+    }
     assertAddress(transaction.sender, "progress submitter");
     assertAddress(transaction.recipient, "progress recipient");
     if (this.#eligibleEvaluators(evaluatorBonds, disabledEvaluators, evaluators).size <
@@ -4445,6 +4487,7 @@ export class NirChain {
     if (
       !candidateBond || candidateBond.purpose !== "progress" ||
       candidateBond.candidateOwner !== transaction.sender ||
+      candidateBond.chainIdentityGenesisHash !== transaction.chainIdentityGenesisHash ||
       candidateBond.bond < MIN_PROGRESS_CANDIDATE_BOND ||
       candidateBond.admissionBound || candidateBond.committedHeight >= height
     ) {
@@ -4515,6 +4558,9 @@ export class NirChain {
       recipient: transaction.recipient,
       sender: transaction.sender,
       suiteCommitment: transaction.suiteCommitment,
+      ...(transaction.chainIdentityGenesisHash === undefined ? {} : {
+        chainIdentityGenesisHash: transaction.chainIdentityGenesisHash,
+      }),
     });
   }
 
@@ -5820,6 +5866,10 @@ export class NirChain {
       epochRandomness.reveal(reveal, block.height);
     }
     for (const claim of block.progressRewards) {
+      if (protocolState.protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION &&
+          this.#progressCommitments.get(claim?.evaluation?.candidateId)?.chainIdentityGenesisHash === undefined) {
+        throw new Error("legacy progress commitment cannot earn a v35 reward");
+      }
       const novelty = this.#verifyProgressClaim(
         claim,
         block.height,
@@ -6008,6 +6058,20 @@ export class NirChain {
       EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
       ? new Map(this.#evaluationAssignments)
       : new Map();
+    if (protocolState.protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION &&
+        this.#protocolVersion < PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION) {
+      for (const [candidateId, commitment] of progressCommitments) {
+        if (commitment.chainIdentityGenesisHash !== undefined) continue;
+        const bond = candidateBonds.get(candidateId);
+        if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
+          throw new Error("legacy progress admission has no refundable candidate bond");
+        }
+        balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
+        candidateBonds.delete(candidateId);
+        progressCommitments.delete(candidateId);
+        evaluationAssignments.delete(candidateId);
+      }
+    }
     if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&
         this.#protocolVersion < EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
       for (const [candidateId, commitment] of progressCommitments) {
@@ -6320,7 +6384,7 @@ export class NirChain {
       } else if (transaction.type === "candidate-bond") {
         this.#applyCandidateBond(
           transaction, balances, nonces, candidateBonds, block.feeRecipient,
-          block.timestamp, block.height,
+          block.timestamp, block.height, protocolState.protocolVersion,
         );
       } else if (transaction.type === "progress-commitment") {
         this.#applyProgressCommitment(
@@ -6339,6 +6403,7 @@ export class NirChain {
           pendingBeaconAdmissions,
           block.height,
           epochRandomness.round,
+          protocolState.protocolVersion,
         );
       } else if (transaction.type === "validator-bond") {
         this.#applyValidatorBond(

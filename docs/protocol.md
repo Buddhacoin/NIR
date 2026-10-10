@@ -165,6 +165,19 @@ not preserve old reward history: valueless test chains that issued 50 NIR
 blocks cannot replay under the current rule. Back up test data before replacing it;
 there is no automatic conversion.
 
+Proposed protocol v35 (not active on the default v24 chain) binds only new
+progress-purpose `candidate-bond` and `progress-commitment` transactions to the
+exact genesis block hash in a signed `chainIdentityGenesisHash` field. The v35
+`candidateId` uses a new domain-separated preimage that includes this hash.
+Blocks before activation reject the new schema; blocks from activation reject
+legacy progress admissions and bonds, while historical v24–v34 blocks keep their
+original IDs and signatures. At activation, any still-pending legacy progress
+commitment is cancelled and its bond refunded to the sponsor. A pre-activation unbound bond cannot sponsor a
+v35 admission and returns to its sponsor under the existing 64-block timeout.
+This is **not** a genesis-binding fix for transfers or other transaction types,
+or for reward escrows accepted before activation. It does not establish a
+public network or independently earned reward.
+
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
 whole reward block is invalid. A lone claim in the first issuance epoch must
