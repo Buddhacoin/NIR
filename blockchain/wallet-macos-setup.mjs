@@ -5,7 +5,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { createLocalTestWallet, listLocalTestBackups, listLocalTestWallets, openLocalTestWallet, renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode } from "./wallet-onboarding.mjs";
+import { createLocalTestWallet, inspectLocalTestWallets, listLocalTestBackups, openLocalTestWallet, renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode } from "./wallet-onboarding.mjs";
 import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 import { walletSetupNotice } from "./wallet-macos-notices.mjs";
 
@@ -36,13 +36,15 @@ if (process.platform !== "darwin") {
   try {
     const createOnly = process.argv[2] === "--create-only";
     if (process.argv.length > (createOnly ? 3 : 2)) throw new Error("unsupported wallet setup arguments");
-    const availableWallets = listLocalTestWallets(STORAGE_ROOT);
+    const inventory = inspectLocalTestWallets(STORAGE_ROOT);
+    const availableWallets = inventory.wallets;
     const availableBackups = listLocalTestBackups(STORAGE_ROOT);
     let result;
     let preferredPath;
     while (!result) {
       const output = execFileSync(ONBOARDING, [], {
         input: JSON.stringify({ wallets: availableWallets, backups: availableBackups,
+          hasUnrecognizedWalletFiles: inventory.unrecognizedWalletFiles > 0,
           createOnly, ...(preferredPath ? { preferredPath } : {}) }),
         encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
         stdio: ["pipe", "pipe", "pipe"],

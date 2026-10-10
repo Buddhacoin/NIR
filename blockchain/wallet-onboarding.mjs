@@ -94,29 +94,38 @@ function privateDirectory(path) {
   }
 }
 
-export function listLocalTestWallets(storageRoot) {
+export function inspectLocalTestWallets(storageRoot) {
   if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
     throw new Error("wallet storage root must be absolute");
   }
   const directory = join(resolve(storageRoot), "Wallets");
-  if (!existsSync(directory)) return [];
+  if (!existsSync(directory)) return { wallets: [], unrecognizedWalletFiles: 0 };
   const stat = lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
     throw new Error("wallet storage directory is not private");
   }
+  let unrecognizedWalletFiles = 0;
   const candidates = readdirSync(directory).filter((name) => name.endsWith(".nirvault.json"))
     .flatMap((name) => {
       const path = join(directory, name);
       try { return [{ address: walletPublicInfo(path).address, path,
         modifiedAt: lstatSync(path).mtimeMs }]; }
-      catch { return []; } // A damaged entry must never become a selectable account.
+      catch {
+        unrecognizedWalletFiles += 1;
+        return []; // A damaged entry must never become a selectable account.
+      }
     });
   candidates.sort((left, right) => right.modifiedAt - left.modifiedAt ||
     left.path.localeCompare(right.path));
   // A restored copy can use a different password for the same address. Keep
   // each private file selectable; address de-duplication could hide the only
   // copy whose password its owner still knows.
-  return candidates.map(({ address, path }) => ({ address, path }));
+  return { wallets: candidates.map(({ address, path }) => ({ address, path })),
+    unrecognizedWalletFiles };
+}
+
+export function listLocalTestWallets(storageRoot) {
+  return inspectLocalTestWallets(storageRoot).wallets;
 }
 
 export function openLocalTestWallet({ wallets, path, password }) {

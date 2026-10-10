@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
+import { inspectLocalTestWallets, listLocalTestWallets } from "../blockchain/wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "../blockchain/wallet-preview-cli.mjs";
 
 test("local wallet bundle uses a strict source allowlist and refuses secret-named paths", () => {
@@ -107,6 +108,59 @@ test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () =
     assert.equal(built.status, 0, built.stderr);
     const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("empty native wallet onboarding exposes existing-wallet and recovery choices", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  assert.match(native, /self\.openLink = \[NSButton buttonWithTitle:@"Открыть существующий"/);
+  assert.match(native, /self\.openLink\.hidden = self\.createOnly \|\| !creation/);
+  assert.match(native, /self\.restoreLink\.hidden = self\.createOnly \|\| \(!opening && !creation\)/);
+  assert.match(native, /self\.action\.enabled = !opening \|\| self\.wallets\.count > 0/);
+  assert.match(native, /Новый кошелёк получит другой адрес/);
+  assert.match(native, /Доступный кошелёк не распознан\. Файл может быть повреждён/);
+  assert.match(native, /if \(\[warning runModal\] != NSAlertSecondButtonReturn\)/);
+  assert.match(native, /self\.back\.frame = NSMakeRect\(23, opening \? 528/);
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-entry-smoke-"));
+  try {
+    const storage = join(directory, "storage");
+    mkdirSync(join(storage, "Wallets"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(storage, "Wallets", "synthetic-damaged.nirvault.json"), "{broken", { mode: 0o600 });
+    assert.deepEqual(listLocalTestWallets(storage), []);
+    const inventory = inspectLocalTestWallets(storage);
+    assert.deepEqual(inventory, { wallets: [], unrecognizedWalletFiles: 1 });
+    const binary = join(directory, "onboarding-entry-smoke");
+    const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_ONBOARDING_ENTRY_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", source, "-o", binary],
+    { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const launch = (payload) => {
+      const result = spawnSync(binary, [], { encoding: "utf8", input: JSON.stringify(payload), timeout: 10_000 });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    assert.deepEqual(launch({ wallets: [], backups: [] }), {
+      startMode: "create", openVisibleOnCreate: 1, restoreVisibleOnCreate: 1,
+      requiresNewAddressConfirmation: false,
+      openActionEnabled: false, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+    assert.deepEqual(launch({ wallets: inventory.wallets, backups: [],
+      hasUnrecognizedWalletFiles: inventory.unrecognizedWalletFiles > 0 }), {
+      startMode: "restore", openVisibleOnCreate: 0, restoreVisibleOnCreate: 0,
+      requiresNewAddressConfirmation: true,
+      openActionEnabled: false, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+    const synthetic = { address: `nir1${"a".repeat(64)}`, path: "/tmp/synthetic-wallet.nirvault.json" };
+    assert.deepEqual(launch({ wallets: [synthetic], backups: [] }), {
+      startMode: "open", openVisibleOnCreate: 0, restoreVisibleOnCreate: 1,
+      requiresNewAddressConfirmation: false,
+      openActionEnabled: true, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
