@@ -98,7 +98,7 @@ export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
   return vestedAllocationAtTimestamp(TREASURY_ALLOCATION, genesisTimestamp, timestamp);
 }
 
-export function scheduledEpochBudget(epoch, initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
+export function scheduledEpochBudget(epoch, initialReward = INITIAL_EPOCH_REWARD) {
   if (!Number.isSafeInteger(epoch) || epoch < 0) {
     throw new Error("epoch must be a non-negative safe integer");
   }
