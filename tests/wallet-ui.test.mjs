@@ -21,7 +21,7 @@ test("unpriced NIR shows an empty market chart, not a fabricated zero quote", ()
   assert.ok(market, "home screen must expose the market state");
   assert.match(market, /Нет рыночных данных/);
   assert.match(market, /Цена: —/);
-  assert.match(market, /Сделок и заявок нет/);
+  assert.match(market, /В приложении нет проверенных данных о сделках или заявках/);
   assert.doesNotMatch(market, /\$\s*0(?:\.00)?|Купить|Продать/);
   assert.match(styles, /\.market-chart/);
 });

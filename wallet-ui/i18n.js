@@ -15,7 +15,7 @@ const copy = new Map(Object.entries({
   "Рынок NIR": "NIR market", "Нет котировки": "No quote",
   "Цена: —": "Price: —", "Нет данных для графика NIR": "No NIR chart data",
   "Нет рыночных данных": "No market data",
-  "Сделок и заявок нет. Цена NIR не определена; ноль не является рыночной ценой.": "No trades or orders. The NIR price is undefined; zero is not a market price.",
+  "В приложении нет проверенных данных о сделках или заявках. Цена NIR здесь не определена; ноль не является рыночной ценой.": "No verified trade or order data is available in this app. The NIR price is undefined here; zero is not a market price.",
   "Баланс не подтверждён · ответ узла скрыт": "Balance not verified · node response hidden",
   "Баланс не подтверждён · локальный узел недоступен": "Balance not verified · local node unavailable",
   "Баланс не подтверждён · узлы недоступны": "Balance not verified · nodes unavailable",
