@@ -8,21 +8,33 @@ requires a deliberate update to `SUPPORTED_REVISIONS`. These are supported
 download pins only; separate security and licence review is required before
 any model execution.
 
-The optional `huggingface_hub` dependency downloads only the fixed core-file
-set into a private temporary directory, with `token=False` and an explicit
-40-character revision. Before downloading, the code checks public, ungated
-Hub metadata and the pinned file tree. It rejects missing core files, invalid
-paths, malformed hashes, or a reported core set over 4 GiB. The downloaded bytes are
-copied through no-follow file descriptors into a separate temporary package;
+The bounded HTTPS downloader streams only the fixed core-file set into a
+private temporary directory, with no Hub token and an explicit 40-character
+revision. Before downloading, the code checks public, ungated Hub metadata
+and the pinned file tree. It rejects missing core files, invalid paths,
+malformed hashes, or a reported core set over 4 GiB. It rejects a response
+that exceeds the pinned size *before writing excess bytes*, and accepts only
+HTTPS redirects to Hub-controlled hosts. A shared 20-minute deadline is checked
+after response headers and around each body read across selected files; each
+network operation has a 15-second socket timeout. This is **not a hard total
+download deadline**: a server that trickles response headers can exceed the
+nominal deadline before the next check. No body bytes are written if headers
+finish after the deadline. The
+downloader requires an exact `Content-Length` and rejects chunked transfer:
+buffered chunk parsing can otherwise outlive the deadline. A Hub endpoint that
+offers only chunked data fails closed rather than being treated as installable. The
+downloaded bytes are copied
+through no-follow file descriptors into a separate temporary package;
 Git blob OIDs or LFS raw SHA-256 and sizes are checked. The copied package is
 then checked again against its manifest and pinned Hub metadata. All temporary
 data is removed on exit or error. Tests inject downloads and do not fetch model
 weights.
 
-The 4 GiB check is on Hub-reported metadata; `hf_hub_download` may consume
-temporary disk space before this wrapper can reject an oversized or hostile
-response. Until the download transport enforces streaming byte limits, do not
-run this on an untrusted/shared host or represent it as disk-exhaustion-safe.
+The streaming byte cap limits this downloader's writes, not all host-wide disk
+activity. It trusts Hub file-size metadata and TLS, and does not authenticate
+the publisher or review the licence. A malicious same-UID process can still
+alter temporary files. Do not run it on an untrusted/shared host or represent
+the package as an immutable installation.
 
 Hub metadata and TLS are trust assumptions, not a publisher signature or a
 licence review. `runtimeDigest` and `dependencyDigest` are caller declarations,
