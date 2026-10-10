@@ -205,12 +205,22 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
       return {
         onboardingSteps: document.querySelector("#onboarding ol").children.length,
         setupHidden: getComputedStyle(document.querySelector("#setup-panel .setup-steps")).display,
+        title: document.querySelector("#onboarding-title").textContent,
+        connect: document.querySelector('#onboarding [data-action="connect"]').textContent,
+        balance: document.querySelector("#balance-value").textContent,
+        balanceStatus: document.querySelector("#wallet-state").textContent,
+        nodes: document.querySelector(".network").textContent,
         bridge: document.querySelector("#bridge-panel > p").textContent,
         mining: document.querySelector("#panel-copy").textContent,
       };
     })()`);
     assert.equal(macCopy.onboardingSteps, 0);
     assert.equal(macCopy.setupHidden, "none");
+    assert.equal(macCopy.title, "Подключите защищённый файл кошелька");
+    assert.equal(macCopy.connect, "Подключить кошелёк");
+    assert.equal(macCopy.balance, "—");
+    assert.match(macCopy.balanceStatus, /не подтверждён/);
+    assert.doesNotMatch(macCopy.nodes, /Nodes|Local testnet/);
     assert.match(macCopy.bridge, /окна macOS/);
     assert.match(macCopy.mining, /не начисляет NIR/);
 

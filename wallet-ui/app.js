@@ -30,13 +30,13 @@ if (localApp) {
 }
 
 const messages = {
-  receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
-  send: ["Отправить NIR", "Подключите локальный vault. Перед подписью кошелёк покажет адрес, сумму, комиссию и процент комиссии."],
+  receive: ["Получить NIR", "Сначала подключите локальный кошелёк, чтобы показать публичный адрес."],
+  send: ["Отправить NIR", "Подключите локальный кошелёк. Перед подписью он покажет адрес, сумму, комиссию и процент комиссии."],
   mine: ["Майнинг интеллекта", "Здесь можно будет выбрать роль, проверить оборудование и получить назначенное задание. Сейчас доступен только локальный демонстрационный режим."],
   history: ["История операций", "Операций пока нет. После подключения узла здесь появятся подтверждённые переводы, комиссии и награды."],
   resources: ["Ресурсы сети", "Заблокируйте NIR, чтобы получать Transfer Credits или безопасно делегировать лимит переводов другому адресу."],
   settings: ["Настройки", "Переключение темы уже работает. Session token хранится только в памяти страницы и исчезает при её закрытии."],
-  network: ["Local testnet", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
+  network: ["Локальная тестовая сеть", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
 };
 if (localApp) messages.mine = ["Майнинг недоступен",
   "Эта локальная сборка кошелька не запускает проверку моделей, не отправляет доказательства операторам и не начисляет NIR."];
@@ -98,8 +98,8 @@ function renderWalletConnection() {
   document.querySelector("#disconnect-wallet").hidden = !connected;
   document.querySelector("#settings-connect").hidden = connected;
   document.querySelector("#security-state").textContent = connected
-    ? `Vault подключён · ${walletInfo.address.slice(0, 16)}…`
-    : "Vault не подключён";
+    ? `Кошелёк подключён · ${walletInfo.address.slice(0, 16)}…`
+    : "Кошелёк не подключён";
 }
 
 function clearAccountNumbers() {
@@ -152,7 +152,7 @@ function resetAccountView(message) {
   activeNodeUrl = null;
 }
 
-function clearWalletSession(message = "Vault отключён · ключи и session token отсутствуют в странице") {
+function clearWalletSession(message = "Кошелёк отключён · ключи и session token отсутствуют в странице") {
   bridgeSession = null;
   walletInfo = null;
   resetAccountView(message);
@@ -249,7 +249,7 @@ function exactLoopbackUrl(value) {
 }
 
 async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
-  if (!bridgeSession) throw new Error("Сначала подключите vault.");
+  if (!bridgeSession) throw new Error("Сначала подключите кошелёк.");
   const session = bridgeSession;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -265,7 +265,7 @@ async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
     const result = await response.json();
     if (!response.ok) {
       if (response.status === 401 && bridgeSession === session) {
-        clearWalletSession("Сессия vault завершена · подключитесь снова");
+        clearWalletSession("Сессия кошелька завершена · подключитесь снова");
       }
       throw new Error(result.error || "Локальный bridge отклонил запрос.");
     }
@@ -365,7 +365,7 @@ function nodeUrl(path) {
 }
 
 async function readAccount() {
-  if (!walletInfo || !networkInfo) throw new Error("Подключите vault и локальный узел.");
+  if (!walletInfo || !networkInfo) throw new Error("Подключите кошелёк и локальный узел.");
   const address = walletInfo.address;
   const { height: minimumHeight, networkId } = networkInfo;
   try {
@@ -1053,7 +1053,7 @@ async function renderAccounts() {
     throw new Error("Не удалось проверить список кошельков.");
   }
   if (accounts.find((account) => account.id === activeId).address !== walletInfo.address) {
-    throw new Error("Выбранный адрес не совпадает с подключённым vault.");
+    throw new Error("Выбранный адрес не совпадает с подключённым кошельком.");
   }
   const list = document.querySelector("#account-list");
   list.replaceChildren();
@@ -1067,7 +1067,7 @@ async function renderAccounts() {
     const title = document.createElement("strong");
     title.textContent = `${account.label}${account.id === activeId ? " · выбран" : ""}`;
     const detail = document.createElement("small");
-    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный vault`;
+    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный файл кошелька`;
     button.append(title, detail);
     button.onclick = () => changeAccount(account.id);
     list.append(button);
@@ -1162,7 +1162,7 @@ function openSettingsPanel() {
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  clearWalletSession("Переподключение vault · ожидаем подтверждения нового сеанса");
+  clearWalletSession("Переподключение кошелька · ожидаем подтверждения нового сеанса");
   const pairingEpoch = accountEpoch;
   bridgeStatus.textContent = "Подключение…";
   const codeInput = document.querySelector("#bridge-code");
@@ -1186,7 +1186,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
     if (pairingEpoch !== accountEpoch) return;
-    clearWalletSession("Подключение vault не подтверждено · баланс скрыт");
+    clearWalletSession("Подключение кошелька не подтверждено · баланс скрыт");
     codeInput.value = "";
     bridgeStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   }
@@ -1679,7 +1679,7 @@ async function refreshNodeStatus() {
     activeNodeUrl = null;
     clearAccountNumbers();
     document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · узлы недоступны";
-    networkButton.textContent = "○ Nodes offline";
+    networkButton.textContent = "○ Узлы недоступны";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
     messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];

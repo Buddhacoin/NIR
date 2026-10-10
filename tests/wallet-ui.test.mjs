@@ -256,6 +256,10 @@ test("double-click Mac mode removes terminal setup and false mining claims", () 
   assert.match(script, /не начисляет NIR/);
   assert.match(styles, /\.setup-steps\[hidden\] \{ display: none; \}/);
   assert.match(script, /Проверьте окно macOS/);
+  assert.match(html, /id="balance-value">—<\/span>/);
+  assert.match(html, /id="onboarding-title">Подключите защищённый файл кошелька/);
+  assert.match(html, /data-action="connect">Подключить кошелёк/);
+  assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
 });
 
 test("wallet navigation has five interactive destinations", () => {
