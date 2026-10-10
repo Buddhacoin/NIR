@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -85,6 +85,41 @@ export async function runPinnedModel(root, { includeEvidence = false } = {}) {
   const result = publicModelResult(parsed?.summary);
   if (!validIrisEvidence(parsed, result)) throw new Error("invalid local Iris evidence");
   return { ...result, evidence: parsed };
+}
+
+export async function verifyPinnedIrisEvidence(root, bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > MAX_IRIS_EVIDENCE_BYTES)
+    throw new Error("invalid local Iris evidence size");
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.env.NIR_MINING_PYTHON ?? "python3", [
+      "-B", "-m", "nir.iris_rehearsal", "--verify-evidence",
+    ], { cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin",
+      PYTHONDONTWRITEBYTECODE: "1" }, stdio: ["pipe", "pipe", "ignore"] });
+    const chunks = [];
+    let length = 0;
+    const deadline = setTimeout(() => child.kill("SIGKILL"), 30_000);
+    child.stdin.on("error", () => {});
+    child.stdout.on("data", (chunk) => {
+      length += chunk.length;
+      if (length > 4096) child.kill("SIGKILL");
+      else chunks.push(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      clearTimeout(deadline);
+      if (code !== 0 || length > 4096) reject(new Error("local Iris evidence failed replay"));
+      else resolve(Buffer.concat(chunks, length).toString("utf8"));
+    });
+    child.stdin.end(bytes);
+  });
+  const parsed = JSON.parse(result);
+  if (parsed?.status !== "local-iris-evidence-matched" ||
+      !/^[0-9a-f]{64}$/.test(parsed.bundleHash) ||
+      parsed.independentlyVerified !== false || parsed.networkSubmitted !== false ||
+      parsed.rewardEligible !== false || Object.keys(parsed).sort().join(",") !==
+      "bundleHash,independentlyVerified,networkSubmitted,rewardEligible,status")
+    throw new Error("invalid local Iris replay result");
+  return parsed;
 }
 
 function validIrisEvidence(evidence, result) {
@@ -213,7 +248,7 @@ export async function checkPinnedQwenRuntime(root) {
 
 export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
-  runReplay = replayPinnedQwen,
+  runReplay = replayPinnedQwen, verifyIris = verifyPinnedIrisEvidence,
   catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
@@ -269,6 +304,47 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       } else {
         send(200, "application/json; charset=utf-8", lastIrisEvidence);
       }
+      return;
+    }
+    if (request.method === "POST" && path === "/model-evidence/verify" &&
+        request.url === "/model-evidence/verify") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > MAX_IRIS_EVIDENCE_BYTES) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      running = true;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared || length > MAX_IRIS_EVIDENCE_BYTES)
+            throw new Error("oversized local Iris evidence");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated local Iris evidence");
+        clearTimeout(deadline);
+        const checked = await verifyIris(root, Buffer.concat(chunks, length));
+        if (checked?.status !== "local-iris-evidence-matched" ||
+            !/^[0-9a-f]{64}$/.test(checked.bundleHash) ||
+            checked.independentlyVerified !== false || checked.networkSubmitted !== false ||
+            checked.rewardEligible !== false || Object.keys(checked).sort().join(",") !==
+            "bundleHash,independentlyVerified,networkSubmitted,rewardEligible,status")
+          throw new Error("invalid local Iris replay result");
+        send(200, "application/json; charset=utf-8", JSON.stringify(checked));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local Iris evidence" }));
+      } finally { clearTimeout(deadline); running = false; }
       return;
     }
     if (request.method === "GET" && path === "/open-model/runtime" &&

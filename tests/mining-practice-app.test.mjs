@@ -24,6 +24,9 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(script, /bundled: "ВСТРОЕНА"/);
   assert.match(script, /bundled: "BUNDLED"/);
   assert.match(html, /data-i18n="localOnly"/);
+  assert.match(html, /id="iris-evidence-file" type="file" accept="application\/json,\.json"/);
+  assert.match(html, /id="iris-evidence-verify"[^>]*disabled/);
+  assert.match(script, /irisImportMatched: \(hash\) => .*Личность оператора не подтверждена/);
   assert.match(css, /image-rendering:pixelated/);
   assert.match(css, /\.event-pulse/);
   for (const event of ["service-online", "iris-requested", "iris-result", "qwen-started",
@@ -385,7 +388,8 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
-      ['<input id="qwen-replay-file" type="file" accept="application/json,.json">']);
+      ['<input id="qwen-replay-file" type="file" accept="application/json,.json">',
+        '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
     assert.doesNotMatch(html, /<textarea|<form|type="(?:text|password)"/i);
     assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
@@ -641,6 +645,40 @@ test("Iris evidence can be downloaded only after a real local run and independen
     });
     assert.equal(JSON.parse(verifier).bundleHash, item.summary.bundleHash);
   } finally { await stop(server); }
+});
+
+test("another Model Lab service can import and rerun bounded Iris evidence without crediting a reward", async () => {
+  const first = await serve();
+  const second = await serve();
+  try {
+    const run = await fetch(`${first.base}/model-check`, { method: "POST", body: "",
+      headers: { origin: first.base, "X-NIR-Session": first.token } });
+    assert.equal(run.status, 200);
+    const exported = await fetch(`${first.base}/model-evidence`, {
+      headers: { "X-NIR-Session": first.token } });
+    const raw = await exported.text();
+    const verify = (body, token = second.token) => fetch(`${second.base}/model-evidence/verify`, {
+      method: "POST", body,
+      headers: { origin: second.base, "X-NIR-Session": token,
+        "Content-Type": "application/json" },
+    });
+    assert.equal((await verify(raw, "0".repeat(64))).status, 403);
+    const checked = await verify(raw);
+    assert.equal(checked.status, 200);
+    assert.deepEqual(await checked.json(), { status: "local-iris-evidence-matched",
+      bundleHash: JSON.parse(raw).summary.bundleHash, independentlyVerified: false,
+      networkSubmitted: false, rewardEligible: false });
+    const forged = JSON.parse(raw);
+    forged.summary.candidateAccuracyBps = 10_000;
+    assert.equal((await verify(JSON.stringify(forged))).status, 400);
+    const typeSwapped = JSON.parse(raw);
+    typeSwapped.summary.rewardCredited = 0;
+    assert.equal((await verify(JSON.stringify(typeSwapped))).status, 400);
+    const extraCommand = JSON.parse(raw);
+    extraCommand.command = "/bin/sh";
+    assert.equal((await verify(JSON.stringify(extraCommand))).status, 400);
+    assert.equal((await verify("x".repeat(1_000_001))).status, 403);
+  } finally { await stop(first.server); await stop(second.server); }
 });
 
 test("a failed later run clears prior Iris evidence and rejects forged bundle metadata", async () => {
