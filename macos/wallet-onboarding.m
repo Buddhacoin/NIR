@@ -710,8 +710,6 @@ int main(int argc, const char *argv[]) {
             // its actual modal window so the backup step is not left behind
             // the wallet shell when the two-click flow changes processes.
             NSWindow *secretWindow = alert.window;
-            secretWindow.level = NSFloatingWindowLevel;
-            secretWindow.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
             [secretWindow orderFrontRegardless];
             [app activateIgnoringOtherApps:YES];
             [secretWindow makeKeyAndOrderFront:nil];

@@ -117,10 +117,10 @@ test("recovery export modal is raised in the fresh onboarding process", () => {
   assert.ok(start >= 0 && end > start);
   const modal = native.slice(start, end);
   assert.match(modal, /NSWindow \*secretWindow = alert\.window/);
-  assert.match(modal, /secretWindow\.level = NSFloatingWindowLevel/);
   assert.match(modal, /\[secretWindow orderFrontRegardless\]/);
   assert.match(modal, /\[app activateIgnoringOtherApps:YES\]/);
   assert.match(modal, /dispatch_async\(dispatch_get_main_queue\(\)/);
+  assert.doesNotMatch(modal, /NSFloatingWindowLevel|NSWindowCollectionBehaviorMoveToActiveSpace/);
 });
 
 test("native onboarding language preference and recovery warnings round-trip in an isolated domain", () => {
