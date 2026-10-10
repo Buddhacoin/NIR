@@ -75,6 +75,14 @@
       <button id="iris-evidence-export" class="secondary" type="button" hidden data-i18n="irisEvidenceExport">Скачать локальное свидетельство (не заявка и не награда)</button>
       <p id="iris-evidence-state" class="evidence-note" role="status" aria-live="polite"></p>
     </section>
+    <section class="catalog" aria-labelledby="iris-import-heading">
+      <h2 id="iris-import-heading" data-i18n="irisImportTitle">Повторить проверку Iris на этом Mac</h2>
+      <p data-i18n="irisImportIntro">Выберите свидетельство с другого компьютера. Приложение заново запустит только встроенную Iris; файл не может указать программу или путь. Совпадение не доказывает независимость оператора и не даёт награды.</p>
+      <label for="iris-evidence-file" data-i18n="irisImportLabel">Локальное свидетельство Iris (.json, не более 1 МБ)</label>
+      <input id="iris-evidence-file" type="file" accept="application/json,.json">
+      <button id="iris-evidence-verify" class="secondary" type="button" disabled data-i18n="irisImportButton">Повторить проверку локально</button>
+      <p id="iris-verify-state" role="status" aria-live="polite"></p>
+    </section>
     <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
     <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.</footer>
   </main>

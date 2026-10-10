@@ -5,6 +5,9 @@ const error = document.querySelector("#error");
 const errorMessage = document.querySelector("#error-message");
 const irisEvidenceExport = document.querySelector("#iris-evidence-export");
 const irisEvidenceState = document.querySelector("#iris-evidence-state");
+const irisEvidenceFile = document.querySelector("#iris-evidence-file");
+const irisEvidenceVerify = document.querySelector("#iris-evidence-verify");
+const irisVerifyState = document.querySelector("#iris-verify-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
 const catalogModel = document.querySelector("#catalog-model");
@@ -100,6 +103,14 @@ const copy = {
     doneBody: "Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.",
     irisEvidenceExport: "Скачать локальное свидетельство (не заявка и не награда)",
     irisEvidenceFailed: "Свидетельство недоступно. Повторите локальную проверку; заявки и награды нет.",
+    irisImportTitle: "Повторить проверку Iris на этом Mac",
+    irisImportIntro: "Выберите свидетельство с другого компьютера. Приложение заново запустит только встроенную Iris; файл не может указать программу или путь. Совпадение не доказывает независимость оператора и не даёт награды.",
+    irisImportLabel: "Локальное свидетельство Iris (.json, не более 1 МБ)",
+    irisImportButton: "Повторить проверку локально",
+    irisImportRunning: "Заново выполняем закреплённую Iris на этом Mac…",
+    irisImportMatched: (hash) => `Локальный прогон совпал: ${hash}. Личность оператора не подтверждена; заявки и награды нет.`,
+    irisImportFailed: "Файл не совпал с новым прогоном или проверка не завершилась. Заявки и награды нет.",
+    irisImportInvalid: "Выберите JSON-свидетельство Iris размером до 1 МБ. Оно не является доказательством награды.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
@@ -168,6 +179,14 @@ const copy = {
     doneBody: "The evidence bundle was checked locally. There are no independent operators, hidden challenges, attested energy measurements, or network rewards.",
     irisEvidenceExport: "Download local evidence (not a claim or reward)",
     irisEvidenceFailed: "Evidence is unavailable. Repeat the local check; no claim or reward exists.",
+    irisImportTitle: "Rerun Iris evidence on this Mac",
+    irisImportIntro: "Choose evidence from another computer. This app reruns only its bundled Iris code; the file cannot select a program or path. A match does not prove operator independence or earn a reward.",
+    irisImportLabel: "Local Iris evidence (.json, at most 1 MB)",
+    irisImportButton: "Rerun locally",
+    irisImportRunning: "Rerunning the pinned Iris model on this Mac…",
+    irisImportMatched: (hash) => `Local rerun matched: ${hash}. Operator identity is unverified; there is no claim or reward.`,
+    irisImportFailed: "The file did not match a fresh run, or verification failed. No claim or reward exists.",
+    irisImportInvalid: "Choose an Iris JSON evidence file up to 1 MB. It is not reward proof.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
     checking: "Checking the local service…", online: "● Local service connected",
@@ -234,6 +253,9 @@ let qwenLastResult = null;
 let qwenRuntime = { status: "checking-runtime" };
 let replayRunning = false;
 let replayStatus = null;
+let irisVerifyRunning = false;
+let irisVerifyStatus = null;
+let irisVerifyHash = null;
 const localEvents = [];
 let lastServiceState = null;
 let lastRuntimeState = null;
@@ -398,7 +420,7 @@ function render() {
   }
   renderEventTrace();
   if (qwenStart) {
-    qwenStart.disabled = !connected || qwenRunning || replayRunning || !progress.hidden ||
+    qwenStart.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
     qwenState.textContent = qwenStatus ?
       (nativeApp && t[`${qwenStatus}Native`] ? t[`${qwenStatus}Native`] : t[qwenStatus]) :
@@ -409,13 +431,19 @@ function render() {
     }
   }
   if (qwenReplay) {
-    qwenReplay.disabled = !connected || qwenRunning || replayRunning || !progress.hidden ||
+    qwenReplay.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready" || !qwenReplayFile.files?.length;
     qwenReplayState.textContent = replayStatus ? t[replayStatus] : "";
   }
   if (errorKind) errorMessage.textContent = errorKind === "offlineMessage" && nativeApp ?
     t.offlineMessageNative : t[errorKind];
   if (irisEvidenceExport) irisEvidenceExport.hidden = lastResult?.evidenceAvailable !== true;
+  if (irisEvidenceVerify) {
+    irisEvidenceVerify.disabled = !connected || irisVerifyRunning || qwenRunning || replayRunning ||
+      !progress.hidden || !irisEvidenceFile?.files?.length;
+    irisVerifyState.textContent = irisVerifyStatus === "irisImportMatched" ?
+      t.irisImportMatched(irisVerifyHash) : irisVerifyStatus ? t[irisVerifyStatus] : "";
+  }
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
       (lastResult.baselineAccuracyBps / 100).toFixed(2),
@@ -483,7 +511,7 @@ if (catalogModel) {
 
 start.addEventListener("click", async () => {
   if (!connected) { showOffline(); return; }
-  if (qwenRunning) return;
+  if (qwenRunning || replayRunning || irisVerifyRunning) return;
   start.disabled = true;
   if (qwenStart) qwenStart.disabled = true;
   progress.hidden = false;
@@ -562,6 +590,53 @@ if (irisEvidenceExport) irisEvidenceExport.addEventListener("click", async () =>
     if (irisEvidenceState) irisEvidenceState.textContent = "";
   } catch {
     if (irisEvidenceState) irisEvidenceState.textContent = copy[locale].irisEvidenceFailed;
+  }
+});
+
+if (irisEvidenceFile) irisEvidenceFile.addEventListener("change", () => {
+  irisVerifyStatus = null;
+  irisVerifyHash = null;
+  render();
+});
+if (irisEvidenceVerify) irisEvidenceVerify.addEventListener("click", async () => {
+  const file = irisEvidenceFile?.files?.[0];
+  if (!connected || irisVerifyRunning || qwenRunning || replayRunning || !progress.hidden || !file) return;
+  if (file.size < 1 || file.size > 1_000_000) {
+    irisVerifyStatus = "irisImportInvalid";
+    render();
+    return;
+  }
+  irisVerifyRunning = true;
+  irisVerifyStatus = "irisImportRunning";
+  irisVerifyHash = null;
+  start.disabled = true;
+  render();
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 35_000);
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const item = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (item?.format !== "nir-local-iris-evidence-v1" ||
+        !/^[0-9a-f]{64}$/.test(item.summary?.bundleHash ?? "") ||
+        item.summary?.rewardCredited !== false || item.summary?.networkSubmitted !== false)
+      throw new Error("invalid file");
+    const response = await fetch("/model-evidence/verify", { method: "POST", body: bytes,
+      headers: { ...sessionHeaders(), "Content-Type": "application/json" }, signal: controller.signal });
+    const checked = await response.json();
+    if (!response.ok || checked?.status !== "local-iris-evidence-matched" ||
+        checked.bundleHash !== item.summary.bundleHash ||
+        checked.independentlyVerified !== false || checked.networkSubmitted !== false ||
+        checked.rewardEligible !== false) throw new Error("replay failed");
+    irisVerifyHash = checked.bundleHash;
+    irisVerifyStatus = "irisImportMatched";
+  } catch (reason) {
+    irisVerifyStatus = reason?.message === "invalid file" || reason instanceof SyntaxError ?
+      "irisImportInvalid" : "irisImportFailed";
+  } finally {
+    clearTimeout(deadline);
+    irisVerifyRunning = false;
+    start.disabled = !connected;
+    render();
   }
 });
 
