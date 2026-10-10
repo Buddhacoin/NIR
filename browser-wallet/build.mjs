@@ -32,7 +32,6 @@ if (firefox) {
       strict_min_version: "142.0",
       data_collection_permissions: { required: ["none"] },
     },
-    gecko_android: { strict_min_version: "142.0" },
   };
 }
 writeFileSync(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
