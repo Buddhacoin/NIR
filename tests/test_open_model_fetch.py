@@ -71,8 +71,8 @@ class FetchTests(unittest.TestCase):
             "from pathlib import Path; from nir.open_model_fetch import _private_model_directory; "
             "import sys,time; "
             "\nwith _private_model_directory(sys.argv[1]) as path:"
-            "\n print(path, flush=True)"
             "\n (Path(path)/'partial.safetensors').write_bytes(b'x'*32)"
+            "\n print(path, flush=True)"
             "\n time.sleep(60)", str(self.root)],
             cwd=Path(__file__).resolve().parent.parent, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True)
