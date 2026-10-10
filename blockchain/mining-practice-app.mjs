@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -83,19 +83,56 @@ export async function runPinnedModel(root) {
 const QWEN_REPOSITORY = "Qwen/Qwen3-0.6B";
 const QWEN_REVISION = "c1899de289a04d12100db370d81485cdf75e47ca";
 const QWEN_PROMPT = "Reply with the single word NIR.";
+const REPLAY_DOMAIN = "NIR_LOCAL_OPEN_MODEL_REPLAY_V1\0";
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function localReplayRecordHash(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error("local replay record is invalid");
+  }
+  const { recordHash, ...payload } = record;
+  if (recordHash === undefined) throw new Error("local replay record has no hash");
+  return `sha256:${createHash("sha256").update(REPLAY_DOMAIN, "utf8")
+    .update(canonicalJson(payload), "utf8").digest("hex")}`;
+}
 
 function publicOpenModelResult(result) {
+  const record = result?.record;
   if (result?.repository !== QWEN_REPOSITORY || result.revision !== QWEN_REVISION ||
       !/^sha256:[0-9a-f]{64}$/.test(result.packageIdentity) ||
       typeof result.answer !== "string" || result.answer.length > 4096 ||
       result.rewardEligible !== false || result.networkSubmitted !== false ||
-      result.independentlyVerified !== false) {
+      result.independentlyVerified !== false ||
+      !record || typeof record !== "object" || Array.isArray(record) ||
+      Object.keys(record).sort().join(",") !== ["answer", "format", "generation", "independentlyVerified",
+        "networkSubmitted", "packageIdentity", "prompt", "recordHash", "repository", "revision",
+        "rewardEligible", "runtimeDeclaration", "scope"].sort().join(",") ||
+      record.format !== "nir-local-open-model-replay-v1" ||
+      record.scope !== "non-reward-local-replay" ||
+      record.repository !== QWEN_REPOSITORY || record.revision !== QWEN_REVISION ||
+      record.packageIdentity !== result.packageIdentity || record.answer !== result.answer ||
+      record.prompt !== QWEN_PROMPT || !/^sha256:[0-9a-f]{64}$/.test(record.recordHash) ||
+      record.recordHash !== localReplayRecordHash(record) ||
+      record.rewardEligible !== false || record.networkSubmitted !== false ||
+      record.independentlyVerified !== false ||
+      JSON.stringify(record.generation) !== JSON.stringify({ temperature: "0", maxTokens: 32 }) ||
+      JSON.stringify(record.runtimeDeclaration) !== JSON.stringify({
+        mlx: "0.32.3", "mlx-lm": "0.32.0", transformers: "5.17.0",
+      })) {
     throw new Error("invalid pinned open-model result");
   }
   return {
     status: "local-open-model-inference-only", repository: QWEN_REPOSITORY,
     revision: QWEN_REVISION, packageIdentity: result.packageIdentity,
-    answer: result.answer, rewardEligible: false, networkSubmitted: false,
+    answer: result.answer, record, rewardEligible: false, networkSubmitted: false,
     independentlyVerified: false,
   };
 }

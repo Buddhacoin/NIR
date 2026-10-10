@@ -13,6 +13,37 @@ const qwenStart = document.querySelector("#qwen-start");
 const qwenState = document.querySelector("#qwen-state");
 const qwenAnswer = document.querySelector("#qwen-answer");
 const qwenIdentity = document.querySelector("#qwen-identity");
+const qwenExport = document.querySelector("#qwen-export");
+
+function canonicalReplayJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalReplayJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalReplayJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function matchesReplayHash(record) {
+  if (!record || !/^sha256:[0-9a-f]{64}$/.test(record.recordHash ?? "") ||
+      typeof crypto === "undefined" || !crypto.subtle) return false;
+  const { recordHash, ...payload } = record;
+  const data = new TextEncoder().encode(`NIR_LOCAL_OPEN_MODEL_REPLAY_V1\0${canonicalReplayJson(payload)}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}` ===
+    recordHash;
+}
+
+async function fetchQwenJson(path, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(path, { ...options, signal: controller.signal });
+    return { response, data: await response.json() };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const copy = {
   ru: {
@@ -52,6 +83,7 @@ const copy = {
     qwenDone: "Локальный вывод выполнен. Независимой проверки и награды нет.",
     qwenAnswer: (answer) => `Ответ локального сервиса (не независимое свидетельство): ${answer}`,
     qwenIdentity: (identity) => `Идентификатор локального пакета (не доказательство выполнения): ${identity}`,
+    qwenExport: "Скачать запись для локального повторного запуска (не доказательство награды)",
     qwenRuntimeChecking: "Проверяем локальную среду Qwen без загрузки модели…",
     qwenRuntimeUnavailable: "Не удалось проверить среду Qwen. Перезапустите приложение из доверенной копии NIR.",
     qwenUnsupported: "Для Qwen нужен Mac с Apple Silicon. На этом устройстве запуск недоступен.",
@@ -96,6 +128,7 @@ const copy = {
     qwenDone: "Local inference completed. There was no independent verification or reward.",
     qwenAnswer: (answer) => `Local service answer (not independent evidence): ${answer}`,
     qwenIdentity: (identity) => `Local package ID (not proof of execution): ${identity}`,
+    qwenExport: "Download local replay record (not reward proof)",
     qwenRuntimeChecking: "Checking the local Qwen runtime without downloading a model…",
     qwenRuntimeUnavailable: "Could not check the Qwen runtime. Restart the app from a trusted NIR checkout.",
     qwenUnsupported: "Qwen requires an Apple Silicon Mac. It cannot run on this device.",
@@ -324,20 +357,21 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
   qwenLastResult = null;
   qwenAnswer.hidden = true;
   qwenIdentity.hidden = true;
+  if (qwenExport) qwenExport.hidden = true;
   start.disabled = true;
   render();
   try {
-    const response = await fetch("/open-model/qwen-check", {
+    const { response, data: started } = await fetchQwenJson("/open-model/qwen-check", {
       method: "POST", body: "", headers: { "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" },
     });
-    const started = await response.json();
     if (response.status !== 202 || started.status !== "running" ||
         !/^[a-f0-9]{32}$/.test(started.jobId)) throw new Error("qwen failed");
     const deadline = Date.now() + 30 * 60_000;
     let data;
     while (Date.now() < deadline) {
-      const check = await fetch(`/open-model/jobs/${started.jobId}`, { cache: "no-store" });
-      data = await check.json();
+      const { response: check, data: polled } = await fetchQwenJson(
+        `/open-model/jobs/${started.jobId}`, { cache: "no-store" });
+      data = polled;
       if (check.status === 200) break;
       if (check.status !== 202 || data.status !== "running") throw new Error("qwen failed");
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -349,10 +383,28 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
         !/^sha256:[0-9a-f]{64}$/.test(data.packageIdentity) ||
         typeof data.answer !== "string" || data.answer.length > 4096 ||
         data.rewardEligible !== false || data.networkSubmitted !== false ||
-        data.independentlyVerified !== false) throw new Error("invalid qwen result");
+        data.independentlyVerified !== false ||
+        data.record?.format !== "nir-local-open-model-replay-v1" ||
+        Object.keys(data.record).sort().join(",") !== ["answer", "format", "generation",
+          "independentlyVerified", "networkSubmitted", "packageIdentity", "prompt",
+          "recordHash", "repository", "revision", "rewardEligible", "runtimeDeclaration",
+          "scope"].sort().join(",") ||
+        data.record.scope !== "non-reward-local-replay" ||
+        data.record.repository !== data.repository || data.record.revision !== data.revision ||
+        data.record.packageIdentity !== data.packageIdentity || data.record.answer !== data.answer ||
+        data.record.prompt !== "Reply with the single word NIR." ||
+        !/^sha256:[0-9a-f]{64}$/.test(data.record.recordHash) ||
+        data.record.rewardEligible !== false || data.record.networkSubmitted !== false ||
+        data.record.independentlyVerified !== false ||
+        JSON.stringify(data.record.generation) !== JSON.stringify({ temperature: "0", maxTokens: 32 }) ||
+        JSON.stringify(data.record.runtimeDeclaration) !== JSON.stringify({
+          mlx: "0.32.3", "mlx-lm": "0.32.0", transformers: "5.17.0",
+        }) ||
+        !(await matchesReplayHash(data.record))) throw new Error("invalid qwen result");
     qwenLastResult = data;
     qwenAnswer.hidden = false;
     qwenIdentity.hidden = false;
+    if (qwenExport) qwenExport.hidden = false;
     qwenStatus = "qwenDone";
   } catch (reason) {
     qwenStatus = reason?.message === "invalid qwen result" ? "qwenInvalid" : "qwenFailed";
@@ -361,6 +413,20 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
     start.disabled = !connected;
     render();
   }
+});
+
+if (qwenExport) qwenExport.addEventListener("click", () => {
+  if (!qwenLastResult?.record || qwenExport.hidden) return;
+  const bytes = JSON.stringify(qwenLastResult.record, null, 2) + "\n";
+  const blob = new Blob([bytes], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nir-local-replay-${qwenLastResult.record.recordHash.slice(7, 19)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
 render();
