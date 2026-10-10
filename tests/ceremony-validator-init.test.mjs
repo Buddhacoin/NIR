@@ -12,7 +12,8 @@ import test from "node:test";
 
 import { multisigAddress } from "../blockchain/chain.mjs";
 import {
-  MIN_EVALUATOR_BOND, PROTOCOL_VERSION, TREASURY_BPS, TREASURY_VESTING_MS,
+  FOUNDER_BPS, FOUNDER_IMMEDIATE_BPS, MIN_EVALUATOR_BOND, PROTOCOL_TREASURY_BPS,
+  PROTOCOL_VERSION, TESTER_REWARD_RESERVE_BPS, TREASURY_BPS, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import {
@@ -113,7 +114,7 @@ function roles(wallets, prefix, port) {
   }));
 }
 
-function fixture(root) {
+function fixture(root, { legacy = false } = {}) {
   const tls = certificate(root, "validator");
   const wrongTls = certificate(root, "wrong-validator");
   const validators = Array.from({ length: 4 }, generateWallet);
@@ -122,6 +123,7 @@ function fixture(root) {
   const beacons = Array.from({ length: 4 }, generateWallet);
   const operators = Array.from({ length: 4 }, generateWallet);
   const guardians = Array.from({ length: 3 }, generateWallet);
+  const founderGuardians = legacy ? [] : Array.from({ length: 3 }, generateWallet);
   const releaseSigner = generateWallet();
   const releasePayload = {
     files: [{ executable: false, path: "package.json", sha3_256: digest("package"), size: 7 }],
@@ -145,6 +147,26 @@ function fixture(root) {
     networkId: "nir-validator-onboarding-devnet",
   });
   const plan = createGenesisPlan({
+    ...(legacy ? {} : {
+      format: "nir-public-genesis-plan-v5",
+      evaluationEnvironment: {
+        adapter_protocol: "nir-application-adapter-v1", cpu_limit: 2,
+        format: "nir-evaluation-environment-v1",
+        image_digest: `sha256:${digest("validator-v5-image")}`,
+        memory_limit_bytes: 1 << 30,
+        runner_digest: `sha256:${digest("validator-v5-runner")}`,
+        timeout_seconds: 60,
+      },
+      founder: {
+        address: multisigAddress(founderGuardians.map(({ publicKey }) => publicKey), 2),
+        algorithm: "ml-dsa-65-multisig",
+        memberPublicKeys: founderGuardians.map(({ publicKey }) => publicKey),
+        threshold: 2,
+        vestingPolicy: { allocationBps: Number(FOUNDER_BPS),
+          durationMs: TREASURY_VESTING_MS, immediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+          model: "genesis-release-plus-linear" },
+      },
+    }),
     beaconAuthorities: roles(beacons, "beacon", 9300),
     ceremonyOperators: operators.map((wallet, index) => ({
       ...publicWallet(wallet), contribution: digest(`contribution-${index}`),
@@ -163,8 +185,12 @@ function fixture(root) {
       memberPublicKeys: guardians.map(({ publicKey }) => publicKey),
       threshold: 2,
       vestingPolicy: {
-        allocationBps: Number(TREASURY_BPS), durationMs: TREASURY_VESTING_MS,
-        model: "linear-from-genesis",
+        allocationBps: Number(legacy ? TREASURY_BPS : PROTOCOL_TREASURY_BPS),
+        durationMs: TREASURY_VESTING_MS,
+        ...(legacy ? { model: "linear-from-genesis" } : {
+          immediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+          model: "genesis-release-plus-linear",
+        }),
       },
     },
     validators: validators.map((wallet, index) => ({
@@ -203,6 +229,16 @@ function fixture(root) {
     validators, transports, wrongTls,
   };
 }
+
+test("new validator installation rejects a signed legacy reward ceremony", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-validator-legacy-reward-"));
+  try {
+    const inputs = fixture(root, { legacy: true });
+    assert.throws(() => initializeValidatorFromCeremony(join(root, "operator-0"),
+      cloneInputs(inputs)), /v5|44 NIR/);
+    assert.equal(readdirSync(root).some((entry) => entry.startsWith(".operator-0.nir-")), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 function cloneInputs(inputs) {
   return structuredClone({
@@ -330,6 +366,24 @@ test("public deployment plan binds ceremony network, genesis, release, endpoint,
       assert.throws(() => createValidatorDeploymentPlan(changed, options),
         /deployment|ceremony|TLS|endpoint|release|genesis|network/);
     }
+    const legacy = fixture(root, { legacy: true });
+    const legacyParticipant = legacy.plan.validators[0];
+    const legacyInput = structuredClone(input);
+    legacyInput.expected = {
+      endpoint: legacyParticipant.endpoint,
+      genesisHash: legacy.anchor.payload.latestGenesisHash,
+      networkId: legacy.genesis.networkId,
+      releaseManifestHash: legacy.plan.sourceRelease.manifestHash,
+      tlsCertificateSha256: legacyParticipant.tlsCertificateSha256,
+    };
+    legacyInput.operatorId = legacyParticipant.operatorId;
+    legacyInput.validatorAddress = legacyParticipant.address;
+    legacyInput.trustedReleaseAddress = legacy.trustedAddress;
+    assert.throws(() => createValidatorDeploymentPlan(legacyInput, {
+      ...options, anchor: legacy.anchor, approvals: legacy.envelope,
+      genesis: legacy.genesis, ceremonyPlan: legacy.plan,
+      signedRelease: legacy.signedRelease, tlsCertificatePem: legacy.tlsCertificatePem,
+    }), /v5|44 NIR/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

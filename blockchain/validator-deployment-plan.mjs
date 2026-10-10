@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { canonicalJson, hashObject } from "./crypto.mjs";
 import { compileGenesis, verifyGenesisCeremony } from "./genesis-ceremony.mjs";
 import { verifyCeremonyRegistryAnchorForLatestPlan } from "./genesis-ceremony-anchor.mjs";
+import { assertApprovedPublicGenesisRewardPolicy } from "./public-genesis-policy.mjs";
 
 const INPUT_FORMAT = "nir-validator-deployment-input-v1";
 const PLAN_FORMAT = "nir-validator-deployment-plan-v1";
@@ -81,6 +82,7 @@ export function createValidatorDeploymentPlan(inputValue, {
       ceremonyPlan.sourceRelease.manifestHash !== input.expected.releaseManifestHash) {
     throw new Error("deployment genesis, network, or release expectation does not match ceremony evidence");
   }
+  assertApprovedPublicGenesisRewardPolicy(ceremonyPlan, genesis);
   verifyCeremonyRegistryAnchorForLatestPlan(anchor, ceremonyPlan, compiled.genesisHash, releaseOptions);
   const participant = ceremonyPlan.validators.find(({ operatorId }) => operatorId === input.operatorId);
   const peer = genesis.peerRegistry?.peers?.find(({ validatorAddress }) =>

@@ -12,6 +12,7 @@ import { initializeBlockStore } from "./block-store.mjs";
 import { compileGenesis, verifyGenesisCeremony } from "./genesis-ceremony.mjs";
 import { verifyCeremonyRegistryAnchorForLatestPlan } from "./genesis-ceremony-anchor.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
+import { assertApprovedPublicGenesisRewardPolicy } from "./public-genesis-policy.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { decryptWallet } from "./vault.mjs";
 
@@ -108,6 +109,7 @@ function validateInputs({
   if (canonicalJson(genesis) !== canonicalJson(compiled.genesis)) {
     throw new Error("compiled genesis does not match the verified ceremony");
   }
+  assertApprovedPublicGenesisRewardPolicy(plan, genesis);
   verifyCeremonyRegistryAnchorForLatestPlan(
     anchor, plan, compiled.genesisHash, releaseOptions,
   );
