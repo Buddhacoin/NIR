@@ -876,7 +876,8 @@ export function createWalletBridgeServer({
         const base = restartsFromPersisted ? persistedBase : (verifiedFinalityTip ?? persistedBase);
         const nextTip = verifyFinalityProofChain(body?.proofs, {
           checkpoint: base,
-          expectedChainIdentityGenesisHash: genesisCheckpoint?.tipHash ?? null,
+          expectedChainIdentityGenesisHash: protocolUpgradeReleaseAnchor
+            ? genesisCheckpoint.tipHash : null,
           expectedNetworkId: accountTrust.expectedNetworkId,
           handoffs: accountTrust.handoffs,
           protocolUpgradeReleaseAnchor,
