@@ -47,6 +47,8 @@ const assetsStatus = document.querySelector("#assets-status");
 let bridgeSession = null;
 let walletInfo = null;
 let accountEpoch = 0;
+let accountRefreshSequence = 0;
+let nodeRefreshSequence = 0;
 let accountTransitionPending = false;
 let networkInfo = null;
 let activeNodeUrl = null;
@@ -80,8 +82,19 @@ function renderWalletConnection() {
     : "Vault не подключён";
 }
 
+function clearAccountNumbers() {
+  document.querySelector("#balance-value").textContent = "—";
+  document.querySelector("#resource-stake").textContent = "—";
+  document.querySelector("#resource-credits").textContent = "—";
+  document.querySelector("#resource-unstake").textContent = "—";
+  document.querySelector("#claim-unstake").hidden = true;
+  document.querySelector("#claim-unstake").disabled = true;
+}
+
 function resetAccountView(message) {
   accountEpoch += 1;
+  accountRefreshSequence += 1;
+  nodeRefreshSequence += 1;
   pendingIntent = null;
   signedTransaction = null;
   signedResourceTransaction = null;
@@ -94,7 +107,7 @@ function resetAccountView(message) {
   knownAssetIds.clear();
   offlineSigningPackage = null;
   offlinePackageQrFrames = [];
-  document.querySelector("#balance-value").textContent = "0.00000000";
+  clearAccountNumbers();
   document.querySelector("#wallet-state").textContent = message;
   document.querySelector("#signed-json").value = "";
   document.querySelector("#resource-signed-json").value = "";
@@ -112,10 +125,6 @@ function resetAccountView(message) {
   document.querySelector("#history-empty b").textContent = "Операций пока нет";
   document.querySelector("#history-empty p").textContent = "Ожидаем проверки выбранного адреса.";
   messages.history = ["История операций", "История выбранного адреса ещё не проверена."];
-  document.querySelector("#resource-stake").textContent = "0.00000000 NIR";
-  document.querySelector("#resource-credits").textContent = "0 переводов";
-  document.querySelector("#resource-unstake").textContent = "Нет";
-  document.querySelector("#claim-unstake").hidden = true;
   document.querySelector("#asset-list").replaceChildren();
   document.querySelector("#asset-checkpoint").dataset.state = "stale";
   document.querySelector("#asset-checkpoint").textContent = "Доказательства ещё не проверены";
@@ -221,20 +230,23 @@ function exactLoopbackUrl(value) {
 
 async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
   if (!bridgeSession) throw new Error("Сначала подключите vault.");
+  const session = bridgeSession;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${bridgeSession.url}${path}`, {
+    const response = await fetch(`${session.url}${path}`, {
       ...options,
       signal: controller.signal,
       headers: {
-        "x-nir-bridge-token": bridgeSession.token,
+        "x-nir-bridge-token": session.token,
         ...(options.body ? { "content-type": "application/json" } : {}),
       },
     });
     const result = await response.json();
     if (!response.ok) {
-      if (response.status === 401) clearWalletSession("Сессия vault завершена · подключитесь снова");
+      if (response.status === 401 && bridgeSession === session) {
+        clearWalletSession("Сессия vault завершена · подключитесь снова");
+      }
       throw new Error(result.error || "Локальный bridge отклонил запрос.");
     }
     return result;
@@ -332,9 +344,8 @@ function nodeUrl(path) {
 
 async function readAccount() {
   if (!walletInfo || !networkInfo) throw new Error("Подключите vault и локальный узел.");
-  const response = await fetch(nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}`));
-  if (!response.ok) throw new Error("Не удалось получить nonce и баланс от узла.");
-  const account = await response.json();
+  const address = walletInfo.address;
+  const { height: minimumHeight, networkId } = networkInfo;
   try {
     const handoffResponse = await fetch(nodeUrl("/v1/validator-handoffs"));
     if (handoffResponse.ok) {
@@ -344,9 +355,9 @@ async function readAccount() {
       });
     }
     const trust = await bridgeRequest("/v1/trust-info");
-    if (trust.enabled && trust.tipHash && networkInfo.height > trust.minimumHeight) {
+    if (trust.enabled && trust.tipHash && minimumHeight > trust.minimumHeight) {
       let verifiedHeight = trust.minimumHeight;
-      while (verifiedHeight < networkInfo.height) {
+      while (verifiedHeight < minimumHeight) {
         const finalityResponse = await fetch(nodeUrl(
           `/v1/finality-proofs?fromHeight=${verifiedHeight}&limit=512`,
         ));
@@ -365,21 +376,27 @@ async function readAccount() {
       }
     }
     const proofResponse = await fetch(
-      nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`),
+      nodeUrl(`/v1/accounts/${encodeURIComponent(address)}/proof`),
     );
     if (!proofResponse.ok) throw new Error("proof unavailable");
     const proof = await proofResponse.json();
     const verified = await bridgeRequest("/v1/verify-account-proof", {
       method: "POST",
       body: JSON.stringify({
-        address: walletInfo.address,
-        minimumHeight: networkInfo.height,
+        address,
+        minimumHeight,
         proof,
       }),
     });
+    if (verified.verified !== true || verified.statement?.account?.address !== address ||
+        verified.statement.networkId !== networkId ||
+        !Number.isSafeInteger(verified.statement.height) ||
+        verified.statement.height < minimumHeight) {
+      throw new Error("account proof does not match the selected wallet and network");
+    }
     const historyCount = verified.statement.account.history.count;
     const historyResponse = await fetch(nodeUrl(
-      `/v1/accounts/${encodeURIComponent(walletInfo.address)}/history?before=${historyCount}&limit=20`,
+      `/v1/accounts/${encodeURIComponent(address)}/history?before=${historyCount}&limit=20`,
     ));
     if (!historyResponse.ok) throw new Error("account history page unavailable");
     const verifiedHistory = await bridgeRequest("/v1/verify-account-history-page", {
@@ -411,7 +428,6 @@ async function readAccount() {
       }
     }
     return {
-      ...account,
       ...verified.statement.account,
       proofHeight: verified.statement.height,
       proofStateRoot: verified.statement.stateRoot,
@@ -421,7 +437,7 @@ async function readAccount() {
       verifiedTransactions,
     };
   } catch {
-    return { ...account, proofVerified: false };
+    return { proofVerified: false };
   }
 }
 
@@ -481,9 +497,21 @@ async function refreshAccount() {
   if (!walletInfo || !networkInfo) return;
   const expectedAddress = walletInfo.address;
   const epoch = accountEpoch;
+  const expectedNetwork = networkInfo;
+  const refreshSequence = ++accountRefreshSequence;
+  const isCurrent = () => epoch === accountEpoch &&
+    refreshSequence === accountRefreshSequence && walletInfo?.address === expectedAddress &&
+    networkInfo === expectedNetwork;
+  clearAccountNumbers();
+  document.querySelector("#wallet-state").textContent = "Проверяем доказательство баланса…";
   try {
     const account = await readAccount();
-    if (epoch !== accountEpoch || walletInfo?.address !== expectedAddress) return;
+    if (!isCurrent()) return;
+    if (!account.proofVerified) {
+      document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · ответ узла скрыт";
+      renderTransactions(account);
+      return;
+    }
     document.querySelector("#balance-value").textContent = formatAtomic(account.atomicBalance);
     const resources = account.resources ?? {};
     document.querySelector("#resource-stake").textContent = `${formatAtomic(resources.atomicStake ?? "0")} NIR`;
@@ -496,13 +524,14 @@ async function refreshAccount() {
     claim.disabled = Boolean(pending && networkInfo.height < pending.unlockHeight);
     claim.textContent = pending && networkInfo.height < pending.unlockHeight
       ? `Доступно с блока ${pending.unlockHeight}` : "Завершить вывод";
-    document.querySelector("#wallet-state").textContent = account.proofVerified
-      ? `Кворум подтвердил баланс · блок ${account.proofHeight}`
-      : `Подключён ${walletInfo.address.slice(0, 12)}… · данные одного узла`;
+    document.querySelector("#wallet-state").textContent =
+      `Кворум подтвердил баланс · блок ${account.proofHeight}`;
     renderTransactions(account);
   } catch {
-    if (epoch !== accountEpoch || walletInfo?.address !== expectedAddress) return;
-    document.querySelector("#wallet-state").textContent = "Vault подключён · локальный узел недоступен";
+    if (!isCurrent()) return;
+    clearAccountNumbers();
+    document.querySelector("#wallet-state").textContent =
+      "Баланс не подтверждён · локальный узел недоступен";
   }
 }
 
@@ -900,7 +929,9 @@ document.querySelector("#submit-resource").onclick = async (event) => {
   event.currentTarget.disabled = true;
   resourcesStatus.textContent = "Повторная проверка тестовой сети…";
   try {
-    await selectActiveNode();
+    if (!(await refreshNodeStatus())) {
+      throw new Error("Сеть не подтверждена; транзакция не отправлена.");
+    }
     const health = await fetch(nodeUrl("/health")).then((response) => response.json());
     if (health.valueMode !== "valueless-devnet" ||
         health.networkId !== signedResourceTransaction.networkId) {
@@ -990,9 +1021,14 @@ function openBridgePanel() {
 }
 
 async function renderAccounts() {
+  const epoch = accountEpoch;
   const { accounts, activeId, canCreate } = await bridgeRequest("/v1/accounts");
+  if (epoch !== accountEpoch || !walletInfo || !bridgeSession) return false;
   if (!Array.isArray(accounts) || !accounts.some((account) => account.id === activeId)) {
     throw new Error("Не удалось проверить список кошельков.");
+  }
+  if (accounts.find((account) => account.id === activeId).address !== walletInfo.address) {
+    throw new Error("Выбранный адрес не совпадает с подключённым vault.");
   }
   const list = document.querySelector("#account-list");
   list.replaceChildren();
@@ -1014,59 +1050,78 @@ async function renderAccounts() {
   accountOpen.textContent = `${accounts.find((account) => account.id === activeId).label} ▾`;
   accountOpen.dataset.activeId = activeId;
   document.querySelector("#add-account").hidden = canCreate !== true;
+  return true;
 }
 
 async function completeAccountChange() {
+  const session = bridgeSession;
+  if (!session) return false;
   resetAccountView("Кошелёк выбран · проверяем баланс заново");
-  walletInfo = await bridgeRequest("/v1/wallet");
+  const epoch = accountEpoch;
+  const info = await bridgeRequest("/v1/wallet");
+  if (bridgeSession !== session || accountEpoch !== epoch) return false;
+  walletInfo = info;
+  if (await renderAccounts() !== true || bridgeSession !== session || accountEpoch !== epoch) return false;
   renderWalletConnection();
-  await renderAccounts();
   if (accountsPanel.open) accountsPanel.close();
   await refreshNodeStatus();
+  return bridgeSession === session && accountEpoch === epoch;
 }
 
 async function reconcileAccountAfterError() {
+  const session = bridgeSession;
+  if (!session) return false;
   resetAccountView("Проверяем выбранный кошелёк заново");
-  walletInfo = await bridgeRequest("/v1/wallet");
+  const epoch = accountEpoch;
+  const info = await bridgeRequest("/v1/wallet");
+  if (bridgeSession !== session || accountEpoch !== epoch) return false;
+  walletInfo = info;
+  if (await renderAccounts() !== true || bridgeSession !== session || accountEpoch !== epoch) return false;
   renderWalletConnection();
-  await renderAccounts();
   await refreshNodeStatus();
+  return bridgeSession === session && accountEpoch === epoch;
 }
 
 async function changeAccount(id) {
   if (accountTransitionPending) return;
   if (id === accountOpen.dataset.activeId) { accountsPanel.close(); return; }
   accountTransitionPending = true;
+  const session = bridgeSession;
   accountsStatus.textContent = "Переключаем кошелёк…";
   try {
     await bridgeRequest("/v1/select-account", { method: "POST", body: JSON.stringify({ id }) });
+    if (bridgeSession !== session) return;
     await completeAccountChange();
   } catch (error) {
+    if (bridgeSession !== session) return;
     accountsStatus.textContent = error.message;
     try { await reconcileAccountAfterError(); }
-    catch { clearWalletSession("Не удалось сверить выбранный кошелёк · подключитесь снова"); }
+    catch { if (bridgeSession === session) clearWalletSession("Не удалось сверить выбранный кошелёк · подключитесь снова"); }
   } finally { accountTransitionPending = false; }
 }
 
 accountOpen.onclick = async () => {
   accountsStatus.textContent = "";
-  try { await renderAccounts(); accountsPanel.showModal(); }
+  try { if (await renderAccounts() === true && bridgeSession && walletInfo) accountsPanel.showModal(); }
   catch (error) { showMessage("settings", error.message); }
 };
 
 document.querySelector("#add-account").onclick = async (event) => {
   if (accountTransitionPending) return;
   accountTransitionPending = true;
+  const session = bridgeSession;
   const button = event.currentTarget;
   button.disabled = true;
   accountsStatus.textContent = "Создайте ключ и сохраните его резервную копию в приложении…";
   try {
     await bridgeRequest("/v1/create-account", { method: "POST", body: "{}" }, 600_000);
+    if (bridgeSession !== session) return;
     await completeAccountChange();
   } catch (error) {
+    if (bridgeSession !== session) return;
     accountsStatus.textContent = error.message;
     try { await reconcileAccountAfterError(); }
-    catch { clearWalletSession("Не удалось сверить созданный кошелёк · подключитесь снова"); }
+    catch { if (bridgeSession === session) clearWalletSession("Не удалось сверить созданный кошелёк · подключитесь снова"); }
   } finally { button.disabled = false; accountTransitionPending = false; }
 };
 
@@ -1082,6 +1137,8 @@ function openSettingsPanel() {
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  clearWalletSession("Переподключение vault · ожидаем подтверждения нового сеанса");
+  const pairingEpoch = accountEpoch;
   bridgeStatus.textContent = "Подключение…";
   const codeInput = document.querySelector("#bridge-code");
   try {
@@ -1089,17 +1146,22 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     const code = codeInput.value.trim();
     if (!/^[0-9]{8}$/.test(code)) throw new Error("Введите восьмизначный одноразовый код.");
     const token = await pairBridge(url, code);
+    if (pairingEpoch !== accountEpoch) return;
     bridgeSession = { token, url };
-    walletInfo = await bridgeRequest("/v1/wallet");
+    const info = await bridgeRequest("/v1/wallet");
+    if (pairingEpoch !== accountEpoch) return;
+    walletInfo = info;
     await renderAccounts();
+    if (pairingEpoch !== accountEpoch) return;
     codeInput.value = "";
     bridgeStatus.textContent = `Подключён ${walletInfo.address.slice(0, 16)}…`;
     renderWalletConnection();
     await refreshNodeStatus();
+    if (pairingEpoch !== accountEpoch) return;
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
-    bridgeSession = null;
-    walletInfo = null;
+    if (pairingEpoch !== accountEpoch) return;
+    clearWalletSession("Подключение vault не подтверждено · баланс скрыт");
     codeInput.value = "";
     bridgeStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   }
@@ -1407,7 +1469,9 @@ document.querySelector("#submit-signed").onclick = async () => {
   submitButton.disabled = true;
   sendStatus.textContent = "Повторная проверка тестовой сети…";
   try {
-    await selectActiveNode();
+    if (!(await refreshNodeStatus())) {
+      throw new Error("Сеть не подтверждена; транзакция не отправлена.");
+    }
     const healthResponse = await fetch(nodeUrl("/health"));
     if (!healthResponse.ok) throw new Error("Локальный узел не отвечает.");
     const currentNetwork = await healthResponse.json();
@@ -1516,7 +1580,7 @@ async function loadNodePolicy() {
   return nodePolicy;
 }
 
-async function selectActiveNode() {
+async function selectActiveNode(refreshSequence) {
   const epoch = accountEpoch;
   const policy = await loadNodePolicy();
   const controller = new AbortController();
@@ -1541,7 +1605,9 @@ async function selectActiveNode() {
         trustedTipHash: trust.tipHash,
       },
     );
-    if (epoch !== accountEpoch) throw new Error("wallet changed during node selection");
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) {
+      throw new Error("wallet or network changed during node selection");
+    }
     activeNodeUrl = selected.url;
     networkInfo = {
       ...selected.health,
@@ -1556,9 +1622,15 @@ async function selectActiveNode() {
 
 async function refreshNodeStatus() {
   const epoch = accountEpoch;
+  const refreshSequence = ++nodeRefreshSequence;
+  accountRefreshSequence += 1;
+  networkInfo = null;
+  activeNodeUrl = null;
+  clearAccountNumbers();
+  document.querySelector("#wallet-state").textContent = "Проверяем сеть и баланс…";
   try {
-    await selectActiveNode();
-    if (epoch !== accountEpoch) return;
+    await selectActiveNode(refreshSequence);
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
     const assetCheckpoint = document.querySelector("#asset-checkpoint");
     if (assetCheckpoint.dataset.state === "verified" &&
         Number(assetCheckpoint.dataset.height) !== networkInfo.height) {
@@ -1571,14 +1643,18 @@ async function refreshNodeStatus() {
     networkButton.classList.remove("offline");
     messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
     await refreshAccount();
+    return epoch === accountEpoch && refreshSequence === nodeRefreshSequence;
   } catch {
-    if (epoch !== accountEpoch) return;
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
     networkInfo = null;
     activeNodeUrl = null;
+    clearAccountNumbers();
+    document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · узлы недоступны";
     networkButton.textContent = "○ Nodes offline";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
     messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
+    return false;
   }
 }
 refreshNodeStatus();

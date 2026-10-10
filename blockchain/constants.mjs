@@ -23,7 +23,6 @@ export const PROTOCOL_TREASURY_BUDGET_BPS = Object.freeze({
   reserve: 50,
 });
 export const MINING_POOL = MAX_SUPPLY - TREASURY_ALLOCATION;
-export const LEGACY_INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
 export const INITIAL_EPOCH_REWARD = 44n * ATOMIC_UNITS;
 export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
@@ -58,8 +57,8 @@ export const MAX_BLOCK_BYTES = 2_000_000;
 export const MAX_FUTURE_DRIFT_MS = 120_000;
 export const EPOCH_REVEAL_TIMEOUT_BLOCKS = 8;
 export const MIN_BEACON_BOND = 1_000n * ATOMIC_UNITS;
-// Keep the existing evaluator-bond rule independent of the reward schedule.
-export const MIN_EVALUATOR_BOND = LEGACY_INITIAL_EPOCH_REWARD;
+// Evaluator collateral is independent of the issuance schedule.
+export const MIN_EVALUATOR_BOND = 50n * ATOMIC_UNITS;
 export const EVALUATOR_ACTIVATION_DELAY_BLOCKS = 64;
 export const EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS = 1_024;
 export const BEACON_NON_REVEAL_SLASH_BPS = 100n;
@@ -98,7 +97,7 @@ export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
   return vestedAllocationAtTimestamp(TREASURY_ALLOCATION, genesisTimestamp, timestamp);
 }
 
-export function scheduledEpochBudget(epoch, initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
+export function scheduledEpochBudget(epoch, initialReward = INITIAL_EPOCH_REWARD) {
   if (!Number.isSafeInteger(epoch) || epoch < 0) {
     throw new Error("epoch must be a non-negative safe integer");
   }

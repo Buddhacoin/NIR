@@ -8,7 +8,7 @@ import {
 import {
   EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION,
   EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
-  LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
+  INITIAL_EPOCH_REWARD,
   SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import { canonicalJson, generateWallet, publicWallet } from "../blockchain/crypto.mjs";

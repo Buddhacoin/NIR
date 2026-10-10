@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main class="wallet">
+    <header><img src="nir-icon.png" alt="" width="40" height="40"><span>NIR <small>WALLET</small></span><div class="locale-switch" role="group" aria-label="Язык / Language"><button type="button" id="locale-ru" aria-label="Русский" aria-pressed="true">RU</button><button type="button" id="locale-en" aria-label="English" aria-pressed="false">EN</button></div><b>TEST</b></header>
+    <p class="notice">Локальная тестовая версия · без реальных средств</p>
+
+    <section id="welcome" hidden>
+      <div class="hero"><img src="nir-icon.png" alt="" width="78" height="78"><h1>Ваш NIR начинается здесь</h1><p>Кошелёк прямо в браузере. Пароль и фраза остаются на вашем устройстве.</p></div>
+      <button class="primary" id="start-create">Создать кошелёк</button>
+      <button class="secondary" id="start-restore">У меня есть фраза восстановления</button>
+    </section>
+
+    <section id="create" hidden>
+      <button class="back" data-back="welcome">← Назад</button>
+      <h1>Придумайте пароль</h1><p>Пароль открывает кошелёк только в этом браузере. На другом устройстве потребуется фраза восстановления.</p>
+      <form id="create-form"><label>Пароль<input name="password" type="password" autocomplete="new-password" minlength="12" required></label><label>Повторите пароль<input name="confirmation" type="password" autocomplete="new-password" minlength="12" required></label><button class="primary" type="submit">Продолжить</button></form>
+    </section>
+
+    <section id="backup" hidden>
+      <h1>Сохраните 24 слова</h1><p>Запишите их по порядку и храните отдельно. Любой, кто знает эту фразу, сможет управлять кошельком. Мы не сможем её восстановить.</p>
+      <p class="warning">Если вы переключитесь на другое окно или не будете действовать 5 минут, фраза исчезнет. Создание придётся начать заново.</p>
+      <div class="phrase-grid" id="phrase-grid"></div>
+      <button class="secondary" id="copy-phrase">Скопировать фразу</button>
+      <button class="primary" id="backup-next">Я сохранил слова</button>
+    </section>
+
+    <section id="confirm" hidden>
+      <button class="back" data-back="backup">← Назад</button>
+      <h1>Проверьте фразу</h1><p>Введите указанные слова, чтобы убедиться, что вы сохранили их верно.</p>
+      <p class="warning">При переключении окна или после 5 минут бездействия проверка начнётся заново.</p>
+      <form id="confirm-form"><div id="confirm-fields"></div><button class="primary" type="submit">Создать кошелёк</button></form>
+    </section>
+
+    <section id="restore" hidden>
+      <button class="back" data-back="welcome">← Назад</button>
+      <h1>Восстановить кошелёк</h1><p>Введите 24 слова в правильном порядке. На этом устройстве задайте новый пароль.</p>
+      <p class="warning">При переключении окна или после 5 минут бездействия введённые слова очистятся.</p>
+      <p>После восстановления будут доступны первые 16 адресов этой фразы. Выберите нужный в списке адресов.</p>
+      <form id="restore-form"><label>Секретная фраза<textarea name="phrase" rows="5" autocapitalize="off" spellcheck="false" autocomplete="off" required></textarea></label><label>Новый пароль<input name="password" type="password" autocomplete="new-password" minlength="12" required></label><label>Повторите пароль<input name="confirmation" type="password" autocomplete="new-password" minlength="12" required></label><button class="primary" type="submit">Восстановить</button></form>
+    </section>
+
+    <section id="unlock" hidden>
+      <div class="hero"><img src="nir-icon.png" alt="" width="78" height="78"><h1>С возвращением!</h1><p>Введите пароль, чтобы открыть NIR Wallet.</p></div>
+      <form id="unlock-form"><label>Пароль<input name="password" type="password" autocomplete="current-password" required autofocus></label><button class="primary" type="submit">Разблокировать</button></form>
+      <button class="text-button" id="forgot-password">Забыли пароль? Восстановить по фразе</button>
+    </section>
+
+    <section id="home" hidden>
+      <div class="account-head"><span id="account-label">Адрес 1</span><button id="open-accounts" aria-label="Выбрать адрес">⌄</button></div>
+      <button class="address-pill" id="copy-address" title="Скопировать адрес"><span id="short-address"></span> <span>▣</span></button>
+      <div class="balance"><p>Сетевой баланс</p><strong id="verified-balance">—</strong><small id="balance-detail">Не подтверждён расширением</small></div>
+      <div class="card observer-report" id="observer-report" hidden><h2>Сообщение локального процесса</h2>
+        <p><span class="report-lead">Локальный наблюдатель сообщил </span><strong id="observer-amount"></strong><span class="report-middle"> тестовых NIR на высоте </span><span id="observer-height"></span><span class="report-tail">. Расширение не проверяло подписи самостоятельно; актуальность сети и доступность средств не подтверждены. Это не начисление за майнинг.</span></p>
+      </div>
+      <div class="action-row"><button id="receive">↓<span>Получить</span></button><button id="send" disabled>↑<span>Отправить</span></button><button id="mine" disabled>✦<span>Майнинг</span></button></div>
+      <div class="card"><h2>Безопасность</h2><p>Адрес уже можно скопировать. Переводы и майнинг недоступны. Локальное сообщение наблюдателя не является независимой проверкой расширения или актуальным балансом сети.</p></div>
+      <nav><button id="nav-home" class="active">Главная</button><button id="nav-settings">Настройки</button></nav>
+    </section>
+
+    <section id="accounts" hidden>
+      <button class="back" data-back="home">← Назад</button><h1>Ваши адреса</h1><div id="account-list" class="account-list"></div><button class="secondary" id="add-account">+ Добавить адрес</button>
+    </section>
+
+    <section id="settings" hidden>
+      <button class="back" data-back="home">← Назад</button><h1>Настройки</h1>
+      <div class="card observer-card"><h2>Локальный наблюдатель · инженерный просмотр</h2>
+        <p>Для опытных операторов тестовой сети. Наблюдатель должен быть отдельно запущен и закреплён за этим адресом, origin расширения и проверенным genesis. Он не получает фразу или право подписи. Публичной сети и реальных средств нет.</p>
+        <p>Origin расширения: <code id="extension-origin"></code></p>
+        <form id="observer-form">
+          <label>Адрес наблюдателя<input name="url" type="url" placeholder="http://127.0.0.1:8787" required></label>
+          <label>Отдельный токен наблюдателя<input name="token" type="password" autocomplete="off" spellcheck="false" required></label>
+          <label>Идентификатор сети<input name="networkId" type="text" autocomplete="off" spellcheck="false" required></label>
+          <label>Genesis hash из доверенного источника<input name="genesisHash" type="text" autocomplete="off" spellcheck="false" required></label>
+          <button class="secondary" type="submit">Получить локальное сообщение</button>
+        </form>
+        <p>Токен хранится только в памяти открытого окна. Нужна ручная настройка отдельного процесса с доверенным genesis; автоматической установки пока нет. Ответ процесса не подтверждает актуальность сети.</p>
+      </div>
+      <div class="card"><h2>Фраза восстановления</h2><p>Для просмотра ещё раз введите пароль. Никому не показывайте эти слова.</p><button class="secondary" id="show-phrase-form">Показать фразу</button></div>
+      <button class="secondary" id="lock-wallet">Заблокировать кошелёк</button>
+    </section>
+
+    <section id="reveal" hidden>
+      <button class="back" data-back="settings">← Назад</button><h1>Показать фразу</h1><p>Убедитесь, что никто не видит экран. Фраза даёт полный доступ к адресам.</p>
+      <form id="reveal-form"><label>Пароль<input name="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">Показать</button></form>
+      <div id="reveal-result" hidden><div class="phrase-grid" id="reveal-grid"></div><button class="secondary" id="copy-revealed">Скопировать фразу</button></div>
+    </section>
+
+    <section id="receive-view" hidden>
+      <button class="back" data-back="home">← Назад</button><h1>Получить NIR</h1><p>Адрес выбранного счёта:</p><code id="full-address"></code><button class="primary" id="copy-full-address">Скопировать адрес</button><p class="warning">Пока нет публичной сети NIR. Не отправляйте реальные средства.</p>
+    </section>
+
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

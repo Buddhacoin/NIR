@@ -10,6 +10,8 @@
   "scripts": {
     "demo:chain": "node blockchain/demo.mjs",
     "mine:preflight": "node blockchain/miner-macos-preflight-cli.mjs",
+    "mine:try": "node blockchain/miner-try-cli.mjs",
+    "mine:app": "node blockchain/mining-practice-app-cli.mjs",
     "mine:wizard": "node blockchain/miner-macos-wizard-cli.mjs",
     "mine:adapter-check": "python3 -m nir.adapter_check",
     "mine:demo": "node blockchain/demo.mjs",
@@ -28,6 +30,7 @@
     "wallet:bridge-production": "node blockchain/wallet-bridge-cli.mjs --production",
     "wallet:serve-production": "node blockchain/wallet-ui-cli.mjs",
     "wallet:extension-production": "node blockchain/production-wallet-extension-cli.mjs",
+    "wallet:firefox-stage": "node blockchain/firefox-wallet-preview.mjs",
     "wallet:export-production": "node blockchain/production-wallet-export-cli.mjs",
     "wallet:release-transparency": "node blockchain/production-wallet-transparency-cli.mjs",
     "wallet:runtime-policy": "node blockchain/production-runtime-policy-cli.mjs",

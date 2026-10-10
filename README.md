@@ -33,11 +33,15 @@ The one-click experience requires an official browser-store listing or a signed 
 |---|---|
 | Chrome on Mac, Windows, Linux | No Chrome Web Store listing planned for this first release. |
 | Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | No verified one-click install. Chromium compatibility has not been tested separately in each browser. |
-| Firefox on desktop | Firefox submission package prepared; Mozilla has not signed or published it yet. No one-click installation link yet. |
+| Firefox on desktop | An unsigned development package can be staged for manifest validation, but Firefox-origin pairing with the local services is not implemented. Mozilla has not signed or published it; no one-click installation link exists. |
 | Safari on Mac or iPhone/iPad | No signed Safari app extension or installer. |
 | Android browsers | No verified browser-wallet installation. |
 
 Existing developer ZIPs require manual installation and are **not** one-click installers, audited wallets, or automatically updated releases. General users should wait for the official Firefox Add-ons listing and must not install purported NIR Wallet apps from third-party sites. The earlier Mac desktop demo is a local prototype, not a public installer. See the [wallet safety guide](docs/wallet.md).
+
+Developers can run `npm run wallet:firefox-stage -- /absolute/new-directory` to create an unsigned Firefox-specific source directory, then validate it with `web-ext lint --source-dir /absolute/new-directory`. The command refuses an existing destination and leaves the Chrome production manifest unchanged. Do not distribute this directory as a usable wallet: normal bridge startup and node services still reject Firefox's per-installation `moz-extension://` origin.
+
+In a local developer run, `npm run wallet:bridge -- <test-vault> 8788 --firefox-pairing` admits only a canonical Firefox extension origin to attempt the existing one-time code. A successful attempt pins that exact origin for the bridge session; other origins are rejected. This does not authenticate the extension's publisher, work in production mode, enable Firefox node read/transaction ingress, or provide an installable release.
 
 ## Current status
 
@@ -55,6 +59,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | See what is actually implemented | [What is implemented now](#what-is-implemented-now) |
 | Run the local test network | [Start using the local prototype](#start-using-the-local-prototype) |
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
+| Run a pinned model check on a Mac | `npm run mine:app` runs local Iris classifiers and verifies a bundle; no network or reward; [beginner guide](docs/miner-quickstart-macos.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
 | Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
@@ -252,15 +257,18 @@ dependency order and measurable exit conditions are defined by the
 
 4. For four independent validator processes, follow
    [`docs/network.md`](docs/network.md).
-5. On macOS, run the read-only miner check and then the corrected local demo:
+5. On macOS, open the local pinned-model check (Python 3.11+ required):
 
    ```bash
-   npm run mine:wizard
-   npm run mine:preflight
-   npm run mine:demo
+   npm run mine:app
    ```
 
-   This is a local simulation with test units, not a public mining connection.
+   This requires a trusted source checkout; it is not an installable public
+   miner. It runs bundled Iris classifiers, checks their local evaluation bundle,
+   and shows both accuracy scores. It is not a public mining connection or a
+   payout; the data are public and there are no independent operators. It does
+   not use your wallet. The separate terminal-only ledger demo is
+   `npm run mine:try`; advanced roles remain in `npm run mine:wizard`.
 6. For contribution roles and the intended mining workflow, read
    [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md),
    [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md),
@@ -394,12 +402,13 @@ vulnerabilities cannot become a minting strategy.
 - Founder: **7%** (1% of total supply available at genesis, 6% vesting over ten
   years); separate protocol treasury: **5%** (0.1% of total supply available at
   genesis, 4.9% vesting). These v5 rules require a new signed genesis.
-- In a v5 genesis, a successful intelligence epoch starts at 44 NIR and its
+- Under the current rule, a successful intelligence epoch starts at 44 NIR and its
   budget is cut in half after every 210,000 rewarded epochs. Empty blocks issue nothing and do
   not advance this counter. Rewarded blocks must be at least ten minutes apart,
   and the hard cap always wins. Atomic-unit rounding leaves 0.0189 NIR of the
   mining pool unissued even if every possible epoch is rewarded.
-  Older v1-v4 genesis plans retain the original 50 NIR schedule for replay.
+  Earlier local test-chain reward blocks made under the discarded rule are
+  incompatible and must not be reused for a launch.
 - Holding NIR does not automatically grant protocol governance power.
 
 The genesis allocation is assigned to explicit post-quantum NIR addresses. The

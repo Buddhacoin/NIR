@@ -86,6 +86,17 @@ async function browserSocket(port) {
   return new WebSocket(info.webSocketDebuggerUrl);
 }
 
+async function waitExtensionServiceWorker(send, extensionOrigin) {
+  const expectedUrl = `${extensionOrigin}/extension-background.js`;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const targets = await send("Target.getTargets");
+    if (targets.targetInfos.some(({ type, url }) =>
+      type === "service_worker" && url === expectedUrl)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Chrome did not register the wallet extension at ${extensionOrigin}`);
+}
+
 async function openSocket(socket) {
   if (socket.readyState !== WebSocket.OPEN) {
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
@@ -177,7 +188,7 @@ test("Chromium preflights only the configured wallet origin before queued valida
     const wallet = JSON.parse(readFileSync(join(layout.coordinatorDirectory, "TREASURY-DEV-KEY.json")));
     const signed = createTransfer({ wallet, networkId: replicas[0].networkId,
       recipient: generateWallet().address, amount: "1000000", nonce: 0 });
-    chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-first-run",
+    chrome = spawn(CHROME, ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--no-first-run",
       "--no-default-browser-check", "--remote-debugging-port=0",
       `--user-data-dir=${profile}`, `${walletOrigin}/index.html`],
     { stdio: ["ignore", "ignore", "pipe"] });
@@ -231,7 +242,7 @@ test("Chromium preflights only the configured wallet origin before queued valida
 });
 
 test("unpacked pinned extension submits directly while a foreign browser origin cannot forward", {
-  skip: !EXTENSION_CHROME || !existsSync(EXTENSION_CHROME), timeout: 40_000,
+  skip: !EXTENSION_CHROME || !existsSync(EXTENSION_CHROME), timeout: 60_000,
 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "nir-extension-ingress-"));
   const profile = mkdtempSync(join(tmpdir(), "nir-extension-ingress-profile-"));
@@ -277,14 +288,16 @@ test("unpacked pinned extension submits directly while a foreign browser origin 
       recipient: generateWallet().address, amount: "1000000", nonce: 0 });
     const extensionPage = `${WALLET_EXTENSION_ORIGIN}/index.html`;
     const walletUi = fileURLToPath(new URL("../wallet-ui/", import.meta.url));
-    chrome = spawn(EXTENSION_CHROME, ["--headless=new", "--disable-gpu", "--no-first-run",
+    chrome = spawn(EXTENSION_CHROME, ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--no-first-run",
       "--no-default-browser-check", "--remote-debugging-port=0",
       `--user-data-dir=${profile}`, `--disable-extensions-except=${walletUi}`,
-      `--load-extension=${walletUi}`, extensionPage],
+      `--load-extension=${walletUi}`, "about:blank"],
     { stdio: ["ignore", "ignore", "pipe"] });
     const port = await chromeDebugPort(chrome);
     browser = await browserSocket(port);
     const browserSend = await openSocket(browser);
+    await waitExtensionServiceWorker(browserSend, WALLET_EXTENSION_ORIGIN);
+    await browserSend("Target.createTarget", { url: extensionPage });
     socket = await pageSocket(port, extensionPage);
     const send = await openSocket(socket);
     await send("Runtime.enable"); await send("Page.enable");
@@ -300,6 +313,14 @@ test("unpacked pinned extension submits directly while a foreign browser origin 
     await browserSend("Target.activateTarget", { targetId: terminalStandIn.targetId });
     await browserSend("Target.activateTarget", { targetId: extensionTarget.targetId });
     assert.equal(await evaluate(send, "window.__nirReviewSurvivedFocus"), true);
+    // Headless Chrome cannot answer the runtime local-network permission prompt.
+    // Grant it before the request so a prompt cannot leave fetch pending.
+    for (const name of ["local-network", "loopback-network"]) {
+      await browserSend("Browser.setPermission", {
+        origin: WALLET_EXTENSION_ORIGIN, embeddedOrigin: ingressOrigin,
+        permission: { name }, setting: "granted",
+      });
+    }
     const request = `window.__nirIngressResult = "pending";
       fetch(${JSON.stringify(`${ingressOrigin}/v1/transactions`)}, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -309,19 +330,12 @@ test("unpacked pinned extension submits directly while a foreign browser origin 
         .catch((error) => { window.__nirIngressResult = { error: error.toString() }; });
       window.__nirIngressResult`;
     assert.equal(await evaluate(send, request), "pending");
-    // Headless Chrome cannot answer the runtime local-network permission prompt.
-    for (const name of ["local-network", "loopback-network"]) {
-      await browserSend("Browser.setPermission", {
-        origin: WALLET_EXTENSION_ORIGIN, embeddedOrigin: ingressOrigin,
-        permission: { name }, setting: "granted",
-      });
-    }
     let accepted = "pending";
-    for (let attempt = 0; attempt < 100 && accepted === "pending"; attempt += 1) {
+    for (let attempt = 0; attempt < 200 && accepted === "pending"; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       accepted = await evaluate(send, "window.__nirIngressResult");
     }
-    assert.equal(accepted.status, 202);
+    assert.equal(accepted.status, 202, JSON.stringify({ accepted, requests }));
     assert.deepEqual(Object.keys(accepted.body).sort(),
       ["gossipedPeers", "status", "transactionId"]);
     assert.equal(accepted.body.status, "queued");
@@ -350,7 +364,7 @@ test("unpacked pinned extension submits directly while a foreign browser origin 
     socket?.close(); browser?.close();
     await closeChrome(chrome);
     await Promise.all(servers.map(close));
-    rmSync(profile, { recursive: true, force: true });
+    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     rmSync(root, { recursive: true, force: true });
   }
 });

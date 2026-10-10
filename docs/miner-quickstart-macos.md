@@ -28,7 +28,8 @@ or **Payment node** to explore the local ledger. Neither role earns real value.
 
 ## 1. Prepare the Mac
 
-You need Terminal, Git, Node.js 26 or newer, and Python 3.11 or newer. Open
+For the local model check you need Terminal, Git, Node.js 26 or newer, and
+Python 3.11 or newer. Open
 Terminal with Spotlight (`Command` + `Space`, type `Terminal`) and check:
 
 ```bash
@@ -52,15 +53,41 @@ cd NIR
 
 No `npm install` is required for the current local demo.
 
-## 2. Use the beginner setup wizard
+## 2. Open the local mining practice app
 
 From the repository root, run:
 
 ```bash
-npm run mine:wizard
+npm run mine:app
 ```
 
-The wizard lists all seven roles and labels each one either `local demo
+The command checks the Mac and opens a small local app in your browser. Press
+**Проверить модель Iris**. The app runs its bundled, digest-pinned Iris baseline
+and candidate on 30 held-out examples, creates six local transcripts, rebuilds
+and verifies the evaluation bundle, then displays both accuracy scores and the
+bundle hash. This is real local model execution, but the data and answers are
+public and the three named verifiers are repeat runs on one Mac, not independent
+operators. The adapter runs without an OS sandbox or enforced CPU/memory
+limits; use only a trusted source checkout. The app pins its example adapter
+and dataset, but does not attest the Python interpreter, NIR libraries, or
+the checkout itself. It accepts no user code, uploaded model, path, or wallet
+secret. It requires no wallet, password, model
+download, role selection, or second command. The app listens only on this Mac;
+close the Terminal window to stop it. The result disappears when the app stops;
+no NIR is earned. `npm run mine:try` is the older **separate** ledger demo,
+not the same model check. Its `--details` output uses 44 **test** NIR on a
+temporary local chain. That is not a live payout.
+
+Keep the Terminal process running while using the page. If the page shows that
+the local service is disconnected, run `npm run mine:app` again and use the
+**new tab/address** it opens; refreshing an old random-port URL is not a fix.
+The page has a RU/EN switch. It defaults to the browser language and remembers
+your choice only for that particular local browser address, not across ports.
+
+### Advanced role wizard
+
+If you need a different role or developer transport check, run
+`npm run mine:wizard`. The wizard lists all seven roles and labels each one either `local demo
 available` or `planned only`. An eighth, clearly separate developer option
 prepares a local adapter transport check; it is not a mining role. Enter a
 number. The wizard then runs the read-only Mac
@@ -98,13 +125,13 @@ The refusal is expected until the project publishes and supports a signed
 network manifest. A URL pasted into a chat is not a substitute for that trust
 root.
 
-## 3. Try one simulated intelligence-mining round
+## 3. Run the underlying demo directly (optional)
 
 ```bash
 npm run mine:demo
 ```
 
-The script creates temporary in-memory participants, commits a candidate,
+This is the demo that `mine:try` runs after its checks. The script creates temporary in-memory participants, commits a candidate,
 assigns a simulated evaluator committee, accepts signed evaluation evidence,
 and places a simulated reward in the mandatory challenge-window escrow. Output
 such as `height`, `issued`, available and pending balances, the unlock height, a
@@ -112,6 +139,10 @@ final block hash, and `ML-DSA-65` proves only
 that the local rules executed. The wallets and balances vanish when the command
 ends. Nothing was downloaded from a job service and nothing was submitted to a
 public network.
+
+This new local example uses the v5 genesis rules and shows **44 test NIR** in
+escrow. Earlier valueless test-chain reward blocks made under the discarded
+rule will not replay in this pre-launch version.
 
 To verify the code paths rather than trust one successful printout:
 
