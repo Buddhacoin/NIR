@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
+import { PROVIDERS, createCapabilityDeclaration } from "./model-provider-capabilities.mjs";
 import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   hashIrisModelCommit, MAX_IRIS_MODEL_BYTES,
   recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
@@ -27,6 +28,7 @@ const APP_FILES = Object.freeze([
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
   "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
   "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
+  "blockchain/model-provider-capabilities.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
   "nir/open_model_package.py", "nir/open_model_snapshot.py",
   "nir/open_model_source.py",
@@ -359,6 +361,41 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "GET" && path === "/catalog" && request.url === "/catalog") {
       send(200, "application/json; charset=utf-8", JSON.stringify(await catalog.get()));
+      return;
+    }
+    if (request.method === "GET" && path === "/provider-capabilities" &&
+        request.url === "/provider-capabilities") {
+      send(200, "application/json; charset=utf-8", JSON.stringify({
+        scope: "onboarding-only", providers: PROVIDERS,
+      }));
+      return;
+    }
+    if (request.method === "POST" && path === "/provider-capabilities/declaration" &&
+        request.url === "/provider-capabilities/declaration") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 2 || declared > 256) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const deadline = setTimeout(() => request.destroy(), 5000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("Oversized declaration");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("Truncated declaration");
+        const result = createCapabilityDeclaration(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        send(200, "application/json; charset=utf-8", JSON.stringify(result));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid capability intent" }));
+      } finally { clearTimeout(deadline); }
       return;
     }
     if (request.method === "GET" && path === "/model-evidence" &&

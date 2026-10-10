@@ -81,6 +81,16 @@
       <button id="catalog-refresh" class="secondary" type="button" data-i18n="catalogRefresh">Обновить сведения</button>
       <p class="catalog-note" data-i18n="catalogNote">Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Выбор ревизии в каталоге ничего не скачивает и не запускает; награда недоступна.</p>
     </section>
+    <section class="catalog" aria-labelledby="provider-heading">
+      <h2 id="provider-heading" data-i18n="providerTitle">Добавить модель: описание возможностей</h2>
+      <p data-i18n="providerIntro">Выберите тип модели и укажите её идентификатор. Скачивается только описание намерения оператора. API-ключи сюда не вводятся: фильтр отсечёт некоторые секреты, но не может распознать все. Ни одна модель этим шагом не запускается и не получает NIR.</p>
+      <label for="provider-kind" data-i18n="providerLabel">Провайдер</label>
+      <select id="provider-kind" disabled><option value="" data-i18n="providerChoose">Выберите провайдера</option></select>
+      <label for="provider-model-id" data-i18n="providerModelLabel">Идентификатор модели (без URL и ключей)</label>
+      <input id="provider-model-id" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Qwen/Qwen3-0.6B">
+      <button id="provider-export" class="secondary" type="button" disabled data-i18n="providerExport">Скачать описание (.json)</button>
+      <p id="provider-state" role="status" aria-live="polite"></p>
+    </section>
     <section class="catalog" aria-labelledby="qwen-heading">
       <h2 id="qwen-heading" data-i18n="qwenTitle">Локальный запуск Qwen3-0.6B</h2>
       <p data-i18n="qwenIntro">Открытая языковая модель Qwen. Однократный запуск закреплённой версии: загрузка около 1,5 ГБ, максимум 4 ГиБ проверяемых файлов, несколько ГБ свободного места. Нужны Apple Silicon, Python 3.13 и дополнительные библиотеки. Без независимой проверки, заявки и награды.</p>
