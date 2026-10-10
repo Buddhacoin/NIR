@@ -561,7 +561,9 @@ export function createWalletBridgeServer({
       }
       if (request.method === "POST" && url.pathname === "/v1/native-security") {
         if (!nativeSecurity) return send(response, 404, { error: "native security is unavailable" }, origin);
-        if (securityPending) return send(response, 409, { error: "security window is already open" }, origin);
+        if (securityPending || pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
         securityPending = true;
         securityController = new AbortController();
         const securityTimeout = setTimeout(() => securityController?.abort(), 540_000);
@@ -1004,6 +1006,9 @@ export function createWalletBridgeServer({
       }
       if (request.method === "POST" &&
           ["/v1/sign", "/v1/sign-resource", "/v1/sign-payment-request"].includes(url.pathname)) {
+        if (securityPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("bridge signing requests require application/json");
         }

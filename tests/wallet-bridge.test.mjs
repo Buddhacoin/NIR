@@ -146,10 +146,52 @@ test("native security cannot switch accounts or return success after session rev
     assert.equal(switchResponse.status, 409);
     assert.equal((await request(`${base}/v1/native-security`, origin, token,
       { method: "POST" })).status, 409);
+    assert.equal((await request(`${base}/v1/sign`, origin, token,
+      { method: "POST", body: "{}" })).status, 409);
     assert.equal((await request(`${base}/v1/session`, origin, token,
       { method: "DELETE" })).status, 200);
     assert.equal(aborted, true);
     assert.equal((await pending).status, 409);
+  } finally {
+    release();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("creating another account blocks native security before a second Mac password dialog", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-create-race-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const otherPath = join(directory, "other.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-native-security-2026" });
+  const second = createWalletFile({ path: otherPath, password: "other-native-security-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let securityCalls = 0;
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, sessionToken: token, vaultPath,
+    createAccount: async () => { started(); await blocked;
+      return { address: second.address, path: otherPath }; },
+    nativeSecurity: async () => { securityCalls += 1; return true; },
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const creating = request(`${base}/v1/create-account`, origin, token,
+      { method: "POST", body: "{}" });
+    await entered;
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 409);
+    assert.equal(securityCalls, 0);
+    release();
+    assert.equal((await creating).status, 200);
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 200);
+    assert.equal(securityCalls, 1);
   } finally {
     release();
     await close(server);
