@@ -46,7 +46,7 @@ const copy = {
     qwenTitle: "Локальный запуск Qwen3-0.6B", qwenIntro: "Открытая языковая модель Qwen. Однократный запуск закреплённой версии: загрузка около 1,5 ГБ, максимум 4 ГиБ проверяемых файлов, несколько ГБ свободного места. Нужны Apple Silicon, Python 3.13 и дополнительные библиотеки. Без независимой проверки, заявки и награды.",
     qwenStart: "Скачать и запустить Qwen локально",
     qwenConfirm: "Разрешить загрузку модели Qwen3-0.6B (около 1,5 ГБ; не более 4 ГиБ проверяемых файлов)? Понадобится несколько ГБ свободного места. Это не майнинг и не начислит NIR.",
-    qwenRunning: "Скачиваем закреплённые файлы и запускаем локальный вывод. Это может занять до 30 минут; не закрывайте вкладку.",
+    qwenRunning: "Скачиваем закреплённые файлы и запускаем локальный вывод. Приложение проверяет состояние задания; это может занять до 30 минут. Не закрывайте вкладку.",
     qwenFailed: "Модель не запустилась. Проверьте Apple Silicon, Python 3.13, установленные зависимости и подключение. Заявка не отправлена, награда не начислена.",
     qwenInvalid: "Результат локального запуска не подтверждён. Заявка не отправлена, награда не начислена.",
     qwenDone: "Локальный вывод выполнен. Независимой проверки и награды нет.",
@@ -90,7 +90,7 @@ const copy = {
     qwenTitle: "Run Qwen3-0.6B locally", qwenIntro: "Open Qwen language model. One pinned-revision run: about 1.5 GB downloaded, up to 4 GiB of checked files, and several GB of free disk space. Requires Apple Silicon, Python 3.13, and optional libraries. No independent verification, claim, or reward.",
     qwenStart: "Download and run Qwen locally",
     qwenConfirm: "Allow the Qwen3-0.6B download (about 1.5 GB; up to 4 GiB of checked files)? Several GB of free disk space are required. This is not mining and will not credit NIR.",
-    qwenRunning: "Downloading pinned files and running local inference. This can take up to 30 minutes; keep this tab open.",
+    qwenRunning: "Downloading pinned files and running local inference. The app checks job progress; this can take up to 30 minutes. Keep this tab open.",
     qwenFailed: "The model could not run. Check Apple Silicon, Python 3.13, installed dependencies, and connectivity. No claim was submitted or reward credited.",
     qwenInvalid: "The local result could not be confirmed. No claim was submitted or reward credited.",
     qwenDone: "Local inference completed. There was no independent verification or reward.",
@@ -330,8 +330,19 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
     const response = await fetch("/open-model/qwen-check", {
       method: "POST", body: "", headers: { "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" },
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error("qwen failed");
+    const started = await response.json();
+    if (response.status !== 202 || started.status !== "running" ||
+        !/^[a-f0-9]{32}$/.test(started.jobId)) throw new Error("qwen failed");
+    const deadline = Date.now() + 30 * 60_000;
+    let data;
+    while (Date.now() < deadline) {
+      const check = await fetch(`/open-model/jobs/${started.jobId}`, { cache: "no-store" });
+      data = await check.json();
+      if (check.status === 200) break;
+      if (check.status !== 202 || data.status !== "running") throw new Error("qwen failed");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    if (data?.status !== "local-open-model-inference-only") throw new Error("qwen failed");
     if (data.status !== "local-open-model-inference-only" ||
         data.repository !== "Qwen/Qwen3-0.6B" ||
         data.revision !== "c1899de289a04d12100db370d81485cdf75e47ca" ||
