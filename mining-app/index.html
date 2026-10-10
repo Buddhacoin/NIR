@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NIR · Майнинг</title>
+  <title>NIR · Проверка модели</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -25,7 +25,7 @@
       <ol id="event-log" class="event-log" aria-live="polite"></ol>
       <h3 class="models-heading" data-i18n="modelsTitle">Доступность локальных моделей</h3>
       <div class="model-grid">
-        <article><span class="model-index">01</span><div><strong>IRIS</strong><small data-i18n="irisScope">Встроенная проверка</small></div><b id="iris-availability" data-i18n="ready">ГОТОВА</b></article>
+        <article><span class="model-index">01</span><div><strong>IRIS</strong><small data-i18n="irisScope">Встроенная проверка</small></div><b id="iris-availability" data-i18n="bundled">ВСТРОЕНА</b></article>
         <article><span class="model-index">02</span><div><strong>QWEN3-0.6B</strong><small data-i18n="qwenScope">Закреплённый локальный запуск</small></div><b id="qwen-availability" data-state="checking" data-i18n="checkingShort">ПРОВЕРКА</b></article>
       </div>
       <p class="local-only" data-i18n="localOnly">Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.</p>
@@ -39,7 +39,7 @@
     </section>
     <section class="catalog" aria-labelledby="catalog-heading">
       <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>
-      <p data-i18n="catalogIntro">Можно посмотреть замеченные ревизии открытых моделей; запускать их здесь пока нельзя. Встроенная Iris выше — единственная доступная проверка.</p>
+      <p data-i18n="catalogIntro">Можно посмотреть замеченные ревизии открытых моделей. Произвольную ревизию запускать здесь нельзя; отдельный закреплённый запуск Qwen доступен ниже.</p>
       <label for="catalog-model" data-i18n="catalogModel">Модель</label>
       <select id="catalog-model" disabled><option value="" data-i18n="catalogPlaceholder">Выберите модель</option></select>
       <label for="catalog-version" data-i18n="catalogVersion">Замеченная ревизия (точный commit SHA)</label>
