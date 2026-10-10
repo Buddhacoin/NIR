@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import {
-  chmodSync, linkSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  chmodSync, fstatSync, linkSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   readlinkSync, renameSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -481,6 +483,34 @@ test("single-file wallet activation cannot follow a raced target symlink", () =>
     assert.deepEqual(readFileSync(join(foreign, "marker")), marker);
     assert.equal(readdirSync(directory).some((name) => name.includes(".nir-private-")), false);
   } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wallet creation cleanup keeps a generation referenced by a replacement activation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-activation-cleanup-"));
+  const target = join(directory, "wallet.json");
+  const held = join(directory, "held-activation");
+  const password = "activation-cleanup-password-long";
+  let generation;
+  const originalFsync = fs.fsyncSync;
+  try {
+    fs.fsyncSync = (descriptor) => {
+      if (fstatSync(descriptor).isDirectory() && generation === undefined) {
+        generation = join(directory, readlinkSync(target));
+        renameSync(target, held);
+        symlinkSync(readlinkSync(held), target, "file");
+      }
+      return originalFsync(descriptor);
+    };
+    syncBuiltinESMExports();
+    assert.throws(() => createWalletFile({ path: target, password }), /activation changed/);
+    assert.equal(readlinkSync(target), readlinkSync(held));
+    assert.equal(statSync(generation).isFile(), true);
+    assert.match(verifyWalletFile({ path: target, password }).address, /^nir1/);
+  } finally {
+    fs.fsyncSync = originalFsync;
+    syncBuiltinESMExports();
     rmSync(directory, { recursive: true, force: true });
   }
 });

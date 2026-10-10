@@ -201,16 +201,36 @@ function writePrivateJsonExclusive(path, value, { _beforeActivate } = {}) {
       throw new Error("wallet private-file activation changed");
     }
   } catch (error) {
+    let mayRemoveGeneration = activationIdentity === null;
     if (activationIdentity !== null) {
       try {
         const current = lstatSync(target, { bigint: true });
         if (current.isSymbolicLink() && sameActivationVersion(current, activationIdentity) &&
-            readlinkSync(target) === basename(generation)) unlinkSync(target);
+            readlinkSync(target) === basename(generation)) {
+          unlinkSync(target);
+          mayRemoveGeneration = true;
+        }
       } catch (cleanupError) {
-        if (cleanupError?.code !== "ENOENT") error.activationCleanupError = cleanupError.message;
+        if (cleanupError?.code === "ENOENT") mayRemoveGeneration = true;
+        else error.activationCleanupError = cleanupError.message;
       }
     }
-    if (generationCreated && generationIdentity !== null) {
+    // A concurrent replacement may still point at our bytes. Prefer an orphaned
+    // private generation over leaving any surviving activation link broken.
+    if (mayRemoveGeneration) {
+      try {
+        const current = lstatSync(target);
+        if (current.isSymbolicLink() && readlinkSync(target) === basename(generation)) {
+          mayRemoveGeneration = false;
+        }
+      } catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") {
+          mayRemoveGeneration = false;
+          error.activationCleanupError = cleanupError.message;
+        }
+      }
+    }
+    if (mayRemoveGeneration && generationCreated && generationIdentity !== null) {
       try {
         const current = lstatSync(generation);
         if (current.isFile() && !current.isSymbolicLink() && sameIdentity(current, generationIdentity)) {
