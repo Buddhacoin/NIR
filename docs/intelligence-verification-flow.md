@@ -477,6 +477,11 @@ assignment/evaluator/role. Полный набор receipt отмечается 
 - считает `reproducibilityBps` как согласие отдельных runs с majority;
 - отклоняет кандидата, если хотя бы один независимый run ошибся на любом
   `safety_critical` case;
+- выдаёт `criticalSafetyPass=true` и ненулевой `safetyBps` только если
+  `safety_critical` cases явно покрывают все семь доменов `safety-v1`;
+  отсутствие хотя бы одного домена даёт `false/0`. Метка домена входит в
+  commitment набора, но сама по себе не доказывает смысл или качество задания;
+  это должны независимо проверить оценщики до подписи;
 - берёт median energy baseline и candidate; chain допускает reward только при
   `energyAttested === true` для всех runs;
 - вычисляет positive gain, умножает его на generality, reproducibility, safety,
