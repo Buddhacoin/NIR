@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -131,6 +132,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
+  const openModelJobs = new Map();
   const server = createServer(async (request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const headers = {
@@ -172,6 +174,21 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         send(200, "application/json; charset=utf-8", JSON.stringify(await checkOpenModel(root)));
       } catch {
         send(503, "application/json; charset=utf-8", JSON.stringify({ status: "runtime-check-unavailable" }));
+      }
+      return;
+    }
+    if (request.method === "GET" && /^\/open-model\/jobs\/[a-f0-9]{32}$/.test(path) &&
+        request.url === path && (!request.headers.origin || request.headers.origin === origin)) {
+      const job = openModelJobs.get(path.slice("/open-model/jobs/".length));
+      if (!job) { send(404, "application/json; charset=utf-8", JSON.stringify({ error: "Job unavailable" })); return; }
+      if (job.status === "running") {
+        send(202, "application/json; charset=utf-8", JSON.stringify({ status: "running" }));
+      } else if (job.status === "failed") {
+        send(500, "application/json; charset=utf-8", JSON.stringify({
+          error: "Локальная модель не запустилась. Заявка не отправлена, награда не начислена.",
+        }));
+      } else {
+        send(200, "application/json; charset=utf-8", JSON.stringify(job.result));
       }
       return;
     }
@@ -218,14 +235,21 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         return;
       }
       running = true;
-      try {
-        send(200, "application/json; charset=utf-8",
-          JSON.stringify(publicOpenModelResult(await runOpenModel(root))));
-      } catch {
-        send(500, "application/json; charset=utf-8", JSON.stringify({
-          error: "Локальная модель не запустилась. Заявка не отправлена, награда не начислена.",
-        }));
-      } finally { running = false; }
+      for (const [id, old] of openModelJobs) {
+        if (old.status !== "running" && Date.now() - old.finishedAt > 30 * 60_000) openModelJobs.delete(id);
+      }
+      if (openModelJobs.size >= 4) openModelJobs.delete(openModelJobs.keys().next().value);
+      const jobId = randomBytes(16).toString("hex");
+      const job = { status: "running" };
+      openModelJobs.set(jobId, job);
+      send(202, "application/json; charset=utf-8", JSON.stringify({ status: "running", jobId }));
+      void Promise.resolve().then(() => runOpenModel(root)).then((raw) => {
+        job.result = publicOpenModelResult(raw);
+        job.status = "done";
+      }).catch(() => { job.status = "failed"; }).finally(() => {
+        job.finishedAt = Date.now();
+        running = false;
+      });
       return;
     }
     send(404, "text/plain; charset=utf-8", "Not found");

@@ -38,8 +38,17 @@ test("pinned Qwen route requires explicit same-origin download consent and refus
     assert.equal((await request(base, "qwen3-0.6b-up-to-4gib", "import os")).status, 403);
     assert.equal(calls, 0);
     const response = await request(base, "qwen3-0.6b-up-to-4gib");
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: "local-open-model-inference-only", ...qwenResult });
+    assert.equal(response.status, 202);
+    const job = await response.json();
+    assert.match(job.jobId, /^[a-f0-9]{32}$/);
+    let completed;
+    for (let i = 0; i < 50; i++) {
+      completed = await fetch(`${base}/open-model/jobs/${job.jobId}`);
+      if (completed.status !== 202) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(completed.status, 200);
+    assert.deepEqual(await completed.json(), { status: "local-open-model-inference-only", ...qwenResult });
     assert.equal(calls, 1);
   } finally { await stop(server); }
 });
@@ -77,7 +86,8 @@ test("Qwen UI refuses missing runtime and requires a separate user confirmation"
     fetch: async (path) => {
       if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
       if (path === "/open-model/runtime") return { ok: true, json: async () => runtime };
-      if (path === "/open-model/qwen-check") { runs++; return { ok: true, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) }; }
+      if (path === "/open-model/qwen-check") { runs++; return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) }; }
+      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) };
       throw new Error(`unexpected ${path}`);
     },
     setInterval: () => 0, setTimeout, clearTimeout, TypeError,
@@ -97,7 +107,8 @@ test("Qwen UI refuses missing runtime and requires a separate user confirmation"
     fetch: async (path) => {
       if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
       if (path === "/open-model/runtime") return { ok: true, json: async () => runtime };
-      if (path === "/open-model/qwen-check") { runs++; return { ok: true, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) }; }
+      if (path === "/open-model/qwen-check") { runs++; return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) }; }
+      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) };
       throw new Error(`unexpected ${path}`);
     }, setInterval: () => 0, setTimeout, clearTimeout, TypeError,
   });
@@ -127,12 +138,21 @@ test("pinned Qwen route rejects forged rewards and conflicting local jobs", asyn
     },
   });
   try {
-    const first = request();
+    const first = await request();
+    assert.equal(first.status, 202);
+    const { jobId } = await first.json();
     for (let index = 0; index < 100 && !finish; index++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(calls, 1);
     assert.equal((await request()).status, 409);
+    assert.equal((await fetch(`${base}/open-model/jobs/${jobId}`)).status, 202);
+    assert.equal((await fetch(`${base}/open-model/jobs/${"b".repeat(32)}`)).status, 404);
     finish({ ...qwenResult, rewardEligible: true });
-    const denied = await first;
+    let denied;
+    for (let i = 0; i < 50; i++) {
+      denied = await fetch(`${base}/open-model/jobs/${jobId}`);
+      if (denied.status !== 202) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     assert.equal(denied.status, 500);
     assert.match((await denied.json()).error, /награда не начислена/);
   } finally { await stop(server); }
