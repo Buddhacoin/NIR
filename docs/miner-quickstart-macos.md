@@ -113,6 +113,13 @@ Python 3.13 MLX environment, then select it **before** building:
 NIR_MINING_PYTHON=/absolute/path/to/venv/bin/python npm run mine:macos-build -- "$PWD/NIR Model Lab.app"
 ```
 
+The separate **transfer rehearsal** in Model Lab starts with 44 imaginary units
+and can record a transfer to a manually typed NIR-shaped address. It does not
+use the real wallet vault, verify address ownership, broadcast a transaction,
+or change the real wallet balance. The scenario and its history are held only
+in that local service's memory and vanish when it stops. It is a UI/state-flow
+exercise, not a substitute for independent model verification or a reward.
+
 Use a fresh destination for the second build. The app checks Qwen prerequisites
 without downloading weights, then asks for explicit consent before a bounded
 download. Its replay record is locally self-hashed, not signed independent

@@ -476,6 +476,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
       "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
       "blockchain/model-provider-capabilities.mjs",
+      "blockchain/synthetic-transfer.mjs",
       "nir/open_model_local_run.py", "nir/open_model_fetch.py",
       "nir/open_model_package.py", "nir/open_model_snapshot.py",
       "nir/open_model_source.py",
@@ -501,7 +502,8 @@ test("mining lab serves bounded model identifier input with no secret or code in
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
-      ['<input id="candidate-file" type="file" accept="application/json,.json">',
+      ['<input id="synthetic-amount" type="number" min="1" max="44" step="1" value="1">',
+        '<input id="candidate-file" type="file" accept="application/json,.json">',
         '<input id="recheck-model-file" type="file" accept="application/json,.json">',
         '<input id="recheck-record-file" type="file" accept="application/json,.json">',
         '<input id="provider-model-id" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Qwen/Qwen3-0.6B">',
@@ -512,6 +514,8 @@ test("mining lab serves bounded model identifier input with no secret or code in
       '<textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька">',
     ]);
     assert.doesNotMatch(html, /<form|type="password"|приватный ключ.*введите|введите.*пароль/i);
+    assert.match(html, /подтверждённый адрес/i);
+    assert.match(html, /не средства в кошельке/);
     assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
     assert.match(html, /id="connection"/);
