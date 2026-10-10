@@ -155,7 +155,8 @@ function renderWalletConnection() {
   accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
   document.querySelector("#settings-connect").hidden = connected;
-  document.querySelector("#settings-secrets").hidden = !connected;
+  document.querySelector("#settings-secrets").hidden = !connected ||
+    walletInfo.nativeSecurityAvailable !== true;
   document.querySelector("#security-state").textContent = connected
     ? `Кошелёк подключён · ${walletInfo.address.slice(0, 16)}…`
     : "Кошелёк не подключён";

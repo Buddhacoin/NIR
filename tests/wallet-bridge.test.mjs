@@ -91,6 +91,8 @@ test("native security requires the paired origin and session, returns no secret,
     assert.equal((await request(endpoint, "http://127.0.0.1:9999", token,
       { method: "POST" })).status, 403);
     assert.equal(calls, 0);
+    assert.equal((await (await request(`http://127.0.0.1:${server.address().port}/v1/wallet`,
+      origin, token)).json()).nativeSecurityAvailable, true);
     const result = await request(endpoint, origin, token, { method: "POST" });
     assert.equal(result.status, 200);
     const body = await result.text();
@@ -150,6 +152,27 @@ test("native security cannot switch accounts or return success after session rev
     assert.equal((await pending).status, 409);
   } finally {
     release();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("generic paired bridge advertises no native recovery action", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-generic-recovery-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "generic-wallet-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  const server = createWalletBridgeServer({ authorize: async () => null, origin,
+    sessionToken: token, vaultPath });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const info = await (await request(`${base}/v1/wallet`, origin, token)).json();
+    assert.equal(info.nativeSecurityAvailable, false);
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 404);
+  } finally {
     await close(server);
     rmSync(directory, { recursive: true, force: true });
   }
