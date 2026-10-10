@@ -110,6 +110,40 @@ test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () =
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("empty native wallet onboarding exposes existing-wallet and recovery choices", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  assert.match(native, /self\.openLink = \[NSButton buttonWithTitle:@"Открыть существующий"/);
+  assert.match(native, /self\.openLink\.hidden = self\.createOnly \|\| !creation/);
+  assert.match(native, /self\.restoreLink\.hidden = self\.createOnly \|\| \(!opening && !creation\)/);
+  assert.match(native, /self\.action\.enabled = !opening \|\| self\.wallets\.count > 0/);
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-entry-smoke-"));
+  try {
+    const binary = join(directory, "onboarding-entry-smoke");
+    const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_ONBOARDING_ENTRY_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", source, "-o", binary],
+    { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const launch = (payload) => {
+      const result = spawnSync(binary, [], { encoding: "utf8", input: JSON.stringify(payload), timeout: 10_000 });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    assert.deepEqual(launch({ wallets: [], backups: [] }), {
+      startMode: "create", openVisibleOnCreate: 1, restoreVisibleOnCreate: 1,
+      openActionEnabled: false, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+    const synthetic = { address: `nir1${"a".repeat(64)}`, path: "/tmp/synthetic-wallet.nirvault.json" };
+    assert.deepEqual(launch({ wallets: [synthetic], backups: [] }), {
+      startMode: "open", openVisibleOnCreate: 0, restoreVisibleOnCreate: 1,
+      openActionEnabled: true, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("recovery export modal is raised in the fresh onboarding process", () => {
   const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
   const start = native.indexOf('strcmp(argv[1], "--show-secret") == 0');
