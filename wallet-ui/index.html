@@ -159,6 +159,9 @@
     <p>Пароль и приватный ключ никогда не вводятся в браузере. Закрытие или отключение удаляет session token из памяти страницы.</p>
     <button class="primary" id="settings-connect" type="button">Подключить кошелёк</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>
+    <button class="secondary" id="settings-secrets" type="button" hidden>Создать новый код восстановления</button>
+    <p>Существующий код нельзя повторно показать: он не хранится в приложении. Новый код действует с новой зашифрованной копией; прежние копии и коды не отзываются. Пароль вводится только в окне macOS.</p>
+    <p class="form-status" id="settings-secrets-status" role="status" aria-live="polite"></p>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить кошелёк</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">
@@ -174,5 +177,5 @@
     <p class="warning">Не храните пароль рядом с файлом кошелька. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=40"></script>
+  <script type="module" src="app.js?v=41"></script>
 </body></html>

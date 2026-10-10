@@ -69,6 +69,199 @@ function validatorMembers(wallets) {
   }));
 }
 
+test("native security requires the paired origin and session, returns no secret, and cannot outlive logout", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-security-test-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-native-security-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let calls = 0;
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, sessionToken: token, vaultPath,
+    nativeSecurity: async ({ vaultPath: selected }) => {
+      assert.equal(selected, vaultPath);
+      calls += 1;
+      return calls === 1 ? true : "NEVER_RETURN_THIS_SECRET";
+    },
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${server.address().port}/v1/native-security`;
+    assert.equal((await request(endpoint, origin, "b".repeat(64), { method: "POST" })).status, 401);
+    assert.equal((await request(endpoint, "http://127.0.0.1:9999", token,
+      { method: "POST" })).status, 403);
+    assert.equal(calls, 0);
+    assert.equal((await (await request(`http://127.0.0.1:${server.address().port}/v1/wallet`,
+      origin, token)).json()).nativeSecurityAvailable, true);
+    const result = await request(endpoint, origin, token, { method: "POST" });
+    assert.equal(result.status, 200);
+    const body = await result.text();
+    assert.deepEqual(JSON.parse(body), { opened: true });
+    assert.equal(body.includes("wallet-native-security-2026"), false);
+    assert.equal(calls, 1);
+    const unexpected = await request(endpoint, origin, token, { method: "POST" });
+    assert.deepEqual(await unexpected.json(), { opened: false });
+    assert.equal(calls, 2);
+    assert.equal((await request(`http://127.0.0.1:${server.address().port}/v1/session`, origin,
+      token, { method: "DELETE" })).status, 200);
+    assert.equal((await request(endpoint, origin, token, { method: "POST" })).status, 401);
+    assert.equal(calls, 2);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("native security cannot switch accounts or return success after session revocation", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-security-race-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const otherPath = join(directory, "other.nirvault.json");
+  const first = createWalletFile({ path: vaultPath, password: "wallet-native-security-2026" });
+  const second = createWalletFile({ path: otherPath, password: "other-native-security-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let aborted = false;
+  const server = createWalletBridgeServer({
+    accounts: [{ address: first.address, path: vaultPath },
+      { address: second.address, path: otherPath }],
+    authorize: async () => null, origin, sessionToken: token, vaultPath,
+    nativeSecurity: async ({ signal }) => {
+      signal.addEventListener("abort", () => { aborted = true; release(); });
+      started();
+      await blocked;
+    },
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const pending = request(`${base}/v1/native-security`, origin, token, { method: "POST" });
+    await entered;
+    const list = await (await request(`${base}/v1/accounts`, origin, token)).json();
+    const switchResponse = await request(`${base}/v1/select-account`, origin, token,
+      { method: "POST", body: JSON.stringify({ id: list.accounts[1].id }) });
+    assert.equal(switchResponse.status, 409);
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 409);
+    assert.equal((await request(`${base}/v1/sign`, origin, token,
+      { method: "POST", body: "{}" })).status, 409);
+    assert.equal((await request(`${base}/v1/session`, origin, token,
+      { method: "DELETE" })).status, 200);
+    assert.equal(aborted, true);
+    assert.equal((await pending).status, 409);
+  } finally {
+    release();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("creating another account blocks native security before a second Mac password dialog", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-create-race-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const otherPath = join(directory, "other.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-native-security-2026" });
+  const second = createWalletFile({ path: otherPath, password: "other-native-security-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let securityCalls = 0;
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, sessionToken: token, vaultPath,
+    createAccount: async () => { started(); await blocked;
+      return { address: second.address, path: otherPath }; },
+    nativeSecurity: async () => { securityCalls += 1; return true; },
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const creating = request(`${base}/v1/create-account`, origin, token,
+      { method: "POST", body: "{}" });
+    await entered;
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 409);
+    assert.equal(securityCalls, 0);
+    release();
+    assert.equal((await creating).status, 200);
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 200);
+    assert.equal(securityCalls, 1);
+  } finally {
+    release();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a delayed signing body cannot pass an earlier native-security check", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-security-body-race-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-native-security-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const server = createWalletBridgeServer({ authorize: async () => null,
+    origin, sessionToken: token, vaultPath,
+    nativeSecurity: async () => { started(); await blocked; return true; },
+  });
+  let outgoing;
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    const signing = new Promise((resolve, reject) => {
+      outgoing = httpRequest({ hostname: "127.0.0.1", port, path: "/v1/sign",
+        method: "POST", headers: { origin, "x-nir-bridge-token": token,
+          "content-type": "application/json", "transfer-encoding": "chunked" } },
+      (response) => { response.resume(); response.once("end", () => resolve(response.statusCode)); });
+      outgoing.once("error", reject);
+    });
+    await new Promise((resolve) => outgoing.write("{", resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const native = request(`http://127.0.0.1:${port}/v1/native-security`, origin,
+      token, { method: "POST" });
+    await entered;
+    outgoing.end("}");
+    assert.equal(await signing, 409);
+    release();
+    assert.equal((await native).status, 200);
+  } finally {
+    outgoing?.destroy();
+    release();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("generic paired bridge advertises no native recovery action", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-generic-recovery-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "generic-wallet-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  const server = createWalletBridgeServer({ authorize: async () => null, origin,
+    sessionToken: token, vaultPath });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const info = await (await request(`${base}/v1/wallet`, origin, token)).json();
+    assert.equal(info.nativeSecurityAvailable, false);
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 404);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("paired bridge keeps distinct same-address vault copies selectable without exposing paths", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-vault-ids-"));
   const firstPath = join(directory, "first.nirvault.json");

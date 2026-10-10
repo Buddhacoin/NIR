@@ -63,6 +63,11 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(launcher, /terminationHandler = [\s\S]*?\[weakSelf stopWalletGroup\]/);
     assert.match(launcher, /WKNavigationActionPolicyCancel/);
     const nativeApp = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
+    assert.match(nativeApp, /nativeSecurity,/);
+    assert.match(nativeApp, /renewLocalTestRecoveryCode\(/);
+    assert.match(nativeApp, /verifyRecoveryExportReceipt\(/);
+    assert.match(nativeApp, /with hidden answer/);
+    assert.doesNotMatch(nativeApp, /console\.(?:log|error)\([^\n]*(?:recoveryCode|password)/);
     assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
     assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
     assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
