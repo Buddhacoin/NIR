@@ -91,7 +91,7 @@ class ProgressProof:
 class EmissionLedger:
     """Minimal capped ledger for settling intelligence-progress epochs."""
 
-    def __init__(self, initial_reward: int = LEGACY_INITIAL_EPOCH_REWARD) -> None:
+    def __init__(self, initial_reward: int = INITIAL_EPOCH_REWARD) -> None:
         if type(initial_reward) is not int or initial_reward <= 0 or initial_reward > MAX_SUPPLY:
             raise ProtocolError("initial epoch reward is invalid")
         self.initial_reward = initial_reward
@@ -109,7 +109,7 @@ class EmissionLedger:
 
     @staticmethod
     def scheduled_epoch_budget(
-        epoch: int, initial_reward: int = LEGACY_INITIAL_EPOCH_REWARD
+        epoch: int, initial_reward: int = INITIAL_EPOCH_REWARD
     ) -> int:
         if epoch < 0:
             raise ProtocolError("epoch cannot be negative")
