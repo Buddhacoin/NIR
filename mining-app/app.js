@@ -55,6 +55,7 @@ const syntheticHistory = document.querySelector("#synthetic-history");
 let syntheticSnapshot = null;
 let syntheticMessage = "";
 let syntheticStateLoading = false;
+let walletLinkLinking = false;
 const nativeApp = typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("local-app") === "1";
 // Native shell injects this before page scripts. The terminal-only browser mode
@@ -143,10 +144,11 @@ const copy = {
     walletLinkComplete: "Проверить адрес",
     syntheticTitle: "Тренажёр перевода — не NIR",
     syntheticIntro: "Отдельный учебный баланс: 7 условных жетонов. Это не результат проверки модели, не начисление сети и не средства в кошельке. Сценарий исчезнет при закрытии сервиса.",
-    syntheticStart: "Создать учебный сценарий", syntheticRecipientLabel: "Адрес получателя NIR (ручной ввод не доказывает владение)",
+    syntheticStart: "Создать учебный сценарий", syntheticRecipientLabel: "Подтверждённый адрес получателя",
+    syntheticRecipientMissing: "Сначала подтвердите адрес в разделе выше.",
     syntheticAmountLabel: "Условных единиц", syntheticSend: "Перевести только в тренажёре",
     syntheticBalance: (state) => state?.started ? `Учебный остаток: ${state.remaining} из 7. Настоящий баланс кошелька не изменился.` : "Учебный сценарий ещё не создан.",
-    syntheticSuccess: "Учебный перевод записан только здесь. Адрес не подтверждён; настоящий кошелёк и сеть не изменились.",
+    syntheticSuccess: "Учебный перевод записан на локально подтверждённый адрес. Настоящий кошелёк и сеть не изменились.",
     syntheticFailure: "Учебный перевод отклонён. Проверьте адрес, сумму и остаток.",
     syntheticHistoryItem: (entry) => `${entry.amount} условных единиц → ${entry.recipient} · не NIR`,
     test: "ТЕСТ", eyebrow: "Локальная тренировка", headline: "Проверка модели Iris",
@@ -260,10 +262,11 @@ const copy = {
     walletLinkProofLabel: "Signed proof from wallet settings", walletLinkComplete: "Verify address",
     syntheticTitle: "Transfer rehearsal — not NIR",
     syntheticIntro: "Separate training balance: 7 imaginary tokens. This is not a model-check result, network reward, or wallet funds. The scenario disappears when this service closes.",
-    syntheticStart: "Create training scenario", syntheticRecipientLabel: "NIR recipient address (manual entry does not prove ownership)",
+    syntheticStart: "Create training scenario", syntheticRecipientLabel: "Verified recipient address",
+    syntheticRecipientMissing: "First verify the address in the section above.",
     syntheticAmountLabel: "Imaginary units", syntheticSend: "Transfer in rehearsal only",
     syntheticBalance: (state) => state?.started ? `Training remainder: ${state.remaining} of 7. Real wallet balance did not change.` : "Training scenario not created yet.",
-    syntheticSuccess: "Training transfer recorded only here. Address is unverified; real wallet and network did not change.",
+    syntheticSuccess: "Training transfer recorded for the locally verified address. Real wallet and network did not change.",
     syntheticFailure: "Training transfer refused. Check address, amount, and remainder.",
     syntheticHistoryItem: (entry) => `${entry.amount} imaginary units → ${entry.recipient} · not NIR`,
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
@@ -564,9 +567,12 @@ function render() {
   }
   renderEventTrace();
   if (syntheticStart) {
-    syntheticStart.disabled = !connected || syntheticSnapshot?.started === true;
-    syntheticSend.disabled = !connected || syntheticSnapshot?.started !== true;
+    const verifiedRecipient = syntheticSnapshot?.verifiedRecipient;
+    const recipientReady = !!walletLinkAddress && verifiedRecipient === walletLinkAddress;
+    syntheticStart.disabled = !connected || !recipientReady || syntheticSnapshot?.started === true;
+    syntheticSend.disabled = !connected || !recipientReady || syntheticSnapshot?.started !== true;
     syntheticBalance.textContent = t.syntheticBalance(syntheticSnapshot);
+    syntheticRecipient.textContent = recipientReady ? verifiedRecipient : t.syntheticRecipientMissing;
     syntheticState.textContent = syntheticMessage ? t[syntheticMessage] : "";
     syntheticHistory.replaceChildren();
     for (const entry of syntheticSnapshot?.history ?? []) {
@@ -701,13 +707,16 @@ function showOffline() {
 }
 
 async function loadSyntheticState() {
-  if (!connected || syntheticStateLoading || syntheticSnapshot) return;
+  if (!connected || walletLinkLinking || walletLinkPending || syntheticStateLoading || syntheticSnapshot) return;
   syntheticStateLoading = true;
   try {
     const { response, data } = await fetchQwenJson("/synthetic-transfer/state");
-    if (response.ok && data?.simulationOnly === true && data?.walletChanged === false &&
-        data?.networkSubmitted === false && data?.transferableNir === "0") {
+    if (!walletLinkLinking && !walletLinkPending && response.ok &&
+        data?.simulationOnly === true && data?.walletChanged === false &&
+        data?.networkSubmitted === false && data?.transferableNir === "0" &&
+        (data.verifiedRecipient === null || /^nir1[0-9a-f]{64}$/.test(data.verifiedRecipient))) {
       syntheticSnapshot = data;
+      walletLinkAddress = data.verifiedRecipient;
       render();
     }
   } catch { /* Keep the training panel unavailable rather than guessing state. */ }
@@ -759,7 +768,8 @@ if (syntheticStart) {
     render();
   });
   syntheticSend.addEventListener("click", async () => {
-    const input = { recipient: syntheticRecipient.value.trim(), amount: syntheticAmount.value,
+    if (!walletLinkAddress || syntheticSnapshot?.verifiedRecipient !== walletLinkAddress) return;
+    const input = { recipient: walletLinkAddress, amount: syntheticAmount.value,
       id: crypto.randomUUID(), networkId: "nir-synthetic-local-1" };
     try {
       const { response, data } = await fetchQwenJson("/synthetic-transfer", {
@@ -1222,7 +1232,9 @@ if (qwenExport) qwenExport.addEventListener("click", () => {
 });
 
 walletLinkStart?.addEventListener("click", async () => {
+  walletLinkLinking = true;
   walletLinkAddress = null;
+  syntheticSnapshot = null;
   walletLinkPending = null;
   walletLinkChallenge.hidden = true;
   walletLinkCopy.hidden = true;
@@ -1245,7 +1257,7 @@ walletLinkStart?.addEventListener("click", async () => {
       : "Copy into NIR Wallet Settings → Model Lab address. Paste the signed proof here. Expires in 5 minutes.";
   } catch {
     walletLinkState.textContent = locale === "ru" ? "Не удалось создать запрос." : "Could not create challenge.";
-  } finally { walletLinkStart.disabled = false; render(); }
+  } finally { walletLinkLinking = false; walletLinkStart.disabled = false; render(); }
 });
 walletLinkCopy?.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(walletLinkChallenge.value); }
@@ -1274,6 +1286,7 @@ walletLinkComplete?.addEventListener("click", async () => {
         data.networkSubmitted !== false || data.rewardEligible !== false ||
         data.walletChanged !== false) throw new Error("proof rejected");
     walletLinkAddress = data.address;
+    syntheticSnapshot = null;
     walletLinkPending = null;
     walletLinkChallenge.hidden = true;
     walletLinkCopy.hidden = true;
@@ -1286,7 +1299,7 @@ walletLinkComplete?.addEventListener("click", async () => {
     walletLinkState.textContent = locale === "ru"
       ? "Доказательство отклонено или истекло. Создайте новый запрос; награда не начислена."
       : "Proof rejected or expired. Create a new challenge; no reward was credited.";
-  } finally { walletLinkComplete.disabled = false; render(); }
+  } finally { walletLinkComplete.disabled = false; render(); void loadSyntheticState(); }
 });
 
 recordLocalEvent("ui-ready");

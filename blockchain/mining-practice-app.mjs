@@ -377,6 +377,10 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
       }
+      if (!linkedWalletAddress) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "A wallet address must be verified for this local session" }));
+        return;
+      }
       try {
         syntheticTransfers.startTraining();
         send(200, "application/json; charset=utf-8", JSON.stringify(syntheticState()));

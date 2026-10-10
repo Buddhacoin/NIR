@@ -114,11 +114,13 @@ NIR_MINING_PYTHON=/absolute/path/to/venv/bin/python npm run mine:macos-build -- 
 ```
 
 The separate **transfer rehearsal** in Model Lab starts with 7 imaginary tokens
-and can record a transfer to a manually typed NIR-shaped address. It does not
-use the real wallet vault, verify address ownership, broadcast a transaction,
-or change the real wallet balance. The scenario and its history are held only
-in that local service's memory and vanish when it stops. It is a UI/state-flow
-exercise, not a substitute for independent model verification or a reward.
+only after the installed wallet signs a one-time local address-ownership proof.
+The rehearsal records a transfer only to that verified address in the current
+local service session; the operator cannot type a different recipient. It does
+not read the wallet vault, broadcast a transaction, or change the real wallet
+balance. Its ledger and history vanish when the service stops. The address proof
+is not bound to a public genesis or network. This is a UI/state-flow exercise,
+not independent model verification, a spendable reward, or a real wallet transfer.
 
 Use a fresh destination for the second build. The app checks Qwen prerequisites
 without downloading weights, then asks for explicit consent before a bounded

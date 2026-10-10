@@ -43,7 +43,7 @@ export function createSyntheticTransferSession() {
     seen.add(id);
     const entry = { id, recipient, amount, networkId: SYNTHETIC_NETWORK_ID,
       status: "synthetic-transfer", simulationOnly: true, walletChanged: false,
-      networkSubmitted: false, recipientOwnershipVerified: false };
+      networkSubmitted: false };
     history.push(entry);
     return { ...entry };
   }

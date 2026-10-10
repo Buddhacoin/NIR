@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createSyntheticTransferSession } from "../blockchain/synthetic-transfer.mjs";
 import { createMiningPracticeApp } from "../blockchain/mining-practice-app.mjs";
 import { join } from "node:path";
+import { generateWallet } from "../blockchain/crypto.mjs";
+import { createOperatorWalletProof } from "../blockchain/operator-wallet-link.mjs";
 
 const address = `nir1${"a".repeat(64)}`;
 const other = `nir1${"b".repeat(64)}`;
@@ -45,15 +47,24 @@ test("Model Lab exposes only authenticated in-memory synthetic transfers and nev
   try {
     assert.equal((await post("/synthetic-transfer/start", "", { ...headers, origin: "https://evil.example" })).status, 403);
     assert.equal((await post("/synthetic-transfer/start", "", { origin: base })).status, 403);
+    assert.equal((await post("/synthetic-transfer/start")).status, 403);
+    const wallet = generateWallet();
+    const otherWallet = generateWallet();
+    const request = await post("/wallet-link/challenge");
+    assert.equal(request.status, 200);
+    const { challenge } = await request.json();
+    const proof = createOperatorWalletProof({ wallet, challenge });
+    assert.equal((await post("/wallet-link/complete", JSON.stringify(proof))).status, 200);
     const started = await post("/synthetic-transfer/start");
     assert.equal(started.status, 200);
-    assert.equal((await started.json()).remaining, "7");
+    assert.equal((await started.json()).verifiedRecipient, wallet.address);
     assert.equal((await post("/synthetic-transfer/start")).status, 409);
-    const input = { recipient: address, amount: "3", id: "test-1", networkId: "nir-synthetic-local-1" };
+    const input = { recipient: wallet.address, amount: "3", id: "test-1", networkId: "nir-synthetic-local-1" };
+    assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, recipient: otherWallet.address }))).status, 400);
     const sent = await post("/synthetic-transfer", JSON.stringify(input));
     assert.equal(sent.status, 200);
     const result = await sent.json();
-    assert.equal(result.state.balances[address], "3");
+    assert.equal(result.state.balances[wallet.address], "3");
     assert.equal(result.state.transferableNir, "0");
     assert.equal(result.state.walletChanged, false);
     assert.equal(result.state.networkSubmitted, false);
@@ -61,6 +72,8 @@ test("Model Lab exposes only authenticated in-memory synthetic transfers and nev
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-2", networkId: "nir-mainnet-1" }))).status, 400);
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-3", recipient: "bad" }))).status, 400);
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-4", amount: "5" }))).status, 400);
+    assert.equal((await post("/wallet-link/challenge")).status, 200);
+    assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-5", amount: "1" }))).status, 400);
     const state = await fetch(`${base}/synthetic-transfer/state`, {
       headers: { "X-NIR-Session": server.localSessionToken },
     });
