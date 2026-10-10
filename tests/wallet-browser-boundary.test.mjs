@@ -189,6 +189,31 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     assert.equal(inert.images, 0);
     assert.match(inert.text, /<img/);
 
+    await send("Page.navigate", { url: `${origin}/index.html?local-app=1` });
+    const macDeadline = Date.now() + 5_000;
+    while (true) {
+      try {
+        const rendered = await evaluate(send,
+          `location.search === "?local-app=1" && document.querySelector('[data-action="mine"]')?.textContent.includes("О майнинге")`);
+        if (rendered) break;
+      } catch { /* Navigation can replace the execution context. */ }
+      if (Date.now() >= macDeadline) throw new Error("Chromium local Mac mode did not render");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const macCopy = await evaluate(send, `(() => {
+      document.querySelector('[data-action="mine"]').click();
+      return {
+        onboardingSteps: document.querySelector("#onboarding ol").children.length,
+        setupHidden: getComputedStyle(document.querySelector("#setup-panel .setup-steps")).display,
+        bridge: document.querySelector("#bridge-panel > p").textContent,
+        mining: document.querySelector("#panel-copy").textContent,
+      };
+    })()`);
+    assert.equal(macCopy.onboardingSteps, 0);
+    assert.equal(macCopy.setupHidden, "none");
+    assert.match(macCopy.bridge, /окна macOS/);
+    assert.match(macCopy.mining, /не начисляет NIR/);
+
     await send("Page.navigate", { url: `${origin}/frame.html` });
     await new Promise((resolve) => setTimeout(resolve, 250));
     const framed = await evaluate(send, `(async () => {

@@ -11,6 +11,24 @@ if (globalThis.top !== globalThis.self) {
   throw new Error("NIR Wallet framing is forbidden");
 }
 
+const localApp = new URLSearchParams(location.search).get("local-app") === "1";
+if (localApp) {
+  document.querySelector("#onboarding ol").replaceChildren();
+  document.querySelector("#onboarding > p").textContent =
+    "Кошелёк создаётся и открывается в отдельном окне macOS до появления этой страницы. Ключ хранится в зашифрованном файле на этом Mac.";
+  document.querySelector("#bridge-panel > p").textContent =
+    "Локальный bridge уже запущен приложением. Нажмите «Подключить» и введите восьмизначный код из отдельного окна macOS. Пароль вводится только в системном окне подтверждения.";
+  document.querySelector("#settings-panel > p").textContent =
+    "Пароль и приватный ключ не вводятся в этой странице. Закрытие приложения удаляет session token из памяти окна.";
+  document.querySelector("#setup-panel > p").textContent =
+    "Этот адрес уже выбран в отдельном окне macOS. Чтобы создать или восстановить другой кошелёк, закройте приложение и откройте его снова. Сохраните проверенную зашифрованную копию и код восстановления отдельно.";
+  document.querySelector("#setup-panel .setup-steps").hidden = true;
+  document.querySelector("#contacts-panel > p").textContent =
+    "Контакты доступны только пока открыто это локальное тестовое окно; после закрытия они не сохраняются. Пароль и ключи здесь не хранятся.";
+  document.querySelector('[data-action="mine"]').lastChild.textContent = "О майнинге";
+  document.querySelector('[data-nav="mine"] span').textContent = "О майнинге";
+}
+
 const messages = {
   receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
   send: ["Отправить NIR", "Подключите локальный vault. Перед подписью кошелёк покажет адрес, сумму, комиссию и процент комиссии."],
@@ -20,6 +38,8 @@ const messages = {
   settings: ["Настройки", "Переключение темы уже работает. Session token хранится только в памяти страницы и исчезает при её закрытии."],
   network: ["Local testnet", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
 };
+if (localApp) messages.mine = ["Майнинг недоступен",
+  "Эта локальная сборка кошелька не запускает проверку моделей, не отправляет доказательства операторам и не начисляет NIR."];
 
 const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8788";
 const NIR_ADDRESS = ADDRESS_PATTERN;
@@ -274,7 +294,9 @@ async function signWithRecovery(path, intent, simulationId, onWait) {
       }
       await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
-    if (!result) throw new Error("Время подтверждения истекло. Проверьте терминал и начните новый запрос.");
+    if (!result) throw new Error(localApp
+      ? "Время подтверждения истекло. Проверьте окно macOS и начните новый запрос."
+      : "Время подтверждения истекло. Проверьте терминал и начните новый запрос.");
   }
   if (result.requestId !== requestId) throw new Error("Bridge вернул результат другого запроса подписи.");
   return result;
@@ -906,9 +928,12 @@ document.querySelector("#confirm-resource-simulation").onclick = async (event) =
   resourcesStatus.textContent = "Повторная симуляция перед подписью…";
   try {
     const refreshed = await recheckSimulation(pendingResourceIntent, pendingSimulation);
-    resourcesStatus.textContent = "Подтвердите параметры и пароль только в терминале bridge…";
+    resourcesStatus.textContent = localApp
+      ? "Подтвердите параметры и пароль только в отдельном окне macOS…"
+      : "Подтвердите параметры и пароль только в терминале bridge…";
     const signed = await signWithRecovery("/v1/sign-resource", pendingResourceIntent,
-      refreshed.simulationId, () => { resourcesStatus.textContent = "Ожидание подтверждения в терминале…"; });
+      refreshed.simulationId, () => { resourcesStatus.textContent = localApp
+        ? "Ожидание подтверждения в окне macOS…" : "Ожидание подтверждения в терминале…"; });
     assertSignedMatchesIntent(signed.transaction, pendingResourceIntent);
     signedResourceTransaction = signed.transaction;
     document.querySelector("#resource-signed-json").value = JSON.stringify(signedResourceTransaction, null, 2);
@@ -1220,7 +1245,8 @@ document.querySelector("#confirm-payment-request-simulation").onclick = async (e
     const refreshed = await simulateIntent(pendingPaymentRequest.intent, account);
     if (!sameSimulation(refreshed, pendingPaymentRequest.simulation)) throw new Error("Результат симуляции изменился. Подпись отменена.");
     const result = await signWithRecovery("/v1/sign-payment-request", pendingPaymentRequest.intent,
-      refreshed.simulationId, () => { receiveStatus.textContent = "Ожидание подтверждения в терминале…"; });
+      refreshed.simulationId, () => { receiveStatus.textContent = localApp
+        ? "Ожидание подтверждения в окне macOS…" : "Ожидание подтверждения в терминале…"; });
     const verifiedRequest = await bridgeRequest("/v1/verify-payment-request", {
       method: "POST", body: JSON.stringify({ networkId: pendingPaymentRequest.intent.networkId, request: result.paymentRequest }),
     });
@@ -1443,11 +1469,14 @@ document.querySelector("#request-signature").onclick = async () => {
   if (!pendingIntent || !pendingSimulation) return;
   const signButton = document.querySelector("#request-signature");
   signButton.disabled = true;
-  sendStatus.textContent = "Подтвердите запрос и введите пароль в терминале bridge…";
+  sendStatus.textContent = localApp
+    ? "Подтвердите запрос и введите пароль в отдельном окне macOS…"
+    : "Подтвердите запрос и введите пароль в терминале bridge…";
   try {
     const refreshed = await recheckSimulation(pendingIntent, pendingSimulation);
     const result = await signWithRecovery("/v1/sign", pendingIntent, refreshed.simulationId,
-      () => { sendStatus.textContent = "Ожидание подтверждения в терминале…"; });
+      () => { sendStatus.textContent = localApp
+        ? "Ожидание подтверждения в окне macOS…" : "Ожидание подтверждения в терминале…"; });
     assertSignedMatchesIntent(result.transaction, pendingIntent);
     document.querySelector("#signed-json").value = JSON.stringify(result.transaction, null, 2);
     signedTransaction = result.transaction;
@@ -1661,7 +1690,7 @@ refreshNodeStatus();
 renderWalletConnection();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  if (new URLSearchParams(location.search).get("local-app") === "1") {
+  if (localApp) {
     // The native launcher uses an ephemeral origin. Never keep a cache-first
     // worker for a later build that might reuse this port.
     navigator.serviceWorker.getRegistrations()

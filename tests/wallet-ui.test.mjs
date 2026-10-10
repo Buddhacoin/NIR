@@ -249,6 +249,15 @@ test("an old account-switch failure cannot cancel a newer pairing", async () => 
   assert.equal(clears, 0);
 });
 
+test("double-click Mac mode removes terminal setup and false mining claims", () => {
+  assert.match(script, /const localApp = new URLSearchParams\(location\.search\)\.get\("local-app"\) === "1"/);
+  assert.match(script, /if \(localApp\) \{[\s\S]*?#onboarding ol[\s\S]*?#bridge-panel > p[\s\S]*?#setup-panel \.setup-steps[\s\S]*?\[data-action=\\?"mine/);
+  assert.match(script, /if \(localApp\) messages\.mine = \["Майнинг недоступен"/);
+  assert.match(script, /не начисляет NIR/);
+  assert.match(styles, /\.setup-steps\[hidden\] \{ display: none; \}/);
+  assert.match(script, /Проверьте окно macOS/);
+});
+
 test("wallet navigation has five interactive destinations", () => {
   for (const destination of ["home", "history", "resources", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
