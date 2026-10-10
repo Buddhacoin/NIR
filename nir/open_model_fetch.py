@@ -88,6 +88,9 @@ def _download_hub(*, repo_id: str, filename: str, revision: str,
             with opener(request, timeout=15) as response:
                 if clock() >= deadline:
                     raise FetchError("model download exceeded time limit")
+                read_once = getattr(response, "read1", None)
+                if not callable(read_once):
+                    raise FetchError("bounded transport read is unavailable")
                 if response.status != 200:
                     raise FetchError("model download returned a non-success status")
                 length = response.headers.get("Content-Length")
@@ -99,7 +102,9 @@ def _download_hub(*, repo_id: str, filename: str, revision: str,
                 while True:
                     if clock() >= deadline:
                         raise FetchError("model download exceeded time limit")
-                    chunk = response.read(min(1 << 20, expected_size + 1 - count))
+                    # HTTPResponse.read(n) can wait to fill n bytes and ignore
+                    # our outer deadline on a slow but active connection.
+                    chunk = read_once(min(1 << 20, expected_size + 1 - count))
                     if clock() >= deadline:
                         raise FetchError("model download exceeded time limit")
                     if not chunk:

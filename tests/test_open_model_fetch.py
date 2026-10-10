@@ -1,10 +1,14 @@
 """Pinned Hub download tests; all network and downloader calls are injected."""
 
 from hashlib import sha1, sha256
+from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
+import threading
+from time import monotonic, sleep
 import unittest
 
 from nir.open_model_fetch import FetchError, _HubRedirect, _download_hub, fetched_curated_model
@@ -237,6 +241,8 @@ class FetchTests(unittest.TestCase):
                 self.reads += 1
                 return b"A"
 
+            read1 = read
+
         folder = self.root / "slow"
         folder.mkdir()
         response = SlowResponse()
@@ -249,6 +255,49 @@ class FetchTests(unittest.TestCase):
                           clock=lambda: next(ticks), deadline=20)
         self.assertLessEqual((folder / "config.json").stat().st_size, 1)
         self.assertLessEqual(response.reads, 2)
+
+    def test_real_http_response_slow_trickle_obeys_deadline(self):
+        class Trickle(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "1000000")
+                self.end_headers()
+                for _ in range(100):
+                    try:
+                        self.wfile.write(b"A")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                    sleep(0.05)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        folder = self.root / "real-slow"
+        folder.mkdir()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+
+        def open_response(_request, timeout):
+            connection.request("GET", "/model")
+            return connection.getresponse()
+
+        start = monotonic()
+        try:
+            with self.assertRaisesRegex(FetchError, "time limit"):
+                _download_hub(repo_id=REPO, filename="config.json", revision=REVISION,
+                              token=False, local_dir=str(folder), endpoint="https://huggingface.co",
+                              expected_size=1_000_000, open_response=open_response,
+                              deadline=start + 0.25)
+            self.assertLess(monotonic() - start, 1.0)
+            self.assertLess((folder / "config.json").stat().st_size, 100)
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":
