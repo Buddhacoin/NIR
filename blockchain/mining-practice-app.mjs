@@ -300,7 +300,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       return;
     }
     if (request.url === "/synthetic-transfer/state" && request.method === "GET") {
-      if (!authorized(request) || request.headers.origin !== origin) {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
       } else {
         send(200, "application/json; charset=utf-8", JSON.stringify(syntheticTransfers.snapshot()));

@@ -61,9 +61,14 @@ test("Model Lab exposes only authenticated in-memory synthetic transfers and nev
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-2", networkId: "nir-mainnet-1" }))).status, 400);
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-3", recipient: "bad" }))).status, 400);
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-4", amount: "28" }))).status, 400);
-    const state = await fetch(`${base}/synthetic-transfer/state`, { headers });
+    const state = await fetch(`${base}/synthetic-transfer/state`, {
+      headers: { "X-NIR-Session": server.localSessionToken },
+    });
     assert.equal(state.status, 200);
     assert.equal((await state.json()).remaining, "27");
+    assert.equal((await fetch(`${base}/synthetic-transfer/state`, {
+      headers: { ...headers, origin: "https://evil.example" },
+    })).status, 403);
   } finally {
     server.closeAllConnections?.();
     await new Promise((resolve) => server.close(resolve));
