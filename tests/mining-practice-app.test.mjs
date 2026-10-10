@@ -474,6 +474,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "examples/iris_model_adapter.py", "examples/iris.data",
       "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
       "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
+      "blockchain/operator-model-receipt.mjs",
       "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
       "blockchain/model-provider-capabilities.mjs",
       "blockchain/synthetic-transfer.mjs",
@@ -512,6 +513,8 @@ test("mining lab serves bounded model identifier input with no secret or code in
     assert.deepEqual([...html.matchAll(/<textarea\b[^>]*>/gi)].map(([field]) => field), [
       '<textarea id="wallet-link-challenge" readonly hidden aria-label="Одноразовый запрос для кошелька">',
       '<textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька">',
+      '<textarea id="iris-receipt-intent" readonly aria-label="Локальный intent Iris">',
+      '<textarea id="iris-receipt-signed" maxlength="16384" spellcheck="false">',
     ]);
     assert.doesNotMatch(html, /<form|type="password"|приватный ключ.*введите|введите.*пароль/i);
     assert.match(html, /подтверждённый адрес/i);

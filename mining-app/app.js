@@ -5,6 +5,12 @@ const error = document.querySelector("#error");
 const errorMessage = document.querySelector("#error-message");
 const irisEvidenceExport = document.querySelector("#iris-evidence-export");
 const irisEvidenceState = document.querySelector("#iris-evidence-state");
+const irisReceiptPanel = document.querySelector("#iris-receipt-panel");
+const irisReceiptIntent = document.querySelector("#iris-receipt-intent");
+const irisReceiptCopy = document.querySelector("#iris-receipt-copy");
+const irisReceiptSigned = document.querySelector("#iris-receipt-signed");
+const irisReceiptComplete = document.querySelector("#iris-receipt-complete");
+const irisReceiptState = document.querySelector("#iris-receipt-state");
 const irisEvidenceFile = document.querySelector("#iris-evidence-file");
 const irisEvidenceVerify = document.querySelector("#iris-evidence-verify");
 const irisVerifyState = document.querySelector("#iris-verify-state");
@@ -162,6 +168,10 @@ const copy = {
     doneTitle: "Локальная проверка завершена",
     doneBody: "Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.",
     irisEvidenceExport: "Скачать локальное свидетельство (не заявка и не награда)",
+    irisReceiptTitle: "Подписать локальную квитанцию запуска",
+    irisReceiptIntro: "Адрес подтверждён до запуска Iris. Скопируйте intent в настройки NIR Wallet, подпишите после отдельного подтверждения и вставьте результат ниже. Это не заявка в сеть и не награда.",
+    irisReceiptCopy: "Скопировать intent", irisReceiptLabel: "Подписанная квитанция из кошелька",
+    irisReceiptComplete: "Проверить локальную подпись",
     irisEvidenceFailed: "Свидетельство недоступно. Повторите локальную проверку; заявки и награды нет.",
     irisImportTitle: "Повторить проверку Iris на этом Mac",
     irisImportIntro: "Выберите свидетельство с другого компьютера. Приложение заново запустит только встроенную Iris; файл не может указать программу или путь. Совпадение не доказывает независимость оператора и не даёт награды.",
@@ -281,6 +291,10 @@ const copy = {
     doneTitle: "Local check complete",
     doneBody: "The evidence bundle was checked locally. There are no independent operators, hidden challenges, attested energy measurements, or network rewards.",
     irisEvidenceExport: "Download local evidence (not a claim or reward)",
+    irisReceiptTitle: "Sign a local run receipt",
+    irisReceiptIntro: "The address was verified before Iris ran. Copy the intent into NIR Wallet settings, approve the separate signature, and paste the result below. No network claim or reward.",
+    irisReceiptCopy: "Copy intent", irisReceiptLabel: "Signed receipt from wallet",
+    irisReceiptComplete: "Verify local signature",
     irisEvidenceFailed: "Evidence is unavailable. Repeat the local check; no claim or reward exists.",
     irisImportTitle: "Rerun Iris evidence on this Mac",
     irisImportIntro: "Choose evidence from another computer. This app reruns only its bundled Iris code; the file cannot select a program or path. A match does not prove operator independence or earn a reward.",
@@ -687,6 +701,8 @@ function showOffline() {
   connected = false;
   walletLinkAddress = null;
   walletLinkPending = null;
+  if (irisReceiptPanel) irisReceiptPanel.hidden = true;
+  if (irisReceiptIntent) irisReceiptIntent.value = "";
   if (walletLinkChallenge) { walletLinkChallenge.value = ""; walletLinkChallenge.hidden = true; }
   if (walletLinkCopy) walletLinkCopy.hidden = true;
   if (walletLinkProof) walletLinkProof.value = "";
@@ -828,6 +844,9 @@ start.addEventListener("click", async () => {
   error.hidden = true;
   errorKind = null;
   lastResult = null;
+  if (irisReceiptPanel) irisReceiptPanel.hidden = true;
+  if (irisReceiptIntent) irisReceiptIntent.value = "";
+  if (irisReceiptSigned) irisReceiptSigned.value = "";
   if (irisEvidenceState) irisEvidenceState.textContent = "";
   recordLocalEvent("iris-requested");
   try {
@@ -846,6 +865,22 @@ start.addEventListener("click", async () => {
       throw new Error("invalid result");
     }
     lastResult = data;
+    if (irisReceiptPanel && walletLinkAddress) {
+      try {
+        const intentResponse = await fetch("/model-run-receipt/intent", {
+          headers: sessionHeaders(), cache: "no-store",
+        });
+        if (intentResponse.ok) {
+          const intent = await intentResponse.json();
+          if (intent?.scope === "local-rehearsal-only" && intent.networkSubmitted === false &&
+              intent.rewardEligible === false && intent.genesisHash === null &&
+              intent.bundleHash === data.bundleHash && intent.recipient === walletLinkAddress) {
+            irisReceiptIntent.value = JSON.stringify(intent);
+            irisReceiptPanel.hidden = false;
+          }
+        }
+      } catch { /* Optional receipt failure does not invalidate the completed local model run. */ }
+    }
     recordLocalEvent("iris-result");
     render();
     result.hidden = false;
@@ -862,6 +897,61 @@ start.addEventListener("click", async () => {
     start.disabled = !connected;
     render();
   }
+});
+
+irisReceiptCopy?.addEventListener("click", async () => {
+  if (irisReceiptPanel.hidden || !irisReceiptIntent.value) return;
+  try {
+    await navigator.clipboard.writeText(irisReceiptIntent.value);
+    irisReceiptState.textContent = locale === "ru" ? "Intent скопирован. Подпишите его в настройках кошелька." :
+      "Intent copied. Sign it in wallet settings.";
+  } catch {
+    irisReceiptState.textContent = locale === "ru" ? "Копирование недоступно. Скопируйте JSON вручную." :
+      "Clipboard unavailable. Copy JSON manually.";
+  }
+});
+irisReceiptComplete?.addEventListener("click", async () => {
+  if (irisReceiptPanel.hidden) return;
+  irisReceiptComplete.disabled = true;
+  let submitted = false;
+  try {
+    const signed = JSON.parse(irisReceiptSigned.value);
+    const intent = JSON.parse(irisReceiptIntent.value);
+    if (signed?.recipient !== intent.recipient || signed?.nonce !== intent.nonce ||
+        signed?.evidenceDigest !== intent.evidenceDigest || signed?.rewardEligible !== false)
+      throw new Error("receipt mismatch");
+    submitted = true;
+    const response = await fetch("/model-run-receipt/complete", { method: "POST",
+      body: JSON.stringify(signed), headers: { ...sessionHeaders(), "Content-Type": "application/json" } });
+    if (!response.ok) throw new Error(response.status === 400 ? "receipt rejected" : "receipt unknown");
+    irisReceiptState.textContent = locale === "ru" ?
+      "Подпись проверена локально. Сеть не получила заявку, награды нет." :
+      "Signature verified locally. Nothing was submitted to a network; no reward exists.";
+  } catch (reason) {
+    const unknown = submitted && reason?.message !== "receipt rejected";
+    let recovered = false;
+    if (unknown) {
+      try {
+        const response = await fetch("/model-run-receipt/status", {
+          headers: sessionHeaders(), cache: "no-store",
+        });
+        const status = response.ok ? await response.json() : null;
+        const intent = JSON.parse(irisReceiptIntent.value);
+        recovered = status?.status === "local-receipt-verified" &&
+          status.recipient === intent.recipient && status.nonce === intent.nonce &&
+          status.evidenceDigest === intent.evidenceDigest &&
+          status.networkSubmitted === false && status.rewardEligible === false;
+      } catch { /* Preserve unknown status if the local service is unreachable. */ }
+    }
+    irisReceiptState.textContent = recovered ? (locale === "ru" ?
+      "Сервис подтвердил эту локальную квитанцию. Сеть и награда не изменились." :
+      "The service confirms this local receipt. Network and reward are unchanged.") :
+      unknown ? (locale === "ru" ?
+      "Статус локальной квитанции неизвестен: ответ потерян. Не подписывайте повторно; проверьте текущую сессию или начните новый запуск после перезапуска." :
+      "Local receipt status is unknown: the response was lost. Do not sign again; inspect this session or restart with a new run.") :
+      (locale === "ru" ? "Квитанция отклонена: адрес, запуск или подпись не совпадают." :
+        "Receipt rejected: address, run, or signature does not match.");
+  } finally { irisReceiptComplete.disabled = false; }
 });
 
 if (irisEvidenceExport) irisEvidenceExport.addEventListener("click", async () => {
@@ -1261,6 +1351,8 @@ if (qwenExport) qwenExport.addEventListener("click", () => {
 walletLinkStart?.addEventListener("click", async () => {
   walletLinkLinking = true;
   walletLinkAddress = null;
+  if (irisReceiptPanel) irisReceiptPanel.hidden = true;
+  if (irisReceiptIntent) irisReceiptIntent.value = "";
   syntheticSnapshot = null;
   syntheticPendingTransfer = null;
   walletLinkPending = null;

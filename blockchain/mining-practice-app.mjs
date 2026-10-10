@@ -11,6 +11,7 @@ import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   hashIrisModelCommit, MAX_IRIS_MODEL_BYTES,
   recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
 import { verifyOperatorWalletProof } from "./operator-wallet-link.mjs";
+import { createLocalIrisRunIntent, verifyLocalIrisRunReceipt } from "./operator-model-receipt.mjs";
 import { createSyntheticTransferSession } from "./synthetic-transfer.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -28,6 +29,7 @@ const APP_FILES = Object.freeze([
   "examples/iris_model_adapter.py", "examples/iris.data",
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
   "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
+  "blockchain/operator-model-receipt.mjs",
   "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
   "blockchain/model-provider-capabilities.mjs",
   "blockchain/synthetic-transfer.mjs",
@@ -265,6 +267,9 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   if (!root) throw new Error("repository root is required");
   let running = false;
   let lastIrisEvidence = null;
+  let lastIrisReceiptIntent = null;
+  let lastIrisReceipt = null;
+  let irisReceiptCompleting = false;
   let pendingCandidate = null;
   let pendingWalletChallenge = null;
   let linkedWalletAddress = null;
@@ -471,6 +476,77 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       } else {
         send(200, "application/json; charset=utf-8", lastIrisEvidence);
       }
+      return;
+    }
+    if (request.method === "GET" && path === "/model-run-receipt/intent" &&
+        request.url === path) {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else if (!lastIrisReceiptIntent ||
+          linkedWalletAddress !== lastIrisReceiptIntent.recipient) {
+        send(404, "application/json; charset=utf-8", JSON.stringify({ error: "No address-bound local run" }));
+      } else {
+        send(200, "application/json; charset=utf-8", JSON.stringify(lastIrisReceiptIntent));
+      }
+      return;
+    }
+    if (request.method === "GET" && path === "/model-run-receipt/status" &&
+        request.url === path) {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else {
+        const intent = lastIrisReceiptIntent;
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          status: intent && linkedWalletAddress === intent.recipient ?
+            (lastIrisReceipt ? "local-receipt-verified" : "local-receipt-pending") : "no-address-bound-run",
+          recipient: intent && linkedWalletAddress === intent.recipient ? intent.recipient : null,
+          nonce: intent && linkedWalletAddress === intent.recipient ? intent.nonce : null,
+          evidenceDigest: intent && linkedWalletAddress === intent.recipient ? intent.evidenceDigest : null,
+          networkSubmitted: false, rewardEligible: false,
+        }));
+      }
+      return;
+    }
+    if (request.method === "POST" && path === "/model-run-receipt/complete" &&
+        request.url === path) {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > 16_384) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const intent = lastIrisReceiptIntent;
+      if (!intent || linkedWalletAddress !== intent.recipient || !lastIrisEvidence ||
+          lastIrisReceipt || irisReceiptCompleting) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "No pending local run" }));
+        return;
+      }
+      irisReceiptCompleting = true;
+      const evidenceAtStart = lastIrisEvidence;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("invalid size");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated receipt");
+        if (lastIrisReceiptIntent !== intent || lastIrisEvidence !== evidenceAtStart ||
+            linkedWalletAddress !== intent.recipient || lastIrisReceipt)
+          throw new Error("local run changed during receipt submission");
+        const receipt = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        verifyLocalIrisRunReceipt(receipt, {
+          intent, evidenceBytes: Buffer.from(evidenceAtStart, "utf8"),
+        });
+        lastIrisReceipt = receipt;
+        send(200, "application/json; charset=utf-8", JSON.stringify(receipt));
+      } catch {
+        send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local receipt" }));
+      } finally { clearTimeout(deadline); irisReceiptCompleting = false; }
       return;
     }
     if (request.method === "POST" && path === "/candidate/iris-linear/recheck" &&
@@ -716,12 +792,20 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       }
       running = true;
       lastIrisEvidence = null;
+      lastIrisReceiptIntent = null;
+      lastIrisReceipt = null;
+      const runRecipient = linkedWalletAddress;
+      const runNonce = randomBytes(32).toString("hex");
       try {
         const raw = await runModel(root, { includeEvidence: true });
         const result = publicModelResult(raw);
         if (raw.evidence !== undefined) {
           if (!validIrisEvidence(raw.evidence, result)) throw new Error("invalid local Iris evidence");
           lastIrisEvidence = JSON.stringify(raw.evidence);
+          if (runRecipient) lastIrisReceiptIntent = createLocalIrisRunIntent({
+            recipient: runRecipient, nonce: runNonce, bundleHash: result.bundleHash,
+            evidenceBytes: Buffer.from(lastIrisEvidence, "utf8"),
+          });
         }
         send(200, "application/json; charset=utf-8", JSON.stringify({
           ...result, evidenceAvailable: lastIrisEvidence !== null,

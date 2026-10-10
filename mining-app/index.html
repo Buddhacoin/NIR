@@ -130,6 +130,16 @@
       <details><summary data-i18n="technicalTitle">Технический результат</summary><p id="technical"></p></details>
       <button id="iris-evidence-export" class="secondary" type="button" hidden data-i18n="irisEvidenceExport">Скачать локальное свидетельство (не заявка и не награда)</button>
       <p id="iris-evidence-state" class="evidence-note" role="status" aria-live="polite"></p>
+      <section id="iris-receipt-panel" class="request-import" hidden aria-labelledby="iris-receipt-heading">
+        <h3 id="iris-receipt-heading" data-i18n="irisReceiptTitle">Подписать локальную квитанцию запуска</h3>
+        <p data-i18n="irisReceiptIntro">Адрес был подтверждён до запуска Iris. Скопируйте intent в настройки NIR Wallet, подпишите после отдельного подтверждения и вставьте результат ниже. Это не заявка в сеть и не награда.</p>
+        <textarea id="iris-receipt-intent" readonly aria-label="Локальный intent Iris"></textarea>
+        <button id="iris-receipt-copy" class="secondary" type="button" data-i18n="irisReceiptCopy">Скопировать intent</button>
+        <label for="iris-receipt-signed" data-i18n="irisReceiptLabel">Подписанная квитанция из кошелька</label>
+        <textarea id="iris-receipt-signed" maxlength="16384" spellcheck="false"></textarea>
+        <button id="iris-receipt-complete" class="secondary" type="button" data-i18n="irisReceiptComplete">Проверить локальную подпись</button>
+        <p id="iris-receipt-state" role="status" aria-live="polite"></p>
+      </section>
     </section>
     <section class="catalog" aria-labelledby="iris-import-heading">
       <h2 id="iris-import-heading" data-i18n="irisImportTitle">Повторить проверку Iris на этом Mac</h2>
