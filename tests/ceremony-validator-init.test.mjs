@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import {
-  chmodSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync,
+  chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync,
   rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -10,9 +10,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
-import { multisigAddress } from "../blockchain/chain.mjs";
+import { multisigAddress, NirChain } from "../blockchain/chain.mjs";
+import { initializeBlockStore } from "../blockchain/block-store.mjs";
 import {
-  MIN_EVALUATOR_BOND, PROTOCOL_VERSION, TREASURY_BPS, TREASURY_VESTING_MS,
+  FOUNDER_BPS, FOUNDER_IMMEDIATE_BPS, MIN_EVALUATOR_BOND, PROTOCOL_TREASURY_BPS,
+  PROTOCOL_VERSION, TESTER_REWARD_RESERVE_BPS, TREASURY_BPS, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import { canonicalJson, generateWallet, hashObject, publicWallet } from "../blockchain/crypto.mjs";
 import {
@@ -113,7 +115,7 @@ function roles(wallets, prefix, port) {
   }));
 }
 
-function fixture(root) {
+function fixture(root, { legacy = false } = {}) {
   const tls = certificate(root, "validator");
   const wrongTls = certificate(root, "wrong-validator");
   const validators = Array.from({ length: 4 }, generateWallet);
@@ -122,6 +124,7 @@ function fixture(root) {
   const beacons = Array.from({ length: 4 }, generateWallet);
   const operators = Array.from({ length: 4 }, generateWallet);
   const guardians = Array.from({ length: 3 }, generateWallet);
+  const founderGuardians = legacy ? [] : Array.from({ length: 3 }, generateWallet);
   const releaseSigner = generateWallet();
   const releasePayload = {
     files: [{ executable: false, path: "package.json", sha3_256: digest("package"), size: 7 }],
@@ -145,6 +148,26 @@ function fixture(root) {
     networkId: "nir-validator-onboarding-devnet",
   });
   const plan = createGenesisPlan({
+    ...(legacy ? {} : {
+      format: "nir-public-genesis-plan-v5",
+      evaluationEnvironment: {
+        adapter_protocol: "nir-application-adapter-v1", cpu_limit: 2,
+        format: "nir-evaluation-environment-v1",
+        image_digest: `sha256:${digest("validator-v5-image")}`,
+        memory_limit_bytes: 1 << 30,
+        runner_digest: `sha256:${digest("validator-v5-runner")}`,
+        timeout_seconds: 60,
+      },
+      founder: {
+        address: multisigAddress(founderGuardians.map(({ publicKey }) => publicKey), 2),
+        algorithm: "ml-dsa-65-multisig",
+        memberPublicKeys: founderGuardians.map(({ publicKey }) => publicKey),
+        threshold: 2,
+        vestingPolicy: { allocationBps: Number(FOUNDER_BPS),
+          durationMs: TREASURY_VESTING_MS, immediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+          model: "genesis-release-plus-linear" },
+      },
+    }),
     beaconAuthorities: roles(beacons, "beacon", 9300),
     ceremonyOperators: operators.map((wallet, index) => ({
       ...publicWallet(wallet), contribution: digest(`contribution-${index}`),
@@ -163,8 +186,12 @@ function fixture(root) {
       memberPublicKeys: guardians.map(({ publicKey }) => publicKey),
       threshold: 2,
       vestingPolicy: {
-        allocationBps: Number(TREASURY_BPS), durationMs: TREASURY_VESTING_MS,
-        model: "linear-from-genesis",
+        allocationBps: Number(legacy ? TREASURY_BPS : PROTOCOL_TREASURY_BPS),
+        durationMs: TREASURY_VESTING_MS,
+        ...(legacy ? { model: "linear-from-genesis" } : {
+          immediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+          model: "genesis-release-plus-linear",
+        }),
       },
     },
     validators: validators.map((wallet, index) => ({
@@ -204,6 +231,16 @@ function fixture(root) {
   };
 }
 
+test("new validator installation rejects a signed legacy reward ceremony", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-validator-legacy-reward-"));
+  try {
+    const inputs = fixture(root, { legacy: true });
+    assert.throws(() => initializeValidatorFromCeremony(join(root, "operator-0"),
+      cloneInputs(inputs)), /v5|44 NIR/);
+    assert.equal(readdirSync(root).some((entry) => entry.startsWith(".operator-0.nir-")), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 function cloneInputs(inputs) {
   return structuredClone({
     anchor: inputs.anchor, envelope: inputs.envelope, genesis: inputs.genesis, plan: inputs.plan,
@@ -213,6 +250,78 @@ function cloneInputs(inputs) {
     validatorVault: inputs.validatorVault,
   });
 }
+
+function installHistoricalCeremonyFixture(root, inputs) {
+  const target = join(root, "operator-0");
+  const generation = join(root, `.operator-0.nir-validator-generation-${"a".repeat(32)}`);
+  mkdirSync(generation, { mode: 0o700 });
+  chmodSync(generation, 0o700);
+  const participant = inputs.plan.validators[0];
+  const provenance = {
+    anchorHead: inputs.anchor.payload.registryHead,
+    endpoint: participant.endpoint,
+    format: "nir-validator-ceremony-onboarding-v1",
+    genesisHash: inputs.anchor.payload.latestGenesisHash,
+    operatorId: participant.operatorId,
+    planCommitment: inputs.plan.commitment,
+    releaseManifestHash: inputs.plan.sourceRelease.manifestHash,
+    tlsCertificateSha256: participant.tlsCertificateSha256,
+    transportAddress: inputs.transports[0].address,
+    validatorAddress: inputs.validators[0].address,
+  };
+  const files = {
+    "CEREMONY-ANCHOR.json": inputs.anchor,
+    "CEREMONY-APPROVALS.json": inputs.envelope,
+    "CEREMONY-PLAN.json": inputs.plan,
+    "SIGNED-RELEASE.json": inputs.signedRelease,
+    "TRANSPORT-VAULT.json": inputs.transportVault,
+    "VALIDATOR-ONBOARDING.json": provenance,
+    "VALIDATOR-VAULT.json": inputs.validatorVault,
+    "genesis.json": inputs.genesis,
+  };
+  for (const [name, value] of Object.entries(files)) {
+    writeFileSync(join(generation, name), `${canonicalJson(value)}\n`, { mode: 0o600 });
+  }
+  writeFileSync(join(generation, "TLS-CERTIFICATE.pem"), inputs.tlsCertificatePem,
+    { mode: 0o600 });
+  for (const name of ["commits", "mempool", "prepares", "timeouts"]) {
+    mkdirSync(join(generation, name), { mode: 0o700 });
+    chmodSync(join(generation, name), 0o700);
+  }
+  initializeBlockStore(generation, new NirChain(inputs.genesis));
+  symlinkSync(basename(generation), target, "dir");
+  return target;
+}
+
+test("historically installed signed v1 validator survives reverification and process restart", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-validator-historical-restart-"));
+  let running;
+  try {
+    const inputs = fixture(root, { legacy: true });
+    const target = installHistoricalCeremonyFixture(root, inputs);
+    assert.equal(reverifyValidatorFromCeremony(target, {
+      transportPassword: TRANSPORT_PASSWORD,
+      trustedAddress: inputs.trustedAddress,
+      validatorPassword: VALIDATOR_PASSWORD,
+    }).verified, true);
+    assert.throws(() => initializeValidatorFromCeremony(join(root, "new-operator"),
+      cloneInputs(inputs)), /v5|44 NIR/);
+    const port = await availablePort();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      running = await startCeremonyProcess(target, port, inputs);
+      const health = await requestJson(`https://127.0.0.1:${port}/health`, {
+        tlsCertificateSha256: inputs.plan.validators[0].tlsCertificateSha256,
+      });
+      assert.equal(health.status, 200);
+      assert.equal(health.body.address, inputs.validators[0].address);
+      await running.stop();
+      running = null;
+    }
+  } finally {
+    if (running) await running.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("ceremony onboarding installs and reverifies only local encrypted evidence", () => {
   const root = mkdtempSync(join(tmpdir(), "nir-validator-ceremony-"));
@@ -330,6 +439,24 @@ test("public deployment plan binds ceremony network, genesis, release, endpoint,
       assert.throws(() => createValidatorDeploymentPlan(changed, options),
         /deployment|ceremony|TLS|endpoint|release|genesis|network/);
     }
+    const legacy = fixture(root, { legacy: true });
+    const legacyParticipant = legacy.plan.validators[0];
+    const legacyInput = structuredClone(input);
+    legacyInput.expected = {
+      endpoint: legacyParticipant.endpoint,
+      genesisHash: legacy.anchor.payload.latestGenesisHash,
+      networkId: legacy.genesis.networkId,
+      releaseManifestHash: legacy.plan.sourceRelease.manifestHash,
+      tlsCertificateSha256: legacyParticipant.tlsCertificateSha256,
+    };
+    legacyInput.operatorId = legacyParticipant.operatorId;
+    legacyInput.validatorAddress = legacyParticipant.address;
+    legacyInput.trustedReleaseAddress = legacy.trustedAddress;
+    assert.throws(() => createValidatorDeploymentPlan(legacyInput, {
+      ...options, anchor: legacy.anchor, approvals: legacy.envelope,
+      genesis: legacy.genesis, ceremonyPlan: legacy.plan,
+      signedRelease: legacy.signedRelease, tlsCertificatePem: legacy.tlsCertificatePem,
+    }), /v5|44 NIR/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

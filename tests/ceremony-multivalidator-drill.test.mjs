@@ -11,8 +11,9 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
-  ATOMIC_UNITS, MIN_EVALUATOR_BOND, MIN_TRANSFER_FEE, PROTOCOL_VERSION, TREASURY_BPS,
-  TREASURY_VESTING_MS,
+  ATOMIC_UNITS, FOUNDER_BPS, FOUNDER_IMMEDIATE_BPS, MIN_EVALUATOR_BOND,
+  MIN_TRANSFER_FEE, PROTOCOL_TREASURY_BPS, PROTOCOL_VERSION,
+  TESTER_REWARD_RESERVE_BPS, TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
 import {
   blockHash, createMultisigTransfer, multisigAddress, NirChain, voteForBlock,
@@ -102,6 +103,7 @@ async function fixture(root) {
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
   const guardians = Array.from({ length: 3 }, generateWallet);
+  const founderGuardians = Array.from({ length: 3 }, generateWallet);
   const releaseSigner = generateWallet();
   const release = signedRelease(releaseSigner);
   const releaseOptions = { signedRelease: release, trustedAddress: releaseSigner.address };
@@ -116,6 +118,24 @@ async function fixture(root) {
     networkId: "nir-multivalidator-ceremony-drill",
   });
   const plan = createGenesisPlan({
+    format: "nir-public-genesis-plan-v5",
+    evaluationEnvironment: {
+      adapter_protocol: "nir-application-adapter-v1", cpu_limit: 2,
+      format: "nir-evaluation-environment-v1",
+      image_digest: `sha256:${digest("multivalidator-v5-image")}`,
+      memory_limit_bytes: 1 << 30,
+      runner_digest: `sha256:${digest("multivalidator-v5-runner")}`,
+      timeout_seconds: 60,
+    },
+    founder: {
+      address: multisigAddress(founderGuardians.map(({ publicKey }) => publicKey), 2),
+      algorithm: "ml-dsa-65-multisig",
+      memberPublicKeys: founderGuardians.map(({ publicKey }) => publicKey),
+      threshold: 2,
+      vestingPolicy: { allocationBps: Number(FOUNDER_BPS),
+        durationMs: TREASURY_VESTING_MS, immediateBps: Number(FOUNDER_IMMEDIATE_BPS),
+        model: "genesis-release-plus-linear" },
+    },
     beaconAuthorities: publicRoles(beacons, "beacon", 19300),
     ceremonyOperators: ceremonyOperators.map((wallet, index) => ({
       ...publicWallet(wallet), contribution: digest(`drill-contribution-${index}`),
@@ -134,8 +154,9 @@ async function fixture(root) {
       memberPublicKeys: guardians.map(({ publicKey }) => publicKey),
       threshold: 2,
       vestingPolicy: {
-        allocationBps: Number(TREASURY_BPS), durationMs: TREASURY_VESTING_MS,
-        model: "linear-from-genesis",
+        allocationBps: Number(PROTOCOL_TREASURY_BPS), durationMs: TREASURY_VESTING_MS,
+        immediateBps: Number(TESTER_REWARD_RESERVE_BPS),
+        model: "genesis-release-plus-linear",
       },
     },
     validators: validators.map((wallet, index) => ({

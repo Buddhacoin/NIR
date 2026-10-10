@@ -85,15 +85,17 @@ class EmissionTests(unittest.TestCase):
     def test_precision(self):
         self.assertEqual(ATOMIC_UNITS, 100_000_000)
 
-    def test_legacy_default_and_explicit_v5_reward(self):
+    def test_default_v5_reward_and_explicit_legacy_replay(self):
         self.assertEqual(EmissionLedger.scheduled_epoch_budget(0),
-                         LEGACY_INITIAL_EPOCH_REWARD)
-        legacy = EmissionLedger()
-        self.assertEqual(sum(legacy.settle_epoch(0, [valid_proof()]).values()),
-                         LEGACY_INITIAL_EPOCH_REWARD)
-        v5 = EmissionLedger(initial_reward=INITIAL_EPOCH_REWARD)
+                         INITIAL_EPOCH_REWARD)
+        v5 = EmissionLedger()
         self.assertEqual(sum(v5.settle_epoch(0, [valid_proof()]).values()),
                          INITIAL_EPOCH_REWARD)
+        legacy = EmissionLedger(initial_reward=LEGACY_INITIAL_EPOCH_REWARD)
+        self.assertEqual(EmissionLedger.scheduled_epoch_budget(
+            0, LEGACY_INITIAL_EPOCH_REWARD), LEGACY_INITIAL_EPOCH_REWARD)
+        self.assertEqual(sum(legacy.settle_epoch(0, [valid_proof()]).values()),
+                         LEGACY_INITIAL_EPOCH_REWARD)
 
 
 if __name__ == "__main__":

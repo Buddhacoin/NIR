@@ -33,6 +33,7 @@ import { assembleCheckpointTrustPackage, createCheckpointWitnessAttestation,
 import { assembleCheckpointTrustPackageV2, createCheckpointWitnessAttestationV2 }
   from "../blockchain/checkpoint-trust-package-v2.mjs";
 import { createPeerAnnouncement, verifyPeerAnnouncement } from "../blockchain/peer-discovery.mjs";
+import { assertApprovedPublicGenesisRewardPolicy } from "../blockchain/public-genesis-policy.mjs";
 import { peerRegistryHash } from "../blockchain/peer-registry.mjs";
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
 import { signReleaseManifest } from "../blockchain/release-manifest.mjs";
@@ -244,6 +245,7 @@ test("v5 ceremony commits tester reserve without rewriting v4", () => {
   assert.equal(envelope.format, "nir-public-genesis-approvals-v5");
   const compiled = compileGenesis(plan, envelope, values.releaseOptions);
   assert.equal(compiled.genesis.treasuryImmediateBps, Number(TESTER_REWARD_RESERVE_BPS));
+  assert.doesNotThrow(() => assertApprovedPublicGenesisRewardPolicy(plan, compiled.genesis));
   assert.equal(new NirChain(compiled.genesis).blocks()[0].hash, compiled.genesisHash);
   assert.throws(() => verifyGenesisCeremony(plan, {
     ...envelope, format: "nir-public-genesis-approvals-v4",
@@ -252,7 +254,12 @@ test("v5 ceremony commits tester reserve without rewriting v4", () => {
   wrong.treasury.vestingPolicy.immediateBps = 20;
   assert.throws(() => createGenesisPlan(wrong, values.releaseOptions), /treasury/);
   const old = v4Fixture("unchanged-v4");
-  assert.equal(approved(old).plan.treasury.vestingPolicy.model, "linear-from-genesis");
+  const oldApproved = approved(old);
+  assert.equal(oldApproved.plan.treasury.vestingPolicy.model, "linear-from-genesis");
+  const oldCompiled = compileGenesis(oldApproved.plan, oldApproved.envelope,
+    old.releaseOptions);
+  assert.throws(() => assertApprovedPublicGenesisRewardPolicy(
+    oldApproved.plan, oldCompiled.genesis), /v5|44 NIR/);
 });
 
 test("v5 ceremony rejects shared founder and treasury guardian keys", () => {
