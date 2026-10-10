@@ -110,6 +110,19 @@ test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () =
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("recovery export modal is raised in the fresh onboarding process", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  const start = native.indexOf('strcmp(argv[1], "--show-secret") == 0');
+  const end = native.indexOf("NSModalResponse choice = [alert runModal]", start);
+  assert.ok(start >= 0 && end > start);
+  const modal = native.slice(start, end);
+  assert.match(modal, /NSWindow \*secretWindow = alert\.window/);
+  assert.match(modal, /secretWindow\.level = NSFloatingWindowLevel/);
+  assert.match(modal, /\[secretWindow orderFrontRegardless\]/);
+  assert.match(modal, /\[app activateIgnoringOtherApps:YES\]/);
+  assert.match(modal, /dispatch_async\(dispatch_get_main_queue\(\)/);
+});
+
 test("native onboarding language preference and recovery warnings round-trip in an isolated domain", () => {
   if (process.platform !== "darwin") return;
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-locale-smoke-"));

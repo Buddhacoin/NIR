@@ -706,7 +706,20 @@ int main(int argc, const char *argv[]) {
             [alert addButtonWithTitle:NIRTranslate(@"Копировать")];
             if (recovery) [alert addButtonWithTitle:NIRTranslate(@"Отложить настройку")];
             if (recovery && !backupPath) return 1;
+            // This helper starts only after the first wizard exits. Activate
+            // its actual modal window so the backup step is not left behind
+            // the wallet shell when the two-click flow changes processes.
+            NSWindow *secretWindow = alert.window;
+            secretWindow.level = NSFloatingWindowLevel;
+            secretWindow.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
+            [secretWindow orderFrontRegardless];
             [app activateIgnoringOtherApps:YES];
+            [secretWindow makeKeyAndOrderFront:nil];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSRunningApplication currentApplication] activateWithOptions:0];
+                [secretWindow makeKeyAndOrderFront:nil];
+                [secretWindow orderFrontRegardless];
+            });
             while (YES) {
                 NSModalResponse choice = [alert runModal];
                 if (choice == NSModalResponseCancel && recovery) return 2;
