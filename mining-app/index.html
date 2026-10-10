@@ -11,6 +11,25 @@
   <main class="app">
     <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MODEL LAB</small></span><div class="header-actions"><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
     <p id="connection" class="connection" role="status" aria-live="polite">Проверяем подключение к локальному сервису…</p>
+    <section id="operator-console" class="operator-console" aria-labelledby="operator-heading">
+      <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="operator-heading" data-i18n="consoleTitle">Локальная панель оператора</h2><b data-i18n="localBadge">НЕ СЕТЬ</b></div>
+      <div class="console-grid">
+        <div><span data-i18n="roleLabel">РОЛЬ</span><strong id="operator-role" data-i18n="roleValue">Локальный оператор</strong></div>
+        <div><span data-i18n="networkLabel">ПУБЛИЧНАЯ СЕТЬ</span><strong data-i18n="networkValue">Не подключена</strong></div>
+        <div><span data-i18n="rewardLabel">НАГРАДА</span><strong data-i18n="rewardValue">Недоступна</strong></div>
+      </div>
+      <div class="trace-heading"><h3 data-i18n="traceTitle">События интерфейса этой сессии</h3><span data-i18n="traceScale">ПОРЯДОК →</span></div>
+      <div id="event-chart" class="event-chart" role="img" data-i18n-aria="traceAria" aria-label="Последовательность событий локального интерфейса без процента выполнения">
+        <div class="trace-axis" aria-hidden="true"><div id="event-pulses"></div></div>
+      </div>
+      <ol id="event-log" class="event-log" aria-live="polite"></ol>
+      <h3 class="models-heading" data-i18n="modelsTitle">Доступность локальных моделей</h3>
+      <div class="model-grid">
+        <article><span class="model-index">01</span><div><strong>IRIS</strong><small data-i18n="irisScope">Встроенная проверка</small></div><b id="iris-availability" data-i18n="ready">ГОТОВА</b></article>
+        <article><span class="model-index">02</span><div><strong>QWEN3-0.6B</strong><small data-i18n="qwenScope">Закреплённый локальный запуск</small></div><b id="qwen-availability" data-state="checking" data-i18n="checkingShort">ПРОВЕРКА</b></article>
+      </div>
+      <p class="local-only" data-i18n="localOnly">Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.</p>
+    </section>
     <section class="hero">
       <span class="eyebrow" data-i18n="eyebrow">Локальная тренировка</span>
       <h1 data-i18n="headline">Проверка модели Iris</h1>

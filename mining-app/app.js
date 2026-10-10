@@ -17,6 +17,9 @@ const qwenExport = document.querySelector("#qwen-export");
 const qwenReplayFile = document.querySelector("#qwen-replay-file");
 const qwenReplay = document.querySelector("#qwen-replay");
 const qwenReplayState = document.querySelector("#qwen-replay-state");
+const eventPulses = document.querySelector("#event-pulses");
+const eventLog = document.querySelector("#event-log");
+const qwenAvailability = document.querySelector("#qwen-availability");
 const nativeApp = typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("local-app") === "1";
 // Native shell injects this before page scripts. The terminal-only browser mode
@@ -77,6 +80,15 @@ async function fetchQwenJson(path, options = {}) {
 
 const copy = {
   ru: {
+    consoleTitle: "Локальная панель оператора", localBadge: "НЕ СЕТЬ",
+    roleLabel: "РОЛЬ", roleValue: "Локальный оператор", networkLabel: "ПУБЛИЧНАЯ СЕТЬ",
+    networkValue: "Не подключена", rewardLabel: "НАГРАДА", rewardValue: "Недоступна",
+    traceTitle: "События интерфейса этой сессии", traceScale: "ПОРЯДОК →",
+    traceAria: "Последовательность событий локального интерфейса без процента выполнения",
+    modelsTitle: "Доступность локальных моделей",
+    irisScope: "Встроенная проверка", qwenScope: "Закреплённый локальный запуск",
+    ready: "ГОТОВА", reportedReady: "СООБЩАЕТ: ГОТОВА", checkingShort: "ПРОВЕРКА", unavailableShort: "НЕДОСТУПНА",
+    localOnly: "Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.",
     test: "ТЕСТ", eyebrow: "Локальная тренировка", headline: "Проверка модели Iris",
     description: "Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.",
     start: "Проверить модель Iris", safety: "Не нужен кошелёк, пароль, секретная фраза или оплата.",
@@ -134,6 +146,15 @@ const copy = {
     qwenReady: "Среда проверена локально. Загрузка модели начнётся только после подтверждения.",
   },
   en: {
+    consoleTitle: "Local operator console", localBadge: "NOT A NETWORK",
+    roleLabel: "ROLE", roleValue: "Local operator", networkLabel: "PUBLIC NETWORK",
+    networkValue: "Not connected", rewardLabel: "REWARD", rewardValue: "Unavailable",
+    traceTitle: "Interface events in this session", traceScale: "SEQUENCE →",
+    traceAria: "Sequence of local interface events without a completion percentage",
+    modelsTitle: "Local model availability",
+    irisScope: "Bundled check", qwenScope: "Pinned local run",
+    ready: "READY", reportedReady: "REPORTS READY", checkingShort: "CHECKING", unavailableShort: "UNAVAILABLE",
+    localOnly: "No wallet address is connected. This console shows actions on this Mac only: it submits no claim and promises no NIR.",
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
     description: "Train two classifiers locally on 120 examples and check them against 30 held-out examples. Results and evidence are checked on this Mac.",
     start: "Check Iris model", safety: "No wallet, password, recovery phrase, or payment is needed.",
@@ -207,6 +228,60 @@ let qwenLastResult = null;
 let qwenRuntime = { status: "checking-runtime" };
 let replayRunning = false;
 let replayStatus = null;
+const localEvents = [];
+let lastServiceState = null;
+let lastRuntimeState = null;
+
+const eventCopy = {
+  ru: {
+    "ui-ready": "Интерфейс готов", "service-online": "Локальный сервис ответил: готов",
+    "service-offline": "Локальный сервис недоступен", "runtime-ready": "Среда Qwen сообщает готовность",
+    "runtime-unavailable": "Среда Qwen недоступна", "iris-requested": "Запрошена проверка Iris",
+    "iris-result": "Локальный результат Iris получен", "iris-failed": "Проверка Iris не завершена",
+    "qwen-started": "Сервис принял запрос Qwen", "qwen-result": "Локальный результат Qwen получен",
+    "qwen-failed": "Локальный запуск Qwen не завершён",
+  },
+  en: {
+    "ui-ready": "Interface ready", "service-online": "Local service responded: ready",
+    "service-offline": "Local service unavailable", "runtime-ready": "Qwen runtime reports ready",
+    "runtime-unavailable": "Qwen runtime unavailable", "iris-requested": "Iris check requested",
+    "iris-result": "Local Iris result received", "iris-failed": "Iris check did not finish",
+    "qwen-started": "Service accepted Qwen request", "qwen-result": "Local Qwen result received",
+    "qwen-failed": "Local Qwen run did not finish",
+  },
+};
+
+function renderEventTrace() {
+  if (!eventPulses || !eventLog) return;
+  eventPulses.replaceChildren();
+  eventLog.replaceChildren();
+  for (const [index, event] of localEvents.entries()) {
+    const pulse = document.createElement("span");
+    pulse.className = "event-pulse";
+    pulse.style.setProperty("--event-position", localEvents.length === 1 ? "0%" :
+      `${(index / (localEvents.length - 1)) * 100}%`);
+    pulse.title = `${event.time} · ${eventCopy[locale][event.kind]}`;
+    eventPulses.append(pulse);
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    time.dateTime = event.dateTime;
+    time.textContent = event.time;
+    const label = document.createElement("span");
+    label.textContent = eventCopy[locale][event.kind];
+    item.append(time, label);
+    eventLog.append(item);
+  }
+}
+
+function recordLocalEvent(kind) {
+  if (!eventCopy.ru[kind] || !eventCopy.en[kind]) return;
+  const now = new Date();
+  localEvents.push({ kind, dateTime: now.toISOString(), time: now.toLocaleTimeString(locale, {
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }) });
+  if (localEvents.length > 8) localEvents.shift();
+  renderEventTrace();
+}
 
 function qwenRuntimeMessage(t) {
   const status = qwenRuntime?.status;
@@ -230,6 +305,12 @@ async function loadQwenRuntime() {
       throw new Error("invalid runtime check");
     qwenRuntime = data;
   } catch { qwenRuntime = { status: "runtime-check-unavailable" }; }
+  const runtimeState = qwenRuntime.status === "pinned-qwen-runtime-ready" ? "runtime-ready" :
+    "runtime-unavailable";
+  if (lastRuntimeState !== runtimeState) {
+    recordLocalEvent(runtimeState);
+    lastRuntimeState = runtimeState;
+  }
   render();
 }
 
@@ -296,9 +377,20 @@ function render() {
   document.documentElement.lang = locale;
   document.title = locale === "ru" ? "NIR · Проверка модели" : "NIR · Model check";
   for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t[node.dataset.i18n];
+  for (const node of document.querySelectorAll("[data-i18n-aria]")) {
+    if (node.dataset?.i18nAria && typeof node.setAttribute === "function")
+      node.setAttribute("aria-label", t[node.dataset.i18nAria]);
+  }
   languageButton.textContent = locale === "ru" ? "EN" : "RU";
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
   connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
+  if (qwenAvailability) {
+    const ready = qwenRuntime.status === "pinned-qwen-runtime-ready";
+    const pending = qwenRuntime.status === "checking-runtime";
+    qwenAvailability.textContent = t[ready ? "reportedReady" : pending ? "checkingShort" : "unavailableShort"];
+    qwenAvailability.dataset.state = ready ? "ready" : pending ? "checking" : "unavailable";
+  }
+  renderEventTrace();
   if (qwenStart) {
     qwenStart.disabled = !connected || qwenRunning || replayRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
@@ -336,6 +428,10 @@ function showOffline() {
   error.hidden = false;
   start.disabled = true;
   if (qwenStart) qwenStart.disabled = true;
+  if (lastServiceState !== "service-offline") {
+    recordLocalEvent("service-offline");
+    lastServiceState = "service-offline";
+  }
   render();
 }
 
@@ -355,6 +451,10 @@ async function checkConnection() {
     connection.dataset.state = "online";
     if (progress.hidden && !qwenRunning) start.disabled = false;
     if (errorKind === "offlineMessage") { errorKind = null; error.hidden = true; }
+    if (lastServiceState !== "service-online") {
+      recordLocalEvent("service-online");
+      lastServiceState = "service-online";
+    }
     render();
   } catch { showOffline(); }
   finally { clearTimeout(timeout); statusRequestRunning = false; }
@@ -383,6 +483,7 @@ start.addEventListener("click", async () => {
   result.hidden = true;
   error.hidden = true;
   errorKind = null;
+  recordLocalEvent("iris-requested");
   try {
     const response = await fetch("/model-check", { method: "POST", body: "", headers: sessionHeaders() });
     const data = await response.json();
@@ -398,11 +499,13 @@ start.addEventListener("click", async () => {
       throw new Error("invalid result");
     }
     lastResult = data;
+    recordLocalEvent("iris-result");
     render();
     result.hidden = false;
   } catch (reason) {
     if (reason instanceof TypeError) showOffline();
     else {
+      recordLocalEvent("iris-failed");
       errorKind = reason?.message === "invalid result" ? "invalid" : "failed";
       render();
       error.hidden = false;
@@ -432,6 +535,7 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
     });
     if (response.status !== 202 || started.status !== "running" ||
         !/^[a-f0-9]{32}$/.test(started.jobId)) throw new Error("qwen failed");
+    recordLocalEvent("qwen-started");
     const deadline = Date.now() + 30 * 60_000;
     let data;
     while (Date.now() < deadline) {
@@ -472,7 +576,9 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
     qwenIdentity.hidden = false;
     if (qwenExport) qwenExport.hidden = false;
     qwenStatus = "qwenDone";
+    recordLocalEvent("qwen-result");
   } catch (reason) {
+    recordLocalEvent("qwen-failed");
     qwenStatus = reason?.message === "invalid qwen result" ? "qwenInvalid" : "qwenFailed";
   } finally {
     qwenRunning = false;
@@ -552,6 +658,7 @@ if (qwenExport) qwenExport.addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
+recordLocalEvent("ui-ready");
 render();
 void checkConnection();
 void loadQwenRuntime();

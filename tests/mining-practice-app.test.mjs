@@ -10,6 +10,22 @@ import { createMiningPracticeApp, localReplayRecordHash, miningModelAppPreflight
   runPinnedModel } from "../blockchain/mining-practice-app.mjs";
 
 const root = join(import.meta.dirname, "..");
+
+test("operator console shows only real local stages, roles, and runnable models", () => {
+  const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
+  const css = readFileSync(join(root, "mining-app/style.css"), "utf8");
+  const script = readFileSync(join(root, "mining-app/app.js"), "utf8");
+  for (const id of ["operator-console", "event-chart", "event-log", "operator-role",
+    "iris-availability", "qwen-availability"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /data-i18n="localOnly"/);
+  assert.match(css, /image-rendering:pixelated/);
+  assert.match(css, /\.event-pulse/);
+  for (const event of ["service-online", "iris-requested", "iris-result", "qwen-started",
+    "qwen-result"]) assert.match(script, new RegExp(`recordLocalEvent\\("${event}"`));
+  assert.doesNotMatch(script, /Math\.random\(\)/);
+  assert.doesNotMatch(html, /\b(?:100|[1-9]?[0-9])%\b/);
+});
+
 async function serve(runModel) {
   const server = createMiningPracticeApp({ root, runModel });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -358,6 +374,10 @@ test("portrait layout stays narrow and a stopped service explains the new-tab re
   assert.match(css, /width:min\(100%,390px\)/);
   assert.match(css, /min-height:680px/);
   assert.match(css, /@media \(max-width:460px\)/);
+  assert.match(css, /html,body \{ max-width:100%;overflow-x:hidden; \}/);
+  assert.match(css, /\.app \{ width:100vw;max-width:100vw;min-width:0;/);
+  assert.match(css, /header \{ flex-wrap:wrap; \}/);
+  assert.match(css, /white-space:normal;overflow-wrap:anywhere;/);
 
   const nodes = new Map();
   for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
@@ -447,12 +467,19 @@ test("RU/EN switch translates the active model result without changing its value
 });
 
 test("a reused loopback port with a different service is not presented as NIR", async () => {
+  const element = () => ({ hidden: true, disabled: false, dataset: {}, textContent: "", children: [],
+    style: { setProperty() {} }, setAttribute() {}, addEventListener() {},
+    replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); } });
   const nodes = new Map();
   for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
-    nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {}, addEventListener() {} });
+    nodes.set(`#${id}`, element());
   }
+  nodes.set("#event-pulses", element());
+  nodes.set("#event-log", element());
   runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
-    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id), querySelectorAll: () => [] },
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
+      querySelectorAll: () => [], createElement: element },
     navigator: { language: "ru-RU" }, AbortController,
     fetch: async () => ({ ok: true, json: async () => ({ status: "another-service" }) }),
     setInterval: () => 0, setTimeout, clearTimeout, TypeError,
@@ -460,6 +487,57 @@ test("a reused loopback port with a different service is not presented as NIR", 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(nodes.get("#connection").dataset.state, "offline");
   assert.equal(nodes.get("#start").disabled, true);
+  const labels = nodes.get("#event-log").children.map((item) => item.children[1]?.textContent);
+  assert.equal(labels.includes("Локальный сервис подтверждён"), false);
+  assert.equal(labels.includes("Локальный сервис недоступен"), true);
+});
+
+test("a matching unauthenticated health string is reported as a response, not identity proof", async () => {
+  const element = () => ({ hidden: true, disabled: false, dataset: {}, textContent: "", children: [],
+    style: { setProperty() {} }, setAttribute() {}, addEventListener() {},
+    replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); } });
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection",
+    "language", "score", "technical", "event-pulses", "event-log"]) nodes.set(`#${id}`, element());
+  runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
+      querySelectorAll: () => [], createElement: element },
+    navigator: { language: "ru-RU" }, AbortController,
+    fetch: async () => ({ ok: true, json: async () => ({ status: "local-model-service-ready" }) }),
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const labels = nodes.get("#event-log").children.map((item) => item.children[1]?.textContent);
+  assert.equal(labels.includes("Локальный сервис ответил: готов"), true);
+  assert.equal(labels.some((label) => /подтвержд/i.test(label ?? "")), false);
+});
+
+test("a refused Iris request is not shown as a started or completed model run", async () => {
+  const element = () => ({ hidden: true, disabled: false, dataset: {}, textContent: "", children: [],
+    style: { setProperty() {} }, setAttribute() {},
+    addEventListener(_, listener) { this.listener = listener; },
+    replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); } });
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection",
+    "language", "score", "technical", "event-pulses", "event-log"]) nodes.set(`#${id}`, element());
+  runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
+      querySelectorAll: () => [], createElement: element },
+    navigator: { language: "ru-RU" }, AbortController,
+    fetch: async (path) => {
+      if (path === "/status") return { ok: true,
+        json: async () => ({ status: "local-model-service-ready" }) };
+      throw new TypeError("refused");
+    },
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await nodes.get("#start").listener();
+  const labels = nodes.get("#event-log").children.map((item) => item.children[1]?.textContent);
+  assert.equal(labels.includes("Запрошена проверка Iris"), true);
+  assert.equal(labels.some((label) => /запущена|результат Iris получен/i.test(label ?? "")), false);
 });
 
 test("model endpoint refuses cross-origin, input bodies, and concurrent runs", async () => {
