@@ -48,6 +48,12 @@ static NSString *NIRTranslate(NSString *source) {
             @"Открыть существующий": @"Open existing wallet",
             @"Новый код восстановления": @"New recovery code",
             @"На этом Mac ещё нет кошелька": @"No wallet on this Mac yet",
+            @"Кошелёк не распознан": @"Wallet not recognized",
+            @"Не удаляйте файл. Восстановите из копии и кода.": @"Do not delete the file. Restore with your backup and code.",
+            @"Создать другой адрес?": @"Create a different address?",
+            @"Обнаружен файл кошелька, который не удалось распознать. Новый кошелёк получит другой адрес и не восстановит доступ к старому. Не удаляйте прежний файл. Если у вас есть копия и код, вернитесь к восстановлению.": @"An existing wallet file could not be recognized. A new wallet gets a different address and will not restore access to the old one. Do not delete the old file. If you have a backup and code, return to Restore.",
+            @"Вернуться к восстановлению": @"Return to Restore",
+            @"Создать другой адрес": @"Create different address",
             @"Новый кошелёк получит другой адрес. Если кошелёк уже был, сначала восстановите его. После создания сохраните код и зашифрованную копию отдельно.": @"A new wallet gets a different address. If you already had one, restore it first. Save the new code and encrypted backup separately.",
             @"Пароль откроет выбранный кошелёк. Для операций он потребуется снова.": @"The password opens the selected wallet. It will be needed again for operations.",
             @"Доступный кошелёк не распознан. Файл может быть повреждён; восстановите адрес из копии и кода.": @"No usable wallet was recognized. A file may be damaged; restore the address with your backup and code.",
@@ -109,6 +115,7 @@ static NSString *NIRTranslate(NSString *source) {
 @property NSButton *importBackup;
 @property NSArray<NSDictionary *> *backups;
 @property BOOL createOnly;
+@property BOOL hasUnrecognizedWalletFiles;
 @property NSTextField *titleLabel;
 @property NSTextField *subtitleLabel;
 @property NSImageView *logo;
@@ -316,6 +323,10 @@ static NSString *NIRTranslate(NSString *source) {
         NSUInteger selectedIndex = preferredIndex == NSNotFound ? 0 : preferredIndex;
         self.selectedPath = self.wallets[selectedIndex][@"path"];
         [self.accountMenu selectItemAtIndex:selectedIndex];
+    } else if (self.hasUnrecognizedWalletFiles) {
+        // Never imply that a damaged/unrecognized vault is absent. Start at
+        // recovery, with explicit opt-in required before creating a new address.
+        self.modes.selectedSegment = 2;
     }
     [self refresh];
     [self.window center];
@@ -394,9 +405,12 @@ static NSString *NIRTranslate(NSString *source) {
     self.titleLabel.frame = NSMakeRect(28, opening ? 387 : (creation ? 468 : 606), 334, 40);
     self.titleLabel.stringValue = opening ? @"С возвращением!" :
         (creation ? (self.createOnly ? @"Новый адрес NIR" : @"Создайте новый кошелёк") :
-         @"Восстановление");
+         (self.hasUnrecognizedWalletFiles && self.wallets.count == 0 ?
+          @"Кошелёк не распознан" : @"Восстановление"));
     self.subtitleLabel.frame = NSMakeRect(28, opening ? 359 : (creation ? 440 : 577), 334, 24);
-    self.subtitleLabel.stringValue = @"NIR Wallet · локальная тестовая сеть";
+    self.subtitleLabel.stringValue = restoring && self.hasUnrecognizedWalletFiles &&
+        self.wallets.count == 0 ? @"Не удаляйте файл. Восстановите из копии и кода." :
+        @"NIR Wallet · локальная тестовая сеть";
     self.modes.hidden = YES;
     self.back.hidden = self.createOnly || (opening && self.wallets.count > 0) ||
         (creation && self.wallets.count == 0);
@@ -541,6 +555,19 @@ static NSString *NIRTranslate(NSString *source) {
     if ([mode isEqualToString:@"restore"] && self.recoveryCode.stringValue.length == 0) {
         [self showError:@"Введите код восстановления."];
         return;
+    }
+    if ([mode isEqualToString:@"create"] && self.hasUnrecognizedWalletFiles) {
+#if !defined(NIR_ONBOARDING_SMOKE_TEST)
+        NSAlert *warning = [NSAlert new];
+        warning.messageText = NIRTranslate(@"Создать другой адрес?");
+        warning.informativeText = NIRTranslate(@"Обнаружен файл кошелька, который не удалось распознать. Новый кошелёк получит другой адрес и не восстановит доступ к старому. Не удаляйте прежний файл. Если у вас есть копия и код, вернитесь к восстановлению.");
+        [warning addButtonWithTitle:NIRTranslate(@"Вернуться к восстановлению")];
+        [warning addButtonWithTitle:NIRTranslate(@"Создать другой адрес")];
+        if ([warning runModal] != NSAlertSecondButtonReturn) {
+            [self restoreMode:nil];
+            return;
+        }
+#endif
     }
     NSMutableDictionary *result = [@{@"mode": mode} mutableCopy];
     if ([mode isEqualToString:@"create"]) result[@"password"] = self.password.stringValue;
@@ -846,10 +873,13 @@ int main(int argc, const char *argv[]) {
         NSArray *wallets = [payload isKindOfClass:NSDictionary.class] ? payload[@"wallets"] : nil;
         NSArray *backups = [payload isKindOfClass:NSDictionary.class] ? payload[@"backups"] : nil;
         NSNumber *createOnly = [payload isKindOfClass:NSDictionary.class] ? payload[@"createOnly"] : nil;
+        NSNumber *hasUnrecognizedWalletFiles = [payload isKindOfClass:NSDictionary.class] ?
+            payload[@"hasUnrecognizedWalletFiles"] : nil;
         NSString *preferredPath = [payload isKindOfClass:NSDictionary.class] ? payload[@"preferredPath"] : nil;
         if (wallets && ![wallets isKindOfClass:NSArray.class]) return 1;
         if (backups && ![backups isKindOfClass:NSArray.class]) return 1;
         if (preferredPath && ![preferredPath isKindOfClass:NSString.class]) return 1;
+        if (hasUnrecognizedWalletFiles && ![hasUnrecognizedWalletFiles isKindOfClass:NSNumber.class]) return 1;
         for (id wallet in wallets) {
             if (![wallet isKindOfClass:NSDictionary.class] ||
                 ![wallet[@"address"] isKindOfClass:NSString.class] ||
@@ -865,12 +895,14 @@ int main(int argc, const char *argv[]) {
         delegate.preferredPath = preferredPath;
         delegate.backups = backups ?: @[];
         delegate.createOnly = [createOnly isKindOfClass:NSNumber.class] && createOnly.boolValue;
+        delegate.hasUnrecognizedWalletFiles = hasUnrecognizedWalletFiles.boolValue;
         app.delegate = delegate;
 #ifdef NIR_ONBOARDING_ENTRY_TEST
         [delegate applicationDidFinishLaunching:nil];
         NSMutableDictionary *state = [@{ @"startMode": [delegate mode],
             @"openVisibleOnCreate": @(!delegate.openLink.hidden),
-            @"restoreVisibleOnCreate": @(!delegate.restoreLink.hidden) } mutableCopy];
+            @"restoreVisibleOnCreate": @(!delegate.restoreLink.hidden),
+            @"requiresNewAddressConfirmation": @(delegate.hasUnrecognizedWalletFiles) } mutableCopy];
         [delegate openMode:nil];
         state[@"openActionEnabled"] = @(delegate.action.enabled);
         state[@"createVisibleOnOpen"] = @(!delegate.createLink.hidden);
