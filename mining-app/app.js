@@ -8,6 +8,9 @@ const irisEvidenceState = document.querySelector("#iris-evidence-state");
 const irisEvidenceFile = document.querySelector("#iris-evidence-file");
 const irisEvidenceVerify = document.querySelector("#iris-evidence-verify");
 const irisVerifyState = document.querySelector("#iris-verify-state");
+const candidateFile = document.querySelector("#candidate-file");
+const candidateCheck = document.querySelector("#candidate-check");
+const candidateState = document.querySelector("#candidate-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
 const catalogModel = document.querySelector("#catalog-model");
@@ -111,6 +114,15 @@ const copy = {
     irisImportMatched: (hash) => `Локальный прогон совпал: ${hash}. Личность оператора не подтверждена; заявки и награды нет.`,
     irisImportFailed: "Файл не совпал с новым прогоном или проверка не завершилась. Заявки и награды нет.",
     irisImportInvalid: "Выберите JSON-свидетельство Iris размером до 1 МБ. Оно не является доказательством награды.",
+    candidateTitle: "Проверить свой файл модели Iris",
+    candidateIntro: "Принимаются только целочисленные веса и смещения линейного классификатора, без программы или ссылок на файлы. Все 30 проверочных примеров Iris публичны: этот результат нельзя использовать для награды.",
+    candidateSample: "Скачать пример файла модели",
+    candidateLabel: "Файл модели (.json, не более 4 КБ)",
+    candidateButton: "Проверить файл локально",
+    candidateRunning: "Проверяем вашу модель на публичных примерах Iris…",
+    candidateDone: (baseline, candidate, hash) => `Публичная Iris: исходная модель ${baseline} %, ваш файл ${candidate} %. Хеш модели: ${hash}. Это не скрытый тест, не сетевая заявка и не награда.`,
+    candidateInvalid: "Файл отклонён: нужен точный JSON только с целочисленными весами и смещениями, без кода. Награды нет.",
+    candidateFailed: "Локальная проверка файла не завершилась. Заявки и награды нет.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
@@ -187,6 +199,15 @@ const copy = {
     irisImportMatched: (hash) => `Local rerun matched: ${hash}. Operator identity is unverified; there is no claim or reward.`,
     irisImportFailed: "The file did not match a fresh run, or verification failed. No claim or reward exists.",
     irisImportInvalid: "Choose an Iris JSON evidence file up to 1 MB. It is not reward proof.",
+    candidateTitle: "Check your Iris model file",
+    candidateIntro: "Only integer weights and biases for a linear classifier are accepted, with no program or file paths. All 30 Iris evaluation examples are public: this result cannot earn a reward.",
+    candidateSample: "Download a sample model file",
+    candidateLabel: "Model file (.json, at most 4 KB)",
+    candidateButton: "Check file locally",
+    candidateRunning: "Checking your model on public Iris examples…",
+    candidateDone: (baseline, candidate, hash) => `Public Iris: baseline ${baseline}%, your file ${candidate}%. Model hash: ${hash}. This is not a hidden test, network claim, or reward.`,
+    candidateInvalid: "File refused: exact JSON with integer weights and biases only, no code. No reward exists.",
+    candidateFailed: "Local file check did not finish. No claim or reward exists.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
     checking: "Checking the local service…", online: "● Local service connected",
@@ -256,6 +277,9 @@ let replayStatus = null;
 let irisVerifyRunning = false;
 let irisVerifyStatus = null;
 let irisVerifyHash = null;
+let candidateRunning = false;
+let candidateStatus = null;
+let candidateResult = null;
 const localEvents = [];
 let lastServiceState = null;
 let lastRuntimeState = null;
@@ -420,7 +444,7 @@ function render() {
   }
   renderEventTrace();
   if (qwenStart) {
-    qwenStart.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || !progress.hidden ||
+    qwenStart.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || candidateRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
     qwenState.textContent = qwenStatus ?
       (nativeApp && t[`${qwenStatus}Native`] ? t[`${qwenStatus}Native`] : t[qwenStatus]) :
@@ -431,7 +455,7 @@ function render() {
     }
   }
   if (qwenReplay) {
-    qwenReplay.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || !progress.hidden ||
+    qwenReplay.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || candidateRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready" || !qwenReplayFile.files?.length;
     qwenReplayState.textContent = replayStatus ? t[replayStatus] : "";
   }
@@ -439,10 +463,18 @@ function render() {
     t.offlineMessageNative : t[errorKind];
   if (irisEvidenceExport) irisEvidenceExport.hidden = lastResult?.evidenceAvailable !== true;
   if (irisEvidenceVerify) {
-    irisEvidenceVerify.disabled = !connected || irisVerifyRunning || qwenRunning || replayRunning ||
+    irisEvidenceVerify.disabled = !connected || irisVerifyRunning || candidateRunning || qwenRunning || replayRunning ||
       !progress.hidden || !irisEvidenceFile?.files?.length;
     irisVerifyState.textContent = irisVerifyStatus === "irisImportMatched" ?
       t.irisImportMatched(irisVerifyHash) : irisVerifyStatus ? t[irisVerifyStatus] : "";
+  }
+  if (candidateCheck) {
+    candidateCheck.disabled = !connected || candidateRunning || irisVerifyRunning ||
+      qwenRunning || replayRunning || !progress.hidden || !candidateFile?.files?.length;
+    candidateState.textContent = candidateStatus === "candidateDone" && candidateResult ?
+      t.candidateDone((candidateResult.baselineAccuracyBps / 100).toFixed(2),
+        (candidateResult.candidateAccuracyBps / 100).toFixed(2), candidateResult.modelHash) :
+      candidateStatus ? t[candidateStatus] : "";
   }
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
@@ -511,7 +543,7 @@ if (catalogModel) {
 
 start.addEventListener("click", async () => {
   if (!connected) { showOffline(); return; }
-  if (qwenRunning || replayRunning || irisVerifyRunning) return;
+  if (qwenRunning || replayRunning || irisVerifyRunning || candidateRunning) return;
   start.disabled = true;
   if (qwenStart) qwenStart.disabled = true;
   progress.hidden = false;
@@ -600,7 +632,7 @@ if (irisEvidenceFile) irisEvidenceFile.addEventListener("change", () => {
 });
 if (irisEvidenceVerify) irisEvidenceVerify.addEventListener("click", async () => {
   const file = irisEvidenceFile?.files?.[0];
-  if (!connected || irisVerifyRunning || qwenRunning || replayRunning || !progress.hidden || !file) return;
+  if (!connected || irisVerifyRunning || candidateRunning || qwenRunning || replayRunning || !progress.hidden || !file) return;
   if (file.size < 1 || file.size > 1_000_000) {
     irisVerifyStatus = "irisImportInvalid";
     render();
@@ -640,8 +672,60 @@ if (irisEvidenceVerify) irisEvidenceVerify.addEventListener("click", async () =>
   }
 });
 
+if (candidateFile) candidateFile.addEventListener("change", () => {
+  candidateStatus = null;
+  candidateResult = null;
+  render();
+});
+if (candidateCheck) candidateCheck.addEventListener("click", async () => {
+  const file = candidateFile?.files?.[0];
+  if (!connected || candidateRunning || irisVerifyRunning || qwenRunning || replayRunning ||
+      !progress.hidden || !file) return;
+  if (file.size < 1 || file.size > 4096) {
+    candidateStatus = "candidateInvalid";
+    render();
+    return;
+  }
+  candidateRunning = true;
+  candidateStatus = "candidateRunning";
+  candidateResult = null;
+  start.disabled = true;
+  render();
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const response = await fetch("/candidate/iris-linear", { method: "POST", body: bytes,
+      headers: { ...sessionHeaders(), "Content-Type": "application/json" }, signal: controller.signal });
+    const data = await response.json();
+    if (!response.ok) throw new Error(response.status === 400 || response.status === 403 ? "invalid" : "failed");
+    if (data?.status !== "local-iris-data-model-evaluated" ||
+        data.scope !== "public-iris-data-only" || data.caseCount !== 30 ||
+        !/^sha256:[0-9a-f]{64}$/.test(data.modelHash) ||
+        data.datasetHash !== "sha256:596ffd580471ca4d4880f8e439c7281f3b50d8249a5960353cb200b1490f63a0" ||
+        !Number.isSafeInteger(data.baselineAccuracyBps) || !Number.isSafeInteger(data.candidateAccuracyBps) ||
+        data.baselineAccuracyBps < 0 || data.baselineAccuracyBps > 10_000 ||
+        data.candidateAccuracyBps < 0 || data.candidateAccuracyBps > 10_000 ||
+        data.independentOperators !== false || data.hiddenChallenges !== false ||
+        data.networkSubmitted !== false || data.rewardEligible !== false || data.walletChanged !== false ||
+        Object.keys(data).sort().join(",") !== ["status", "scope", "modelHash", "datasetHash",
+          "baselineAccuracyBps", "candidateAccuracyBps", "caseCount", "independentOperators",
+          "hiddenChallenges", "networkSubmitted", "rewardEligible", "walletChanged"].sort().join(","))
+      throw new Error("invalid");
+    candidateResult = data;
+    candidateStatus = "candidateDone";
+  } catch (reason) {
+    candidateStatus = reason?.message === "invalid" ? "candidateInvalid" : "candidateFailed";
+  } finally {
+    clearTimeout(deadline);
+    candidateRunning = false;
+    start.disabled = !connected;
+    render();
+  }
+});
+
 if (qwenStart) qwenStart.addEventListener("click", async () => {
-  if (!connected || qwenRunning || replayRunning || !progress.hidden ||
+  if (!connected || qwenRunning || replayRunning || candidateRunning || irisVerifyRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready") return;
   if (!window.confirm(copy[locale].qwenConfirm)) return;
   qwenRunning = true;
@@ -715,7 +799,7 @@ if (qwenReplayFile) qwenReplayFile.addEventListener("change", () => {
   render();
 });
 if (qwenReplay) qwenReplay.addEventListener("click", async () => {
-  if (!connected || qwenRunning || replayRunning || !progress.hidden ||
+  if (!connected || qwenRunning || replayRunning || candidateRunning || irisVerifyRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready") return;
   const file = qwenReplayFile.files?.[0];
   if (!file || file.size < 1 || file.size > 16_384) {

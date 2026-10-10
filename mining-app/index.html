@@ -37,6 +37,15 @@
       <button id="start" type="button"><span data-i18n="start">Проверить модель Iris</span><span aria-hidden="true">→</span></button>
       <p class="safety" data-i18n="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
     </section>
+    <section class="catalog" aria-labelledby="candidate-heading">
+      <h2 id="candidate-heading" data-i18n="candidateTitle">Проверить свой файл модели Iris</h2>
+      <p data-i18n="candidateIntro">Принимаются только целочисленные веса и смещения линейного классификатора, без программы или ссылок на файлы. Все 30 проверочных примеров Iris публичны: этот результат нельзя использовать для награды.</p>
+      <a href="/iris-linear-sample.json" download="iris_integer_linear.json" data-i18n="candidateSample">Скачать пример файла модели</a>
+      <label for="candidate-file" data-i18n="candidateLabel">Файл модели (.json, не более 4 КБ)</label>
+      <input id="candidate-file" type="file" accept="application/json,.json">
+      <button id="candidate-check" class="secondary" type="button" disabled data-i18n="candidateButton">Проверить файл локально</button>
+      <p id="candidate-state" role="status" aria-live="polite"></p>
+    </section>
     <section class="catalog" aria-labelledby="catalog-heading">
       <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>
       <p data-i18n="catalogIntro">Можно посмотреть замеченные ревизии открытых моделей. Произвольную ревизию запускать здесь нельзя; отдельный закреплённый запуск Qwen доступен ниже.</p>

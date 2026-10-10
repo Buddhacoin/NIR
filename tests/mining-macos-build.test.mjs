@@ -51,7 +51,9 @@ test("double-click model app build includes only local UI and model code, withou
       "Contents/Resources/app/mining-app/app.js",
       "Contents/Resources/app/nir/iris_rehearsal.py",
       "Contents/Resources/app/nir/open_model_local_run.py",
-      "Contents/Resources/app/examples/iris.data"]) {
+      "Contents/Resources/app/examples/iris.data",
+      "Contents/Resources/app/examples/iris_integer_linear.json",
+      "Contents/Resources/app/blockchain/iris-linear-candidate.mjs"]) {
       assert.equal(existsSync(join(app, relative)), true, relative);
     }
     for (const relative of ["Contents/Resources/app/wallet-ui/app.js",

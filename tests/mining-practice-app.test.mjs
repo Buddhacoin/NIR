@@ -27,6 +27,10 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(html, /id="iris-evidence-file" type="file" accept="application\/json,\.json"/);
   assert.match(html, /id="iris-evidence-verify"[^>]*disabled/);
   assert.match(script, /irisImportMatched: \(hash\) => .*Личность оператора не подтверждена/);
+  assert.match(html, /id="candidate-file" type="file" accept="application\/json,\.json"/);
+  assert.match(html, /href="\/iris-linear-sample\.json"/);
+  assert.match(html, /Все 30 проверочных примеров Iris публичны/);
+  assert.match(script, /candidateDone: \(baseline, candidate, hash\) => .*не скрытый тест, не сетевая заявка и не награда/);
   assert.match(css, /image-rendering:pixelated/);
   assert.match(css, /\.event-pulse/);
   for (const event of ["service-online", "iris-requested", "iris-result", "qwen-started",
@@ -363,6 +367,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "mining-app/index.html", "mining-app/app.js", "mining-app/style.css",
       "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
       "examples/iris_model_adapter.py", "examples/iris.data",
+      "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
       "nir/open_model_local_run.py", "nir/open_model_fetch.py",
       "nir/open_model_package.py", "nir/open_model_snapshot.py",
       "nir/open_model_source.py",
@@ -388,7 +393,8 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
-      ['<input id="qwen-replay-file" type="file" accept="application/json,.json">',
+      ['<input id="candidate-file" type="file" accept="application/json,.json">',
+        '<input id="qwen-replay-file" type="file" accept="application/json,.json">',
         '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
     assert.doesNotMatch(html, /<textarea|<form|type="(?:text|password)"/i);
     assert.match(html, /Проверка модели Iris/);
@@ -679,6 +685,47 @@ test("another Model Lab service can import and rerun bounded Iris evidence witho
     assert.equal((await verify(JSON.stringify(extraCommand))).status, 400);
     assert.equal((await verify("x".repeat(1_000_001))).status, 403);
   } finally { await stop(first.server); await stop(second.server); }
+});
+
+test("a participant data-only Iris model changes measured output without executing supplied code", async () => {
+  const { server, base, token } = await serve();
+  const second = await serve();
+  const model = JSON.stringify({ bias: [-21900, -199165, -349234],
+    format: "nir-iris-integer-linear-v1",
+    weights: [[0, 0, 2920, 480], [0, 0, 8520, 2660], [0, 0, 11100, 4060]] });
+  const submit = (body, origin = base, session = token) => fetch(`${base}/candidate/iris-linear`, {
+    method: "POST", body, headers: { origin, "X-NIR-Session": session,
+      "Content-Type": "application/json" },
+  });
+  try {
+    const example = await fetch(`${base}/iris-linear-sample.json`);
+    assert.equal(example.status, 200);
+    assert.equal(JSON.parse(await example.text()).format, "nir-iris-integer-linear-v1");
+    assert.equal((await submit(model, "https://attacker.invalid")).status, 403);
+    assert.equal((await submit(model, base, "0".repeat(64))).status, 403);
+    const checked = await submit(model);
+    assert.equal(checked.status, 200);
+    const result = await checked.json();
+    assert.equal(result.status, "local-iris-data-model-evaluated");
+    assert.equal(result.baselineAccuracyBps, 9000);
+    assert.equal(result.caseCount, 30);
+    assert.match(result.modelHash, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(result.rewardEligible, false);
+    assert.equal(result.networkSubmitted, false);
+    const secondRun = await fetch(`${second.base}/candidate/iris-linear`, {
+      method: "POST", body: model, headers: { origin: second.base,
+        "X-NIR-Session": second.token, "Content-Type": "application/json" },
+    });
+    assert.equal(secondRun.status, 200);
+    assert.deepEqual(await secondRun.json(), result);
+    const zero = await submit(JSON.stringify({ bias: [0, 0, 0],
+      format: "nir-iris-integer-linear-v1", weights: Array.from({ length: 3 }, () => [0, 0, 0, 0]) }));
+    assert.equal(zero.status, 200);
+    assert.notEqual((await zero.json()).candidateAccuracyBps, result.candidateAccuracyBps);
+    assert.equal((await submit('{"format":"nir-iris-integer-linear-v1","format":"evil"}')).status, 400);
+    assert.equal((await submit(JSON.stringify({ ...JSON.parse(model), command: "/bin/sh" }))).status, 400);
+    assert.equal((await submit("x".repeat(4097))).status, 403);
+  } finally { await stop(server); await stop(second.server); }
 });
 
 test("a failed later run clears prior Iris evidence and rejects forged bundle metadata", async () => {
