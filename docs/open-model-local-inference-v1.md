@@ -1,8 +1,10 @@
 # Opt-in local Qwen inference experiment
 
 `nir.open_model_local_run` is a developer-only command for one pinned open
-Qwen3-0.6B revision. The local app can invoke it only after a read-only runtime
-check and explicit download consent. This UI path does not establish that the
+Qwen3-0.6B revision. The UI checks the runtime before offering a separate
+download-confirmation dialog. Its loopback API requires the same origin and a
+static consent header; that header is not proof of a human gesture. The Python
+runner checks runtime again before any download. This UI path does not establish that the
 model has run successfully on a user's machine. It does not
 submit a claim, involve independent operators, establish a new capability,
 participate in consensus, or credit NIR. Output fields explicitly say this.
