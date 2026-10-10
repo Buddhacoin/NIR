@@ -34,6 +34,21 @@ pinned packages above, then restart `npm run mine:app` from that environment.
 The app reports prerequisites before enabling its Qwen button. The catalog
 selection does not choose the revision executed by this separate action.
 
+After a Qwen run, the app can download a small JSON local replay record. It
+binds the fixed prompt and observed answer to the package identity and declared
+generation settings with a domain-separated SHA-256 digest. A second process
+can check the record and repeat the model run with
+`python3 -m nir.open_model_local_run --replay-record /path/to/record.json
+--allow-1.5gb-download`. The same runtime and model download are required again;
+the command fails if the record is malformed, its hash differs, the package
+identity differs, or the answer differs. The file is bounded and read without
+following a final symlink. The UI and local HTTP service check the record hash
+before offering the download. This is a local replay facility, **not** a signed
+claim, proof of the first execution, independent operator verdict, safety or
+energy attestation, consensus input, or NIR reward. Anyone can construct a
+matching hash for fabricated fields; only an independently run, protocol-bound
+evaluation can advance beyond this experiment.
+
 The runtime is not sandboxed or independently attested. The package can be
 modified by another same-user process between or during checks. A hostile
 download or another process may still exhaust disk despite the preflight. The Hub

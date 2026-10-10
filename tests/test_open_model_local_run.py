@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from hashlib import sha256
 from importlib.metadata import PackageNotFoundError
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,7 +11,9 @@ from unittest.mock import patch
 
 from nir.open_model_fetch import FetchedPackage
 from nir.open_model_package import FORMAT, verify_package
-from nir.open_model_local_run import LocalRunError, _mlx_backend, run_pinned_qwen, runtime_status
+from nir.open_model_local_run import (LocalRunError, _mlx_backend, load_replay_record,
+                                      make_replay_record, replay_record, run_pinned_qwen, runtime_status,
+                                      validate_replay_record)
 
 
 REPO = "Qwen/Qwen3-0.6B"
@@ -46,6 +49,10 @@ class LocalRunTests(unittest.TestCase):
                                  backend=lambda path, prompt: "NIR")
         self.assertEqual(result["answer"], "NIR")
         self.assertEqual(result["packageIdentity"], self.identity)
+        self.assertEqual(result["record"]["prompt"], "Say NIR")
+        self.assertEqual(result["record"]["answer"], "NIR")
+        self.assertEqual(result["record"]["scope"], "non-reward-local-replay")
+        self.assertRegex(result["record"]["recordHash"], r"^sha256:[0-9a-f]{64}$")
         self.assertFalse(result["rewardEligible"])
         self.assertFalse(result["networkSubmitted"])
         self.assertEqual(self.calls[0][0][:2], (REPO, REV))
@@ -56,6 +63,66 @@ class LocalRunTests(unittest.TestCase):
                 run_pinned_qwen(prompt, fetch_package=self.package,
                                 backend=lambda path, text: "NIR")
         self.assertEqual(self.calls, [])
+
+    def test_replay_record_reruns_and_never_claims_independent_verification(self):
+        original = run_pinned_qwen("Say NIR", fetch_package=self.package,
+                                   backend=lambda path, prompt: "NIR")
+        checked = validate_replay_record(original["record"])
+        self.assertEqual(checked, original["record"])
+        replay = replay_record(checked, fetch_package=self.package,
+                               backend=lambda path, prompt: "NIR")
+        self.assertEqual(replay["status"], "local-replay-matched")
+        self.assertEqual(replay["recordHash"], checked["recordHash"])
+        self.assertFalse(replay["rewardEligible"])
+        self.assertFalse(replay["independentlyVerified"])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_cross_language_replay_hash_vector(self):
+        record = make_replay_record("Reply with the single word NIR.", "NIR",
+                                    "sha256:" + "a" * 64)
+        self.assertEqual(record["recordHash"],
+                         "sha256:866768567ad82a3bce80ea074f2612215f31f237aa04c9a2ed8cb118453dbe54")
+        unicode_record = make_replay_record("Reply with the single word NIR.", "Ответ: ✓",
+                                            "sha256:" + "a" * 64)
+        self.assertEqual(unicode_record["recordHash"],
+                         "sha256:b06751692ce4d1ac5460ed3f6526b0d10b5b0eb8a2d4b2068a211d2ac19252e6")
+
+    def test_replay_rejects_mutation_and_mismatched_execution(self):
+        record = run_pinned_qwen("Say NIR", fetch_package=self.package,
+                                 backend=lambda path, prompt: "NIR")["record"]
+        for field, value in (("answer", "FAKE"), ("prompt", "Different prompt"),
+                             ("rewardEligible", True), ("rewardEligible", 0),
+                             ("independentlyVerified", True),
+                             ("packageIdentity", "sha256:" + "0" * 64)):
+            with self.subTest(field=field, value=value), self.assertRaises(LocalRunError):
+                validate_replay_record({**record, field: value})
+        with self.assertRaises(LocalRunError):
+            validate_replay_record({**record, "extra": "ignored?"})
+        with self.assertRaises(LocalRunError):
+            replay_record(record, fetch_package=self.package,
+                          backend=lambda path, prompt: "DIFFERENT")
+
+    def test_replay_file_rejects_links_duplicate_keys_fifo_and_oversize(self):
+        record = run_pinned_qwen("Say NIR", fetch_package=self.package,
+                                 backend=lambda path, prompt: "NIR")["record"]
+        path = self.root / "record.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        self.assertEqual(load_replay_record(path), record)
+        link = self.root / "record-link.json"
+        link.symlink_to(path)
+        with self.assertRaises(OSError):
+            load_replay_record(link)
+        path.write_text('{"format":"a","format":"b"}', encoding="utf-8")
+        with self.assertRaises(LocalRunError):
+            load_replay_record(path)
+        path.write_bytes(b"x" * 16_385)
+        with self.assertRaises(LocalRunError):
+            load_replay_record(path)
+        fifo = self.root / "record.fifo"
+        import os
+        os.mkfifo(fifo)
+        with self.assertRaises(LocalRunError):
+            load_replay_record(fifo)
 
     def test_modified_package_rejected_before_or_after_execution(self):
         self.weight.write_bytes(b"changed-weights")

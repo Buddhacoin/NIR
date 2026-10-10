@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { createMiningPracticeApp, miningModelAppPreflight, runPinnedModel } from "../blockchain/mining-practice-app.mjs";
+import { createMiningPracticeApp, localReplayRecordHash, miningModelAppPreflight,
+  runPinnedModel } from "../blockchain/mining-practice-app.mjs";
 
 const root = join(import.meta.dirname, "..");
 async function serve(runModel) {
@@ -21,8 +23,22 @@ async function stop(server) {
 const qwenResult = {
   repository: "Qwen/Qwen3-0.6B", revision: "c1899de289a04d12100db370d81485cdf75e47ca",
   packageIdentity: `sha256:${"a".repeat(64)}`, answer: "NIR",
+  record: {
+    format: "nir-local-open-model-replay-v1", scope: "non-reward-local-replay",
+    repository: "Qwen/Qwen3-0.6B", revision: "c1899de289a04d12100db370d81485cdf75e47ca",
+    packageIdentity: `sha256:${"a".repeat(64)}`, prompt: "Reply with the single word NIR.",
+    answer: "NIR", generation: { temperature: "0", maxTokens: 32 },
+    runtimeDeclaration: { mlx: "0.32.3", "mlx-lm": "0.32.0", transformers: "5.17.0" },
+    rewardEligible: false, networkSubmitted: false, independentlyVerified: false,
+    recordHash: `sha256:${"b".repeat(64)}`,
+  },
   rewardEligible: false, networkSubmitted: false, independentlyVerified: false,
 };
+qwenResult.record.recordHash = localReplayRecordHash(qwenResult.record);
+assert.equal(qwenResult.record.recordHash,
+  "sha256:866768567ad82a3bce80ea074f2612215f31f237aa04c9a2ed8cb118453dbe54");
+assert.equal(localReplayRecordHash({ ...qwenResult.record, answer: "Ответ: ✓" }),
+  "sha256:b06751692ce4d1ac5460ed3f6526b0d10b5b0eb8a2d4b2068a211d2ac19252e6");
 
 test("pinned Qwen route requires explicit same-origin download consent and refuses code", async () => {
   let calls = 0;
@@ -48,7 +64,9 @@ test("pinned Qwen route requires explicit same-origin download consent and refus
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     assert.equal(completed.status, 200);
-    assert.deepEqual(await completed.json(), { status: "local-open-model-inference-only", ...qwenResult });
+    const completedResult = await completed.json();
+    assert.deepEqual(completedResult, { status: "local-open-model-inference-only", ...qwenResult });
+    assert.equal(completedResult.record.scope, "non-reward-local-replay");
     assert.equal(calls, 1);
   } finally { await stop(server); }
 });
@@ -69,28 +87,63 @@ test("Qwen runtime preflight gives a read-only reason before any download", asyn
   } finally { await stop(server); }
 });
 
+test("Qwen route refuses a transcript whose hash would fail independent local replay", async () => {
+  const server = createMiningPracticeApp({ root, runOpenModel: async () => ({
+    ...qwenResult, record: { ...qwenResult.record, recordHash: `sha256:${"b".repeat(64)}` },
+  }) });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const start = await fetch(`${base}/open-model/qwen-check`, { method: "POST", body: "",
+      headers: { origin: base, "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" } });
+    const { jobId } = await start.json();
+    let result;
+    for (let i = 0; i < 50; i++) {
+      result = await fetch(`${base}/open-model/jobs/${jobId}`);
+      if (result.status !== 202) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(result.status, 500);
+  } finally { await stop(server); }
+});
+
 test("Qwen UI refuses missing runtime and requires a separate user confirmation", async () => {
   const nodes = new Map();
   for (const id of ["start", "progress", "result", "error", "error-message", "connection",
-    "language", "score", "technical", "qwen-start", "qwen-state", "qwen-answer", "qwen-identity"]) {
+    "language", "score", "technical", "qwen-start", "qwen-state", "qwen-answer", "qwen-identity",
+    "qwen-export"]) {
     nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {},
       addEventListener(_, listener) { this.click = listener; } });
   }
   let runtime = { status: "missing-runtime", package: "mlx" };
   let consent = false;
   let runs = 0;
+  let returnedResult = qwenResult;
+  let stall = false;
+  let downloaded;
+  const document = { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
+    querySelectorAll: () => [], body: { append() {} }, createElement: () => ({
+      click() { downloaded = { filename: this.download, bytes: this.href }; }, remove() {},
+    }) };
+  const browserURL = { createObjectURL: (blob) => blob.parts.join(""), revokeObjectURL() {} };
+  class TestBlob { constructor(parts) { this.parts = parts; } }
   const code = readFileSync(join(root, "mining-app/app.js"), "utf8");
   runInNewContext(code, {
-    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id), querySelectorAll: () => [] },
+    document,
     navigator: { language: "ru-RU" }, window: { confirm: () => consent }, AbortController,
-    fetch: async (path) => {
+    fetch: async (path, options) => {
       if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
       if (path === "/open-model/runtime") return { ok: true, json: async () => runtime };
-      if (path === "/open-model/qwen-check") { runs++; return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) }; }
-      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) };
+      if (path === "/open-model/qwen-check") {
+        runs++;
+        if (stall) return new Promise((_, reject) => options?.signal?.addEventListener("abort", () => reject(new TypeError("aborted"))));
+        return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) };
+      }
+      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...returnedResult }) };
       throw new Error(`unexpected ${path}`);
     },
-    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError, Blob: TestBlob, URL: browserURL,
+    crypto: webcrypto, TextEncoder,
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(nodes.get("#qwen-start").disabled, true);
@@ -102,15 +155,22 @@ test("Qwen UI refuses missing runtime and requires a separate user confirmation"
   const freshNodes = new Map();
   for (const [key, value] of nodes) freshNodes.set(key, { ...value, addEventListener(_, listener) { this.click = listener; } });
   runInNewContext(code, {
-    document: { documentElement: { lang: "ru" }, querySelector: (id) => freshNodes.get(id), querySelectorAll: () => [] },
+    document: { ...document, querySelector: (id) => freshNodes.get(id) },
     navigator: { language: "ru-RU" }, window: { confirm: () => consent }, AbortController,
-    fetch: async (path) => {
+    fetch: async (path, options) => {
       if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
       if (path === "/open-model/runtime") return { ok: true, json: async () => runtime };
-      if (path === "/open-model/qwen-check") { runs++; return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) }; }
-      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) };
+      if (path === "/open-model/qwen-check") {
+        runs++;
+        if (stall) return new Promise((_, reject) => options?.signal?.addEventListener("abort", () => reject(new TypeError("aborted"))));
+        return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) };
+      }
+      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...returnedResult }) };
       throw new Error(`unexpected ${path}`);
-    }, setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+    }, setInterval: () => 0, setTimeout: (callback, delay) =>
+      setTimeout(callback, delay === 10_000 ? 5 : delay), clearTimeout, TypeError,
+    Blob: TestBlob, URL: browserURL,
+    crypto: webcrypto, TextEncoder,
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(freshNodes.get("#qwen-start").disabled, false);
@@ -120,7 +180,32 @@ test("Qwen UI refuses missing runtime and requires a separate user confirmation"
   await freshNodes.get("#qwen-start").click();
   assert.equal(runs, 1);
   assert.equal(freshNodes.get("#qwen-answer").hidden, false);
+  assert.equal(freshNodes.get("#qwen-export").hidden, false);
+  freshNodes.get("#qwen-export").click();
+  assert.match(downloaded.filename, /^nir-local-replay-[0-9a-f]{12}\.json$/);
+  assert.deepEqual(JSON.parse(downloaded.bytes), qwenResult.record);
   assert.match(freshNodes.get("#qwen-state").textContent, /награды нет/);
+  returnedResult = { ...qwenResult, record: {
+    ...qwenResult.record, recordHash: `sha256:${"b".repeat(64)}`,
+  } };
+  downloaded = undefined;
+  await freshNodes.get("#qwen-start").click();
+  assert.equal(freshNodes.get("#qwen-export").hidden, true);
+  assert.match(freshNodes.get("#qwen-state").textContent, /не подтверждён/);
+  freshNodes.get("#qwen-export").click();
+  assert.equal(downloaded, undefined);
+  const wrongSettings = { ...qwenResult.record, generation: { temperature: "1", maxTokens: 32 },
+    extra: "unreviewed" };
+  wrongSettings.recordHash = localReplayRecordHash(wrongSettings);
+  returnedResult = { ...qwenResult, record: wrongSettings };
+  await freshNodes.get("#qwen-start").click();
+  assert.equal(freshNodes.get("#qwen-export").hidden, true);
+  assert.match(freshNodes.get("#qwen-state").textContent, /не подтверждён/);
+  stall = true;
+  await Promise.race([freshNodes.get("#qwen-start").click(),
+    new Promise((resolve) => setTimeout(resolve, 100))]);
+  assert.equal(freshNodes.get("#qwen-export").hidden, true);
+  assert.match(freshNodes.get("#qwen-state").textContent, /не запустилась/);
 });
 
 test("pinned Qwen route rejects forged rewards and conflicting local jobs", async () => {
