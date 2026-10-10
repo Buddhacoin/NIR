@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 
 import { createAccountObserverBridgeServer } from "../blockchain/account-observer-bridge.mjs";
@@ -13,6 +14,16 @@ import { createFinalityProof } from "../blockchain/light-client.mjs";
 
 test("observer requires a pinned address, network and genesis checkpoint", () => {
   assert.throws(() => createAccountObserverBridgeServer({}), /configuration/);
+  assert.throws(() => createAccountObserverBridgeServer({
+    address: `nir1${"a".repeat(64)}`,
+    nodeBaseUrl: "http://example.com:9000",
+    origin: "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d",
+    sessionToken: "b".repeat(64),
+    trustAnchor: { expectedNetworkId: "nir-test", trustedValidators: [],
+      genesisCheckpoint: { height: 0, tipHash: "a".repeat(64),
+        stateRoot: "a".repeat(64), accountStateRoot: "a".repeat(64),
+        validatorSetId: "a".repeat(64) } },
+  }), /configuration/);
 });
 
 test("observer verifies only one Firefox account on one pinned chain and cannot sign", async () => {
@@ -51,6 +62,20 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
   };
   const origin = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
   const token = "a".repeat(64);
+  let nodeAccountProof = proofFor(account.address);
+  let nodeFinalityProofs = [createFinalityProof(block)];
+  let nodeHealthNetworkId = networkId;
+  const node = createServer((request, response) => {
+    const payload = request.url === "/health"
+      ? { height: chain.height, networkId: nodeHealthNetworkId, tipHash: chain.tipHash }
+      : request.url === "/v1/finality-proofs?fromHeight=0&limit=512"
+        ? { proofs: nodeFinalityProofs }
+        : request.url === `/v1/accounts/${account.address}/proof`
+          ? nodeAccountProof : null;
+    response.writeHead(payload ? 200 : 404, { "content-type": "application/json" });
+    response.end(JSON.stringify(payload ?? { error: "not found" }));
+  });
+  await new Promise((resolve) => node.listen(0, "127.0.0.1", resolve));
   const trustAnchor = { expectedNetworkId: networkId,
     genesisCheckpoint: { accountStateRoot: genesis.accountStateRoot,
       height: 0, stateRoot: genesis.stateRoot, tipHash: genesis.hash,
@@ -58,6 +83,7 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     handoffs: [], trustedValidators: members };
   const server = createAccountObserverBridgeServer({
     address: account.address, origin, sessionToken: token, trustAnchor,
+    nodeBaseUrl: `http://127.0.0.1:${node.address().port}`,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -87,6 +113,19 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     assert.equal(result.address, account.address);
     assert.equal(result.statement.account.atomicBalance, "0");
     assert.equal(result.verified, true);
+    const refreshed = await post("/v1/refresh-account", {});
+    assert.equal(refreshed.status, 200);
+    assert.equal((await refreshed.json()).statement.account.address, account.address);
+    nodeAccountProof = proofFor(other.address);
+    assert.equal((await post("/v1/refresh-account", {})).status, 400);
+    nodeAccountProof = proofFor(account.address);
+    nodeHealthNetworkId = "nir-foreign-network";
+    assert.equal((await post("/v1/refresh-account", {})).status, 400);
+    nodeHealthNetworkId = networkId;
+    nodeFinalityProofs = [{ ...nodeFinalityProofs[0], hash: "f".repeat(64) }];
+    assert.equal((await post("/v1/refresh-account", {})).status, 400);
+    nodeFinalityProofs = [createFinalityProof(block)];
+    assert.equal((await post("/v1/refresh-account", { address: other.address })).status, 400);
     assert.equal((await post("/v1/verify-account-proof", {
       proof: proofFor(other.address),
     })).status, 400);
@@ -131,6 +170,7 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     }
   } finally {
     await new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); });
+    await new Promise((resolve) => { node.closeAllConnections?.(); node.close(resolve); });
   }
 });
 

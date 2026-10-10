@@ -45,16 +45,37 @@ async function readJson(request, maximumBytes) {
   return parseConsensusJson(Buffer.concat(chunks).toString("utf8"));
 }
 
+async function readNodeJson(nodeBaseUrl, path, maximumBytes) {
+  const response = await fetch(`${nodeBaseUrl}${path}`, {
+    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok || !/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "") ||
+      Number(response.headers.get("content-length") ?? 0) > maximumBytes) {
+    throw new Error("node proof response is unavailable or too large");
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > maximumBytes) throw new Error("node proof response is too large");
+    chunks.push(chunk);
+  }
+  return parseConsensusJson(Buffer.concat(chunks).toString("utf8"));
+}
+
 // This is deliberately a separate capability from the native wallet bridge.
 // Its token is useful only for checking public evidence for one fixed address;
 // there is no vault path, account selection, signing or token-upgrade route.
 export function createAccountObserverBridgeServer({
-  address, origin, sessionToken, trustAnchor,
+  address, nodeBaseUrl, origin, sessionToken, trustAnchor,
 } = {}) {
   const networkId = trustAnchor?.expectedNetworkId;
   const genesis = trustAnchor?.genesisCheckpoint;
   if (!ADDRESS.test(address ?? "") || !FIREFOX_ORIGIN.test(origin ?? "") ||
       !HASH.test(sessionToken ?? "") ||
+      (nodeBaseUrl !== undefined &&
+        (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(nodeBaseUrl) ||
+         Number(nodeBaseUrl.slice("http://127.0.0.1:".length)) > 65_535)) ||
       typeof networkId !== "string" || networkId.length < 3 || networkId.length > 128 ||
       !Array.isArray(trustAnchor?.trustedValidators) ||
       !genesis || genesis.height !== 0 || !HASH.test(genesis.tipHash ?? "") ||
@@ -70,6 +91,54 @@ export function createAccountObserverBridgeServer({
   advanceValidatorTrust(trust);
   const pinnedGenesis = structuredClone(genesis);
   let verifiedTip = null;
+  let refreshPending = false;
+  const verifyChain = (proofs) => {
+    // Full genesis-to-tip chain only; cannot silently substitute a later fork.
+    const next = verifyFinalityProofChain(proofs, {
+      checkpoint: pinnedGenesis,
+      expectedChainIdentityGenesisHash: pinnedGenesis.tipHash,
+      expectedNetworkId: networkId,
+      handoffs: trust.handoffs,
+      trustedValidators: trust.trustedValidators,
+    });
+    const previousHeightProof = verifiedTip && proofs[verifiedTip.height - 1];
+    if (verifiedTip && (next.height < verifiedTip.height ||
+        previousHeightProof?.hash !== verifiedTip.tipHash)) {
+      throw new Error("observer finality tip would roll back or conflict");
+    }
+    return next;
+  };
+  const verifyAccount = (proof, tip) => {
+    if (!tip || proof?.height !== tip.height) {
+      throw new Error("account proof requires the latest verified finality tip");
+    }
+    const activeTrust = advanceValidatorTrust({
+      expectedNetworkId: networkId,
+      handoffs: trust.handoffs.filter(({ activationHeight }) =>
+        activationHeight <= proof.height),
+      trustedValidators: trust.trustedValidators,
+    });
+    if (activeTrust.lastHandoff?.activationHeight === proof.height &&
+        (proof.tipHash !== activeTrust.lastHandoff.activationBlockHash ||
+         proof.stateRoot !== activeTrust.lastHandoff.activationStateRoot)) {
+      throw new Error("account proof does not match validator activation block");
+    }
+    const statement = verifyAccountProof(proof, {
+      expectedAddress: address,
+      expectedNetworkId: networkId,
+      minimumHeight: tip.height,
+      trustedValidators: activeTrust.trustedValidators,
+    });
+    if (statement.accountStateRoot !== tip.accountStateRoot ||
+        statement.tipHash !== tip.tipHash || statement.stateRoot !== tip.stateRoot ||
+        statement.validatorSetId !== tip.validatorSetId ||
+        statement.protocolVersion !== tip.protocolVersion ||
+        JSON.stringify(statement.pendingProtocolUpgrade) !==
+          JSON.stringify(tip.pendingProtocolUpgrade)) {
+      throw new Error("account proof does not match verified finality chain");
+    }
+    return statement;
+  };
   return createServer(async (request, response) => {
     const requestOrigin = request.headers.origin;
     const remoteAddress = request.socket.remoteAddress ?? "";
@@ -99,65 +168,66 @@ export function createAccountObserverBridgeServer({
     }
     const url = new URL(request.url, "http://observer.local");
     if (url.search || request.method !== "POST" ||
-        !["/v1/verify-finality-chain", "/v1/verify-account-proof"].includes(url.pathname)) {
+        !["/v1/verify-finality-chain", "/v1/verify-account-proof",
+          "/v1/refresh-account"].includes(url.pathname)) {
       return send(response, 404, { error: "observer endpoint is unavailable" }, origin);
     }
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
       return send(response, 415, { error: "application/json is required" }, origin);
     }
     try {
+      if (url.pathname === "/v1/refresh-account") {
+        if (!nodeBaseUrl) return send(response, 404, { error: "node reader is not configured" }, origin);
+        if (refreshPending) return send(response, 409, { error: "account refresh is already running" }, origin);
+        const body = await readJson(request, 16);
+        if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
+          throw new Error("account refresh body is invalid");
+        }
+        if (refreshPending) return send(response, 409, { error: "account refresh is already running" }, origin);
+        refreshPending = true;
+        try {
+          const health = await readNodeJson(nodeBaseUrl, "/health", 1_024);
+          if (health?.networkId !== networkId || !Number.isSafeInteger(health.height) ||
+              health.height < 1 || health.height > 512 || !HASH.test(health.tipHash ?? "")) {
+            throw new Error("node height or network is unsupported");
+          }
+          const finality = await readNodeJson(nodeBaseUrl,
+            "/v1/finality-proofs?fromHeight=0&limit=512", MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
+          if (!Array.isArray(finality?.proofs) || finality.proofs.length !== health.height) {
+            throw new Error("node finality chain is incomplete");
+          }
+          const next = verifyChain(finality.proofs);
+          if (next.height !== health.height || next.tipHash !== health.tipHash) {
+            throw new Error("node tip changed during account refresh");
+          }
+          const priorTip = verifiedTip;
+          const proof = await readNodeJson(nodeBaseUrl,
+            `/v1/accounts/${address}/proof`, MAX_ACCOUNT_PROOF_BYTES + 1_024);
+          const statement = verifyAccount(proof, next);
+          if (verifiedTip !== priorTip) {
+            throw new Error("observer tip changed during account refresh");
+          }
+          verifiedTip = next;
+          return send(response, 200, {
+            address, genesisHash: pinnedGenesis.tipHash, networkId, statement, verified: true,
+          }, origin);
+        } finally {
+          refreshPending = false;
+        }
+      }
       if (url.pathname === "/v1/verify-finality-chain") {
         const body = await readJson(request, MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
-        // Always verify the full chain from the pinned genesis. A shorter
-        // untrusted replacement may be valid but cannot roll the tip backward.
-        const next = verifyFinalityProofChain(body?.proofs, {
-          checkpoint: pinnedGenesis,
-          expectedChainIdentityGenesisHash: pinnedGenesis.tipHash,
-          expectedNetworkId: networkId,
-          handoffs: trust.handoffs,
-          trustedValidators: trust.trustedValidators,
-        });
-        const previousHeightProof = verifiedTip && body.proofs[verifiedTip.height - 1];
-        if (verifiedTip && (next.height < verifiedTip.height ||
-            previousHeightProof?.hash !== verifiedTip.tipHash)) {
-          throw new Error("observer finality tip would roll back or conflict");
-        }
+        const next = verifyChain(body?.proofs);
         verifiedTip = next;
         return send(response, 200, {
           genesisHash: pinnedGenesis.tipHash, networkId, tip: next, verified: true,
         }, origin);
       }
       const body = await readJson(request, MAX_ACCOUNT_PROOF_BYTES + 1_024);
-      if (!body || Object.keys(body).sort().join(",") !== "proof" || !verifiedTip ||
-          body.proof?.height !== verifiedTip.height) {
-        throw new Error("account proof requires the latest verified finality tip");
+      if (!body || Object.keys(body).sort().join(",") !== "proof") {
+        throw new Error("account proof body is invalid");
       }
-      const activeTrust = advanceValidatorTrust({
-        expectedNetworkId: networkId,
-        handoffs: trust.handoffs.filter(({ activationHeight }) =>
-          activationHeight <= body.proof.height),
-        trustedValidators: trust.trustedValidators,
-      });
-      if (activeTrust.lastHandoff?.activationHeight === body.proof.height &&
-          (body.proof.tipHash !== activeTrust.lastHandoff.activationBlockHash ||
-           body.proof.stateRoot !== activeTrust.lastHandoff.activationStateRoot)) {
-        throw new Error("account proof does not match validator activation block");
-      }
-      const statement = verifyAccountProof(body.proof, {
-        expectedAddress: address,
-        expectedNetworkId: networkId,
-        minimumHeight: verifiedTip.height,
-        trustedValidators: activeTrust.trustedValidators,
-      });
-      if (statement.accountStateRoot !== verifiedTip.accountStateRoot ||
-          statement.tipHash !== verifiedTip.tipHash ||
-          statement.stateRoot !== verifiedTip.stateRoot ||
-          statement.validatorSetId !== verifiedTip.validatorSetId ||
-          statement.protocolVersion !== verifiedTip.protocolVersion ||
-          JSON.stringify(statement.pendingProtocolUpgrade) !==
-            JSON.stringify(verifiedTip.pendingProtocolUpgrade)) {
-        throw new Error("account proof does not match verified finality chain");
-      }
+      const statement = verifyAccount(body.proof, verifiedTip);
       return send(response, 200, {
         address, genesisHash: pinnedGenesis.tipHash, networkId, statement, verified: true,
       }, origin);
