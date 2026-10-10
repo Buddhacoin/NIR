@@ -58,7 +58,8 @@ button:disabled { opacity:.46;cursor:not-allowed;box-shadow:none; }.safety { mar
 .catalog h2,.result h2 { margin:0 0 7px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:18px; }
 .catalog p,.result p { margin:0 0 13px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px; }
 .catalog label { display:block;margin:12px 0 6px;color:#c6cdc7;font-size:14px;font-weight:700; }
-.catalog select,.catalog input[type="file"] { width:100%;min-width:0;padding:11px;border:1px solid #586159;border-radius:2px;background:#151815;color:#eef2ef;font:inherit;font-size:14px; }
+.catalog select,.catalog input[type="file"],.catalog input[type="text"],.catalog input[type="number"] { width:100%;min-width:0;padding:11px;border:1px solid #586159;border-radius:2px;background:#151815;color:#eef2ef;font:inherit;font-size:14px; }
+.synthetic-history { padding-left:20px;color:#dce5dc;font-size:13px;overflow-wrap:anywhere; }
 .catalog #iris-verify-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog #candidate-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog a { color:var(--lime);font-size:14px;text-underline-offset:3px; }

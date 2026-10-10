@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
 import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   hashIrisModelCommit, MAX_IRIS_MODEL_BYTES } from "./iris-linear-candidate.mjs";
+import { createSyntheticTransferSession } from "./synthetic-transfer.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -23,6 +24,7 @@ const APP_FILES = Object.freeze([
   "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
   "examples/iris_model_adapter.py", "examples/iris.data",
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
+  "blockchain/synthetic-transfer.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
   "nir/open_model_package.py", "nir/open_model_snapshot.py",
   "nir/open_model_source.py",
@@ -258,6 +260,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   let running = false;
   let lastIrisEvidence = null;
   let pendingCandidate = null;
+  const syntheticTransfers = createSyntheticTransferSession();
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -294,6 +297,54 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "GET" && path === "/status") {
       send(200, "application/json; charset=utf-8", JSON.stringify({ status: "local-model-service-ready" }));
+      return;
+    }
+    if (request.url === "/synthetic-transfer/state" && request.method === "GET") {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else {
+        send(200, "application/json; charset=utf-8", JSON.stringify(syntheticTransfers.snapshot()));
+      }
+      return;
+    }
+    if (request.url === "/synthetic-transfer/start" && request.method === "POST") {
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+          request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      try { send(200, "application/json; charset=utf-8", JSON.stringify(syntheticTransfers.startTraining())); }
+      catch { send(409, "application/json; charset=utf-8", JSON.stringify({ error: "Training already started" })); }
+      return;
+    }
+    if (request.url === "/synthetic-transfer" && request.method === "POST") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" || request.headers["transfer-encoding"] ||
+          !Number.isSafeInteger(declared) || declared < 2 || declared > 512) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("body too large");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated body");
+        const input = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        if (!input || Array.isArray(input) || typeof input !== "object" ||
+            Object.keys(input).sort().join(",") !== "amount,id,networkId,recipient")
+          throw new Error("invalid fields");
+        const entry = syntheticTransfers.transfer(input);
+        send(200, "application/json; charset=utf-8", JSON.stringify({ entry, state: syntheticTransfers.snapshot() }));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid synthetic transfer" }));
+      } finally { clearTimeout(deadline); }
       return;
     }
     if (request.method === "GET" && path === "/catalog" && request.url === "/catalog") {

@@ -30,6 +30,16 @@ const qwenReplayState = document.querySelector("#qwen-replay-state");
 const eventPulses = document.querySelector("#event-pulses");
 const eventLog = document.querySelector("#event-log");
 const qwenAvailability = document.querySelector("#qwen-availability");
+const syntheticStart = document.querySelector("#synthetic-start");
+const syntheticSend = document.querySelector("#synthetic-send");
+const syntheticRecipient = document.querySelector("#synthetic-recipient");
+const syntheticAmount = document.querySelector("#synthetic-amount");
+const syntheticBalance = document.querySelector("#synthetic-balance");
+const syntheticState = document.querySelector("#synthetic-state");
+const syntheticHistory = document.querySelector("#synthetic-history");
+let syntheticSnapshot = null;
+let syntheticMessage = "";
+let syntheticStateLoading = false;
 const nativeApp = typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("local-app") === "1";
 // Native shell injects this before page scripts. The terminal-only browser mode
@@ -110,6 +120,14 @@ const copy = {
     irisScope: "Встроенная проверка", qwenScope: "Закреплённый локальный запуск",
     bundled: "ВСТРОЕНА", reportedReady: "СООБЩАЕТ: ГОТОВА", checkingShort: "ПРОВЕРКА", unavailableShort: "НЕДОСТУПНА",
     localOnly: "Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.",
+    syntheticTitle: "Тренажёр перевода — не NIR",
+    syntheticIntro: "Отдельный учебный баланс: 7 условных жетонов. Это не результат проверки модели, не начисление сети и не средства в кошельке. Сценарий исчезнет при закрытии сервиса.",
+    syntheticStart: "Создать учебный сценарий", syntheticRecipientLabel: "Адрес получателя NIR (ручной ввод не доказывает владение)",
+    syntheticAmountLabel: "Условных единиц", syntheticSend: "Перевести только в тренажёре",
+    syntheticBalance: (state) => state?.started ? `Учебный остаток: ${state.remaining} из 7. Настоящий баланс кошелька не изменился.` : "Учебный сценарий ещё не создан.",
+    syntheticSuccess: "Учебный перевод записан только здесь. Адрес не подтверждён; настоящий кошелёк и сеть не изменились.",
+    syntheticFailure: "Учебный перевод отклонён. Проверьте адрес, сумму и остаток.",
+    syntheticHistoryItem: (entry) => `${entry.amount} условных единиц → ${entry.recipient} · не NIR`,
     test: "ТЕСТ", eyebrow: "Локальная тренировка", headline: "Проверка модели Iris",
     description: "Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.",
     start: "Проверить модель Iris", safety: "Не нужен кошелёк, пароль, секретная фраза или оплата.",
@@ -200,6 +218,14 @@ const copy = {
     irisScope: "Bundled check", qwenScope: "Pinned local run",
     bundled: "BUNDLED", reportedReady: "REPORTS READY", checkingShort: "CHECKING", unavailableShort: "UNAVAILABLE",
     localOnly: "No wallet address is connected. This console shows actions on this Mac only: it submits no claim and promises no NIR.",
+    syntheticTitle: "Transfer rehearsal — not NIR",
+    syntheticIntro: "Separate training balance: 7 imaginary tokens. This is not a model-check result, network reward, or wallet funds. The scenario disappears when this service closes.",
+    syntheticStart: "Create training scenario", syntheticRecipientLabel: "NIR recipient address (manual entry does not prove ownership)",
+    syntheticAmountLabel: "Imaginary units", syntheticSend: "Transfer in rehearsal only",
+    syntheticBalance: (state) => state?.started ? `Training remainder: ${state.remaining} of 7. Real wallet balance did not change.` : "Training scenario not created yet.",
+    syntheticSuccess: "Training transfer recorded only here. Address is unverified; real wallet and network did not change.",
+    syntheticFailure: "Training transfer refused. Check address, amount, and remainder.",
+    syntheticHistoryItem: (entry) => `${entry.amount} imaginary units → ${entry.recipient} · not NIR`,
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
     description: "Train two classifiers locally on 120 examples and check them against 30 held-out examples. Results and evidence are checked on this Mac.",
     start: "Check Iris model", safety: "No wallet, password, recovery phrase, or payment is needed.",
@@ -468,6 +494,18 @@ function render() {
     qwenAvailability.dataset.state = ready ? "ready" : pending ? "checking" : "unavailable";
   }
   renderEventTrace();
+  if (syntheticStart) {
+    syntheticStart.disabled = !connected || syntheticSnapshot?.started === true;
+    syntheticSend.disabled = !connected || syntheticSnapshot?.started !== true;
+    syntheticBalance.textContent = t.syntheticBalance(syntheticSnapshot);
+    syntheticState.textContent = syntheticMessage ? t[syntheticMessage] : "";
+    syntheticHistory.replaceChildren();
+    for (const entry of syntheticSnapshot?.history ?? []) {
+      const item = document.createElement("li");
+      item.textContent = t.syntheticHistoryItem(entry);
+      syntheticHistory.append(item);
+    }
+  }
   if (qwenStart) {
     qwenStart.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || candidateRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
@@ -521,6 +559,8 @@ function render() {
 function showOffline() {
   connected = false;
   checking = false;
+  syntheticSnapshot = null;
+  syntheticMessage = "";
   connection.dataset.state = "offline";
   progress.hidden = true;
   result.hidden = true;
@@ -533,6 +573,20 @@ function showOffline() {
     lastServiceState = "service-offline";
   }
   render();
+}
+
+async function loadSyntheticState() {
+  if (!connected || syntheticStateLoading || syntheticSnapshot) return;
+  syntheticStateLoading = true;
+  try {
+    const { response, data } = await fetchQwenJson("/synthetic-transfer/state");
+    if (response.ok && data?.simulationOnly === true && data?.walletChanged === false &&
+        data?.networkSubmitted === false && data?.transferableNir === "0") {
+      syntheticSnapshot = data;
+      render();
+    }
+  } catch { /* Keep the training panel unavailable rather than guessing state. */ }
+  finally { syntheticStateLoading = false; }
 }
 
 async function checkConnection() {
@@ -556,6 +610,7 @@ async function checkConnection() {
       lastServiceState = "service-online";
     }
     render();
+    void loadSyntheticState();
   } catch { showOffline(); }
   finally { clearTimeout(timeout); statusRequestRunning = false; }
 }
@@ -566,6 +621,33 @@ languageButton.addEventListener("click", () => {
   render();
   renderCatalog();
 });
+if (syntheticStart) {
+  syntheticStart.addEventListener("click", async () => {
+    try {
+      const { response, data } = await fetchQwenJson("/synthetic-transfer/start", {
+        method: "POST", body: "",
+      });
+      if (!response.ok || data?.simulationOnly !== true || data?.walletChanged !== false) throw new Error("invalid training state");
+      syntheticSnapshot = data;
+      syntheticMessage = "";
+    } catch { syntheticMessage = "syntheticFailure"; }
+    render();
+  });
+  syntheticSend.addEventListener("click", async () => {
+    const input = { recipient: syntheticRecipient.value.trim(), amount: syntheticAmount.value,
+      id: crypto.randomUUID(), networkId: "nir-synthetic-local-1" };
+    try {
+      const { response, data } = await fetchQwenJson("/synthetic-transfer", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      });
+      if (!response.ok || data?.entry?.simulationOnly !== true || data?.state?.walletChanged !== false)
+        throw new Error("invalid training transfer");
+      syntheticSnapshot = data.state;
+      syntheticMessage = "syntheticSuccess";
+    } catch { syntheticMessage = "syntheticFailure"; }
+    render();
+  });
+}
 if (catalogModel) {
   catalogModel.addEventListener("change", () => { catalogVersion.value = ""; renderCatalog(); });
   catalogVersion.addEventListener("change", renderCatalog);
