@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 const DATA_SHA256 = "596ffd580471ca4d4880f8e439c7281f3b50d8249a5960353cb200b1490f63a0";
 const FORMAT = "nir-iris-integer-linear-v1";
@@ -137,4 +138,19 @@ export function evaluateIrisPostCommitStress(root, modelBytes, seed) {
     caseCount: 90, syntheticPerturbations: true, independentOperators: false,
     hiddenChallenges: false, networkSubmitted: false, rewardEligible: false, walletChanged: false,
   };
+}
+
+export function recheckIrisPostCommitRecord(root, modelBytes, record) {
+  if (!record || typeof record !== "object" || Array.isArray(record) ||
+      !/^[0-9a-f]{64}$/.test(record.seed ?? ""))
+    throw new Error("local Iris record is invalid");
+  const expected = evaluateIrisPostCommitStress(root, modelBytes, Buffer.from(record.seed, "hex"));
+  const matched = isDeepStrictEqual(record, expected);
+  return { status: matched ? "local-iris-recheck-matched" : "local-iris-recheck-mismatch",
+    modelHash: expected.modelHash, commitHash: expected.commitHash, caseCount: 90,
+    baselineAccuracyBps: expected.baselineAccuracyBps,
+    candidateAccuracyBps: expected.candidateAccuracyBps,
+    independentOperators: false, operatorIdentityVerified: false,
+    hiddenChallenges: false, networkSubmitted: false, rewardEligible: false,
+    walletChanged: false };
 }
