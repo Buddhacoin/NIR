@@ -47,7 +47,11 @@ export function loadAccountObserverLaunchConfig(values) {
   }
   const anchorPath = resolve(values["anchor-file"]);
   let bytes;
-  const descriptor = openSync(anchorPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  // A FIFO must not hang launch before fstat can reject it. O_NONBLOCK also
+  // makes non-regular descriptors fail promptly when the operator supplied a
+  // mistaken or hostile anchor path.
+  const descriptor = openSync(anchorPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const anchorFile = fstatSync(descriptor);
     if (!anchorFile.isFile() || anchorFile.size < 1 ||

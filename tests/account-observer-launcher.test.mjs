@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +67,12 @@ test("launcher requires independently pinned anchor and private identity checkpo
     symlinkSync(fixtureValue.values["anchor-file"], linkedAnchor);
     assert.throws(() => loadAccountObserverLaunchConfig({ ...fixtureValue.values,
       "anchor-file": linkedAnchor }), /ELOOP|symbolic link/);
+    const fifoAnchor = join(fixtureValue.root, "anchor.fifo");
+    execFileSync("mkfifo", [fifoAnchor]);
+    const started = Date.now();
+    assert.throws(() => loadAccountObserverLaunchConfig({ ...fixtureValue.values,
+      "anchor-file": fifoAnchor }), /unsafe/);
+    assert.ok(Date.now() - started < 1000, "FIFO must fail without waiting for a writer");
     const untrusted = { ...config.trustAnchor,
       genesisCheckpoint: { ...config.trustAnchor.genesisCheckpoint,
         validatorSetId: "d".repeat(64) } };
