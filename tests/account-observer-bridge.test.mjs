@@ -4,7 +4,10 @@ import test from "node:test";
 import { createAccountObserverBridgeServer } from "../blockchain/account-observer-bridge.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
 import { finalizeBlock, NirChain } from "../blockchain/chain.mjs";
-import { SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
+import { CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION,
+  EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+  MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
+  SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { createFinalityProof } from "../blockchain/light-client.mjs";
 
@@ -126,6 +129,66 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     } finally {
       await new Promise((resolve) => { wrongGenesis.closeAllConnections?.(); wrongGenesis.close(resolve); });
     }
+  } finally {
+    await new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); });
+  }
+});
+
+test("observer rejects a signed continuous v28 header with a foreign genesis identity", async () => {
+  const validators = Array.from({ length: 4 }, generateWallet);
+  const members = validators.map((entry, index) => ({
+    ...publicWallet(entry), operatorId: `validator-${index}`,
+  }));
+  const membersFor = (role) => Array.from({ length: 4 }, (_, index) => ({
+    ...publicWallet(generateWallet()), operatorId: `${role}-${index}`,
+  }));
+  const networkId = "nir-observer-identity";
+  const chain = new NirChain({
+    beaconAuthorities: membersFor("beacon"),
+    capabilityReferences: [{ artifactHash: `sha256:${"1".repeat(64)}`,
+      behaviorCommitment: "2".repeat(64), capabilitiesBps: { "reasoning-v1": 1 } }],
+    evaluationEnvironment: { adapter_protocol: "nir-application-adapter-v1",
+      cpu_limit: 2, format: "nir-evaluation-environment-v1",
+      image_digest: `sha256:${"3".repeat(64)}`, memory_limit_bytes: 1 << 30,
+      runner_digest: `sha256:${"4".repeat(64)}`, timeout_seconds: 60 },
+    evaluators: membersFor("evaluator"),
+    genesisProtocolVersion: EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+    genesisTimestamp: 0, networkId,
+    safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
+    treasuryAddress: generateWallet().address, validators: members,
+  });
+  const genesis = chain.blocks()[0];
+  const activationHeight = 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+  const append = (options = {}) => {
+    const block = finalizeBlock(chain.buildBlock({ timestamp: chain.height + 1,
+      ...options }), validators.slice(0, 3));
+    chain.appendBlock(block);
+  };
+  append({ protocolUpgrade: { activationHeight, format: "nir-protocol-upgrade-v1",
+    version: CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION } });
+  while (chain.height < activationHeight) append();
+  const foreign = finalizeBlock({ ...chain.buildBlock({ timestamp: chain.height + 1 }),
+    chainIdentityGenesisHash: "f".repeat(64) }, validators.slice(0, 3));
+  const origin = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
+  const token = "a".repeat(64);
+  const server = createAccountObserverBridgeServer({
+    address: generateWallet().address, origin, sessionToken: token,
+    trustAnchor: { expectedNetworkId: networkId,
+      genesisCheckpoint: { accountStateRoot: genesis.accountStateRoot, height: 0,
+        protocolVersion: EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION,
+        stateRoot: genesis.stateRoot, tipHash: genesis.hash,
+        validatorSetId: chain.validatorSetId },
+      handoffs: [], trustedValidators: members },
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/verify-finality-chain`, {
+      method: "POST", body: JSON.stringify({ proofs: [
+        ...chain.blocks().slice(1).map(createFinalityProof), createFinalityProof(foreign),
+      ] }), headers: { "content-type": "application/json", origin,
+        "x-nir-observer-token": token },
+    });
+    assert.equal(response.status, 400);
   } finally {
     await new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); });
   }

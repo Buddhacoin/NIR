@@ -112,6 +112,7 @@ export function createAccountObserverBridgeServer({
         // untrusted replacement may be valid but cannot roll the tip backward.
         const next = verifyFinalityProofChain(body?.proofs, {
           checkpoint: pinnedGenesis,
+          expectedChainIdentityGenesisHash: pinnedGenesis.tipHash,
           expectedNetworkId: networkId,
           handoffs: trust.handoffs,
           trustedValidators: trust.trustedValidators,
