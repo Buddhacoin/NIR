@@ -30,7 +30,11 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(html, /id="candidate-file" type="file" accept="application\/json,\.json"/);
   assert.match(html, /href="\/iris-linear-sample\.json"/);
   assert.match(html, /Все 30 проверочных примеров Iris публичны/);
+  assert.match(html, /id="candidate-stress"[^>]*disabled/);
+  assert.match(html, /id="candidate-stress-state"[^>]*aria-live="polite"/);
   assert.match(script, /candidateDone: \(baseline, candidate, hash\) => .*не скрытый тест, не сетевая заявка и не награда/);
+  assert.match(script, /candidateStressDone: .*повторными запусками можно выбрать удачный seed/);
+  assert.match(script, /candidateStressDone: .*repeated runs can cherry-pick a favorable seed/);
   assert.match(css, /image-rendering:pixelated/);
   assert.match(css, /\.event-pulse/);
   for (const event of ["service-online", "iris-requested", "iris-result", "qwen-started",
@@ -726,6 +730,59 @@ test("a participant data-only Iris model changes measured output without executi
     assert.equal((await submit(JSON.stringify({ ...JSON.parse(model), command: "/bin/sh" }))).status, 400);
     assert.equal((await submit("x".repeat(4097))).status, 403);
   } finally { await stop(server); await stop(second.server); }
+});
+
+test("a local stress challenge fixes model bytes before its one-use seed is revealed", async () => {
+  const first = await serve();
+  const second = await serve();
+  const sample = readFileSync(join(root, "examples/iris_integer_linear.json"));
+  const changed = JSON.parse(sample);
+  changed.bias[2] = -400000;
+  const commit = (body = sample, origin = first.base, token = first.token) =>
+    fetch(`${first.base}/candidate/iris-linear/commit`, { method: "POST", body,
+      headers: { origin, "X-NIR-Session": token, "Content-Type": "application/json" } });
+  const reveal = (id, base = first.base, token = first.token) =>
+    fetch(`${base}/candidate/iris-linear/reveal`, { method: "POST", body: "",
+      headers: { origin: base, "X-NIR-Session": token, "X-NIR-Challenge": id } });
+  try {
+    assert.equal((await commit(sample, "https://attacker.invalid")).status, 403);
+    assert.equal((await commit(sample, first.base, "0".repeat(64))).status, 403);
+    const accepted = await commit();
+    assert.equal(accepted.status, 200);
+    const record = await accepted.json();
+    assert.equal(record.status, "local-model-committed");
+    assert.match(record.modelHash, /^sha256:[a-f0-9]{64}$/);
+    assert.match(record.commitHash, /^sha256:[a-f0-9]{64}$/);
+    assert.match(record.challengeId, /^[a-f0-9]{32}$/);
+    assert.equal(record.seed, undefined);
+    assert.equal(record.rewardEligible, false);
+    assert.equal((await commit(Buffer.from(JSON.stringify(changed)))).status, 409);
+    assert.equal((await reveal("0".repeat(32))).status, 404);
+    assert.equal((await reveal(record.challengeId, first.base, "0".repeat(64))).status, 403);
+    assert.equal((await fetch(`${first.base}/candidate/iris-linear/reveal`, {
+      method: "POST", body: "x", headers: { origin: first.base,
+        "X-NIR-Session": first.token, "X-NIR-Challenge": record.challengeId },
+    })).status, 403);
+    assert.equal((await reveal(record.challengeId, second.base, second.token)).status, 404);
+    const scored = await reveal(record.challengeId);
+    assert.equal(scored.status, 200);
+    const result = await scored.json();
+    assert.equal(result.status, "local-postcommit-iris-stress");
+    assert.equal(result.modelHash, record.modelHash);
+    assert.equal(result.commitHash, record.commitHash);
+    assert.match(result.seed, /^[a-f0-9]{64}$/);
+    assert.equal(result.caseCount, 90);
+    assert.equal(result.syntheticPerturbations, true);
+    assert.equal(result.hiddenChallenges, false);
+    assert.equal(result.independentOperators, false);
+    assert.equal(result.networkSubmitted, false);
+    assert.equal(result.rewardEligible, false);
+    assert.equal(result.walletChanged, false);
+    assert.equal((await reveal(record.challengeId)).status, 404);
+    const next = await commit(Buffer.from(JSON.stringify(changed)));
+    assert.equal(next.status, 200);
+    assert.notEqual((await next.json()).modelHash, record.modelHash);
+  } finally { await stop(first.server); await stop(second.server); }
 });
 
 test("a failed later run clears prior Iris evidence and rejects forged bundle metadata", async () => {
