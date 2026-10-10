@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { parseConsensusJson } from "./consensus-json.mjs";
 
 const FILES = Object.freeze([
-  "address-book.js", "app.js", "extension-background.js", "index.html", "manifest.json", "manifest.webmanifest",
+  "address-book.js", "app.js", "i18n.js", "extension-background.js", "index.html", "manifest.json", "manifest.webmanifest",
   "nir-coin-icon.png", "nir-coin-icon.svg", "node-selection.js", "nodes.json",
   "offline-signing.js", "qr.js", "style.css", "submission-status.js", "sw.js",
   "transaction-decoder.js",
