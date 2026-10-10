@@ -322,6 +322,23 @@ test("a replaced activation link is not overwritten by password rotation", () =>
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("lost rotation lock after activation reports uncertain, never unchanged", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-lock-loss-"));
+  const path = join(directory, "personal.nirvault.json");
+  const lock = join(directory, ".personal.nirvault.json.nir-password-rotation.lock");
+  const oldPassword = "old-personal-password-2026";
+  const newPassword = "new-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword, personalWallet: true,
+      _beforeActivate: () => { rmSync(lock); } }), (error) =>
+      error.code === "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN");
+    assert.equal(verifyWalletFile({ path, password: newPassword }).address, created.address);
+    assert.throws(() => verifyWalletFile({ path, password: oldPassword }), /invalid/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("a second process cannot change the same wallet while its rotation lock is held", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-lock-"));
   const path = join(directory, "personal.nirvault.json");

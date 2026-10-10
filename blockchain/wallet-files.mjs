@@ -313,15 +313,26 @@ export function changeWalletFilePassword({ path, oldPassword, newPassword,
     return changeWalletFilePasswordLocked({ path: target, oldPassword, newPassword,
       personalWallet, _beforeActivate });
   } finally {
-    closeSync(lockDescriptor);
+    let cleanupError;
     try {
+      closeSync(lockDescriptor);
       const current = lstatSync(lock);
       if (sameIdentity(current, lockIdentity) && current.isFile() &&
           !current.isSymbolicLink()) {
         unlinkSync(lock);
         fsyncSync(parentDescriptor);
+      } else {
+        throw new Error("wallet password rotation lock changed");
       }
-    } finally { closeSync(parentDescriptor); }
+    } catch (error) { cleanupError = error; }
+    try { closeSync(parentDescriptor); }
+    catch (error) { cleanupError ??= error; }
+    if (cleanupError) {
+      const uncertain = new Error("wallet password change may have activated; reopen and verify the address",
+        { cause: cleanupError });
+      uncertain.code = "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
+      throw uncertain;
+    }
   }
 }
 
