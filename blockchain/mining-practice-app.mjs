@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
+import { evaluateIrisLinearCandidate, MAX_IRIS_MODEL_BYTES } from "./iris-linear-candidate.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -14,11 +15,13 @@ const assets = new Map([
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
   ["/style.css", ["style.css", "text/css; charset=utf-8"]],
   ["/nir-icon.png", ["../wallet-ui/nir-coin-icon.png", "image/png"]],
+  ["/iris-linear-sample.json", ["../examples/iris_integer_linear.json", "application/json; charset=utf-8"]],
 ]);
 const APP_FILES = Object.freeze([
   "mining-app/index.html", "mining-app/app.js", "mining-app/style.css",
   "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
   "examples/iris_model_adapter.py", "examples/iris.data",
+  "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
   "nir/open_model_package.py", "nir/open_model_snapshot.py",
   "nir/open_model_source.py",
@@ -304,6 +307,41 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       } else {
         send(200, "application/json; charset=utf-8", lastIrisEvidence);
       }
+      return;
+    }
+    if (request.method === "POST" && path === "/candidate/iris-linear" &&
+        request.url === "/candidate/iris-linear") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > MAX_IRIS_MODEL_BYTES) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      running = true;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared || length > MAX_IRIS_MODEL_BYTES)
+            throw new Error("oversized Iris model");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated Iris model");
+        clearTimeout(deadline);
+        const result = evaluateIrisLinearCandidate(root, Buffer.concat(chunks, length));
+        send(200, "application/json; charset=utf-8", JSON.stringify(result));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid data-only Iris model" }));
+      } finally { clearTimeout(deadline); running = false; }
       return;
     }
     if (request.method === "POST" && path === "/model-evidence/verify" &&
