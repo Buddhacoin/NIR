@@ -579,6 +579,12 @@ test("RU/EN switch translates the active model result without changing its value
   for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
     nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {} });
   }
+  const providerSelect = { value: "", disabled: true, options: [], addEventListener() {},
+    replaceChildren(...items) { this.options = items; }, append(item) { this.options.push(item); } };
+  nodes.set("#provider-kind", providerSelect);
+  nodes.set("#provider-model-id", { value: "", addEventListener() {} });
+  nodes.set("#provider-export", { disabled: true, addEventListener() {} });
+  nodes.set("#provider-state", { textContent: "" });
   let onStart;
   let onLanguage;
   nodes.get("#start").addEventListener = (_, listener) => { onStart = listener; };
@@ -587,6 +593,7 @@ test("RU/EN switch translates the active model result without changing its value
     documentElement: { lang: "ru" },
     querySelector: (id) => nodes.get(id),
     querySelectorAll: () => labels,
+    createElement: () => ({ value: "", textContent: "" }),
   };
   const model = {
     status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
@@ -600,18 +607,26 @@ test("RU/EN switch translates the active model result without changing its value
     document,
     navigator: { language: "ru-RU" }, AbortController,
     fetch: async (path) => ({
-      ok: true, json: async () => path === "/status" ? { status: "local-model-service-ready" } : model,
+      ok: true, json: async () => path === "/status" ? { status: "local-model-service-ready" } :
+        path === "/provider-capabilities" ? { scope: "onboarding-only", providers: [
+          { id: "open-weight", label: "Open-weight model", executable: false },
+          { id: "openai-api", label: "OpenAI API", executable: false },
+          { id: "anthropic-api", label: "Anthropic API", executable: false },
+          { id: "google-api", label: "Google API", executable: false },
+        ] } : model,
     }),
     setInterval: () => 0, setTimeout, clearTimeout,
     TypeError,
   });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(providerSelect.options[0].textContent, "Выберите провайдера");
   await onStart();
   assert.equal(nodes.get("#result").hidden, false);
   assert.match(nodes.get("#score").textContent, /90\.00.*96\.66/);
   assert.ok(labels.every((label) => label.textContent.length > 0));
   onLanguage();
   assert.equal(document.documentElement.lang, "en");
+  assert.equal(providerSelect.options[0].textContent, "Choose a provider");
   assert.match(nodes.get("#score").textContent, /Accuracy: baseline 90\.00%, candidate 96\.66%/);
   assert.match(nodes.get("#technical").textContent, /Verified bundle hash/);
   assert.ok(labels.every((label) => label.textContent.length > 0));

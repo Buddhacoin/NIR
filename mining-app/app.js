@@ -524,6 +524,7 @@ function render() {
   }
   languageButton.textContent = locale === "ru" ? "EN" : "RU";
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
+  if (providerKind?.options?.length) providerKind.options[0].textContent = t.providerChoose;
   connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
   if (providerExport) {
     providerExport.disabled = !connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim();
