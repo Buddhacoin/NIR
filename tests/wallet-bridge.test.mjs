@@ -106,6 +106,8 @@ test("Firefox pairing binds one exact installation origin before exposing a brid
     assert.equal(deniedBeforePairing.headers.get("access-control-allow-origin"), null);
     assert.equal((await request(`${base}/v1/pairing-prompt`, first, "", { method: "POST" })).status, 202);
     assert.equal(prompts, 1);
+    assert.equal((await request(`${base}/v1/pairing-prompt`, second, "", { method: "POST" })).status, 429);
+    assert.equal(prompts, 1);
     const wrong = await request(`${base}/v1/pair`, second, "", {
       method: "POST", body: JSON.stringify({ code: "00000000" }),
     });
@@ -127,6 +129,36 @@ test("Firefox pairing binds one exact installation origin before exposing a brid
     assert.equal((await request(`${base}/v1/wallet`,
       "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d.evil", token)).status, 403);
   } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("an incomplete Firefox pairing body releases its global reservation promptly", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-firefox-bridge-stall-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "firefox-stall-password-2026" });
+  const origin = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
+  const server = createWalletBridgeServer({
+    authorize: async () => null, firefoxPairing: true, origin: "http://127.0.0.1:8765",
+    pairingCode: "12345678", sessionToken: "a".repeat(64), vaultPath,
+  });
+  let stalled;
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    stalled = httpRequest({ hostname: "127.0.0.1", port, path: "/v1/pair", method: "POST",
+      headers: { host: `127.0.0.1:${port}`, origin, "content-type": "application/json",
+        "content-length": "128" } });
+    stalled.on("error", () => {});
+    stalled.write("{");
+    await new Promise((resolve) => setTimeout(resolve, 5_500));
+    const paired = await request(`http://127.0.0.1:${port}/v1/pair`, origin, "", {
+      method: "POST", body: JSON.stringify({ code: "12345678" }),
+    });
+    assert.equal(paired.status, 200);
+  } finally {
+    stalled?.destroy();
     await close(server);
     rmSync(directory, { recursive: true, force: true });
   }

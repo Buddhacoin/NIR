@@ -108,10 +108,17 @@ function send(response, status, value, origin) {
   response.end(body);
 }
 
-function readBody(request, maximumBytes = 72 * 1024) {
+function readBody(request, maximumBytes = 72 * 1024, timeoutMs = 0) {
+  let timer;
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        reject(new Error("bridge pairing request timed out"));
+        request.destroy();
+      }, timeoutMs);
+    }
     request.on("data", (chunk) => {
       size += chunk.length;
       if (size > maximumBytes) reject(new Error("bridge request is too large"));
@@ -122,7 +129,8 @@ function readBody(request, maximumBytes = 72 * 1024) {
       catch { reject(new Error("bridge request is not valid JSON")); }
     });
     request.on("error", reject);
-  });
+    request.on("aborted", () => reject(new Error("bridge request was aborted")));
+  }).finally(() => clearTimeout(timer));
 }
 
 function validIntent(value) {
@@ -457,6 +465,8 @@ export function createWalletBridgeServer({
   let pairingPending = false;
   let sessionActive = pairingCode === undefined;
   let pairedFirefoxOrigin = null;
+  let firefoxPromptCount = 0;
+  let lastFirefoxPromptAt = 0;
   let sessionGeneration = 0;
   let accountActionPending = false;
   const activateAccount = (id) => {
@@ -527,8 +537,16 @@ export function createWalletBridgeServer({
           Date.now() > pairingDeadline || pairingAttempts >= 5) {
         return send(response, 409, { error: "pairing is unavailable; restart the bridge" }, origin);
       }
+      if (firefoxPairing && (firefoxPromptCount >= 3 ||
+          (lastFirefoxPromptAt !== 0 && Date.now() - lastFirefoxPromptAt < 10_000))) {
+        return send(response, 429, { error: "pairing prompt is temporarily limited" }, origin);
+      }
       try {
         presentPairingCode();
+        if (firefoxPairing) {
+          firefoxPromptCount += 1;
+          lastFirefoxPromptAt = Date.now();
+        }
         return send(response, 202, { shownOnDevice: true }, origin);
       } catch {
         return send(response, 503, { error: "pairing window could not be opened" }, origin);
@@ -546,7 +564,7 @@ export function createWalletBridgeServer({
         }
         pairingPending = true;
         pairingAttempts += 1;
-        const body = await readBody(request, 128);
+        const body = await readBody(request, 128, firefoxPairing ? 4_000 : 0);
         if (!body || Object.keys(body).length !== 1 || typeof body.code !== "string" ||
             !sameSecret(body.code, pairingCode)) {
           throw new Error("pairing code is invalid");
@@ -556,6 +574,7 @@ export function createWalletBridgeServer({
         sessionActive = true;
         return send(response, 200, { sessionToken }, origin);
       } catch (error) {
+        if (response.destroyed) return;
         return send(response, 400, { error: publicBridgeError(error) }, origin);
       } finally {
         pairingPending = false;
