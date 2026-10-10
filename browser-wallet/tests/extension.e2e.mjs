@@ -81,6 +81,14 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     const firstAddress = await page.locator("#full-address").textContent();
     assert.match(firstAddress, /^nir1[0-9a-f]{64}$/);
     await page.getByRole("button", { name: "Выбрать адрес" }).click();
+    await page.evaluate(() => {
+      window.__originalStorageSet = chrome.storage.local.set;
+      chrome.storage.local.set = () => Promise.reject(new Error("simulated storage failure"));
+    });
+    await page.getByRole("button", { name: "+ Добавить адрес" }).click();
+    await page.waitForFunction(() => document.querySelector("#status")?.textContent.length > 0);
+    assert.equal((await page.evaluate(() => chrome.storage.local.get("nirTestWallet"))).nirTestWallet.accountCount, 1);
+    await page.evaluate(() => { chrome.storage.local.set = window.__originalStorageSet; });
     await page.getByRole("button", { name: "+ Добавить адрес" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
     assert.equal(await page.locator("#account-label").textContent(), "Адрес 2");
