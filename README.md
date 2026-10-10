@@ -33,11 +33,13 @@ The one-click experience requires an official browser-store listing or a signed 
 |---|---|
 | Chrome on Mac, Windows, Linux | No Chrome Web Store listing planned for this first release. |
 | Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | No verified one-click install. Chromium compatibility has not been tested separately in each browser. |
-| Firefox on desktop | Submission package is not ready: the current extension fails Firefox manifest validation. Mozilla has not signed or published it; no one-click installation link exists. |
+| Firefox on desktop | An unsigned development package can be staged for manifest validation, but Firefox-origin pairing with the local services is not implemented. Mozilla has not signed or published it; no one-click installation link exists. |
 | Safari on Mac or iPhone/iPad | No signed Safari app extension or installer. |
 | Android browsers | No verified browser-wallet installation. |
 
 Existing developer ZIPs require manual installation and are **not** one-click installers, audited wallets, or automatically updated releases. General users should wait for the official Firefox Add-ons listing and must not install purported NIR Wallet apps from third-party sites. The earlier Mac desktop demo is a local prototype, not a public installer. See the [wallet safety guide](docs/wallet.md).
+
+Developers can run `npm run wallet:firefox-stage -- /absolute/new-directory` to create an unsigned Firefox-specific source directory, then validate it with `web-ext lint --source-dir /absolute/new-directory`. The command refuses an existing destination and leaves the Chrome production manifest unchanged. Do not distribute this directory as a usable wallet: the local bridge and node still reject Firefox's per-installation `moz-extension://` origin.
 
 ## Current status
 
