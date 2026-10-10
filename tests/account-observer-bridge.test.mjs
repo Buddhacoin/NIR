@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { createAccountObserverBridgeServer } from "../blockchain/account-observer-bridge.mjs";
@@ -62,14 +65,23 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
   };
   const origin = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
   const token = "a".repeat(64);
+  const checkpointDirectory = mkdtempSync(join(tmpdir(), "nir-account-observer-"));
+  const checkpointPath = join(checkpointDirectory, "checkpoint.json");
   let nodeAccountProof = proofFor(account.address);
   let nodeFinalityProofs = [createFinalityProof(block)];
   let nodeHealthNetworkId = networkId;
+  let nodeHealthHeight = null;
+  let nodeHealthTipHash = null;
   const node = createServer((request, response) => {
+    const url = new URL(request.url, "http://node.local");
+    const fromHeight = Number(url.searchParams.get("fromHeight"));
+    const limit = Number(url.searchParams.get("limit"));
     const payload = request.url === "/health"
-      ? { height: chain.height, networkId: nodeHealthNetworkId, tipHash: chain.tipHash }
-      : request.url === "/v1/finality-proofs?fromHeight=0&limit=512"
-        ? { proofs: nodeFinalityProofs }
+      ? { height: nodeHealthHeight ?? chain.height, networkId: nodeHealthNetworkId,
+        tipHash: nodeHealthTipHash ?? chain.tipHash }
+      : url.pathname === "/v1/finality-proofs" && Number.isInteger(fromHeight) &&
+        Number.isInteger(limit)
+        ? { proofs: nodeFinalityProofs.slice(fromHeight, fromHeight + limit) }
         : request.url === `/v1/accounts/${account.address}/proof`
           ? nodeAccountProof : null;
     response.writeHead(payload ? 200 : 404, { "content-type": "application/json" });
@@ -82,10 +94,11 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
       validatorSetId: chain.validatorSetId },
     handoffs: [], trustedValidators: members };
   const server = createAccountObserverBridgeServer({
-    address: account.address, origin, sessionToken: token, trustAnchor,
+    address: account.address, checkpointPath, origin, sessionToken: token, trustAnchor,
     nodeBaseUrl: `http://127.0.0.1:${node.address().port}`,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let serverClosed = false;
   try {
     const base = `http://127.0.0.1:${server.address().port}`;
     const post = (path, body, overrides = {}) => fetch(`${base}${path}`, {
@@ -122,8 +135,12 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     nodeHealthNetworkId = "nir-foreign-network";
     assert.equal((await post("/v1/refresh-account", {})).status, 400);
     nodeHealthNetworkId = networkId;
-    nodeFinalityProofs = [{ ...nodeFinalityProofs[0], hash: "f".repeat(64) }];
+    nodeHealthHeight = 513;
     assert.equal((await post("/v1/refresh-account", {})).status, 400);
+    nodeHealthHeight = null;
+    nodeFinalityProofs = [{ ...nodeFinalityProofs[0], hash: "f".repeat(64) }];
+    // The already authenticated tip needs no duplicate finality download.
+    assert.equal((await post("/v1/refresh-account", {})).status, 200);
     nodeFinalityProofs = [createFinalityProof(block)];
     assert.equal((await post("/v1/refresh-account", { address: other.address })).status, 400);
     assert.equal((await post("/v1/verify-account-proof", {
@@ -146,6 +163,15 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     })).status, 400);
     // A rejected higher fork must not replace the previously verified tip.
     assert.equal((await post("/v1/verify-account-proof", { proof: accountProof })).status, 200);
+    const second = finalizeBlock(chain.buildBlock({ timestamp: 2 }), validators.slice(0, 3));
+    chain.appendBlock(second);
+    nodeFinalityProofs = [createFinalityProof(block), createFinalityProof(second)];
+    nodeAccountProof = proofFor(account.address);
+    assert.equal((await post("/v1/refresh-account", {})).status, 200);
+    assert.throws(() => createAccountObserverBridgeServer({
+      address: account.address, checkpointPath, origin, sessionToken: token, trustAnchor,
+      nodeBaseUrl: `http://127.0.0.1:${node.address().port}`,
+    }), /EEXIST/);
     for (const path of ["/v1/sign-transfer", "/v1/wallet", "/v1/pair", "/v1/select-account"]) {
       assert.equal((await post(path, {})).status, 404);
     }
@@ -168,9 +194,101 @@ test("observer verifies only one Firefox account on one pinned chain and cannot 
     } finally {
       await new Promise((resolve) => { wrongGenesis.closeAllConnections?.(); wrongGenesis.close(resolve); });
     }
-  } finally {
     await new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); });
+    serverClosed = true;
+    const restarted = createAccountObserverBridgeServer({
+      address: account.address, checkpointPath, origin, sessionToken: token, trustAnchor,
+      nodeBaseUrl: `http://127.0.0.1:${node.address().port}`,
+    });
+    await new Promise((resolve) => restarted.listen(0, "127.0.0.1", resolve));
+    try {
+      nodeHealthHeight = 1;
+      nodeHealthTipHash = block.hash;
+      nodeFinalityProofs = [createFinalityProof(block)];
+      nodeAccountProof = accountProof;
+      const stale = await fetch(`http://127.0.0.1:${restarted.address().port}/v1/refresh-account`, {
+        body: "{}", method: "POST", headers: {
+          "content-type": "application/json", origin, "x-nir-observer-token": token,
+        },
+      });
+      assert.equal(stale.status, 400);
+    } finally {
+      await new Promise((resolve) => {
+        restarted.closeAllConnections?.(); restarted.close(resolve);
+      });
+    }
+    nodeHealthHeight = null;
+    nodeHealthTipHash = null;
+    for (let height = chain.height + 1; height <= 513; height += 1) {
+      chain.appendBlock(finalizeBlock(chain.buildBlock({ timestamp: height }),
+        validators.slice(0, 3)));
+    }
+    nodeFinalityProofs = chain.blocks().slice(1).map(createFinalityProof);
+    nodeAccountProof = proofFor(account.address);
+    const lastProof = nodeFinalityProofs[512];
+    nodeFinalityProofs[512] = { ...lastProof, hash: "f".repeat(64) };
+    const interruptedPath = join(checkpointDirectory, "interrupted.json");
+    const startInterrupted = () => createAccountObserverBridgeServer({
+      address: account.address, checkpointPath: interruptedPath,
+      origin, sessionToken: token, trustAnchor,
+      nodeBaseUrl: `http://127.0.0.1:${node.address().port}`,
+    });
+    const interrupted = startInterrupted();
+    await new Promise((resolve) => interrupted.listen(0, "127.0.0.1", resolve));
+    try {
+      const rejected = await fetch(`http://127.0.0.1:${interrupted.address().port}/v1/refresh-account`, {
+        body: "{}", method: "POST", headers: {
+          "content-type": "application/json", origin, "x-nir-observer-token": token,
+        },
+      });
+      assert.equal(rejected.status, 400);
+    } finally {
+      await new Promise((resolve) => {
+        interrupted.closeAllConnections?.(); interrupted.close(resolve);
+      });
+    }
+    nodeFinalityProofs[512] = lastProof;
+    const resumed = startInterrupted();
+    await new Promise((resolve) => resumed.listen(0, "127.0.0.1", resolve));
+    try {
+      const recovered = await fetch(`http://127.0.0.1:${resumed.address().port}/v1/refresh-account`, {
+        body: "{}", method: "POST", headers: {
+          "content-type": "application/json", origin, "x-nir-observer-token": token,
+        },
+      });
+      assert.equal(recovered.status, 200);
+      assert.equal((await recovered.json()).statement.height, 513);
+    } finally {
+      await new Promise((resolve) => {
+        resumed.closeAllConnections?.(); resumed.close(resolve);
+      });
+    }
+    const freshObserver = createAccountObserverBridgeServer({
+      address: account.address, checkpointPath: join(checkpointDirectory, "fresh.json"),
+      origin, sessionToken: token, trustAnchor,
+      nodeBaseUrl: `http://127.0.0.1:${node.address().port}`,
+    });
+    await new Promise((resolve) => freshObserver.listen(0, "127.0.0.1", resolve));
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${freshObserver.address().port}/v1/refresh-account`, {
+          body: "{}", method: "POST", headers: {
+            "content-type": "application/json", origin, "x-nir-observer-token": token,
+          },
+        });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).statement.height, 513);
+    } finally {
+      await new Promise((resolve) => {
+        freshObserver.closeAllConnections?.(); freshObserver.close(resolve);
+      });
+    }
+  } finally {
+    if (!serverClosed) {
+      await new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); });
+    }
     await new Promise((resolve) => { node.closeAllConnections?.(); node.close(resolve); });
+    rmSync(checkpointDirectory, { recursive: true, force: true });
   }
 });
 
@@ -222,12 +340,17 @@ test("observer rejects a signed continuous v28 header with a foreign genesis ide
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/verify-finality-chain`, {
-      method: "POST", body: JSON.stringify({ proofs: [
-        ...chain.blocks().slice(1).map(createFinalityProof), createFinalityProof(foreign),
-      ] }), headers: { "content-type": "application/json", origin,
-        "x-nir-observer-token": token },
-    });
+    const post = (proofs) => fetch(
+      `http://127.0.0.1:${server.address().port}/v1/verify-finality-chain`, {
+        method: "POST", body: JSON.stringify({ proofs }), headers: {
+          "content-type": "application/json", origin, "x-nir-observer-token": token,
+        },
+      });
+    const beforeActivation = chain.blocks().slice(1, -1).map(createFinalityProof);
+    assert.equal((await post(beforeActivation)).status, 200);
+    const response = await post([
+      createFinalityProof(chain.blocks().at(-1)), createFinalityProof(foreign),
+    ]);
     assert.equal(response.status, 400);
   } finally {
     await new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); });

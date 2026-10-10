@@ -2,9 +2,17 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
 import { verifyAccountProof, MAX_ACCOUNT_PROOF_BYTES } from "./account-proof.mjs";
+import {
+  acquireAccountObserverSession, loadAccountObserverCheckpoint,
+  saveAccountObserverCheckpoint,
+} from "./account-observer-checkpoint.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
-import { verifyFinalityProofChain, MAX_FINALITY_CHAIN_BYTES } from "./light-client.mjs";
+import { CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION } from "./constants.mjs";
+import {
+  verifyFinalityProofChain, MAX_FINALITY_CHAIN_BYTES, MAX_FINALITY_PROOFS,
+} from "./light-client.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
+import { validatorSetId } from "./validator-rotation.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -67,12 +75,14 @@ async function readNodeJson(nodeBaseUrl, path, maximumBytes) {
 // Its token is useful only for checking public evidence for one fixed address;
 // there is no vault path, account selection, signing or token-upgrade route.
 export function createAccountObserverBridgeServer({
-  address, nodeBaseUrl, origin, sessionToken, trustAnchor,
+  address, checkpointPath, nodeBaseUrl, origin, sessionToken, trustAnchor,
 } = {}) {
   const networkId = trustAnchor?.expectedNetworkId;
   const genesis = trustAnchor?.genesisCheckpoint;
   if (!ADDRESS.test(address ?? "") || !FIREFOX_ORIGIN.test(origin ?? "") ||
       !HASH.test(sessionToken ?? "") ||
+      (checkpointPath !== undefined &&
+       (typeof checkpointPath !== "string" || checkpointPath.length < 1)) ||
       (nodeBaseUrl !== undefined &&
         (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(nodeBaseUrl) ||
          Number(nodeBaseUrl.slice("http://127.0.0.1:".length)) > 65_535)) ||
@@ -90,23 +100,60 @@ export function createAccountObserverBridgeServer({
   };
   advanceValidatorTrust(trust);
   const pinnedGenesis = structuredClone(genesis);
-  let verifiedTip = null;
+  const binding = { address, genesisHash: pinnedGenesis.tipHash, networkId };
+  const releaseSession = checkpointPath
+    ? acquireAccountObserverSession(checkpointPath) : null;
+  let savedCheckpoint;
+  try {
+    savedCheckpoint = checkpointPath
+      ? loadAccountObserverCheckpoint(checkpointPath, binding) : null;
+    if (savedCheckpoint) {
+      const active = advanceValidatorTrust({
+        expectedNetworkId: networkId,
+        handoffs: trust.handoffs.filter(({ activationHeight }) =>
+          activationHeight <= savedCheckpoint.tip.height),
+        trustedValidators: trust.trustedValidators,
+      });
+      if (savedCheckpoint.tip.validatorSetId !== validatorSetId(active.trustedValidators)) {
+        throw new Error("observer checkpoint validator set is not trusted");
+      }
+    }
+  } catch (error) {
+    releaseSession?.();
+    throw error;
+  }
+  let verifiedTip = savedCheckpoint?.tip ?? null;
+  let verifiedTimestamp = savedCheckpoint?.lastTimestamp ?? null;
   let refreshPending = false;
   const verifyChain = (proofs) => {
-    // Full genesis-to-tip chain only; cannot silently substitute a later fork.
+    const base = verifiedTip ?? pinnedGenesis;
+    if (!Array.isArray(proofs) || proofs[0]?.header?.height !== base.height + 1 ||
+        proofs[0]?.header?.previousHash !== base.tipHash ||
+        (verifiedTimestamp !== null && proofs[0]?.header?.timestamp < verifiedTimestamp)) {
+      throw new Error("observer finality chain does not extend the verified tip");
+    }
+    if (proofs.some(({ header }) =>
+      header?.protocolVersion >= CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION &&
+      header?.chainIdentityGenesisHash !== pinnedGenesis.tipHash)) {
+      throw new Error("observer finality chain has a foreign genesis identity");
+    }
+    // A pre-v28 checkpoint is bound to genesis by the private local store; v28+
+    // additionally authenticates the genesis identity inside every header.
     const next = verifyFinalityProofChain(proofs, {
-      checkpoint: pinnedGenesis,
-      expectedChainIdentityGenesisHash: pinnedGenesis.tipHash,
+      checkpoint: base,
+      expectedChainIdentityGenesisHash: base.height > 0 &&
+        base.protocolVersion < CHAIN_IDENTITY_CHECKPOINT_PROTOCOL_VERSION
+        ? null : pinnedGenesis.tipHash,
       expectedNetworkId: networkId,
       handoffs: trust.handoffs,
       trustedValidators: trust.trustedValidators,
     });
-    const previousHeightProof = verifiedTip && proofs[verifiedTip.height - 1];
-    if (verifiedTip && (next.height < verifiedTip.height ||
-        previousHeightProof?.hash !== verifiedTip.tipHash)) {
-      throw new Error("observer finality tip would roll back or conflict");
-    }
     return next;
+  };
+  const commitTip = (tip, timestamp) => {
+    if (checkpointPath) saveAccountObserverCheckpoint(checkpointPath, binding, tip, timestamp);
+    verifiedTip = tip;
+    verifiedTimestamp = timestamp;
   };
   const verifyAccount = (proof, tip) => {
     if (!tip || proof?.height !== tip.height) {
@@ -139,7 +186,7 @@ export function createAccountObserverBridgeServer({
     }
     return statement;
   };
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     const requestOrigin = request.headers.origin;
     const remoteAddress = request.socket.remoteAddress ?? "";
     if (requestOrigin !== origin ||
@@ -188,15 +235,23 @@ export function createAccountObserverBridgeServer({
         try {
           const health = await readNodeJson(nodeBaseUrl, "/health", 1_024);
           if (health?.networkId !== networkId || !Number.isSafeInteger(health.height) ||
-              health.height < 1 || health.height > 512 || !HASH.test(health.tipHash ?? "")) {
+              health.height < 1 || !HASH.test(health.tipHash ?? "") ||
+              health.height < (verifiedTip?.height ?? 0)) {
             throw new Error("node height or network is unsupported");
           }
-          const finality = await readNodeJson(nodeBaseUrl,
-            "/v1/finality-proofs?fromHeight=0&limit=512", MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
-          if (!Array.isArray(finality?.proofs) || finality.proofs.length !== health.height) {
-            throw new Error("node finality chain is incomplete");
+          while ((verifiedTip?.height ?? 0) < health.height) {
+            const fromHeight = verifiedTip?.height ?? 0;
+            const limit = Math.min(MAX_FINALITY_PROOFS, health.height - fromHeight);
+            const finality = await readNodeJson(nodeBaseUrl,
+              `/v1/finality-proofs?fromHeight=${fromHeight}&limit=${limit}`,
+              MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
+            if (!Array.isArray(finality?.proofs) || finality.proofs.length !== limit) {
+              throw new Error("node finality chain is incomplete");
+            }
+            const next = verifyChain(finality.proofs);
+            commitTip(next, finality.proofs.at(-1).header.timestamp);
           }
-          const next = verifyChain(finality.proofs);
+          const next = verifiedTip;
           if (next.height !== health.height || next.tipHash !== health.tipHash) {
             throw new Error("node tip changed during account refresh");
           }
@@ -207,7 +262,6 @@ export function createAccountObserverBridgeServer({
           if (verifiedTip !== priorTip) {
             throw new Error("observer tip changed during account refresh");
           }
-          verifiedTip = next;
           return send(response, 200, {
             address, genesisHash: pinnedGenesis.tipHash, networkId, statement, verified: true,
           }, origin);
@@ -216,12 +270,19 @@ export function createAccountObserverBridgeServer({
         }
       }
       if (url.pathname === "/v1/verify-finality-chain") {
-        const body = await readJson(request, MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
-        const next = verifyChain(body?.proofs);
-        verifiedTip = next;
-        return send(response, 200, {
-          genesisHash: pinnedGenesis.tipHash, networkId, tip: next, verified: true,
-        }, origin);
+        if (refreshPending) return send(response, 409,
+          { error: "account refresh is already running" }, origin);
+        refreshPending = true;
+        try {
+          const body = await readJson(request, MAX_FINALITY_CHAIN_BYTES + 64 * 1024);
+          const next = verifyChain(body?.proofs);
+          commitTip(next, body.proofs.at(-1).header.timestamp);
+          return send(response, 200, {
+            genesisHash: pinnedGenesis.tipHash, networkId, tip: next, verified: true,
+          }, origin);
+        } finally {
+          refreshPending = false;
+        }
       }
       const body = await readJson(request, MAX_ACCOUNT_PROOF_BYTES + 1_024);
       if (!body || Object.keys(body).sort().join(",") !== "proof") {
@@ -235,4 +296,6 @@ export function createAccountObserverBridgeServer({
       return send(response, 400, { error: "observer evidence could not be verified" }, origin);
     }
   });
+  if (releaseSession) server.once("close", releaseSession);
+  return server;
 }
