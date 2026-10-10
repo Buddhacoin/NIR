@@ -9,8 +9,68 @@ import { runInNewContext } from "node:vm";
 
 import { createMiningPracticeApp, localReplayRecordHash, miningModelAppPreflight,
   runPinnedModel } from "../blockchain/mining-practice-app.mjs";
+import { evaluateIrisPostCommitStress } from "../blockchain/iris-linear-candidate.mjs";
 
 const root = join(import.meta.dirname, "..");
+
+test("local rechecker requires authenticated model and record imports", async () => {
+  const { server, base, token } = await serve();
+  try {
+    const model = readFileSync(join(root, "examples/iris_integer_linear.json"));
+    const record = evaluateIrisPostCommitStress(root, model, Buffer.alloc(32, 7));
+    const post = (origin, supplied, body) => fetch(`${base}/candidate/iris-linear/recheck`, {
+      method: "POST", body: JSON.stringify(body), headers: { origin,
+        "X-NIR-Session": supplied, "Content-Type": "application/json" },
+    });
+    const input = { modelBase64: model.toString("base64"), record };
+    assert.equal((await post(base, "0".repeat(64), input)).status, 403);
+    assert.equal((await post("https://attacker.example", token, input)).status, 403);
+    assert.equal((await post(base, token, { modelBase64: "", record: {} })).status, 400);
+    const match = await post(base, token, input);
+    assert.equal(match.status, 200);
+    const matched = await match.json();
+    assert.equal(matched.status, "local-iris-recheck-matched");
+    assert.equal(matched.caseCount, 90);
+    assert.equal(matched.rewardEligible, false);
+    assert.equal(matched.operatorIdentityVerified, false);
+    const mismatch = await post(base, token, { ...input,
+      record: { ...record, candidateAccuracyBps: 0 } });
+    assert.equal((await mismatch.json()).status, "local-iris-recheck-mismatch");
+    assert.equal((await post(base, token, { ...input,
+      modelBase64: Buffer.from("import os").toString("base64") })).status, 400);
+  } finally { await stop(server); }
+});
+
+test("one Model Lab service exposes wallet ownership, recheck role, and provider intent without reward", async () => {
+  const { server, base, token } = await serve();
+  const headers = { origin: base, "X-NIR-Session": token };
+  try {
+    const challenge = await fetch(`${base}/wallet-link/challenge`, {
+      method: "POST", headers, body: "",
+    });
+    assert.equal(challenge.status, 200);
+    assert.equal((await challenge.json()).rewardEligible, false);
+    const providers = await (await fetch(`${base}/provider-capabilities`)).json();
+    assert.equal(providers.scope, "onboarding-only");
+    const declaration = await fetch(`${base}/provider-capabilities/declaration`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "anthropic-api", modelId: "claude-sonnet-4" }),
+    });
+    assert.equal(declaration.status, 200);
+    assert.equal((await declaration.json()).rewardEligible, false);
+    const model = readFileSync(join(root, "examples/iris_integer_linear.json"));
+    const record = evaluateIrisPostCommitStress(root, model, Buffer.alloc(32, 5));
+    const recheck = await fetch(`${base}/candidate/iris-linear/recheck`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ modelBase64: model.toString("base64"), record }),
+    });
+    assert.equal(recheck.status, 200);
+    const checked = await recheck.json();
+    assert.equal(checked.status, "local-iris-recheck-matched");
+    assert.equal(checked.rewardEligible, false);
+    assert.equal(checked.operatorIdentityVerified, false);
+  } finally { await stop(server); }
+});
 
 test("operator console shows only real local stages, roles, and runnable models", () => {
   const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
@@ -32,15 +92,56 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(html, /Все 30 проверочных примеров Iris публичны/);
   assert.match(html, /id="candidate-stress"[^>]*disabled/);
   assert.match(html, /id="candidate-stress-state"[^>]*aria-live="polite"/);
+  for (const id of ["provider-kind", "provider-model-id", "provider-export", "provider-state"])
+    assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /API-ключи сюда не вводятся/);
+  assert.match(script, /providerDone: .*не проверка модели и не майнинг/);
   assert.match(script, /candidateDone: \(baseline, candidate, hash\) => .*не скрытый тест, не сетевая заявка и не награда/);
   assert.match(script, /candidateStressDone: .*повторными запусками можно выбрать удачный seed/);
   assert.match(script, /candidateStressDone: .*repeated runs can cherry-pick a favorable seed/);
+  for (const id of ["candidate-record-export", "recheck-model-file", "recheck-record-file",
+    "recheck-run", "recheck-state"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются/);
+  assert.match(script, /recheckMatched: \(hash\) => .*не независимая сетевая проверка/);
+  assert.match(script, /recheckMismatch: .*Не принимайте эту запись как результат/);
   assert.match(css, /image-rendering:pixelated/);
   assert.match(css, /\.event-pulse/);
   for (const event of ["service-online", "iris-requested", "iris-result", "qwen-started",
     "qwen-result"]) assert.match(script, new RegExp(`recordLocalEvent\\("${event}"`));
   assert.doesNotMatch(script, /Math\.random\(\)/);
   assert.doesNotMatch(html, /\b(?:100|[1-9]?[0-9])%\b/);
+});
+
+test("provider onboarding exports bounded non-reward capability declaration", async () => {
+  const { server, base, token } = await serve();
+  try {
+    const registry = await fetch(`${base}/provider-capabilities`);
+    assert.equal(registry.status, 200);
+    const listed = await registry.json();
+    assert.deepEqual(listed.providers.map((p) => p.id), ["open-weight", "openai-api", "anthropic-api", "google-api"]);
+    const post = (body, origin = base) => fetch(`${base}/provider-capabilities/declaration`, {
+      method: "POST", body: JSON.stringify(body), headers: { origin, "X-NIR-Session": token,
+        "Content-Type": "application/json" },
+    });
+    assert.equal((await post({ provider: "openai-api", modelId: "gpt-4o" }, "https://evil.example")).status, 403);
+    assert.equal((await post({ provider: "openai-api", modelId: "gpt-4o", apiKey: "secret" })).status, 400);
+    assert.equal((await post({ provider: "openai-api", modelId: "https://evil.example" })).status, 400);
+    assert.equal((await post({ provider: "anthropic-api", modelId: "../.ssh/id_ed25519" })).status, 400);
+    assert.equal((await post({ provider: "unregistered", modelId: "model-1" })).status, 400);
+    assert.equal((await post({ provider: "google-api", modelId: "x".repeat(101) })).status, 400);
+    for (const modelId of ["sk-proj-" + "A".repeat(48), "sk-ant-" + "B".repeat(48),
+      "AIza" + "C".repeat(35), "BearerToken12345", "D".repeat(40)])
+      assert.equal((await post({ provider: "openai-api", modelId })).status, 400);
+    const response = await post({ provider: "openai-api", modelId: "gpt-4o" });
+    assert.equal(response.status, 200);
+    const declaration = await response.json();
+    assert.equal(declaration.scope, "operator-capability-intent-only");
+    assert.equal(declaration.provider, "openai-api");
+    assert.equal(declaration.modelId, "gpt-4o");
+    for (const flag of ["modelExecuted", "independentlyVerified", "networkSubmitted", "rewardEligible", "walletChanged"])
+      assert.equal(declaration[flag], false);
+    assert.doesNotMatch(JSON.stringify(declaration), /secret|apiKey/i);
+  } finally { await stop(server); }
 });
 
 test("operator console keeps its status, event, and model text readable", () => {
@@ -374,6 +475,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
       "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
       "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
+      "blockchain/model-provider-capabilities.mjs",
       "nir/open_model_local_run.py", "nir/open_model_fetch.py",
       "nir/open_model_package.py", "nir/open_model_snapshot.py",
       "nir/open_model_source.py",
@@ -390,7 +492,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
-test("mining lab serves a pinned-model UI with no secret or code input", async () => {
+test("mining lab serves bounded model identifier input with no secret or code input", async () => {
   const { server, base } = await serve(async () => ({}));
   try {
     const response = await fetch(base);
@@ -400,13 +502,16 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
       ['<input id="candidate-file" type="file" accept="application/json,.json">',
+        '<input id="recheck-model-file" type="file" accept="application/json,.json">',
+        '<input id="recheck-record-file" type="file" accept="application/json,.json">',
+        '<input id="provider-model-id" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Qwen/Qwen3-0.6B">',
         '<input id="qwen-replay-file" type="file" accept="application/json,.json">',
         '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
     assert.deepEqual([...html.matchAll(/<textarea\b[^>]*>/gi)].map(([field]) => field), [
       '<textarea id="wallet-link-challenge" readonly hidden aria-label="Одноразовый запрос для кошелька">',
       '<textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька">',
     ]);
-    assert.doesNotMatch(html, /<form|type="(?:text|password)"|приватный ключ.*введите|введите.*пароль/i);
+    assert.doesNotMatch(html, /<form|type="password"|приватный ключ.*введите|введите.*пароль/i);
     assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
     assert.match(html, /id="connection"/);
@@ -474,6 +579,12 @@ test("RU/EN switch translates the active model result without changing its value
   for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
     nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {} });
   }
+  const providerSelect = { value: "", disabled: true, options: [], addEventListener() {},
+    replaceChildren(...items) { this.options = items; }, append(item) { this.options.push(item); } };
+  nodes.set("#provider-kind", providerSelect);
+  nodes.set("#provider-model-id", { value: "", addEventListener() {} });
+  nodes.set("#provider-export", { disabled: true, addEventListener() {} });
+  nodes.set("#provider-state", { textContent: "" });
   let onStart;
   let onLanguage;
   nodes.get("#start").addEventListener = (_, listener) => { onStart = listener; };
@@ -482,6 +593,7 @@ test("RU/EN switch translates the active model result without changing its value
     documentElement: { lang: "ru" },
     querySelector: (id) => nodes.get(id),
     querySelectorAll: () => labels,
+    createElement: () => ({ value: "", textContent: "" }),
   };
   const model = {
     status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
@@ -495,18 +607,26 @@ test("RU/EN switch translates the active model result without changing its value
     document,
     navigator: { language: "ru-RU" }, AbortController,
     fetch: async (path) => ({
-      ok: true, json: async () => path === "/status" ? { status: "local-model-service-ready" } : model,
+      ok: true, json: async () => path === "/status" ? { status: "local-model-service-ready" } :
+        path === "/provider-capabilities" ? { scope: "onboarding-only", providers: [
+          { id: "open-weight", label: "Open-weight model", executable: false },
+          { id: "openai-api", label: "OpenAI API", executable: false },
+          { id: "anthropic-api", label: "Anthropic API", executable: false },
+          { id: "google-api", label: "Google API", executable: false },
+        ] } : model,
     }),
     setInterval: () => 0, setTimeout, clearTimeout,
     TypeError,
   });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(providerSelect.options[0].textContent, "Выберите провайдера");
   await onStart();
   assert.equal(nodes.get("#result").hidden, false);
   assert.match(nodes.get("#score").textContent, /90\.00.*96\.66/);
   assert.ok(labels.every((label) => label.textContent.length > 0));
   onLanguage();
   assert.equal(document.documentElement.lang, "en");
+  assert.equal(providerSelect.options[0].textContent, "Choose a provider");
   assert.match(nodes.get("#score").textContent, /Accuracy: baseline 90\.00%, candidate 96\.66%/);
   assert.match(nodes.get("#technical").textContent, /Verified bundle hash/);
   assert.ok(labels.every((label) => label.textContent.length > 0));

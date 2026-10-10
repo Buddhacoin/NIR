@@ -58,6 +58,17 @@
       <p id="candidate-state" role="status" aria-live="polite"></p>
       <button id="candidate-stress" class="secondary" type="button" disabled data-i18n="candidateStressButton">Проверить после фиксации файла</button>
       <p id="candidate-stress-state" class="candidate-proof" role="status" aria-live="polite"></p>
+      <button id="candidate-record-export" class="secondary" type="button" hidden data-i18n="candidateRecordExport">Скачать запись испытания для повторной проверки</button>
+    </section>
+    <section class="catalog" aria-labelledby="recheck-heading">
+      <h2 id="recheck-heading" data-i18n="recheckTitle">Роль: локальный повторный проверяющий</h2>
+      <p data-i18n="recheckIntro">Получите у участника файл модели и запись испытания. Этот Mac пересчитает 90 публичных синтетических случаев и сравнит точные поля записи. Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются.</p>
+      <label for="recheck-model-file" data-i18n="recheckModelLabel">Файл модели участника (.json, до 4 КБ)</label>
+      <input id="recheck-model-file" type="file" accept="application/json,.json">
+      <label for="recheck-record-file" data-i18n="recheckRecordLabel">Запись испытания (.json, до 8 КБ)</label>
+      <input id="recheck-record-file" type="file" accept="application/json,.json">
+      <button id="recheck-run" class="secondary" type="button" disabled data-i18n="recheckButton">Пересчитать и сравнить</button>
+      <p id="recheck-state" class="candidate-proof" role="status" aria-live="polite"></p>
     </section>
     <section class="catalog" aria-labelledby="catalog-heading">
       <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>
@@ -69,6 +80,16 @@
       <p id="catalog-state" role="status" aria-live="polite"></p>
       <button id="catalog-refresh" class="secondary" type="button" data-i18n="catalogRefresh">Обновить сведения</button>
       <p class="catalog-note" data-i18n="catalogNote">Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Выбор ревизии в каталоге ничего не скачивает и не запускает; награда недоступна.</p>
+    </section>
+    <section class="catalog" aria-labelledby="provider-heading">
+      <h2 id="provider-heading" data-i18n="providerTitle">Добавить модель: описание возможностей</h2>
+      <p data-i18n="providerIntro">Выберите тип модели и укажите её идентификатор. Скачивается только описание намерения оператора. API-ключи сюда не вводятся: фильтр отсечёт некоторые секреты, но не может распознать все. Ни одна модель этим шагом не запускается и не получает NIR.</p>
+      <label for="provider-kind" data-i18n="providerLabel">Провайдер</label>
+      <select id="provider-kind" disabled><option value="" data-i18n="providerChoose">Выберите провайдера</option></select>
+      <label for="provider-model-id" data-i18n="providerModelLabel">Идентификатор модели (без URL и ключей)</label>
+      <input id="provider-model-id" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Qwen/Qwen3-0.6B">
+      <button id="provider-export" class="secondary" type="button" disabled data-i18n="providerExport">Скачать описание (.json)</button>
+      <p id="provider-state" role="status" aria-live="polite"></p>
     </section>
     <section class="catalog" aria-labelledby="qwen-heading">
       <h2 id="qwen-heading" data-i18n="qwenTitle">Локальный запуск Qwen3-0.6B</h2>

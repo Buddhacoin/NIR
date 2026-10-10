@@ -13,6 +13,11 @@ const candidateCheck = document.querySelector("#candidate-check");
 const candidateState = document.querySelector("#candidate-state");
 const candidateStress = document.querySelector("#candidate-stress");
 const candidateStressState = document.querySelector("#candidate-stress-state");
+const candidateRecordExport = document.querySelector("#candidate-record-export");
+const recheckModelFile = document.querySelector("#recheck-model-file");
+const recheckRecordFile = document.querySelector("#recheck-record-file");
+const recheckRun = document.querySelector("#recheck-run");
+const recheckState = document.querySelector("#recheck-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
 const walletLinkStart = document.querySelector("#wallet-link-start");
@@ -25,6 +30,10 @@ const catalogModel = document.querySelector("#catalog-model");
 const catalogVersion = document.querySelector("#catalog-version");
 const catalogState = document.querySelector("#catalog-state");
 const catalogRefresh = document.querySelector("#catalog-refresh");
+const providerKind = document.querySelector("#provider-kind");
+const providerModelId = document.querySelector("#provider-model-id");
+const providerExport = document.querySelector("#provider-export");
+const providerState = document.querySelector("#provider-state");
 const qwenStart = document.querySelector("#qwen-start");
 const qwenState = document.querySelector("#qwen-state");
 const qwenAnswer = document.querySelector("#qwen-answer");
@@ -153,6 +162,17 @@ const copy = {
     candidateStressDone: (score, hash, seed) => `Синтетическая стресс-проверка: ${score} % из 90 случаев. Хеш зафиксированных байтов: ${hash}. Seed для повтора: ${seed}. Это публичная Iris с искусственными изменениями: повторными запусками можно выбрать удачный seed. Не скрытые задания, не независимый оператор и не награда.`,
     candidateStressInvalid: "Файл или локальная запись фиксации отклонены. Награды нет.",
     candidateStressFailed: "Локальная фиксация или стресс-проверка не завершилась. После перезапуска приложения незавершённая фиксация теряется; отправьте файл снова. Награды нет.",
+    candidateRecordExport: "Скачать запись испытания для повторной проверки",
+    recheckTitle: "Роль: локальный повторный проверяющий",
+    recheckIntro: "Получите у участника файл модели и запись испытания. Этот Mac пересчитает 90 публичных синтетических случаев и сравнит точные поля записи. Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются.",
+    recheckModelLabel: "Файл модели участника (.json, до 4 КБ)",
+    recheckRecordLabel: "Запись испытания (.json, до 8 КБ)",
+    recheckButton: "Пересчитать и сравнить",
+    recheckRunning: "Локально пересчитываем 90 случаев…",
+    recheckMatched: (hash) => `Запись совпала с локальным пересчётом. Хеш модели: ${hash}. Это не независимая сетевая проверка, не консенсус и не награда.`,
+    recheckMismatch: "Несовпадение: запись или файл модели изменены. Не принимайте эту запись как результат.",
+    recheckInvalid: "Файлы отклонены: нужен исходный файл модели и неизменённая запись испытания.",
+    recheckFailed: "Повторная проверка не завершилась. Награды нет.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
@@ -174,6 +194,11 @@ const copy = {
     catalogSelected: (repo, sha) => `${repo} · ${sha}. Только просмотр: запуск и награда недоступны.`,
     catalogOlderSelection: "Это ранее замеченная ревизия; её уже нет в кратком списке.",
     catalogNote: "Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Выбор ревизии в каталоге ничего не скачивает и не запускает; награда недоступна.",
+    providerTitle: "Добавить модель: описание возможностей", providerIntro: "Выберите тип модели и укажите её идентификатор. Скачивается только описание намерения оператора. API-ключи сюда не вводятся: фильтр отсечёт некоторые секреты, но не может распознать все. Ни одна модель этим шагом не запускается и не получает NIR.",
+    providerLabel: "Провайдер", providerChoose: "Выберите провайдера", providerModelLabel: "Идентификатор модели (без URL и ключей)",
+    providerExport: "Скачать описание (.json)", providerUnavailable: "Список провайдеров недоступен.",
+    providerInvalid: "Проверьте идентификатор модели: только латинские буквы, цифры, / . _ : -, не более 100 символов; без URL, путей и ключей.",
+    providerDone: "Описание скачано. Это не подключение к API, не проверка модели и не майнинг.",
     qwenTitle: "Локальный запуск Qwen3-0.6B", qwenIntro: "Открытая языковая модель Qwen. Однократный запуск закреплённой версии: загрузка около 1,5 ГБ, максимум 4 ГиБ проверяемых файлов. Во время проверки хранятся две копии; до загрузки требуется свободное место не меньше удвоенного размера файлов плюс 1 ГиБ. Нужны Apple Silicon, Python 3.13 и дополнительные библиотеки. Без независимой проверки, заявки и награды.",
     qwenStart: "Скачать и запустить Qwen локально",
     qwenConfirm: "Разрешить загрузку модели Qwen3-0.6B (около 1,5 ГБ; не более 4 ГиБ проверяемых файлов)? Программа проверит запас места для двух копий файлов и 1 ГиБ резерва. Это не майнинг и не начислит NIR.",
@@ -246,6 +271,17 @@ const copy = {
     candidateStressDone: (score, hash, seed) => `Synthetic stress check: ${score}% over 90 cases. Committed byte hash: ${hash}. Replay seed: ${seed}. This is public Iris with artificial changes; repeated runs can cherry-pick a favorable seed. Not hidden tasks, an independent operator, or a reward.`,
     candidateStressInvalid: "The file or local commitment was refused. No reward exists.",
     candidateStressFailed: "Local commit or stress check did not finish. A restart loses an unfinished commit; submit the file again. No reward exists.",
+    candidateRecordExport: "Download local check record for replay",
+    recheckTitle: "Role: local replay checker",
+    recheckIntro: "Get the participant's model file and check record. This Mac recomputes 90 public synthetic cases and compares every record field. This does not prove operator identity, hidden tasks, consensus, or a reward.",
+    recheckModelLabel: "Participant model file (.json, up to 4 KB)",
+    recheckRecordLabel: "Check record (.json, up to 8 KB)",
+    recheckButton: "Recompute and compare",
+    recheckRunning: "Recomputing 90 cases locally…",
+    recheckMatched: (hash) => `Record matches local recomputation. Model hash: ${hash}. Not independent network verification, consensus, or a reward.`,
+    recheckMismatch: "Mismatch: the record or model file changed. Do not accept this record as a result.",
+    recheckInvalid: "Files rejected: supply the original model file and unmodified check record.",
+    recheckFailed: "Local replay did not finish. No reward exists.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
     checking: "Checking the local service…", online: "● Local service connected",
@@ -267,6 +303,11 @@ const copy = {
     catalogSelected: (repo, sha) => `${repo} · ${sha}. View only: execution and rewards are unavailable.`,
     catalogOlderSelection: "This revision was observed earlier and is no longer in the short list.",
     catalogNote: "Metadata comes from public Hugging Face records. A SHA identifies a repository revision; it does not verify model files. Choosing a catalog revision downloads or runs nothing; no reward is available.",
+    providerTitle: "Add a model: capability intent", providerIntro: "Choose a model type and enter its identifier. Only an operator intent description is downloaded. Never enter API keys here: the filter catches some secrets, not all. This does not run a model or earn NIR.",
+    providerLabel: "Provider", providerChoose: "Choose a provider", providerModelLabel: "Model identifier (no URLs or keys)",
+    providerExport: "Download declaration (.json)", providerUnavailable: "Provider list is unavailable.",
+    providerInvalid: "Check the model identifier: Latin letters, digits, / . _ : -, up to 100 characters; no URLs, paths, or keys.",
+    providerDone: "Declaration downloaded. This is not an API connection, model verification, or mining.",
     qwenTitle: "Run Qwen3-0.6B locally", qwenIntro: "Open Qwen language model. One pinned-revision run: about 1.5 GB downloaded, up to 4 GiB of checked files. Verification holds two copies; before downloading, free space must exceed twice the file size plus 1 GiB. Requires Apple Silicon, Python 3.13, and optional libraries. No independent verification, claim, or reward.",
     qwenStart: "Download and run Qwen locally",
     qwenConfirm: "Allow the Qwen3-0.6B download (about 1.5 GB; up to 4 GiB of checked files)? The app checks free space for two file copies plus 1 GiB of headroom. This is not mining and will not credit NIR.",
@@ -306,6 +347,8 @@ let errorKind = null;
 let lastResult = null;
 let catalogData = null;
 let catalogLoading = false;
+let providerRegistry = null;
+let providerMessage = null;
 let qwenRunning = false;
 let qwenStatus = null;
 let qwenLastResult = null;
@@ -320,6 +363,9 @@ let candidateStatus = null;
 let candidateResult = null;
 let candidateStressStatus = null;
 let candidateStressResult = null;
+let recheckRunning = false;
+let recheckStatus = null;
+let recheckHash = null;
 const localEvents = [];
 let lastServiceState = null;
 let lastRuntimeState = null;
@@ -478,7 +524,12 @@ function render() {
   }
   languageButton.textContent = locale === "ru" ? "EN" : "RU";
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
+  if (providerKind?.options?.length) providerKind.options[0].textContent = t.providerChoose;
   connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
+  if (providerExport) {
+    providerExport.disabled = !connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim();
+    providerState.textContent = providerMessage ? t[providerMessage] : "";
+  }
   if (qwenAvailability) {
     const ready = qwenRuntime.status === "pinned-qwen-runtime-ready";
     const pending = qwenRuntime.status === "checking-runtime";
@@ -527,6 +578,14 @@ function render() {
         candidateStressResult.commitHash, candidateStressResult.seed) :
       candidateStressStatus ? t[candidateStressStatus] : "";
   }
+  if (candidateRecordExport) candidateRecordExport.hidden = !candidateStressResult;
+  if (recheckRun) {
+    recheckRun.disabled = !connected || recheckRunning || candidateRunning || irisVerifyRunning ||
+      qwenRunning || replayRunning || !progress.hidden || !recheckModelFile?.files?.length ||
+      !recheckRecordFile?.files?.length;
+    recheckState.textContent = recheckStatus === "recheckMatched" ?
+      t.recheckMatched(recheckHash) : recheckStatus ? t[recheckStatus] : "";
+  }
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
       (lastResult.baselineAccuracyBps / 100).toFixed(2),
@@ -535,6 +594,46 @@ function render() {
     document.querySelector("#technical").textContent = t.hash(lastResult.bundleHash);
   }
 }
+
+async function loadProviderRegistry() {
+  try {
+    const { response, data } = await fetchQwenJson("/provider-capabilities", { cache: "no-store" });
+    if (!response.ok || data.scope !== "onboarding-only" || !Array.isArray(data.providers) ||
+        data.providers.length !== 4 || data.providers.some((p) =>
+          typeof p.id !== "string" || typeof p.label !== "string" || p.executable !== false))
+      throw new Error("invalid registry");
+    providerRegistry = data;
+    providerKind.replaceChildren(option("", copy[locale].providerChoose));
+    for (const item of data.providers) providerKind.append(option(item.id, item.label));
+    providerKind.disabled = false;
+    providerMessage = null;
+  } catch { providerRegistry = null; providerMessage = "providerUnavailable"; }
+  render();
+}
+
+providerKind?.addEventListener("change", render);
+providerModelId?.addEventListener("input", render);
+providerExport?.addEventListener("click", async () => {
+  if (!connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim()) return;
+  try {
+    const { response, data } = await fetchQwenJson("/provider-capabilities/declaration", {
+      method: "POST", body: JSON.stringify({ provider: providerKind.value, modelId: providerModelId.value.trim() }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok || data.scope !== "operator-capability-intent-only" ||
+        data.modelExecuted !== false || data.independentlyVerified !== false ||
+        data.networkSubmitted !== false || data.rewardEligible !== false || data.walletChanged !== false)
+      throw new Error("invalid declaration");
+    const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "nir-model-capability-intent.json";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    providerMessage = "providerDone";
+  } catch { providerMessage = "providerInvalid"; }
+  render();
+});
 
 function showOffline() {
   connected = false;
@@ -837,6 +936,68 @@ if (candidateStress) candidateStress.addEventListener("click", async () => {
   }
 });
 
+if (candidateRecordExport) candidateRecordExport.addEventListener("click", () => {
+  if (!candidateStressResult || candidateRecordExport.hidden) return;
+  const blob = new Blob([JSON.stringify(candidateStressResult, null, 2) + "\n"],
+    { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nir-local-iris-check-${candidateStressResult.commitHash.slice(7, 19)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+for (const input of [recheckModelFile, recheckRecordFile]) input?.addEventListener("change", () => {
+  recheckStatus = null;
+  recheckHash = null;
+  render();
+});
+if (recheckRun) recheckRun.addEventListener("click", async () => {
+  const modelFile = recheckModelFile?.files?.[0];
+  const recordFile = recheckRecordFile?.files?.[0];
+  if (!connected || recheckRunning || candidateRunning || irisVerifyRunning ||
+      qwenRunning || replayRunning || !progress.hidden || !modelFile || !recordFile) return;
+  if (modelFile.size < 1 || modelFile.size > 4096 || recordFile.size < 1 ||
+      recordFile.size > 8192) {
+    recheckStatus = "recheckInvalid";
+    render();
+    return;
+  }
+  recheckRunning = true;
+  recheckStatus = "recheckRunning";
+  recheckHash = null;
+  render();
+  try {
+    const model = new Uint8Array(await modelFile.arrayBuffer());
+    const record = JSON.parse(new TextDecoder("utf-8", { fatal: true })
+      .decode(await recordFile.arrayBuffer()));
+    const body = JSON.stringify({ modelBase64: btoa(String.fromCharCode(...model)), record });
+    const { response, data } = await fetchQwenJson("/candidate/iris-linear/recheck", {
+      method: "POST", body, headers: { "Content-Type": "application/json" },
+    });
+    if (response.status === 400 || response.status === 403) throw new Error("invalid");
+    if (!response.ok || !["local-iris-recheck-matched", "local-iris-recheck-mismatch"]
+      .includes(data?.status) || data.caseCount !== 90 ||
+      !/^sha256:[a-f0-9]{64}$/.test(data.modelHash ?? "") ||
+      data.independentOperators !== false || data.operatorIdentityVerified !== false ||
+      data.hiddenChallenges !== false || data.networkSubmitted !== false ||
+      data.rewardEligible !== false || data.walletChanged !== false)
+      throw new Error("failed");
+    recheckHash = data.modelHash;
+    recheckStatus = data.status === "local-iris-recheck-matched" ?
+      "recheckMatched" : "recheckMismatch";
+  } catch (reason) {
+    recheckStatus = reason?.message === "invalid" || reason instanceof SyntaxError ?
+      "recheckInvalid" : "recheckFailed";
+  } finally {
+    recheckRunning = false;
+    render();
+  }
+});
+
 if (qwenStart) qwenStart.addEventListener("click", async () => {
   if (!connected || qwenRunning || replayRunning || candidateRunning || irisVerifyRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready") return;
@@ -1050,4 +1211,5 @@ recordLocalEvent("ui-ready");
 render();
 void checkConnection();
 void loadQwenRuntime();
+void loadProviderRegistry();
 setInterval(() => { if (progress.hidden) void checkConnection(); }, 5000);
