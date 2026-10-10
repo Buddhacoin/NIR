@@ -50,7 +50,12 @@ function privateGenerationPattern(target) {
 }
 
 function sameIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
+  return BigInt(left.dev) === BigInt(right.dev) && BigInt(left.ino) === BigInt(right.ino);
+}
+
+function sameActivationVersion(left, right) {
+  return sameIdentity(left, right) && left.ctimeNs === right.ctimeNs &&
+    left.birthtimeNs === right.birthtimeNs;
 }
 
 function secureOpenFlags(directory = false) {
@@ -113,11 +118,11 @@ function realpathSafeLink(target) {
 
 function capturePrivateActivation(path) {
   const target = resolve(path);
-  const activation = lstatSync(target);
+  const activation = lstatSync(target, { bigint: true });
   const link = realpathSafeLink(target);
   const generation = join(dirname(target), link);
   const generationIdentity = lstatSync(generation);
-  if (!activation.isSymbolicLink() || activation.nlink !== 1 ||
+  if (!activation.isSymbolicLink() || activation.nlink !== 1n ||
       !generationIdentity.isFile() || generationIdentity.isSymbolicLink()) {
     throw new Error("wallet private-file activation is unsafe");
   }
@@ -125,8 +130,8 @@ function capturePrivateActivation(path) {
 }
 
 function removePrivateActivation(created) {
-  const current = lstatSync(created.target);
-  if (!current.isSymbolicLink() || !sameIdentity(current, created.activation) ||
+  const current = lstatSync(created.target, { bigint: true });
+  if (!current.isSymbolicLink() || !sameActivationVersion(current, created.activation) ||
       readlinkSync(created.target) !== created.link) return;
   unlinkSync(created.target);
   const generation = lstatSync(created.generation);
@@ -387,7 +392,7 @@ function changeWalletFilePasswordLocked({ path, oldPassword, newPassword,
       _beforeActivate({ generation, target: original.target });
     }
     const current = capturePrivateActivation(original.target);
-    if (!sameIdentity(current.activation, original.activation) ||
+    if (!sameActivationVersion(current.activation, original.activation) ||
         !sameIdentity(current.generationIdentity, original.generationIdentity) ||
         current.link !== original.link ||
         !sameIdentity(fstatSync(parentDescriptor), parentIdentity) ||

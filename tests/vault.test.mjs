@@ -312,9 +312,10 @@ test("a replaced activation link is not overwritten by password rotation", () =>
   try {
     const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
     const originalLink = readlinkSync(path);
+    const heldActivation = join(directory, "held-activation");
     assert.throws(() => changeWalletFilePassword({ path, oldPassword,
       newPassword: "new-personal-password-2026", personalWallet: true,
-      _beforeActivate: () => { rmSync(path); symlinkSync(originalLink, path); } }),
+      _beforeActivate: () => { renameSync(path, heldActivation); symlinkSync(originalLink, path); } }),
     /activation changed/);
     assert.equal(readlinkSync(path), originalLink);
     assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
