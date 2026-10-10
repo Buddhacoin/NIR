@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ const APP_FILES = Object.freeze([
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
   "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
   "blockchain/operator-model-receipt.mjs",
-  "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
+  "blockchain/consensus-codec.mjs", "blockchain/consensus-json.mjs", "blockchain/constants.mjs",
   "blockchain/model-provider-capabilities.mjs",
   "blockchain/synthetic-transfer.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
@@ -359,7 +360,8 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
           chunks.push(chunk);
         }
         if (length !== declared) throw new Error("truncated proof");
-        const proof = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        const proof = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
         linkedWalletAddress = verifyOperatorWalletProof(proof, {
           challenge: challenge.value, now: Date.now(),
         });
@@ -538,7 +540,8 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         if (lastIrisReceiptIntent !== intent || lastIrisEvidence !== evidenceAtStart ||
             linkedWalletAddress !== intent.recipient || lastIrisReceipt)
           throw new Error("local run changed during receipt submission");
-        const receipt = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        const receipt = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
         verifyLocalIrisRunReceipt(receipt, {
           intent, evidenceBytes: Buffer.from(evidenceAtStart, "utf8"),
         });
@@ -774,7 +777,8 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         }
         if (length !== declared) throw new Error("truncated local receipt recheck");
         clearTimeout(deadline);
-        const input = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        const input = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
         if (!input || Array.isArray(input) || Object.keys(input).sort().join(",") !==
             "evidenceBase64,receipt" || typeof input.evidenceBase64 !== "string" ||
             input.evidenceBase64.length > Math.ceil(MAX_IRIS_EVIDENCE_BYTES * 4 / 3) + 4)

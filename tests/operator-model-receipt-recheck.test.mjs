@@ -85,6 +85,10 @@ test("two separate Model Lab OS processes recheck exact Iris evidence and signed
     const postRaw = (value, session = second.token, origin = second.base) =>
       fetch(`${second.base}/model-run-receipt/recheck`, { method: "POST", body: JSON.stringify(value),
         headers: { origin, "X-NIR-Session": session, "Content-Type": "application/json" } });
+    const postRawBytes = (body) => fetch(`${second.base}/model-run-receipt/recheck`, {
+      method: "POST", body,
+      headers: { origin: second.base, "X-NIR-Session": second.token, "Content-Type": "application/json" },
+    });
     assert.equal((await postRaw({ evidenceBase64: evidenceBytes.toString("base64"), receipt },
       "0".repeat(64))).status, 403);
     assert.equal((await postRaw({ evidenceBase64: evidenceBytes.toString("base64"), receipt },
@@ -99,6 +103,11 @@ test("two separate Model Lab OS processes recheck exact Iris evidence and signed
       networkSubmitted: false, rewardEligible: false,
     });
     assert.equal((await recheck(evidenceBytes)).status, 200);
+    const canonicalBase64 = evidenceBytes.toString("base64");
+    assert.equal((await postRawBytes(`{"evidenceBase64":"%%%","evidenceBase64":"${canonicalBase64}","receipt":${JSON.stringify(receipt)}}`)).status, 400);
+    const receiptJson = JSON.stringify(receipt);
+    assert.equal((await postRawBytes(`{"evidenceBase64":"${canonicalBase64}","receipt":${receiptJson.replace(`"recipient":"${wallet.address}"`, `"recipient":"${generateWallet().address}","recipient":"${wallet.address}"`)}}`)).status, 400);
+    assert.equal((await postRawBytes(Buffer.from([0xff, ...Buffer.from(JSON.stringify({ evidenceBase64: canonicalBase64, receipt }))]))).status, 400);
     assert.equal((await recheck(Buffer.concat([evidenceBytes, Buffer.from(" ")]))).status, 400);
     assert.equal((await recheck(evidenceBytes, { ...receipt, recipient: generateWallet().address })).status, 400);
     assert.equal((await recheck(evidenceBytes, { ...receipt, signature: "AAAA" })).status, 400);

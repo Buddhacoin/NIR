@@ -56,6 +56,7 @@ test("double-click model app build includes only local UI and model code, withou
       "Contents/Resources/app/blockchain/iris-linear-candidate.mjs",
       "Contents/Resources/app/blockchain/operator-wallet-link.mjs",
       "Contents/Resources/app/blockchain/operator-model-receipt.mjs",
+      "Contents/Resources/app/blockchain/consensus-json.mjs",
       "Contents/Resources/app/blockchain/synthetic-transfer.mjs"]) {
       assert.equal(existsSync(join(app, relative)), true, relative);
     }
