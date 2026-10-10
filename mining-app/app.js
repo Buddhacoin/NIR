@@ -55,6 +55,8 @@ const syntheticHistory = document.querySelector("#synthetic-history");
 let syntheticSnapshot = null;
 let syntheticMessage = "";
 let syntheticStateLoading = false;
+let syntheticTransferBusy = false;
+let syntheticPendingTransfer = null;
 let walletLinkLinking = false;
 const nativeApp = typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("local-app") === "1";
@@ -570,7 +572,7 @@ function render() {
     const verifiedRecipient = syntheticSnapshot?.verifiedRecipient;
     const recipientReady = !!walletLinkAddress && verifiedRecipient === walletLinkAddress;
     syntheticStart.disabled = !connected || !recipientReady || syntheticSnapshot?.started === true;
-    syntheticSend.disabled = !connected || !recipientReady || syntheticSnapshot?.started !== true;
+    syntheticSend.disabled = syntheticTransferBusy || !connected || !recipientReady || syntheticSnapshot?.started !== true;
     syntheticBalance.textContent = t.syntheticBalance(syntheticSnapshot);
     syntheticRecipient.textContent = recipientReady ? verifiedRecipient : t.syntheticRecipientMissing;
     syntheticState.textContent = syntheticMessage ? t[syntheticMessage] : "";
@@ -768,18 +770,41 @@ if (syntheticStart) {
     render();
   });
   syntheticSend.addEventListener("click", async () => {
-    if (!walletLinkAddress || syntheticSnapshot?.verifiedRecipient !== walletLinkAddress) return;
-    const input = { recipient: walletLinkAddress, amount: syntheticAmount.value,
-      id: crypto.randomUUID(), networkId: "nir-synthetic-local-1" };
+    if (syntheticTransferBusy || !walletLinkAddress ||
+        syntheticSnapshot?.verifiedRecipient !== walletLinkAddress) return;
+    syntheticTransferBusy = true;
+    const input = syntheticPendingTransfer ?? { recipient: walletLinkAddress,
+      amount: syntheticAmount.value, id: crypto.randomUUID(), networkId: "nir-synthetic-local-1" };
+    syntheticPendingTransfer = input;
+    render();
+    let definitelyRejected = false;
     try {
       const { response, data } = await fetchQwenJson("/synthetic-transfer", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
       });
+      definitelyRejected = !response.ok;
       if (!response.ok || data?.entry?.simulationOnly !== true || data?.state?.walletChanged !== false)
         throw new Error("invalid training transfer");
       syntheticSnapshot = data.state;
+      syntheticPendingTransfer = null;
       syntheticMessage = "syntheticSuccess";
-    } catch { syntheticMessage = "syntheticFailure"; }
+    } catch {
+      // A response may be lost after the local ledger committed. Reconcile by
+      // transfer ID; retries keep the same ID and cannot duplicate a debit.
+      try {
+        const { response, data } = await fetchQwenJson("/synthetic-transfer/state");
+        if (response.ok && data?.simulationOnly === true && data?.walletChanged === false) {
+          syntheticSnapshot = data;
+          if (data.history?.some((entry) => entry.id === input.id)) {
+            syntheticPendingTransfer = null;
+            syntheticMessage = "syntheticSuccess";
+          } else {
+            if (definitelyRejected) syntheticPendingTransfer = null;
+            syntheticMessage = "syntheticFailure";
+          }
+        } else syntheticMessage = "syntheticFailure";
+      } catch { syntheticMessage = "syntheticFailure"; }
+    } finally { syntheticTransferBusy = false; }
     render();
   });
 }
@@ -1235,6 +1260,7 @@ walletLinkStart?.addEventListener("click", async () => {
   walletLinkLinking = true;
   walletLinkAddress = null;
   syntheticSnapshot = null;
+  syntheticPendingTransfer = null;
   walletLinkPending = null;
   walletLinkChallenge.hidden = true;
   walletLinkCopy.hidden = true;

@@ -9,6 +9,8 @@ import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { runInNewContext } from "node:vm";
+import { webcrypto } from "node:crypto";
 
 const address = `nir1${"a".repeat(64)}`;
 const other = `nir1${"b".repeat(64)}`;
@@ -16,7 +18,7 @@ const other = `nir1${"b".repeat(64)}`;
 test("explicitly synthetic training credit can be transferred once to a NIR-shaped address", () => {
   const ledger = createSyntheticTransferSession();
   assert.equal(ledger.snapshot().remaining, "0");
-  ledger.startTraining();
+  ledger.startTraining(address);
   assert.equal(ledger.snapshot().remaining, "7");
   const entry = ledger.transfer({ recipient: address, amount: "3", id: "first" });
   assert.equal(entry.recipient, address);
@@ -31,12 +33,21 @@ test("explicitly synthetic training credit can be transferred once to a NIR-shap
 test("synthetic transfer rejects malformed recipient, network, overspend, zero and repeated credit", () => {
   const ledger = createSyntheticTransferSession();
   assert.throws(() => ledger.transfer({ recipient: address, amount: "1", id: "x" }), /training/);
-  ledger.startTraining();
-  assert.throws(() => ledger.startTraining(), /already/);
+  ledger.startTraining(address);
+  assert.throws(() => ledger.startTraining(address), /already/);
   assert.throws(() => ledger.transfer({ recipient: "nir1bad", amount: "1", id: "x" }), /recipient/);
   assert.throws(() => ledger.transfer({ recipient: address, amount: "1", id: "x", networkId: "nir-mainnet-1" }), /network/);
   assert.throws(() => ledger.transfer({ recipient: address, amount: "0", id: "x" }), /amount/);
   assert.throws(() => ledger.transfer({ recipient: address, amount: "8", id: "x" }), /balance/);
+  assert.deepEqual(ledger.snapshot().balances, {});
+});
+
+test("training credit stays with the address that was verified when training began", () => {
+  const ledger = createSyntheticTransferSession();
+  ledger.startTraining(address);
+  assert.equal(ledger.snapshot().trainingRecipient, address);
+  assert.throws(() => ledger.transfer({ recipient: other, amount: "1", id: "reroute" }), /recipient/);
+  assert.equal(ledger.snapshot().remaining, "7");
   assert.deepEqual(ledger.snapshot().balances, {});
 });
 
@@ -78,6 +89,13 @@ test("Model Lab exposes only authenticated in-memory synthetic transfers and nev
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-4", amount: "5" }))).status, 400);
     assert.equal((await post("/wallet-link/challenge")).status, 200);
     assert.equal((await post("/synthetic-transfer", JSON.stringify({ ...input, id: "test-5", amount: "1" }))).status, 400);
+    const secondChallenge = await post("/wallet-link/challenge");
+    const secondProof = createOperatorWalletProof({ wallet: otherWallet,
+      challenge: (await secondChallenge.json()).challenge });
+    assert.equal((await post("/wallet-link/complete", JSON.stringify(secondProof))).status, 200);
+    assert.equal((await post("/synthetic-transfer", JSON.stringify({
+      ...input, id: "test-6", amount: "1", recipient: otherWallet.address,
+    }))).status, 400);
     const state = await fetch(`${base}/synthetic-transfer/state`, {
       headers: { "X-NIR-Session": server.localSessionToken },
     });
@@ -146,4 +164,56 @@ test("temporary wallet bridge proof permits only an imaginary transfer without v
     }
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("two rapid UI clicks send one stable imaginary transfer request", async () => {
+  const element = () => ({ hidden: true, disabled: false, dataset: {}, textContent: "", value: "2",
+    children: [], style: { setProperty() {} }, setAttribute() {},
+    addEventListener(_, listener) { this.click = listener; },
+    replaceChildren(...items) { this.children = items; },
+    append(...items) { this.children.push(...items); } });
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection",
+    "language", "score", "technical", "event-pulses", "event-log", "synthetic-start",
+    "synthetic-send", "synthetic-recipient", "synthetic-amount", "synthetic-balance",
+    "synthetic-state", "synthetic-history", ".local-only"]) nodes.set(`#${id.replace(/^\./, "")}`, element());
+  nodes.set(".local-only", element());
+  let requests = 0;
+  const transferIds = [];
+  let release;
+  const pause = new Promise((resolve) => { release = resolve; });
+  const snapshot = { simulationOnly: true, walletChanged: false, networkSubmitted: false,
+    transferableNir: "0", started: true, remaining: "7", trainingRecipient: address,
+    verifiedRecipient: address, history: [], balances: {} };
+  runInNewContext(readFileSync(join(import.meta.dirname, "../mining-app/app.js"), "utf8"), {
+    document: { documentElement: { lang: "ru" }, querySelector: (selector) => nodes.get(selector),
+      querySelectorAll: () => [], createElement: element },
+    navigator: { language: "ru-RU" }, AbortController, crypto: webcrypto,
+    fetch: async (path, options) => {
+      if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
+      if (path === "/synthetic-transfer/state") return { ok: true, json: async () => snapshot };
+      if (path === "/synthetic-transfer") {
+        requests++;
+        transferIds.push(JSON.parse(options.body).id);
+        if (requests === 1) {
+          await pause;
+          throw new TypeError("response lost after uncertain send");
+        }
+        return { ok: true, json: async () => ({ entry: { simulationOnly: true }, state: snapshot }) };
+      }
+      throw new Error(`unexpected ${path}`);
+    },
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const click = nodes.get("#synthetic-send").click;
+  const first = click();
+  const second = click();
+  assert.equal(nodes.get("#synthetic-send").disabled, true);
+  assert.equal(requests, 1);
+  release();
+  await Promise.all([first, second]);
+  await click();
+  assert.equal(requests, 2);
+  assert.deepEqual(transferIds, [transferIds[0], transferIds[0]]);
 });

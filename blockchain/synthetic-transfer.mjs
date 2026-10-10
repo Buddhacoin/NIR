@@ -5,6 +5,7 @@ const TRAINING_UNITS = 7n;
 
 export function createSyntheticTransferSession() {
   let started = false;
+  let trainingRecipient = null;
   let remaining = 0n;
   const balances = new Map();
   const seen = new Set();
@@ -14,15 +15,18 @@ export function createSyntheticTransferSession() {
     return {
       status: "synthetic-training-only", networkId: SYNTHETIC_NETWORK_ID,
       simulationOnly: true, networkSubmitted: false, walletChanged: false,
-      transferableNir: "0", started, remaining: remaining.toString(),
+      transferableNir: "0", started, trainingRecipient, remaining: remaining.toString(),
       balances: Object.fromEntries([...balances].map(([key, value]) => [key, value.toString()])),
       history: history.map((entry) => ({ ...entry })),
     };
   }
 
-  function startTraining() {
+  function startTraining(recipient) {
     if (started) throw new Error("training already started");
+    if (typeof recipient !== "string" || !/^nir1[0-9a-f]{64}$/.test(recipient))
+      throw new Error("invalid training recipient");
     started = true;
+    trainingRecipient = recipient;
     remaining = TRAINING_UNITS;
     return snapshot();
   }
@@ -34,6 +38,7 @@ export function createSyntheticTransferSession() {
     if (seen.has(id)) throw new Error("transfer replay");
     if (typeof recipient !== "string" || !/^nir1[0-9a-f]{64}$/.test(recipient))
       throw new Error("invalid recipient");
+    if (recipient !== trainingRecipient) throw new Error("recipient differs from training owner");
     if (typeof amount !== "string" || !/^[1-9][0-9]{0,5}$/.test(amount)) throw new Error("invalid amount");
     const units = BigInt(amount);
     if (units > remaining) throw new Error("insufficient synthetic balance");

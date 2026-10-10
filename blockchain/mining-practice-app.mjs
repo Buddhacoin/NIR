@@ -269,7 +269,11 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   let pendingWalletChallenge = null;
   let linkedWalletAddress = null;
   const syntheticTransfers = createSyntheticTransferSession();
-  const syntheticState = () => ({ ...syntheticTransfers.snapshot(), verifiedRecipient: linkedWalletAddress });
+  const syntheticState = () => {
+    const snapshot = syntheticTransfers.snapshot();
+    return { ...snapshot, verifiedRecipient: !snapshot.started ||
+      snapshot.trainingRecipient === linkedWalletAddress ? linkedWalletAddress : null };
+  };
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -382,7 +386,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         return;
       }
       try {
-        syntheticTransfers.startTraining();
+        syntheticTransfers.startTraining(linkedWalletAddress);
         send(200, "application/json; charset=utf-8", JSON.stringify(syntheticState()));
       } catch { send(409, "application/json; charset=utf-8", JSON.stringify({ error: "Training already started" })); }
       return;

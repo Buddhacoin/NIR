@@ -117,6 +117,11 @@ The separate **transfer rehearsal** in Model Lab starts with 7 imaginary tokens
 only after the installed wallet signs a one-time local address-ownership proof.
 The rehearsal records a transfer only to that verified address in the current
 local service session; the operator cannot type a different recipient. It does
+not move to another wallet if the operator verifies a new address in the same
+session: the 7 imaginary tokens remain bound to the first verified address.
+An uncertain UI response reuses the same local transfer ID and checks history,
+so double-clicks or retries cannot create two training debits.
+It does
 not read the wallet vault, broadcast a transaction, or change the real wallet
 balance. Its ledger and history vanish when the service stops. The address proof
 is not bound to a public genesis or network. This is a UI/state-flow exercise,
