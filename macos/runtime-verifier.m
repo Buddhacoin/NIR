@@ -41,6 +41,19 @@ static BOOL exactKeys(NSDictionary *value, NSArray<NSString *> *keys) {
     return [[NSSet setWithArray:value.allKeys] isEqualToSet:[NSSet setWithArray:keys]];
 }
 
+static NSString *lexicalPath(NSString *path) {
+    if (![path isKindOfClass:NSString.class] || !path.isAbsolutePath) return nil;
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *part in [path componentsSeparatedByString:@"/"]) {
+        if (part.length == 0 || [part isEqualToString:@"."]) continue;
+        if ([part isEqualToString:@".."]) {
+            if (parts.count == 0) return nil;
+            [parts removeLastObject];
+        } else [parts addObject:part];
+    }
+    return [@"/" stringByAppendingString:[parts componentsJoinedByString:@"/"]];
+}
+
 static BOOL verifyExecutable(NSDictionary *binding) {
     if (![binding isKindOfClass:NSDictionary.class] || !exactKeys(binding,
         @[@"logicalPath", @"realPath", @"links", @"sha256", @"size"])) return NO;
@@ -52,7 +65,7 @@ static BOOL verifyExecutable(NSDictionary *binding) {
         ![expectedReal isKindOfClass:NSString.class] || !expectedReal.isAbsolutePath ||
         ![links isKindOfClass:NSArray.class] || ![size isKindOfClass:NSNumber.class] ||
         ![digest isKindOfClass:NSString.class] || digest.length != 64) return NO;
-    NSString *cursor = logical.stringByStandardizingPath;
+    NSString *cursor = lexicalPath(logical);
     for (NSDictionary *link in links) {
         if (![link isKindOfClass:NSDictionary.class] || !exactKeys(link, @[@"path", @"target"]) ||
             ![cursor isEqualToString:link[@"path"]]) return NO;
@@ -63,8 +76,8 @@ static BOOL verifyExecutable(NSDictionary *binding) {
         if (length < 0 || length >= (ssize_t)sizeof(target)) return NO;
         NSString *actual = [[NSString alloc] initWithBytes:target length:(NSUInteger)length encoding:NSUTF8StringEncoding];
         if (!actual || ![actual isEqualToString:link[@"target"]]) return NO;
-        cursor = ([actual hasPrefix:@"/"] ? actual : [cursor.stringByDeletingLastPathComponent
-            stringByAppendingPathComponent:actual]).stringByStandardizingPath;
+        cursor = lexicalPath([actual hasPrefix:@"/"] ? actual :
+            [cursor.stringByDeletingLastPathComponent stringByAppendingPathComponent:actual]);
     }
     if (![canonicalRealPath(logical) isEqualToString:expectedReal] ||
         ![cursor isEqualToString:expectedReal]) return NO;

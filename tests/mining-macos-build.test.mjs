@@ -97,7 +97,10 @@ test("selected symlinked Python venv keeps its own site-packages path", () => {
 
 test("signed model app rejects a changed external Python runtime", () => {
   if (process.platform !== "darwin") return;
-  const directory = mkdtempSync(join(tmpdir(), "nir-model-runtime-proof-test-"));
+  // Keep the lexical /private/tmp prefix used by the real MLX environment.
+  // Foundation's stringByStandardizingPath rewrites it to /tmp, which must not
+  // alter the exact symlink-chain identity written by the JavaScript builder.
+  const directory = mkdtempSync("/private/tmp/nir-model-runtime-proof-test-");
   const previous = process.env.NIR_MINING_PYTHON;
   const previousNode = process.env.NIR_MINING_NODE;
   try {
