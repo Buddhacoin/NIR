@@ -331,6 +331,7 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  nativeSecurity,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -344,6 +345,7 @@ export function createWalletBridgeServer({
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       (createAccount !== undefined && typeof createAccount !== "function") ||
+      (nativeSecurity !== undefined && typeof nativeSecurity !== "function") ||
       (presentPairingCode !== undefined &&
         (typeof presentPairingCode !== "function" || pairingCode === undefined)) ||
       (accounts !== undefined && (!Array.isArray(accounts) || accounts.length < 1 ||
@@ -453,6 +455,8 @@ export function createWalletBridgeServer({
   let pairingAttempts = 0;
   let pairingAvailable = pairingCode !== undefined;
   let pairingPending = false;
+  let securityPending = false;
+  let securityController = null;
   let sessionActive = pairingCode === undefined;
   let sessionGeneration = 0;
   let accountActionPending = false;
@@ -544,6 +548,7 @@ export function createWalletBridgeServer({
     }
     try {
       if (request.method === "DELETE" && url.pathname === "/v1/session") {
+        securityController?.abort();
         sessionActive = false;
         sessionGeneration += 1;
         pairingAvailable = false;
@@ -553,6 +558,26 @@ export function createWalletBridgeServer({
         simulations.clear();
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/native-security") {
+        if (!nativeSecurity) return send(response, 404, { error: "native security is unavailable" }, origin);
+        if (securityPending) return send(response, 409, { error: "security window is already open" }, origin);
+        securityPending = true;
+        securityController = new AbortController();
+        const securityTimeout = setTimeout(() => securityController?.abort(), 540_000);
+        const generation = sessionGeneration;
+        try {
+          const completed = await nativeSecurity({ vaultPath: activeVaultPath,
+            signal: securityController.signal });
+          if (!sessionActive || generation !== sessionGeneration) {
+            return send(response, 409, { error: "wallet session ended" }, origin);
+          }
+          return send(response, 200, { opened: completed === true }, origin);
+        } finally {
+          clearTimeout(securityTimeout);
+          securityPending = false;
+          securityController = null;
+        }
       }
       if (accountActionPending) {
         return send(response, 409, { error: "finish creating the new account first" }, origin);
@@ -567,7 +592,7 @@ export function createWalletBridgeServer({
         }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/select-account") {
-        if (pending) return send(response, 409, { error: "finish signing before switching" }, origin);
+        if (pending || securityPending) return send(response, 409, { error: "finish the pending wallet action before switching" }, origin);
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("account selection requires application/json");
         }
@@ -576,7 +601,7 @@ export function createWalletBridgeServer({
             !/^[0-9a-f]{32}$/.test(body.id ?? "") || !accountEntries.has(body.id)) {
           throw new Error("selected account is invalid");
         }
-        if (pending || accountActionPending) {
+        if (pending || accountActionPending || securityPending) {
           return send(response, 409, { error: "finish the pending wallet action before switching" }, origin);
         }
         activateAccount(body.id);
@@ -584,7 +609,7 @@ export function createWalletBridgeServer({
       }
       if (request.method === "POST" && url.pathname === "/v1/create-account") {
         if (!createAccount) return send(response, 404, { error: "account creation is unavailable" }, origin);
-        if (pending || accountEntries.size >= 100) {
+        if (pending || securityPending || accountEntries.size >= 100) {
           return send(response, 409, { error: "finish the pending wallet action first" }, origin);
         }
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
@@ -594,7 +619,7 @@ export function createWalletBridgeServer({
         if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
           throw new Error("account creation body is invalid");
         }
-        if (pending || accountActionPending || accountEntries.size >= 100) {
+        if (pending || accountActionPending || securityPending || accountEntries.size >= 100) {
           return send(response, 409, { error: "finish the pending wallet action first" }, origin);
         }
         accountActionPending = true;

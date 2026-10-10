@@ -367,9 +367,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=33/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=40/);
-  assert.match(serviceWorker, /app\.js\?v=40/);
-  assert.match(serviceWorker, /nir-wallet-shell-v42/);
+  assert.match(html, /app\.js\?v=41/);
+  assert.match(serviceWorker, /app\.js\?v=41/);
+  assert.match(serviceWorker, /nir-wallet-shell-v43/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
@@ -393,6 +393,10 @@ test("wallet provides safe onboarding, recovery guidance, and session revocation
   assert.match(script, /bridgeRequest\("\/v1\/session", \{ method: "DELETE" \}\)/);
   assert.match(script, /clearWalletSession/);
   assert.match(script, /onboarding\.hidden = connected/);
+  assert.match(html, /id="settings-secrets"/);
+  assert.match(html, /Создать новый код восстановления/);
+  assert.match(script, /bridgeRequest\("\/v1\/native-security", \{ method: "POST" \}/);
+  assert.doesNotMatch(html, /<input[^>]+(?:privateKey|recoveryCode)/i);
 });
 
 test("wallet limits browser privileges and supports accessible system settings", () => {

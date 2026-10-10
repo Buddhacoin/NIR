@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
-import { listLocalTestWallets } from "./wallet-onboarding.mjs";
+import { listLocalTestWallets, renewLocalTestRecoveryCode } from "./wallet-onboarding.mjs";
+import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -27,6 +28,14 @@ async function nativeDialog(script, args = [], signal) {
 async function notify(title, message) {
   return nativeDialog(`on run argv\n display alert (item 1 of argv) message (item 2 of argv) buttons {"OK"}\nend run`,
     [title, message]);
+}
+
+async function nativeLanguage() {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/defaults",
+      ["read", "org.nir.wallet-setup-test", "language"], { encoding: "utf8", timeout: 2_000 });
+    return stdout.trim() === "en" ? "en" : "ru";
+  } catch { return "ru"; }
 }
 
 function listen(server, port) {
@@ -81,6 +90,65 @@ function showPairingCode(code) {
   });
 }
 
+function showNativeRecoveryCode(secret, backupPath, signal) {
+  const executable = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, ["--show-secret"], { stdio: ["pipe", "pipe", "ignore"], signal });
+    let receipt = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      receipt += chunk;
+      if (receipt.length > 8192) child.kill("SIGTERM");
+    });
+    child.once("error", reject);
+    child.once("close", (status) => {
+      if (status !== 0 || receipt.length > 8192) return reject(new Error("recovery export was not completed"));
+      try { resolve(JSON.parse(receipt)); }
+      catch { reject(new Error("recovery export receipt is invalid")); }
+    });
+    child.stdin.on("error", reject);
+    child.stdin.end(JSON.stringify({ kind: "recovery", secret, backupPath }));
+  });
+}
+
+async function nativeSecurity({ vaultPath, signal }) {
+  const english = await nativeLanguage() === "en";
+  try {
+    const continueLabel = english ? "Continue" : "Продолжить";
+    const cancelLabel = english ? "Cancel" : "Отмена";
+    const decision = await nativeDialog(`on run argv\n set answer to display alert (item 1 of argv) message (item 2 of argv) buttons {(item 3 of argv), (item 4 of argv)} default button (item 3 of argv) as warning\n return button returned of answer\nend run`,
+      [english ? "Create a new recovery code?" : "Создать новый код восстановления?",
+        english ? "Save the new code with its new encrypted backup. Old backups and codes still work. If they may have been exposed, create a new address and move funds." :
+          "Новый код нужно сохранить с новой зашифрованной копией. Прежние копии и коды продолжат работать. Если они могли попасть к посторонним, создайте новый адрес и переведите на него средства.",
+        cancelLabel, continueLabel], signal);
+    if (decision !== continueLabel) return false;
+    const password = await nativeDialog(`on run argv\n set answer to display dialog (item 1 of argv) default answer "" with hidden answer buttons {(item 2 of argv), (item 3 of argv)} default button (item 3 of argv)\n return text returned of answer\nend run`,
+      [english ? "Enter this wallet's password." : "Введите пароль этого кошелька.",
+        cancelLabel, continueLabel], signal);
+    if (signal?.aborted) return false;
+    const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
+    const renewed = renewLocalTestRecoveryCode({ storageRoot, walletPath: vaultPath, password });
+    const fingerprint = recoveryBackupFingerprint(renewed.backupPath, renewed.address);
+    if (signal?.aborted) return false;
+    const receipt = await showNativeRecoveryCode(renewed.recoveryCode, renewed.backupPath, signal);
+    if (signal?.aborted) return false;
+    verifyRecoveryExportReceipt(receipt, renewed.backupPath, fingerprint, renewed.address);
+    try { await notify(english ? "New backup verified" : "Новая копия проверена",
+      english ? "Keep the new code separate from its encrypted backup. Old backups and codes remain valid." :
+        "Храните новый код отдельно от зашифрованной копии. Старые копии и коды остаются действительными."); }
+    catch { /* Verification is complete even if the user closes this notice. */ }
+    return true;
+  } catch (error) {
+    if (signal?.aborted || String(error?.message ?? "").includes("User canceled") ||
+        String(error?.message ?? "").includes("-128")) return false;
+    try { await notify(english ? "Backup not completed" : "Не удалось завершить резервирование",
+      english ? "Check the password and save the new code with its encrypted backup in the Mac window. Existing backups were not deleted." :
+        "Проверьте пароль и сохраните код с новой зашифрованной копией в окне Mac. Существующие копии не удалены."); }
+    catch { /* Keep the HTTP failure generic if the user closes this notice. */ }
+    throw new Error("native recovery did not complete");
+  }
+}
+
 async function main() {
   if (process.platform !== "darwin") throw new Error("this visual wallet runs on macOS only");
   const setup = fileURLToPath(new URL("./wallet-macos-setup.mjs", import.meta.url));
@@ -122,6 +190,7 @@ async function main() {
       accounts: listLocalTestWallets(storageRoot),
       authorize: authorizeSigning,
       createAccount,
+      nativeSecurity,
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,

@@ -155,6 +155,7 @@ function renderWalletConnection() {
   accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
   document.querySelector("#settings-connect").hidden = connected;
+  document.querySelector("#settings-secrets").hidden = !connected;
   document.querySelector("#security-state").textContent = connected
     ? `Кошелёк подключён · ${walletInfo.address.slice(0, 16)}…`
     : "Кошелёк не подключён";
@@ -1619,6 +1620,20 @@ document.querySelector("#settings-connect").onclick = () => {
   openBridgePanel();
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
+document.querySelector("#settings-secrets").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#settings-secrets-status");
+  button.disabled = true;
+  status.textContent = "Подтвердите действие в отдельном окне Mac; секрет здесь не появится.";
+  try {
+    const result = await bridgeRequest("/v1/native-security", { method: "POST" }, 600_000);
+    status.textContent = result.opened ? "Новая зашифрованная копия проверена в окне Mac."
+      : "Действие отменено. Существующие копии не изменены.";
+  } catch (error) {
+    status.textContent = error.name === "AbortError"
+      ? "Окно Mac не ответило вовремя." : "Не удалось завершить действие. Проверьте окно Mac.";
+  } finally { button.disabled = false; }
+};
 document.querySelector("#setup-connect").onclick = () => {
   setupPanel.close();
   openBridgePanel();
