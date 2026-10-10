@@ -185,9 +185,12 @@ async function nativePasswordChange({ vaultPath, signal }) {
     if (!committed && (signal?.aborted || String(error?.message ?? "").includes("User canceled") ||
         String(error?.message ?? "").includes("-128"))) return false;
     const uncertain = committed || error?.code === "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
+    const locked = error?.code === "NIR_WALLET_PASSWORD_CHANGE_LOCKED";
     try { await notify(english ? "Password change needs checking" : "Проверьте смену пароля",
       uncertain ? (english ? "Reopen the wallet and verify the address and which password works. Do not delete any backup." :
         "Откройте кошелёк снова, проверьте адрес и какой пароль подходит. Не удаляйте резервные копии.") :
+        locked ? (english ? "Another wallet process may be changing this file, or a previous change stopped unexpectedly. Close every NIR Wallet instance, confirm a verified backup, and seek diagnostics. Do not delete the lock manually." :
+          "Возможно, другой процесс меняет файл или прежняя смена прервалась. Закройте все окна NIR Wallet, проверьте резервную копию и обратитесь за диагностикой. Не удаляйте блокировку вручную.") :
         (english ? "Check the current password and new password rules. The active vault was not replaced." :
           "Проверьте текущий пароль и требования к новому. Активный файл не был заменён.")); }
     catch { /* Keep bridge response generic. */ }

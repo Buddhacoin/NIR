@@ -360,7 +360,8 @@ test("a second process cannot change the same wallet while its rotation lock is 
         reject(new Error("rotation-lock child did not start")));
     });
     assert.throws(() => changeWalletFilePassword({ path, oldPassword,
-      newPassword: "new-personal-password-2026", personalWallet: true }), /EEXIST/);
+      newPassword: "new-personal-password-2026", personalWallet: true }),
+    (error) => error.code === "NIR_WALLET_PASSWORD_CHANGE_LOCKED");
     assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
     child.stdin.write("done");
     await new Promise((resolve) => child.once("exit", resolve));

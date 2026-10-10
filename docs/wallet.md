@@ -37,6 +37,10 @@ not revoke separately exported backups and recovery codes. Older backup/code
 pairs can still restore the same key; suspected key exposure requires a new
 address and a deliberate transfer. The native password-change path has only
 been exercised with synthetic wallets, not as a public-network recovery claim.
+An interrupted password change can leave a private rotation lock. The app fails
+closed instead of deleting that lock automatically. Close all wallet processes,
+verify the address and an independent backup, and diagnose the interrupted
+operation before any recovery action; do not blindly remove the lock.
 
 ```bash
 npm run wallet:create -- /absolute/path/personal.nirvault.json

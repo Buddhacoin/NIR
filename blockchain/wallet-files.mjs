@@ -307,6 +307,11 @@ export function changeWalletFilePassword({ path, oldPassword, newPassword,
       } catch { /* Preserve the original error; a stale lock fails closed. */ }
     }
     closeSync(parentDescriptor);
+    if (error?.code === "EEXIST") {
+      const locked = new Error("wallet password rotation lock exists (EEXIST); close other wallet processes and inspect before recovery", { cause: error });
+      locked.code = "NIR_WALLET_PASSWORD_CHANGE_LOCKED";
+      throw locked;
+    }
     throw error;
   }
   try {
