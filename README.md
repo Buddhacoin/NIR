@@ -33,7 +33,7 @@ The one-click experience requires an official browser-store listing or a signed 
 |---|---|
 | Chrome on Mac, Windows, Linux | No Chrome Web Store listing planned for this first release. |
 | Edge, Brave, Opera, Vivaldi, Yandex Browser on desktop | No verified one-click install. Chromium compatibility has not been tested separately in each browser. |
-| Firefox on desktop | Firefox submission package prepared; Mozilla has not signed or published it yet. No one-click installation link yet. |
+| Firefox on desktop | Submission package is not ready: the current extension fails Firefox manifest validation. Mozilla has not signed or published it; no one-click installation link exists. |
 | Safari on Mac or iPhone/iPad | No signed Safari app extension or installer. |
 | Android browsers | No verified browser-wallet installation. |
 
