@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync,
+  symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -30,6 +31,8 @@ test("model app build has a bounded source allowlist and explicit nonreward mark
   assert.match(native, /terminationHandler =/);
   assert.match(native, /stopServiceGroup/);
   assert.match(native, /DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM/);
+  assert.match(native, /verifyRuntimeAtResources/);
+  assert.ok(native.indexOf("verifyRuntimeAtResources:resources") < native.indexOf("self.service = [NSTask new]"));
 });
 
 test("double-click model app build includes only local UI and model code, without overwriting", () => {
@@ -40,6 +43,7 @@ test("double-click model app build includes only local UI and model code, withou
     assert.equal(buildMacMiningApp(app, { sign: false }), app);
     for (const relative of ["Contents/Info.plist", "Contents/MacOS/launcher",
       "Contents/MacOS/mining-runner",
+      "Contents/MacOS/runtime-verifier",
       "Contents/Resources/NIR.icns", "Contents/Resources/NIR-RUNTIME.json",
       "Contents/Resources/NIR-LOCAL-BUILD.json",
       "Contents/Resources/app/mining-app/index.html",
@@ -58,8 +62,8 @@ test("double-click model app build includes only local UI and model code, withou
     assert.equal(marker.rewardEligible, false);
     assert.equal(marker.distribution, "not-a-public-installer");
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
-    assert.equal(runtime.nodeExecutable, process.execPath);
-    assert.match(runtime.pythonExecutable, /^\//);
+    assert.equal(runtime.nodeExecutable.logicalPath, process.execPath);
+    assert.match(runtime.pythonExecutable.logicalPath, /^\//);
     assert.throws(() => buildMacMiningApp(app, { sign: false }), /new NIR Model Lab\.app/);
     const syntax = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-fsyntax-only",
       new URL("../macos/mining-launcher.m", import.meta.url).pathname], { encoding: "utf8" });
@@ -79,13 +83,77 @@ test("selected symlinked Python venv keeps its own site-packages path", () => {
     process.env.NIR_MINING_PYTHON = python;
     const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"), { sign: false });
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
-    assert.equal(runtime.pythonExecutable, python);
-    const prefix = spawnSync(runtime.pythonExecutable, ["-c", "import sys; print(sys.prefix)"], { encoding: "utf8" });
+    assert.equal(runtime.pythonExecutable.logicalPath, python);
+    const prefix = spawnSync(runtime.pythonExecutable.logicalPath, ["-c", "import sys; print(sys.prefix)"], { encoding: "utf8" });
     assert.equal(prefix.status, 0, prefix.stderr);
     assert.equal(realpathSync(prefix.stdout.trim()), realpathSync(venv));
   } finally {
     if (previous === undefined) delete process.env.NIR_MINING_PYTHON;
     else process.env.NIR_MINING_PYTHON = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("signed model app rejects a changed external Python runtime", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-model-runtime-proof-test-"));
+  const previous = process.env.NIR_MINING_PYTHON;
+  const previousNode = process.env.NIR_MINING_NODE;
+  try {
+    const venv = join(directory, "venv");
+    const created = spawnSync("python3", ["-m", "venv", venv, "--symlinks"], { encoding: "utf8" });
+    assert.equal(created.status, 0, created.stderr);
+    process.env.NIR_MINING_PYTHON = join(venv, "bin", "python");
+    const nodeLink = join(directory, "node");
+    symlinkSync(process.execPath, nodeLink);
+    process.env.NIR_MINING_NODE = nodeLink;
+    const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"));
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    assert.equal(runtime.format, "nir-local-runtime-binding-v1");
+    assert.match(runtime.nodeExecutable.sha256, /^[0-9a-f]{64}$/);
+    assert.match(runtime.pythonEnvironment.treeSha256, /^[0-9a-f]{64}$/);
+    const launcher = join(app, "Contents/MacOS/launcher");
+    const verify = () => spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8" });
+    assert.equal(verify().status, 0);
+
+    unlinkSync(nodeLink);
+    symlinkSync("/bin/echo", nodeLink);
+    assert.notEqual(verify().status, 0, "Node symlink substitution must fail closed");
+    assert.equal(spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app],
+      { encoding: "utf8" }).status, 0, "external Node substitution must preserve the app seal");
+    unlinkSync(nodeLink);
+    symlinkSync(process.execPath, nodeLink);
+    assert.equal(verify().status, 0);
+
+    const pythonLink = process.env.NIR_MINING_PYTHON;
+    const pythonTarget = readlinkSync(pythonLink);
+    unlinkSync(pythonLink);
+    symlinkSync("/bin/echo", pythonLink);
+    assert.notEqual(verify().status, 0, "Python symlink substitution must fail closed");
+    unlinkSync(pythonLink);
+    symlinkSync(pythonTarget, pythonLink);
+    assert.equal(verify().status, 0);
+
+    const site = spawnSync(pythonLink, ["-c", "import site; print(site.getsitepackages()[0])"],
+      { encoding: "utf8" });
+    assert.equal(site.status, 0, site.stderr);
+    const injected = join(site.stdout.trim(), "substituted_runtime.py");
+    writeFileSync(injected, "raise RuntimeError('substituted')\n");
+    assert.notEqual(verify().status, 0, "new site-packages import must fail closed");
+    unlinkSync(injected);
+    assert.equal(verify().status, 0);
+
+    writeFileSync(join(venv, "pyvenv.cfg"), "substituted = true\n");
+    assert.equal(spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app],
+      { encoding: "utf8" }).status, 0, "external mutation must not alter the app seal");
+    const rejected = spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8" });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /runtime binding verification failed/);
+  } finally {
+    if (previous === undefined) delete process.env.NIR_MINING_PYTHON;
+    else process.env.NIR_MINING_PYTHON = previous;
+    if (previousNode === undefined) delete process.env.NIR_MINING_NODE;
+    else process.env.NIR_MINING_NODE = previousNode;
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -171,8 +239,8 @@ test("packaged embedded service starts outside source checkout and runs real pin
     assert.equal(signed().status, 0, "the newly built bundle must have an intact seal");
     const root = join(app, "Contents/Resources/app");
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
-    child = spawn(runtime.nodeExecutable, [join(root, "blockchain/mining-practice-app-cli.mjs"), "--embedded"], {
-      cwd: root, env: { ...process.env, NIR_MINING_PYTHON: runtime.pythonExecutable },
+    child = spawn(runtime.nodeExecutable.logicalPath, [join(root, "blockchain/mining-practice-app-cli.mjs"), "--embedded"], {
+      cwd: root, env: { ...process.env, NIR_MINING_PYTHON: runtime.pythonExecutable.logicalPath },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let diagnostic = "";

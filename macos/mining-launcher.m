@@ -15,6 +15,22 @@
 
 @implementation NIRModelLauncher
 
++ (BOOL)verifyRuntimeAtResources:(NSString *)resources {
+    NSString *verifier = [[NSBundle mainBundle].executablePath.stringByDeletingLastPathComponent
+        stringByAppendingPathComponent:@"runtime-verifier"];
+    NSString *configuration = [resources stringByAppendingPathComponent:@"NIR-RUNTIME.json"];
+    NSFileManager *files = NSFileManager.defaultManager;
+    if (![files isExecutableFileAtPath:verifier]) return NO;
+    NSTask *task = [NSTask new];
+    task.executableURL = [NSURL fileURLWithPath:verifier];
+    task.arguments = @[configuration];
+    task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+    task.standardError = NSFileHandle.fileHandleWithNullDevice;
+    if (![task launchAndReturnError:nil]) return NO;
+    [task waitUntilExit];
+    return task.terminationReason == NSTaskTerminationReasonExit && task.terminationStatus == 0;
+}
+
 - (void)stopWithMessage:(NSString *)message {
     [self stopServiceGroup];
     NSAlert *alert = [NSAlert new];
@@ -39,10 +55,16 @@
     dispatch_source_set_event_handler(self.terminationSignal, ^{ [NSApp terminate:nil]; });
     dispatch_resume(self.terminationSignal);
     NSString *resources = [NSBundle mainBundle].resourcePath;
+    if (![NIRModelLauncher verifyRuntimeAtResources:resources]) {
+        [self stopWithMessage:@"Node.js или Python изменились после локальной сборки. Соберите приложение заново."];
+        return;
+    }
     NSData *data = [NSData dataWithContentsOfFile:[resources stringByAppendingPathComponent:@"NIR-RUNTIME.json"]];
     NSDictionary *runtime = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-    NSString *node = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"nodeExecutable"] : nil;
-    NSString *python = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"pythonExecutable"] : nil;
+    NSDictionary *nodeBinding = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"nodeExecutable"] : nil;
+    NSDictionary *pythonBinding = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"pythonExecutable"] : nil;
+    NSString *node = [nodeBinding isKindOfClass:NSDictionary.class] ? nodeBinding[@"logicalPath"] : nil;
+    NSString *python = [pythonBinding isKindOfClass:NSDictionary.class] ? pythonBinding[@"logicalPath"] : nil;
     NSString *root = [resources stringByAppendingPathComponent:@"app"];
     NSString *script = [root stringByAppendingPathComponent:@"blockchain/mining-practice-app-cli.mjs"];
     NSString *runner = [[[NSBundle mainBundle] executablePath] stringByDeletingLastPathComponent];
@@ -78,6 +100,10 @@
     self.service.currentDirectoryURL = [NSURL fileURLWithPath:root isDirectory:YES];
     NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
     env[@"NIR_MINING_PYTHON"] = python;
+    env[@"PYTHONNOUSERSITE"] = @"1";
+    env[@"PYTHONDONTWRITEBYTECODE"] = @"1";
+    [env removeObjectsForKeys:@[@"NODE_OPTIONS", @"NODE_PATH", @"PYTHONHOME", @"PYTHONPATH",
+        @"PYTHONSTARTUP", @"PYTHONUSERBASE"]];
     self.service.environment = env;
     NSPipe *pipe = [NSPipe pipe];
     self.service.standardOutput = pipe;
@@ -205,8 +231,14 @@
 }
 @end
 
-int main(void) {
+int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        if (argc == 2 && strcmp(argv[1], "--verify-runtime") == 0) {
+            if ([NIRModelLauncher verifyRuntimeAtResources:NSBundle.mainBundle.resourcePath]) return 0;
+            fputs("runtime binding verification failed\n", stderr);
+            return 1;
+        }
+        if (argc != 1) return 2;
         NSApplication *app = [NSApplication sharedApplication];
         app.activationPolicy = NSApplicationActivationPolicyRegular;
         NIRModelLauncher *delegate = [NIRModelLauncher new];

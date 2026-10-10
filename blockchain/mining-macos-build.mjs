@@ -6,6 +6,8 @@ import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createRuntimeBinding } from "./local-runtime-binding.mjs";
+
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FILES = Object.freeze(`
 package.json blockchain/mining-practice-app-cli.mjs blockchain/mining-practice-app.mjs
@@ -17,7 +19,7 @@ nir/open_model_local_run.py nir/open_model_fetch.py nir/open_model_package.py
 nir/open_model_snapshot.py nir/open_model_source.py
 `.trim().split(/\s+/));
 const BUILD_FILES = Object.freeze(["macos/mining-Info.plist", "macos/mining-launcher.m",
-  "macos/mining-runner.c"]);
+  "macos/mining-runner.c", "macos/runtime-verifier.m", "blockchain/local-runtime-binding.mjs"]);
 
 function checkedSource(relative) {
   if (typeof relative !== "string" || relative.startsWith("/") ||
@@ -57,6 +59,22 @@ function pythonExecutable() {
   return path;
 }
 
+function nodeExecutable() {
+  const requested = process.env.NIR_MINING_NODE || process.execPath;
+  if (!requested.startsWith("/")) throw new Error("Node.js executable must have an absolute path");
+  const version = command(requested, ["--version"], "Node.js version");
+  if (!/^v(?:2[6-9]|[3-9][0-9])\./.test(version)) throw new Error("Node.js 26 or newer is required");
+  return requested;
+}
+
+function runtimeBinding(node, python) {
+  const info = JSON.parse(command(python, ["-I", "-c",
+    "import json,sys; print(json.dumps({'prefix':sys.prefix,'basePrefix':sys.base_prefix}))"],
+  "Python runtime identity"));
+  return createRuntimeBinding({ nodePath: node, pythonPath: python,
+    pythonPrefix: info.prefix, pythonBasePrefix: info.basePrefix });
+}
+
 function icon(resources) {
   const iconset = join(resources, "NIR.iconset");
   mkdirSync(iconset);
@@ -87,6 +105,7 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
   catch (error) { if (error.code !== "ENOENT") throw error; }
   for (const relative of [...FILES, ...BUILD_FILES]) checkedSource(relative);
   const python = pythonExecutable();
+  const node = nodeExecutable();
   const scratch = mkdtempSync(join(parent, ".nir-model-build-"));
   try {
     const app = join(scratch, "NIR Model Lab.app");
@@ -103,8 +122,7 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
       .replace(/(<key>CFBundleVersion<\/key><string>)[^<]+(<\/string>)/,
         (_, before, after) => `${before}${version}${after}`);
     writeFileSync(join(contents, "Info.plist"), info);
-    writeFileSync(join(resources, "NIR-RUNTIME.json"), `${JSON.stringify({ nodeExecutable: process.execPath,
-      pythonExecutable: python })}\n`);
+    writeFileSync(join(resources, "NIR-RUNTIME.json"), `${JSON.stringify(runtimeBinding(node, python))}\n`);
     writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
       '{"format":"nir-local-model-build-v1","distribution":"not-a-public-installer","rewardEligible":false}\n');
     icon(resources);
@@ -113,6 +131,9 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
       "-o", join(contents, "MacOS", "launcher")], "native model app build");
     command("/usr/bin/clang", [checkedSource("macos/mining-runner.c"), "-o",
       join(contents, "MacOS", "mining-runner")], "native process-group runner build");
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "Foundation",
+      checkedSource("macos/runtime-verifier.m"), "-o",
+      join(contents, "MacOS", "runtime-verifier")], "native runtime verifier build");
     for (const relative of FILES) {
       const destination = join(payload, relative);
       mkdirSync(dirname(destination), { recursive: true });
