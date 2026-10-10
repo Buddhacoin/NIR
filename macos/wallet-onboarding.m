@@ -70,6 +70,9 @@ static NSString *NIRTranslate(NSString *source) {
             @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому.": @"This address needs BOTH the code AND an encrypted backup. The code alone cannot restore the wallet if this Mac is lost. Save the backup, preferably on separate media, and keep the code elsewhere. Every new address needs its own backup. Never send them to anyone.",
             @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.": @"This is the full private key. Anyone who sees it can use this address. Show or copy it only in a safe place.",
             @"Сохранить копию": @"Save backup", @"Копировать": @"Copy",
+            @"Показать код": @"Reveal code", @"Показать ключ": @"Reveal key",
+            @"Нажмите «Показать», когда рядом нет посторонних и экран не транслируется.": @"Select Reveal only when nobody else can see your screen and screen sharing is off.",
+            @"Закрыть": @"Close",
             @"Отложить настройку": @"Set up later", @"Копия остаётся на том же диске": @"Backup remains on the same disk",
             @"При потере или поломке этого Mac код без копии не восстановит адрес. Лучше выбрать отдельный носитель. Приложение не может проверить, где физически находится выбранное хранилище.": @"If this Mac is lost or fails, the code without a backup cannot restore the address. Separate media is safer. The app cannot verify the physical location of storage you choose.",
             @"Выбрать другое место": @"Choose another location", @"Сохранить всё равно": @"Save anyway",
@@ -695,16 +698,17 @@ int main(int argc, const char *argv[]) {
             scroll.hasVerticalScroller = YES;
             scroll.borderType = NSBezelBorder;
             NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
-            view.string = shown;
+            // Raising this helper window must never raise the secret itself.
+            // The user explicitly reveals it only after the neutral alert is visible.
+            view.string = NIRTranslate(@"Нажмите «Показать», когда рядом нет посторонних и экран не транслируется.");
             view.editable = NO;
             view.selectable = YES;
             view.font = [NSFont monospacedSystemFontOfSize:recovery ? 15 : 13 weight:NSFontWeightRegular];
             view.textContainer.widthTracksTextView = YES;
             scroll.documentView = view;
             alert.accessoryView = scroll;
-            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Сохранить копию" : @"Готово")];
-            [alert addButtonWithTitle:NIRTranslate(@"Копировать")];
-            if (recovery) [alert addButtonWithTitle:NIRTranslate(@"Отложить настройку")];
+            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Показать код" : @"Показать ключ")];
+            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Отложить настройку" : @"Закрыть")];
             if (recovery && !backupPath) return 1;
             // This helper starts only after the first wizard exits. Activate
             // its actual modal window so the backup step is not left behind
@@ -718,8 +722,27 @@ int main(int argc, const char *argv[]) {
                 [secretWindow makeKeyAndOrderFront:nil];
                 [secretWindow orderFrontRegardless];
             });
+            BOOL revealed = NO;
             while (YES) {
                 NSModalResponse choice = [alert runModal];
+                if (!revealed) {
+                    if (choice != NSAlertFirstButtonReturn) return recovery ? 2 : 0;
+                    // NSAlert is one-shot on some macOS versions: re-running
+                    // the same instance after Reveal can leave a blank window.
+                    // Build a fresh modal only after the explicit user action.
+                    NSAlert *revealedAlert = [NSAlert new];
+                    revealedAlert.messageText = alert.messageText;
+                    revealedAlert.informativeText = alert.informativeText;
+                    alert.accessoryView = nil;
+                    view.string = shown;
+                    revealedAlert.accessoryView = scroll;
+                    [revealedAlert addButtonWithTitle:NIRTranslate(recovery ? @"Сохранить копию" : @"Готово")];
+                    [revealedAlert addButtonWithTitle:NIRTranslate(@"Копировать")];
+                    if (recovery) [revealedAlert addButtonWithTitle:NIRTranslate(@"Отложить настройку")];
+                    alert = revealedAlert;
+                    revealed = YES;
+                    continue;
+                }
                 if (choice == NSModalResponseCancel && recovery) return 2;
                 if (choice == NSAlertFirstButtonReturn && !recovery) break;
                 if (choice == NSAlertSecondButtonReturn) {
