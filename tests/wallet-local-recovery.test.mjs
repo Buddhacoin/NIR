@@ -7,7 +7,8 @@ import test from "node:test";
 
 import { createWalletFile, restoreRecoveryCodeWalletBackup, verifyWalletFile } from "../blockchain/wallet-files.mjs";
 import {
-  createLocalTestWallet, createWalletWithRecoveryDrill, listLocalTestWallets, openLocalTestWallet,
+  changeLocalTestWalletPassword, createLocalTestWallet, createWalletWithRecoveryDrill,
+  listLocalTestWallets, openLocalTestWallet,
   renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode,
 } from "../blockchain/wallet-onboarding.mjs";
 import { validPassword, validPersonalWalletPassword } from "../blockchain/vault.mjs";
@@ -25,6 +26,51 @@ test("personal wallet password policy does not weaken high-value vault creation"
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("local password change keeps the same address and old recovery backup usable", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-local-password-rotation-"));
+  const storageRoot = join(root, "wallet");
+  const oldPassword = "old-password-2026";
+  const newPassword = "aB7!xK2#q";
+  try {
+    const created = createLocalTestWallet({ storageRoot, password: oldPassword });
+    assert.throws(() => changeLocalTestWalletPassword({ storageRoot,
+      walletPath: created.walletPath, oldPassword: "wrong-password-2026", newPassword }), /invalid/);
+    assert.equal(verifyWalletFile({ path: created.walletPath, password: oldPassword }).address,
+      created.address);
+    const changed = changeLocalTestWalletPassword({ storageRoot,
+      walletPath: created.walletPath, oldPassword, newPassword });
+    assert.equal(changed.address, created.address);
+    assert.equal(verifyWalletFile({ path: created.walletPath, password: newPassword }).address,
+      created.address);
+    assert.throws(() => verifyWalletFile({ path: created.walletPath,
+      password: oldPassword }), /invalid/);
+    assert.throws(() => changeLocalTestWalletPassword({ storageRoot,
+      walletPath: join(root, "other.nirvault.json"), oldPassword, newPassword }), /not in/);
+    const restored = restoreLocalTestWalletWithRecoveryCode({ storageRoot: join(root, "restored"),
+      backupPath: created.backupPath, expectedAddress: created.address,
+      recoveryCode: created.recoveryCode, newPassword: "restore-password-2026" });
+    assert.equal(restored.address, created.address);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("nine-character personal passwords are usable while trivial PINs and high-value creation stay rejected", () => {
+  const password = "aB7!xK2#q";
+  assert.equal([...password].length, 9);
+  assert.equal(validPersonalWalletPassword(password), true);
+  assert.equal(validPassword(password, { creation: true }), false);
+  for (const weak of ["123456789", "987654321", "password1", "qwerty123", "aaaaa1111", "abcdefghi",
+    "aB7!xK2#", "aB7!xK2#q\n"]) {
+    assert.equal(validPersonalWalletPassword(weak), false, weak);
+  }
+  const root = mkdtempSync(join(tmpdir(), "nir-local-nine-policy-"));
+  try {
+    const local = createLocalTestWallet({ storageRoot: join(root, "personal"), password });
+    assert.equal(verifyWalletFile({ path: local.walletPath, password }).address, local.address);
+    assert.throws(() => createWalletFile({ path: join(root, "high-value.nirvault.json"),
+      password }), /at least 16 characters/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("local recovery keeps the address, requires the matching code, and never revokes old copies", () => {

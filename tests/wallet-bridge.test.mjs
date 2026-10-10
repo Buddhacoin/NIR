@@ -112,6 +112,81 @@ test("native security requires the paired origin and session, returns no secret,
   }
 });
 
+test("native password change is Mac-capability gated, session-bound, and never returns passwords", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-password-change-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "old-wallet-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let calls = 0;
+  const server = createWalletBridgeServer({
+    authorize: async () => null, origin, sessionToken: token, vaultPath,
+    nativePasswordChange: async ({ vaultPath: selected }) => {
+      assert.equal(selected, vaultPath);
+      calls += 1;
+      return calls === 1 ? true : "DO_NOT_EXPOSE_THIS_PASSWORD";
+    },
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const endpoint = `${base}/v1/native-password-change`;
+    assert.equal((await request(endpoint, origin, "b".repeat(64), { method: "POST" })).status, 401);
+    assert.equal((await request(endpoint, "http://127.0.0.1:9999", token,
+      { method: "POST" })).status, 403);
+    assert.equal(calls, 0);
+    assert.equal((await (await request(`${base}/v1/wallet`, origin, token)).json())
+      .nativePasswordChangeAvailable, true);
+    assert.deepEqual(await (await request(endpoint, origin, token,
+      { method: "POST" })).json(), { changed: true });
+    const second = await (await request(endpoint, origin, token,
+      { method: "POST" })).text();
+    assert.deepEqual(JSON.parse(second), { changed: false });
+    assert.equal(second.includes("DO_NOT_EXPOSE_THIS_PASSWORD"), false);
+    assert.equal((await request(`${base}/v1/session`, origin, token,
+      { method: "DELETE" })).status, 200);
+    assert.equal((await request(endpoint, origin, token, { method: "POST" })).status, 401);
+    assert.equal(calls, 2);
+  } finally { await close(server); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("native password change excludes other native security dialogs and account actions", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-change-overlap-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "old-wallet-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let release;
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  let securityCalls = 0;
+  const server = createWalletBridgeServer({ authorize: async () => null,
+    origin, sessionToken: token, vaultPath,
+    nativePasswordChange: async () => { entered(); await gate; return true; },
+    nativeSecurity: async () => { securityCalls += 1; return true; },
+    createAccount: async () => { throw new Error("must not create while password dialog is open"); },
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const pending = request(`${base}/v1/native-password-change`, origin, token,
+      { method: "POST" });
+    await started;
+    assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 409);
+    assert.equal((await request(`${base}/v1/native-password-change`, origin, token,
+      { method: "POST" })).status, 409);
+    assert.equal((await request(`${base}/v1/create-account`, origin, token,
+      { method: "POST", body: "{}" })).status, 409);
+    assert.equal(securityCalls, 0);
+    release();
+    assert.deepEqual(await (await pending).json(), { changed: true });
+  } finally {
+    release?.(); await close(server); rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("native security cannot switch accounts or return success after session revocation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-security-race-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
@@ -254,7 +329,10 @@ test("generic paired bridge advertises no native recovery action", async () => {
     const base = `http://127.0.0.1:${server.address().port}`;
     const info = await (await request(`${base}/v1/wallet`, origin, token)).json();
     assert.equal(info.nativeSecurityAvailable, false);
+    assert.equal(info.nativePasswordChangeAvailable, false);
     assert.equal((await request(`${base}/v1/native-security`, origin, token,
+      { method: "POST" })).status, 404);
+    assert.equal((await request(`${base}/v1/native-password-change`, origin, token,
       { method: "POST" })).status, 404);
   } finally {
     await close(server);

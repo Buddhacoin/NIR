@@ -64,10 +64,20 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(launcher, /WKNavigationActionPolicyCancel/);
     const nativeApp = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
     assert.match(nativeApp, /nativeSecurity,/);
+    assert.match(nativeApp, /nativePasswordChange,/);
+    assert.match(nativeApp, /changeLocalTestWalletPassword\(/);
+    const changeSource = nativeApp.slice(nativeApp.indexOf("async function nativePasswordChange("),
+      nativeApp.indexOf("async function main()"));
+    assert.match(changeSource, /committed = true;[\s\S]*?return true;/);
+    assert.doesNotMatch(changeSource.slice(changeSource.indexOf("committed = true;"),
+      changeSource.indexOf("return true;")), /await notify\(/);
     assert.match(nativeApp, /renewLocalTestRecoveryCode\(/);
     assert.match(nativeApp, /verifyRecoveryExportReceipt\(/);
     assert.match(nativeApp, /with hidden answer/);
     assert.doesNotMatch(nativeApp, /console\.(?:log|error)\([^\n]*(?:recoveryCode|password)/);
+    const onboardingSource = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+    assert.match(onboardingSource, /Пароль слишком короткий: нужно от 9 символов/);
+    assert.doesNotMatch(onboardingSource, /Пароль слишком короткий: нужно от 12 символов/);
     assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
     assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
     assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
