@@ -27,6 +27,7 @@ import {
 import { addressFromPublicKey, generateWallet, hashObject } from "./crypto.mjs";
 import { createPaymentRequest } from "./payment-request.mjs";
 import { createOperatorWalletProof } from "./operator-wallet-link.mjs";
+import { signLocalIrisRunReceipt } from "./operator-model-receipt.mjs";
 import { createSignedHistoryArchive } from "./archive-sync.mjs";
 import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { createValidatorAdmission } from "./validator-admission.mjs";
@@ -555,6 +556,16 @@ export function signWalletOperatorLink({ path, password, challenge, expectedAddr
   } finally {
     wallet.privateKey = "";
   }
+}
+
+export function signWalletLocalIrisReceipt({ path, password, intent, expectedAddress }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    if (wallet.address !== expectedAddress || walletPublicInfo(path).address !== expectedAddress ||
+        intent?.recipient !== expectedAddress)
+      throw new Error("wallet account changed during the request");
+    return signLocalIrisRunReceipt({ wallet, intent });
+  } finally { wallet.privateKey = ""; }
 }
 
 export function signWalletHistoryArchive({ path, password, directory, chain, options }) {
