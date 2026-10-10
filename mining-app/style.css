@@ -58,10 +58,12 @@ button:disabled { opacity:.46;cursor:not-allowed;box-shadow:none; }.safety { mar
 .catalog h2,.result h2 { margin:0 0 7px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:18px; }
 .catalog p,.result p { margin:0 0 13px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px; }
 .catalog label { display:block;margin:12px 0 6px;color:#c6cdc7;font-size:14px;font-weight:700; }
-.catalog select,.catalog input[type="file"],.catalog input[type="text"] { width:100%;min-width:0;padding:11px;border:1px solid #586159;border-radius:2px;background:#151815;color:#eef2ef;font:inherit;font-size:14px; }
+.catalog select,.catalog input[type="file"],.catalog input[type="text"],.catalog input[type="number"] { width:100%;min-width:0;padding:11px;border:1px solid #586159;border-radius:2px;background:#151815;color:#eef2ef;font:inherit;font-size:14px; }
 .catalog textarea { display:block;width:100%;min-width:0;min-height:80px;margin:9px 0;padding:11px;border:1px solid #586159;border-radius:2px;background:#151815;color:#eef2ef;font:inherit;font-size:14px;line-height:1.5;overflow-wrap:anywhere;resize:vertical; }
 #wallet-link-challenge { min-height:58px;color:var(--lime); }
 #wallet-link-state { margin-top:12px;overflow-wrap:anywhere; }
+.synthetic-history { padding-left:20px;color:#dce5dc;font-size:13px;overflow-wrap:anywhere; }
+.synthetic-recipient { display:block;padding:11px;border:1px solid #586159;background:#151815;color:var(--lime);font-size:13px;overflow-wrap:anywhere; }
 .catalog #iris-verify-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog #candidate-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog a { color:var(--lime);font-size:14px;text-underline-offset:3px; }

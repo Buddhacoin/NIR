@@ -11,6 +11,7 @@ import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   hashIrisModelCommit, MAX_IRIS_MODEL_BYTES,
   recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
 import { verifyOperatorWalletProof } from "./operator-wallet-link.mjs";
+import { createSyntheticTransferSession } from "./synthetic-transfer.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -29,6 +30,7 @@ const APP_FILES = Object.freeze([
   "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
   "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
   "blockchain/model-provider-capabilities.mjs",
+  "blockchain/synthetic-transfer.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
   "nir/open_model_package.py", "nir/open_model_snapshot.py",
   "nir/open_model_source.py",
@@ -266,6 +268,12 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   let pendingCandidate = null;
   let pendingWalletChallenge = null;
   let linkedWalletAddress = null;
+  const syntheticTransfers = createSyntheticTransferSession();
+  const syntheticState = () => {
+    const snapshot = syntheticTransfers.snapshot();
+    return { ...snapshot, verifiedRecipient: !snapshot.started ||
+      snapshot.trainingRecipient === linkedWalletAddress ? linkedWalletAddress : null };
+  };
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -356,6 +364,62 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         }));
       } catch {
         send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid wallet-link proof" }));
+      } finally { clearTimeout(deadline); }
+      return;
+    }
+    if (request.url === "/synthetic-transfer/state" && request.method === "GET") {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else {
+        send(200, "application/json; charset=utf-8", JSON.stringify(syntheticState()));
+      }
+      return;
+    }
+    if (request.url === "/synthetic-transfer/start" && request.method === "POST") {
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+          request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (!linkedWalletAddress) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "A wallet address must be verified for this local session" }));
+        return;
+      }
+      try {
+        syntheticTransfers.startTraining(linkedWalletAddress);
+        send(200, "application/json; charset=utf-8", JSON.stringify(syntheticState()));
+      } catch { send(409, "application/json; charset=utf-8", JSON.stringify({ error: "Training already started" })); }
+      return;
+    }
+    if (request.url === "/synthetic-transfer" && request.method === "POST") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" || request.headers["transfer-encoding"] ||
+          !Number.isSafeInteger(declared) || declared < 2 || declared > 512) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("body too large");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated body");
+        const input = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        if (!input || Array.isArray(input) || typeof input !== "object" ||
+            Object.keys(input).sort().join(",") !== "amount,id,networkId,recipient")
+          throw new Error("invalid fields");
+        if (!linkedWalletAddress || input.recipient !== linkedWalletAddress)
+          throw new Error("recipient is not verified in this local session");
+        const entry = syntheticTransfers.transfer(input);
+        send(200, "application/json; charset=utf-8", JSON.stringify({ entry, state: syntheticState() }));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid synthetic transfer or unverified recipient" }));
       } finally { clearTimeout(deadline); }
       return;
     }
