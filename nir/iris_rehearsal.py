@@ -32,6 +32,7 @@ DATASET = ROOT / "examples" / "iris.data"
 ADAPTER = ROOT / "examples" / "iris_model_adapter.py"
 DATA_SHA256 = "596ffd580471ca4d4880f8e439c7281f3b50d8249a5960353cb200b1490f63a0"
 ADAPTER_SHA256 = "b0363146abd7712b04b3331dd9a2600a94ece1814b08db8645dc69d7d9eb8c56"
+MAX_EVIDENCE_BYTES = 1_000_000
 
 
 def _read_pinned_regular(path: Path, limit: int) -> bytes:
@@ -66,8 +67,8 @@ def check_pinned_iris_runtime() -> tuple[bytes, bytes]:
     return dataset_bytes, adapter_bytes
 
 
-def run_pinned_iris_evaluation() -> dict[str, object]:
-    """Run fixed, bundled models, verify a serialized bundle, return no reward."""
+def _run_pinned_iris() -> tuple[dict[str, object], dict[str, object]]:
+    """Run fixed models and return a checked summary and exact local bundle."""
     # Pin both executable and data *before* launching the unsandboxed adapter.
     dataset_bytes, adapter_bytes = check_pinned_iris_runtime()
     rows = list(csv.reader(dataset_bytes.decode("ascii").splitlines()))
@@ -170,7 +171,7 @@ def run_pinned_iris_evaluation() -> dict[str, object]:
     verify_bundle(restored, expected_hash=bundle.bundle_hash)
     if restored.report.energy_attested:
         raise ValueError("local example unexpectedly claims energy attestation")
-    return {
+    summary = {
         "status": "pinned-local-model-evaluation",
         "scope": "local-public-iris-example-only",
         "baselineAccuracyBps": restored.report.baseline_accuracy_bps,
@@ -185,6 +186,53 @@ def run_pinned_iris_evaluation() -> dict[str, object]:
         "rewardCredited": False,
         "walletChanged": False,
     }
+    return summary, serialized
+
+
+def run_pinned_iris_evaluation() -> dict[str, object]:
+    """Run fixed, bundled models, verify a serialized bundle, return no reward."""
+    summary, _ = _run_pinned_iris()
+    return summary
+
+
+def export_pinned_iris_evidence() -> dict[str, object]:
+    """Export public local evidence, not an admission or reward proof."""
+    summary, bundle = _run_pinned_iris()
+    evidence = {"format": "nir-local-iris-evidence-v1", "summary": summary, "bundle": bundle}
+    if len(json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()) > MAX_EVIDENCE_BYTES:
+        raise ValueError("local Iris evidence exceeds its byte limit")
+    return evidence
+
+
+def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key in local Iris evidence")
+        result[key] = value
+    return result
+
+
+def verify_pinned_iris_evidence(raw: bytes) -> dict[str, object]:
+    """Rerun trusted pinned code; never execute code or paths from the evidence."""
+    if not isinstance(raw, bytes) or len(raw) > MAX_EVIDENCE_BYTES:
+        raise ValueError("local Iris evidence exceeds its byte limit")
+    try:
+        evidence = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                              parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite number")))
+        if not isinstance(evidence, dict) or set(evidence) != {"format", "summary", "bundle"} or \
+                evidence["format"] != "nir-local-iris-evidence-v1" or \
+                not isinstance(evidence["summary"], dict) or not isinstance(evidence["bundle"], dict):
+            raise ValueError("invalid local Iris evidence envelope")
+        restored = EvaluationBundle.from_dict(evidence["bundle"])
+        verify_bundle(restored, expected_hash=evidence["summary"].get("bundleHash"))
+    except (UnicodeError, json.JSONDecodeError, TypeError, KeyError, RecursionError) as error:
+        raise ValueError("invalid local Iris evidence") from error
+    canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    if canonical(evidence) != canonical(export_pinned_iris_evidence()):
+        raise ValueError("local Iris evidence does not match a fresh pinned run")
+    return {"status": "local-iris-evidence-matched", "bundleHash": restored.bundle_hash,
+            "independentlyVerified": False, "networkSubmitted": False, "rewardEligible": False}
 
 
 if __name__ == "__main__":
@@ -193,5 +241,10 @@ if __name__ == "__main__":
         print('{"status":"pinned-iris-ready"}')
     elif len(sys.argv) == 1:
         print(json.dumps(run_pinned_iris_evaluation(), separators=(",", ":")))
+    elif sys.argv[1:] == ["--export-evidence"]:
+        print(json.dumps(export_pinned_iris_evidence(), sort_keys=True, separators=(",", ":")))
+    elif sys.argv[1:] == ["--verify-evidence"]:
+        print(json.dumps(verify_pinned_iris_evidence(sys.stdin.buffer.read(MAX_EVIDENCE_BYTES + 1)),
+                         sort_keys=True, separators=(",", ":")))
     else:
-        raise SystemExit("usage: python3 -m nir.iris_rehearsal [--check]")
+        raise SystemExit("usage: python3 -m nir.iris_rehearsal [--check|--export-evidence|--verify-evidence]")

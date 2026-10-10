@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { webcrypto } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -467,7 +468,7 @@ test("RU/EN switch translates the active model result without changing its value
     baselineAccuracyBps: 9000, candidateAccuracyBps: 9666, caseCount: 30,
     bundleHash: "a".repeat(64), bundleVerified: true, independentOperators: false,
     hiddenChallenges: false, energyAttested: false, networkSubmitted: false,
-    rewardCredited: false, walletChanged: false,
+    rewardCredited: false, walletChanged: false, evidenceAvailable: false,
   };
   const code = readFileSync(join(root, "mining-app/app.js"), "utf8");
   runInNewContext(code, {
@@ -606,12 +607,63 @@ test("pinned Iris endpoint runs trained classifiers and never reports a reward",
     });
     assert.equal(response.status, 200);
     const result = await response.json();
-    assert.deepEqual(result, await runPinnedModel(root));
+    assert.deepEqual(result, { ...await runPinnedModel(root), evidenceAvailable: true });
     assert.equal(result.baselineAccuracyBps, 9000);
     assert.equal(result.candidateAccuracyBps, 9666);
     assert.equal(result.bundleVerified, true);
     assert.equal(result.networkSubmitted, false);
     assert.equal(result.rewardCredited, false);
+  } finally { await stop(server); }
+});
+
+test("Iris evidence can be downloaded only after a real local run and independently rerun", async () => {
+  const { server, base, token } = await serve();
+  const evidence = () => fetch(`${base}/model-evidence`, {
+    headers: { "X-NIR-Session": token },
+  });
+  try {
+    assert.equal((await evidence()).status, 404);
+    assert.equal((await fetch(`${base}/model-evidence`)).status, 403);
+    const run = await fetch(`${base}/model-check`, {
+      method: "POST", body: "", headers: { origin: base, "X-NIR-Session": token },
+    });
+    assert.equal(run.status, 200);
+    assert.equal((await run.json()).evidenceAvailable, true);
+    const downloaded = await evidence();
+    assert.equal(downloaded.status, 200);
+    const raw = await downloaded.text();
+    assert.ok(Buffer.byteLength(raw) <= 1_000_000);
+    const item = JSON.parse(raw);
+    assert.equal(item.format, "nir-local-iris-evidence-v1");
+    assert.equal(item.summary.rewardCredited, false);
+    const verifier = execFileSync("python3", ["-B", "-m", "nir.iris_rehearsal", "--verify-evidence"], {
+      cwd: root, input: raw, encoding: "utf8", timeout: 15_000,
+    });
+    assert.equal(JSON.parse(verifier).bundleHash, item.summary.bundleHash);
+  } finally { await stop(server); }
+});
+
+test("a failed later run clears prior Iris evidence and rejects forged bundle metadata", async () => {
+  let calls = 0;
+  const model = async (source, options) => {
+    calls++;
+    if (calls === 1) return runPinnedModel(source, options);
+    if (calls === 2) return { ...await runPinnedModel(source, options),
+      evidence: { format: "nir-local-iris-evidence-v1", summary: {}, bundle: { bundle_hash: "0".repeat(64) } } };
+    throw new Error("model failed");
+  };
+  const { server, base, token } = await serve(model);
+  const check = () => fetch(`${base}/model-check`, {
+    method: "POST", body: "", headers: { origin: base, "X-NIR-Session": token },
+  });
+  const evidence = () => fetch(`${base}/model-evidence`, { headers: { "X-NIR-Session": token } });
+  try {
+    assert.equal((await check()).status, 200);
+    assert.equal((await evidence()).status, 200);
+    assert.equal((await check()).status, 500);
+    assert.equal((await evidence()).status, 404);
+    assert.equal((await check()).status, 500);
+    assert.equal((await evidence()).status, 404);
   } finally { await stop(server); }
 });
 
