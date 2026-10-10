@@ -449,7 +449,7 @@ test("Python and JavaScript capability memory use the same state root", () => {
   );
 });
 
-test("fresh genesis can reach its first reward with the committed evaluator bonds", () => {
+test("legacy genesis can reach its historical first reward with committed evaluator bonds", () => {
   const { chain, evaluators, treasury, validators } = fixture();
   const miner = generateWallet();
   const memoryRootBefore = chain.capabilityMemoryRoot;
