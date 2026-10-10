@@ -152,6 +152,7 @@ const copy = {
     syntheticBalance: (state) => state?.started ? `Учебный остаток: ${state.remaining} из 7. Настоящий баланс кошелька не изменился.` : "Учебный сценарий ещё не создан.",
     syntheticSuccess: "Учебный перевод записан на локально подтверждённый адрес. Настоящий кошелёк и сеть не изменились.",
     syntheticFailure: "Учебный перевод отклонён. Проверьте адрес, сумму и остаток.",
+    syntheticUnknown: "Статус учебного перевода неизвестен: ответ или история недоступны. Не создавайте новую операцию; повторите запрос с тем же ID после восстановления связи. Это не NIR.",
     syntheticHistoryItem: (entry) => `${entry.amount} учебных жетонов → ${entry.recipient} · не NIR`,
     test: "ТЕСТ", eyebrow: "Локальная тренировка", headline: "Проверка модели Iris",
     description: "Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.",
@@ -270,6 +271,7 @@ const copy = {
     syntheticBalance: (state) => state?.started ? `Training remainder: ${state.remaining} of 7. Real wallet balance did not change.` : "Training scenario not created yet.",
     syntheticSuccess: "Training transfer recorded for the locally verified address. Real wallet and network did not change.",
     syntheticFailure: "Training transfer refused. Check address, amount, and remainder.",
+    syntheticUnknown: "Training transfer status is unknown: response or history is unavailable. Do not create a new operation; retry with the same ID after reconnection. This is not NIR.",
     syntheticHistoryItem: (entry) => `${entry.amount} imaginary units → ${entry.recipient} · not NIR`,
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
     description: "Train two classifiers locally on 120 examples and check them against 30 held-out examples. Results and evidence are checked on this Mac.",
@@ -800,10 +802,10 @@ if (syntheticStart) {
             syntheticMessage = "syntheticSuccess";
           } else {
             if (definitelyRejected) syntheticPendingTransfer = null;
-            syntheticMessage = "syntheticFailure";
+            syntheticMessage = definitelyRejected ? "syntheticFailure" : "syntheticUnknown";
           }
-        } else syntheticMessage = "syntheticFailure";
-      } catch { syntheticMessage = "syntheticFailure"; }
+        } else syntheticMessage = "syntheticUnknown";
+      } catch { syntheticMessage = "syntheticUnknown"; }
     } finally { syntheticTransferBusy = false; }
     render();
   });

@@ -179,6 +179,7 @@ test("two rapid UI clicks send one stable imaginary transfer request", async () 
     "synthetic-state", "synthetic-history", ".local-only"]) nodes.set(`#${id.replace(/^\./, "")}`, element());
   nodes.set(".local-only", element());
   let requests = 0;
+  let stateReads = 0;
   const transferIds = [];
   let release;
   const pause = new Promise((resolve) => { release = resolve; });
@@ -191,7 +192,11 @@ test("two rapid UI clicks send one stable imaginary transfer request", async () 
     navigator: { language: "ru-RU" }, AbortController, crypto: webcrypto,
     fetch: async (path, options) => {
       if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
-      if (path === "/synthetic-transfer/state") return { ok: true, json: async () => snapshot };
+      if (path === "/synthetic-transfer/state") {
+        stateReads++;
+        if (stateReads === 2) throw new TypeError("state response unavailable");
+        return { ok: true, json: async () => snapshot };
+      }
       if (path === "/synthetic-transfer") {
         requests++;
         transferIds.push(JSON.parse(options.body).id);
@@ -213,6 +218,7 @@ test("two rapid UI clicks send one stable imaginary transfer request", async () 
   assert.equal(requests, 1);
   release();
   await Promise.all([first, second]);
+  assert.match(nodes.get("#synthetic-state").textContent, /неизвестен/i);
   await click();
   assert.equal(requests, 2);
   assert.deepEqual(transferIds, [transferIds[0], transferIds[0]]);
