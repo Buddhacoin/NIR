@@ -6,12 +6,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 from time import monotonic, sleep
 import unittest
+from unittest.mock import patch
 
-from nir.open_model_fetch import FetchError, _HubRedirect, _download_hub, fetched_curated_model
+from nir.open_model_fetch import FetchError, _HubRedirect, _download_capacity_guard, _download_hub, fetched_curated_model
 from nir.open_model_snapshot import REQUIRED_FILES
 
 
@@ -43,6 +46,33 @@ class FetchTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_download_guard_rejects_insufficient_space_and_second_process(self):
+        with self.assertRaisesRegex(FetchError, "insufficient free disk"):
+            with _download_capacity_guard(self.root, 100, available_bytes=lambda _: 1024):
+                pass
+        with _download_capacity_guard(self.root, 100, available_bytes=lambda _: 2 << 30):
+            with self.assertRaisesRegex(FetchError, "already running"):
+                with _download_capacity_guard(self.root, 100, available_bytes=lambda _: 2 << 30):
+                    pass
+            child = subprocess.run([sys.executable, "-c", "from nir.open_model_fetch import FetchError, _download_capacity_guard; "
+                "import sys; "
+                "\ntry:\n with _download_capacity_guard(sys.argv[1], 100, available_bytes=lambda _: 2 << 30): pass"
+                "\nexcept FetchError as error:\n assert 'already running' in str(error)"
+                "\nelse:\n raise AssertionError('second process acquired the download lock')", str(self.root)],
+                cwd=Path(__file__).resolve().parent.parent, capture_output=True, text=True, timeout=10)
+            self.assertEqual(child.returncode, 0, child.stderr)
+        with _download_capacity_guard(self.root, 100, available_bytes=lambda _: 2 << 30):
+            pass
+
+    def test_insufficient_space_aborts_before_model_download(self):
+        with patch("nir.open_model_fetch.os.statvfs", return_value=type("Space", (), {
+            "f_bavail": 0, "f_frsize": 1,
+        })()):
+            with self.assertRaisesRegex(FetchError, "insufficient free disk"):
+                with self.package():
+                    pass
+        self.assertEqual(self.calls, [])
 
     def fetch(self, url):
         result = self.metadata if "/revision/" in url else self.tree

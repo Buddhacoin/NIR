@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from nir.open_model_fetch import FetchedPackage
 from nir.open_model_package import FORMAT, verify_package
-from nir.open_model_local_run import LocalRunError, _mlx_backend, run_pinned_qwen
+from nir.open_model_local_run import LocalRunError, _mlx_backend, run_pinned_qwen, runtime_status
 
 
 REPO = "Qwen/Qwen3-0.6B"
@@ -74,6 +74,22 @@ class LocalRunTests(unittest.TestCase):
             with self.assertRaises(LocalRunError):
                 run_pinned_qwen("Say NIR", fetch_package=self.package, backend=_mlx_backend)
         self.assertEqual(self.calls, [])
+
+    def test_runtime_preflight_is_read_only_and_reports_actionable_reason(self):
+        with patch("nir.open_model_local_run.platform.system", return_value="Darwin"), \
+             patch("nir.open_model_local_run.platform.machine", return_value="arm64"), \
+             patch("nir.open_model_local_run.sys.version_info", (3, 13)), \
+             patch("nir.open_model_local_run.version", side_effect=PackageNotFoundError("mlx")):
+            self.assertEqual(runtime_status(), {"status": "missing-runtime", "package": "mlx"})
+        self.assertEqual(self.calls, [])
+
+    def test_runtime_preflight_rejects_unsupported_host_and_version(self):
+        with patch("nir.open_model_local_run.platform.system", return_value="Linux"):
+            self.assertEqual(runtime_status()["status"], "unsupported-machine")
+        with patch("nir.open_model_local_run.platform.system", return_value="Darwin"), \
+             patch("nir.open_model_local_run.platform.machine", return_value="arm64"), \
+             patch("nir.open_model_local_run.sys.version_info", (3, 14)):
+            self.assertEqual(runtime_status()["status"], "python-3.13-required")
 
 
 if __name__ == "__main__":

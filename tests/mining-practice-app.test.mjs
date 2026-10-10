@@ -18,6 +18,146 @@ async function stop(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
+const qwenResult = {
+  repository: "Qwen/Qwen3-0.6B", revision: "c1899de289a04d12100db370d81485cdf75e47ca",
+  packageIdentity: `sha256:${"a".repeat(64)}`, answer: "NIR",
+  rewardEligible: false, networkSubmitted: false, independentlyVerified: false,
+};
+
+test("pinned Qwen route requires explicit same-origin download consent and refuses code", async () => {
+  let calls = 0;
+  const server = createMiningPracticeApp({ root, runOpenModel: async () => { calls++; return qwenResult; } });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = (origin, consent, body = "") => fetch(`${base}/open-model/qwen-check`, {
+    method: "POST", body, headers: { origin, ...(consent ? { "X-NIR-Download-Consent": consent } : {}) },
+  });
+  try {
+    assert.equal((await request(base)).status, 403);
+    assert.equal((await request("https://evil.example", "qwen3-0.6b-up-to-4gib")).status, 403);
+    assert.equal((await request(base, "qwen3-0.6b-up-to-4gib", "import os")).status, 403);
+    assert.equal(calls, 0);
+    const response = await request(base, "qwen3-0.6b-up-to-4gib");
+    assert.equal(response.status, 202);
+    const job = await response.json();
+    assert.match(job.jobId, /^[a-f0-9]{32}$/);
+    let completed;
+    for (let i = 0; i < 50; i++) {
+      completed = await fetch(`${base}/open-model/jobs/${job.jobId}`);
+      if (completed.status !== 202) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(completed.status, 200);
+    assert.deepEqual(await completed.json(), { status: "local-open-model-inference-only", ...qwenResult });
+    assert.equal(calls, 1);
+  } finally { await stop(server); }
+});
+
+test("Qwen runtime preflight gives a read-only reason before any download", async () => {
+  let runs = 0;
+  const server = createMiningPracticeApp({ root,
+    runOpenModel: async () => { runs++; return qwenResult; },
+    checkOpenModel: async () => ({ status: "missing-runtime", package: "mlx" }),
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const response = await fetch(`${base}/open-model/runtime`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: "missing-runtime", package: "mlx" });
+    assert.equal(runs, 0);
+  } finally { await stop(server); }
+});
+
+test("Qwen UI refuses missing runtime and requires a separate user confirmation", async () => {
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection",
+    "language", "score", "technical", "qwen-start", "qwen-state", "qwen-answer", "qwen-identity"]) {
+    nodes.set(`#${id}`, { hidden: true, disabled: false, dataset: {}, textContent: "", setAttribute() {},
+      addEventListener(_, listener) { this.click = listener; } });
+  }
+  let runtime = { status: "missing-runtime", package: "mlx" };
+  let consent = false;
+  let runs = 0;
+  const code = readFileSync(join(root, "mining-app/app.js"), "utf8");
+  runInNewContext(code, {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id), querySelectorAll: () => [] },
+    navigator: { language: "ru-RU" }, window: { confirm: () => consent }, AbortController,
+    fetch: async (path) => {
+      if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
+      if (path === "/open-model/runtime") return { ok: true, json: async () => runtime };
+      if (path === "/open-model/qwen-check") { runs++; return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) }; }
+      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) };
+      throw new Error(`unexpected ${path}`);
+    },
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nodes.get("#qwen-start").disabled, true);
+  assert.match(nodes.get("#qwen-state").textContent, /mlx/);
+  await nodes.get("#qwen-start").click();
+  assert.equal(runs, 0);
+  runtime = { status: "pinned-qwen-runtime-ready" };
+  // A fresh tab performs another read-only prerequisite check.
+  const freshNodes = new Map();
+  for (const [key, value] of nodes) freshNodes.set(key, { ...value, addEventListener(_, listener) { this.click = listener; } });
+  runInNewContext(code, {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => freshNodes.get(id), querySelectorAll: () => [] },
+    navigator: { language: "ru-RU" }, window: { confirm: () => consent }, AbortController,
+    fetch: async (path) => {
+      if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
+      if (path === "/open-model/runtime") return { ok: true, json: async () => runtime };
+      if (path === "/open-model/qwen-check") { runs++; return { ok: true, status: 202, json: async () => ({ status: "running", jobId: "a".repeat(32) }) }; }
+      if (path === `/open-model/jobs/${"a".repeat(32)}`) return { ok: true, status: 200, json: async () => ({ status: "local-open-model-inference-only", ...qwenResult }) };
+      throw new Error(`unexpected ${path}`);
+    }, setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(freshNodes.get("#qwen-start").disabled, false);
+  await freshNodes.get("#qwen-start").click();
+  assert.equal(runs, 0);
+  consent = true;
+  await freshNodes.get("#qwen-start").click();
+  assert.equal(runs, 1);
+  assert.equal(freshNodes.get("#qwen-answer").hidden, false);
+  assert.match(freshNodes.get("#qwen-state").textContent, /награды нет/);
+});
+
+test("pinned Qwen route rejects forged rewards and conflicting local jobs", async () => {
+  let finish;
+  let calls = 0;
+  const server = createMiningPracticeApp({ root, runOpenModel: () => {
+    calls++;
+    return new Promise((resolve) => { finish = resolve; });
+  } });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = () => fetch(`${base}/open-model/qwen-check`, {
+    method: "POST", body: "", headers: {
+      origin: base, "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib",
+    },
+  });
+  try {
+    const first = await request();
+    assert.equal(first.status, 202);
+    const { jobId } = await first.json();
+    for (let index = 0; index < 100 && !finish; index++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(calls, 1);
+    assert.equal((await request()).status, 409);
+    assert.equal((await fetch(`${base}/open-model/jobs/${jobId}`)).status, 202);
+    assert.equal((await fetch(`${base}/open-model/jobs/${"b".repeat(32)}`)).status, 404);
+    finish({ ...qwenResult, rewardEligible: true });
+    let denied;
+    for (let i = 0; i < 50; i++) {
+      denied = await fetch(`${base}/open-model/jobs/${jobId}`);
+      if (denied.status !== 202) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(denied.status, 500);
+    assert.match((await denied.json()).error, /награда не начислена/);
+  } finally { await stop(server); }
+});
+
 test("app preflight requires model files but not unrelated demo or wallet files", () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-model-app-test-"));
   try {
@@ -26,6 +166,9 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "mining-app/index.html", "mining-app/app.js", "mining-app/style.css",
       "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
       "examples/iris_model_adapter.py", "examples/iris.data",
+      "nir/open_model_local_run.py", "nir/open_model_fetch.py",
+      "nir/open_model_package.py", "nir/open_model_snapshot.py",
+      "nir/open_model_source.py",
     ]) {
       mkdirSync(join(temporary, name, ".."), { recursive: true });
       writeFileSync(join(temporary, name), "test");

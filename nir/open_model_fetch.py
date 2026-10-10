@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 from hashlib import sha1, sha256
 import os
 from pathlib import Path
@@ -37,6 +38,50 @@ SUPPORTED_REVISIONS = {
 
 class FetchError(ValueError):
     """Pinned model core files could not be downloaded and reconciled safely."""
+
+
+@contextmanager
+def _download_capacity_guard(parent: str | Path | None, package_bytes: int,
+                             *, available_bytes: Callable[[Path], int] | None = None):
+    """Serialize honest local fetches and reserve headroom for two bounded copies.
+
+    A same-UID attacker or unrelated process can still consume disk or replace
+    the lock path. This is a local resource guard, not a security sandbox.
+    """
+    target = Path(parent) if parent is not None else Path(tempfile.gettempdir())
+    lock_path = Path(tempfile.gettempdir()) / "nir-open-model-fetch-v1.lock"
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
+                    info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+                raise FetchError("unsafe local model download lock")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise FetchError("another local model download is already running") from error
+            # Incoming files and the verified package coexist during inference.
+            required = package_bytes * 2 + (1 << 30)
+            if available_bytes is None:
+                capacity = os.statvfs(target)
+                free = capacity.f_bavail * capacity.f_frsize
+            else:
+                free = available_bytes(target)
+            if free < required:
+                raise FetchError("insufficient free disk for two model copies and safety headroom")
+            yield
+        finally:
+            os.close(fd)
+    except OSError as error:
+        raise FetchError("local model download capacity check failed") from error
+
+
+def _private_model_directory(parent: str | Path | None) -> tempfile.TemporaryDirectory:
+    try:
+        return tempfile.TemporaryDirectory(prefix="nir-model-fetch-", dir=parent)
+    except (OSError, TypeError, ValueError) as error:
+        raise FetchError("private model download directory could not be created") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,11 +303,7 @@ def fetched_curated_model(
         if isinstance(error, FetchError):
             raise
         raise FetchError("pinned Hub metadata could not be validated") from error
-    try:
-        temporary = tempfile.TemporaryDirectory(prefix="nir-model-fetch-", dir=parent)
-    except (OSError, TypeError, ValueError) as error:
-        raise FetchError("private model download directory could not be created") from error
-    with temporary as temp:
+    with _download_capacity_guard(parent, sum(entry["size"] for entry in selected.values())), _private_model_directory(parent) as temp:
         try:
             base = Path(temp).resolve()
             download_root = base / "incoming"
