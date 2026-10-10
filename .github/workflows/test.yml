@@ -26,6 +26,9 @@ jobs:
       - name: Package Firefox submission candidate
         working-directory: browser-wallet
         run: npm run package:firefox
+      - name: Verify Firefox package provenance and reproducibility
+        working-directory: browser-wallet
+        run: npm run test:release
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
@@ -34,11 +37,11 @@ jobs:
         run: |
           python3 -m pip install selenium==4.51.0
           python3 browser-wallet/tests/firefox.e2e.py
-      - name: Attach unsigned Firefox submission candidate
+      - name: Attach unsigned Firefox candidate, source, and provenance
         uses: actions/upload-artifact@v4
         with:
           name: nir-firefox-wallet-unsigned-submission-candidate
-          path: browser-wallet/artifacts/firefox/*.zip
+          path: browser-wallet/artifacts/firefox/*
           if-no-files-found: error
           retention-days: 7
       - name: Install isolated Chromium test browser

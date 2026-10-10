@@ -15,7 +15,7 @@ The phrase is encrypted in Firefox extension storage. This version cannot connec
 Publisher choices:
 
 - Distribution: listed on addons.mozilla.org, marked experimental.
-- Compatible platform: Firefox desktop only until Android is tested separately.
+- Compatible platform: Firefox desktop only; Android support is not declared or tested.
 - Payment or external service required: no.
 - `storage` permission: saves the encrypted wallet profile and selected address locally. No host permissions or content scripts.
 - Data collection: none. No analytics or remote wallet service in this build.
@@ -24,4 +24,4 @@ Publisher choices:
 - Source: `https://github.com/Buddhacoin/NIR/tree/main/browser-wallet` **only after merge**. Since the extension is bundled with esbuild, provide Mozilla reviewers with the full source archive and build instructions (`npm ci && npm run package:firefox` from `browser-wallet/`). Include `blockchain/bip39-english.txt` and `wallet-ui/nir-coin-icon.png` from the same Git revision.
 - Third-party library source: `https://github.com/paulmillr/noble-hashes` and `https://github.com/paulmillr/noble-post-quantum` (exact versions are pinned in `package-lock.json`).
 
-The artifact from `npm run package:firefox` is an **unsigned submission candidate**, not a user-facing installer. Upload it to Mozilla Add-on Developer Hub. Only after Mozilla signs/publishes the listed add-on should README point ordinary users to its actual AMO page. Never provide an unsigned ZIP as a one-click download for release Firefox.
+The artifact from `npm run package:firefox` is an **unsigned submission candidate**, not a user-facing installer. Upload that exact ZIP and the accompanying source archive to Mozilla Add-on Developer Hub after comparing their SHA-256 values with the provenance JSON from a reviewed, passing CI run. Run `npm run test:release` to check deterministic packaging. The JSON is not a Mozilla signature. Only after Mozilla signs/publishes the listed add-on should README point ordinary users to its actual AMO page. Never provide an unsigned ZIP as a one-click download for release Firefox.
