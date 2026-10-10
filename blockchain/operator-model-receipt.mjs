@@ -17,11 +17,17 @@ function evidenceMatchesBundle(bytes, bundleHash) {
   try {
     const parsed = JSON.parse(bytes.toString("utf8"));
     return parsed?.format === "nir-local-iris-evidence-v1" &&
+      parsed.summary?.status === "pinned-local-model-evaluation" &&
+      parsed.summary?.scope === "local-public-iris-example-only" &&
       parsed.summary?.bundleHash === bundleHash &&
       parsed.bundle?.bundle_hash === bundleHash &&
+      parsed.summary?.bundleVerified === true &&
       parsed.summary?.networkSubmitted === false &&
       parsed.summary?.rewardCredited === false &&
-      parsed.summary?.independentOperators === false;
+      parsed.summary?.independentOperators === false &&
+      parsed.summary?.hiddenChallenges === false &&
+      parsed.summary?.energyAttested === false &&
+      parsed.summary?.walletChanged === false;
   } catch { return false; }
 }
 
@@ -33,7 +39,7 @@ export function createLocalIrisRunIntent({ recipient, nonce, bundleHash, evidenc
     format: FORMAT, scope: "local-rehearsal-only", model: "pinned-iris-linear-v1",
     recipient, nonce, bundleHash, evidenceDigest: irisEvidenceDigest(evidenceBytes),
     networkId: null, genesisHash: null, networkSubmitted: false,
-    rewardEligible: false,
+    rewardEligible: false, executionVerified: false,
   };
 }
 
@@ -41,13 +47,13 @@ function validIntent(intent) {
   return intent && typeof intent === "object" && !Array.isArray(intent) &&
     Object.keys(intent).sort().join(",") === ["format", "scope", "model", "recipient",
       "nonce", "bundleHash", "evidenceDigest", "networkId", "genesisHash",
-      "networkSubmitted", "rewardEligible"].sort().join(",") &&
+      "networkSubmitted", "rewardEligible", "executionVerified"].sort().join(",") &&
     intent.format === FORMAT && intent.scope === "local-rehearsal-only" &&
     intent.model === "pinned-iris-linear-v1" && ADDRESS.test(intent.recipient ?? "") &&
     HEX.test(intent.nonce ?? "") && HEX.test(intent.bundleHash ?? "") &&
     HEX.test(intent.evidenceDigest ?? "") && intent.networkId === null &&
     intent.genesisHash === null && intent.networkSubmitted === false &&
-    intent.rewardEligible === false;
+    intent.rewardEligible === false && intent.executionVerified === false;
 }
 
 export function validateLocalIrisRunIntent(intent) {
@@ -80,5 +86,6 @@ export function verifyLocalIrisRunReceipt(receipt, { intent, evidenceBytes } = {
   if (signed.evidenceDigest !== irisEvidenceDigest(evidenceBytes) ||
       !evidenceMatchesBundle(evidenceBytes, signed.bundleHash))
     throw new Error("local Iris receipt evidence differs");
-  return signed.recipient;
+  return { recipient: signed.recipient, signatureValid: true, evidenceBytesBound: true,
+    executionVerified: false, networkSubmitted: false, rewardEligible: false };
 }

@@ -498,11 +498,11 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         const intent = lastIrisReceiptIntent;
         send(200, "application/json; charset=utf-8", JSON.stringify({
           status: intent && linkedWalletAddress === intent.recipient ?
-            (lastIrisReceipt ? "local-receipt-verified" : "local-receipt-pending") : "no-address-bound-run",
+            (lastIrisReceipt ? "local-receipt-signature-checked" : "local-receipt-pending") : "no-address-bound-run",
           recipient: intent && linkedWalletAddress === intent.recipient ? intent.recipient : null,
           nonce: intent && linkedWalletAddress === intent.recipient ? intent.nonce : null,
           evidenceDigest: intent && linkedWalletAddress === intent.recipient ? intent.evidenceDigest : null,
-          networkSubmitted: false, rewardEligible: false,
+          networkSubmitted: false, rewardEligible: false, executionVerified: false,
         }));
       }
       return;

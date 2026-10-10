@@ -24,6 +24,27 @@ test("operator link proves only local address ownership and binds challenge", ()
   assert.throws(() => verifyOperatorWalletProof({ ...proof, permissions: ["mint"] }, { challenge, now }));
 });
 
+test("a forged shallow Iris envelope can prove only signature and byte binding, never execution", () => {
+  const wallet = generateWallet();
+  const bundleHash = "a".repeat(64);
+  const fakeEvidence = Buffer.from(JSON.stringify({ format: "nir-local-iris-evidence-v1",
+    summary: { status: "pinned-local-model-evaluation",
+      scope: "local-public-iris-example-only", bundleHash, bundleVerified: true,
+      networkSubmitted: false, rewardCredited: false, independentOperators: false,
+      hiddenChallenges: false, energyAttested: false, walletChanged: false },
+    bundle: { bundle_hash: bundleHash } }));
+  const intent = createLocalIrisRunIntent({ recipient: wallet.address,
+    nonce: "b".repeat(64), bundleHash, evidenceBytes: fakeEvidence });
+  const receipt = signLocalIrisRunReceipt({ wallet, intent });
+  assert.equal(receipt.executionVerified, false);
+  assert.deepEqual(verifyLocalIrisRunReceipt(receipt, { intent, evidenceBytes: fakeEvidence }), {
+    recipient: wallet.address, signatureValid: true, evidenceBytesBound: true,
+    executionVerified: false, networkSubmitted: false, rewardEligible: false,
+  });
+  assert.throws(() => signLocalIrisRunReceipt({ wallet,
+    intent: { ...intent, executionVerified: true } }));
+});
+
 test("vault replacement during native approval cannot sign a different wallet", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-local-wallet-swap-"));
   const path = join(directory, "selected.json");
@@ -186,7 +207,10 @@ test("Iris run receipt intent requires a pre-linked address and cannot be redire
     const evidenceBytes = Buffer.from(await (await fetch(`${base}/model-evidence`, { headers })).text());
     const signed = signLocalIrisRunReceipt({ wallet: walletA, intent: a });
     assert.throws(() => verifyLocalIrisRunReceipt(signed));
-    assert.equal(verifyLocalIrisRunReceipt(signed, { intent: a, evidenceBytes }), walletA.address);
+    assert.deepEqual(verifyLocalIrisRunReceipt(signed, { intent: a, evidenceBytes }), {
+      recipient: walletA.address, signatureValid: true, evidenceBytesBound: true,
+      executionVerified: false, networkSubmitted: false, rewardEligible: false,
+    });
     assert.throws(() => verifyLocalIrisRunReceipt({ ...signed, recipient: walletB.address },
       { intent: a, evidenceBytes }));
     assert.throws(() => verifyLocalIrisRunReceipt({ ...signed, rewardEligible: true },
@@ -211,7 +235,7 @@ test("Iris run receipt intent requires a pre-linked address and cannot be redire
     assert.equal(complete.status, 200);
     assert.equal((await complete.json()).rewardEligible, false);
     const recovered = await status();
-    assert.equal(recovered.status, "local-receipt-verified");
+    assert.equal(recovered.status, "local-receipt-signature-checked");
     assert.equal(recovered.nonce, a.nonce);
     assert.equal(recovered.evidenceDigest, a.evidenceDigest);
     assert.equal(recovered.networkSubmitted, false);
@@ -240,8 +264,11 @@ test("wallet bridge signs only an exact local nonreward Iris intent after author
     await new Promise((resolve) => bridge.listen(0, "127.0.0.1", resolve));
     const url = `http://127.0.0.1:${bridge.address().port}/v1/sign-local-iris-receipt`;
     const evidenceBytes = Buffer.from(JSON.stringify({ format: "nir-local-iris-evidence-v1",
-      summary: { bundleHash: "c".repeat(64), networkSubmitted: false,
-        rewardCredited: false, independentOperators: false },
+      summary: { status: "pinned-local-model-evaluation",
+        scope: "local-public-iris-example-only", bundleHash: "c".repeat(64),
+        bundleVerified: true, networkSubmitted: false, rewardCredited: false,
+        independentOperators: false, hiddenChallenges: false,
+        energyAttested: false, walletChanged: false },
       bundle: { bundle_hash: "c".repeat(64) } }));
     const intent = createLocalIrisRunIntent({ recipient: wallet.address,
       nonce: "a".repeat(64), bundleHash: "c".repeat(64), evidenceBytes });
@@ -260,7 +287,7 @@ test("wallet bridge signs only an exact local nonreward Iris intent after author
     assert.equal(signed.status, 200);
     const receipt = (await signed.json()).receipt;
     assert.equal(verifyLocalIrisRunReceipt(receipt, { intent,
-      evidenceBytes }), wallet.address);
+      evidenceBytes }).executionVerified, false);
     assert.equal(approvals, 1);
     assert.equal((await post({ intent, requestId: "4".repeat(64) })).status, 409);
     assert.equal(approvals, 1);
@@ -288,8 +315,11 @@ test("vault replacement during Iris receipt approval cannot sign with another ac
     await new Promise((resolve) => bridge.listen(0, "127.0.0.1", resolve));
     const bundleHash = "a".repeat(64);
     const evidenceBytes = Buffer.from(JSON.stringify({ format: "nir-local-iris-evidence-v1",
-      summary: { bundleHash, networkSubmitted: false, rewardCredited: false,
-        independentOperators: false }, bundle: { bundle_hash: bundleHash } }));
+      summary: { status: "pinned-local-model-evaluation",
+        scope: "local-public-iris-example-only", bundleHash, bundleVerified: true,
+        networkSubmitted: false, rewardCredited: false, independentOperators: false,
+        hiddenChallenges: false, energyAttested: false, walletChanged: false },
+      bundle: { bundle_hash: bundleHash } }));
     const intent = createLocalIrisRunIntent({ recipient: original.address,
       nonce: "c".repeat(64), bundleHash, evidenceBytes });
     const response = await fetch(`http://127.0.0.1:${bridge.address().port}/v1/sign-local-iris-receipt`, {
@@ -391,7 +421,10 @@ test("temporary Mac wallet signs the exact local Iris run and Model Lab verifies
     assert.equal(receipt.networkSubmitted, false);
     assert.equal(receipt.rewardEligible, false);
     const evidenceBytes = Buffer.from(await (await fetch(`${labBase}/model-evidence`, { headers })).text());
-    assert.equal(verifyLocalIrisRunReceipt(receipt, { intent, evidenceBytes }), wallet.address);
+    assert.deepEqual(verifyLocalIrisRunReceipt(receipt, { intent, evidenceBytes }), {
+      recipient: wallet.address, signatureValid: true, evidenceBytesBound: true,
+      executionVerified: false, networkSubmitted: false, rewardEligible: false,
+    });
   } finally {
     for (const server of [bridge, lab]) {
       server.closeAllConnections?.();

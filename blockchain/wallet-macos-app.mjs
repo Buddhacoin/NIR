@@ -41,12 +41,12 @@ function listen(server, port) {
 
 async function authorizeSigning(intent, { signal } = {}) {
   const summary = intent.type === "local-iris-run-receipt" ? [
-    "Подписать локальную квитанцию запуска Iris?",
+    "Подтвердить адресом хэш локального свидетельства Iris?",
     `Адрес: ${intent.address}`,
     `Nonce запуска: ${intent.nonce}`,
     `SHA-256 свидетельства: ${intent.evidenceDigest}`,
     `Hash пакета: ${intent.bundleHash}`,
-    "Только локальная репетиция. Не заявка в сеть, не доказательство независимости и не награда.",
+    "Подпись привяжет адрес к байтам файла, но не докажет выполнение модели. Не заявка в сеть и не награда.",
     "Подписывайте, только если запускали Iris в Model Lab и сверили адрес и hash.",
   ].join("\n") : intent.type === "local-operator-wallet-link" ? [
     "Подтвердить адрес для NIR Model Lab?",

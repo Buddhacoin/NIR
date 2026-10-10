@@ -168,8 +168,8 @@ const copy = {
     doneTitle: "Локальная проверка завершена",
     doneBody: "Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.",
     irisEvidenceExport: "Скачать локальное свидетельство (не заявка и не награда)",
-    irisReceiptTitle: "Подписать локальную квитанцию запуска",
-    irisReceiptIntro: "Адрес подтверждён до запуска Iris. Скопируйте intent в настройки NIR Wallet, подпишите после отдельного подтверждения и вставьте результат ниже. Это не заявка в сеть и не награда.",
+    irisReceiptTitle: "Подтвердить хэш свидетельства адресом",
+    irisReceiptIntro: "Адрес подтверждён до запуска Iris. Подпись привяжет его к хэшу байтов свидетельства, но сама по себе не докажет выполнение модели. Скопируйте intent в NIR Wallet и вставьте подпись ниже. Это не заявка в сеть и не награда.",
     irisReceiptCopy: "Скопировать intent", irisReceiptLabel: "Подписанная квитанция из кошелька",
     irisReceiptComplete: "Проверить локальную подпись",
     irisEvidenceFailed: "Свидетельство недоступно. Повторите локальную проверку; заявки и награды нет.",
@@ -291,8 +291,8 @@ const copy = {
     doneTitle: "Local check complete",
     doneBody: "The evidence bundle was checked locally. There are no independent operators, hidden challenges, attested energy measurements, or network rewards.",
     irisEvidenceExport: "Download local evidence (not a claim or reward)",
-    irisReceiptTitle: "Sign a local run receipt",
-    irisReceiptIntro: "The address was verified before Iris ran. Copy the intent into NIR Wallet settings, approve the separate signature, and paste the result below. No network claim or reward.",
+    irisReceiptTitle: "Bind the evidence hash to your address",
+    irisReceiptIntro: "The address was verified before Iris ran. The signature binds it to the evidence bytes hash; it does not itself prove model execution. Copy the intent into NIR Wallet, approve, and paste the signature below. No network claim or reward.",
     irisReceiptCopy: "Copy intent", irisReceiptLabel: "Signed receipt from wallet",
     irisReceiptComplete: "Verify local signature",
     irisEvidenceFailed: "Evidence is unavailable. Repeat the local check; no claim or reward exists.",
@@ -873,7 +873,8 @@ start.addEventListener("click", async () => {
         if (intentResponse.ok) {
           const intent = await intentResponse.json();
           if (intent?.scope === "local-rehearsal-only" && intent.networkSubmitted === false &&
-              intent.rewardEligible === false && intent.genesisHash === null &&
+              intent.rewardEligible === false && intent.executionVerified === false &&
+              intent.genesisHash === null &&
               intent.bundleHash === data.bundleHash && intent.recipient === walletLinkAddress) {
             irisReceiptIntent.value = JSON.stringify(intent);
             irisReceiptPanel.hidden = false;
@@ -918,15 +919,16 @@ irisReceiptComplete?.addEventListener("click", async () => {
     const signed = JSON.parse(irisReceiptSigned.value);
     const intent = JSON.parse(irisReceiptIntent.value);
     if (signed?.recipient !== intent.recipient || signed?.nonce !== intent.nonce ||
-        signed?.evidenceDigest !== intent.evidenceDigest || signed?.rewardEligible !== false)
+        signed?.evidenceDigest !== intent.evidenceDigest || signed?.rewardEligible !== false ||
+        signed?.executionVerified !== false)
       throw new Error("receipt mismatch");
     submitted = true;
     const response = await fetch("/model-run-receipt/complete", { method: "POST",
       body: JSON.stringify(signed), headers: { ...sessionHeaders(), "Content-Type": "application/json" } });
     if (!response.ok) throw new Error(response.status === 400 ? "receipt rejected" : "receipt unknown");
     irisReceiptState.textContent = locale === "ru" ?
-      "Подпись проверена локально. Сеть не получила заявку, награды нет." :
-      "Signature verified locally. Nothing was submitted to a network; no reward exists.";
+      "Подпись и хэш байтов проверены локально. Выполнение модели этим не доказано; сеть не получила заявку и награды нет." :
+      "Signature and bytes hash matched locally. This does not prove execution; no network claim or reward exists.";
   } catch (reason) {
     const unknown = submitted && reason?.message !== "receipt rejected";
     let recovered = false;
@@ -937,15 +939,16 @@ irisReceiptComplete?.addEventListener("click", async () => {
         });
         const status = response.ok ? await response.json() : null;
         const intent = JSON.parse(irisReceiptIntent.value);
-        recovered = status?.status === "local-receipt-verified" &&
+        recovered = status?.status === "local-receipt-signature-checked" &&
           status.recipient === intent.recipient && status.nonce === intent.nonce &&
           status.evidenceDigest === intent.evidenceDigest &&
-          status.networkSubmitted === false && status.rewardEligible === false;
+          status.networkSubmitted === false && status.rewardEligible === false &&
+          status.executionVerified === false;
       } catch { /* Preserve unknown status if the local service is unreachable. */ }
     }
     irisReceiptState.textContent = recovered ? (locale === "ru" ?
-      "Сервис подтвердил эту локальную квитанцию. Сеть и награда не изменились." :
-      "The service confirms this local receipt. Network and reward are unchanged.") :
+      "Сервис подтвердил подпись и хэш этой локальной квитанции, но не выполнение модели. Сеть и награда не изменились." :
+      "The service confirms the signature and hash, not model execution. Network and reward are unchanged.") :
       unknown ? (locale === "ru" ?
       "Статус локальной квитанции неизвестен: ответ потерян. Не подписывайте повторно; проверьте текущую сессию или начните новый запуск после перезапуска." :
       "Local receipt status is unknown: the response was lost. Do not sign again; inspect this session or restart with a new run.") :

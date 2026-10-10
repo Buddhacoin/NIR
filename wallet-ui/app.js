@@ -1583,7 +1583,8 @@ document.querySelector("#sign-iris-receipt").onclick = async (event) => {
   try { intent = JSON.parse(document.querySelector("#iris-receipt-intent").value); }
   catch { status.textContent = "Нужен точный JSON intent из Model Lab."; return; }
   if (intent?.recipient !== walletInfo.address || intent?.scope !== "local-rehearsal-only" ||
-      intent?.networkSubmitted !== false || intent?.rewardEligible !== false) {
+      intent?.networkSubmitted !== false || intent?.rewardEligible !== false ||
+      intent?.executionVerified !== false) {
     status.textContent = "Intent не совпадает с адресом или обещает сетевую награду.";
     return;
   }
@@ -1592,7 +1593,7 @@ document.querySelector("#sign-iris-receipt").onclick = async (event) => {
   try {
     const requestId = Array.from(crypto.getRandomValues(new Uint8Array(32)),
       (byte) => byte.toString(16).padStart(2, "0")).join("");
-    status.textContent = "Подтвердите локальную квитанцию в системном окне кошелька.";
+    status.textContent = "Подтвердите хэш свидетельства в системном окне кошелька.";
     const result = await signWithRecovery("/v1/sign-local-iris-receipt", { intent, requestId },
       undefined, () => { status.textContent = "Ожидаем подтверждения кошелька…"; });
     if (walletInfo?.address !== expectedAddress || result.receipt?.recipient !== expectedAddress ||
@@ -1602,7 +1603,7 @@ document.querySelector("#sign-iris-receipt").onclick = async (event) => {
     signedField.value = JSON.stringify(result.receipt);
     signedField.hidden = false;
     copy.hidden = false;
-    status.textContent = "Скопируйте квитанцию в Model Lab. Средства и сеть не изменились.";
+    status.textContent = "Скопируйте подпись в Model Lab. Выполнение модели подписью не доказано; средства и сеть не изменились.";
   } catch {
     status.textContent = "Подпись не завершилась. Сетевая заявка и награда не созданы.";
   } finally { event.currentTarget.disabled = false; }
