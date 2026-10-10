@@ -14,8 +14,12 @@ revision. Before downloading, the code checks public, ungated Hub metadata
 and the pinned file tree. It rejects missing core files, invalid paths,
 malformed hashes, or a reported core set over 4 GiB. It rejects a response
 that exceeds the pinned size *before writing excess bytes*, and accepts only
-HTTPS redirects to Hub-controlled hosts. A single 20-minute deadline covers
-all selected file downloads; each network read has a 15-second timeout. The
+HTTPS redirects to Hub-controlled hosts. A shared 20-minute deadline is checked
+after response headers and around each body read across selected files; each
+network operation has a 15-second socket timeout. This is **not a hard total
+download deadline**: a server that trickles response headers can exceed the
+nominal deadline before the next check. No body bytes are written if headers
+finish after the deadline. The
 downloader requires an exact `Content-Length` and rejects chunked transfer:
 buffered chunk parsing can otherwise outlive the deadline. A Hub endpoint that
 offers only chunked data fails closed rather than being treated as installable. The

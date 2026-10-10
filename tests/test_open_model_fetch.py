@@ -229,7 +229,7 @@ class FetchTests(unittest.TestCase):
                           endpoint="https://huggingface.co", expected_size=1,
                           open_response=lambda *_args, **_kwargs: self.fail("network must not start"))
 
-    def test_slow_trickle_exceeds_overall_deadline_before_more_writes(self):
+    def test_slow_trickle_exceeds_body_deadline_before_more_writes(self):
         class SlowResponse:
             status = 200
             headers = {"Content-Length": "1000000"}
@@ -338,6 +338,48 @@ class FetchTests(unittest.TestCase):
                               expected_size=1_000_000, open_response=open_response,
                               deadline=start + 0.1)
             self.assertLess(monotonic() - start, 0.8)
+            self.assertEqual((folder / "config.json").stat().st_size, 0)
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_slow_headers_exceed_body_deadline_without_writing_data(self):
+        class SlowHeaders(BaseHTTPRequestHandler):
+            def do_GET(self):
+                sleep(0.3)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "1000000")
+                    self.end_headers()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHeaders)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        folder = self.root / "slow-headers"
+        folder.mkdir()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+
+        def open_response(_request, timeout):
+            connection.request("GET", "/model")
+            return connection.getresponse()
+
+        start = monotonic()
+        try:
+            with self.assertRaisesRegex(FetchError, "time limit"):
+                _download_hub(repo_id=REPO, filename="config.json", revision=REVISION,
+                              token=False, local_dir=str(folder), endpoint="https://huggingface.co",
+                              expected_size=1_000_000, open_response=open_response,
+                              deadline=start + 0.1)
+            # Headers are outside the body deadline. This is a documented
+            # availability limitation, not evidence of a hard total timeout.
+            self.assertGreaterEqual(monotonic() - start, 0.25)
             self.assertEqual((folder / "config.json").stat().st_size, 0)
         finally:
             connection.close()
