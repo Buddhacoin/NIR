@@ -10,7 +10,10 @@ import { createLocalIrisRunIntent, signLocalIrisRunReceipt } from "../blockchain
 const root = join(import.meta.dirname, "..");
 
 async function startLabProcess() {
-  const child = spawn(process.execPath, [join(root, "blockchain/mining-practice-app-cli.mjs"), "--embedded"], {
+  // Exercise the real HTTP app and pinned Python Iris runtime in two OS processes.
+  // The user-facing CLI intentionally refuses non-macOS hosts; this protocol
+  // integration test must run on Linux CI without relaxing that product gate.
+  const child = spawn(process.execPath, [join(root, "tests/fixtures/model-lab-server-child.mjs")], {
     cwd: root, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -55,6 +58,9 @@ test("two separate Model Lab OS processes recheck exact Iris evidence and signed
   try {
     second = await startLabProcess();
     assert.notEqual(first.child.pid, second.child.pid);
+    assert.equal(new URL(first.base).hostname, "127.0.0.1");
+    assert.equal(new URL(second.base).hostname, "127.0.0.1");
+    assert.notEqual(first.token, second.token);
     const wallet = generateWallet();
     const firstHeaders = { origin: first.base, "X-NIR-Session": first.token };
     const challengeResponse = await fetch(`${first.base}/wallet-link/challenge`, {
@@ -91,6 +97,8 @@ test("two separate Model Lab OS processes recheck exact Iris evidence and signed
     });
     assert.equal((await postRaw({ evidenceBase64: evidenceBytes.toString("base64"), receipt },
       "0".repeat(64))).status, 403);
+    assert.equal((await postRaw({ evidenceBase64: evidenceBytes.toString("base64"), receipt },
+      first.token)).status, 403);
     assert.equal((await postRaw({ evidenceBase64: evidenceBytes.toString("base64"), receipt },
       second.token, "http://evil.invalid")).status, 403);
     const checked = await recheck(evidenceBytes);
