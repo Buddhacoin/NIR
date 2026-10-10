@@ -12,6 +12,7 @@ import { initializeBlockStore } from "./block-store.mjs";
 import { compileGenesis, verifyGenesisCeremony } from "./genesis-ceremony.mjs";
 import { verifyCeremonyRegistryAnchorForLatestPlan } from "./genesis-ceremony-anchor.mjs";
 import { peerRegistryHash } from "./peer-registry.mjs";
+import { assertApprovedPublicGenesisRewardPolicy } from "./public-genesis-policy.mjs";
 import { validatorSetId } from "./validator-rotation.mjs";
 import { decryptWallet } from "./vault.mjs";
 
@@ -178,6 +179,7 @@ function serializedJson(value) { return Buffer.from(`${canonicalJson(value)}\n`)
 
 export function initializeValidatorFromCeremony(targetPath, inputs) {
   const verified = validateInputs(inputs);
+  assertApprovedPublicGenesisRewardPolicy(inputs.plan, verified.compiled.genesis);
   const target = resolve(targetPath);
   const parent = dirname(target);
   const parentOpened = openDirectory(parent, "validator ceremony parent");
