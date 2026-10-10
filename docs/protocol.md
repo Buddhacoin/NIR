@@ -186,6 +186,11 @@ The local wallet bridge can derive this field only from a configured, trusted
 genesis checkpoint after verifying a matching v36 account/finality proof; a
 browser-provided genesis value is not a trust anchor. Operators must provision
 the genesis and authorized release anchor for upgrades before this path works.
+Nodes discard queued wrong-era transfers before proposing the activation block;
+an unbound transfer accepted into a v35 mempool is not carried into v36, and no
+fee or nonce is spent by that discard. If this leaves no transaction or operator
+event, the current coordinator's empty-mempool policy still requires fresh
+valid activity to advance height; the wallet must re-sign for v36.
 This does **not** bind native-asset transfers, other signed transaction types,
 legacy escrow claims, or offline signing packages; those remain separate review
 and migration blockers. A passing local transfer test is not a public network,

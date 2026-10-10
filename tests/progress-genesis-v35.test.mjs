@@ -30,6 +30,8 @@ import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { createAccountProof } from "../blockchain/account-proof.mjs";
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
+import { invalidGenesisBoundTransfersForNextBlock, TransactionMempool }
+  from "../blockchain/distributed-node.mjs";
 
 const digest = (text) => createHash("sha256").update(text).digest("hex");
 const members = (wallets, prefix) => wallets.map((wallet, index) => ({
@@ -351,6 +353,35 @@ test("v36 genesis gate covers multisig, sponsored and credit transfer variants",
   for (const legacy of cases) assert.throws(() => append(left, [legacy]), /genesis/i);
   assert.equal(left.nextNonce(sender.address), 1);
   assert.equal(left.nextNonce(sponsor.address), 1);
+});
+
+test("v35 queued transfer is pruned before first v36 proposal; bound transfer remains", () => {
+  const { append, left, treasury, upgrade } = fixture();
+  const recipient = generateWallet();
+  upgrade(left, 35);
+  const legacy = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1", nonce: 0 });
+  const pool = new TransactionMempool();
+  pool.add(legacy);
+  assert.equal(pool.size, 1);
+  const v35 = left.buildBlock({ transactions: pool.take(),
+    timestamp: left.blocks().at(-1).timestamp + 1 });
+  left.validateProposal(v35);
+  upgrade(left, 36);
+  assert.throws(() => left.validateProposal(left.buildBlock({ transactions: pool.take(),
+    timestamp: left.blocks().at(-1).timestamp + 1 })), /genesis/i);
+  const invalid = invalidGenesisBoundTransfersForNextBlock(pool.values(), {
+    chainIdentityGenesisHash: left.blocks()[0].hash, protocolVersion: 36 });
+  assert.deepEqual(invalid, [legacy]);
+  pool.remove(invalid);
+  const bound = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1", nonce: 0,
+    chainIdentityGenesisHash: left.blocks()[0].hash });
+  pool.add(bound);
+  assert.deepEqual(invalidGenesisBoundTransfersForNextBlock(pool.values(), {
+    chainIdentityGenesisHash: left.blocks()[0].hash, protocolVersion: 36 }), []);
+  append(left, pool.take());
+  assert.equal(left.balance(recipient.address), 1n);
 });
 
 test("v36 wallet bridge signs trusted genesis, ignoring browser-selected genesis", async () => {
