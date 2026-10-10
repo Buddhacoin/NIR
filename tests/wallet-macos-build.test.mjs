@@ -47,6 +47,7 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
       "Contents/Resources/app/blockchain/bip39-english.txt",
       "Contents/Resources/app/demo/wallet-nodes.local-demo.json",
       "Contents/Resources/app/wallet-ui/index.html",
+      "Contents/Resources/app/wallet-ui/i18n.js",
       "Contents/Resources/app/wallet-ui/nir-coin-icon.png",
     ]) assert.equal(existsSync(join(app, relative)), true, relative);
     for (const relative of ["Contents/Resources/app/blockchain/wallet-macos-local-update.mjs",
@@ -103,6 +104,21 @@ test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () =
     const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_LAUNCHER_URL_SMOKE_TEST",
       "-framework", "AppKit", "-framework", "Foundation", "-framework", "WebKit",
       source, "-o", binary], { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(run.status, 0, run.stderr);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("native onboarding language preference and recovery warnings round-trip in an isolated domain", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-locale-smoke-"));
+  try {
+    const binary = join(directory, "onboarding-locale-smoke");
+    const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_ONBOARDING_LOCALE_SMOKE_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", source, "-o", binary],
+    { encoding: "utf8" });
     assert.equal(built.status, 0, built.stderr);
     const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);

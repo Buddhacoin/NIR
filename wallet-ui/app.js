@@ -4,12 +4,70 @@ import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
+import { translateWalletText } from "./i18n.js";
 
 if (globalThis.top !== globalThis.self) {
   document.documentElement.replaceChildren();
   document.documentElement.textContent = "NIR Wallet cannot run inside a frame.";
   throw new Error("NIR Wallet framing is forbidden");
 }
+
+// Presentation state is separate from proof/account state. Language changes
+// never trigger a network read, reveal a cached balance or change an intent.
+const languageControl = document.querySelector("#language");
+const localizedTextNodes = new WeakMap();
+const localizedAttributes = new WeakMap();
+const language = localStorage.getItem("nir-language") === "en" ? "en" : "ru";
+languageControl.value = language;
+document.documentElement.lang = language;
+
+function localizeNode(node) {
+  if (node.parentElement?.closest("script,style,code,pre,textarea,[data-i18n-ignore]")) return;
+  const previous = localizedTextNodes.get(node);
+  const source = previous && node.data === previous.rendered ? previous.source : node.data;
+  const rendered = translateWalletText(source, document.documentElement.lang);
+  localizedTextNodes.set(node, { source, rendered });
+  if (node.data !== rendered) node.data = rendered;
+}
+
+function localizeAttributes(element) {
+  const previous = localizedAttributes.get(element) ?? {};
+  const next = { ...previous };
+  for (const name of ["aria-label", "placeholder", "title"]) {
+    if (!element.hasAttribute(name)) continue;
+    const current = element.getAttribute(name);
+    const source = previous[name] && current === previous[name].rendered ? previous[name].source : current;
+    const rendered = translateWalletText(source, document.documentElement.lang);
+    next[name] = { source, rendered };
+    if (current !== rendered) element.setAttribute(name, rendered);
+  }
+  localizedAttributes.set(element, next);
+}
+
+function localizeDocument() {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) localizeNode(walker.currentNode);
+  for (const element of document.body.querySelectorAll("[aria-label],[placeholder],[title]")) {
+    localizeAttributes(element);
+  }
+}
+
+function setLanguage(value) {
+  const next = value === "en" ? "en" : "ru";
+  document.documentElement.lang = next;
+  languageControl.value = next;
+  localStorage.setItem("nir-language", next);
+  // The native shell persists this non-secret preference across its ephemeral
+  // web views. It accepts only ru/en from the exact local wallet page.
+  globalThis.window?.webkit?.messageHandlers?.nirLanguage?.postMessage(next);
+  localizeDocument();
+}
+
+languageControl.addEventListener("change", (event) => setLanguage(event.currentTarget.value));
+const languageObserver = new MutationObserver(() => localizeDocument());
+languageObserver.observe(document.body, { subtree: true, childList: true, characterData: true,
+  attributes: true, attributeFilter: ["aria-label", "placeholder", "title"] });
+localizeDocument();
 
 const localApp = new URLSearchParams(location.search).get("local-app") === "1";
 if (localApp) {
@@ -171,9 +229,13 @@ function renderSimulation(target, simulation) {
   const fields = root.querySelector(".simulation-fields");
   const risks = root.querySelector(".simulation-risks");
   fields.replaceChildren(); risks.replaceChildren();
-  const add = (term, value) => {
+  const add = (term, value, { termContainsProtocol = false } = {}) => {
     const row = document.createElement("div");
     const dt = document.createElement("dt"); const dd = document.createElement("dd");
+    // The verifier supplied value is protocol data. Never translate it, even
+    // when an arbitrary role/risk happens to match a UI label.
+    dd.dataset.i18nIgnore = "";
+    if (termContainsProtocol) dt.dataset.i18nIgnore = "";
     dt.textContent = term; dd.textContent = value; row.append(dt, dd); fields.append(row);
   };
   add("Операция", simulation.type);
@@ -182,13 +244,14 @@ function renderSimulation(target, simulation) {
   add("Комиссия", `${formatAtomic(simulation.fee.amount)} NIR · платит ${simulation.fee.payer ?? "ресурс сети"}`);
   for (const effect of simulation.balance) {
     const sign = BigInt(effect.delta) > 0n ? "+" : "";
-    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`);
+    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`, { termContainsProtocol: true });
   }
-  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено");
+  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено", { termContainsProtocol: true });
   for (const asset of simulation.assets ?? []) add("Актив", asset.details || `${asset.assetId}: изменение подтверждено`);
-  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`);
+  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`, { termContainsProtocol: true });
   for (const risk of simulation.risks) {
     const item = document.createElement("li"); item.className = "risk-info";
+    item.dataset.i18nIgnore = "";
     item.textContent = risk; risks.append(item);
   }
   root.hidden = false;
@@ -760,6 +823,7 @@ function renderVerifiedAssets(statements) {
   }
   for (const statement of visible) {
     const row = document.createElement("article"); row.className = "asset-row";
+    row.dataset.i18nIgnore = "";
     const title = document.createElement("b"); title.textContent = `${statement.balance} units`;
     const id = document.createElement("span"); id.textContent = `ID ${statement.assetId}`;
     const metadata = document.createElement("span"); metadata.textContent = `metadata ${statement.asset.metadataHash}`;

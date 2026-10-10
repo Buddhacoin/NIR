@@ -256,7 +256,7 @@ test("double-click Mac mode removes terminal setup and false mining claims", () 
   assert.match(script, /не начисляет NIR/);
   assert.match(styles, /\.setup-steps\[hidden\] \{ display: none; \}/);
   assert.match(script, /Проверьте окно macOS/);
-  assert.match(html, /id="balance-value">—<\/span>/);
+  assert.match(html, /id="balance-value" data-i18n-ignore>—<\/span>/);
   assert.match(html, /id="onboarding-title">Подключите защищённый файл кошелька/);
   assert.match(html, /data-action="connect">Подключить кошелёк/);
   assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
@@ -363,13 +363,14 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=32/);
-  assert.match(serviceWorker, /style\.css\?v=32/);
+  assert.match(html, /style\.css\?v=33/);
+  assert.match(serviceWorker, /style\.css\?v=33/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=39/);
-  assert.match(serviceWorker, /app\.js\?v=39/);
-  assert.match(serviceWorker, /nir-wallet-shell-v41/);
+  assert.match(html, /app\.js\?v=40/);
+  assert.match(serviceWorker, /app\.js\?v=40/);
+  assert.match(serviceWorker, /nir-wallet-shell-v42/);
+  assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);

@@ -34,7 +34,7 @@ blockchain/wallet-seed.mjs
 blockchain/wallet-trust-store.mjs wallet-ui/node-selection.js
 `.trim().split(/\s+/));
 const UI_FILES = Object.freeze(`
-address-book.js app.js extension-background.js index.html manifest.json manifest.webmanifest
+address-book.js app.js i18n.js extension-background.js index.html manifest.json manifest.webmanifest
 nir-coin-icon.png nir-coin-icon.svg node-selection.js nodes.json offline-signing.js qr.js
 style.css submission-status.js sw.js transaction-decoder.js
 `.trim().split(/\s+/).map((name) => `wallet-ui/${name}`));
