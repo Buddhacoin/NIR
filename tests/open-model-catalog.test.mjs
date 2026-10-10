@@ -258,3 +258,9 @@ test("empty stale catalog does not imply downloaded weights or cached revisions"
   assert.match(nodes.get("#catalog-state").textContent, /could not be refreshed/);
   assert.match(nodes.get("#catalog-model-info").textContent, /not been downloaded or installed/);
 });
+
+test("sample explanation is associated with the selector and announced on change", () => {
+  const markup = readFileSync(new URL("../mining-app/index.html", import.meta.url), "utf8");
+  assert.match(markup, /<select id="catalog-model" aria-describedby="catalog-model-info"/);
+  assert.match(markup, /<p id="catalog-model-info" aria-live="polite"/);
+});
