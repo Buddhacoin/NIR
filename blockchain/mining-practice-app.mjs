@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
 
 const execFileAsync = promisify(execFile);
+const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
 const assets = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
@@ -72,13 +73,30 @@ function publicModelResult(result) {
   };
 }
 
-export async function runPinnedModel(root) {
-  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-B", "-m", "nir.iris_rehearsal"], {
+export async function runPinnedModel(root, { includeEvidence = false } = {}) {
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
+    "-B", "-m", "nir.iris_rehearsal", ...(includeEvidence ? ["--export-evidence"] : []),
+  ], {
     cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
-    timeout: 30_000, maxBuffer: 16_384,
+    timeout: 30_000, maxBuffer: includeEvidence ? MAX_IRIS_EVIDENCE_BYTES + 1024 : 16_384,
   });
-  const result = JSON.parse(stdout);
-  return publicModelResult(result);
+  const parsed = JSON.parse(stdout);
+  if (!includeEvidence) return publicModelResult(parsed);
+  const result = publicModelResult(parsed?.summary);
+  if (!validIrisEvidence(parsed, result)) throw new Error("invalid local Iris evidence");
+  return { ...result, evidence: parsed };
+}
+
+function validIrisEvidence(evidence, result) {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence) ||
+      Object.keys(evidence).sort().join(",") !== "bundle,format,summary" ||
+      evidence.format !== "nir-local-iris-evidence-v1" ||
+      !evidence.bundle || typeof evidence.bundle !== "object" || Array.isArray(evidence.bundle) ||
+      evidence.bundle.bundle_hash !== result.bundleHash) return false;
+  try {
+    return canonicalJson(evidence.summary) === canonicalJson(result) &&
+      Buffer.byteLength(JSON.stringify(evidence)) <= MAX_IRIS_EVIDENCE_BYTES;
+  } catch { return false; }
 }
 
 const QWEN_REPOSITORY = "Qwen/Qwen3-0.6B";
@@ -199,6 +217,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
+  let lastIrisEvidence = null;
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -239,6 +258,17 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "GET" && path === "/catalog" && request.url === "/catalog") {
       send(200, "application/json; charset=utf-8", JSON.stringify(await catalog.get()));
+      return;
+    }
+    if (request.method === "GET" && path === "/model-evidence" &&
+        request.url === "/model-evidence") {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else if (!lastIrisEvidence) {
+        send(404, "application/json; charset=utf-8", JSON.stringify({ error: "Evidence unavailable" }));
+      } else {
+        send(200, "application/json; charset=utf-8", lastIrisEvidence);
+      }
       return;
     }
     if (request.method === "GET" && path === "/open-model/runtime" &&
@@ -285,9 +315,17 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         return;
       }
       running = true;
+      lastIrisEvidence = null;
       try {
-        const result = publicModelResult(await runModel(root));
-        send(200, "application/json; charset=utf-8", JSON.stringify(result));
+        const raw = await runModel(root, { includeEvidence: true });
+        const result = publicModelResult(raw);
+        if (raw.evidence !== undefined) {
+          if (!validIrisEvidence(raw.evidence, result)) throw new Error("invalid local Iris evidence");
+          lastIrisEvidence = JSON.stringify(raw.evidence);
+        }
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          ...result, evidenceAvailable: lastIrisEvidence !== null,
+        }));
       } catch {
         send(500, "application/json; charset=utf-8", JSON.stringify({
           error: "Проверка модели не завершилась. Заявка не отправлена, награда не начислена.",

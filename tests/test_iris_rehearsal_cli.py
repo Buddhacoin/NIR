@@ -1,6 +1,7 @@
 """The app's fixed-model path must fail closed before launching changed code."""
 
 from pathlib import Path
+import json
 import os
 import tempfile
 import unittest
@@ -10,6 +11,39 @@ from nir import iris_rehearsal
 
 
 class IrisRehearsalCliTests(unittest.TestCase):
+    def test_portable_evidence_replays_exact_pinned_model_without_reward_claim(self):
+        evidence = iris_rehearsal.export_pinned_iris_evidence()
+        self.assertEqual(evidence["format"], "nir-local-iris-evidence-v1")
+        self.assertEqual(evidence["summary"]["bundleHash"], evidence["bundle"]["bundle_hash"])
+        self.assertFalse(evidence["summary"]["independentOperators"])
+        self.assertFalse(evidence["summary"]["rewardCredited"])
+        raw = json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+        self.assertLessEqual(len(raw), iris_rehearsal.MAX_EVIDENCE_BYTES)
+        result = iris_rehearsal.verify_pinned_iris_evidence(raw)
+        self.assertEqual(result["status"], "local-iris-evidence-matched")
+        self.assertFalse(result["independentlyVerified"])
+        self.assertFalse(result["rewardEligible"])
+
+    def test_portable_evidence_rejects_tampering_duplicates_and_oversize(self):
+        evidence = iris_rehearsal.export_pinned_iris_evidence()
+        for field, value in (("candidateAccuracyBps", 10_000), ("rewardCredited", True),
+                             ("rewardCredited", 0), ("bundleVerified", 1),
+                             ("caseCount", 30.0)):
+            changed = json.loads(json.dumps(evidence))
+            changed["summary"][field] = value
+            with self.assertRaises(ValueError):
+                iris_rehearsal.verify_pinned_iris_evidence(json.dumps(changed).encode())
+        changed = json.loads(json.dumps(evidence))
+        changed["bundle"]["commitment"]["recipient"] = "nir1forged"
+        with self.assertRaises(ValueError):
+            iris_rehearsal.verify_pinned_iris_evidence(json.dumps(changed).encode())
+        with patch.object(iris_rehearsal, "_run_pinned_iris", side_effect=AssertionError("model started")):
+            for raw in (b'{"format":"one","format":"two"}',
+                        b" " * (iris_rehearsal.MAX_EVIDENCE_BYTES + 1),
+                        b'{"format":NaN}'):
+                with self.assertRaises(ValueError):
+                    iris_rehearsal.verify_pinned_iris_evidence(raw)
+
     def test_preflight_checks_fixed_inputs_without_running_model(self):
         with patch.object(
             iris_rehearsal, "ApplicationAdapter", side_effect=AssertionError("model started")

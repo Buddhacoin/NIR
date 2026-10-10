@@ -3,6 +3,8 @@ const progress = document.querySelector("#progress");
 const result = document.querySelector("#result");
 const error = document.querySelector("#error");
 const errorMessage = document.querySelector("#error-message");
+const irisEvidenceExport = document.querySelector("#iris-evidence-export");
+const irisEvidenceState = document.querySelector("#iris-evidence-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
 const catalogModel = document.querySelector("#catalog-model");
@@ -96,6 +98,8 @@ const copy = {
     runningBody: "Проверяем исходную и улучшенную модель, затем целостность набора свидетельств.",
     doneTitle: "Локальная проверка завершена",
     doneBody: "Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.",
+    irisEvidenceExport: "Скачать локальное свидетельство (не заявка и не награда)",
+    irisEvidenceFailed: "Свидетельство недоступно. Повторите локальную проверку; заявки и награды нет.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
@@ -162,6 +166,8 @@ const copy = {
     runningBody: "Checking the baseline and candidate models, then the evidence bundle integrity.",
     doneTitle: "Local check complete",
     doneBody: "The evidence bundle was checked locally. There are no independent operators, hidden challenges, attested energy measurements, or network rewards.",
+    irisEvidenceExport: "Download local evidence (not a claim or reward)",
+    irisEvidenceFailed: "Evidence is unavailable. Repeat the local check; no claim or reward exists.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
     checking: "Checking the local service…", online: "● Local service connected",
@@ -409,6 +415,7 @@ function render() {
   }
   if (errorKind) errorMessage.textContent = errorKind === "offlineMessage" && nativeApp ?
     t.offlineMessageNative : t[errorKind];
+  if (irisEvidenceExport) irisEvidenceExport.hidden = lastResult?.evidenceAvailable !== true;
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
       (lastResult.baselineAccuracyBps / 100).toFixed(2),
@@ -483,6 +490,8 @@ start.addEventListener("click", async () => {
   result.hidden = true;
   error.hidden = true;
   errorKind = null;
+  lastResult = null;
+  if (irisEvidenceState) irisEvidenceState.textContent = "";
   recordLocalEvent("iris-requested");
   try {
     const response = await fetch("/model-check", { method: "POST", body: "", headers: sessionHeaders() });
@@ -495,7 +504,8 @@ start.addEventListener("click", async () => {
         data.energyAttested !== false || data.bundleVerified !== true ||
         data.caseCount !== 30 || !Number.isSafeInteger(data.baselineAccuracyBps) ||
         !Number.isSafeInteger(data.candidateAccuracyBps) ||
-        !/^[0-9a-f]{64}$/.test(data.bundleHash)) {
+        !/^[0-9a-f]{64}$/.test(data.bundleHash) ||
+        typeof data.evidenceAvailable !== "boolean") {
       throw new Error("invalid result");
     }
     lastResult = data;
@@ -514,6 +524,44 @@ start.addEventListener("click", async () => {
     progress.hidden = true;
     start.disabled = !connected;
     render();
+  }
+});
+
+if (irisEvidenceExport) irisEvidenceExport.addEventListener("click", async () => {
+  if (!connected || lastResult?.evidenceAvailable !== true || irisEvidenceExport.hidden) return;
+  try {
+    const response = await fetch("/model-evidence", { headers: sessionHeaders(), cache: "no-store" });
+    if (!response.ok || !response.body) throw new Error("evidence unavailable");
+    const reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 1_000_000) { await reader.cancel(); throw new Error("oversized evidence"); }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const item = JSON.parse(new TextDecoder().decode(bytes));
+    if (item?.format !== "nir-local-iris-evidence-v1" ||
+        item.summary?.bundleHash !== lastResult.bundleHash ||
+        item.bundle?.bundle_hash !== lastResult.bundleHash ||
+        item.summary?.networkSubmitted !== false || item.summary?.rewardCredited !== false ||
+        item.summary?.independentOperators !== false) throw new Error("invalid evidence");
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `nir-local-iris-${lastResult.bundleHash.slice(0, 12)}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (irisEvidenceState) irisEvidenceState.textContent = "";
+  } catch {
+    if (irisEvidenceState) irisEvidenceState.textContent = copy[locale].irisEvidenceFailed;
   }
 });
 
