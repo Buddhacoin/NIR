@@ -41,6 +41,37 @@ test("local rechecker requires authenticated model and record imports", async ()
   } finally { await stop(server); }
 });
 
+test("one Model Lab service exposes wallet ownership, recheck role, and provider intent without reward", async () => {
+  const { server, base, token } = await serve();
+  const headers = { origin: base, "X-NIR-Session": token };
+  try {
+    const challenge = await fetch(`${base}/wallet-link/challenge`, {
+      method: "POST", headers, body: "",
+    });
+    assert.equal(challenge.status, 200);
+    assert.equal((await challenge.json()).rewardEligible, false);
+    const providers = await (await fetch(`${base}/provider-capabilities`)).json();
+    assert.equal(providers.scope, "onboarding-only");
+    const declaration = await fetch(`${base}/provider-capabilities/declaration`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "anthropic-api", modelId: "claude-sonnet-4" }),
+    });
+    assert.equal(declaration.status, 200);
+    assert.equal((await declaration.json()).rewardEligible, false);
+    const model = readFileSync(join(root, "examples/iris_integer_linear.json"));
+    const record = evaluateIrisPostCommitStress(root, model, Buffer.alloc(32, 5));
+    const recheck = await fetch(`${base}/candidate/iris-linear/recheck`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ modelBase64: model.toString("base64"), record }),
+    });
+    assert.equal(recheck.status, 200);
+    const checked = await recheck.json();
+    assert.equal(checked.status, "local-iris-recheck-matched");
+    assert.equal(checked.rewardEligible, false);
+    assert.equal(checked.operatorIdentityVerified, false);
+  } finally { await stop(server); }
+});
+
 test("operator console shows only real local stages, roles, and runnable models", () => {
   const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
   const css = readFileSync(join(root, "mining-app/style.css"), "utf8");
