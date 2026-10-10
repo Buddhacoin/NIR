@@ -127,6 +127,10 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
         "a forged localhost observer must not change the network balance");
       assert.equal(await page.locator("#observer-amount").textContent(), "9999999.99999999");
       assert.match(await page.locator("#observer-report").textContent(), /не проверяло подписи самостоятельно/);
+      await page.getByRole("button", { name: "English" }).click();
+      assert.match(await page.locator("#observer-report").textContent(), /did not verify signatures independently/);
+      assert.equal(await page.locator("#verified-balance").textContent(), "—");
+      await page.getByRole("button", { name: "Русский" }).click();
       observerReply = { ...observerReply, address: `nir1${"e".repeat(64)}` };
       await page.getByRole("button", { name: "Настройки" }).click();
       await page.locator("#observer-form button[type=submit]").click();
