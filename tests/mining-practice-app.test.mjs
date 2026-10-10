@@ -399,7 +399,7 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
       ['<input id="synthetic-recipient" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="nir1…">',
-        '<input id="synthetic-amount" type="number" min="1" max="44" step="1" value="1">',
+        '<input id="synthetic-amount" type="number" min="1" max="7" step="1" value="1">',
         '<input id="candidate-file" type="file" accept="application/json,.json">',
         '<input id="qwen-replay-file" type="file" accept="application/json,.json">',
         '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
