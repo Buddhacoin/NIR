@@ -29,6 +29,8 @@ test("actual local model bundle remains ineligible for a signed progress reward"
   assert.equal(report.gain_ppm, 66_600);
   assert.equal(report.energy_attested, false);
   assert.equal(chainEvaluation.energyAttested, false);
+  assert.equal(chainEvaluation.criticalSafetyPass, false);
+  assert.equal(chainEvaluation.safetyBps, 0);
   assert.equal(chainEvaluation.executionBundleHash, first.bundleHash);
   assert.equal(chainEvaluation.artifactHash, commitment.artifact_hash);
   assert.equal(chainEvaluation.baselineHash, commitment.baseline_hash);
@@ -52,6 +54,13 @@ test("actual local model bundle remains ineligible for a signed progress reward"
     epoch: first.challengeEpoch,
     recipient: ephemeralRecipient,
     evaluation,
+    evaluatorWallets: [],
+  }), /safety is outside protocol limits/);
+  assert.throws(() => createProgressClaim({
+    networkId: commitment.network_id,
+    epoch: first.challengeEpoch,
+    recipient: ephemeralRecipient,
+    evaluation: { ...evaluation, criticalSafetyPass: true, safetyBps: 10_000 },
     evaluatorWallets: [],
   }), /evaluation energy must be positive and attested/);
 });
