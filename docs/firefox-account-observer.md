@@ -5,7 +5,7 @@ own phrase and address. It **does not** target `blockchain/firefox-wallet-previe
 which packages the separate native-vault `wallet-ui`. These two wallet identities
 must not be silently interchanged.
 
-`createAccountObserverBridgeServer({ address, nodeBaseUrl, origin, sessionToken, trustAnchor })`
+`createAccountObserverBridgeServer({ address, nodeBaseUrl, origin, sessionToken, trustAnchor, checkpointPath })`
 creates a loopback HTTP server. A caller must supply the unlocked extension's exact
 address, its exact `moz-extension://<uuid>` origin, a random 32-byte hex bearer token,
 and an operator-reviewed trust anchor (`expectedNetworkId`, genesis checkpoint,
@@ -21,7 +21,8 @@ With `Origin: <bound origin>`, `x-nir-observer-token: <bound token>` and
 `Content-Type: application/json`:
 
 1. `POST /v1/verify-finality-chain` with `{ "proofs": [...] }`, starting at the
-   pinned genesis successor. The response includes `networkId`, `genesisHash`,
+   pinned genesis successor or the next height after a retained checkpoint.
+   The response includes `networkId`, `genesisHash`,
    `tip` and `verified: true`. A chain that rolls back or conflicts with a tip
    already verified in this process is rejected.
 2. `POST /v1/verify-account-proof` with `{ "proof": {...} }`. This accepts only
@@ -34,20 +35,25 @@ With `Origin: <bound origin>`, `x-nir-observer-token: <bound token>` and
    address, genesis identity or conflicting chain and returns only the verified
    account response. The extension never has to fetch raw node balances.
 
-No account balance is returned from a raw node response. The caller must check
-the echoed address/network/genesis before displaying a balance and clear stale
-results on account change or locking. No extension UI, secure token handoff,
-operator setup CLI or persistence is wired to this backend yet. After restart
-the full finality chain must be presented again; no balance should be shown until
-fresh evidence verifies. This is **not** a working network wallet or mining app.
-The underlying verifier limits one chain submission to 512 proofs / 32 MiB;
-because this increment requires a full genesis-to-tip submission, it cannot
-follow a chain past that bound. A durable authenticated checkpoint/header store
-and incremental continuity checks are required before treating this as a
-long-running balance source.
+No account balance is returned from a raw node response. The Firefox extension
+checks the echoed address/network/genesis and clears stale reports on account
+change or locking. It deliberately keeps its main network balance blank: a
+spoofed localhost process can return `verified: true`, and the extension does
+not independently check cryptographic proofs. The separate card is labelled a
+local observer report, not a verified wallet balance or reward. No secure
+operator setup CLI, trusted release binding, or automatic server launch exists.
+This is **not** a working network wallet or mining app.
+
+When the caller supplies a private `checkpointPath`, the observer persists a
+monotonic verified tip and continues in segments of at most 512 proofs / 32 MiB
+after restart. Tests cover a real 513-block signed chain, an invalid next block,
+restart, rollback and competing sessions. A crash leaves a lock requiring manual
+investigation. Without `checkpointPath`, restart rollback protection is absent;
+the API does not silently infer a trusted path. A same-user process can still
+replace local state, so this is not an external trust anchor.
 The node's `/health` height is not itself independently authenticated. After an
-observer restart, a node could replay an older but valid finalized chain and
-account proof; the response proves the balance **at the reported height**, not
-that this height is the freshest network tip. The UI must show the proof height
-and must not imply current spendability or finality freshness until durable trust
-and independent peer freshness checks exist.
+observer restart without a retained checkpoint, a node could replay an older but
+valid finalized chain and account proof. Even with a retained checkpoint, one
+node does not establish the freshest network height. The response proves the
+balance **at the reported height**, not current spendability. The UI shows the
+reported height and must not imply network freshness or mining rewards.
