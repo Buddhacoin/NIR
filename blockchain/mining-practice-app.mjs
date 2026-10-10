@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
@@ -148,6 +149,34 @@ export async function runPinnedQwen(root) {
   return publicOpenModelResult(JSON.parse(stdout));
 }
 
+export async function replayPinnedQwen(root, recordBytes) {
+  const directory = mkdtempSync(join(tmpdir(), "nir-local-replay-"));
+  try {
+    const path = join(directory, "record.json");
+    writeFileSync(path, recordBytes, { flag: "wx", mode: 0o600 });
+    const { stdout } = await execFileAsync("python3", [
+      "-m", "nir.open_model_local_run", "--replay-record", path,
+      "--allow-1.5gb-download",
+    ], {
+      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+      timeout: 30 * 60_000, maxBuffer: 4_096,
+    });
+    return publicReplayResult(JSON.parse(stdout));
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+function publicReplayResult(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+      Object.keys(result).sort().join(",") !== ["status", "recordHash", "rewardEligible",
+        "networkSubmitted", "independentlyVerified"].sort().join(",") ||
+      result.status !== "local-replay-matched" ||
+      !/^sha256:[0-9a-f]{64}$/.test(result.recordHash) ||
+      result.rewardEligible !== false || result.networkSubmitted !== false ||
+      result.independentlyVerified !== false) throw new Error("invalid local replay result");
+  return { status: "local-replay-matched", recordHash: result.recordHash,
+    rewardEligible: false, networkSubmitted: false, independentlyVerified: false };
+}
+
 export async function checkPinnedQwenRuntime(root) {
   const { stdout } = await execFileAsync("python3", [
     "-m", "nir.open_model_local_run", "--check-runtime",
@@ -166,6 +195,7 @@ export async function checkPinnedQwenRuntime(root) {
 
 export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
+  runReplay = replayPinnedQwen,
   catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
@@ -282,6 +312,62 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       send(202, "application/json; charset=utf-8", JSON.stringify({ status: "running", jobId }));
       void Promise.resolve().then(() => runOpenModel(root)).then((raw) => {
         job.result = publicOpenModelResult(raw);
+        job.status = "done";
+      }).catch(() => { job.status = "failed"; }).finally(() => {
+        job.finishedAt = Date.now();
+        running = false;
+      });
+      return;
+    }
+    if (request.method === "POST" && path === "/open-model/replay" &&
+        request.url === "/open-model/replay") {
+      const declared = Number(request.headers["content-length"]);
+      if (request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["x-nir-download-consent"] !== "qwen3-0.6b-up-to-4gib" ||
+          request.headers["transfer-encoding"] ||
+          !Number.isSafeInteger(declared) || declared < 1 || declared > 16_384) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      let bytes;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > 16_384 || length > declared) throw new Error("oversized replay body");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated replay body");
+        bytes = Buffer.concat(chunks, length);
+        const record = JSON.parse(bytes.toString("utf8"));
+        publicOpenModelResult({ repository: QWEN_REPOSITORY, revision: QWEN_REVISION,
+          packageIdentity: record?.packageIdentity, answer: record?.answer, record,
+          rewardEligible: false, networkSubmitted: false, independentlyVerified: false });
+      } catch {
+        send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid replay record" }));
+        return;
+      } finally { clearTimeout(deadline); }
+      running = true;
+      for (const [id, old] of openModelJobs) {
+        if (old.status !== "running" && Date.now() - old.finishedAt > 30 * 60_000) openModelJobs.delete(id);
+      }
+      if (openModelJobs.size >= 4) openModelJobs.delete(openModelJobs.keys().next().value);
+      const jobId = randomBytes(16).toString("hex");
+      const job = { status: "running" };
+      openModelJobs.set(jobId, job);
+      send(202, "application/json; charset=utf-8", JSON.stringify({ status: "running", jobId }));
+      void Promise.resolve().then(() => runReplay(root, bytes)).then((result) => {
+        const publicResult = publicReplayResult(result);
+        if (publicResult.recordHash !== JSON.parse(bytes.toString("utf8")).recordHash)
+          throw new Error("invalid replay result");
+        job.result = publicResult;
         job.status = "done";
       }).catch(() => { job.status = "failed"; }).finally(() => {
         job.finishedAt = Date.now();
