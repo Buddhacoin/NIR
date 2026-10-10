@@ -5,6 +5,7 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -64,6 +65,43 @@ class FetchTests(unittest.TestCase):
             self.assertEqual(child.returncode, 0, child.stderr)
         with _download_capacity_guard(self.root, 100, available_bytes=lambda _: 2 << 30):
             pass
+
+    def test_next_locked_fetch_removes_its_crashed_partial_download(self):
+        child = subprocess.Popen([sys.executable, "-c",
+            "from pathlib import Path; from nir.open_model_fetch import _private_model_directory; "
+            "import sys,time; "
+            "\nwith _private_model_directory(sys.argv[1]) as path:"
+            "\n print(path, flush=True)"
+            "\n (Path(path)/'partial.safetensors').write_bytes(b'x'*32)"
+            "\n time.sleep(60)", str(self.root)],
+            cwd=Path(__file__).resolve().parent.parent, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        path = Path(child.stdout.readline().strip())
+        try:
+            self.assertTrue(path.is_dir())
+            child.kill()
+            self.assertEqual(child.wait(timeout=5), -9)
+            self.assertEqual((path / "partial.safetensors").stat().st_size, 32)
+            outside = self.root / "user-data"
+            outside.mkdir()
+            (outside / "keep").write_text("unchanged")
+            os.symlink(outside, path / "outside-link")
+            unmarked = self.root / "nir-model-fetch-user-owned"
+            unmarked.mkdir(mode=0o700)
+            (unmarked / "keep").write_text("unchanged")
+            os.symlink(outside, self.root / "nir-model-fetch-symlink")
+            with _download_capacity_guard(self.root, 100, available_bytes=lambda _: 2 << 30):
+                pass
+            self.assertFalse(path.exists(), "a killed download must not strand model bytes")
+            self.assertEqual((outside / "keep").read_text(), "unchanged")
+            self.assertEqual((unmarked / "keep").read_text(), "unchanged")
+            self.assertTrue((self.root / "nir-model-fetch-symlink").is_symlink())
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            child.stdout.close()
+            child.stderr.close()
 
     def test_insufficient_space_aborts_before_model_download(self):
         with patch("nir.open_model_fetch.os.statvfs", return_value=type("Space", (), {

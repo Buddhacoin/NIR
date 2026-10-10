@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
 import fcntl
 from hashlib import sha1, sha256
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import tempfile
 from time import monotonic
@@ -40,6 +42,62 @@ class FetchError(ValueError):
     """Pinned model core files could not be downloaded and reconciled safely."""
 
 
+_TEMP_PREFIX = "nir-model-fetch-"
+_TEMP_MARKER = ".nir-model-fetch-v1"
+_TEMP_MARKER_BYTES = b"NIR_OPEN_MODEL_FETCH_V1\n"
+
+
+def _reap_crashed_downloads(parent: str | Path | None) -> None:
+    """Remove only marked, owner-private trees after the global fetch lock is held.
+
+    This recovers bytes after SIGKILL or a crash. It cannot defend against a
+    malicious process running as the same user, nor a power loss before the
+    marker has reached durable storage.
+    """
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise FetchError("safe model download cleanup is unavailable")
+    root = Path(parent) if parent is not None else Path(tempfile.gettempdir())
+    try:
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            with os.scandir(root_fd) as entries:
+                for entry in entries:
+                    if not entry.name.startswith(_TEMP_PREFIX) or not entry.is_dir(follow_symlinks=False):
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                        continue
+                    child_fd = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                       dir_fd=root_fd)
+                    try:
+                        child_info = os.fstat(child_fd)
+                        if (child_info.st_ino, child_info.st_dev) != (info.st_ino, info.st_dev):
+                            continue
+                        try:
+                            marker_fd = os.open(_TEMP_MARKER, os.O_RDONLY | os.O_NOFOLLOW,
+                                                dir_fd=child_fd)
+                        except OSError as error:
+                            if error.errno in (errno.ENOENT, errno.ELOOP, errno.ENOTDIR):
+                                continue
+                            raise
+                        try:
+                            marker = os.fstat(marker_fd)
+                            if (not stat.S_ISREG(marker.st_mode) or marker.st_uid != os.getuid() or
+                                    stat.S_IMODE(marker.st_mode) != 0o600 or
+                                    marker.st_size != len(_TEMP_MARKER_BYTES) or
+                                    os.read(marker_fd, len(_TEMP_MARKER_BYTES) + 1) != _TEMP_MARKER_BYTES):
+                                continue
+                        finally:
+                            os.close(marker_fd)
+                    finally:
+                        os.close(child_fd)
+                    shutil.rmtree(entry.name, dir_fd=root_fd)
+        finally:
+            os.close(root_fd)
+    except OSError as error:
+        raise FetchError("crashed model download cleanup failed") from error
+
+
 @contextmanager
 def _download_capacity_guard(parent: str | Path | None, package_bytes: int,
                              *, available_bytes: Callable[[Path], int] | None = None):
@@ -61,6 +119,7 @@ def _download_capacity_guard(parent: str | Path | None, package_bytes: int,
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as error:
                 raise FetchError("another local model download is already running") from error
+            _reap_crashed_downloads(parent)
             # Incoming files and the verified package coexist during inference.
             required = package_bytes * 2 + (1 << 30)
             if available_bytes is None:
@@ -77,11 +136,24 @@ def _download_capacity_guard(parent: str | Path | None, package_bytes: int,
         raise FetchError("local model download capacity check failed") from error
 
 
-def _private_model_directory(parent: str | Path | None) -> tempfile.TemporaryDirectory:
+@contextmanager
+def _private_model_directory(parent: str | Path | None) -> Iterator[str]:
     try:
-        return tempfile.TemporaryDirectory(prefix="nir-model-fetch-", dir=parent)
+        temporary = tempfile.TemporaryDirectory(prefix=_TEMP_PREFIX, dir=parent)
     except (OSError, TypeError, ValueError) as error:
         raise FetchError("private model download directory could not be created") from error
+    with temporary as path:
+        try:
+            marker = os.open(Path(path) / _TEMP_MARKER,
+                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            try:
+                os.write(marker, _TEMP_MARKER_BYTES)
+                os.fsync(marker)
+            finally:
+                os.close(marker)
+        except OSError as error:
+            raise FetchError("private model download marker could not be created") from error
+        yield path
 
 
 @dataclass(frozen=True, slots=True)
