@@ -18,8 +18,8 @@ if (!report.ready) {
   process.exitCode = 2;
 } else {
   try {
-    const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-m", "nir.iris_rehearsal", "--check"], {
-      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-B", "-m", "nir.iris_rehearsal", "--check"], {
+      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" },
       encoding: "utf8", timeout: 5_000, maxBuffer: 2048,
     });
     if (JSON.parse(stdout).status !== "pinned-iris-ready") throw new Error("invalid model preflight");

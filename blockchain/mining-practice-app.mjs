@@ -73,8 +73,8 @@ function publicModelResult(result) {
 }
 
 export async function runPinnedModel(root) {
-  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-m", "nir.iris_rehearsal"], {
-    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-B", "-m", "nir.iris_rehearsal"], {
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
     timeout: 30_000, maxBuffer: 16_384,
   });
   const result = JSON.parse(stdout);
@@ -140,10 +140,10 @@ function publicOpenModelResult(result) {
 
 export async function runPinnedQwen(root) {
   const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
-    "-m", "nir.open_model_local_run", "--prompt", QWEN_PROMPT,
+    "-B", "-m", "nir.open_model_local_run", "--prompt", QWEN_PROMPT,
     "--allow-1.5gb-download",
   ], {
-    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
     timeout: 30 * 60_000, maxBuffer: 16_384,
   });
   return publicOpenModelResult(JSON.parse(stdout));
@@ -155,10 +155,10 @@ export async function replayPinnedQwen(root, recordBytes) {
     const path = join(directory, "record.json");
     writeFileSync(path, recordBytes, { flag: "wx", mode: 0o600 });
     const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
-      "-m", "nir.open_model_local_run", "--replay-record", path,
+      "-B", "-m", "nir.open_model_local_run", "--replay-record", path,
       "--allow-1.5gb-download",
     ], {
-      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
       timeout: 30 * 60_000, maxBuffer: 4_096,
     });
     return publicReplayResult(JSON.parse(stdout));
@@ -179,9 +179,9 @@ function publicReplayResult(result) {
 
 export async function checkPinnedQwenRuntime(root) {
   const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
-    "-m", "nir.open_model_local_run", "--check-runtime",
+    "-B", "-m", "nir.open_model_local_run", "--check-runtime",
   ], {
-    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
     timeout: 10_000, maxBuffer: 4_096,
   });
   const result = JSON.parse(stdout);

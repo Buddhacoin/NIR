@@ -164,13 +164,19 @@ test("packaged embedded service starts outside source checkout and runs real pin
   const directory = mkdtempSync(join(tmpdir(), "nir-model-service-test-"));
   let child;
   try {
-    const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"), { sign: false });
+    const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"));
+    const signed = () => spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app],
+      { encoding: "utf8" });
+    assert.equal(signed().status, 0, "the newly built bundle must have an intact seal");
     const root = join(app, "Contents/Resources/app");
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
     child = spawn(runtime.nodeExecutable, [join(root, "blockchain/mining-practice-app-cli.mjs"), "--embedded"], {
       cwd: root, env: { ...process.env, NIR_MINING_PYTHON: runtime.pythonExecutable },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let diagnostic = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { diagnostic = (diagnostic + chunk).slice(-1024); });
     const url = await Promise.race([
       new Promise((resolve, reject) => {
         let output = "";
@@ -182,9 +188,12 @@ test("packaged embedded service starts outside source checkout and runs real pin
         });
         child.once("exit", (code) => reject(new Error(`embedded service exited ${code}`)));
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("embedded service timed out")), 10_000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(
+        `embedded service timed out after 30s: ${diagnostic}`)), 30_000)),
     ]);
     const origin = new URL(url.url).origin;
+    const runtimeCheck = await fetch(`${origin}/open-model/runtime`);
+    assert.equal(runtimeCheck.status, 200);
     const response = await fetch(`${origin}/model-check`, { method: "POST", headers: {
       Origin: origin, "Content-Length": "0", "X-NIR-Session": url.token,
     } });
@@ -194,6 +203,9 @@ test("packaged embedded service starts outside source checkout and runs real pin
     assert.equal(result.bundleVerified, true);
     assert.equal(result.rewardCredited, false);
     assert.equal(result.networkSubmitted, false);
+    assert.equal(existsSync(join(root, "nir/__pycache__")), false,
+      "running packaged Python must not write bytecode into the signed app");
+    assert.equal(signed().status, 0, "running Iris and Qwen preflight must preserve the app seal");
   } finally {
     if (child && !child.killed) child.kill("SIGTERM");
     rmSync(directory, { recursive: true, force: true });
