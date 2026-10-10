@@ -131,3 +131,13 @@ export function localize(message, locale) {
   if (match) return `${match[1] === "Фраза" ? "Phrase" : "Address"} copied. Clear your clipboard after use.`;
   return message;
 }
+
+function isKnownUiMessage(message) {
+  return Object.hasOwn(messages, message) || /^Адрес \d+( ✓)?$/.test(message) ||
+    /^Слово № \d+$/.test(message) || /^Проверьте слово № \d+$/.test(message) ||
+    /^(Фраза|Адрес) скопирован\. Очистите буфер обмена после использования\.$/.test(message);
+}
+
+export function safeUiError(error) {
+  return error instanceof Error && isKnownUiMessage(error.message) ? error.message : "Не удалось выполнить действие";
+}

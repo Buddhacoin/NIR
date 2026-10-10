@@ -1,10 +1,12 @@
 import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from "./crypto.js";
 import { createSessionGuard, reloadAfterPendingWrite } from "./session-guard.js";
-import { applyStaticLocale, localize } from "./i18n.js";
+import { applyStaticLocale, localize, safeUiError } from "./i18n.js";
+import { createLocaleWriteQueue } from "./locale-write-queue.js";
 
 const STORE_KEY = "nirTestWallet";
 const LOCALE_KEY = "nirWalletLocale";
 const extensionApi = globalThis.browser ?? globalThis.chrome;
+const writeLocale = createLocaleWriteQueue((value) => extensionApi.storage.local.set({ [LOCALE_KEY]: value }));
 const $ = (selector) => document.querySelector(selector);
 let profile = null;
 let phrase = null;
@@ -163,7 +165,9 @@ async function run(action) {
   busy = true;
   try { await action(() => assertSession(generation)); assertSession(generation); }
   catch (error) {
-    if (!sessionExpired) status(error instanceof Error ? error.message : "Не удалось выполнить действие");
+    if (!sessionExpired) {
+      status(safeUiError(error));
+    }
   }
   finally { busy = false; }
 }
@@ -333,8 +337,8 @@ for (const language of ["ru", "en"]) {
   $(`#locale-${language}`).addEventListener("click", async () => {
     locale = language;
     refreshLocale();
-    try { await extensionApi.storage.local.set({ [LOCALE_KEY]: language }); }
-    catch { status("Не удалось сохранить язык интерфейса"); }
+    try { await writeLocale(language); }
+    catch { if (locale === language) status("Не удалось сохранить язык интерфейса"); }
   });
 }
 const stored = settings[STORE_KEY];

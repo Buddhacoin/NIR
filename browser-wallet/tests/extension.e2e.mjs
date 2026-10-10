@@ -34,6 +34,9 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     for (const target of staticTranslationTargets) {
       assert.ok(await page.locator(target.split("@")[0]).count(), `missing translation target: ${target}`);
     }
+    assert.equal(await page.locator("body").evaluate((element) => element.getBoundingClientRect().width), 390);
+    assert.ok(await page.locator("header").evaluate((element) => element.scrollWidth <= element.clientWidth),
+      "language switch and test badge must fit the 390px portrait header");
     await page.getByRole("button", { name: "English" }).click();
     assert.equal(await page.locator("html").getAttribute("lang"), "en");
     assert.equal(await page.locator(".notice").textContent(), "Local test version · no real funds");
