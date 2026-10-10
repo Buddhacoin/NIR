@@ -230,20 +230,23 @@ function exactLoopbackUrl(value) {
 
 async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
   if (!bridgeSession) throw new Error("Сначала подключите vault.");
+  const session = bridgeSession;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${bridgeSession.url}${path}`, {
+    const response = await fetch(`${session.url}${path}`, {
       ...options,
       signal: controller.signal,
       headers: {
-        "x-nir-bridge-token": bridgeSession.token,
+        "x-nir-bridge-token": session.token,
         ...(options.body ? { "content-type": "application/json" } : {}),
       },
     });
     const result = await response.json();
     if (!response.ok) {
-      if (response.status === 401) clearWalletSession("Сессия vault завершена · подключитесь снова");
+      if (response.status === 401 && bridgeSession === session) {
+        clearWalletSession("Сессия vault завершена · подключитесь снова");
+      }
       throw new Error(result.error || "Локальный bridge отклонил запрос.");
     }
     return result;
@@ -341,9 +344,8 @@ function nodeUrl(path) {
 
 async function readAccount() {
   if (!walletInfo || !networkInfo) throw new Error("Подключите vault и локальный узел.");
-  const response = await fetch(nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}`));
-  if (!response.ok) throw new Error("Не удалось получить nonce и баланс от узла.");
-  const account = await response.json();
+  const address = walletInfo.address;
+  const { height: minimumHeight, networkId } = networkInfo;
   try {
     const handoffResponse = await fetch(nodeUrl("/v1/validator-handoffs"));
     if (handoffResponse.ok) {
@@ -353,9 +355,9 @@ async function readAccount() {
       });
     }
     const trust = await bridgeRequest("/v1/trust-info");
-    if (trust.enabled && trust.tipHash && networkInfo.height > trust.minimumHeight) {
+    if (trust.enabled && trust.tipHash && minimumHeight > trust.minimumHeight) {
       let verifiedHeight = trust.minimumHeight;
-      while (verifiedHeight < networkInfo.height) {
+      while (verifiedHeight < minimumHeight) {
         const finalityResponse = await fetch(nodeUrl(
           `/v1/finality-proofs?fromHeight=${verifiedHeight}&limit=512`,
         ));
@@ -374,21 +376,27 @@ async function readAccount() {
       }
     }
     const proofResponse = await fetch(
-      nodeUrl(`/v1/accounts/${encodeURIComponent(walletInfo.address)}/proof`),
+      nodeUrl(`/v1/accounts/${encodeURIComponent(address)}/proof`),
     );
     if (!proofResponse.ok) throw new Error("proof unavailable");
     const proof = await proofResponse.json();
     const verified = await bridgeRequest("/v1/verify-account-proof", {
       method: "POST",
       body: JSON.stringify({
-        address: walletInfo.address,
-        minimumHeight: networkInfo.height,
+        address,
+        minimumHeight,
         proof,
       }),
     });
+    if (verified.verified !== true || verified.statement?.account?.address !== address ||
+        verified.statement.networkId !== networkId ||
+        !Number.isSafeInteger(verified.statement.height) ||
+        verified.statement.height < minimumHeight) {
+      throw new Error("account proof does not match the selected wallet and network");
+    }
     const historyCount = verified.statement.account.history.count;
     const historyResponse = await fetch(nodeUrl(
-      `/v1/accounts/${encodeURIComponent(walletInfo.address)}/history?before=${historyCount}&limit=20`,
+      `/v1/accounts/${encodeURIComponent(address)}/history?before=${historyCount}&limit=20`,
     ));
     if (!historyResponse.ok) throw new Error("account history page unavailable");
     const verifiedHistory = await bridgeRequest("/v1/verify-account-history-page", {
@@ -420,7 +428,6 @@ async function readAccount() {
       }
     }
     return {
-      ...account,
       ...verified.statement.account,
       proofHeight: verified.statement.height,
       proofStateRoot: verified.statement.stateRoot,
@@ -430,7 +437,7 @@ async function readAccount() {
       verifiedTransactions,
     };
   } catch {
-    return { ...account, proofVerified: false };
+    return { proofVerified: false };
   }
 }
 
@@ -1014,9 +1021,14 @@ function openBridgePanel() {
 }
 
 async function renderAccounts() {
+  const epoch = accountEpoch;
   const { accounts, activeId, canCreate } = await bridgeRequest("/v1/accounts");
+  if (epoch !== accountEpoch || !walletInfo || !bridgeSession) return false;
   if (!Array.isArray(accounts) || !accounts.some((account) => account.id === activeId)) {
     throw new Error("Не удалось проверить список кошельков.");
+  }
+  if (accounts.find((account) => account.id === activeId).address !== walletInfo.address) {
+    throw new Error("Выбранный адрес не совпадает с подключённым vault.");
   }
   const list = document.querySelector("#account-list");
   list.replaceChildren();
@@ -1038,59 +1050,78 @@ async function renderAccounts() {
   accountOpen.textContent = `${accounts.find((account) => account.id === activeId).label} ▾`;
   accountOpen.dataset.activeId = activeId;
   document.querySelector("#add-account").hidden = canCreate !== true;
+  return true;
 }
 
 async function completeAccountChange() {
+  const session = bridgeSession;
+  if (!session) return false;
   resetAccountView("Кошелёк выбран · проверяем баланс заново");
-  walletInfo = await bridgeRequest("/v1/wallet");
+  const epoch = accountEpoch;
+  const info = await bridgeRequest("/v1/wallet");
+  if (bridgeSession !== session || accountEpoch !== epoch) return false;
+  walletInfo = info;
+  if (await renderAccounts() !== true || bridgeSession !== session || accountEpoch !== epoch) return false;
   renderWalletConnection();
-  await renderAccounts();
   if (accountsPanel.open) accountsPanel.close();
   await refreshNodeStatus();
+  return bridgeSession === session && accountEpoch === epoch;
 }
 
 async function reconcileAccountAfterError() {
+  const session = bridgeSession;
+  if (!session) return false;
   resetAccountView("Проверяем выбранный кошелёк заново");
-  walletInfo = await bridgeRequest("/v1/wallet");
+  const epoch = accountEpoch;
+  const info = await bridgeRequest("/v1/wallet");
+  if (bridgeSession !== session || accountEpoch !== epoch) return false;
+  walletInfo = info;
+  if (await renderAccounts() !== true || bridgeSession !== session || accountEpoch !== epoch) return false;
   renderWalletConnection();
-  await renderAccounts();
   await refreshNodeStatus();
+  return bridgeSession === session && accountEpoch === epoch;
 }
 
 async function changeAccount(id) {
   if (accountTransitionPending) return;
   if (id === accountOpen.dataset.activeId) { accountsPanel.close(); return; }
   accountTransitionPending = true;
+  const session = bridgeSession;
   accountsStatus.textContent = "Переключаем кошелёк…";
   try {
     await bridgeRequest("/v1/select-account", { method: "POST", body: JSON.stringify({ id }) });
+    if (bridgeSession !== session) return;
     await completeAccountChange();
   } catch (error) {
+    if (bridgeSession !== session) return;
     accountsStatus.textContent = error.message;
     try { await reconcileAccountAfterError(); }
-    catch { clearWalletSession("Не удалось сверить выбранный кошелёк · подключитесь снова"); }
+    catch { if (bridgeSession === session) clearWalletSession("Не удалось сверить выбранный кошелёк · подключитесь снова"); }
   } finally { accountTransitionPending = false; }
 }
 
 accountOpen.onclick = async () => {
   accountsStatus.textContent = "";
-  try { await renderAccounts(); accountsPanel.showModal(); }
+  try { if (await renderAccounts() === true && bridgeSession && walletInfo) accountsPanel.showModal(); }
   catch (error) { showMessage("settings", error.message); }
 };
 
 document.querySelector("#add-account").onclick = async (event) => {
   if (accountTransitionPending) return;
   accountTransitionPending = true;
+  const session = bridgeSession;
   const button = event.currentTarget;
   button.disabled = true;
   accountsStatus.textContent = "Создайте ключ и сохраните его резервную копию в приложении…";
   try {
     await bridgeRequest("/v1/create-account", { method: "POST", body: "{}" }, 600_000);
+    if (bridgeSession !== session) return;
     await completeAccountChange();
   } catch (error) {
+    if (bridgeSession !== session) return;
     accountsStatus.textContent = error.message;
     try { await reconcileAccountAfterError(); }
-    catch { clearWalletSession("Не удалось сверить созданный кошелёк · подключитесь снова"); }
+    catch { if (bridgeSession === session) clearWalletSession("Не удалось сверить созданный кошелёк · подключитесь снова"); }
   } finally { button.disabled = false; accountTransitionPending = false; }
 };
 
@@ -1106,6 +1137,8 @@ function openSettingsPanel() {
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  clearWalletSession("Переподключение vault · ожидаем подтверждения нового сеанса");
+  const pairingEpoch = accountEpoch;
   bridgeStatus.textContent = "Подключение…";
   const codeInput = document.querySelector("#bridge-code");
   try {
@@ -1113,17 +1146,22 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     const code = codeInput.value.trim();
     if (!/^[0-9]{8}$/.test(code)) throw new Error("Введите восьмизначный одноразовый код.");
     const token = await pairBridge(url, code);
+    if (pairingEpoch !== accountEpoch) return;
     bridgeSession = { token, url };
-    walletInfo = await bridgeRequest("/v1/wallet");
+    const info = await bridgeRequest("/v1/wallet");
+    if (pairingEpoch !== accountEpoch) return;
+    walletInfo = info;
     await renderAccounts();
+    if (pairingEpoch !== accountEpoch) return;
     codeInput.value = "";
     bridgeStatus.textContent = `Подключён ${walletInfo.address.slice(0, 16)}…`;
     renderWalletConnection();
     await refreshNodeStatus();
+    if (pairingEpoch !== accountEpoch) return;
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
-    bridgeSession = null;
-    walletInfo = null;
+    if (pairingEpoch !== accountEpoch) return;
+    clearWalletSession("Подключение vault не подтверждено · баланс скрыт");
     codeInput.value = "";
     bridgeStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   }
