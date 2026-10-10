@@ -19,6 +19,10 @@ const catalogModel = document.querySelector("#catalog-model");
 const catalogVersion = document.querySelector("#catalog-version");
 const catalogState = document.querySelector("#catalog-state");
 const catalogRefresh = document.querySelector("#catalog-refresh");
+const providerKind = document.querySelector("#provider-kind");
+const providerModelId = document.querySelector("#provider-model-id");
+const providerExport = document.querySelector("#provider-export");
+const providerState = document.querySelector("#provider-state");
 const qwenStart = document.querySelector("#qwen-start");
 const qwenState = document.querySelector("#qwen-state");
 const qwenAnswer = document.querySelector("#qwen-answer");
@@ -162,6 +166,11 @@ const copy = {
     catalogSelected: (repo, sha) => `${repo} · ${sha}. Только просмотр: запуск и награда недоступны.`,
     catalogOlderSelection: "Это ранее замеченная ревизия; её уже нет в кратком списке.",
     catalogNote: "Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Выбор ревизии в каталоге ничего не скачивает и не запускает; награда недоступна.",
+    providerTitle: "Добавить модель: описание возможностей", providerIntro: "Выберите тип модели и укажите её идентификатор. Скачивается только описание намерения оператора. API-ключи сюда не вводятся: фильтр отсечёт некоторые секреты, но не может распознать все. Ни одна модель этим шагом не запускается и не получает NIR.",
+    providerLabel: "Провайдер", providerChoose: "Выберите провайдера", providerModelLabel: "Идентификатор модели (без URL и ключей)",
+    providerExport: "Скачать описание (.json)", providerUnavailable: "Список провайдеров недоступен.",
+    providerInvalid: "Проверьте идентификатор модели: только латинские буквы, цифры, / . _ : -, не более 100 символов; без URL, путей и ключей.",
+    providerDone: "Описание скачано. Это не подключение к API, не проверка модели и не майнинг.",
     qwenTitle: "Локальный запуск Qwen3-0.6B", qwenIntro: "Открытая языковая модель Qwen. Однократный запуск закреплённой версии: загрузка около 1,5 ГБ, максимум 4 ГиБ проверяемых файлов. Во время проверки хранятся две копии; до загрузки требуется свободное место не меньше удвоенного размера файлов плюс 1 ГиБ. Нужны Apple Silicon, Python 3.13 и дополнительные библиотеки. Без независимой проверки, заявки и награды.",
     qwenStart: "Скачать и запустить Qwen локально",
     qwenConfirm: "Разрешить загрузку модели Qwen3-0.6B (около 1,5 ГБ; не более 4 ГиБ проверяемых файлов)? Программа проверит запас места для двух копий файлов и 1 ГиБ резерва. Это не майнинг и не начислит NIR.",
@@ -252,6 +261,11 @@ const copy = {
     catalogSelected: (repo, sha) => `${repo} · ${sha}. View only: execution and rewards are unavailable.`,
     catalogOlderSelection: "This revision was observed earlier and is no longer in the short list.",
     catalogNote: "Metadata comes from public Hugging Face records. A SHA identifies a repository revision; it does not verify model files. Choosing a catalog revision downloads or runs nothing; no reward is available.",
+    providerTitle: "Add a model: capability intent", providerIntro: "Choose a model type and enter its identifier. Only an operator intent description is downloaded. Never enter API keys here: the filter catches some secrets, not all. This does not run a model or earn NIR.",
+    providerLabel: "Provider", providerChoose: "Choose a provider", providerModelLabel: "Model identifier (no URLs or keys)",
+    providerExport: "Download declaration (.json)", providerUnavailable: "Provider list is unavailable.",
+    providerInvalid: "Check the model identifier: Latin letters, digits, / . _ : -, up to 100 characters; no URLs, paths, or keys.",
+    providerDone: "Declaration downloaded. This is not an API connection, model verification, or mining.",
     qwenTitle: "Run Qwen3-0.6B locally", qwenIntro: "Open Qwen language model. One pinned-revision run: about 1.5 GB downloaded, up to 4 GiB of checked files. Verification holds two copies; before downloading, free space must exceed twice the file size plus 1 GiB. Requires Apple Silicon, Python 3.13, and optional libraries. No independent verification, claim, or reward.",
     qwenStart: "Download and run Qwen locally",
     qwenConfirm: "Allow the Qwen3-0.6B download (about 1.5 GB; up to 4 GiB of checked files)? The app checks free space for two file copies plus 1 GiB of headroom. This is not mining and will not credit NIR.",
@@ -291,6 +305,8 @@ let errorKind = null;
 let lastResult = null;
 let catalogData = null;
 let catalogLoading = false;
+let providerRegistry = null;
+let providerMessage = null;
 let qwenRunning = false;
 let qwenStatus = null;
 let qwenLastResult = null;
@@ -461,6 +477,10 @@ function render() {
   languageButton.textContent = locale === "ru" ? "EN" : "RU";
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
   connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
+  if (providerExport) {
+    providerExport.disabled = !connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim();
+    providerState.textContent = providerMessage ? t[providerMessage] : "";
+  }
   if (qwenAvailability) {
     const ready = qwenRuntime.status === "pinned-qwen-runtime-ready";
     const pending = qwenRuntime.status === "checking-runtime";
@@ -517,6 +537,46 @@ function render() {
     document.querySelector("#technical").textContent = t.hash(lastResult.bundleHash);
   }
 }
+
+async function loadProviderRegistry() {
+  try {
+    const { response, data } = await fetchQwenJson("/provider-capabilities", { cache: "no-store" });
+    if (!response.ok || data.scope !== "onboarding-only" || !Array.isArray(data.providers) ||
+        data.providers.length !== 4 || data.providers.some((p) =>
+          typeof p.id !== "string" || typeof p.label !== "string" || p.executable !== false))
+      throw new Error("invalid registry");
+    providerRegistry = data;
+    providerKind.replaceChildren(option("", copy[locale].providerChoose));
+    for (const item of data.providers) providerKind.append(option(item.id, item.label));
+    providerKind.disabled = false;
+    providerMessage = null;
+  } catch { providerRegistry = null; providerMessage = "providerUnavailable"; }
+  render();
+}
+
+providerKind?.addEventListener("change", render);
+providerModelId?.addEventListener("input", render);
+providerExport?.addEventListener("click", async () => {
+  if (!connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim()) return;
+  try {
+    const { response, data } = await fetchQwenJson("/provider-capabilities/declaration", {
+      method: "POST", body: JSON.stringify({ provider: providerKind.value, modelId: providerModelId.value.trim() }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok || data.scope !== "operator-capability-intent-only" ||
+        data.modelExecuted !== false || data.independentlyVerified !== false ||
+        data.networkSubmitted !== false || data.rewardEligible !== false || data.walletChanged !== false)
+      throw new Error("invalid declaration");
+    const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "nir-model-capability-intent.json";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    providerMessage = "providerDone";
+  } catch { providerMessage = "providerInvalid"; }
+  render();
+});
 
 function showOffline() {
   connected = false;
@@ -956,4 +1016,5 @@ recordLocalEvent("ui-ready");
 render();
 void checkConnection();
 void loadQwenRuntime();
+void loadProviderRegistry();
 setInterval(() => { if (progress.hidden) void checkConnection(); }, 5000);
