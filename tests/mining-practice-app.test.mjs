@@ -17,6 +17,11 @@ test("operator console shows only real local stages, roles, and runnable models"
   const script = readFileSync(join(root, "mining-app/app.js"), "utf8");
   for (const id of ["operator-console", "event-chart", "event-log", "operator-role",
     "iris-availability", "qwen-availability"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /<title>NIR · Проверка модели<\/title>/);
+  assert.match(html, /id="iris-availability" data-i18n="bundled">ВСТРОЕНА<\/b>/);
+  assert.match(html, /отдельный закреплённый запуск Qwen доступен ниже/);
+  assert.match(script, /bundled: "ВСТРОЕНА"/);
+  assert.match(script, /bundled: "BUNDLED"/);
   assert.match(html, /data-i18n="localOnly"/);
   assert.match(css, /image-rendering:pixelated/);
   assert.match(css, /\.event-pulse/);
@@ -24,6 +29,27 @@ test("operator console shows only real local stages, roles, and runnable models"
     "qwen-result"]) assert.match(script, new RegExp(`recordLocalEvent\\("${event}"`));
   assert.doesNotMatch(script, /Math\.random\(\)/);
   assert.doesNotMatch(html, /\b(?:100|[1-9]?[0-9])%\b/);
+});
+
+test("operator console keeps its status, event, and model text readable", () => {
+  const css = readFileSync(join(root, "mining-app/style.css"), "utf8");
+  const fontSize = (selector) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rule = css.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`));
+    assert.ok(rule, `missing CSS rule for ${selector}`);
+    const size = rule[1].match(/font-size:\s*(\d+)px/);
+    assert.ok(size, `missing pixel font size for ${selector}`);
+    return Number(size[1]);
+  };
+  for (const selector of ["header small", "header b,.local-only,.console-title b",
+    ".connection", ".console-grid span", ".console-grid strong",
+    ".trace-heading h3,.models-heading", ".trace-heading span", ".event-log li",
+    ".model-index", ".model-grid strong", ".model-grid small",
+    ".model-grid article > b", ".eyebrow", ".safety", "footer"]) {
+    assert.ok(fontSize(selector) >= 12, `${selector} is too small`);
+  }
+  assert.doesNotMatch(css, /\.event-log span\s*\{[^}]*text-overflow:ellipsis/);
+  assert.doesNotMatch(css, /\.model-grid small\s*\{[^}]*text-overflow:ellipsis/);
 });
 
 async function serve(runModel) {
@@ -369,9 +395,9 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
   } finally { await stop(server); }
 });
 
-test("portrait layout stays narrow and a stopped service explains the new-tab requirement", async () => {
+test("portrait layout stays bounded and a stopped service explains the new-tab requirement", async () => {
   const css = readFileSync(join(root, "mining-app/style.css"), "utf8");
-  assert.match(css, /width:min\(100%,390px\)/);
+  assert.match(css, /width:min\(100%,480px\)/);
   assert.match(css, /min-height:680px/);
   assert.match(css, /@media \(max-width:460px\)/);
   assert.match(css, /html,body \{ max-width:100%;overflow-x:hidden; \}/);
