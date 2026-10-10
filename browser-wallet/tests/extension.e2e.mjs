@@ -139,6 +139,16 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     await page.locator("#restore-form [name=phrase]").fill(words.map((word) => word.replace(/^\d+\./, "")).join(" "));
     await page.locator("#restore-form [name=password]").fill("a new device password 123");
     await page.locator("#restore-form [name=confirmation]").fill("a new device password 123");
+    await page.evaluate(() => {
+      window.__originalStorageSet = chrome.storage.local.set;
+      chrome.storage.local.set = () => Promise.reject(new Error("simulated restore storage failure"));
+    });
+    await page.getByRole("button", { name: "Restore" }).click();
+    await page.waitForFunction(() => document.querySelector("#status")?.textContent !==
+      "Enter 24 valid English recovery words");
+    assert.equal(await page.locator("#restore").isVisible(), true);
+    assert.equal((await page.evaluate(() => chrome.storage.local.get("nirTestWallet"))).nirTestWallet, undefined);
+    await page.evaluate(() => { chrome.storage.local.set = window.__originalStorageSet; });
     await page.getByRole("button", { name: "Restore" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
     assert.equal(await page.locator("#full-address").textContent(), firstAddress);

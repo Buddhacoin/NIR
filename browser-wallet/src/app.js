@@ -264,7 +264,6 @@ $("#restore-form").addEventListener("submit", (event) => {
     }
     const restoredPhrase = await decryptPhrase(record, password);
     assertCurrent();
-    phrase = restoredPhrase;
     // A phrase reproduces all first 16 addresses, but the old device's
     // accountCount is not part of the phrase. Expose them all on clean restore
     // so an existing secondary address cannot appear to be lost.
@@ -273,6 +272,7 @@ $("#restore-form").addEventListener("submit", (event) => {
     await saveProfile({ vault: record, accountCount: nextAccountCount,
       selectedIndex: nextSelectedIndex });
     assertCurrent();
+    phrase = restoredPhrase;
     accountCount = nextAccountCount;
     selectedIndex = nextSelectedIndex;
     form.reset();
