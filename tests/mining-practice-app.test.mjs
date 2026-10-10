@@ -9,8 +9,37 @@ import { runInNewContext } from "node:vm";
 
 import { createMiningPracticeApp, localReplayRecordHash, miningModelAppPreflight,
   runPinnedModel } from "../blockchain/mining-practice-app.mjs";
+import { evaluateIrisPostCommitStress } from "../blockchain/iris-linear-candidate.mjs";
 
 const root = join(import.meta.dirname, "..");
+
+test("local rechecker requires authenticated model and record imports", async () => {
+  const { server, base, token } = await serve();
+  try {
+    const model = readFileSync(join(root, "examples/iris_integer_linear.json"));
+    const record = evaluateIrisPostCommitStress(root, model, Buffer.alloc(32, 7));
+    const post = (origin, supplied, body) => fetch(`${base}/candidate/iris-linear/recheck`, {
+      method: "POST", body: JSON.stringify(body), headers: { origin,
+        "X-NIR-Session": supplied, "Content-Type": "application/json" },
+    });
+    const input = { modelBase64: model.toString("base64"), record };
+    assert.equal((await post(base, "0".repeat(64), input)).status, 403);
+    assert.equal((await post("https://attacker.example", token, input)).status, 403);
+    assert.equal((await post(base, token, { modelBase64: "", record: {} })).status, 400);
+    const match = await post(base, token, input);
+    assert.equal(match.status, 200);
+    const matched = await match.json();
+    assert.equal(matched.status, "local-iris-recheck-matched");
+    assert.equal(matched.caseCount, 90);
+    assert.equal(matched.rewardEligible, false);
+    assert.equal(matched.operatorIdentityVerified, false);
+    const mismatch = await post(base, token, { ...input,
+      record: { ...record, candidateAccuracyBps: 0 } });
+    assert.equal((await mismatch.json()).status, "local-iris-recheck-mismatch");
+    assert.equal((await post(base, token, { ...input,
+      modelBase64: Buffer.from("import os").toString("base64") })).status, 400);
+  } finally { await stop(server); }
+});
 
 test("operator console shows only real local stages, roles, and runnable models", () => {
   const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
@@ -35,6 +64,11 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(script, /candidateDone: \(baseline, candidate, hash\) => .*не скрытый тест, не сетевая заявка и не награда/);
   assert.match(script, /candidateStressDone: .*повторными запусками можно выбрать удачный seed/);
   assert.match(script, /candidateStressDone: .*repeated runs can cherry-pick a favorable seed/);
+  for (const id of ["candidate-record-export", "recheck-model-file", "recheck-record-file",
+    "recheck-run", "recheck-state"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются/);
+  assert.match(script, /recheckMatched: \(hash\) => .*не независимая сетевая проверка/);
+  assert.match(script, /recheckMismatch: .*Не принимайте эту запись как результат/);
   assert.match(css, /image-rendering:pixelated/);
   assert.match(css, /\.event-pulse/);
   for (const event of ["service-online", "iris-requested", "iris-result", "qwen-started",
@@ -398,6 +432,8 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
       ['<input id="candidate-file" type="file" accept="application/json,.json">',
+        '<input id="recheck-model-file" type="file" accept="application/json,.json">',
+        '<input id="recheck-record-file" type="file" accept="application/json,.json">',
         '<input id="qwen-replay-file" type="file" accept="application/json,.json">',
         '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
     assert.doesNotMatch(html, /<textarea|<form|type="(?:text|password)"/i);

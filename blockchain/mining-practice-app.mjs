@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
 import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
-  hashIrisModelCommit, MAX_IRIS_MODEL_BYTES } from "./iris-linear-candidate.mjs";
+  hashIrisModelCommit, MAX_IRIS_MODEL_BYTES,
+  recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -309,6 +310,49 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       } else {
         send(200, "application/json; charset=utf-8", lastIrisEvidence);
       }
+      return;
+    }
+    if (request.method === "POST" && path === "/candidate/iris-linear/recheck" &&
+        request.url === "/candidate/iris-linear/recheck") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > 16_384) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      running = true;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared || length > 16_384) throw new Error("oversized recheck request");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated recheck request");
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, length));
+        const input = JSON.parse(text);
+        if (!input || Object.keys(input).sort().join(",") !== "modelBase64,record" ||
+            JSON.stringify(input) !== text || typeof input.modelBase64 !== "string" ||
+            !/^[A-Za-z0-9+/]+={0,2}$/.test(input.modelBase64))
+          throw new Error("invalid recheck request");
+        const model = Buffer.from(input.modelBase64, "base64");
+        if (model.length < 1 || model.length > MAX_IRIS_MODEL_BYTES ||
+            model.toString("base64") !== input.modelBase64)
+          throw new Error("invalid recheck model");
+        const checked = recheckIrisPostCommitRecord(root, model, input.record);
+        send(200, "application/json; charset=utf-8", JSON.stringify(checked));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local recheck files" }));
+      } finally { clearTimeout(deadline); running = false; }
       return;
     }
     if (request.method === "POST" && path === "/candidate/iris-linear/commit" &&

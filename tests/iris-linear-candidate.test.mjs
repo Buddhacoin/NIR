@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
-  hashIrisModelCommit } from "../blockchain/iris-linear-candidate.mjs";
+  hashIrisModelCommit, recheckIrisPostCommitRecord } from "../blockchain/iris-linear-candidate.mjs";
 
 const root = join(import.meta.dirname, "..");
 const sample = readFileSync(join(root, "examples/iris_integer_linear.json"));
@@ -77,4 +77,27 @@ test("post-commit local stress binds exact bytes and is reproducible only after 
   assert.notEqual(hashIrisModelCommit(Buffer.from(sample.toString().trimEnd())), checked.commitHash);
   assert.throws(() => evaluateIrisPostCommitStress(root, sample, Buffer.alloc(31)));
   assert.throws(() => hashIrisModelCommit(Buffer.from("import os")));
+});
+
+test("local role rechecks all public synthetic cases and rejects forged claims", () => {
+  const record = evaluateIrisPostCommitStress(root, sample, Buffer.alloc(32, 9));
+  const same = recheckIrisPostCommitRecord(root, sample, record);
+  assert.equal(same.status, "local-iris-recheck-matched");
+  assert.equal(same.caseCount, 90);
+  assert.equal(same.operatorIdentityVerified, false);
+  assert.equal(same.rewardEligible, false);
+  for (const forged of [
+    { ...record, candidateAccuracyBps: record.candidateAccuracyBps + 1 },
+    { ...record, rewardEligible: true },
+    { ...record, independentOperators: true },
+    { ...record, seed: "a".repeat(64) },
+    { ...record, extra: "claim" },
+  ]) assert.equal(recheckIrisPostCommitRecord(root, sample, forged).status,
+    "local-iris-recheck-mismatch");
+  const changedModel = JSON.parse(sample);
+  changedModel.bias[2] = -400000;
+  assert.equal(recheckIrisPostCommitRecord(root,
+    Buffer.from(JSON.stringify(changedModel)), record).status, "local-iris-recheck-mismatch");
+  assert.throws(() => recheckIrisPostCommitRecord(root, sample, { ...record, seed: "bad" }));
+  assert.throws(() => recheckIrisPostCommitRecord(root, Buffer.from("import os"), record));
 });
