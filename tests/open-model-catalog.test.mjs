@@ -149,7 +149,7 @@ test("portrait UI retains selected exact revision across refresh and language sw
     return { ...node(id), children: [], replaceChildren(...children) { this.children = children; this.value = children[0]?.value ?? ""; },
       append(child) { this.children.push(child); } };
   }
-  const ids = ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical", "catalog-state", "catalog-refresh"];
+  const ids = ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical", "catalog-state", "catalog-model-info", "catalog-refresh"];
   const nodes = new Map(ids.map((id) => [`#${id}`, node(id)]));
   nodes.set("#catalog-model", select("catalog-model"));
   nodes.set("#catalog-version", select("catalog-version"));
@@ -179,10 +179,13 @@ test("portrait UI retains selected exact revision across refresh and language sw
   model.value = qwen;
   listeners.get("catalog-model:change")();
   assert.equal(revision.children[0].textContent, "Выберите ревизию");
+  assert.match(nodes.get("#catalog-model-info").textContent, /0,6 млрд параметров/);
+  assert.match(nodes.get("#catalog-model-info").textContent, /не установлена/);
   revision.value = shaA;
   listeners.get("catalog-version:change")();
   model.value = tiny;
   listeners.get("catalog-model:change")();
+  assert.match(nodes.get("#catalog-model-info").textContent, /1,1 млрд параметров/);
   assert.equal(revision.value, "", "switching model must not carry over the matching SHA");
   model.value = qwen;
   listeners.get("catalog-model:change")();
@@ -200,6 +203,7 @@ test("portrait UI retains selected exact revision across refresh and language sw
   listeners.get("language:click")();
   assert.equal(revision.value, shaA);
   assert.equal(revision.children[0].textContent, "Choose a revision");
+  assert.match(nodes.get("#catalog-model-info").textContent, /not been downloaded or installed/);
   assert.match(nodes.get("#catalog-state").textContent, /View only/);
   assert.match(nodes.get("#catalog-state").textContent, /may be outdated/);
   version = shaC;
@@ -207,4 +211,56 @@ test("portrait UI retains selected exact revision across refresh and language sw
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(revision.value, shaA, "an evicted observed SHA remains explicitly visible while selected");
   assert.match(nodes.get("#catalog-state").textContent, /no longer in the short list/);
+});
+
+test("empty stale catalog does not imply downloaded weights or cached revisions", async () => {
+  const root = new URL("..", import.meta.url).pathname;
+  const listeners = new Map();
+  function node(id) {
+    return { id, hidden: true, disabled: false, dataset: {}, textContent: "", value: "",
+      setAttribute() {}, addEventListener(event, callback) { listeners.set(`${id}:${event}`, callback); } };
+  }
+  function select(id) {
+    return { ...node(id), children: [], replaceChildren(...children) { this.children = children; this.value = children[0]?.value ?? ""; },
+      append(child) { this.children.push(child); } };
+  }
+  const ids = ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical", "catalog-state", "catalog-model-info", "catalog-refresh"];
+  const nodes = new Map(ids.map((id) => [`#${id}`, node(id)]));
+  nodes.set("#catalog-model", select("catalog-model"));
+  nodes.set("#catalog-version", select("catalog-version"));
+  const document = {
+    documentElement: { lang: "ru" }, visibilityState: "visible", querySelector: (key) => nodes.get(key), querySelectorAll: () => [],
+    createElement: () => ({ value: "", textContent: "" }),
+  };
+  runInNewContext(readFileSync(`${root}/mining-app/app.js`, "utf8"), {
+    document, navigator: { language: "ru-RU" }, AbortController, TypeError,
+    fetch: async (path) => ({ ok: true, json: async () => path === "/status"
+      ? { status: "local-model-service-ready" }
+      : { status: "read-only-open-model-catalog", rewardEligible: false, runnableRepo: null, stale: true,
+        entries: [
+          { provider: "Qwen", name: "Qwen3 0.6B", repo: qwen, runnable: false, versions: [] },
+          { provider: "TinyLlama", name: "TinyLlama 1.1B Chat", repo: tiny, runnable: false, versions: [] },
+        ] },
+    }),
+    setInterval: () => 0, setTimeout, clearTimeout,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const model = nodes.get("#catalog-model");
+  model.value = qwen;
+  listeners.get("catalog-model:change")();
+  assert.equal(nodes.get("#catalog-version").disabled, true);
+  assert.match(nodes.get("#catalog-state").textContent, /нет загруженных ревизий/);
+  assert.match(nodes.get("#catalog-state").textContent, /Не удалось обновить/);
+  assert.doesNotMatch(nodes.get("#catalog-state").textContent, /Показаны ранее загруженные версии/);
+  assert.match(nodes.get("#catalog-model-info").textContent, /не установлена/);
+  listeners.get("language:click")();
+  assert.match(nodes.get("#catalog-state").textContent, /No revisions have been loaded/);
+  assert.match(nodes.get("#catalog-state").textContent, /could not be refreshed/);
+  assert.match(nodes.get("#catalog-model-info").textContent, /not been downloaded or installed/);
+});
+
+test("sample explanation is associated with the selector and announced on change", () => {
+  const markup = readFileSync(new URL("../mining-app/index.html", import.meta.url), "utf8");
+  assert.match(markup, /<select id="catalog-model" aria-describedby="catalog-model-info"/);
+  assert.match(markup, /<p id="catalog-model-info" aria-live="polite"/);
 });
