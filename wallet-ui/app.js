@@ -229,9 +229,13 @@ function renderSimulation(target, simulation) {
   const fields = root.querySelector(".simulation-fields");
   const risks = root.querySelector(".simulation-risks");
   fields.replaceChildren(); risks.replaceChildren();
-  const add = (term, value) => {
+  const add = (term, value, { termContainsProtocol = false } = {}) => {
     const row = document.createElement("div");
     const dt = document.createElement("dt"); const dd = document.createElement("dd");
+    // The verifier supplied value is protocol data. Never translate it, even
+    // when an arbitrary role/risk happens to match a UI label.
+    dd.dataset.i18nIgnore = "";
+    if (termContainsProtocol) dt.dataset.i18nIgnore = "";
     dt.textContent = term; dd.textContent = value; row.append(dt, dd); fields.append(row);
   };
   add("Операция", simulation.type);
@@ -240,13 +244,14 @@ function renderSimulation(target, simulation) {
   add("Комиссия", `${formatAtomic(simulation.fee.amount)} NIR · платит ${simulation.fee.payer ?? "ресурс сети"}`);
   for (const effect of simulation.balance) {
     const sign = BigInt(effect.delta) > 0n ? "+" : "";
-    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`);
+    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`, { termContainsProtocol: true });
   }
-  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено");
+  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено", { termContainsProtocol: true });
   for (const asset of simulation.assets ?? []) add("Актив", asset.details || `${asset.assetId}: изменение подтверждено`);
-  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`);
+  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`, { termContainsProtocol: true });
   for (const risk of simulation.risks) {
     const item = document.createElement("li"); item.className = "risk-info";
+    item.dataset.i18nIgnore = "";
     item.textContent = risk; risks.append(item);
   }
   root.hidden = false;
@@ -818,6 +823,7 @@ function renderVerifiedAssets(statements) {
   }
   for (const statement of visible) {
     const row = document.createElement("article"); row.className = "asset-row";
+    row.dataset.i18nIgnore = "";
     const title = document.createElement("b"); title.textContent = `${statement.balance} units`;
     const id = document.createElement("span"); id.textContent = `ID ${statement.assetId}`;
     const metadata = document.createElement("span"); metadata.textContent = `metadata ${statement.asset.metadataHash}`;

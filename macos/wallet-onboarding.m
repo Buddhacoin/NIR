@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 
-#if defined(NIR_ONBOARDING_LOCALE_SMOKE_TEST)
+#if defined(NIR_ONBOARDING_LOCALE_SMOKE_TEST) || defined(NIR_ONBOARDING_LOCALE_UI_TEST)
 static CFStringRef const NIRPreferenceDomain = CFSTR("org.nir.wallet-locale-smoke-test");
 #else
 static CFStringRef const NIRPreferenceDomain = CFSTR("org.nir.wallet-setup-test");
@@ -152,7 +152,7 @@ static NSString *NIRTranslate(NSString *source) {
     content.wantsLayer = YES;
     content.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.975 alpha:1].CGColor;
     self.window.contentView = content;
-    self.languageMenu = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(278, 538, 84, 30)
+    self.languageMenu = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(252, 538, 110, 30)
                                                   pullsDown:NO];
     [self.languageMenu addItemsWithTitles:@[@"Русский", @"English"]];
     [self.languageMenu selectItemAtIndex:NIREnglish() ? 1 : 0];
@@ -379,7 +379,7 @@ static NSString *NIRTranslate(NSString *source) {
     BOOL opening = [[self mode] isEqualToString:@"open"];
     BOOL restoring = !creation && !opening;
     [self.window setContentSize:NSMakeSize(390, opening ? 580 : (creation ? 640 : 780))];
-    self.languageMenu.frame = NSMakeRect(278, (opening ? 580 : (creation ? 640 : 780)) - 42, 84, 30);
+    self.languageMenu.frame = NSMakeRect(252, (opening ? 580 : (creation ? 640 : 780)) - 42, 110, 30);
     self.logo.frame = NSMakeRect(163, opening ? 440 : (creation ? 522 : 655), 64, 64);
     self.titleLabel.frame = NSMakeRect(28, opening ? 387 : (creation ? 468 : 606), 334, 40);
     self.titleLabel.stringValue = opening ? @"С возвращением!" :
@@ -590,6 +590,18 @@ int main(int argc, const char *argv[]) {
         CFPreferencesAppSynchronize(NIRPreferenceDomain);
         if (previous) CFRelease(previous);
         return 0;
+#endif
+#ifdef NIR_ONBOARDING_LOCALE_UI_TEST
+        {
+        NSApplication *app = [NSApplication sharedApplication];
+        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+        NIRSetup *delegate = [NIRSetup new];
+        delegate.wallets = @[];
+        delegate.backups = @[];
+        app.delegate = delegate;
+        [app run];
+        return 0;
+        }
 #endif
         if (argc == 2 && strcmp(argv[1], "--show-pairing") == 0) {
             NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];

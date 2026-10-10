@@ -21,7 +21,7 @@ test("RU/EN selector and all static wallet copy have translations", () => {
 });
 
 test("locale never rewrites values, addresses, proof IDs or unknown errors", () => {
-  for (const id of ["balance-value", "transaction-list", "asset-list", "contacts-list",
+  for (const id of ["balance-value", "transaction-list", "contacts-list",
     "verified-request-note", "offline-signed-summary", "receive-address"]) {
     assert.match(html, new RegExp(`id="${id}"[^>]*data-i18n-ignore`));
   }
@@ -32,6 +32,11 @@ test("locale never rewrites values, addresses, proof IDs or unknown errors", () 
     "Balance not verified · nodes unavailable");
   assert.equal(translateWalletText("Кворум подтвердил баланс · блок 123", "en"),
     "Quorum verified balance · block 123");
+  assert.equal(translateWalletText("7 переводов", "en"), "7 transfers");
+  assert.equal(translateWalletText("1.50000000 NIR · блок 123", "en"),
+    "1.50000000 NIR · block 123");
+  assert.match(app, /row\.dataset\.i18nIgnore = "";/);
+  assert.doesNotMatch(html, /id="asset-list"[^>]*data-i18n-ignore/);
 });
 
 test("critical dynamic wallet copy is English and native warnings are translated", () => {
@@ -110,4 +115,47 @@ test("switching language while verified then offline cannot restore stale balanc
   assert.equal(network.data, "○ Узлы недоступны");
   assert.equal(untrustedAssetName.data, "Баланс");
   assert.equal(storage.get("nir-language"), "ru");
+});
+
+test("verified simulation keeps verifier risk and role bytes exact across RU to EN", () => {
+  const source = app.slice(app.indexOf("function renderSimulation("), app.indexOf("async function simulateIntent("));
+  class Element {
+    constructor(tagName) { this.tagName = tagName; this.dataset = {}; this.children = []; this.textContent = ""; }
+    append(...children) { this.children.push(...children); }
+    replaceChildren() { this.children = []; }
+    querySelector(selector) { return selector === ".simulation-fields" ? this.fields : this.risks; }
+  }
+  const root = new Element("section");
+  root.fields = new Element("dl"); root.risks = new Element("ul");
+  const context = {
+    document: { querySelector: () => root, createElement: (tag) => new Element(tag) },
+    BigInt, formatAtomic: () => "0",
+  };
+  runInNewContext(`${source}\nglobalThis.renderSimulationForTest = renderSimulation;`, context);
+  context.renderSimulationForTest("#simulation", {
+    type: "transfer", networkId: "nir-test", stateHeight: 7,
+    authority: [{ role: "Получить", address: "nir1test" }],
+    fee: { amount: "0", payer: "ресурс сети" },
+    balance: [{ role: "Получить", address: "nir1test", delta: "1" }],
+    resources: [{ role: "Баланс", details: "Получить" }],
+    assets: [], nonces: [{ role: "Получить", address: "nir1test", before: 0, after: 1 }],
+    risks: ["Получить"],
+  });
+  const rows = root.fields.children;
+  assert.equal(rows[2].children[1].textContent, "Получить: nir1test");
+  assert.equal(rows[2].children[1].dataset.i18nIgnore, "");
+  for (const row of rows) {
+    assert.equal(row.children[1].dataset.i18nIgnore, "");
+    for (const child of row.children) {
+      if (child.dataset.i18nIgnore === "") continue;
+      child.textContent = translateWalletText(child.textContent, "en");
+    }
+  }
+  assert.equal(rows[2].children[1].textContent, "Получить: nir1test");
+  assert.equal(rows[4].children[0].textContent, "Баланс: Получить");
+  assert.equal(rows[4].children[0].dataset.i18nIgnore, "");
+  assert.equal(rows[5].children[1].textContent, "Получить");
+  assert.equal(root.risks.children[0].textContent, "Получить");
+  assert.equal(root.risks.children[0].dataset.i18nIgnore, "");
+  assert.equal(rows[0].children[0].textContent, "Operation");
 });

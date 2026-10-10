@@ -2,8 +2,14 @@
 #import <WebKit/WebKit.h>
 #import <signal.h>
 
+#ifdef NIR_LAUNCHER_LOCALE_UI_TEST
+static CFStringRef const NIRLauncherPreferenceDomain = CFSTR("org.nir.wallet-locale-smoke-test");
+#else
+static CFStringRef const NIRLauncherPreferenceDomain = CFSTR("org.nir.wallet-setup-test");
+#endif
+
 static NSString *NIRPreferredLanguage(void) {
-    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("language"), CFSTR("org.nir.wallet-setup-test"));
+    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("language"), NIRLauncherPreferenceDomain);
     NSString *language = value && CFGetTypeID(value) == CFStringGetTypeID() &&
         [(__bridge NSString *)value isEqualToString:@"en"] ? @"en" : @"ru";
     if (value) CFRelease(value);
@@ -126,8 +132,9 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
         message.body, message.frameInfo.request.URL, self.origin)) return;
     CFPreferencesSetAppValue(CFSTR("language"),
         [message.body isEqualToString:@"en"] ? CFSTR("en") : CFSTR("ru"),
-        CFSTR("org.nir.wallet-setup-test"));
-    CFPreferencesAppSynchronize(CFSTR("org.nir.wallet-setup-test"));
+        NIRLauncherPreferenceDomain);
+    CFPreferencesAppSynchronize(NIRLauncherPreferenceDomain);
+    self.window.title = NIRLauncherText(@"NIR Wallet · локальный тест");
 }
 
 - (void)consumeStartupData:(NSData *)data {
@@ -156,6 +163,19 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+#ifdef NIR_LAUNCHER_LOCALE_UI_TEST
+    NSString *port = NSProcessInfo.processInfo.environment[@"NIR_LOCALE_FIXTURE_PORT"] ?: @"8765";
+    NSInteger portNumber = port.integerValue;
+    if (portNumber < 1 || portNumber > 65535 ||
+        ![port isEqualToString:[NSString stringWithFormat:@"%ld", (long)portNumber]]) {
+        [NSApp terminate:nil];
+        return;
+    }
+    self.origin = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%@", port]];
+    [self showWalletAtURL:NIRLocalWalletURL([NSString stringWithFormat:
+        @"http://127.0.0.1:%@/?local-demo=1&local-app=1", port])];
+    return;
+#endif
     signal(SIGTERM, SIG_IGN);
     self.terminationSignal = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0,
         dispatch_get_main_queue());
