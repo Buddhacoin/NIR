@@ -20,6 +20,235 @@ test("wallet browser module parses as valid JavaScript", () => {
   execFileSync(process.execPath, ["--check", new URL("../wallet-ui/app.js", import.meta.url).pathname]);
 });
 
+test("a verified account proof does not depend on an unauthenticated account response", async () => {
+  const source = script.slice(script.indexOf("async function readAccount()"),
+    script.indexOf("function renderTransactions("));
+  const address = `nir1${"a".repeat(64)}`;
+  const requests = [];
+  const context = {
+    walletInfo: { address }, networkInfo: { height: 1, networkId: "nir-test" },
+    nodeUrl: (path) => path,
+    fetch: async (path) => {
+      requests.push(path);
+      if (path === `/v1/accounts/${address}`) throw new Error("raw account unavailable");
+      if (path === "/v1/validator-handoffs") return { ok: false };
+      if (path === `/v1/accounts/${address}/proof`) return {
+        ok: true, json: async () => ({ signed: "proof" }),
+      };
+      if (path.startsWith(`/v1/accounts/${address}/history?`)) return {
+        ok: true, json: async () => ({ entries: [] }),
+      };
+      throw new Error(`unexpected request: ${path}`);
+    },
+    bridgeRequest: async (path) => {
+      if (path === "/v1/trust-info") return { enabled: false };
+      if (path === "/v1/verify-account-proof") return { verified: true, statement: {
+        account: { address, atomicBalance: "500000000", history: { count: 0 } },
+        height: 1, networkId: "nir-test", stateRoot: "b".repeat(64), tipHash: "c".repeat(64),
+      } };
+      if (path === "/v1/verify-account-history-page") return { verified: true, entries: [] };
+      throw new Error(`unexpected bridge request: ${path}`);
+    },
+  };
+  runInNewContext(`${source}\nglobalThis.readAccount = readAccount;`, context);
+  const account = await context.readAccount();
+  assert.equal(account.proofVerified, true);
+  assert.equal(account.atomicBalance, "500000000");
+  assert.ok(!requests.includes(`/v1/accounts/${address}`));
+
+  const originalBridgeRequest = context.bridgeRequest;
+  for (const change of [
+    (result) => { result.verified = false; },
+    (result) => { result.statement.account.address = `nir1${"d".repeat(64)}`; },
+    (result) => { result.statement.networkId = "another-network"; },
+    (result) => { result.statement.height = 0; },
+  ]) {
+    context.bridgeRequest = async (path) => {
+      const result = await originalBridgeRequest(path);
+      if (path === "/v1/verify-account-proof") change(result);
+      return result;
+    };
+    const rejected = await context.readAccount();
+    assert.equal(rejected.proofVerified, false);
+    assert.equal(rejected.atomicBalance, undefined);
+  }
+});
+
+test("a failed bridge reconnection clears a previously verified balance", async () => {
+  const source = script.slice(script.indexOf('document.querySelector("#bridge-form").addEventListener'),
+    script.indexOf("function receive()"));
+  let submit;
+  const balance = { textContent: "5.00000000" };
+  const state = { textContent: "Кворум подтвердил баланс · блок 7" };
+  const code = { value: "invalid" };
+  const context = {
+    accountEpoch: 0,
+    bridgeSession: { token: "old" }, walletInfo: { address: `nir1${"a".repeat(64)}` },
+    bridgeStatus: { textContent: "" }, bridgePanel: { open: false },
+    document: { querySelector(selector) {
+      if (selector === "#bridge-form") return { addEventListener(_event, handler) { submit = handler; } };
+      if (selector === "#bridge-code") return code;
+      if (selector === "#bridge-url") return { value: "bad-url" };
+      return null;
+    } },
+    exactLoopbackUrl: () => { throw new Error("invalid URL"); },
+    clearWalletSession: () => {
+      context.accountEpoch += 1;
+      context.bridgeSession = null;
+      context.walletInfo = null;
+      balance.textContent = "—";
+      state.textContent = "Vault отключён";
+    },
+  };
+  runInNewContext(source, context);
+  await submit({ preventDefault() {} });
+  assert.equal(context.bridgeSession, null);
+  assert.equal(context.walletInfo, null);
+  assert.equal(balance.textContent, "—");
+  assert.doesNotMatch(state.textContent, /Кворум подтвердил/);
+});
+
+test("a late pairing response cannot restore a superseded wallet session", async () => {
+  const source = script.slice(script.indexOf('document.querySelector("#bridge-form").addEventListener'),
+    script.indexOf("function receive()"));
+  let submit;
+  let resolvePair;
+  let bridgeCalls = 0;
+  const code = { value: "12345678" };
+  const balance = { textContent: "5.00000000" };
+  const context = {
+    accountEpoch: 0, bridgeSession: { token: "old" },
+    walletInfo: { address: `nir1${"a".repeat(64)}` },
+    bridgeStatus: { textContent: "" }, bridgePanel: { open: false },
+    document: { querySelector(selector) {
+      if (selector === "#bridge-form") return { addEventListener(_event, handler) { submit = handler; } };
+      if (selector === "#bridge-code") return code;
+      if (selector === "#bridge-url") return { value: "http://127.0.0.1:8788" };
+      return null;
+    } },
+    exactLoopbackUrl: (value) => value,
+    pairBridge: () => new Promise((resolve) => { resolvePair = resolve; }),
+    bridgeRequest: async () => { bridgeCalls += 1; throw new Error("stale bridge call"); },
+    clearWalletSession: () => {
+      context.accountEpoch += 1;
+      context.bridgeSession = null;
+      context.walletInfo = null;
+      balance.textContent = "—";
+    },
+  };
+  runInNewContext(source, context);
+  const first = submit({ preventDefault() {} });
+  assert.equal(typeof resolvePair, "function");
+  code.value = "bad";
+  await submit({ preventDefault() {} });
+  resolvePair("late-token");
+  await first;
+  assert.equal(bridgeCalls, 0);
+  assert.equal(context.bridgeSession, null);
+  assert.equal(context.walletInfo, null);
+  assert.equal(balance.textContent, "—");
+});
+
+test("an old bridge 401 cannot disconnect a newer pairing", async () => {
+  const source = script.slice(script.indexOf("async function bridgeRequest("),
+    script.indexOf("async function signWithRecovery("));
+  let finishFetch;
+  let cleared = 0;
+  const oldSession = { url: "http://127.0.0.1:8788", token: "old" };
+  const newSession = { url: "http://127.0.0.1:8789", token: "new" };
+  const context = {
+    bridgeSession: oldSession, AbortController, setTimeout, clearTimeout,
+    fetch: () => new Promise((resolve) => { finishFetch = resolve; }),
+    clearWalletSession: () => { cleared += 1; context.bridgeSession = null; },
+  };
+  runInNewContext(`${source}\nglobalThis.bridgeRequest = bridgeRequest;`, context);
+  const pending = context.bridgeRequest("/v1/accounts").catch(() => {});
+  context.bridgeSession = newSession;
+  finishFetch({ ok: false, status: 401, json: async () => ({ error: "expired" }) });
+  await pending;
+  assert.equal(cleared, 0);
+  assert.equal(context.bridgeSession, newSession);
+});
+
+test("a stale account-list response cannot replace the new wallet identity", async () => {
+  const source = script.slice(script.indexOf("async function renderAccounts()"),
+    script.indexOf("async function completeAccountChange()"));
+  let finishFetch;
+  const selected = { textContent: "New ▾", dataset: { activeId: "new" } };
+  const list = { replaceChildren() { this.rows = []; }, append(row) { this.rows.push(row); } };
+  const context = {
+    accountEpoch: 1, walletInfo: { address: `nir1${"a".repeat(64)}` },
+    bridgeSession: { token: "old" },
+    NIR_ADDRESS: /^nir1[0-9a-f]{64}$/, accountOpen: selected,
+    bridgeRequest: () => new Promise((resolve) => { finishFetch = resolve; }),
+    document: { querySelector: (query) => query === "#account-list" ? list : { hidden: false },
+      createElement: () => ({ append() {}, setAttribute() {} }) },
+    changeAccount() {},
+  };
+  runInNewContext(`${source}\nglobalThis.renderAccounts = renderAccounts;`, context);
+  const pending = context.renderAccounts();
+  context.accountEpoch += 1;
+  context.walletInfo = { address: `nir1${"b".repeat(64)}` };
+  finishFetch({ accounts: [{ id: "a".repeat(32), address: `nir1${"a".repeat(64)}`,
+    label: "OLD" }], activeId: "a".repeat(32), canCreate: false });
+  await pending;
+  assert.equal(selected.textContent, "New ▾");
+  assert.equal(selected.dataset.activeId, "new");
+  assert.equal(list.rows, undefined);
+});
+
+test("an old account-change response cannot overwrite a new bridge identity", async () => {
+  const source = script.slice(script.indexOf("async function completeAccountChange()"),
+    script.indexOf("async function changeAccount("));
+  let finishFetch;
+  let refreshes = 0;
+  const context = {
+    accountEpoch: 0, walletInfo: { address: "old" },
+    bridgeSession: { token: "old" },
+    resetAccountView: () => { context.accountEpoch += 1; },
+    bridgeRequest: () => new Promise((resolve) => { finishFetch = resolve; }),
+    renderWalletConnection() {}, renderAccounts: async () => true,
+    accountsPanel: { open: false },
+    refreshNodeStatus: async () => { refreshes += 1; },
+  };
+  runInNewContext(`${source}\nglobalThis.completeAccountChange = completeAccountChange;`, context);
+  const pending = context.completeAccountChange();
+  context.accountEpoch += 1;
+  context.bridgeSession = { token: "new" };
+  context.walletInfo = { address: "new" };
+  finishFetch({ address: "old" });
+  await pending;
+  assert.equal(context.walletInfo.address, "new");
+  assert.equal(refreshes, 0);
+});
+
+test("an old account-switch failure cannot cancel a newer pairing", async () => {
+  const source = script.slice(script.indexOf("async function completeAccountChange()"),
+    script.indexOf("accountOpen.onclick"));
+  let rejectOld;
+  let clears = 0;
+  const context = {
+    accountEpoch: 0, accountTransitionPending: false,
+    bridgeSession: { token: "old" }, walletInfo: { address: "old" },
+    accountOpen: { dataset: { activeId: "old" } },
+    accountsPanel: { close() {} }, accountsStatus: { textContent: "" },
+    resetAccountView: () => { context.accountEpoch += 1; },
+    clearWalletSession: () => { clears += 1; context.accountEpoch += 1; },
+    bridgeRequest: () => new Promise((resolve, reject) => { rejectOld = reject; }),
+    renderWalletConnection() {}, renderAccounts: async () => true,
+    refreshNodeStatus: async () => {},
+  };
+  runInNewContext(`${source}\nglobalThis.changeAccount = changeAccount;`, context);
+  const pending = context.changeAccount("new");
+  context.accountEpoch += 1;
+  context.bridgeSession = null;
+  context.walletInfo = null;
+  rejectOld(new Error("old session closed"));
+  await pending;
+  assert.equal(context.accountEpoch, 1);
+  assert.equal(clears, 0);
+});
+
 test("wallet navigation has five interactive destinations", () => {
   for (const destination of ["home", "history", "resources", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
@@ -125,9 +354,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=38/);
-  assert.match(serviceWorker, /app\.js\?v=38/);
-  assert.match(serviceWorker, /nir-wallet-shell-v40/);
+  assert.match(html, /app\.js\?v=39/);
+  assert.match(serviceWorker, /app\.js\?v=39/);
+  assert.match(serviceWorker, /nir-wallet-shell-v41/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -284,7 +513,7 @@ test("wallet reports the local node connection state", () => {
   assert.match(script, /networkButton\.classList\.add\("offline"\)/);
   assert.match(styles, /\.network\.connected/);
   assert.match(styles, /\.network\.offline/);
-  assert.match(script, /\/v1\/accounts\/\$\{encodeURIComponent\(walletInfo\.address\)\}\/proof/);
+  assert.match(script, /\/v1\/accounts\/\$\{encodeURIComponent\(address\)\}\/proof/);
   assert.match(script, /bridgeRequest\("\/v1\/verify-account-proof"/);
   assert.match(script, /\/v1\/validator-handoffs/);
   assert.match(script, /bridgeRequest\("\/v1\/update-validator-trust"/);
