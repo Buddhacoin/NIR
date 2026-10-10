@@ -58,6 +58,17 @@
       <p id="candidate-state" role="status" aria-live="polite"></p>
       <button id="candidate-stress" class="secondary" type="button" disabled data-i18n="candidateStressButton">Проверить после фиксации файла</button>
       <p id="candidate-stress-state" class="candidate-proof" role="status" aria-live="polite"></p>
+      <button id="candidate-record-export" class="secondary" type="button" hidden data-i18n="candidateRecordExport">Скачать запись испытания для повторной проверки</button>
+    </section>
+    <section class="catalog" aria-labelledby="recheck-heading">
+      <h2 id="recheck-heading" data-i18n="recheckTitle">Роль: локальный повторный проверяющий</h2>
+      <p data-i18n="recheckIntro">Получите у участника файл модели и запись испытания. Этот Mac пересчитает 90 публичных синтетических случаев и сравнит точные поля записи. Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются.</p>
+      <label for="recheck-model-file" data-i18n="recheckModelLabel">Файл модели участника (.json, до 4 КБ)</label>
+      <input id="recheck-model-file" type="file" accept="application/json,.json">
+      <label for="recheck-record-file" data-i18n="recheckRecordLabel">Запись испытания (.json, до 8 КБ)</label>
+      <input id="recheck-record-file" type="file" accept="application/json,.json">
+      <button id="recheck-run" class="secondary" type="button" disabled data-i18n="recheckButton">Пересчитать и сравнить</button>
+      <p id="recheck-state" class="candidate-proof" role="status" aria-live="polite"></p>
     </section>
     <section class="catalog" aria-labelledby="catalog-heading">
       <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>

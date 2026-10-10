@@ -13,6 +13,11 @@ const candidateCheck = document.querySelector("#candidate-check");
 const candidateState = document.querySelector("#candidate-state");
 const candidateStress = document.querySelector("#candidate-stress");
 const candidateStressState = document.querySelector("#candidate-stress-state");
+const candidateRecordExport = document.querySelector("#candidate-record-export");
+const recheckModelFile = document.querySelector("#recheck-model-file");
+const recheckRecordFile = document.querySelector("#recheck-record-file");
+const recheckRun = document.querySelector("#recheck-run");
+const recheckState = document.querySelector("#recheck-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
 const walletLinkStart = document.querySelector("#wallet-link-start");
@@ -153,6 +158,17 @@ const copy = {
     candidateStressDone: (score, hash, seed) => `Синтетическая стресс-проверка: ${score} % из 90 случаев. Хеш зафиксированных байтов: ${hash}. Seed для повтора: ${seed}. Это публичная Iris с искусственными изменениями: повторными запусками можно выбрать удачный seed. Не скрытые задания, не независимый оператор и не награда.`,
     candidateStressInvalid: "Файл или локальная запись фиксации отклонены. Награды нет.",
     candidateStressFailed: "Локальная фиксация или стресс-проверка не завершилась. После перезапуска приложения незавершённая фиксация теряется; отправьте файл снова. Награды нет.",
+    candidateRecordExport: "Скачать запись испытания для повторной проверки",
+    recheckTitle: "Роль: локальный повторный проверяющий",
+    recheckIntro: "Получите у участника файл модели и запись испытания. Этот Mac пересчитает 90 публичных синтетических случаев и сравнит точные поля записи. Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются.",
+    recheckModelLabel: "Файл модели участника (.json, до 4 КБ)",
+    recheckRecordLabel: "Запись испытания (.json, до 8 КБ)",
+    recheckButton: "Пересчитать и сравнить",
+    recheckRunning: "Локально пересчитываем 90 случаев…",
+    recheckMatched: (hash) => `Запись совпала с локальным пересчётом. Хеш модели: ${hash}. Это не независимая сетевая проверка, не консенсус и не награда.`,
+    recheckMismatch: "Несовпадение: запись или файл модели изменены. Не принимайте эту запись как результат.",
+    recheckInvalid: "Файлы отклонены: нужен исходный файл модели и неизменённая запись испытания.",
+    recheckFailed: "Повторная проверка не завершилась. Награды нет.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
@@ -246,6 +262,17 @@ const copy = {
     candidateStressDone: (score, hash, seed) => `Synthetic stress check: ${score}% over 90 cases. Committed byte hash: ${hash}. Replay seed: ${seed}. This is public Iris with artificial changes; repeated runs can cherry-pick a favorable seed. Not hidden tasks, an independent operator, or a reward.`,
     candidateStressInvalid: "The file or local commitment was refused. No reward exists.",
     candidateStressFailed: "Local commit or stress check did not finish. A restart loses an unfinished commit; submit the file again. No reward exists.",
+    candidateRecordExport: "Download local check record for replay",
+    recheckTitle: "Role: local replay checker",
+    recheckIntro: "Get the participant's model file and check record. This Mac recomputes 90 public synthetic cases and compares every record field. This does not prove operator identity, hidden tasks, consensus, or a reward.",
+    recheckModelLabel: "Participant model file (.json, up to 4 KB)",
+    recheckRecordLabel: "Check record (.json, up to 8 KB)",
+    recheckButton: "Recompute and compare",
+    recheckRunning: "Recomputing 90 cases locally…",
+    recheckMatched: (hash) => `Record matches local recomputation. Model hash: ${hash}. Not independent network verification, consensus, or a reward.`,
+    recheckMismatch: "Mismatch: the record or model file changed. Do not accept this record as a result.",
+    recheckInvalid: "Files rejected: supply the original model file and unmodified check record.",
+    recheckFailed: "Local replay did not finish. No reward exists.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
     checking: "Checking the local service…", online: "● Local service connected",
@@ -320,6 +347,9 @@ let candidateStatus = null;
 let candidateResult = null;
 let candidateStressStatus = null;
 let candidateStressResult = null;
+let recheckRunning = false;
+let recheckStatus = null;
+let recheckHash = null;
 const localEvents = [];
 let lastServiceState = null;
 let lastRuntimeState = null;
@@ -526,6 +556,14 @@ function render() {
       t.candidateStressDone((candidateStressResult.candidateAccuracyBps / 100).toFixed(2),
         candidateStressResult.commitHash, candidateStressResult.seed) :
       candidateStressStatus ? t[candidateStressStatus] : "";
+  }
+  if (candidateRecordExport) candidateRecordExport.hidden = !candidateStressResult;
+  if (recheckRun) {
+    recheckRun.disabled = !connected || recheckRunning || candidateRunning || irisVerifyRunning ||
+      qwenRunning || replayRunning || !progress.hidden || !recheckModelFile?.files?.length ||
+      !recheckRecordFile?.files?.length;
+    recheckState.textContent = recheckStatus === "recheckMatched" ?
+      t.recheckMatched(recheckHash) : recheckStatus ? t[recheckStatus] : "";
   }
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
@@ -833,6 +871,68 @@ if (candidateStress) candidateStress.addEventListener("click", async () => {
   } finally {
     candidateRunning = false;
     start.disabled = !connected;
+    render();
+  }
+});
+
+if (candidateRecordExport) candidateRecordExport.addEventListener("click", () => {
+  if (!candidateStressResult || candidateRecordExport.hidden) return;
+  const blob = new Blob([JSON.stringify(candidateStressResult, null, 2) + "\n"],
+    { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nir-local-iris-check-${candidateStressResult.commitHash.slice(7, 19)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+for (const input of [recheckModelFile, recheckRecordFile]) input?.addEventListener("change", () => {
+  recheckStatus = null;
+  recheckHash = null;
+  render();
+});
+if (recheckRun) recheckRun.addEventListener("click", async () => {
+  const modelFile = recheckModelFile?.files?.[0];
+  const recordFile = recheckRecordFile?.files?.[0];
+  if (!connected || recheckRunning || candidateRunning || irisVerifyRunning ||
+      qwenRunning || replayRunning || !progress.hidden || !modelFile || !recordFile) return;
+  if (modelFile.size < 1 || modelFile.size > 4096 || recordFile.size < 1 ||
+      recordFile.size > 8192) {
+    recheckStatus = "recheckInvalid";
+    render();
+    return;
+  }
+  recheckRunning = true;
+  recheckStatus = "recheckRunning";
+  recheckHash = null;
+  render();
+  try {
+    const model = new Uint8Array(await modelFile.arrayBuffer());
+    const record = JSON.parse(new TextDecoder("utf-8", { fatal: true })
+      .decode(await recordFile.arrayBuffer()));
+    const body = JSON.stringify({ modelBase64: btoa(String.fromCharCode(...model)), record });
+    const { response, data } = await fetchQwenJson("/candidate/iris-linear/recheck", {
+      method: "POST", body, headers: { "Content-Type": "application/json" },
+    });
+    if (response.status === 400 || response.status === 403) throw new Error("invalid");
+    if (!response.ok || !["local-iris-recheck-matched", "local-iris-recheck-mismatch"]
+      .includes(data?.status) || data.caseCount !== 90 ||
+      !/^sha256:[a-f0-9]{64}$/.test(data.modelHash ?? "") ||
+      data.independentOperators !== false || data.operatorIdentityVerified !== false ||
+      data.hiddenChallenges !== false || data.networkSubmitted !== false ||
+      data.rewardEligible !== false || data.walletChanged !== false)
+      throw new Error("failed");
+    recheckHash = data.modelHash;
+    recheckStatus = data.status === "local-iris-recheck-matched" ?
+      "recheckMatched" : "recheckMismatch";
+  } catch (reason) {
+    recheckStatus = reason?.message === "invalid" || reason instanceof SyntaxError ?
+      "recheckInvalid" : "recheckFailed";
+  } finally {
+    recheckRunning = false;
     render();
   }
 });
