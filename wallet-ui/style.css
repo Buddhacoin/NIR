@@ -22,6 +22,10 @@ header, .title { display: flex; align-items: center; justify-content: space-betw
 .brand { display: flex; gap: 10px; align-items: center; font-size: 19px; letter-spacing: 3px; }
 .brand-logo { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; }
 .header-actions { display: flex; align-items: center; gap: 7px; }
+.language-control { flex: none; }
+.language-control select { min-height: 40px; max-width: 96px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.language-control select:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .header-actions button, .title button { min-height: 40px; border: 1px solid var(--border); background: #ffffffd9; color: var(--text); border-radius: 20px; padding: 8px 13px; box-shadow: 0 3px 12px #0000000a; backdrop-filter: blur(16px); }
 #account-open { max-width: 135px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
 .network.connected { color: #157542; }
@@ -190,6 +194,7 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
 
 @media (max-width: 520px) {
   header { flex-wrap: wrap; gap: 8px; }
+  .header-actions { flex-wrap: wrap; justify-content: flex-end; }
   #account-open { max-width: 110px; }
 }
 

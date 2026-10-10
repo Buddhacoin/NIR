@@ -4,12 +4,70 @@ import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
+import { translateWalletText } from "./i18n.js";
 
 if (globalThis.top !== globalThis.self) {
   document.documentElement.replaceChildren();
   document.documentElement.textContent = "NIR Wallet cannot run inside a frame.";
   throw new Error("NIR Wallet framing is forbidden");
 }
+
+// Presentation state is separate from proof/account state. Language changes
+// never trigger a network read, reveal a cached balance or change an intent.
+const languageControl = document.querySelector("#language");
+const localizedTextNodes = new WeakMap();
+const localizedAttributes = new WeakMap();
+const language = localStorage.getItem("nir-language") === "en" ? "en" : "ru";
+languageControl.value = language;
+document.documentElement.lang = language;
+
+function localizeNode(node) {
+  if (node.parentElement?.closest("script,style,code,pre,textarea,[data-i18n-ignore]")) return;
+  const previous = localizedTextNodes.get(node);
+  const source = previous && node.data === previous.rendered ? previous.source : node.data;
+  const rendered = translateWalletText(source, document.documentElement.lang);
+  localizedTextNodes.set(node, { source, rendered });
+  if (node.data !== rendered) node.data = rendered;
+}
+
+function localizeAttributes(element) {
+  const previous = localizedAttributes.get(element) ?? {};
+  const next = { ...previous };
+  for (const name of ["aria-label", "placeholder", "title"]) {
+    if (!element.hasAttribute(name)) continue;
+    const current = element.getAttribute(name);
+    const source = previous[name] && current === previous[name].rendered ? previous[name].source : current;
+    const rendered = translateWalletText(source, document.documentElement.lang);
+    next[name] = { source, rendered };
+    if (current !== rendered) element.setAttribute(name, rendered);
+  }
+  localizedAttributes.set(element, next);
+}
+
+function localizeDocument() {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) localizeNode(walker.currentNode);
+  for (const element of document.body.querySelectorAll("[aria-label],[placeholder],[title]")) {
+    localizeAttributes(element);
+  }
+}
+
+function setLanguage(value) {
+  const next = value === "en" ? "en" : "ru";
+  document.documentElement.lang = next;
+  languageControl.value = next;
+  localStorage.setItem("nir-language", next);
+  // The native shell persists this non-secret preference across its ephemeral
+  // web views. It accepts only ru/en from the exact local wallet page.
+  globalThis.window?.webkit?.messageHandlers?.nirLanguage?.postMessage(next);
+  localizeDocument();
+}
+
+languageControl.addEventListener("change", (event) => setLanguage(event.currentTarget.value));
+const languageObserver = new MutationObserver(() => localizeDocument());
+languageObserver.observe(document.body, { subtree: true, childList: true, characterData: true,
+  attributes: true, attributeFilter: ["aria-label", "placeholder", "title"] });
+localizeDocument();
 
 const localApp = new URLSearchParams(location.search).get("local-app") === "1";
 if (localApp) {

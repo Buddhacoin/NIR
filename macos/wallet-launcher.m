@@ -2,6 +2,27 @@
 #import <WebKit/WebKit.h>
 #import <signal.h>
 
+static NSString *NIRPreferredLanguage(void) {
+    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("language"), CFSTR("org.nir.wallet-setup-test"));
+    NSString *language = value && CFGetTypeID(value) == CFStringGetTypeID() &&
+        [(__bridge NSString *)value isEqualToString:@"en"] ? @"en" : @"ru";
+    if (value) CFRelease(value);
+    return language;
+}
+
+static NSString *NIRLauncherText(NSString *russian) {
+    if (![NIRPreferredLanguage() isEqualToString:@"en"]) return russian;
+    NSDictionary<NSString *, NSString *> *copy = @{
+        @"NIR Wallet не запущен": @"NIR Wallet could not start",
+        @"Локальный сервис прислал некорректный адрес.": @"The local service returned an invalid address.",
+        @"Сборка приложения неполная.": @"The app build is incomplete.",
+        @"Node.js, использованный для локальной сборки, больше не найден. Соберите приложение заново.": @"The Node.js used for this local build is no longer available. Rebuild the app.",
+        @"Локальный сервис завершился до открытия кошелька.": @"The local service stopped before the wallet opened.",
+        @"NIR Wallet · локальный тест": @"NIR Wallet · local test",
+    };
+    return copy[russian] ?: russian;
+}
+
 static NSURL *NIRLocalWalletURL(NSString *line) {
     NSURLComponents *components = line ? [NSURLComponents componentsWithString:line] : nil;
     NSInteger port = components.port.integerValue;
@@ -14,9 +35,20 @@ static NSURL *NIRLocalWalletURL(NSString *line) {
     return components.URL;
 }
 
+static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
+                                      NSURL *frameURL, NSURL *origin) {
+    if (![name isEqualToString:@"nirLanguage"] || !mainFrame ||
+        ![body isKindOfClass:NSString.class] ||
+        ![@[@"ru", @"en"] containsObject:body] || !origin) return NO;
+    NSURL *source = NIRLocalWalletURL(frameURL.absoluteString);
+    return source && [source.scheme isEqualToString:origin.scheme] &&
+        [source.host isEqualToString:origin.host] &&
+        source.port.integerValue == origin.port.integerValue;
+}
+
 // The Node service starts in its own process group. Closing the app must also
 // close an in-progress native onboarding dialog, not orphan a signing bridge.
-@interface NIRLauncher : NSObject <NSApplicationDelegate, WKNavigationDelegate>
+@interface NIRLauncher : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler>
 @property NSTask *wallet;
 @property NSWindow *window;
 @property WKWebView *webView;
@@ -42,8 +74,8 @@ static NSURL *NIRLocalWalletURL(NSString *line) {
 
 - (void)failWithMessage:(NSString *)message {
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"NIR Wallet не запущен";
-    alert.informativeText = message;
+    alert.messageText = NIRLauncherText(@"NIR Wallet не запущен");
+    alert.informativeText = NIRLauncherText(message);
     [alert runModal];
     [NSApp terminate:nil];
 }
@@ -62,6 +94,15 @@ static NSURL *NIRLocalWalletURL(NSString *line) {
 - (void)showWalletAtURL:(NSURL *)url {
     WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
     configuration.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    // The onboarding helper writes only this non-secret preference. Seed the
+    // ephemeral WKWebView before app.js runs; no key or URL parameter is used.
+    NSString *localeScript = [NSString stringWithFormat:
+        @"try { localStorage.setItem('nir-language', '%@'); } catch (_) {}",
+        NIRPreferredLanguage()];
+    WKUserScript *language = [[WKUserScript alloc] initWithSource:localeScript
+        injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
+    [configuration.userContentController addUserScript:language];
+    [configuration.userContentController addScriptMessageHandler:self name:@"nirLanguage"];
     self.webView = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 480, 760)
                                        configuration:configuration];
     self.webView.navigationDelegate = self;
@@ -69,7 +110,7 @@ static NSURL *NIRLocalWalletURL(NSString *line) {
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                   NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"NIR Wallet · локальный тест";
+    self.window.title = NIRLauncherText(@"NIR Wallet · локальный тест");
     self.window.contentMinSize = NSMakeSize(360, 600);
     self.window.contentView = self.webView;
     [self.window center];
@@ -77,6 +118,16 @@ static NSURL *NIRLocalWalletURL(NSString *line) {
     [NSApp activateIgnoringOtherApps:YES];
     [self.webView loadRequest:[NSURLRequest requestWithURL:url
         cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:20]];
+}
+
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (!NIRTrustedLanguageMessage(message.name, message.frameInfo.isMainFrame,
+        message.body, message.frameInfo.request.URL, self.origin)) return;
+    CFPreferencesSetAppValue(CFSTR("language"),
+        [message.body isEqualToString:@"en"] ? CFSTR("en") : CFSTR("ru"),
+        CFSTR("org.nir.wallet-setup-test"));
+    CFPreferencesAppSynchronize(CFSTR("org.nir.wallet-setup-test"));
 }
 
 - (void)consumeStartupData:(NSData *)data {
@@ -184,6 +235,20 @@ int main(void) {
         ];
         if (!NIRLocalWalletURL(@"http://127.0.0.1:1234/?local-demo=1&local-app=1")) return 1;
         for (NSString *line in bad) if (NIRLocalWalletURL(line)) return 2;
+        NSURL *origin = [NSURL URLWithString:@"http://127.0.0.1:1234"];
+        NSURL *page = [NSURL URLWithString:@"http://127.0.0.1:1234/?local-demo=1&local-app=1"];
+        if (!NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en", page, origin)) return 3;
+        if (!NIRTrustedLanguageMessage(@"nirLanguage", YES, @"ru", page, origin)) return 4;
+        if (NIRTrustedLanguageMessage(@"nirLanguage", NO, @"en", page, origin) ||
+            NIRTrustedLanguageMessage(@"other", YES, @"en", page, origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"fr", page, origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @42, page, origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en",
+                [NSURL URLWithString:@"http://127.0.0.1:5678/?local-demo=1&local-app=1"], origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en",
+                [NSURL URLWithString:@"http://evil.test:1234/?local-demo=1&local-app=1"], origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en",
+                [NSURL URLWithString:@"http://127.0.0.1:1234/?local-demo=1&local-app=0"], origin)) return 5;
     }
     return 0;
 }
