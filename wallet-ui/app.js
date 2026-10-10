@@ -1630,11 +1630,13 @@ document.querySelector("#settings-secrets").onclick = async (event) => {
   status.textContent = "Подтвердите действие в отдельном окне Mac; секрет здесь не появится.";
   try {
     const result = await bridgeRequest("/v1/native-security", { method: "POST" }, 600_000);
-    status.textContent = result.opened ? "Новая зашифрованная копия проверена в окне Mac."
-      : "Действие отменено. Существующие копии не изменены.";
+    status.textContent = result.opened && result.unsafePermissions === true
+      ? "Копия проверена, но файл доступен другим пользователям Mac. Перенесите его в приватное место; код храните отдельно."
+      : result.opened && result.unsafePermissions === false
+        ? "Новая зашифрованная копия проверена в окне Mac."
+        : "Результат не подтверждён в этом окне. Проверьте новый код и зашифрованную копию на Mac. Старые копии и коды не удаляйте.";
   } catch (error) {
-    status.textContent = error.name === "AbortError"
-      ? "Окно Mac не ответило вовремя." : "Не удалось завершить действие. Проверьте окно Mac.";
+    status.textContent = "Результат не подтверждён в этом окне. Проверьте новый код и зашифрованную копию на Mac. Старые копии и коды не удаляйте.";
   } finally { button.disabled = false; }
 };
 document.querySelector("#settings-password-change").onclick = async (event) => {

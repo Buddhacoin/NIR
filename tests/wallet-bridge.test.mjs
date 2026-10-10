@@ -81,7 +81,8 @@ test("native security requires the paired origin and session, returns no secret,
     nativeSecurity: async ({ vaultPath: selected }) => {
       assert.equal(selected, vaultPath);
       calls += 1;
-      return calls === 1 ? true : "NEVER_RETURN_THIS_SECRET";
+      return calls === 1 ? { verified: true, unsafePermissions: true } :
+        "NEVER_RETURN_THIS_SECRET";
     },
   });
   try {
@@ -96,7 +97,7 @@ test("native security requires the paired origin and session, returns no secret,
     const result = await request(endpoint, origin, token, { method: "POST" });
     assert.equal(result.status, 200);
     const body = await result.text();
-    assert.deepEqual(JSON.parse(body), { opened: true });
+    assert.deepEqual(JSON.parse(body), { opened: true, unsafePermissions: true });
     assert.equal(body.includes("wallet-native-security-2026"), false);
     assert.equal(calls, 1);
     const unexpected = await request(endpoint, origin, token, { method: "POST" });

@@ -5,10 +5,100 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
 import { inspectLocalTestWallets, listLocalTestWallets } from "../blockchain/wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "../blockchain/wallet-preview-cli.mjs";
+
+test("verified recovery renewal does not wait for an optional success notice", async () => {
+  const app = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
+  const start = app.indexOf("async function nativeSecurity(");
+  const end = app.indexOf("async function nativePasswordChange(", start);
+  assert.ok(start >= 0 && end > start);
+  let dialogs = 0;
+  let verified = false;
+  let noticeOpened = false;
+  const context = {
+    nativeLanguage: async () => "ru",
+    nativeDialog: async () => ++dialogs === 1 ? "Продолжить" : "example-password",
+    homedir: () => "/synthetic-home",
+    join,
+    renewLocalTestRecoveryCode: () => ({
+      backupPath: "/synthetic-backup", address: `nir1${"a".repeat(64)}`,
+      recoveryCode: "SYNTHETIC-RECOVERY-CODE",
+    }),
+    recoveryBackupFingerprint: () => "synthetic-fingerprint",
+    showNativeRecoveryCode: async () => ({ saved: true }),
+    verifyRecoveryExportReceipt: () => {
+      verified = true;
+      return { verified: true, unsafePermissions: true };
+    },
+    notify: () => { noticeOpened = true; return new Promise(() => {}); },
+  };
+  runInNewContext(`${app.slice(start, end)}\nglobalThis.testNativeSecurity = nativeSecurity;`, context);
+  const result = await Promise.race([
+    context.testNativeSecurity({ vaultPath: "/synthetic-vault" }),
+    new Promise((resolve) => setTimeout(resolve, 150, "stalled")),
+  ]);
+  assert.equal(verified, true);
+  assert.equal(noticeOpened, false);
+  assert.deepEqual({ ...result }, { verified: true, unsafePermissions: true });
+});
+
+test("recovery receipt remains successful if the bridge aborts after export", async () => {
+  const app = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
+  const source = app.slice(app.indexOf("async function nativeSecurity("),
+    app.indexOf("async function nativePasswordChange("));
+  const signal = { aborted: false };
+  let dialogs = 0;
+  let verified = false;
+  const context = {
+    nativeLanguage: async () => "en",
+    nativeDialog: async () => ++dialogs === 1 ? "Continue" : "example-password",
+    homedir: () => "/synthetic-home", join,
+    renewLocalTestRecoveryCode: () => ({
+      backupPath: "/synthetic-backup", address: `nir1${"b".repeat(64)}`,
+      recoveryCode: "SYNTHETIC-RECOVERY-CODE",
+    }),
+    recoveryBackupFingerprint: () => "synthetic-fingerprint",
+    showNativeRecoveryCode: async () => { signal.aborted = true; return { saved: true }; },
+    verifyRecoveryExportReceipt: () => {
+      verified = true;
+      return { verified: true, unsafePermissions: false };
+    },
+    notify: () => { throw new Error("a second notice must not appear"); },
+  };
+  runInNewContext(`${source}\nglobalThis.testNativeSecurity = nativeSecurity;`, context);
+  assert.deepEqual({ ...await context.testNativeSecurity({ vaultPath: "/synthetic-vault", signal }) },
+    { verified: true, unsafePermissions: false });
+  assert.equal(verified, true);
+});
+
+test("failed recovery receipt returns an error without waiting for a notice", async () => {
+  const app = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
+  const source = app.slice(app.indexOf("async function nativeSecurity("),
+    app.indexOf("async function nativePasswordChange("));
+  let dialogs = 0;
+  const context = {
+    nativeLanguage: async () => "en",
+    nativeDialog: async () => ++dialogs === 1 ? "Continue" : "example-password",
+    homedir: () => "/synthetic-home", join,
+    renewLocalTestRecoveryCode: () => ({
+      backupPath: "/synthetic-backup", address: `nir1${"c".repeat(64)}`,
+      recoveryCode: "SYNTHETIC-RECOVERY-CODE",
+    }),
+    recoveryBackupFingerprint: () => "synthetic-fingerprint",
+    showNativeRecoveryCode: async () => ({ saved: false }),
+    verifyRecoveryExportReceipt: () => { throw new Error("synthetic invalid receipt"); },
+    notify: () => new Promise(() => {}),
+  };
+  runInNewContext(`${source}\nglobalThis.testNativeSecurity = nativeSecurity;`, context);
+  await assert.rejects(Promise.race([
+    context.testNativeSecurity({ vaultPath: "/synthetic-vault" }),
+    new Promise((resolve) => setTimeout(resolve, 150, "stalled")),
+  ]), /native recovery did not complete/);
+});
 
 test("local wallet bundle uses a strict source allowlist and refuses secret-named paths", () => {
   const source = readFileSync(new URL("../blockchain/wallet-macos-build.mjs", import.meta.url), "utf8");

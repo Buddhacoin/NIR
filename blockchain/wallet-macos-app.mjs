@@ -132,20 +132,14 @@ async function nativeSecurity({ vaultPath, signal }) {
     const fingerprint = recoveryBackupFingerprint(renewed.backupPath, renewed.address);
     if (signal?.aborted) return false;
     const receipt = await showNativeRecoveryCode(renewed.recoveryCode, renewed.backupPath, signal);
-    if (signal?.aborted) return false;
-    verifyRecoveryExportReceipt(receipt, renewed.backupPath, fingerprint, renewed.address);
-    try { await notify(english ? "New backup verified" : "Новая копия проверена",
-      english ? "Keep the new code separate from its encrypted backup. Old backups and codes remain valid." :
-        "Храните новый код отдельно от зашифрованной копии. Старые копии и коды остаются действительными."); }
-    catch { /* Verification is complete even if the user closes this notice. */ }
-    return true;
+    const verification = verifyRecoveryExportReceipt(receipt, renewed.backupPath,
+      fingerprint, renewed.address);
+    // The browser window reports completion. A second modal notice could outlive
+    // the bridge request and misreport an already verified export as a timeout.
+    return verification;
   } catch (error) {
     if (signal?.aborted || String(error?.message ?? "").includes("User canceled") ||
         String(error?.message ?? "").includes("-128")) return false;
-    try { await notify(english ? "Backup not completed" : "Не удалось завершить резервирование",
-      english ? "Check the password and save the new code with its encrypted backup in the Mac window. Existing backups were not deleted." :
-        "Проверьте пароль и сохраните код с новой зашифрованной копией в окне Mac. Существующие копии не удалены."); }
-    catch { /* Keep the HTTP failure generic if the user closes this notice. */ }
     throw new Error("native recovery did not complete");
   }
 }

@@ -578,8 +578,13 @@ export function createWalletBridgeServer({
           if (!sessionActive || generation !== sessionGeneration) {
             return send(response, 409, { error: "wallet session ended" }, origin);
           }
+          const verifiedRecovery = !changingPassword && completed &&
+            typeof completed === "object" && !Array.isArray(completed) &&
+            Object.keys(completed).sort().join("\0") === "unsafePermissions\0verified" &&
+            completed.verified === true && typeof completed.unsafePermissions === "boolean";
           return send(response, 200, changingPassword ? { changed: completed === true } :
-            { opened: completed === true }, origin);
+            { opened: completed === true || verifiedRecovery,
+              ...(verifiedRecovery ? { unsafePermissions: completed.unsafePermissions } : {}) }, origin);
         } finally {
           clearTimeout(securityTimeout);
           securityPending = false;

@@ -439,6 +439,35 @@ test("settings hide Mac-only recovery when the paired bridge lacks native capabi
   assert.equal(controls.get("#settings-password-change").hidden, true);
 });
 
+test("recovery settings distinguish unconfirmed, safe, and unsafe exports", async () => {
+  const source = script.slice(script.indexOf('document.querySelector("#settings-secrets").onclick ='),
+    script.indexOf('document.querySelector("#settings-password-change").onclick ='));
+  for (const [bridgeRequest, expected] of [
+    [async () => { throw new Error("wallet session ended after export"); },
+      /Результат не подтверждён.*Старые копии и коды не удаляйте/],
+    [async () => ({ opened: false }),
+      /Результат не подтверждён.*Старые копии и коды не удаляйте/],
+    [async () => ({ opened: true, unsafePermissions: true }),
+      /Копия проверена, но файл доступен другим пользователям Mac/],
+    [async () => ({ opened: true, unsafePermissions: false }),
+      /Новая зашифрованная копия проверена/],
+    [async () => ({ opened: true }),
+      /Результат не подтверждён.*Старые копии и коды не удаляйте/],
+  ]) {
+    const controls = new Map();
+    const document = { querySelector(selector) {
+      if (!controls.has(selector)) controls.set(selector, { textContent: "", disabled: false });
+      return controls.get(selector);
+    } };
+    const context = { document, bridgeRequest };
+    runInNewContext(source, context);
+    const button = controls.get("#settings-secrets");
+    await button.onclick({ currentTarget: button });
+    assert.match(controls.get("#settings-secrets-status").textContent, expected);
+    assert.equal(button.disabled, false);
+  }
+});
+
 test("wallet limits browser privileges and supports accessible system settings", () => {
   assert.match(html, /Content-Security-Policy/);
   assert.doesNotMatch(html, /http:\/\/localhost/);
