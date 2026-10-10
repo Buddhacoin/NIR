@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "build:firefox": "node build.mjs --firefox",
-    "package:firefox": "npm run build:firefox && node scripts/package-firefox.mjs",
+    "package:firefox": "node scripts/package-firefox.mjs",
     "test:release": "node --test tests/release-package.check.mjs",
     "test": "npm run build && npm run build:firefox && node --test tests/*.test.mjs",
     "test:browser": "node --test tests/extension.e2e.mjs",

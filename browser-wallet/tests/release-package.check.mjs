@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
@@ -36,4 +37,23 @@ test("Firefox submission candidate is deterministic and tied to reviewed source"
   assert.deepEqual(readFileSync(candidate), firstBytes);
   assert.deepEqual(readFileSync(sourceArchive), sourceBytes);
   assert.deepEqual(JSON.parse(readFileSync(evidenceFile, "utf8")), first);
+
+  // An attacker can alter ignored dist output without making Git dirty.
+  // Packaging must discard it rather than bless it with fresh provenance.
+  appendFileSync(join(root, "dist-firefox", "app.js"), "\n// injected in ignored build output\n");
+  execFileSync("node", ["scripts/package-firefox.mjs"], { cwd: root });
+  assert.deepEqual(readFileSync(candidate), firstBytes);
+  assert.deepEqual(JSON.parse(readFileSync(evidenceFile, "utf8")), first);
+
+  const extracted = mkdtempSync(join(tmpdir(), "nir-firefox-source-rebuild-"));
+  try {
+    execFileSync("unzip", ["-q", sourceArchive, "-d", extracted]);
+    const reviewerRoot = join(extracted, "browser-wallet");
+    execFileSync("npm", ["ci"], { cwd: reviewerRoot });
+    execFileSync("node", ["scripts/package-firefox.mjs", "--rebuild-from-source"], { cwd: reviewerRoot });
+    const rebuilt = join(reviewerRoot, "artifacts", "firefox", `nir-wallet-firefox-preview-${manifest.version}-reproduction.zip`);
+    assert.deepEqual(readFileSync(rebuilt), firstBytes, "Mozilla reviewer source must build the exact candidate bytes");
+  } finally {
+    rmSync(extracted, { recursive: true, force: true });
+  }
 });
