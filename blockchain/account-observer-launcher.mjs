@@ -13,6 +13,13 @@ const MAX_ANCHOR_BYTES = 1024 * 1024;
 const REQUIRED = ["address", "origin", "node", "anchor-file", "anchor-sha256",
   "genesis-hash", "state-dir", "port"];
 
+// JSON.stringify does not escape Unicode bidi overrides or C1 terminal
+// controls. Present every non-printable/non-ASCII code point as literal text.
+export function safeTerminalValue(value) {
+  return JSON.stringify(String(value)).replace(/[^\x20-\x7e]/gu,
+    (character) => `\\u{${character.codePointAt(0).toString(16)}}`);
+}
+
 export function parseObserverLaunchArguments(args) {
   const values = {};
   for (let index = 0; index < args.length; index += 2) {

@@ -8,7 +8,7 @@ import test from "node:test";
 
 import {
   createLaunchedAccountObserver, loadAccountObserverLaunchConfig,
-  parseObserverLaunchArguments,
+  parseObserverLaunchArguments, safeTerminalValue,
 } from "../blockchain/account-observer-launcher.mjs";
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
 import { validatorSetId } from "../blockchain/validator-rotation.mjs";
@@ -40,6 +40,14 @@ test("launcher requires every argument and no duplicates or unknown switches", (
   assert.throws(() => parseObserverLaunchArguments([]), /incomplete/);
   assert.throws(() => parseObserverLaunchArguments(["--address", "x", "--address", "y"]), /once/);
   assert.throws(() => parseObserverLaunchArguments(["--token", "x"]), /once/);
+});
+
+test("terminal binding display escapes bidi and C1 control characters", () => {
+  const rendered = safeTerminalValue("nir\u202e\u009b\u001b[31m");
+  assert.match(rendered, /\\u\{202e\}/);
+  assert.match(rendered, /\\u\{9b\}/);
+  assert.match(rendered, /\\u001b/);
+  assert.doesNotMatch(rendered, /[\u202e\u009b\u001b]/u);
 });
 
 test("launcher requires independently pinned anchor and private identity checkpoint", () => {

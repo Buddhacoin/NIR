@@ -4,7 +4,7 @@ import process from "node:process";
 
 import {
   createLaunchedAccountObserver, loadAccountObserverLaunchConfig,
-  parseObserverLaunchArguments,
+  parseObserverLaunchArguments, safeTerminalValue,
 } from "./account-observer-launcher.mjs";
 
 let server;
@@ -17,9 +17,9 @@ try {
   const config = loadAccountObserverLaunchConfig(
     parseObserverLaunchArguments(process.argv.slice(2)));
   process.stdout.write(`Firefox origin: ${config.origin}\nAccount: ${config.address}\n` +
-    `Network: ${JSON.stringify(config.trustAnchor.expectedNetworkId)}\n` +
+    `Network: ${safeTerminalValue(config.trustAnchor.expectedNetworkId)}\n` +
     `Pinned genesis: ${config.trustAnchor.genesisCheckpoint.tipHash}\n` +
-    `Local node: ${config.nodeBaseUrl}\nCheckpoint: ${JSON.stringify(config.checkpointPath)}\n` +
+    `Local node: ${config.nodeBaseUrl}\nCheckpoint: ${safeTerminalValue(config.checkpointPath)}\n` +
     "Only continue if these values match your independently reviewed network and extension. Type START: ");
   const answer = await new Promise((resolve) => {
     process.stdin.once("data", (value) => resolve(value.toString("utf8").trim()));
@@ -39,6 +39,6 @@ try {
   process.once("SIGTERM", close);
 } catch (error) {
   if (server) server.close();
-  process.stderr.write(`Observer not started: ${JSON.stringify(error.message)}\n`);
+  process.stderr.write(`Observer not started: ${safeTerminalValue(error.message)}\n`);
   process.exitCode = 1;
 }
