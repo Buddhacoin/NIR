@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
 import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   hashIrisModelCommit, MAX_IRIS_MODEL_BYTES } from "./iris-linear-candidate.mjs";
+import { verifyOperatorWalletProof } from "./operator-wallet-link.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -23,6 +24,8 @@ const APP_FILES = Object.freeze([
   "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
   "examples/iris_model_adapter.py", "examples/iris.data",
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
+  "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
+  "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
   "nir/open_model_package.py", "nir/open_model_snapshot.py",
   "nir/open_model_source.py",
@@ -258,6 +261,8 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   let running = false;
   let lastIrisEvidence = null;
   let pendingCandidate = null;
+  let pendingWalletChallenge = null;
+  let linkedWalletAddress = null;
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -294,6 +299,61 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "GET" && path === "/status") {
       send(200, "application/json; charset=utf-8", JSON.stringify({ status: "local-model-service-ready" }));
+      return;
+    }
+    if (request.method === "POST" && path === "/wallet-link/challenge" &&
+        request.url === path) {
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      pendingWalletChallenge = { value: randomBytes(32).toString("hex"),
+        expiresAt: Date.now() + 300_000 };
+      linkedWalletAddress = null;
+      send(200, "application/json; charset=utf-8", JSON.stringify({
+        challenge: pendingWalletChallenge.value, expiresAt: pendingWalletChallenge.expiresAt,
+        scope: "local-address-ownership-only", networkSubmitted: false, rewardEligible: false,
+      }));
+      return;
+    }
+    if (request.method === "POST" && path === "/wallet-link/complete" &&
+        request.url === path) {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > 16_384) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const challenge = pendingWalletChallenge;
+      pendingWalletChallenge = null;
+      if (!challenge || challenge.expiresAt <= Date.now()) {
+        send(410, "application/json; charset=utf-8", JSON.stringify({ error: "Challenge expired" }));
+        return;
+      }
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("invalid size");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated proof");
+        const proof = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        linkedWalletAddress = verifyOperatorWalletProof(proof, {
+          challenge: challenge.value, now: Date.now(),
+        });
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          status: "local-address-ownership-verified", address: linkedWalletAddress,
+          networkSubmitted: false, rewardEligible: false, walletChanged: false,
+        }));
+      } catch {
+        send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid wallet-link proof" }));
+      } finally { clearTimeout(deadline); }
       return;
     }
     if (request.method === "GET" && path === "/catalog" && request.url === "/catalog") {

@@ -372,6 +372,8 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
       "examples/iris_model_adapter.py", "examples/iris.data",
       "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
+      "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
+      "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
       "nir/open_model_local_run.py", "nir/open_model_fetch.py",
       "nir/open_model_package.py", "nir/open_model_snapshot.py",
       "nir/open_model_source.py",
@@ -400,7 +402,11 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
       ['<input id="candidate-file" type="file" accept="application/json,.json">',
         '<input id="qwen-replay-file" type="file" accept="application/json,.json">',
         '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
-    assert.doesNotMatch(html, /<textarea|<form|type="(?:text|password)"/i);
+    assert.deepEqual([...html.matchAll(/<textarea\b[^>]*>/gi)].map(([field]) => field), [
+      '<textarea id="wallet-link-challenge" readonly hidden aria-label="Одноразовый запрос для кошелька">',
+      '<textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька">',
+    ]);
+    assert.doesNotMatch(html, /<form|type="(?:text|password)"|приватный ключ.*введите|введите.*пароль/i);
     assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
     assert.match(html, /id="connection"/);

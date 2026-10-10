@@ -12,6 +12,7 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FILES = Object.freeze(`
 package.json blockchain/mining-practice-app-cli.mjs blockchain/mining-practice-app.mjs
 blockchain/iris-linear-candidate.mjs examples/iris_integer_linear.json
+blockchain/operator-wallet-link.mjs blockchain/crypto.mjs blockchain/consensus-codec.mjs blockchain/constants.mjs
 blockchain/open-model-catalog.mjs mining-app/index.html mining-app/app.js
 mining-app/style.css wallet-ui/nir-coin-icon.png nir/__init__.py
 nir/iris_rehearsal.py nir/application_adapter.py nir/evaluator.py nir/runner.py

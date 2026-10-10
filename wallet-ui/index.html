@@ -159,6 +159,15 @@
     <p>Пароль и приватный ключ никогда не вводятся в браузере. Закрытие или отключение удаляет session token из памяти страницы.</p>
     <button class="primary" id="settings-connect" type="button">Подключить vault</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>
+    <section class="request-import" aria-labelledby="operator-link-title">
+      <h3 id="operator-link-title">Адрес для Model Lab</h3>
+      <p>Вставьте одноразовый запрос из локального Model Lab. Кошелёк попросит отдельное подтверждение и пароль. Подпись подтверждает только владение адресом: она не переводит средства и не даёт награды. Скопированное доказательство содержит публичный адрес и доступно другим приложениям через буфер обмена.</p>
+      <label>Одноразовый запрос (64 шестнадцатеричных символа)<input id="operator-link-challenge" autocomplete="off" spellcheck="false" maxlength="64"></label>
+      <button class="secondary" id="sign-operator-link" type="button">Подтвердить адрес</button>
+      <textarea id="operator-link-proof" readonly aria-label="Подписанное доказательство адреса для Model Lab" hidden></textarea>
+      <button class="secondary" id="copy-operator-link-proof" type="button" hidden>Скопировать доказательство</button>
+      <p id="operator-link-status" role="status"></p>
+    </section>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить vault</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">
