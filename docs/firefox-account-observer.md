@@ -40,9 +40,52 @@ checks the echoed address/network/genesis and clears stale reports on account
 change or locking. It deliberately keeps its main network balance blank: a
 spoofed localhost process can return `verified: true`, and the extension does
 not independently check cryptographic proofs. The separate card is labelled a
-local observer report, not a verified wallet balance or reward. No secure
-operator setup CLI, trusted release binding, or automatic server launch exists.
+local observer report, not a verified wallet balance or reward. A local,
+interactive operator launcher now exists, but no trusted release binding,
+automatic installation, independent operators, or public network exists.
 This is **not** a working network wallet or mining app.
+
+## Manual local launch (test evidence only)
+
+The operator must obtain and review a trust-anchor JSON **outside the node being
+queried**: its `expectedNetworkId`, height-0 `genesisCheckpoint` (including
+`tipHash`, roots and validator-set ID), `trustedValidators`, and any authenticated
+`handoffs`. Do not derive or copy the expected SHA-256 and genesis hash from an
+untrusted node's `/health` response. This repository does not distribute a
+reviewed public-network anchor. Therefore the command below cannot honestly
+connect to a public NIR network today.
+
+Create a private state directory (`mkdir -m 700 /absolute/private/state/path`).
+Unlock the Firefox extension and copy its *currently selected address* and the
+`moz-extension://...` origin displayed under Settings. With a separately reviewed
+anchor file and independently recorded file SHA-256/genesis hash, run in a
+visible terminal (never via a pipe or background log):
+
+```sh
+npm run wallet:observer -- \
+  --address 'nir1<64 lowercase hex>' \
+  --origin 'moz-extension://<extension-uuid>' \
+  --node 'http://127.0.0.1:<node-port>' \
+  --anchor-file /absolute/reviewed-anchor.json \
+  --anchor-sha256 '<independently-reviewed-64-hex-SHA256>' \
+  --genesis-hash '<independently-reviewed-64-hex-genesis>' \
+  --state-dir /absolute/private/state/path \
+  --port 8787
+```
+
+The launcher checks the anchor digest, genesis and initial validator-set ID;
+rejects non-loopback nodes and non-private state directories; and fixes one
+checkpoint file per address/network/genesis, retained across an extension
+reinstall. It displays the exact
+binding, then requires `START` before it opens a loopback-only server. Only
+then does it generate and show a fresh, one-session observer token. Manually
+enter the shown local URL, token, network ID and genesis hash in the extension.
+The token is never accepted on the command line or persisted by the launcher.
+It is visible in the terminal and may remain in terminal scrollback; treat it
+as a session secret. Close the terminal after use. Reinstalling the extension
+changes its origin and requires a new launch. A stale `.session.lock` after a
+crash requires manual investigation before removal; do not automatically
+delete the checkpoint or lock.
 
 When the caller supplies a private `checkpointPath`, the observer persists a
 monotonic verified tip and continues in segments of at most 512 proofs / 32 MiB

@@ -61,7 +61,7 @@ const english = {
   "#observer-form label:nth-child(3)": "Network ID",
   "#observer-form label:nth-child(4)": "Genesis hash from a trusted source",
   "#observer-form button": "Get local report",
-  "#settings .observer-card > p:nth-of-type(3)": "The token lives only in this open window's memory. A separate process must be set up manually with a trusted genesis; automatic installation is unavailable. Its response does not prove network freshness.",
+  "#settings .observer-card > p:nth-of-type(3)": "The token lives only in this open window's memory. Start wallet:observer manually with an independent trust anchor; automatic installation is unavailable. Its response does not prove network freshness.",
   "#settings .card:not(.observer-card) h2": "Recovery phrase",
   "#settings .card:not(.observer-card) p": "Enter your password to view it again. Never show these words to anyone.",
   "#show-phrase-form": "Show phrase",

@@ -27,6 +27,7 @@
     "offline:sign": "node blockchain/offline-signer-cli.mjs sign",
     "offline:watch-export": "node blockchain/offline-signer-cli.mjs watch-export",
     "wallet:bridge": "node blockchain/wallet-bridge-cli.mjs",
+    "wallet:observer": "node blockchain/account-observer-cli.mjs",
     "wallet:bridge-production": "node blockchain/wallet-bridge-cli.mjs --production",
     "wallet:serve-production": "node blockchain/wallet-ui-cli.mjs",
     "wallet:extension-production": "node blockchain/production-wallet-extension-cli.mjs",
