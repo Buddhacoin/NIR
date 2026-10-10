@@ -14,12 +14,16 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+from time import monotonic
 from typing import Callable, Iterator
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from nir.open_model_package import FORMAT, PackageError, _path, _validated_manifest, verify_package
 from nir.open_model_snapshot import MAX_SNAPSHOT_BYTES, REQUIRED_FILES
 from nir.open_model_source import (
-    ORIGIN, SourceError, _fetch, _json_response, verify_hub_source,
+    ORIGIN, SourceError, _fetch, _json_response, _tls_context, verify_hub_source,
 )
 
 
@@ -42,17 +46,83 @@ class FetchedPackage:
     identity: str
 
 
+class _HubRedirect(HTTPRedirectHandler):
+    """Follow only HTTPS redirects to known Hub-controlled download hosts."""
+
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        parsed = urlsplit(newurl)
+        host = parsed.hostname or ""
+        if (parsed.scheme != "https" or parsed.username or parsed.password or
+                parsed.port not in (None, 443) or
+                not (host == "huggingface.co" or host.endswith(".hf.co") or
+                     host.endswith(".huggingface.co"))):
+            raise FetchError("model download redirected outside trusted HTTPS hosts")
+        return super().redirect_request(request, fp, code, message, headers, newurl)
+
+
 def _download_hub(*, repo_id: str, filename: str, revision: str,
-                  token: bool, local_dir: str, endpoint: str) -> str:
+                  token: bool, local_dir: str, endpoint: str,
+                  expected_size: int, open_response: Callable | None = None,
+                  clock: Callable[[], float] = monotonic,
+                  deadline: float | None = None) -> str:
+    """Stream no more than the pinned file size before accepting any bytes.
+
+    This bounds our own download writes, unlike a downloader that fills its
+    cache before the caller gets to inspect the returned file. It does not
+    provide a host-wide disk quota or protect against a same-UID process.
+    """
+    if (token is not False or endpoint != ORIGIN or type(expected_size) is not int or
+            expected_size < 0 or expected_size > MAX_SNAPSHOT_BYTES or
+            repo_id not in REQUIRED_FILES or filename not in REQUIRED_FILES[repo_id] or
+            not _SHA1.fullmatch(revision)):
+        raise FetchError("unsupported pinned model download")
+    url = f"{ORIGIN}/{quote(repo_id, safe='/')}/resolve/{revision}/{quote(filename, safe='')}"
+    opener = open_response or build_opener(_HubRedirect, HTTPSHandler(context=_tls_context())).open
+    deadline = clock() + 20 * 60 if deadline is None else deadline
+    directory = os.open(local_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as error:
-        raise FetchError("huggingface_hub is required for model downloads") from error
-    # token=False prevents implicit use of a user's Hub token. Download only
-    # to this invocation's temporary directory, never into a user cache path.
-    return hf_hub_download(repo_id=repo_id, filename=filename,
-                           revision=revision, token=token,
-                           local_dir=local_dir, endpoint=endpoint)
+        target = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o400, dir_fd=directory)
+        try:
+            request = Request(url, headers={"Accept-Encoding": "identity"}, method="GET")
+            with opener(request, timeout=15) as response:
+                if clock() >= deadline:
+                    raise FetchError("model download exceeded time limit")
+                if response.status != 200:
+                    raise FetchError("model download returned a non-success status")
+                length = response.headers.get("Content-Length")
+                if length is not None and (not length.isdigit() or int(length) != expected_size):
+                    raise FetchError("model download length differs from pinned metadata")
+                if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                    raise FetchError("compressed model download is not accepted")
+                count = 0
+                while True:
+                    if clock() >= deadline:
+                        raise FetchError("model download exceeded time limit")
+                    chunk = response.read(min(1 << 20, expected_size + 1 - count))
+                    if clock() >= deadline:
+                        raise FetchError("model download exceeded time limit")
+                    if not chunk:
+                        break
+                    count += len(chunk)
+                    if count > expected_size:
+                        raise FetchError("model download exceeded pinned byte limit")
+                    remaining = memoryview(chunk)
+                    while remaining:
+                        written = os.write(target, remaining)
+                        if written <= 0:
+                            raise FetchError("model download write made no progress")
+                        remaining = remaining[written:]
+                if count != expected_size:
+                    raise FetchError("model download ended before pinned byte count")
+            os.fsync(target)
+        finally:
+            os.close(target)
+        return str(Path(local_dir) / filename)
+    except (HTTPError, URLError, TimeoutError, OSError) as error:
+        raise FetchError("pinned model download failed") from error
+    finally:
+        os.close(directory)
 
 
 def _pinned_tree(repo: str, revision: str, fetch: Callable) -> dict[str, dict]:
@@ -193,11 +263,14 @@ def fetched_curated_model(
             download_root.mkdir(mode=0o700)
             output_root.mkdir(mode=0o700)
             files = []
+            deadline = monotonic() + 20 * 60
             for name in sorted(selected):
                 try:
                     result = (downloader or _download_hub)(
                         repo_id=repository, filename=name, revision=revision,
                         token=False, local_dir=str(download_root), endpoint=ORIGIN,
+                        expected_size=selected[name]["size"],
+                        deadline=deadline,
                     )
                 except Exception as error:
                     raise FetchError("pinned model file download failed") from error
