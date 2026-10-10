@@ -87,6 +87,7 @@ const SAFE_CLIENT_ERRORS = new Set([
   "signing was rejected by the user",
   "bridge session ended before signing authorization completed",
   "v36 transfer requires a trusted genesis checkpoint",
+  "v36 transfer requires a trusted release anchor",
   "wallet account changed during the request",
 ]);
 
@@ -1162,6 +1163,11 @@ export function createWalletBridgeServer({
             signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
             !transferGenesisHash) {
           throw new Error("v36 transfer requires a trusted genesis checkpoint");
+        }
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !protocolUpgradeReleaseAnchor) {
+          throw new Error("v36 transfer requires a trusted release anchor");
         }
         seen.add(intent.requestId);
         if (seen.size > 1_000) seen.delete(seen.values().next().value);

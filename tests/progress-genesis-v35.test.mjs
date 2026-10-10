@@ -28,8 +28,9 @@ import {
 import { createStateSnapshot, restoreStateSnapshot } from "../blockchain/state-snapshot.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
-import { createAccountProof } from "../blockchain/account-proof.mjs";
+import { createAccountProof, verifyAccountProof } from "../blockchain/account-proof.mjs";
 import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
+import { saveWalletTrustCheckpoint } from "../blockchain/wallet-trust-store.mjs";
 import { invalidGenesisBoundTransfersForNextBlock, TransactionMempool }
   from "../blockchain/distributed-node.mjs";
 
@@ -452,6 +453,51 @@ test("v36 wallet bridge signs trusted genesis, ignoring browser-selected genesis
   } finally {
     missingAnchor.closeAllConnections?.();
     await new Promise((resolve) => missingAnchor.close(resolve));
+  }
+  const checkpointPath = join(directory, "wallet.trust.json");
+  const statement = verifyAccountProof(proof, {
+    expectedAddress: wallet.address, expectedNetworkId: left.networkId,
+    minimumHeight: left.height, trustedValidators: config.validators,
+  });
+  saveWalletTrustCheckpoint(checkpointPath, statement);
+  let missingReleaseAuthorizations = 0;
+  const missingRelease = createWalletBridgeServer({
+    authorize: async () => { missingReleaseAuthorizations += 1; return password; },
+    origin, sessionToken: token, vaultPath, trustCheckpointPath: checkpointPath,
+    trustAnchor: { expectedNetworkId: left.networkId,
+      genesisCheckpoint: { accountStateRoot: genesis.accountStateRoot,
+        height: 0, stateRoot: genesis.stateRoot, tipHash: genesis.hash,
+        validatorSetId: left.validatorSetId, protocolVersion: genesis.protocolVersion,
+        pendingProtocolUpgrade: genesis.pendingProtocolUpgrade ?? null },
+      handoffs: [], trustedValidators: config.validators },
+  });
+  try {
+    await new Promise((resolve) => missingRelease.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${missingRelease.address().port}`;
+    const send = (path, body) => fetch(`${base}${path}`, { method: "POST",
+      headers: { "content-type": "application/json", origin,
+        "x-nir-bridge-token": token }, body: JSON.stringify(body) });
+    const verified = await send("/v1/verify-account-proof", {
+      address: wallet.address, minimumHeight: left.height, proof });
+    assert.equal(verified.status, 200);
+    const simulated = await send("/v1/simulate-transaction", {
+      intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(),
+        networkId: left.networkId, nonce: 0,
+        recipient: recipient.address, type: "transfer" },
+      network: { height: left.height, networkId: left.networkId },
+      verifiedAccount: { address: wallet.address, height: left.height, proofVerified: true } });
+    assert.equal(simulated.status, 200);
+    const { simulation } = await simulated.json();
+    const denied = await send("/v1/sign", { amount: "1", fee: MIN_TRANSFER_FEE.toString(),
+      networkId: left.networkId, nonce: 0, recipient: recipient.address,
+      requestId: "b".repeat(64), simulationId: simulation.simulationId });
+    assert.equal(denied.status, 400);
+    assert.match((await denied.json()).error, /trusted release anchor/i);
+    assert.equal(missingReleaseAuthorizations, 0);
+    assert.equal(left.nextNonce(wallet.address), 0);
+  } finally {
+    missingRelease.closeAllConnections?.();
+    await new Promise((resolve) => missingRelease.close(resolve));
   }
   const server = createWalletBridgeServer({ authorize: async () => password,
     origin, sessionToken: token, vaultPath,
