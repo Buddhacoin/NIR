@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,8 +73,8 @@ function publicModelResult(result) {
 }
 
 export async function runPinnedModel(root) {
-  const { stdout } = await execFileAsync("python3", ["-m", "nir.iris_rehearsal"], {
-    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-B", "-m", "nir.iris_rehearsal"], {
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
     timeout: 30_000, maxBuffer: 16_384,
   });
   const result = JSON.parse(stdout);
@@ -139,11 +139,11 @@ function publicOpenModelResult(result) {
 }
 
 export async function runPinnedQwen(root) {
-  const { stdout } = await execFileAsync("python3", [
-    "-m", "nir.open_model_local_run", "--prompt", QWEN_PROMPT,
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
+    "-B", "-m", "nir.open_model_local_run", "--prompt", QWEN_PROMPT,
     "--allow-1.5gb-download",
   ], {
-    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
     timeout: 30 * 60_000, maxBuffer: 16_384,
   });
   return publicOpenModelResult(JSON.parse(stdout));
@@ -154,11 +154,11 @@ export async function replayPinnedQwen(root, recordBytes) {
   try {
     const path = join(directory, "record.json");
     writeFileSync(path, recordBytes, { flag: "wx", mode: 0o600 });
-    const { stdout } = await execFileAsync("python3", [
-      "-m", "nir.open_model_local_run", "--replay-record", path,
+    const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
+      "-B", "-m", "nir.open_model_local_run", "--replay-record", path,
       "--allow-1.5gb-download",
     ], {
-      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+      cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
       timeout: 30 * 60_000, maxBuffer: 4_096,
     });
     return publicReplayResult(JSON.parse(stdout));
@@ -178,10 +178,10 @@ function publicReplayResult(result) {
 }
 
 export async function checkPinnedQwenRuntime(root) {
-  const { stdout } = await execFileAsync("python3", [
-    "-m", "nir.open_model_local_run", "--check-runtime",
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
+    "-B", "-m", "nir.open_model_local_run", "--check-runtime",
   ], {
-    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
     timeout: 10_000, maxBuffer: 4_096,
   });
   const result = JSON.parse(stdout);
@@ -199,6 +199,12 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
+  const sessionToken = randomBytes(32);
+  function authorized(request) {
+    const supplied = request.headers["x-nir-session"];
+    return typeof supplied === "string" && /^[0-9a-f]{64}$/.test(supplied) &&
+      timingSafeEqual(Buffer.from(supplied, "hex"), sessionToken);
+  }
   const openModelJobs = new Map();
   const server = createServer(async (request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
@@ -260,7 +266,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       return;
     }
     if (request.method === "POST" && path === "/catalog/refresh" && request.url === "/catalog/refresh") {
-      if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
           request.headers["transfer-encoding"]) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
@@ -269,7 +275,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       return;
     }
     if (request.method === "POST" && path === "/model-check") {
-      if (request.headers.origin !== origin ||
+      if (!authorized(request) || request.headers.origin !== origin ||
           request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
@@ -291,7 +297,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "POST" && path === "/open-model/qwen-check" &&
         request.url === "/open-model/qwen-check") {
-      if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
           request.headers["transfer-encoding"] ||
           request.headers["x-nir-download-consent"] !== "qwen3-0.6b-up-to-4gib") {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
@@ -322,7 +328,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     if (request.method === "POST" && path === "/open-model/replay" &&
         request.url === "/open-model/replay") {
       const declared = Number(request.headers["content-length"]);
-      if (request.headers.origin !== origin ||
+      if (!authorized(request) || request.headers.origin !== origin ||
           request.headers["content-type"] !== "application/json" ||
           request.headers["x-nir-download-consent"] !== "qwen3-0.6b-up-to-4gib" ||
           request.headers["transfer-encoding"] ||
@@ -377,5 +383,6 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     send(404, "text/plain; charset=utf-8", "Not found");
   });
+  Object.defineProperty(server, "localSessionToken", { value: sessionToken.toString("hex") });
   return server;
 }

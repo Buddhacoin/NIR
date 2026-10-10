@@ -12,6 +12,7 @@
     "mine:preflight": "node blockchain/miner-macos-preflight-cli.mjs",
     "mine:try": "node blockchain/miner-try-cli.mjs",
     "mine:app": "node blockchain/mining-practice-app-cli.mjs",
+    "mine:macos-build": "node blockchain/mining-macos-build.mjs",
     "mine:wizard": "node blockchain/miner-macos-wizard-cli.mjs",
     "mine:adapter-check": "python3 -m nir.adapter_check",
     "mine:demo": "node blockchain/demo.mjs",

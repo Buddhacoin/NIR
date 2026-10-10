@@ -130,7 +130,11 @@ test("local catalog endpoints expose only validated metadata and refuse cross-or
     assert.equal((await fetch(`${base}/catalog/refresh`, { method: "POST", body: "", headers: { Origin: "https://evil.test" } })).status, 403);
     assert.equal((await fetch(`${base}/catalog/refresh`, { method: "POST", body: "repo=evil", headers: { Origin: base } })).status, 403);
     assert.equal(refreshes, 0);
-    assert.equal((await fetch(`${base}/catalog/refresh`, { method: "POST", body: "", headers: { Origin: base } })).status, 200);
+    assert.equal((await fetch(`${base}/catalog/refresh`, { method: "POST", body: "", headers: { Origin: base } })).status, 403);
+    assert.equal(refreshes, 0);
+    assert.equal((await fetch(`${base}/catalog/refresh`, { method: "POST", body: "", headers: {
+      Origin: base, "X-NIR-Session": server.localSessionToken,
+    } })).status, 200);
     assert.equal(refreshes, 1);
   } finally {
     server.closeAllConnections?.();
