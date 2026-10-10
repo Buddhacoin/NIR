@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright";
+import { staticTranslationTargets } from "../src/i18n.js";
 
 const extension = resolve(import.meta.dirname, "../dist");
 
@@ -30,6 +31,27 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     const failures = [];
     page.on("pageerror", (error) => failures.push(error.message));
     await page.goto(`${extensionOrigin}/wallet.html`);
+    for (const target of staticTranslationTargets) {
+      assert.ok(await page.locator(target.split("@")[0]).count(), `missing translation target: ${target}`);
+    }
+    assert.equal(await page.locator("body").evaluate((element) => element.getBoundingClientRect().width), 390);
+    assert.ok(await page.locator("header").evaluate((element) => element.scrollWidth <= element.clientWidth),
+      "language switch and test badge must fit the 390px portrait header");
+    await page.getByRole("button", { name: "English" }).click();
+    assert.equal(await page.locator("html").getAttribute("lang"), "en");
+    assert.equal(await page.locator(".notice").textContent(), "Local test version · no real funds");
+    await page.getByRole("button", { name: "Create wallet" }).click();
+    assert.equal(await page.locator("#create h1").textContent(), "Create a password");
+    await page.locator("#create-form [name=password]").fill("aaaaaaaaaaaa");
+    await page.locator("#create-form [name=confirmation]").fill("aaaaaaaaaaaa");
+    await page.locator("#create-form button[type=submit]").click();
+    assert.equal(await page.locator("#status").textContent(),
+      "Password: at least 12 characters, including 4 distinct ones");
+    await page.locator("#create-form [name=password]").fill("keep my unfinished password");
+    await page.getByRole("button", { name: "Русский" }).click();
+    assert.equal(await page.locator("#create-form [name=password]").inputValue(),
+      "keep my unfinished password", "locale change must not reset a pending form");
+    await page.locator("#create [data-back=welcome]").click();
     await page.getByRole("button", { name: "Создать кошелёк" }).click();
     await page.locator("#create-form [name=password]").fill("correct horse battery staple");
     await page.locator("#create-form [name=confirmation]").fill("correct horse battery staple");
@@ -37,7 +59,14 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     await page.locator("#backup").waitFor({ state: "visible" });
     const words = await page.locator("#phrase-grid span").allTextContents();
     assert.equal(words.length, 24);
-    await page.getByRole("button", { name: "Я сохранил слова" }).click();
+    await page.getByRole("button", { name: "English" }).click();
+    assert.deepEqual(await page.locator("#phrase-grid span").allTextContents(), words,
+      "changing locale must not replace or persist the recovery phrase");
+    assert.equal(await page.locator("#backup .warning").textContent(),
+      "If you switch windows or are inactive for 5 minutes, the phrase disappears. You will need to start again.");
+    await page.getByRole("button", { name: "I saved the words" }).click();
+    assert.equal(await page.locator("#confirm-fields label").first().textContent(), "Word #4");
+    await page.getByRole("button", { name: "Русский" }).click();
     for (const position of [3, 11, 19]) {
       await page.locator(`#confirm-fields [name=word${position}]`).fill(words[position].replace(/^\d+\./, ""));
     }
@@ -57,40 +86,63 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     assert.equal(await page.locator("#account-label").textContent(), "Адрес 2");
     const secondAddress = await page.locator("#full-address").textContent();
     assert.notEqual(secondAddress, firstAddress);
+    const profileBeforeLocale = (await page.evaluate(() => chrome.storage.local.get("nirTestWallet"))).nirTestWallet;
+    await page.getByRole("button", { name: "English" }).click();
+    assert.equal(await page.locator("#account-label").textContent(), "Address 2");
+    assert.deepEqual((await page.evaluate(() => chrome.storage.local.get("nirTestWallet"))).nirTestWallet,
+      profileBeforeLocale, "changing language must not modify the encrypted wallet profile");
+    await page.getByRole("button", { name: "Русский" }).click();
     await page.getByRole("button", { name: "Настройки" }).click();
     await page.getByRole("button", { name: "Показать фразу" }).click();
     await page.locator("#reveal-form [name=password]").fill("wrong password 123");
     await page.locator("#reveal-form button[type=submit]").click();
     assert.equal(await page.locator("#reveal-result").isVisible(), false);
+    await page.getByRole("button", { name: "English" }).click();
+    assert.match(await page.locator("#status").textContent(), /Wrong password or damaged wallet data/);
     await page.locator("#reveal-form [name=password]").fill("correct horse battery staple");
     await page.locator("#reveal-form button[type=submit]").click();
     await page.locator("#reveal-result").waitFor({ state: "visible" });
+    assert.deepEqual(await page.locator("#reveal-grid span").allTextContents(), words);
+    await page.getByRole("button", { name: "Русский" }).click();
     await page.locator("#reveal [data-back=settings]").click();
     await page.getByRole("button", { name: "Заблокировать кошелёк" }).click();
     await page.locator("#unlock").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "English" }).click();
+    assert.deepEqual(Object.keys(await page.evaluate(() => chrome.storage.local.get(null))).sort(),
+      ["nirTestWallet", "nirWalletLocale"], "language setting must remain separate from encrypted profile");
     await page.reload();
     await page.locator("#unlock").waitFor({ state: "visible" });
+    assert.equal(await page.locator("html").getAttribute("lang"), "en");
+    assert.equal(await page.locator("#unlock h1").textContent(), "Welcome back!");
     await page.locator("#unlock-form [name=password]").fill("correct horse battery staple");
-    await page.getByRole("button", { name: "Разблокировать" }).click();
+    await page.getByRole("button", { name: "Unlock" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
-    assert.equal(await page.locator("#account-label").textContent(), "Адрес 2");
+    assert.equal(await page.locator("#account-label").textContent(), "Address 2");
     await page.evaluate(() => chrome.storage.local.remove("nirTestWallet"));
     await page.reload();
     await page.locator("#welcome").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "У меня есть фраза восстановления" }).click();
+    assert.equal(await page.locator("html").getAttribute("lang"), "en");
+    await page.getByRole("button", { name: "I have a recovery phrase" }).click();
+    await page.locator("#restore-form [name=phrase]").fill("not a valid recovery phrase");
+    await page.locator("#restore-form [name=password]").fill("a new device password 123");
+    await page.locator("#restore-form [name=confirmation]").fill("a new device password 123");
+    await page.getByRole("button", { name: "Restore" }).click();
+    assert.equal(await page.locator("#status").textContent(), "Enter 24 valid English recovery words");
     await page.locator("#restore-form [name=phrase]").fill(words.map((word) => word.replace(/^\d+\./, "")).join(" "));
     await page.locator("#restore-form [name=password]").fill("a new device password 123");
     await page.locator("#restore-form [name=confirmation]").fill("a new device password 123");
-    await page.getByRole("button", { name: "Восстановить" }).click();
+    await page.getByRole("button", { name: "Restore" }).click();
     await page.locator("#home").waitFor({ state: "visible" });
     assert.equal(await page.locator("#full-address").textContent(), firstAddress);
-    await page.getByRole("button", { name: "Выбрать адрес" }).click();
+    await page.getByRole("button", { name: "Select address" }).click();
     await page.waitForFunction(() => document.querySelectorAll("#account-list button").length === 16);
     assert.equal(await page.locator("#account-list button").count(), 16);
     await page.locator("#account-list button").nth(1).click();
     await page.waitForFunction((expected) => document.querySelector("#full-address")?.textContent === expected,
       secondAddress);
     assert.equal(await page.locator("#full-address").textContent(), secondAddress);
+    await page.getByRole("button", { name: "Русский" }).click();
+    assert.equal(await page.locator("#account-label").textContent(), "Адрес 2");
     assert.deepEqual(failures, []);
   } finally {
     await context?.close();

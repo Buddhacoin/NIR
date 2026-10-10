@@ -1,0 +1,143 @@
+// UI-only translations. BIP39 words, wallet metadata and encrypted profiles are never translated.
+// Russian text remains in the HTML as a safe default if JavaScript does not load.
+const english = {
+  "header b": "TEST",
+  ".notice": "Local test version · no real funds",
+  "#welcome h1": "Your NIR starts here",
+  "#welcome .hero p": "A wallet in your browser. Your password and recovery phrase stay on this device.",
+  "#start-create": "Create wallet",
+  "#start-restore": "I have a recovery phrase",
+  "[data-back]": "← Back",
+  "#create h1": "Create a password",
+  "#create > p": "This password unlocks the wallet only in this browser. On another device you will need your recovery phrase.",
+  "#create-form label:nth-child(1)": "Password",
+  "#create-form label:nth-child(2)": "Confirm password",
+  "#create-form button": "Continue",
+  "#backup h1": "Save your 24 words",
+  "#backup > p:not(.warning)": "Write them down in order and keep them separate. Anyone with this phrase can control the wallet. We cannot recover it for you.",
+  "#backup .warning": "If you switch windows or are inactive for 5 minutes, the phrase disappears. You will need to start again.",
+  "#copy-phrase": "Copy phrase",
+  "#backup-next": "I saved the words",
+  "#confirm h1": "Verify your phrase",
+  "#confirm > p:not(.warning)": "Enter the requested words to confirm you saved them correctly.",
+  "#confirm .warning": "Switching windows or being inactive for 5 minutes restarts verification.",
+  "#confirm-form button": "Create wallet",
+  "#restore h1": "Restore wallet",
+  "#restore > p:not(.warning):nth-of-type(1)": "Enter all 24 words in the correct order. Set a new password on this device.",
+  "#restore .warning": "Switching windows or being inactive for 5 minutes clears the entered words.",
+  "#restore > p:not(.warning):nth-of-type(3)": "The first 16 addresses from this phrase will be available. Select yours from the address list.",
+  "#restore-form label:nth-child(1)": "Secret recovery phrase",
+  "#restore-form label:nth-child(2)": "New password",
+  "#restore-form label:nth-child(3)": "Confirm password",
+  "#restore-form button": "Restore",
+  "#unlock h1": "Welcome back!",
+  "#unlock .hero p": "Enter your password to unlock NIR Wallet.",
+  "#unlock-form label": "Password",
+  "#unlock-form button": "Unlock",
+  "#forgot-password": "Forgot password? Restore with phrase",
+  "#open-accounts@aria-label": "Select address",
+  "#copy-address@title": "Copy address",
+  ".balance p": "Balance",
+  ".balance small": "Network not connected yet",
+  "#receive span": "Receive",
+  "#send span": "Send",
+  "#mine span": "Mining",
+  "#home .card h2": "Security",
+  "#home .card p": "You can copy your address now. Transfers, balance and mining will appear only after a verified network is connected.",
+  "#nav-home": "Home",
+  "#nav-settings": "Settings",
+  "#accounts h1": "Your addresses",
+  "#add-account": "+ Add address",
+  "#settings h1": "Settings",
+  "#settings .card h2": "Recovery phrase",
+  "#settings .card p": "Enter your password to view it again. Never show these words to anyone.",
+  "#show-phrase-form": "Show phrase",
+  "#lock-wallet": "Lock wallet",
+  "#reveal h1": "Show phrase",
+  "#reveal > p": "Make sure nobody can see your screen. The phrase gives full access to your addresses.",
+  "#reveal-form label": "Password",
+  "#reveal-form button": "Show",
+  "#copy-revealed": "Copy phrase",
+  "#receive-view h1": "Receive NIR",
+  "#receive-view > p:not(.warning)": "Selected account address:",
+  "#copy-full-address": "Copy address",
+  "#receive-view .warning": "There is no public NIR network yet. Do not send real funds."
+};
+
+const messages = {
+  "Сеанс кошелька завершён": "Wallet session has ended",
+  "Кошелёк заблокирован": "Wallet is locked",
+  "Не удалось выполнить действие": "Could not complete the action",
+  "Не удалось сохранить язык интерфейса": "Could not save the interface language",
+  "Пароли не совпадают": "Passwords do not match",
+  "Подождите завершения текущего действия": "Wait for the current action to finish",
+  "На этом устройстве уже есть кошелёк": "A wallet already exists on this device",
+  "Создание кошелька прервано": "Wallet creation was interrupted",
+  "Это фраза другого кошелька. Существующий кошелёк не заменён.": "This phrase belongs to a different wallet. The existing wallet was not replaced.",
+  "На устройстве нет кошелька": "No wallet exists on this device",
+  "Достигнут предел 16 адресов": "The limit of 16 addresses has been reached",
+  "Не показывайте эти слова никому.": "Never show these words to anyone.",
+  "Сначала введите пароль": "Enter your password first",
+  "Данные кошелька повреждены. Обратитесь за помощью, не удаляйте расширение.": "Wallet data is damaged. Seek help; do not remove the extension.",
+  "Пароль: минимум 12 символов, включая 4 разных": "Password: at least 12 characters, including 4 distinct ones",
+  "Нужны 24 слова восстановления": "A 24-word recovery phrase is required",
+  "Нужны 24 правильных английских слова": "Enter 24 valid English recovery words",
+  "Контрольная сумма фразы неверна": "The phrase checksum is invalid",
+  "Неверный пароль или повреждены данные кошелька": "Wrong password or damaged wallet data",
+  "Invalid wallet data": "Invalid wallet data",
+  "Invalid entropy": "Invalid entropy",
+  "Invalid account index": "Invalid account index",
+  "NIR word list is invalid": "NIR word list is invalid"
+};
+
+const original = new Map();
+export const staticTranslationTargets = Object.freeze(Object.keys(english));
+
+function textNode(element) {
+  return [...element.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) ?? element;
+}
+
+export function applyStaticLocale(locale) {
+  document.documentElement.lang = locale;
+  for (const [target, translation] of Object.entries(english)) {
+    const [selector, attribute] = target.split("@");
+    const elements = document.querySelectorAll(selector);
+    if (!elements.length) throw new Error(`Missing translation target: ${target}`);
+    for (const element of elements) {
+      const node = attribute ? element : textNode(element);
+      if (!original.has(node)) original.set(node, attribute ? element.getAttribute(attribute) : node.textContent);
+      const value = locale === "en" ? translation : original.get(node);
+      if (attribute) element.setAttribute(attribute, value);
+      else node.textContent = value;
+    }
+  }
+  for (const [name, code] of [["ru", "Русский"], ["en", "English"]]) {
+    const button = document.querySelector(`#locale-${name}`);
+    button.setAttribute("aria-pressed", String(locale === name));
+    button.setAttribute("aria-label", code);
+  }
+}
+
+export function localize(message, locale) {
+  if (locale !== "en") return message;
+  if (messages[message]) return messages[message];
+  let match = /^Адрес (\d+)( ✓)?$/.exec(message);
+  if (match) return `Address ${match[1]}${match[2] ?? ""}`;
+  match = /^Слово № (\d+)$/.exec(message);
+  if (match) return `Word #${match[1]}`;
+  match = /^Проверьте слово № (\d+)$/.exec(message);
+  if (match) return `Check word #${match[1]}`;
+  match = /^(Фраза|Адрес) скопирован\. Очистите буфер обмена после использования\.$/.exec(message);
+  if (match) return `${match[1] === "Фраза" ? "Phrase" : "Address"} copied. Clear your clipboard after use.`;
+  return message;
+}
+
+function isKnownUiMessage(message) {
+  return Object.hasOwn(messages, message) || /^Адрес \d+( ✓)?$/.test(message) ||
+    /^Слово № \d+$/.test(message) || /^Проверьте слово № \d+$/.test(message) ||
+    /^(Фраза|Адрес) скопирован\. Очистите буфер обмена после использования\.$/.test(message);
+}
+
+export function safeUiError(error) {
+  return error instanceof Error && isKnownUiMessage(error.message) ? error.message : "Не удалось выполнить действие";
+}
