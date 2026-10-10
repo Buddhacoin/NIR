@@ -7,6 +7,9 @@ WebDriver session uses its own temporary profile; no personal profile is read.
 from __future__ import annotations
 
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+import json
 import os
 
 from selenium import webdriver
@@ -60,6 +63,63 @@ def fill(browser, selector, value):
     visible(browser, selector).send_keys(value)
 
 
+def observer_report_cannot_become_network_balance(browser, address):
+    origin = browser.current_url.split("/wallet.html", 1)[0]
+    network = "nir-firefox-ui-test"
+    genesis = "c" * 64
+    token = "b" * 64
+
+    class FakeObserver(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def headers_for_response(self, status):
+            self.send_response(status)
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "content-type, x-nir-observer-token")
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+
+        def do_OPTIONS(self):
+            self.headers_for_response(204)
+
+        def do_POST(self):
+            assert self.path == "/v1/refresh-account"
+            assert self.headers.get("x-nir-observer-token") == token
+            self.headers_for_response(200)
+            self.wfile.write(json.dumps({
+                "verified": True, "address": address, "networkId": network,
+                "genesisHash": genesis,
+                "statement": {"networkId": network, "height": 1,
+                              "tipHash": "d" * 64,
+                              "account": {"address": address,
+                                          "atomicBalance": "999999999999999"}},
+            }).encode())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), FakeObserver)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        click(browser, "#nav-settings")
+        fill(browser, "#observer-form [name=url]", f"http://127.0.0.1:{server.server_port}")
+        fill(browser, "#observer-form [name=token]", token)
+        fill(browser, "#observer-form [name=networkId]", network)
+        fill(browser, "#observer-form [name=genesisHash]", genesis)
+        click(browser, "#observer-form button[type=submit]")
+        visible(browser, "#observer-report")
+        assert browser.find_element(By.CSS_SELECTOR, "#verified-balance").text == "—"
+        assert browser.find_element(By.CSS_SELECTOR, "#observer-amount").text == "9999999.99999999"
+        click(browser, "#locale-en")
+        assert "did not verify signatures independently" in visible(browser, "#observer-report").text
+        assert browser.find_element(By.CSS_SELECTOR, "#verified-balance").text == "—"
+        click(browser, "#locale-ru")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def create_wallet(browser):
     browser.install_addon(str(PACKAGE), temporary=True)
     wallet_tab(browser)
@@ -79,6 +139,7 @@ def create_wallet(browser):
     visible(browser, "#home")
     address = browser.find_element(By.CSS_SELECTOR, "#full-address").get_attribute("textContent")
     assert address.startswith("nir1") and len(address) == 68
+    observer_report_cannot_become_network_balance(browser, address)
     click(browser, "#open-accounts")
     click(browser, "#add-account")
     visible(browser, "#home")
