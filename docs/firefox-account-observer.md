@@ -45,3 +45,9 @@ because this increment requires a full genesis-to-tip submission, it cannot
 follow a chain past that bound. A durable authenticated checkpoint/header store
 and incremental continuity checks are required before treating this as a
 long-running balance source.
+The node's `/health` height is not itself independently authenticated. After an
+observer restart, a node could replay an older but valid finalized chain and
+account proof; the response proves the balance **at the reported height**, not
+that this height is the freshest network tip. The UI must show the proof height
+and must not imply current spendability or finality freshness until durable trust
+and independent peer freshness checks exist.
