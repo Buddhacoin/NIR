@@ -16,6 +16,9 @@ const APP_FILES = Object.freeze([
   "mining-app/index.html", "mining-app/app.js", "mining-app/style.css",
   "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
   "examples/iris_model_adapter.py", "examples/iris.data",
+  "nir/open_model_local_run.py", "nir/open_model_fetch.py",
+  "nir/open_model_package.py", "nir/open_model_snapshot.py",
+  "nir/open_model_source.py",
 ]);
 
 export function miningModelAppPreflight({ root, platform = process.platform, nodeVersion = process.versions.node } = {}) {
@@ -76,7 +79,56 @@ export async function runPinnedModel(root) {
   return publicModelResult(result);
 }
 
-export function createMiningPracticeApp({ root, runModel = runPinnedModel, catalog = createOpenModelCatalog() } = {}) {
+const QWEN_REPOSITORY = "Qwen/Qwen3-0.6B";
+const QWEN_REVISION = "c1899de289a04d12100db370d81485cdf75e47ca";
+const QWEN_PROMPT = "Reply with the single word NIR.";
+
+function publicOpenModelResult(result) {
+  if (result?.repository !== QWEN_REPOSITORY || result.revision !== QWEN_REVISION ||
+      !/^sha256:[0-9a-f]{64}$/.test(result.packageIdentity) ||
+      typeof result.answer !== "string" || result.answer.length > 4096 ||
+      result.rewardEligible !== false || result.networkSubmitted !== false ||
+      result.independentlyVerified !== false) {
+    throw new Error("invalid pinned open-model result");
+  }
+  return {
+    status: "local-open-model-inference-only", repository: QWEN_REPOSITORY,
+    revision: QWEN_REVISION, packageIdentity: result.packageIdentity,
+    answer: result.answer, rewardEligible: false, networkSubmitted: false,
+    independentlyVerified: false,
+  };
+}
+
+export async function runPinnedQwen(root) {
+  const { stdout } = await execFileAsync("python3", [
+    "-m", "nir.open_model_local_run", "--prompt", QWEN_PROMPT,
+    "--allow-1.5gb-download",
+  ], {
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    timeout: 30 * 60_000, maxBuffer: 16_384,
+  });
+  return publicOpenModelResult(JSON.parse(stdout));
+}
+
+export async function checkPinnedQwenRuntime(root) {
+  const { stdout } = await execFileAsync("python3", [
+    "-m", "nir.open_model_local_run", "--check-runtime",
+  ], {
+    cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
+    timeout: 10_000, maxBuffer: 4_096,
+  });
+  const result = JSON.parse(stdout);
+  if (!["pinned-qwen-runtime-ready", "unsupported-machine", "python-3.13-required",
+        "missing-runtime", "runtime-version-mismatch"].includes(result?.status) ||
+      (result.package && !["mlx", "mlx-lm", "transformers"].includes(result.package))) {
+    throw new Error("invalid local runtime status");
+  }
+  return result;
+}
+
+export function createMiningPracticeApp({ root, runModel = runPinnedModel,
+  runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
+  catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
   const server = createServer(async (request, response) => {
@@ -114,6 +166,15 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel, catal
       send(200, "application/json; charset=utf-8", JSON.stringify(await catalog.get()));
       return;
     }
+    if (request.method === "GET" && path === "/open-model/runtime" &&
+        request.url === "/open-model/runtime") {
+      try {
+        send(200, "application/json; charset=utf-8", JSON.stringify(await checkOpenModel(root)));
+      } catch {
+        send(503, "application/json; charset=utf-8", JSON.stringify({ status: "runtime-check-unavailable" }));
+      }
+      return;
+    }
     if (request.method === "POST" && path === "/catalog/refresh" && request.url === "/catalog/refresh") {
       if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
           request.headers["transfer-encoding"]) {
@@ -140,6 +201,29 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel, catal
       } catch {
         send(500, "application/json; charset=utf-8", JSON.stringify({
           error: "Проверка модели не завершилась. Заявка не отправлена, награда не начислена.",
+        }));
+      } finally { running = false; }
+      return;
+    }
+    if (request.method === "POST" && path === "/open-model/qwen-check" &&
+        request.url === "/open-model/qwen-check") {
+      if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+          request.headers["transfer-encoding"] ||
+          request.headers["x-nir-download-consent"] !== "qwen3-0.6b-up-to-4gib") {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      running = true;
+      try {
+        send(200, "application/json; charset=utf-8",
+          JSON.stringify(publicOpenModelResult(await runOpenModel(root))));
+      } catch {
+        send(500, "application/json; charset=utf-8", JSON.stringify({
+          error: "Локальная модель не запустилась. Заявка не отправлена, награда не начислена.",
         }));
       } finally { running = false; }
       return;

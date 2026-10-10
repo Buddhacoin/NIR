@@ -29,6 +29,7 @@ button:hover { background:#303030; } button:focus-visible,summary:focus-visible 
 .catalog .secondary { margin:12px 0 0; padding:12px 14px; justify-content:center; border:1px solid #dedee0; border-radius:12px; background:#f5f5f7; color:#171717; font-size:13px; }
 .catalog .secondary:hover { background:#ececef; }
 .catalog .catalog-note { margin:15px 0 0; color:#777; font-size:11px; }
+.catalog .model-answer { padding:12px; border-radius:10px; background:#f5f5f7; color:#181818; overflow-wrap:anywhere; white-space:pre-wrap; }
 .result { margin:0 0 24px; padding:22px; border:1px solid #e5e5e8; border-radius:18px; background:#fff; }
 .result h2 { margin:8px 0 6px; font-size:20px; }.result p { margin:0; font-size:13px; }
 .result-icon { display:grid; place-items:center; width:35px; height:35px; border-radius:50%; background:#e2f6e9; color:#22723c; font-weight:900; }

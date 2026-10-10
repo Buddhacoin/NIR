@@ -1,6 +1,6 @@
 # Open-model catalog in the local NIR mining lab
 
-The catalog is read-only discovery, not a miner. The only runnable action in this app remains the bundled, pinned Iris rehearsal. Selecting a Hugging Face repository or revision does not download weights, execute code, submit a claim, create a wallet, or earn NIR.
+The catalog is read-only discovery, not a miner. Selecting a Hugging Face repository or revision does not download weights, execute code, submit a claim, create a wallet, or earn NIR. The app also offers a separate, explicitly consented local Qwen3-0.6B experiment at a fixed revision; it depends on optional local runtime packages, has not been demonstrated end-to-end in every environment, and does not submit a claim or earn NIR.
 
 The first curated entries are `Qwen/Qwen3-0.6B` and `TinyLlama/TinyLlama-1.1B-Chat-v1.0`. The local server requests only `id`, `sha`, `private`, and `gated` from the public Hugging Face metadata API. It accepts only an exact allowlisted repository ID, a 40-character lowercase Git commit SHA, and explicit `private: false` / `gated: false`. These entries are examples for browsing, not endorsements or publisher verification. The SHA identifies the repository revision; it is **not** a verification of downloaded file bytes or a reproducible execution environment.
 

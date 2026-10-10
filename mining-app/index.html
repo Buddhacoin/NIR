@@ -27,7 +27,15 @@
       <select id="catalog-version" disabled><option value="" data-i18n="catalogVersionPlaceholder">Сначала выберите модель</option></select>
       <p id="catalog-state" role="status" aria-live="polite"></p>
       <button id="catalog-refresh" class="secondary" type="button" data-i18n="catalogRefresh">Обновить сведения</button>
-      <p class="catalog-note" data-i18n="catalogNote">Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Ничего не скачивается, не исполняется и не даёт права на награду.</p>
+      <p class="catalog-note" data-i18n="catalogNote">Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Выбор ревизии в каталоге ничего не скачивает и не запускает; награда недоступна.</p>
+    </section>
+    <section class="catalog" aria-labelledby="qwen-heading">
+      <h2 id="qwen-heading" data-i18n="qwenTitle">Локальный запуск Qwen3-0.6B</h2>
+      <p data-i18n="qwenIntro">Открытая языковая модель Qwen. Однократный запуск закреплённой версии: загрузка около 1,5 ГБ, максимум 4 ГиБ проверяемых файлов, несколько ГБ свободного места. Нужны Apple Silicon, Python 3.13 и дополнительные библиотеки. Без независимой проверки, заявки и награды.</p>
+      <button id="qwen-start" class="secondary" type="button" disabled data-i18n="qwenStart">Скачать и запустить Qwen локально</button>
+      <p id="qwen-state" role="status" aria-live="polite"></p>
+      <p id="qwen-answer" class="model-answer" hidden></p>
+      <p id="qwen-identity" class="catalog-note" hidden></p>
     </section>
     <section id="progress" class="result" hidden aria-live="polite">
       <div class="spinner" aria-hidden="true"></div>
@@ -42,7 +50,7 @@
       <details><summary data-i18n="technicalTitle">Технический результат</summary><p id="technical"></p></details>
     </section>
     <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
-    <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Запускается только встроенный пример из доверенной копии NIR; программа не является песочницей и не принимает произвольный код.</footer>
+    <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.</footer>
   </main>
 </body>
 </html>

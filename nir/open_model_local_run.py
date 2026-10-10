@@ -11,7 +11,9 @@ from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 import json
 import os
+import platform
 from pathlib import Path
+import sys
 from typing import Callable
 
 from nir.open_model_fetch import SUPPORTED_REVISIONS, fetched_curated_model
@@ -32,14 +34,27 @@ def _digest(label: str) -> str:
     return "sha256:" + sha256(label.encode("ascii")).hexdigest()
 
 
-def _check_runtime() -> None:
+def runtime_status() -> dict:
+    """Read-only local prerequisite check; no model metadata or bytes are fetched."""
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return {"status": "unsupported-machine"}
+    if sys.version_info[:2] != (3, 13):
+        return {"status": "python-3.13-required"}
     for distribution, expected in RUNTIME_VERSIONS.items():
         try:
             actual = version(distribution)
-        except PackageNotFoundError as error:
-            raise LocalRunError(f"optional {distribution} runtime is missing") from error
+        except PackageNotFoundError:
+            return {"status": "missing-runtime", "package": distribution}
         if actual != expected:
-            raise LocalRunError(f"{distribution} version is not {expected}")
+            return {"status": "runtime-version-mismatch", "package": distribution,
+                    "expected": expected}
+    return {"status": "pinned-qwen-runtime-ready"}
+
+
+def _check_runtime() -> None:
+    result = runtime_status()
+    if result["status"] != "pinned-qwen-runtime-ready":
+        raise LocalRunError(f"local runtime unavailable: {result['status']}")
 
 
 def _mlx_backend(package_path: Path, prompt: str) -> str:
@@ -97,9 +112,17 @@ def run_pinned_qwen(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prompt", required=True)
+    parser.add_argument("--prompt")
+    parser.add_argument("--check-runtime", action="store_true")
     parser.add_argument("--allow-1.5gb-download", dest="allow_large_download", action="store_true")
     args = parser.parse_args()
+    if args.check_runtime:
+        if args.prompt is not None or args.allow_large_download:
+            parser.error("runtime check cannot be combined with model execution")
+        print(json.dumps(runtime_status()))
+        return
+    if args.prompt is None:
+        parser.error("--prompt is required for model execution")
     if not args.allow_large_download:
         parser.error("confirm the temporary ~1.5 GB model download with --allow-1.5gb-download")
     _check_runtime()

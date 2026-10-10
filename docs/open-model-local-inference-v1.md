@@ -1,7 +1,9 @@
 # Opt-in local Qwen inference experiment
 
 `nir.open_model_local_run` is a developer-only command for one pinned open
-Qwen3-0.6B revision. It is not connected to the mining app. It does not
+Qwen3-0.6B revision. The local app can invoke it only after a read-only runtime
+check and explicit download consent. This UI path does not establish that the
+model has run successfully on a user's machine. It does not
 submit a claim, involve independent operators, establish a new capability,
 participate in consensus, or credit NIR. Output fields explicitly say this.
 
@@ -14,6 +16,14 @@ directory, verifies the fixed Hub revision and its selected core bytes, runs
 at most 32 generated tokens locally with remote model code disabled, and
 deletes temporary package files on exit. Leave at least several GB of free
 disk space. The required flag is deliberate consent for this download.
+
+The app invokes `python3` from its own `PATH`. Run
+`python3 -m nir.open_model_local_run --check-runtime` before launching it;
+the check never downloads model bytes. If the check reports a missing package,
+create and activate a disposable Python 3.13 virtual environment with the
+pinned packages above, then restart `npm run mine:app` from that environment.
+The app reports prerequisites before enabling its Qwen button. The catalog
+selection does not choose the revision executed by this separate action.
 
 The runtime is not sandboxed or independently attested. The package can be
 modified by another same-user process between or during checks. A hostile

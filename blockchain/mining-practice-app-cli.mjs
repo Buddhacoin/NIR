@@ -21,8 +21,8 @@ if (!report.ready) {
     const server = createMiningPracticeApp({ root });
     server.listen(0, "127.0.0.1", () => {
       const url = `http://127.0.0.1:${server.address().port}/`;
-      console.log(`Открываю локальную проверку модели Iris: ${url}`);
-      console.log("Модель выполняется локально. Это не публичный майнинг и не начисляет NIR. Закройте терминал, чтобы остановить приложение.");
+      console.log(`Открываю локальное приложение проверки моделей: ${url}`);
+      console.log("Iris доступна локально; Qwen требует отдельного согласия и дополнительных библиотек. Это не публичный майнинг и не начисляет NIR. Закройте терминал, чтобы остановить приложение.");
       const opener = spawn("/usr/bin/open", [url], { stdio: "ignore" });
       opener.on("error", () => console.error(`Не удалось открыть браузер автоматически. Откройте ${url}`));
     });
