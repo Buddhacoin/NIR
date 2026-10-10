@@ -62,6 +62,7 @@ button:disabled { opacity:.46;cursor:not-allowed;box-shadow:none; }.safety { mar
 .catalog #iris-verify-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog #candidate-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog a { color:var(--lime);font-size:14px;text-underline-offset:3px; }
+.candidate-proof { overflow-wrap:anywhere; }
 .catalog #catalog-state { margin:11px 0 0;overflow-wrap:anywhere; }
 .catalog .secondary { margin:11px 0 0;padding:11px 13px;justify-content:center;border-color:#667168;background:#292e2a;color:#eef3ef;box-shadow:2px 2px 0 #111; }.catalog .secondary:hover { background:#343b35; }
 .result .secondary { justify-content:center;border-color:#667168;background:#292e2a;color:#eef3ef;box-shadow:2px 2px 0 #111; }.result .secondary:hover { background:#343b35; }

@@ -3,7 +3,8 @@ import { readFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { evaluateIrisLinearCandidate } from "../blockchain/iris-linear-candidate.mjs";
+import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
+  hashIrisModelCommit } from "../blockchain/iris-linear-candidate.mjs";
 
 const root = join(import.meta.dirname, "..");
 const sample = readFileSync(join(root, "examples/iris_integer_linear.json"));
@@ -57,4 +58,23 @@ test("evaluation fails closed on changed or symlinked public dataset", () => {
     symlinkSync(join(root, "examples/iris.data"), path);
     assert.throws(() => evaluateIrisLinearCandidate(temporary, sample));
   } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("post-commit local stress binds exact bytes and is reproducible only after seed reveal", () => {
+  const seed = Buffer.alloc(32, 7);
+  const checked = evaluateIrisPostCommitStress(root, sample, seed);
+  assert.equal(checked.status, "local-postcommit-iris-stress");
+  assert.equal(checked.scope, "public-iris-synthetic-perturbations-only");
+  assert.equal(checked.commitHash, hashIrisModelCommit(sample));
+  assert.equal(checked.modelHash, evaluateIrisLinearCandidate(root, sample).modelHash);
+  assert.equal(checked.caseCount, 90);
+  assert.equal(checked.hiddenChallenges, false);
+  assert.equal(checked.independentOperators, false);
+  assert.equal(checked.rewardEligible, false);
+  assert.deepEqual(evaluateIrisPostCommitStress(root, sample, seed), checked);
+  assert.notEqual(evaluateIrisPostCommitStress(root, sample, Buffer.alloc(32, 8)).seed,
+    checked.seed);
+  assert.notEqual(hashIrisModelCommit(Buffer.from(sample.toString().trimEnd())), checked.commitHash);
+  assert.throws(() => evaluateIrisPostCommitStress(root, sample, Buffer.alloc(31)));
+  assert.throws(() => hashIrisModelCommit(Buffer.from("import os")));
 });

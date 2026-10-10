@@ -11,6 +11,8 @@ const irisVerifyState = document.querySelector("#iris-verify-state");
 const candidateFile = document.querySelector("#candidate-file");
 const candidateCheck = document.querySelector("#candidate-check");
 const candidateState = document.querySelector("#candidate-state");
+const candidateStress = document.querySelector("#candidate-stress");
+const candidateStressState = document.querySelector("#candidate-stress-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
 const catalogModel = document.querySelector("#catalog-model");
@@ -55,6 +57,17 @@ async function matchesReplayHash(record) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
   return `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}` ===
     recordHash;
+}
+
+async function irisCommitHash(bytes) {
+  if (!crypto?.subtle) throw new Error("local hash unavailable");
+  const prefix = new TextEncoder().encode("NIR_LOCAL_IRIS_POSTCOMMIT_STRESS_V1\0" +
+    "596ffd580471ca4d4880f8e439c7281f3b50d8249a5960353cb200b1490f63a0\0");
+  const combined = new Uint8Array(prefix.length + bytes.length);
+  combined.set(prefix);
+  combined.set(bytes, prefix.length);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", combined));
+  return `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 async function fetchQwenJson(path, options = {}) {
@@ -123,6 +136,11 @@ const copy = {
     candidateDone: (baseline, candidate, hash) => `Публичная Iris: исходная модель ${baseline} %, ваш файл ${candidate} %. Хеш модели: ${hash}. Это не скрытый тест, не сетевая заявка и не награда.`,
     candidateInvalid: "Файл отклонён: нужен точный JSON только с целочисленными весами и смещениями, без кода. Награды нет.",
     candidateFailed: "Локальная проверка файла не завершилась. Заявки и награды нет.",
+    candidateStressButton: "Проверить после фиксации файла",
+    candidateStressRunning: "Файл зафиксирован. Выполняем одноразовую локальную стресс-проверку…",
+    candidateStressDone: (score, hash, seed) => `Синтетическая стресс-проверка: ${score} % из 90 случаев. Хеш зафиксированных байтов: ${hash}. Seed для повтора: ${seed}. Это публичная Iris с искусственными изменениями: повторными запусками можно выбрать удачный seed. Не скрытые задания, не независимый оператор и не награда.`,
+    candidateStressInvalid: "Файл или локальная запись фиксации отклонены. Награды нет.",
+    candidateStressFailed: "Локальная фиксация или стресс-проверка не завершилась. После перезапуска приложения незавершённая фиксация теряется; отправьте файл снова. Награды нет.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
@@ -208,6 +226,11 @@ const copy = {
     candidateDone: (baseline, candidate, hash) => `Public Iris: baseline ${baseline}%, your file ${candidate}%. Model hash: ${hash}. This is not a hidden test, network claim, or reward.`,
     candidateInvalid: "File refused: exact JSON with integer weights and biases only, no code. No reward exists.",
     candidateFailed: "Local file check did not finish. No claim or reward exists.",
+    candidateStressButton: "Check after fixing the file",
+    candidateStressRunning: "File committed. Running a one-use local stress check…",
+    candidateStressDone: (score, hash, seed) => `Synthetic stress check: ${score}% over 90 cases. Committed byte hash: ${hash}. Replay seed: ${seed}. This is public Iris with artificial changes; repeated runs can cherry-pick a favorable seed. Not hidden tasks, an independent operator, or a reward.`,
+    candidateStressInvalid: "The file or local commitment was refused. No reward exists.",
+    candidateStressFailed: "Local commit or stress check did not finish. A restart loses an unfinished commit; submit the file again. No reward exists.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
     checking: "Checking the local service…", online: "● Local service connected",
@@ -280,6 +303,8 @@ let irisVerifyHash = null;
 let candidateRunning = false;
 let candidateStatus = null;
 let candidateResult = null;
+let candidateStressStatus = null;
+let candidateStressResult = null;
 const localEvents = [];
 let lastServiceState = null;
 let lastRuntimeState = null;
@@ -475,6 +500,14 @@ function render() {
       t.candidateDone((candidateResult.baselineAccuracyBps / 100).toFixed(2),
         (candidateResult.candidateAccuracyBps / 100).toFixed(2), candidateResult.modelHash) :
       candidateStatus ? t[candidateStatus] : "";
+  }
+  if (candidateStress) {
+    candidateStress.disabled = !connected || candidateRunning || irisVerifyRunning ||
+      qwenRunning || replayRunning || !progress.hidden || !candidateFile?.files?.length;
+    candidateStressState.textContent = candidateStressStatus === "candidateStressDone" && candidateStressResult ?
+      t.candidateStressDone((candidateStressResult.candidateAccuracyBps / 100).toFixed(2),
+        candidateStressResult.commitHash, candidateStressResult.seed) :
+      candidateStressStatus ? t[candidateStressStatus] : "";
   }
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
@@ -675,6 +708,8 @@ if (irisEvidenceVerify) irisEvidenceVerify.addEventListener("click", async () =>
 if (candidateFile) candidateFile.addEventListener("change", () => {
   candidateStatus = null;
   candidateResult = null;
+  candidateStressStatus = null;
+  candidateStressResult = null;
   render();
 });
 if (candidateCheck) candidateCheck.addEventListener("click", async () => {
@@ -718,6 +753,58 @@ if (candidateCheck) candidateCheck.addEventListener("click", async () => {
     candidateStatus = reason?.message === "invalid" ? "candidateInvalid" : "candidateFailed";
   } finally {
     clearTimeout(deadline);
+    candidateRunning = false;
+    start.disabled = !connected;
+    render();
+  }
+});
+
+if (candidateStress) candidateStress.addEventListener("click", async () => {
+  const file = candidateFile?.files?.[0];
+  if (!connected || candidateRunning || irisVerifyRunning || qwenRunning || replayRunning ||
+      !progress.hidden || !file) return;
+  if (file.size < 1 || file.size > 4096) {
+    candidateStressStatus = "candidateStressInvalid";
+    render();
+    return;
+  }
+  candidateRunning = true;
+  candidateStressStatus = "candidateStressRunning";
+  candidateStressResult = null;
+  start.disabled = true;
+  render();
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const commitment = await fetchQwenJson("/candidate/iris-linear/commit", {
+      method: "POST", body: bytes, headers: { "Content-Type": "application/json" },
+    });
+    const fixed = commitment.data;
+    if (!commitment.response.ok || fixed?.status !== "local-model-committed" ||
+        !/^[a-f0-9]{32}$/.test(fixed.challengeId ?? "") ||
+        !/^sha256:[a-f0-9]{64}$/.test(fixed.modelHash ?? "") ||
+        fixed.commitHash !== await irisCommitHash(bytes) ||
+        fixed.hiddenChallenges !== false || fixed.independentOperators !== false ||
+        fixed.networkSubmitted !== false || fixed.rewardEligible !== false || fixed.walletChanged !== false)
+      throw new Error(commitment.response.status === 400 ? "invalid" : "failed");
+    const revealed = await fetchQwenJson("/candidate/iris-linear/reveal", {
+      method: "POST", body: "", headers: { "X-NIR-Challenge": fixed.challengeId },
+    });
+    const data = revealed.data;
+    if (!revealed.response.ok || data?.status !== "local-postcommit-iris-stress" ||
+        data.scope !== "public-iris-synthetic-perturbations-only" ||
+        data.modelHash !== fixed.modelHash || data.commitHash !== fixed.commitHash ||
+        !/^[a-f0-9]{64}$/.test(data.seed ?? "") || data.caseCount !== 90 ||
+        !Number.isSafeInteger(data.candidateAccuracyBps) ||
+        data.candidateAccuracyBps < 0 || data.candidateAccuracyBps > 10_000 ||
+        data.syntheticPerturbations !== true || data.hiddenChallenges !== false ||
+        data.independentOperators !== false || data.networkSubmitted !== false ||
+        data.rewardEligible !== false || data.walletChanged !== false)
+      throw new Error("failed");
+    candidateStressResult = data;
+    candidateStressStatus = "candidateStressDone";
+  } catch (reason) {
+    candidateStressStatus = reason?.message === "invalid" ? "candidateStressInvalid" : "candidateStressFailed";
+  } finally {
     candidateRunning = false;
     start.disabled = !connected;
     render();

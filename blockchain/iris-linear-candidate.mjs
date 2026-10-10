@@ -6,6 +6,7 @@ const DATA_SHA256 = "596ffd580471ca4d4880f8e439c7281f3b50d8249a5960353cb200b1490
 const FORMAT = "nir-iris-integer-linear-v1";
 const LABELS = ["Iris-setosa", "Iris-versicolor", "Iris-virginica"];
 export const MAX_IRIS_MODEL_BYTES = 4096;
+const STRESS_DOMAIN = "NIR_LOCAL_IRIS_POSTCOMMIT_STRESS_V1\0";
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -90,5 +91,50 @@ export function evaluateIrisLinearCandidate(root, modelBytes) {
     candidateAccuracyBps: Math.floor(candidateCorrect * 10_000 / heldOut.length),
     caseCount: heldOut.length, independentOperators: false, hiddenChallenges: false,
     networkSubmitted: false, rewardEligible: false, walletChanged: false,
+  };
+}
+
+export function hashIrisModelCommit(modelBytes) {
+  parseModel(modelBytes);
+  return `sha256:${createHash("sha256").update(STRESS_DOMAIN)
+    .update(DATA_SHA256).update("\0").update(modelBytes).digest("hex")}`;
+}
+
+export function evaluateIrisPostCommitStress(root, modelBytes, seed) {
+  if (!Buffer.isBuffer(seed) || seed.length !== 32) throw new Error("local stress seed is invalid");
+  const { model } = parseModel(modelBytes);
+  const rows = readDataset(root);
+  const training = rows.filter((_, index) => index % 5 !== 0);
+  const heldOut = rows.filter((_, index) => index % 5 === 0);
+  const sums = LABELS.map((_, label) => [0, 1].map((feature) => training.reduce((total, row) =>
+    total + (row.label === label ? row.features[feature] : 0), 0)));
+  let baselineCorrect = 0;
+  let candidateCorrect = 0;
+  for (let index = 0; index < heldOut.length; index++) {
+    const row = heldOut[index];
+    for (let variant = 0; variant < 3; variant++) {
+      const features = row.features.map((value, feature) => {
+        const choice = createHash("sha256").update(STRESS_DOMAIN).update(seed)
+          .update(Buffer.from([index, variant, feature])).digest()[0] % 3;
+        return value + choice - 1;
+      });
+      const baseline = LABELS.map((_, label) =>
+        (40 * features[0] - sums[label][0]) ** 2 +
+        (40 * features[1] - sums[label][1]) ** 2);
+      const scores = model.bias.map((bias, label) => bias + model.weights[label].reduce((total, weight, feature) =>
+        total + weight * features[feature], 0));
+      if (baseline.indexOf(Math.min(...baseline)) === row.label) baselineCorrect++;
+      if (scores.indexOf(Math.max(...scores)) === row.label) candidateCorrect++;
+    }
+  }
+  return {
+    status: "local-postcommit-iris-stress", scope: "public-iris-synthetic-perturbations-only",
+    modelHash: evaluateIrisLinearCandidate(root, modelBytes).modelHash,
+    commitHash: hashIrisModelCommit(modelBytes),
+    datasetHash: `sha256:${DATA_SHA256}`, seed: seed.toString("hex"),
+    baselineAccuracyBps: Math.floor(baselineCorrect * 10_000 / 90),
+    candidateAccuracyBps: Math.floor(candidateCorrect * 10_000 / 90),
+    caseCount: 90, syntheticPerturbations: true, independentOperators: false,
+    hiddenChallenges: false, networkSubmitted: false, rewardEligible: false, walletChanged: false,
   };
 }

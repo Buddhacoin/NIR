@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createOpenModelCatalog } from "./open-model-catalog.mjs";
-import { evaluateIrisLinearCandidate, MAX_IRIS_MODEL_BYTES } from "./iris-linear-candidate.mjs";
+import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
+  hashIrisModelCommit, MAX_IRIS_MODEL_BYTES } from "./iris-linear-candidate.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -256,6 +257,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   if (!root) throw new Error("repository root is required");
   let running = false;
   let lastIrisEvidence = null;
+  let pendingCandidate = null;
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -307,6 +309,85 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       } else {
         send(200, "application/json; charset=utf-8", lastIrisEvidence);
       }
+      return;
+    }
+    if (request.method === "POST" && path === "/candidate/iris-linear/commit" &&
+        request.url === "/candidate/iris-linear/commit") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > MAX_IRIS_MODEL_BYTES) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running || (pendingCandidate && pendingCandidate.expiresAt > Date.now())) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A candidate is pending" }));
+        return;
+      }
+      running = true;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared || length > MAX_IRIS_MODEL_BYTES)
+            throw new Error("oversized Iris model");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated Iris model");
+        clearTimeout(deadline);
+        const bytes = Buffer.concat(chunks, length);
+        const checked = evaluateIrisLinearCandidate(root, bytes);
+        const challengeId = randomBytes(16).toString("hex");
+        pendingCandidate = { bytes, challengeId, modelHash: checked.modelHash,
+          commitHash: hashIrisModelCommit(bytes), seed: randomBytes(32),
+          expiresAt: Date.now() + 10 * 60_000 };
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          status: "local-model-committed", modelHash: pendingCandidate.modelHash,
+          commitHash: pendingCandidate.commitHash, challengeId, expiresInSeconds: 600,
+          independentOperators: false, hiddenChallenges: false,
+          networkSubmitted: false, rewardEligible: false, walletChanged: false,
+        }));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid data-only Iris model" }));
+      } finally { clearTimeout(deadline); running = false; }
+      return;
+    }
+    if (request.method === "POST" && path === "/candidate/iris-linear/reveal" &&
+        request.url === "/candidate/iris-linear/reveal") {
+      const challengeId = request.headers["x-nir-challenge"];
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-length"] !== "0" || request.headers["transfer-encoding"] ||
+          typeof challengeId !== "string" || !/^[a-f0-9]{32}$/.test(challengeId)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      if (!pendingCandidate || pendingCandidate.challengeId !== challengeId) {
+        send(404, "application/json; charset=utf-8", JSON.stringify({ error: "Challenge unavailable" }));
+        return;
+      }
+      const challenge = pendingCandidate;
+      pendingCandidate = null;
+      if (challenge.expiresAt <= Date.now()) {
+        send(410, "application/json; charset=utf-8", JSON.stringify({ error: "Challenge expired" }));
+        return;
+      }
+      running = true;
+      try {
+        const result = evaluateIrisPostCommitStress(root, challenge.bytes, challenge.seed);
+        if (result.modelHash !== challenge.modelHash || result.commitHash !== challenge.commitHash)
+          throw new Error("local model commitment changed");
+        send(200, "application/json; charset=utf-8", JSON.stringify(result));
+      } catch {
+        send(500, "application/json; charset=utf-8", JSON.stringify({ error: "Local stress check failed" }));
+      } finally { running = false; }
       return;
     }
     if (request.method === "POST" && path === "/candidate/iris-linear" &&
