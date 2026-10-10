@@ -113,7 +113,7 @@ Python 3.13 MLX environment, then select it **before** building:
 NIR_MINING_PYTHON=/absolute/path/to/venv/bin/python npm run mine:macos-build -- "$PWD/NIR Model Lab.app"
 ```
 
-The separate **transfer rehearsal** in Model Lab starts with 44 imaginary units
+The separate **transfer rehearsal** in Model Lab starts with 7 imaginary tokens
 and can record a transfer to a manually typed NIR-shaped address. It does not
 use the real wallet vault, verify address ownership, broadcast a transaction,
 or change the real wallet balance. The scenario and its history are held only

@@ -1,7 +1,7 @@
 // A deliberately isolated teaching ledger. It is NOT NIR consensus state and
 // cannot issue a spendable coin or change a wallet vault.
 export const SYNTHETIC_NETWORK_ID = "nir-synthetic-local-1";
-const TRAINING_UNITS = 44n;
+const TRAINING_UNITS = 7n;
 
 export function createSyntheticTransferSession() {
   let started = false;

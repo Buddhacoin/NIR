@@ -502,7 +502,7 @@ test("mining lab serves bounded model identifier input with no secret or code in
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
-      ['<input id="synthetic-amount" type="number" min="1" max="44" step="1" value="1">',
+      ['<input id="synthetic-amount" type="number" min="1" max="7" step="1" value="1">',
         '<input id="candidate-file" type="file" accept="application/json,.json">',
         '<input id="recheck-model-file" type="file" accept="application/json,.json">',
         '<input id="recheck-record-file" type="file" accept="application/json,.json">',
