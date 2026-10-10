@@ -32,6 +32,10 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(html, /Все 30 проверочных примеров Iris публичны/);
   assert.match(html, /id="candidate-stress"[^>]*disabled/);
   assert.match(html, /id="candidate-stress-state"[^>]*aria-live="polite"/);
+  for (const id of ["provider-kind", "provider-model-id", "provider-export", "provider-state"])
+    assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /API-ключи сюда не вводятся/);
+  assert.match(script, /providerDone: .*не проверка модели и не майнинг/);
   assert.match(script, /candidateDone: \(baseline, candidate, hash\) => .*не скрытый тест, не сетевая заявка и не награда/);
   assert.match(script, /candidateStressDone: .*повторными запусками можно выбрать удачный seed/);
   assert.match(script, /candidateStressDone: .*repeated runs can cherry-pick a favorable seed/);
@@ -41,6 +45,38 @@ test("operator console shows only real local stages, roles, and runnable models"
     "qwen-result"]) assert.match(script, new RegExp(`recordLocalEvent\\("${event}"`));
   assert.doesNotMatch(script, /Math\.random\(\)/);
   assert.doesNotMatch(html, /\b(?:100|[1-9]?[0-9])%\b/);
+});
+
+test("provider onboarding exports bounded non-reward capability declaration", async () => {
+  const { server, base, token } = await serve();
+  try {
+    const registry = await fetch(`${base}/provider-capabilities`);
+    assert.equal(registry.status, 200);
+    const listed = await registry.json();
+    assert.deepEqual(listed.providers.map((p) => p.id), ["open-weight", "openai-api", "anthropic-api", "google-api"]);
+    const post = (body, origin = base) => fetch(`${base}/provider-capabilities/declaration`, {
+      method: "POST", body: JSON.stringify(body), headers: { origin, "X-NIR-Session": token,
+        "Content-Type": "application/json" },
+    });
+    assert.equal((await post({ provider: "openai-api", modelId: "gpt-4o" }, "https://evil.example")).status, 403);
+    assert.equal((await post({ provider: "openai-api", modelId: "gpt-4o", apiKey: "secret" })).status, 400);
+    assert.equal((await post({ provider: "openai-api", modelId: "https://evil.example" })).status, 400);
+    assert.equal((await post({ provider: "anthropic-api", modelId: "../.ssh/id_ed25519" })).status, 400);
+    assert.equal((await post({ provider: "unregistered", modelId: "model-1" })).status, 400);
+    assert.equal((await post({ provider: "google-api", modelId: "x".repeat(101) })).status, 400);
+    for (const modelId of ["sk-proj-" + "A".repeat(48), "sk-ant-" + "B".repeat(48),
+      "AIza" + "C".repeat(35), "BearerToken12345", "D".repeat(40)])
+      assert.equal((await post({ provider: "openai-api", modelId })).status, 400);
+    const response = await post({ provider: "openai-api", modelId: "gpt-4o" });
+    assert.equal(response.status, 200);
+    const declaration = await response.json();
+    assert.equal(declaration.scope, "operator-capability-intent-only");
+    assert.equal(declaration.provider, "openai-api");
+    assert.equal(declaration.modelId, "gpt-4o");
+    for (const flag of ["modelExecuted", "independentlyVerified", "networkSubmitted", "rewardEligible", "walletChanged"])
+      assert.equal(declaration[flag], false);
+    assert.doesNotMatch(JSON.stringify(declaration), /secret|apiKey/i);
+  } finally { await stop(server); }
 });
 
 test("operator console keeps its status, event, and model text readable", () => {
@@ -372,6 +408,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "wallet-ui/nir-coin-icon.png", "nir/iris_rehearsal.py",
       "examples/iris_model_adapter.py", "examples/iris.data",
       "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
+      "blockchain/model-provider-capabilities.mjs",
       "nir/open_model_local_run.py", "nir/open_model_fetch.py",
       "nir/open_model_package.py", "nir/open_model_snapshot.py",
       "nir/open_model_source.py",
@@ -388,7 +425,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
-test("mining lab serves a pinned-model UI with no secret or code input", async () => {
+test("mining lab serves bounded model identifier input with no secret or code input", async () => {
   const { server, base } = await serve(async () => ({}));
   try {
     const response = await fetch(base);
@@ -398,9 +435,10 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.match(html, /id="start"/);
     assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
       ['<input id="candidate-file" type="file" accept="application/json,.json">',
+        '<input id="provider-model-id" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Qwen/Qwen3-0.6B">',
         '<input id="qwen-replay-file" type="file" accept="application/json,.json">',
         '<input id="iris-evidence-file" type="file" accept="application/json,.json">']);
-    assert.doesNotMatch(html, /<textarea|<form|type="(?:text|password)"/i);
+    assert.doesNotMatch(html, /<textarea|<form|type="password"/i);
     assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
     assert.match(html, /id="connection"/);
