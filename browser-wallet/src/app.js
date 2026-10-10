@@ -141,8 +141,8 @@ async function renderAccounts() {
     button.append(title, detail);
     button.dataset.index = String(index);
     button.addEventListener("click", () => run(async () => {
+      await saveProfile({ ...profile, selectedIndex: index });
       selectedIndex = index;
-      await saveProfile({ ...profile, selectedIndex });
       await renderHome();
     }));
     rows.push(button);
@@ -264,14 +264,17 @@ $("#restore-form").addEventListener("submit", (event) => {
     }
     const restoredPhrase = await decryptPhrase(record, password);
     assertCurrent();
-    phrase = restoredPhrase;
     // A phrase reproduces all first 16 addresses, but the old device's
     // accountCount is not part of the phrase. Expose them all on clean restore
     // so an existing secondary address cannot appear to be lost.
-    accountCount = profile?.accountCount ?? 16;
-    selectedIndex = profile?.selectedIndex ?? 0;
-    await saveProfile({ vault: record, accountCount, selectedIndex });
+    const nextAccountCount = profile?.accountCount ?? 16;
+    const nextSelectedIndex = profile?.selectedIndex ?? 0;
+    await saveProfile({ vault: record, accountCount: nextAccountCount,
+      selectedIndex: nextSelectedIndex });
     assertCurrent();
+    phrase = restoredPhrase;
+    accountCount = nextAccountCount;
+    selectedIndex = nextSelectedIndex;
     form.reset();
     await renderHome();
   });
@@ -296,9 +299,12 @@ $("#forgot-password").addEventListener("click", () => screen("restore"));
 $("#open-accounts").addEventListener("click", () => run(renderAccounts));
 $("#add-account").addEventListener("click", () => run(async () => {
   if (accountCount >= 16) throw new Error("Достигнут предел 16 адресов");
-  accountCount++;
-  selectedIndex = accountCount - 1;
-  await saveProfile({ ...profile, accountCount, selectedIndex });
+  const nextAccountCount = accountCount + 1;
+  const nextSelectedIndex = nextAccountCount - 1;
+  await saveProfile({ ...profile, accountCount: nextAccountCount,
+    selectedIndex: nextSelectedIndex });
+  accountCount = nextAccountCount;
+  selectedIndex = nextSelectedIndex;
   await renderHome();
 }));
 $("#copy-address").addEventListener("click", () => run(async () => copy((await currentAccount()).address, "Адрес")));
