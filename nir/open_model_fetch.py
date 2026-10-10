@@ -81,17 +81,24 @@ def _reap_crashed_downloads(parent: str | Path | None) -> None:
                                 continue
                             raise
                         try:
+                            try:
+                                # The global pathname can be replaced while another
+                                # fetch still holds its old inode. A per-tree lease
+                                # keeps that live tree out of crash recovery.
+                                fcntl.flock(marker_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            except BlockingIOError:
+                                continue
                             marker = os.fstat(marker_fd)
                             if (not stat.S_ISREG(marker.st_mode) or marker.st_uid != os.getuid() or
-                                    stat.S_IMODE(marker.st_mode) != 0o600 or
+                                    marker.st_nlink != 1 or stat.S_IMODE(marker.st_mode) != 0o600 or
                                     marker.st_size != len(_TEMP_MARKER_BYTES) or
                                     os.read(marker_fd, len(_TEMP_MARKER_BYTES) + 1) != _TEMP_MARKER_BYTES):
                                 continue
+                            shutil.rmtree(entry.name, dir_fd=root_fd)
                         finally:
                             os.close(marker_fd)
                     finally:
                         os.close(child_fd)
-                    shutil.rmtree(entry.name, dir_fd=root_fd)
         finally:
             os.close(root_fd)
     except OSError as error:
@@ -142,18 +149,26 @@ def _private_model_directory(parent: str | Path | None) -> Iterator[str]:
         temporary = tempfile.TemporaryDirectory(prefix=_TEMP_PREFIX, dir=parent)
     except (OSError, TypeError, ValueError) as error:
         raise FetchError("private model download directory could not be created") from error
-    with temporary as path:
-        try:
-            marker = os.open(Path(path) / _TEMP_MARKER,
-                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    marker = None
+    try:
+        with temporary as path:
             try:
-                os.write(marker, _TEMP_MARKER_BYTES)
+                marker = os.open(Path(path) / _TEMP_MARKER,
+                                 os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                fcntl.flock(marker, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                remaining = memoryview(_TEMP_MARKER_BYTES)
+                while remaining:
+                    written = os.write(marker, remaining)
+                    if written <= 0:
+                        raise OSError("short marker write")
+                    remaining = remaining[written:]
                 os.fsync(marker)
-            finally:
-                os.close(marker)
-        except OSError as error:
-            raise FetchError("private model download marker could not be created") from error
-        yield path
+            except OSError as error:
+                raise FetchError("private model download marker could not be created") from error
+            yield path
+    finally:
+        if marker is not None:
+            os.close(marker)
 
 
 @dataclass(frozen=True, slots=True)

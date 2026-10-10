@@ -15,7 +15,7 @@ from time import monotonic, sleep
 import unittest
 from unittest.mock import patch
 
-from nir.open_model_fetch import FetchError, _HubRedirect, _download_capacity_guard, _download_hub, fetched_curated_model
+from nir.open_model_fetch import FetchError, _HubRedirect, _download_capacity_guard, _download_hub, _private_model_directory, fetched_curated_model
 from nir.open_model_snapshot import REQUIRED_FILES
 
 
@@ -102,6 +102,32 @@ class FetchTests(unittest.TestCase):
                 child.wait(timeout=5)
             child.stdout.close()
             child.stderr.close()
+
+    def test_recreated_global_lock_cannot_reap_a_live_download(self):
+        # A tmp cleaner may unlink the global lock pathname while its original
+        # inode is still flocked. The new lock must not authorize deletion of
+        # a live package held by the first process.
+        with patch("nir.open_model_fetch.tempfile.gettempdir", return_value=str(self.root)):
+            with _download_capacity_guard(self.root, 1, available_bytes=lambda _: 2 << 30):
+                with _private_model_directory(self.root) as active:
+                    self.assertTrue(Path(active).exists())
+                    os.unlink(self.root / "nir-open-model-fetch-v1.lock")
+                    with _download_capacity_guard(self.root, 1, available_bytes=lambda _: 2 << 30):
+                        self.assertTrue(Path(active).exists(), "a live download must keep its own lease")
+
+    def test_short_marker_write_is_completed_before_download_begins(self):
+        original = os.write
+        first = True
+        def short_once(descriptor, data):
+            nonlocal first
+            if first:
+                first = False
+                return original(descriptor, data[:1])
+            return original(descriptor, data)
+        with patch("nir.open_model_fetch.os.write", side_effect=short_once):
+            with _private_model_directory(self.root) as path:
+                self.assertEqual((Path(path) / ".nir-model-fetch-v1").read_bytes(),
+                                 b"NIR_OPEN_MODEL_FETCH_V1\n")
 
     def test_insufficient_space_aborts_before_model_download(self):
         with patch("nir.open_model_fetch.os.statvfs", return_value=type("Space", (), {
