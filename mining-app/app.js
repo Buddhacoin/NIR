@@ -15,6 +15,12 @@ const candidateStress = document.querySelector("#candidate-stress");
 const candidateStressState = document.querySelector("#candidate-stress-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
+const walletLinkStart = document.querySelector("#wallet-link-start");
+const walletLinkChallenge = document.querySelector("#wallet-link-challenge");
+const walletLinkCopy = document.querySelector("#wallet-link-copy");
+const walletLinkProof = document.querySelector("#wallet-link-proof");
+const walletLinkComplete = document.querySelector("#wallet-link-complete");
+const walletLinkState = document.querySelector("#wallet-link-state");
 const catalogModel = document.querySelector("#catalog-model");
 const catalogVersion = document.querySelector("#catalog-version");
 const catalogState = document.querySelector("#catalog-state");
@@ -39,6 +45,8 @@ const fragmentSession = typeof location !== "undefined" &&
 if (fragmentSession) history.replaceState(null, "", `${location.pathname}${location.search}`);
 const localSession = nativeApp && typeof window !== "undefined" ? window.__NIR_MODEL_SESSION : fragmentSession;
 const sessionHeaders = () => ({ "X-NIR-Session": localSession ?? "" });
+let walletLinkPending = null;
+let walletLinkAddress = null;
 
 function canonicalReplayJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalReplayJson).join(",")}]`;
@@ -110,6 +118,10 @@ const copy = {
     irisScope: "Встроенная проверка", qwenScope: "Закреплённый локальный запуск",
     bundled: "ВСТРОЕНА", reportedReady: "СООБЩАЕТ: ГОТОВА", checkingShort: "ПРОВЕРКА", unavailableShort: "НЕДОСТУПНА",
     localOnly: "Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.",
+    walletLinkTitle: "Адрес оператора", walletLinkIntro: "Подтвердите владение адресом через установленный NIR Wallet. Пароль и ключ остаются в кошельке. Это локальная привязка без сетевой заявки и начисления.",
+    walletLinkStart: "Создать одноразовый запрос", walletLinkCopy: "Скопировать запрос",
+    walletLinkProofLabel: "Подписанное доказательство из настроек кошелька",
+    walletLinkComplete: "Проверить адрес",
     test: "ТЕСТ", eyebrow: "Локальная тренировка", headline: "Проверка модели Iris",
     description: "Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.",
     start: "Проверить модель Iris", safety: "Не нужен кошелёк, пароль, секретная фраза или оплата.",
@@ -200,6 +212,9 @@ const copy = {
     irisScope: "Bundled check", qwenScope: "Pinned local run",
     bundled: "BUNDLED", reportedReady: "REPORTS READY", checkingShort: "CHECKING", unavailableShort: "UNAVAILABLE",
     localOnly: "No wallet address is connected. This console shows actions on this Mac only: it submits no claim and promises no NIR.",
+    walletLinkTitle: "Operator address", walletLinkIntro: "Prove address ownership using the installed NIR Wallet. Your password and key stay in the wallet. This is a local link, with no network claim or reward.",
+    walletLinkStart: "Create one-time challenge", walletLinkCopy: "Copy challenge",
+    walletLinkProofLabel: "Signed proof from wallet settings", walletLinkComplete: "Verify address",
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
     description: "Train two classifiers locally on 120 examples and check them against 30 held-out examples. Results and evidence are checked on this Mac.",
     start: "Check Iris model", safety: "No wallet, password, recovery phrase, or payment is needed.",
@@ -454,6 +469,9 @@ function render() {
   document.documentElement.lang = locale;
   document.title = locale === "ru" ? "NIR · Проверка модели" : "NIR · Model check";
   for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t[node.dataset.i18n];
+  if (walletLinkAddress) document.querySelector(".local-only").textContent = locale === "ru"
+    ? `Локально подтверждено владение адресом ${walletLinkAddress}. Сеть не подключена, заявки и награды нет.`
+    : `Local ownership of ${walletLinkAddress} verified. No network, claim, or reward is connected.`;
   for (const node of document.querySelectorAll("[data-i18n-aria]")) {
     if (node.dataset?.i18nAria && typeof node.setAttribute === "function")
       node.setAttribute("aria-label", t[node.dataset.i18nAria]);
@@ -520,6 +538,14 @@ function render() {
 
 function showOffline() {
   connected = false;
+  walletLinkAddress = null;
+  walletLinkPending = null;
+  if (walletLinkChallenge) { walletLinkChallenge.value = ""; walletLinkChallenge.hidden = true; }
+  if (walletLinkCopy) walletLinkCopy.hidden = true;
+  if (walletLinkProof) walletLinkProof.value = "";
+  if (walletLinkState) walletLinkState.textContent = locale === "ru"
+    ? "Локальный сервис остановился. Привязка адреса сброшена."
+    : "Local service stopped. Address link was cleared.";
   checking = false;
   connection.dataset.state = "offline";
   progress.hidden = true;
@@ -950,6 +976,74 @@ if (qwenExport) qwenExport.addEventListener("click", () => {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+walletLinkStart?.addEventListener("click", async () => {
+  walletLinkAddress = null;
+  walletLinkPending = null;
+  walletLinkChallenge.hidden = true;
+  walletLinkCopy.hidden = true;
+  walletLinkProof.value = "";
+  walletLinkStart.disabled = true;
+  try {
+    const { response, data } = await fetchQwenJson("/wallet-link/challenge", {
+      method: "POST", body: "", cache: "no-store",
+    });
+    if (!response.ok || !/^[0-9a-f]{64}$/.test(data.challenge) ||
+        data.scope !== "local-address-ownership-only" ||
+        data.networkSubmitted !== false || data.rewardEligible !== false ||
+        !Number.isSafeInteger(data.expiresAt)) throw new Error("invalid challenge");
+    walletLinkPending = data.challenge;
+    walletLinkChallenge.value = data.challenge;
+    walletLinkChallenge.hidden = false;
+    walletLinkCopy.hidden = false;
+    walletLinkState.textContent = locale === "ru"
+      ? "Скопируйте запрос в Настройки NIR Wallet → Адрес для Model Lab. Затем вставьте подписанное доказательство сюда. Действует 5 минут."
+      : "Copy into NIR Wallet Settings → Model Lab address. Paste the signed proof here. Expires in 5 minutes.";
+  } catch {
+    walletLinkState.textContent = locale === "ru" ? "Не удалось создать запрос." : "Could not create challenge.";
+  } finally { walletLinkStart.disabled = false; render(); }
+});
+walletLinkCopy?.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(walletLinkChallenge.value); }
+  catch { walletLinkChallenge.select(); }
+});
+walletLinkComplete?.addEventListener("click", async () => {
+  if (!walletLinkPending) {
+    walletLinkState.textContent = locale === "ru" ? "Сначала создайте запрос." : "Create a challenge first.";
+    return;
+  }
+  let proof;
+  try { proof = JSON.parse(walletLinkProof.value); }
+  catch { walletLinkState.textContent = locale === "ru" ? "Неверный JSON." : "Invalid JSON."; return; }
+  if (proof?.challenge !== walletLinkPending || walletLinkProof.value.length > 16_384) {
+    walletLinkState.textContent = locale === "ru" ? "Доказательство не соответствует запросу." : "Proof does not match challenge.";
+    return;
+  }
+  walletLinkComplete.disabled = true;
+  try {
+    const { response, data } = await fetchQwenJson("/wallet-link/complete", {
+      method: "POST", body: JSON.stringify(proof),
+      headers: { "Content-Type": "application/json" }, cache: "no-store",
+    });
+    if (!response.ok || data.status !== "local-address-ownership-verified" ||
+        !/^nir1[0-9a-f]{64}$/.test(data.address) ||
+        data.networkSubmitted !== false || data.rewardEligible !== false ||
+        data.walletChanged !== false) throw new Error("proof rejected");
+    walletLinkAddress = data.address;
+    walletLinkPending = null;
+    walletLinkChallenge.hidden = true;
+    walletLinkCopy.hidden = true;
+    walletLinkProof.value = "";
+    walletLinkState.textContent = locale === "ru"
+      ? `Адрес ${data.address} подтверждён для этой локальной сессии. Монет и заявки нет.`
+      : `Address ${data.address} verified for this local session. No coins or claim exist.`;
+  } catch {
+    walletLinkPending = null;
+    walletLinkState.textContent = locale === "ru"
+      ? "Доказательство отклонено или истекло. Создайте новый запрос; награда не начислена."
+      : "Proof rejected or expired. Create a new challenge; no reward was credited.";
+  } finally { walletLinkComplete.disabled = false; render(); }
 });
 
 recordLocalEvent("ui-ready");

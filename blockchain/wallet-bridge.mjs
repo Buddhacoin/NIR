@@ -5,6 +5,7 @@ import { nativeAssetId } from "./chain.mjs";
 
 import {
   signWalletPaymentRequest,
+  signWalletOperatorLink,
   signWalletResourceOperation,
   signWalletTransfer,
   walletPublicInfo,
@@ -672,6 +673,60 @@ export function createWalletBridgeServer({
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(activeVaultPath), origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/sign-operator-link") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("wallet-link request requires application/json");
+        }
+        const body = await readAuthenticatedBody(256);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !==
+            "challenge,requestId" || !/^[0-9a-f]{64}$/.test(body.challenge ?? "") ||
+            !REQUEST_ID.test(body.requestId ?? "")) {
+          throw new Error("wallet-link request is invalid");
+        }
+        if (pending || seen.has(body.requestId)) {
+          return send(response, 409, { error: "wallet-link request is pending or already used" }, origin);
+        }
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const signingGeneration = sessionGeneration;
+        const resultEntry = { completedAt: null, status: null, value: null };
+        signResults.set(body.requestId, resultEntry);
+        pending = true;
+        try {
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize({ type: "local-operator-wallet-link", address: expectedAddress,
+              challenge: body.challenge, requestId: body.requestId },
+            { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("wallet-link confirmation expired"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
+          if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration ||
+              walletAddress !== expectedAddress || activeVaultPath !== expectedPath) {
+            throw new Error("wallet account changed during the request");
+          }
+          const proof = signWalletOperatorLink({ path: expectedPath, password,
+            challenge: body.challenge, expectedAddress });
+          const value = { requestId: body.requestId, proof };
+          resultEntry.status = 200;
+          resultEntry.value = value;
+          resultEntry.completedAt = Date.now();
+          return send(response, 200, value, origin);
+        } catch (error) {
+          resultEntry.status = 400;
+          resultEntry.value = { error: publicBridgeError(error) };
+          resultEntry.completedAt = Date.now();
+          throw error;
+        } finally { pending = false; }
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {

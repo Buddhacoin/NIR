@@ -11,6 +11,17 @@
   <main class="app">
     <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MODEL LAB</small></span><div class="header-actions"><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
     <p id="connection" class="connection" role="status" aria-live="polite">Проверяем подключение к локальному сервису…</p>
+    <section class="catalog" aria-labelledby="wallet-link-heading">
+      <h2 id="wallet-link-heading" data-i18n="walletLinkTitle">Адрес оператора</h2>
+      <p data-i18n="walletLinkIntro">Подтвердите владение адресом через установленный NIR Wallet. Пароль и ключ остаются в кошельке. Это локальная привязка без сетевой заявки и начисления.</p>
+      <button id="wallet-link-start" class="secondary" type="button" data-i18n="walletLinkStart">Создать одноразовый запрос</button>
+      <textarea id="wallet-link-challenge" readonly hidden aria-label="Одноразовый запрос для кошелька"></textarea>
+      <button id="wallet-link-copy" class="secondary" type="button" hidden data-i18n="walletLinkCopy">Скопировать запрос</button>
+      <label for="wallet-link-proof" data-i18n="walletLinkProofLabel">Подписанное доказательство из настроек кошелька</label>
+      <textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька"></textarea>
+      <button id="wallet-link-complete" class="secondary" type="button" data-i18n="walletLinkComplete">Проверить адрес</button>
+      <p id="wallet-link-state" role="status"></p>
+    </section>
     <section id="operator-console" class="operator-console" aria-labelledby="operator-heading">
       <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="operator-heading" data-i18n="consoleTitle">Локальная панель оператора</h2><b data-i18n="localBadge">НЕ СЕТЬ</b></div>
       <div class="console-grid">

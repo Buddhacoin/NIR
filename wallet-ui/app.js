@@ -1526,6 +1526,48 @@ document.querySelector("#settings-connect").onclick = () => {
   openBridgePanel();
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
+document.querySelector("#sign-operator-link").onclick = async (event) => {
+  const status = document.querySelector("#operator-link-status");
+  const proofField = document.querySelector("#operator-link-proof");
+  const copy = document.querySelector("#copy-operator-link-proof");
+  proofField.hidden = true;
+  copy.hidden = true;
+  proofField.value = "";
+  const challenge = document.querySelector("#operator-link-challenge").value.trim();
+  if (!/^[0-9a-f]{64}$/.test(challenge)) {
+    status.textContent = "Нужен полный одноразовый запрос из Model Lab.";
+    return;
+  }
+  if (!walletInfo || !bridgeSession) {
+    status.textContent = "Сначала подключите vault к этому окну кошелька.";
+    return;
+  }
+  const expectedAddress = walletInfo.address;
+  event.currentTarget.disabled = true;
+  try {
+    const requestId = Array.from(crypto.getRandomValues(new Uint8Array(32)),
+      (byte) => byte.toString(16).padStart(2, "0")).join("");
+    status.textContent = "Подтвердите запрос в системном окне кошелька.";
+    const result = await signWithRecovery("/v1/sign-operator-link", { challenge, requestId },
+      undefined, () => { status.textContent = "Ожидаем подтверждения кошелька…"; });
+    if (walletInfo?.address !== expectedAddress || result.proof?.address !== expectedAddress ||
+        result.proof?.challenge !== challenge) throw new Error("Адрес изменился во время подтверждения.");
+    proofField.value = JSON.stringify(result.proof);
+    proofField.hidden = false;
+    copy.hidden = false;
+    status.textContent = "Скопируйте доказательство в Model Lab. Это не заявка и не награда.";
+  } catch {
+    status.textContent = "Подтверждение не завершилось. Запрос не создал перевод или награду.";
+  } finally { event.currentTarget.disabled = false; }
+};
+document.querySelector("#copy-operator-link-proof").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(document.querySelector("#operator-link-proof").value);
+    document.querySelector("#operator-link-status").textContent = "Доказательство скопировано. Вставьте его в Model Lab.";
+  } catch {
+    document.querySelector("#operator-link-status").textContent = "Копирование недоступно. Скопируйте текст вручную.";
+  }
+};
 document.querySelector("#setup-connect").onclick = () => {
   setupPanel.close();
   openBridgePanel();

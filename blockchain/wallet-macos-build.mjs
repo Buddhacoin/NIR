@@ -17,6 +17,7 @@ blockchain/constants.mjs blockchain/crypto.mjs blockchain/evaluation-assignment-
 blockchain/http-ingress.mjs blockchain/light-client.mjs blockchain/memory.mjs
 blockchain/offline-release-bundle.mjs blockchain/offline-release-governance.mjs
 blockchain/offline-signer.mjs blockchain/operators.mjs blockchain/payment-request.mjs
+blockchain/operator-wallet-link.mjs
 blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs

@@ -40,7 +40,13 @@ function listen(server, port) {
 }
 
 async function authorizeSigning(intent, { signal } = {}) {
-  const summary = [
+  const summary = intent.type === "local-operator-wallet-link" ? [
+    "Подтвердить адрес для NIR Model Lab?",
+    `Адрес: ${intent.address}`,
+    `Одноразовый запрос: ${intent.challenge}`,
+    "Только локальное доказательство владения адресом. Не перевод, не заявка и не награда.",
+    "Отклоните, если вы не начинали привязку в Model Lab.",
+  ].join("\n") : [
     "Подписать операцию NIR?",
     `Тип: ${intent.type ?? "transfer"}`,
     `Сеть: ${intent.networkId}`,

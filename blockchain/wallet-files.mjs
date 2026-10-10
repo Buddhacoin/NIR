@@ -26,6 +26,7 @@ import {
 } from "./chain.mjs";
 import { addressFromPublicKey, generateWallet, hashObject } from "./crypto.mjs";
 import { createPaymentRequest } from "./payment-request.mjs";
+import { createOperatorWalletProof } from "./operator-wallet-link.mjs";
 import { createSignedHistoryArchive } from "./archive-sync.mjs";
 import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { createValidatorAdmission } from "./validator-admission.mjs";
@@ -539,6 +540,18 @@ export function signWalletPaymentRequest({ path, password, intent }) {
   const wallet = decryptWallet(readVault(path), password);
   try {
     return createPaymentRequest({ wallet, ...intent });
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+export function signWalletOperatorLink({ path, password, challenge, expectedAddress }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    if (wallet.address !== expectedAddress || walletPublicInfo(path).address !== expectedAddress) {
+      throw new Error("wallet account changed during the request");
+    }
+    return createOperatorWalletProof({ wallet, challenge });
   } finally {
     wallet.privateKey = "";
   }
