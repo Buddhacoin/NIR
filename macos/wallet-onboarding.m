@@ -48,9 +48,9 @@ static NSString *NIRTranslate(NSString *source) {
             @"Открыть существующий": @"Open existing wallet",
             @"Новый код восстановления": @"New recovery code",
             @"На этом Mac ещё нет кошелька": @"No wallet on this Mac yet",
-            @"После создания сохраните код и зашифрованную копию отдельно.": @"After creation, save the code and encrypted backup separately.",
+            @"Новый кошелёк получит другой адрес. Если кошелёк уже был, сначала восстановите его. После создания сохраните код и зашифрованную копию отдельно.": @"A new wallet gets a different address. If you already had one, restore it first. Save the new code and encrypted backup separately.",
             @"Пароль откроет выбранный кошелёк. Для операций он потребуется снова.": @"The password opens the selected wallet. It will be needed again for operations.",
-            @"На этом Mac кошелёк не найден. Восстановите его из копии и кода.": @"No wallet was found on this Mac. Restore it with your backup and code.",
+            @"Доступный кошелёк не распознан. Файл может быть повреждён; восстановите адрес из копии и кода.": @"No usable wallet was recognized. A file may be damaged; restore the address with your backup and code.",
             @"Нужны копия, код восстановления и ранее записанный адрес.": @"You need a backup, recovery code and the address you previously recorded.",
             @"Выбрать": @"Select", @"Выберите резервную копию NIR": @"Select a NIR backup",
             @"NIR Wallet · новый адрес": @"NIR Wallet · new address",
@@ -398,8 +398,9 @@ static NSString *NIRTranslate(NSString *source) {
     self.subtitleLabel.frame = NSMakeRect(28, opening ? 359 : (creation ? 440 : 577), 334, 24);
     self.subtitleLabel.stringValue = @"NIR Wallet · локальная тестовая сеть";
     self.modes.hidden = YES;
-    self.back.hidden = self.createOnly || (creation && self.wallets.count == 0);
-    self.back.frame = NSMakeRect(23, restoring ? 730 : 588, 95, 28);
+    self.back.hidden = self.createOnly || (opening && self.wallets.count > 0) ||
+        (creation && self.wallets.count == 0);
+    self.back.frame = NSMakeRect(23, opening ? 528 : (restoring ? 730 : 588), 95, 28);
     self.createLink.hidden = !opening;
     self.openLink.hidden = self.createOnly || !creation;
     self.restoreLink.hidden = self.createOnly || (!opening && !creation);
@@ -421,7 +422,7 @@ static NSString *NIRTranslate(NSString *source) {
     self.importBackup.frame = NSMakeRect(245, 466, 117, 36);
     self.addressLabel.frame = NSMakeRect(28, 170, 334, 20);
     self.address.frame = NSMakeRect(28, 130, 334, 36);
-    self.hint.frame = NSMakeRect(28, opening ? 142 : 169, 334, opening ? 32 : 45);
+    self.hint.frame = NSMakeRect(28, opening ? 130 : 169, 334, opening ? 50 : 45);
     self.hint.alignment = NSTextAlignmentCenter;
     self.action.frame = NSMakeRect(28, restoring ? 48 : (opening ? 78 : 99), 334, 46);
     self.backupLabel.hidden = !restoring;
@@ -452,9 +453,9 @@ static NSString *NIRTranslate(NSString *source) {
                      NSFontAttributeName:[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold]}];
     self.hint.hidden = restoring;
     self.hint.stringValue = creation ?
-        @"После создания сохраните код и зашифрованную копию отдельно." :
+        @"Новый кошелёк получит другой адрес. Если кошелёк уже был, сначала восстановите его. После создания сохраните код и зашифрованную копию отдельно." :
         (opening ? (self.wallets.count ? @"Пароль откроет выбранный кошелёк. Для операций он потребуется снова." :
-            @"На этом Mac кошелёк не найден. Восстановите его из копии и кода.") :
+            @"Доступный кошелёк не распознан. Файл может быть повреждён; восстановите адрес из копии и кода.") :
          @"Нужны копия, код восстановления и ранее записанный адрес.");
     [self localizeControls];
 }

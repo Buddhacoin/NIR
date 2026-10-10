@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
+import { listLocalTestWallets } from "../blockchain/wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "../blockchain/wallet-preview-cli.mjs";
 
 test("local wallet bundle uses a strict source allowlist and refuses secret-named paths", () => {
@@ -116,9 +117,16 @@ test("empty native wallet onboarding exposes existing-wallet and recovery choice
   assert.match(native, /self\.openLink\.hidden = self\.createOnly \|\| !creation/);
   assert.match(native, /self\.restoreLink\.hidden = self\.createOnly \|\| \(!opening && !creation\)/);
   assert.match(native, /self\.action\.enabled = !opening \|\| self\.wallets\.count > 0/);
+  assert.match(native, /Новый кошелёк получит другой адрес/);
+  assert.match(native, /Доступный кошелёк не распознан\. Файл может быть повреждён/);
+  assert.match(native, /self\.back\.frame = NSMakeRect\(23, opening \? 528/);
   if (process.platform !== "darwin") return;
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-entry-smoke-"));
   try {
+    const storage = join(directory, "storage");
+    mkdirSync(join(storage, "Wallets"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(storage, "Wallets", "synthetic-damaged.nirvault.json"), "{broken", { mode: 0o600 });
+    assert.deepEqual(listLocalTestWallets(storage), []);
     const binary = join(directory, "onboarding-entry-smoke");
     const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
     const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_ONBOARDING_ENTRY_TEST",
