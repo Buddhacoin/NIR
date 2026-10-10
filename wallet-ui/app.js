@@ -47,6 +47,8 @@ const assetsStatus = document.querySelector("#assets-status");
 let bridgeSession = null;
 let walletInfo = null;
 let accountEpoch = 0;
+let accountRefreshSequence = 0;
+let nodeRefreshSequence = 0;
 let accountTransitionPending = false;
 let networkInfo = null;
 let activeNodeUrl = null;
@@ -80,8 +82,19 @@ function renderWalletConnection() {
     : "Vault не подключён";
 }
 
+function clearAccountNumbers() {
+  document.querySelector("#balance-value").textContent = "—";
+  document.querySelector("#resource-stake").textContent = "—";
+  document.querySelector("#resource-credits").textContent = "—";
+  document.querySelector("#resource-unstake").textContent = "—";
+  document.querySelector("#claim-unstake").hidden = true;
+  document.querySelector("#claim-unstake").disabled = true;
+}
+
 function resetAccountView(message) {
   accountEpoch += 1;
+  accountRefreshSequence += 1;
+  nodeRefreshSequence += 1;
   pendingIntent = null;
   signedTransaction = null;
   signedResourceTransaction = null;
@@ -94,7 +107,7 @@ function resetAccountView(message) {
   knownAssetIds.clear();
   offlineSigningPackage = null;
   offlinePackageQrFrames = [];
-  document.querySelector("#balance-value").textContent = "0.00000000";
+  clearAccountNumbers();
   document.querySelector("#wallet-state").textContent = message;
   document.querySelector("#signed-json").value = "";
   document.querySelector("#resource-signed-json").value = "";
@@ -112,10 +125,6 @@ function resetAccountView(message) {
   document.querySelector("#history-empty b").textContent = "Операций пока нет";
   document.querySelector("#history-empty p").textContent = "Ожидаем проверки выбранного адреса.";
   messages.history = ["История операций", "История выбранного адреса ещё не проверена."];
-  document.querySelector("#resource-stake").textContent = "0.00000000 NIR";
-  document.querySelector("#resource-credits").textContent = "0 переводов";
-  document.querySelector("#resource-unstake").textContent = "Нет";
-  document.querySelector("#claim-unstake").hidden = true;
   document.querySelector("#asset-list").replaceChildren();
   document.querySelector("#asset-checkpoint").dataset.state = "stale";
   document.querySelector("#asset-checkpoint").textContent = "Доказательства ещё не проверены";
@@ -481,9 +490,21 @@ async function refreshAccount() {
   if (!walletInfo || !networkInfo) return;
   const expectedAddress = walletInfo.address;
   const epoch = accountEpoch;
+  const expectedNetwork = networkInfo;
+  const refreshSequence = ++accountRefreshSequence;
+  const isCurrent = () => epoch === accountEpoch &&
+    refreshSequence === accountRefreshSequence && walletInfo?.address === expectedAddress &&
+    networkInfo === expectedNetwork;
+  clearAccountNumbers();
+  document.querySelector("#wallet-state").textContent = "Проверяем доказательство баланса…";
   try {
     const account = await readAccount();
-    if (epoch !== accountEpoch || walletInfo?.address !== expectedAddress) return;
+    if (!isCurrent()) return;
+    if (!account.proofVerified) {
+      document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · ответ узла скрыт";
+      renderTransactions(account);
+      return;
+    }
     document.querySelector("#balance-value").textContent = formatAtomic(account.atomicBalance);
     const resources = account.resources ?? {};
     document.querySelector("#resource-stake").textContent = `${formatAtomic(resources.atomicStake ?? "0")} NIR`;
@@ -496,13 +517,14 @@ async function refreshAccount() {
     claim.disabled = Boolean(pending && networkInfo.height < pending.unlockHeight);
     claim.textContent = pending && networkInfo.height < pending.unlockHeight
       ? `Доступно с блока ${pending.unlockHeight}` : "Завершить вывод";
-    document.querySelector("#wallet-state").textContent = account.proofVerified
-      ? `Кворум подтвердил баланс · блок ${account.proofHeight}`
-      : `Подключён ${walletInfo.address.slice(0, 12)}… · данные одного узла`;
+    document.querySelector("#wallet-state").textContent =
+      `Кворум подтвердил баланс · блок ${account.proofHeight}`;
     renderTransactions(account);
   } catch {
-    if (epoch !== accountEpoch || walletInfo?.address !== expectedAddress) return;
-    document.querySelector("#wallet-state").textContent = "Vault подключён · локальный узел недоступен";
+    if (!isCurrent()) return;
+    clearAccountNumbers();
+    document.querySelector("#wallet-state").textContent =
+      "Баланс не подтверждён · локальный узел недоступен";
   }
 }
 
@@ -900,7 +922,9 @@ document.querySelector("#submit-resource").onclick = async (event) => {
   event.currentTarget.disabled = true;
   resourcesStatus.textContent = "Повторная проверка тестовой сети…";
   try {
-    await selectActiveNode();
+    if (!(await refreshNodeStatus())) {
+      throw new Error("Сеть не подтверждена; транзакция не отправлена.");
+    }
     const health = await fetch(nodeUrl("/health")).then((response) => response.json());
     if (health.valueMode !== "valueless-devnet" ||
         health.networkId !== signedResourceTransaction.networkId) {
@@ -1407,7 +1431,9 @@ document.querySelector("#submit-signed").onclick = async () => {
   submitButton.disabled = true;
   sendStatus.textContent = "Повторная проверка тестовой сети…";
   try {
-    await selectActiveNode();
+    if (!(await refreshNodeStatus())) {
+      throw new Error("Сеть не подтверждена; транзакция не отправлена.");
+    }
     const healthResponse = await fetch(nodeUrl("/health"));
     if (!healthResponse.ok) throw new Error("Локальный узел не отвечает.");
     const currentNetwork = await healthResponse.json();
@@ -1516,7 +1542,7 @@ async function loadNodePolicy() {
   return nodePolicy;
 }
 
-async function selectActiveNode() {
+async function selectActiveNode(refreshSequence) {
   const epoch = accountEpoch;
   const policy = await loadNodePolicy();
   const controller = new AbortController();
@@ -1541,7 +1567,9 @@ async function selectActiveNode() {
         trustedTipHash: trust.tipHash,
       },
     );
-    if (epoch !== accountEpoch) throw new Error("wallet changed during node selection");
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) {
+      throw new Error("wallet or network changed during node selection");
+    }
     activeNodeUrl = selected.url;
     networkInfo = {
       ...selected.health,
@@ -1556,9 +1584,15 @@ async function selectActiveNode() {
 
 async function refreshNodeStatus() {
   const epoch = accountEpoch;
+  const refreshSequence = ++nodeRefreshSequence;
+  accountRefreshSequence += 1;
+  networkInfo = null;
+  activeNodeUrl = null;
+  clearAccountNumbers();
+  document.querySelector("#wallet-state").textContent = "Проверяем сеть и баланс…";
   try {
-    await selectActiveNode();
-    if (epoch !== accountEpoch) return;
+    await selectActiveNode(refreshSequence);
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
     const assetCheckpoint = document.querySelector("#asset-checkpoint");
     if (assetCheckpoint.dataset.state === "verified" &&
         Number(assetCheckpoint.dataset.height) !== networkInfo.height) {
@@ -1571,14 +1605,18 @@ async function refreshNodeStatus() {
     networkButton.classList.remove("offline");
     messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
     await refreshAccount();
+    return epoch === accountEpoch && refreshSequence === nodeRefreshSequence;
   } catch {
-    if (epoch !== accountEpoch) return;
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
     networkInfo = null;
     activeNodeUrl = null;
+    clearAccountNumbers();
+    document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · узлы недоступны";
     networkButton.textContent = "○ Nodes offline";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
     messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
+    return false;
   }
 }
 refreshNodeStatus();
