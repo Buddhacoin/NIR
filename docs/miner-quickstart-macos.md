@@ -84,6 +84,38 @@ the local service is disconnected, run `npm run mine:app` again and use the
 The page has a RU/EN switch. It defaults to the browser language and remembers
 your choice only for that particular local browser address, not across ports.
 
+### Double-click Mac app for a local operator rehearsal
+
+An experimental **source-built**, portrait `NIR Model Lab.app` opens its own
+window without a Terminal or browser tab. It is not a notarized, signed public
+release, an independent evaluator, or a miner that pays NIR. The source builder
+packages an explicit allowlist of local UI, Iris and pinned Qwen code, and records the
+absolute Node and Python runtimes already installed on the builder's Mac. It
+does not install those runtimes or download Qwen weights. If a runtime moves,
+the app refuses to start; a same-path runtime update is **not detected** or
+attested. Rebuild and retest after updates. Build only from a trusted source checkout:
+
+```bash
+npm run mine:macos-build -- "$PWD/NIR Model Lab.app"
+open "$PWD/NIR Model Lab.app"
+```
+
+The builder refuses to overwrite an existing app. The window is intentionally
+narrow and tall, with a RU/EN switch. Closing its last window stops the local
+service. To try pinned Qwen instead of Iris, prepare the separately documented
+Python 3.13 MLX environment, then select it **before** building:
+
+```bash
+NIR_MINING_PYTHON=/absolute/path/to/venv/bin/python npm run mine:macos-build -- "$PWD/NIR Model Lab.app"
+```
+
+Use a fresh destination for the second build. The app checks Qwen prerequisites
+without downloading weights, then asks for explicit consent before a bounded
+download. Its replay record is locally self-hashed, not signed independent
+evidence. No claim enters consensus and no wallet balance changes. This local
+build should be inspected and tested before sharing; it is not a website-hosted
+installer and has no notarization or external release audit.
+
 ### Advanced role wizard
 
 If you need a different role or developer transport check, run

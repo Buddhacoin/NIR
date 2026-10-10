@@ -73,7 +73,7 @@ function publicModelResult(result) {
 }
 
 export async function runPinnedModel(root) {
-  const { stdout } = await execFileAsync("python3", ["-m", "nir.iris_rehearsal"], {
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", ["-m", "nir.iris_rehearsal"], {
     cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",
     timeout: 30_000, maxBuffer: 16_384,
   });
@@ -139,7 +139,7 @@ function publicOpenModelResult(result) {
 }
 
 export async function runPinnedQwen(root) {
-  const { stdout } = await execFileAsync("python3", [
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
     "-m", "nir.open_model_local_run", "--prompt", QWEN_PROMPT,
     "--allow-1.5gb-download",
   ], {
@@ -154,7 +154,7 @@ export async function replayPinnedQwen(root, recordBytes) {
   try {
     const path = join(directory, "record.json");
     writeFileSync(path, recordBytes, { flag: "wx", mode: 0o600 });
-    const { stdout } = await execFileAsync("python3", [
+    const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
       "-m", "nir.open_model_local_run", "--replay-record", path,
       "--allow-1.5gb-download",
     ], {
@@ -178,7 +178,7 @@ function publicReplayResult(result) {
 }
 
 export async function checkPinnedQwenRuntime(root) {
-  const { stdout } = await execFileAsync("python3", [
+  const { stdout } = await execFileAsync(process.env.NIR_MINING_PYTHON ?? "python3", [
     "-m", "nir.open_model_local_run", "--check-runtime",
   ], {
     cwd: root, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, encoding: "utf8",

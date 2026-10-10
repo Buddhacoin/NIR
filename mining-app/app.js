@@ -17,6 +17,8 @@ const qwenExport = document.querySelector("#qwen-export");
 const qwenReplayFile = document.querySelector("#qwen-replay-file");
 const qwenReplay = document.querySelector("#qwen-replay");
 const qwenReplayState = document.querySelector("#qwen-replay-state");
+const nativeApp = typeof location !== "undefined" &&
+  new URLSearchParams(location.search).get("local-app") === "1";
 
 function canonicalReplayJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalReplayJson).join(",")}]`;
@@ -79,6 +81,7 @@ const copy = {
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
     offline: "● Локальный сервис отключён",
     offlineMessage: "Локальный сервис NIR недоступен. Повторно запустите `npm run mine:app` из доверенной копии NIR и используйте новую вкладку, которую откроет приложение. Старый адрес может больше не работать.",
+    offlineMessageNative: "Локальный сервис остановился. Закройте окно и снова откройте NIR Model Lab.app. Если ошибка повторится, проверьте локальную сборку и Node/Python; награды не было.",
     failed: "Локальная проверка не завершилась. Заявка не отправлена, награда не начислена.",
     invalid: "Результат локальной проверки не подтверждён. Награда не начислена.",
     score: (baseline, candidate, count) => `Точность: исходная модель ${baseline} %, улучшенная ${candidate} % · ${count} примеров.`,
@@ -98,7 +101,9 @@ const copy = {
     qwenStart: "Скачать и запустить Qwen локально",
     qwenConfirm: "Разрешить загрузку модели Qwen3-0.6B (около 1,5 ГБ; не более 4 ГиБ проверяемых файлов)? Программа проверит запас места для двух копий файлов и 1 ГиБ резерва. Это не майнинг и не начислит NIR.",
     qwenRunning: "Скачиваем закреплённые файлы и запускаем локальный вывод. Приложение проверяет состояние задания; это может занять до 30 минут. Не закрывайте вкладку.",
+    qwenRunningNative: "Скачиваем закреплённые файлы и запускаем локальный вывод. Это может занять до 30 минут. Не закрывайте окно приложения.",
     qwenFailed: "Модель не запустилась. Проверьте Apple Silicon, Python 3.13, установленные зависимости и подключение. Заявка не отправлена, награда не начислена.",
+    qwenFailedNative: "Модель не запустилась. Проверьте Apple Silicon, среду Python 3.13, выбранную при сборке, зависимости и подключение. Заявка не отправлена, награда не начислена.",
     qwenInvalid: "Результат локального запуска не подтверждён. Заявка не отправлена, награда не начислена.",
     qwenDone: "Локальный вывод выполнен. Независимой проверки и награды нет.",
     qwenAnswer: (answer) => `Ответ локального сервиса (не независимое свидетельство): ${answer}`,
@@ -112,9 +117,12 @@ const copy = {
     qwenReplayInvalid: "Выберите действительную запись JSON до 16 КБ. Файл не является доказательством выполнения.",
     qwenRuntimeChecking: "Проверяем локальную среду Qwen без загрузки модели…",
     qwenRuntimeUnavailable: "Не удалось проверить среду Qwen. Перезапустите приложение из доверенной копии NIR.",
+    qwenRuntimeUnavailableNative: "Не удалось проверить среду Qwen. Закройте окно и снова откройте NIR Model Lab.app; если ошибка повторится, пересоберите из доверенной копии NIR.",
     qwenUnsupported: "Для Qwen нужен Mac с Apple Silicon. На этом устройстве запуск недоступен.",
     qwenPython: "Для Qwen нужен Python 3.13. Установите его и запустите приложение с ним в PATH.",
+    qwenPythonNative: "Для Qwen нужен Python 3.13. Создайте новую локальную Mac-сборку, выбрав эту среду до сборки.",
     qwenDependencies: (name) => `Нет закреплённой зависимости ${name}. Создайте отдельную Python 3.13 venv, установите mlx==0.32.3, mlx-lm==0.32.0, transformers==5.17.0; запустите приложение из активированной venv.`,
+    qwenDependenciesNative: (name) => `Нет закреплённой зависимости ${name}. Нужна Python 3.13 venv с mlx==0.32.3, mlx-lm==0.32.0, transformers==5.17.0; затем создайте новую локальную Mac-сборку с ней.`,
     qwenReady: "Среда проверена локально. Загрузка модели начнётся только после подтверждения.",
   },
   en: {
@@ -130,6 +138,7 @@ const copy = {
     checking: "Checking the local service…", online: "● Local service connected",
     offline: "● Local service disconnected",
     offlineMessage: "The local NIR service is unavailable. Run `npm run mine:app` again from a trusted NIR checkout and use the new browser tab it opens. The old address may no longer work.",
+    offlineMessageNative: "The local service stopped. Close this window and reopen NIR Model Lab.app. If it persists, check the local build and Node/Python; no reward was issued.",
     failed: "The local check did not finish. No claim was submitted and no reward was credited.",
     invalid: "The local result could not be verified. No reward was credited.",
     score: (baseline, candidate, count) => `Accuracy: baseline ${baseline}%, candidate ${candidate}% · ${count} examples.`,
@@ -149,7 +158,9 @@ const copy = {
     qwenStart: "Download and run Qwen locally",
     qwenConfirm: "Allow the Qwen3-0.6B download (about 1.5 GB; up to 4 GiB of checked files)? The app checks free space for two file copies plus 1 GiB of headroom. This is not mining and will not credit NIR.",
     qwenRunning: "Downloading pinned files and running local inference. The app checks job progress; this can take up to 30 minutes. Keep this tab open.",
+    qwenRunningNative: "Downloading pinned files and running local inference. This can take up to 30 minutes. Keep the app window open.",
     qwenFailed: "The model could not run. Check Apple Silicon, Python 3.13, installed dependencies, and connectivity. No claim was submitted or reward credited.",
+    qwenFailedNative: "The model could not run. Check Apple Silicon, the Python 3.13 environment selected when building, dependencies, and connectivity. No claim was submitted or reward credited.",
     qwenInvalid: "The local result could not be confirmed. No claim was submitted or reward credited.",
     qwenDone: "Local inference completed. There was no independent verification or reward.",
     qwenAnswer: (answer) => `Local service answer (not independent evidence): ${answer}`,
@@ -163,9 +174,12 @@ const copy = {
     qwenReplayInvalid: "Choose a valid JSON record up to 16 KB. The file is not execution proof.",
     qwenRuntimeChecking: "Checking the local Qwen runtime without downloading a model…",
     qwenRuntimeUnavailable: "Could not check the Qwen runtime. Restart the app from a trusted NIR checkout.",
+    qwenRuntimeUnavailableNative: "Could not check the Qwen runtime. Close and reopen NIR Model Lab.app; if it persists, rebuild from a trusted NIR checkout.",
     qwenUnsupported: "Qwen requires an Apple Silicon Mac. It cannot run on this device.",
     qwenPython: "Qwen requires Python 3.13. Install it and start the app with that interpreter in PATH.",
+    qwenPythonNative: "Qwen requires Python 3.13. Make a new local Mac build with that environment selected before building.",
     qwenDependencies: (name) => `Pinned dependency ${name} is unavailable or has the wrong version. Create a separate Python 3.13 venv, install mlx==0.32.3, mlx-lm==0.32.0, transformers==5.17.0, and start the app from the activated venv.`,
+    qwenDependenciesNative: (name) => `Pinned dependency ${name} is missing or has the wrong version. Use a Python 3.13 venv with mlx==0.32.3, mlx-lm==0.32.0, transformers==5.17.0, then make a new local Mac build with it.`,
     qwenReady: "Local runtime checked. Model download starts only after confirmation.",
   },
 };
@@ -190,10 +204,11 @@ function qwenRuntimeMessage(t) {
   const status = qwenRuntime?.status;
   if (status === "pinned-qwen-runtime-ready") return t.qwenReady;
   if (status === "unsupported-machine") return t.qwenUnsupported;
-  if (status === "python-3.13-required") return t.qwenPython;
+  if (status === "python-3.13-required") return nativeApp ? t.qwenPythonNative : t.qwenPython;
   if (status === "missing-runtime" || status === "runtime-version-mismatch")
-    return t.qwenDependencies(qwenRuntime.package);
-  return status === "checking-runtime" ? t.qwenRuntimeChecking : t.qwenRuntimeUnavailable;
+    return (nativeApp ? t.qwenDependenciesNative : t.qwenDependencies)(qwenRuntime.package);
+  return status === "checking-runtime" ? t.qwenRuntimeChecking :
+    nativeApp ? t.qwenRuntimeUnavailableNative : t.qwenRuntimeUnavailable;
 }
 
 async function loadQwenRuntime() {
@@ -278,7 +293,9 @@ function render() {
   if (qwenStart) {
     qwenStart.disabled = !connected || qwenRunning || replayRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
-    qwenState.textContent = qwenStatus ? t[qwenStatus] : qwenRuntimeMessage(t);
+    qwenState.textContent = qwenStatus ?
+      (nativeApp && t[`${qwenStatus}Native`] ? t[`${qwenStatus}Native`] : t[qwenStatus]) :
+      qwenRuntimeMessage(t);
     if (qwenLastResult) {
       qwenAnswer.textContent = t.qwenAnswer(qwenLastResult.answer);
       qwenIdentity.textContent = t.qwenIdentity(qwenLastResult.packageIdentity);
@@ -289,7 +306,8 @@ function render() {
       qwenRuntime.status !== "pinned-qwen-runtime-ready" || !qwenReplayFile.files?.length;
     qwenReplayState.textContent = replayStatus ? t[replayStatus] : "";
   }
-  if (errorKind) errorMessage.textContent = t[errorKind];
+  if (errorKind) errorMessage.textContent = errorKind === "offlineMessage" && nativeApp ?
+    t.offlineMessageNative : t[errorKind];
   if (lastResult) {
     document.querySelector("#score").textContent = t.score(
       (lastResult.baselineAccuracyBps / 100).toFixed(2),
