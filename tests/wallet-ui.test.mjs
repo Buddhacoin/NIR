@@ -125,9 +125,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=37/);
-  assert.match(serviceWorker, /app\.js\?v=37/);
-  assert.match(serviceWorker, /nir-wallet-shell-v39/);
+  assert.match(html, /app\.js\?v=38/);
+  assert.match(serviceWorker, /app\.js\?v=38/);
+  assert.match(serviceWorker, /nir-wallet-shell-v40/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -289,7 +289,146 @@ test("wallet reports the local node connection state", () => {
   assert.match(script, /\/v1\/validator-handoffs/);
   assert.match(script, /bridgeRequest\("\/v1\/update-validator-trust"/);
   assert.match(script, /Кворум подтвердил баланс/);
-  assert.match(script, /данные одного узла/);
+  assert.match(script, /Баланс не подтверждён · ответ узла скрыт/);
+});
+
+test("wallet never displays an unverified node balance or stale verified balance", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const refreshSource = script.slice(script.indexOf("async function refreshAccount()"),
+    script.indexOf("function randomRequestId()"));
+  const nodes = new Map();
+  const document = { querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false, disabled: false });
+    return nodes.get(selector);
+  } };
+  nodes.set("#balance-value", { textContent: "5.00000000" });
+  const context = {
+    document, accountEpoch: 0, accountRefreshSequence: 0,
+    walletInfo: { address: `nir1${"a".repeat(64)}` },
+    networkInfo: { height: 3 },
+    readAccount: async () => ({ atomicBalance: "100000000000000", proofVerified: false,
+      resources: { atomicStake: "500000000", availableTransferCredits: "99",
+        pendingUnstake: { amount: "100000000", unlockHeight: 4 } } }),
+    formatAtomic: (value) => (BigInt(value) / 100000000n).toString(),
+    renderTransactions: () => {},
+  };
+  runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshAccount = refreshAccount;`, context);
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(nodes.get("#resource-stake").textContent, "—");
+  assert.equal(nodes.get("#resource-credits").textContent, "—");
+  assert.equal(nodes.get("#resource-unstake").textContent, "—");
+  assert.equal(nodes.get("#claim-unstake").hidden, true);
+  assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
+
+  context.readAccount = async () => ({ atomicBalance: "500000000", proofVerified: true,
+    proofHeight: 3, resources: { atomicStake: "0", availableTransferCredits: "2",
+      pendingUnstake: null } });
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "5");
+  assert.match(nodes.get("#wallet-state").textContent, /Кворум подтвердил баланс/);
+
+  context.readAccount = async () => { throw new Error("node offline"); };
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(nodes.get("#resource-credits").textContent, "—");
+  assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
+
+  context.readAccount = async () => ({ atomicBalance: "500000000", proofVerified: true,
+    proofHeight: 3, resources: { atomicStake: "bad", availableTransferCredits: "2",
+      pendingUnstake: null } });
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+
+  const pending = [];
+  context.readAccount = () => new Promise((resolve) => pending.push(resolve));
+  const older = context.refreshAccount();
+  const newer = context.refreshAccount();
+  pending[1]({ atomicBalance: "100000000", proofVerified: false });
+  await newer;
+  pending[0]({ atomicBalance: "99900000000", proofVerified: true,
+    proofHeight: 2, resources: { atomicStake: "0", availableTransferCredits: "0",
+      pendingUnstake: null } });
+  await older;
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+
+  const previousNetwork = context.refreshAccount();
+  context.networkInfo = { height: 4, networkId: "different" };
+  pending[2]({ atomicBalance: "77700000000", proofVerified: true,
+    proofHeight: 3, resources: { atomicStake: "0", availableTransferCredits: "0",
+      pendingUnstake: null } });
+  await previousNetwork;
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+});
+
+test("wallet clears a previously proven balance when node selection fails", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const refreshSource = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const nodes = new Map([["#balance-value", { textContent: "5.00000000" }],
+    ["#wallet-state", { textContent: "Кворум подтвердил баланс · блок 3" }]]);
+  const document = { querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false,
+      disabled: false, classList: { add() {}, remove() {} } });
+    return nodes.get(selector);
+  } };
+  const context = { document, accountEpoch: 0, accountRefreshSequence: 0,
+    nodeRefreshSequence: 0, networkInfo: { height: 3 }, activeNodeUrl: "http://127.0.0.1:1",
+    networkButton: { textContent: "", classList: { add() {}, remove() {} } },
+    messages: { network: [] }, selectActiveNode: async () => { throw new Error("offline"); } };
+  runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`,
+    context);
+  assert.equal(await context.refreshNodeStatus(), false);
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(nodes.get("#resource-stake").textContent, "—");
+  assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
+  assert.equal(context.networkInfo, null);
+});
+
+test("superseded node refresh cannot authorize a testnet submission", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const refreshSource = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const nodes = new Map();
+  const document = { querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false,
+      disabled: false, dataset: {}, classList: { add() {}, remove() {} } });
+    return nodes.get(selector);
+  } };
+  const pending = [];
+  const context = { document, accountEpoch: 0, accountRefreshSequence: 0,
+    nodeRefreshSequence: 0, networkInfo: { height: 3 },
+    activeNodeUrl: "http://127.0.0.1:1",
+    networkButton: { textContent: "", classList: { add() {}, remove() {} } },
+    messages: { network: [] }, assetsStatus: { textContent: "" },
+    selectActiveNode: () => new Promise((resolve) => pending.push(resolve)),
+    refreshAccount: async () => {},
+  };
+  runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`,
+    context);
+  const first = context.refreshNodeStatus();
+  const second = context.refreshNodeStatus();
+  pending[0]();
+  assert.equal(await first, false);
+  assert.equal(context.networkInfo, null);
+  context.networkInfo = { height: 4, networkId: "test", agreeingNodes: 2,
+    availableNodes: 2 };
+  pending[1]();
+  assert.equal(await second, true);
+});
+
+test("both explicit testnet submissions recheck network through the fail-closed refresh", () => {
+  for (const id of ["submit-resource", "submit-signed"]) {
+    const start = script.indexOf(`document.querySelector("#${id}").onclick =`);
+    assert.notEqual(start, -1);
+    const section = script.slice(start, start + 1100);
+    assert.match(section, /if \(!\(await refreshNodeStatus\(\)\)\) \{/);
+    assert.match(section, /throw new Error\("Сеть не подтверждена; транзакция не отправлена\."\)/);
+    assert.doesNotMatch(section, /await selectActiveNode\(\)/);
+  }
 });
 
 test("wallet creates and verifies signed payment requests before filling a transfer", () => {

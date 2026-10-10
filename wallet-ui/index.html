@@ -10,7 +10,7 @@
 <body>
   <main class="shell">
     <header><div class="brand"><img class="brand-logo" src="nir-coin-icon.png?v=24" alt=""><b>NIR</b></div><div class="header-actions"><button id="account-open" type="button" hidden>Кошелёк 1 ▾</button><button id="theme" aria-label="Сменить тему">☀</button><button class="network" data-action="network" aria-live="polite">● Local testnet</button></div></header>
-    <section class="balance"><p>Общий баланс</p><h1><span id="balance-value">0.00000000</span> <small>NIR</small></h1><span id="wallet-state" role="status" aria-live="polite">Тестовая сеть · реальные средства отключены</span></section>
+    <section class="balance"><p>Общий баланс</p><h1><span id="balance-value">—</span> <small>NIR</small></h1><span id="wallet-state" role="status" aria-live="polite">Баланс не подтверждён</span></section>
     <section class="actions">
       <button data-action="receive"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14m0 0 5-5m-5 5-5-5"/></svg></i>Получить</button><button data-action="send"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m0 0 5 5m-5-5-5 5"/></svg></i>Отправить</button><button data-action="mine"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="M18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg></i>Майнинг</button>
     </section>
@@ -124,7 +124,7 @@
     <button class="close" data-close="resources-panel" aria-label="Закрыть">×</button>
     <h2 id="resources-title">Ресурсы сети</h2>
     <p>Заблокированные NIR дают возобновляемые Transfer Credits. Это не доходность: монеты остаются вашими и превращаются в право проводить переводы без комиссии.</p>
-    <div class="resource-stats"><div><span>Заблокировано</span><b id="resource-stake">0.00000000 NIR</b></div><div><span>Доступно</span><b id="resource-credits">0 переводов</b></div><div><span>Вывод</span><b id="resource-unstake">Нет</b></div></div>
+    <div class="resource-stats"><div><span>Заблокировано</span><b id="resource-stake">—</b></div><div><span>Доступно</span><b id="resource-credits">—</b></div><div><span>Вывод</span><b id="resource-unstake">—</b></div></div>
     <details open><summary>Заблокировать NIR</summary><form id="stake-form"><label>Сумма NIR<input id="stake-amount" inputmode="decimal" placeholder="100.00000000" required></label><button class="primary" type="submit">Запросить подпись</button></form></details>
     <details><summary>Разрешить переводы другому адресу</summary><form id="delegation-form"><label>Адрес<input id="delegate-address" placeholder="nir1…" minlength="68" maxlength="68" required></label><label>Лимит переводов на эпоху<input id="delegate-limit" inputmode="numeric" min="0" max="1000000" placeholder="10" required></label><small>Укажите 0, чтобы отозвать действующее разрешение.</small><button class="primary" type="submit">Запросить подпись</button></form></details>
     <details><summary>Начать вывод</summary><form id="unstake-form"><label>Сумма NIR<input id="unstake-amount" inputmode="decimal" placeholder="100.00000000" required></label><button class="primary" type="submit">Запросить подпись</button></form><button class="secondary" id="claim-unstake" type="button" hidden>Подписать завершение вывода</button></details>
@@ -174,5 +174,5 @@
     <p class="warning">Не храните пароль рядом с vault. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=37"></script>
+  <script type="module" src="app.js?v=38"></script>
 </body></html>
