@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
   NirChain, PROGRESS_BOND_BINDING_TIMEOUT_BLOCKS,
-  createCandidateBond, createProgressCommitment, finalizeBlock,
+  createCandidateBond, createProgressCommitment, createTransfer,
+  createMultisigTransfer, createSponsoredTransfer, createCreditTransfer,
+  createDelegatedCreditTransfer, finalizeBlock,
 } from "../blockchain/chain.mjs";
 import {
   MIN_PROGRESS_CANDIDATE_BOND, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
+  MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
   TREASURY_VESTING_MS,
 } from "../blockchain/constants.mjs";
@@ -20,6 +26,13 @@ import {
   createProtocolUpgradeAuthorizationPayload,
 } from "../blockchain/protocol-upgrade-authorization.mjs";
 import { createStateSnapshot, restoreStateSnapshot } from "../blockchain/state-snapshot.mjs";
+import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
+import { createWalletFile } from "../blockchain/wallet-files.mjs";
+import { createAccountProof, verifyAccountProof } from "../blockchain/account-proof.mjs";
+import { createFinalityProof, verifyFinalityProofChain } from "../blockchain/light-client.mjs";
+import { saveWalletTrustCheckpoint } from "../blockchain/wallet-trust-store.mjs";
+import { invalidGenesisBoundTransfersForNextBlock, TransactionMempool }
+  from "../blockchain/distributed-node.mjs";
 
 const digest = (text) => createHash("sha256").update(text).digest("hex");
 const members = (wallets, prefix) => wallets.map((wallet, index) => ({
@@ -252,4 +265,280 @@ test("v35 activation cancels pending v34 commitment, refunds bond, and restores 
     { expectedNetworkId: left.networkId, trustedValidators: config.validators });
   assert.equal(restored.consensusSnapshot().state.progressCommitments.length, 0);
   assert.equal(restored.stateRoot, left.stateRoot);
+});
+
+test("v36 first block requires genesis-bound ordinary transfer; foreign genesis and nonce are atomic", () => {
+  const { append, config, left, right, treasury, upgrade, validators } = fixture();
+  const recipient = generateWallet();
+  upgrade(left, 35);
+  upgrade(right, 36);
+  const legacy = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1000", nonce: 0 });
+  const bound = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1000", nonce: 0,
+    chainIdentityGenesisHash: left.blocks()[0].hash });
+  assert.throws(() => append(left, [bound]), /not active/i);
+  assert.throws(() => upgrade(left, 36, [legacy]), /genesis/i);
+  assert.equal(left.protocolVersion, 35);
+  assert.equal(left.nextNonce(treasury.address), 0);
+  const proposal = left.buildBlock({ transactions: [bound],
+    timestamp: Math.max(left.blocks().at(-1).timestamp + 1, TREASURY_VESTING_MS + 1) });
+  assert.equal(proposal.protocolVersion, 36);
+  const signers = [validators.find(({ address }) => address === proposal.proposer),
+    ...validators.filter(({ address }) => address !== proposal.proposer).slice(0, 2)];
+  const downgraded = finalizeBlock({ ...proposal, protocolVersion: 35 }, signers);
+  assert.throws(() => left.appendBlock(downgraded), /protocol version|activation height/i);
+  append(left, [bound]);
+  assert.equal(left.protocolVersion, 36);
+  assert.equal(left.balance(recipient.address), 1000n);
+  assert.throws(() => append(right, [bound]), /genesis/i);
+  assert.equal(right.nextNonce(treasury.address), 0);
+  assert.equal(right.balance(recipient.address), 0n);
+  assert.throws(() => append(left, [bound]), /nonce|duplicat/i);
+  assert.throws(() => append(left, [{ ...bound, unexpected: true }]), /schema/i);
+  const malformed = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1000", nonce: 1, chainIdentityGenesisHash: "not-a-hash" });
+  assert.throws(() => append(left, [malformed]), /genesis/i);
+  assert.equal(left.nextNonce(treasury.address), 1);
+  const snapshot = createStateSnapshot(left, validators.slice(0, 3));
+  const restored = restoreStateSnapshot({ ...config, genesisTimestamp: 0 }, snapshot,
+    { expectedNetworkId: left.networkId, trustedValidators: config.validators });
+  assert.equal(restored.protocolVersion, 36);
+  assert.equal(restored.stateRoot, left.stateRoot);
+  assert.equal(restored.balance(recipient.address), 1000n);
+});
+
+test("v36 genesis gate covers multisig, sponsored and credit transfer variants", () => {
+  const { append, left, treasury, upgrade } = fixture();
+  const recipient = generateWallet();
+  const sender = generateWallet();
+  const sponsor = generateWallet();
+  const members = [generateWallet(), generateWallet()];
+  upgrade(left, 36);
+  const genesis = left.blocks()[0].hash;
+  const multisig = createMultisigTransfer({ signerWallets: members,
+    memberPublicKeys: members.map(({ publicKey }) => publicKey), threshold: 2,
+    networkId: left.networkId, recipient: recipient.address, amount: "1", nonce: 0,
+    chainIdentityGenesisHash: genesis });
+  const fund = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: multisig.sender, amount: "100000", nonce: 0,
+    chainIdentityGenesisHash: genesis });
+  append(left, [fund]);
+  assert.throws(() => append(left, [createMultisigTransfer({ signerWallets: members,
+    memberPublicKeys: members.map(({ publicKey }) => publicKey), threshold: 2,
+    networkId: left.networkId, recipient: recipient.address, amount: "1", nonce: 0 })]), /genesis/i);
+  append(left, [multisig]);
+  assert.equal(left.balance(recipient.address), 1n);
+  append(left, [
+    createTransfer({ wallet: treasury, networkId: left.networkId,
+      recipient: sender.address, amount: "100000", nonce: 1,
+      chainIdentityGenesisHash: genesis }),
+    createTransfer({ wallet: treasury, networkId: left.networkId,
+      recipient: sponsor.address, amount: "100000", nonce: 2,
+      chainIdentityGenesisHash: genesis }),
+  ]);
+  const sponsored = createSponsoredTransfer({ wallet: sender, sponsorWallet: sponsor,
+    networkId: left.networkId, recipient: recipient.address, amount: "1",
+    nonce: 0, sponsorNonce: 0, chainIdentityGenesisHash: genesis });
+  append(left, [sponsored]);
+  assert.equal(left.balance(recipient.address), 2n);
+  assert.equal(left.nextNonce(sponsor.address), 1);
+  const cases = [
+    createSponsoredTransfer({ wallet: sender, sponsorWallet: sponsor, networkId: left.networkId,
+      recipient: recipient.address, amount: "1", nonce: 1, sponsorNonce: 1 }),
+    createCreditTransfer({ wallet: sender, networkId: left.networkId,
+      recipient: recipient.address, amount: "1", nonce: 1 }),
+    createDelegatedCreditTransfer({ wallet: sender, creditOwner: sponsor.address,
+      networkId: left.networkId, recipient: recipient.address, amount: "1", nonce: 1 }),
+  ];
+  for (const legacy of cases) assert.throws(() => append(left, [legacy]), /genesis/i);
+  assert.equal(left.nextNonce(sender.address), 1);
+  assert.equal(left.nextNonce(sponsor.address), 1);
+});
+
+test("v35 queued transfer is pruned before first v36 proposal; bound transfer remains", () => {
+  const { append, left, treasury, upgrade } = fixture();
+  const recipient = generateWallet();
+  upgrade(left, 35);
+  const legacy = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1", nonce: 0 });
+  const pool = new TransactionMempool();
+  pool.add(legacy);
+  assert.equal(pool.size, 1);
+  const v35 = left.buildBlock({ transactions: pool.take(),
+    timestamp: left.blocks().at(-1).timestamp + 1 });
+  left.validateProposal(v35);
+  upgrade(left, 36);
+  assert.throws(() => left.validateProposal(left.buildBlock({ transactions: pool.take(),
+    timestamp: left.blocks().at(-1).timestamp + 1 })), /genesis/i);
+  const invalid = invalidGenesisBoundTransfersForNextBlock(pool.values(), {
+    chainIdentityGenesisHash: left.blocks()[0].hash, protocolVersion: 36 });
+  assert.deepEqual(invalid, [legacy]);
+  pool.remove(invalid);
+  const bound = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: recipient.address, amount: "1", nonce: 0,
+    chainIdentityGenesisHash: left.blocks()[0].hash });
+  pool.add(bound);
+  assert.deepEqual(invalidGenesisBoundTransfersForNextBlock(pool.values(), {
+    chainIdentityGenesisHash: left.blocks()[0].hash, protocolVersion: 36 }), []);
+  append(left, pool.take());
+  assert.equal(left.balance(recipient.address), 1n);
+});
+
+test("v36 wallet bridge signs trusted genesis, ignoring browser-selected genesis", async () => {
+  const { append, config, left, treasury, upgrade, validators } = fixture();
+  upgrade(left, 36);
+  const directory = mkdtempSync(join(tmpdir(), "nir-v36-bridge-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const password = "v36-wallet-bridge-test-password";
+  const wallet = createWalletFile({ path: vaultPath, password });
+  const recipient = generateWallet();
+  const fund = createTransfer({ wallet: treasury, networkId: left.networkId,
+    recipient: wallet.address, amount: "100000", nonce: 0,
+    chainIdentityGenesisHash: left.blocks()[0].hash });
+  append(left, [fund]);
+  const account = left.accountStateProof(wallet.address);
+  const proof = createAccountProof({ account: account.account,
+    accountStateRoot: account.accountStateRoot, inclusionProof: account.inclusionProof,
+    height: left.height, networkId: left.networkId, protocolVersion: 36,
+    stateRoot: left.stateRoot, tipHash: left.tipHash,
+    validators: config.validators, validatorWallets: validators.slice(0, 3) });
+  const origin = "http://127.0.0.1:8765";
+  const token = "9".repeat(64);
+  const genesis = left.blocks()[0];
+  verifyFinalityProofChain(left.blocks().slice(1).map(createFinalityProof), {
+    checkpoint: { height: 0, tipHash: genesis.hash, stateRoot: genesis.stateRoot,
+      accountStateRoot: genesis.accountStateRoot, validatorSetId: left.validatorSetId,
+      protocolVersion: genesis.protocolVersion,
+      pendingProtocolUpgrade: genesis.pendingProtocolUpgrade ?? null },
+    expectedNetworkId: left.networkId, expectedChainIdentityGenesisHash: genesis.hash,
+    protocolUpgradeReleaseAnchor: config.protocolUpgradeReleaseAnchor,
+    trustedValidators: config.validators, handoffs: [],
+  });
+  let missingAnchorAuthorizations = 0;
+  const missingAnchor = createWalletBridgeServer({
+    authorize: async () => { missingAnchorAuthorizations += 1; return password; },
+    origin, sessionToken: token, vaultPath,
+    trustAnchor: { expectedNetworkId: left.networkId,
+      handoffs: [], trustedValidators: config.validators },
+  });
+  try {
+    await new Promise((resolve) => missingAnchor.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${missingAnchor.address().port}`;
+    const send = (path, body) => fetch(`${base}${path}`, { method: "POST",
+      headers: { "content-type": "application/json", origin,
+        "x-nir-bridge-token": token }, body: JSON.stringify(body) });
+    const verified = await send("/v1/verify-account-proof", {
+      address: wallet.address, minimumHeight: left.height, proof });
+    assert.equal(verified.status, 200);
+    const signIntent = { amount: "1", fee: MIN_TRANSFER_FEE.toString(),
+      networkId: left.networkId, nonce: 0, recipient: recipient.address,
+      requestId: "a".repeat(64) };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const simulated = await send("/v1/simulate-transaction", {
+        intent: { amount: signIntent.amount, fee: signIntent.fee,
+          networkId: signIntent.networkId, nonce: 0,
+          recipient: signIntent.recipient, type: "transfer" },
+        network: { height: left.height, networkId: left.networkId },
+        verifiedAccount: { address: wallet.address, height: left.height, proofVerified: true } });
+      assert.equal(simulated.status, 200);
+      const { simulation } = await simulated.json();
+      const denied = await send("/v1/sign", {
+        ...signIntent, simulationId: simulation.simulationId });
+      assert.equal(denied.status, 400);
+      assert.match((await denied.json()).error, /trusted genesis checkpoint/i);
+    }
+    assert.equal(missingAnchorAuthorizations, 0);
+    assert.equal(left.nextNonce(wallet.address), 0);
+  } finally {
+    missingAnchor.closeAllConnections?.();
+    await new Promise((resolve) => missingAnchor.close(resolve));
+  }
+  const checkpointPath = join(directory, "wallet.trust.json");
+  const statement = verifyAccountProof(proof, {
+    expectedAddress: wallet.address, expectedNetworkId: left.networkId,
+    minimumHeight: left.height, trustedValidators: config.validators,
+  });
+  saveWalletTrustCheckpoint(checkpointPath, statement);
+  let missingReleaseAuthorizations = 0;
+  const missingRelease = createWalletBridgeServer({
+    authorize: async () => { missingReleaseAuthorizations += 1; return password; },
+    origin, sessionToken: token, vaultPath, trustCheckpointPath: checkpointPath,
+    trustAnchor: { expectedNetworkId: left.networkId,
+      genesisCheckpoint: { accountStateRoot: genesis.accountStateRoot,
+        height: 0, stateRoot: genesis.stateRoot, tipHash: genesis.hash,
+        validatorSetId: left.validatorSetId, protocolVersion: genesis.protocolVersion,
+        pendingProtocolUpgrade: genesis.pendingProtocolUpgrade ?? null },
+      handoffs: [], trustedValidators: config.validators },
+  });
+  try {
+    await new Promise((resolve) => missingRelease.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${missingRelease.address().port}`;
+    const send = (path, body) => fetch(`${base}${path}`, { method: "POST",
+      headers: { "content-type": "application/json", origin,
+        "x-nir-bridge-token": token }, body: JSON.stringify(body) });
+    const verified = await send("/v1/verify-account-proof", {
+      address: wallet.address, minimumHeight: left.height, proof });
+    assert.equal(verified.status, 200);
+    const simulated = await send("/v1/simulate-transaction", {
+      intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(),
+        networkId: left.networkId, nonce: 0,
+        recipient: recipient.address, type: "transfer" },
+      network: { height: left.height, networkId: left.networkId },
+      verifiedAccount: { address: wallet.address, height: left.height, proofVerified: true } });
+    assert.equal(simulated.status, 200);
+    const { simulation } = await simulated.json();
+    const denied = await send("/v1/sign", { amount: "1", fee: MIN_TRANSFER_FEE.toString(),
+      networkId: left.networkId, nonce: 0, recipient: recipient.address,
+      requestId: "b".repeat(64), simulationId: simulation.simulationId });
+    assert.equal(denied.status, 400);
+    assert.match((await denied.json()).error, /trusted release anchor/i);
+    assert.equal(missingReleaseAuthorizations, 0);
+    assert.equal(left.nextNonce(wallet.address), 0);
+  } finally {
+    missingRelease.closeAllConnections?.();
+    await new Promise((resolve) => missingRelease.close(resolve));
+  }
+  const server = createWalletBridgeServer({ authorize: async () => password,
+    origin, sessionToken: token, vaultPath,
+    trustAnchor: { expectedNetworkId: left.networkId,
+      genesisCheckpoint: { accountStateRoot: genesis.accountStateRoot,
+        height: 0, stateRoot: genesis.stateRoot, tipHash: genesis.hash,
+        validatorSetId: left.validatorSetId, protocolVersion: genesis.protocolVersion,
+        pendingProtocolUpgrade: genesis.pendingProtocolUpgrade ?? null },
+      handoffs: [], trustedValidators: config.validators,
+      protocolUpgradeReleaseAnchor: config.protocolUpgradeReleaseAnchor } });
+  const post = (base, path, body) => fetch(`${base}${path}`, {
+    method: "POST", headers: { "content-type": "application/json", origin,
+      "x-nir-bridge-token": token }, body: JSON.stringify(body) });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const finality = await post(base, "/v1/verify-finality-chain", {
+      proofs: left.blocks().slice(1).map(createFinalityProof) });
+    assert.equal(finality.status, 200, JSON.stringify(await finality.json()));
+    const verified = await post(base, "/v1/verify-account-proof", {
+      address: wallet.address, minimumHeight: left.height, proof });
+    assert.equal(verified.status, 200, JSON.stringify(await verified.json()));
+    const simulated = await post(base, "/v1/simulate-transaction", {
+      intent: { amount: "1", fee: MIN_TRANSFER_FEE.toString(),
+        networkId: left.networkId, nonce: 0, recipient: recipient.address, type: "transfer" },
+      network: { height: left.height, networkId: left.networkId },
+      verifiedAccount: { address: wallet.address, height: left.height, proofVerified: true } });
+    const { simulation } = await simulated.json();
+    assert.equal(simulated.status, 200, JSON.stringify({ simulation }));
+    const signed = await post(base, "/v1/sign", { amount: "1",
+      fee: MIN_TRANSFER_FEE.toString(), networkId: left.networkId, nonce: 0,
+      recipient: recipient.address, requestId: "c".repeat(64),
+      simulationId: simulation.simulationId, chainIdentityGenesisHash: "f".repeat(64) });
+    const { transaction } = await signed.json();
+    assert.equal(signed.status, 200, JSON.stringify({ transaction }));
+    assert.equal(transaction.chainIdentityGenesisHash, genesis.hash);
+    append(left, [transaction]);
+    assert.equal(left.balance(recipient.address), 1n);
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

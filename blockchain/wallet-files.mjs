@@ -501,12 +501,14 @@ export function restoreVerifiedWalletBackup({
   }
 }
 
-export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee }) {
+export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee,
+  chainIdentityGenesisHash }) {
   const wallet = decryptWallet(readVault(path), password);
   try {
     return createTransfer({
       wallet, networkId, recipient, amount, nonce,
       ...(fee === undefined ? {} : { fee }),
+      ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     });
   } finally {
     wallet.privateKey = "";

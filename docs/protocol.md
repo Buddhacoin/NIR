@@ -178,6 +178,24 @@ This is **not** a genesis-binding fix for transfers or other transaction types,
 or for reward escrows accepted before activation. It does not establish a
 public network or independently earned reward.
 
+Proposed protocol v36 (not active on the default v24 chain) requires the signed
+`chainIdentityGenesisHash` on every new NIR `transfer`, including multisignature,
+sponsored, and transfer-credit variants. The first v36 block rejects unbound
+transfers; v24–v35 history retains its original signatures and replay rules.
+The local wallet bridge can derive this field only from a configured, trusted
+genesis checkpoint after verifying a matching v36 account/finality proof; a
+browser-provided genesis value is not a trust anchor. Operators must provision
+the genesis and authorized release anchor for upgrades before this path works.
+Nodes discard queued wrong-era transfers before proposing the activation block;
+an unbound transfer accepted into a v35 mempool is not carried into v36, and no
+fee or nonce is spent by that discard. If this leaves no transaction or operator
+event, the current coordinator's empty-mempool policy still requires fresh
+valid activity to advance height; the wallet must re-sign for v36.
+This does **not** bind native-asset transfers, other signed transaction types,
+legacy escrow claims, or offline signing packages; those remain separate review
+and migration blockers. A passing local transfer test is not a public network,
+test reward, or launch approval.
+
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
 whole reward block is invalid. A lone claim in the first issuance epoch must

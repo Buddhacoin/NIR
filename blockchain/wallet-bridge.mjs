@@ -2,6 +2,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { nativeAssetId } from "./chain.mjs";
+import { TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION } from "./constants.mjs";
+import { validateProtocolUpgradeReleaseAnchor } from "./protocol-upgrade-authorization.mjs";
 
 import {
   signWalletPaymentRequest,
@@ -84,6 +86,8 @@ const SAFE_CLIENT_ERRORS = new Set([
   "account proof trust anchor does not match",
   "signing was rejected by the user",
   "bridge session ended before signing authorization completed",
+  "v36 transfer requires a trusted genesis checkpoint",
+  "v36 transfer requires a trusted release anchor",
   "wallet account changed during the request",
 ]);
 
@@ -389,6 +393,12 @@ export function createWalletBridgeServer({
   } : null;
   const genesisCheckpoint = trustAnchor?.genesisCheckpoint
     ? structuredClone(trustAnchor.genesisCheckpoint) : null;
+  const protocolUpgradeReleaseAnchor = trustAnchor?.protocolUpgradeReleaseAnchor
+    ? validateProtocolUpgradeReleaseAnchor(trustAnchor.protocolUpgradeReleaseAnchor,
+      accountTrust.expectedNetworkId) : null;
+  if (protocolUpgradeReleaseAnchor && !genesisCheckpoint) {
+    throw new Error("protocol release anchor requires a genesis checkpoint");
+  }
   if (accountTrust) {
     advanceValidatorTrust(accountTrust);
   }
@@ -867,8 +877,11 @@ export function createWalletBridgeServer({
         const base = restartsFromPersisted ? persistedBase : (verifiedFinalityTip ?? persistedBase);
         const nextTip = verifyFinalityProofChain(body?.proofs, {
           checkpoint: base,
+          expectedChainIdentityGenesisHash: protocolUpgradeReleaseAnchor
+            ? genesisCheckpoint.tipHash : null,
           expectedNetworkId: accountTrust.expectedNetworkId,
           handoffs: accountTrust.handoffs,
+          protocolUpgradeReleaseAnchor,
           trustedValidators: accountTrust.trustedValidators,
         });
         if (headerHistoryPath) {
@@ -1142,6 +1155,20 @@ export function createWalletBridgeServer({
         const reviewedSimulationId = simulationForSigning({
           body, intent, pathname: url.pathname, simulations, verifiedAccountStates, walletAddress,
         });
+        const signerProof = verifiedAccountStates.get(walletAddress);
+        const transferGenesisHash = url.pathname === "/v1/sign" &&
+          signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION
+          ? genesisCheckpoint?.tipHash : undefined;
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !transferGenesisHash) {
+          throw new Error("v36 transfer requires a trusted genesis checkpoint");
+        }
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !protocolUpgradeReleaseAnchor) {
+          throw new Error("v36 transfer requires a trusted release anchor");
+        }
         seen.add(intent.requestId);
         if (seen.size > 1_000) seen.delete(seen.values().next().value);
         pruneSignResults();
@@ -1165,6 +1192,12 @@ export function createWalletBridgeServer({
           if (!sessionActive || signingGeneration !== sessionGeneration) {
             throw new Error("bridge session ended before signing authorization completed");
           }
+          const currentSignerProof = verifiedAccountStates.get(walletAddress);
+          if (!currentSignerProof || currentSignerProof.tipHash !== signerProof.tipHash ||
+              currentSignerProof.stateRoot !== signerProof.stateRoot ||
+              currentSignerProof.protocolVersion !== signerProof.protocolVersion) {
+            throw new Error("wallet account changed during the request");
+          }
           const { requestId, ...payload } = intent;
           const transaction = url.pathname === "/v1/sign-resource"
             ? signWalletResourceOperation({ path: activeVaultPath, password, operation: payload })
@@ -1172,7 +1205,8 @@ export function createWalletBridgeServer({
               ? signWalletPaymentRequest({
                 path: activeVaultPath, password, intent: { ...payload, requestId },
               })
-              : signWalletTransfer({ path: activeVaultPath, password, ...payload });
+              : signWalletTransfer({ path: activeVaultPath, password, ...payload,
+                ...(transferGenesisHash === undefined ? {} : { chainIdentityGenesisHash: transferGenesisHash }) });
           const value = {
             requestId,
             ...(reviewedSimulationId ? { simulationId: reviewedSimulationId } : {}),

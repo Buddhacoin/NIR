@@ -38,6 +38,7 @@ import {
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
   PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION,
+  TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
@@ -571,7 +572,7 @@ const TRANSACTION_SCHEMAS = Object.freeze({
       "algorithm", "amount", "fee", "memberPublicKeys", "networkId", "nonce",
       "recipient", "sender", "signatures", "threshold", "type",
     ],
-  ],
+  ].flatMap((fields) => [fields, [...fields, "chainIdentityGenesisHash"]]),
 });
 
 function requireExactTransactionSchema(transaction) {
@@ -611,10 +612,12 @@ export function createTransfer({
   amount,
   nonce,
   fee = MIN_TRANSFER_FEE.toString(),
+  chainIdentityGenesisHash,
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: String(fee),
     networkId,
     nonce,
@@ -698,6 +701,7 @@ export function createSponsoredTransfer({
   sponsorNonce,
   fee = MIN_TRANSFER_FEE.toString(),
   useCredits = false,
+  chainIdentityGenesisHash,
 }) {
   if (!sponsorWallet || sponsorWallet.address === wallet?.address) {
     throw new Error("a sponsored transfer requires a distinct fee payer");
@@ -705,6 +709,7 @@ export function createSponsoredTransfer({
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: useCredits ? "0" : String(fee),
     feePayer: sponsorWallet.address,
     feePayerAlgorithm: SIGNATURE_ALGORITHM,
@@ -728,10 +733,11 @@ export function createSponsoredTransfer({
   };
 }
 
-export function createCreditTransfer({ wallet, networkId, recipient, amount, nonce }) {
+export function createCreditTransfer({ wallet, networkId, recipient, amount, nonce, chainIdentityGenesisHash }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: "0",
     networkId,
     nonce,
@@ -745,13 +751,14 @@ export function createCreditTransfer({ wallet, networkId, recipient, amount, non
 }
 
 export function createDelegatedCreditTransfer({
-  wallet, creditOwner, networkId, recipient, amount, nonce,
+  wallet, creditOwner, networkId, recipient, amount, nonce, chainIdentityGenesisHash,
 }) {
   assertAddress(creditOwner, "credit owner");
   if (creditOwner === wallet?.address) throw new Error("delegated credit owner must be distinct");
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     creditOwner,
     fee: "0",
     networkId,
@@ -982,11 +989,13 @@ export function createMultisigTransfer({
   amount,
   nonce,
   fee = MIN_TRANSFER_FEE.toString(),
+  chainIdentityGenesisHash,
 }) {
   const descriptor = multisigDescriptor(memberPublicKeys, threshold);
   const transaction = {
     algorithm: MULTISIG_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: String(fee),
     memberPublicKeys: descriptor.memberPublicKeys,
     networkId,
@@ -4202,7 +4211,7 @@ export class NirChain {
 
   #applyTransfer(
     transaction, balances, nonces, proposer, timestamp, height,
-    creditStakes, creditUsage, creditDelegations,
+    creditStakes, creditUsage, creditDelegations, protocolVersion,
   ) {
     if (transaction.type !== "transfer") throw new Error("unknown transaction type");
     if (![SIGNATURE_ALGORITHM, MULTISIG_ALGORITHM].includes(transaction.algorithm)) {
@@ -4210,6 +4219,13 @@ export class NirChain {
     }
     if (transaction.networkId !== this.#networkId) {
       throw new Error("transaction belongs to another network");
+    }
+    if (protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION) {
+      if (transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+        throw new Error("transfer belongs to another genesis");
+      }
+    } else if (transaction.chainIdentityGenesisHash !== undefined) {
+      throw new Error("genesis-bound transfer is not active");
     }
     assertAddress(transaction.recipient, "transfer recipient");
     const unsigned = unsignedTransaction(transaction);
@@ -6379,7 +6395,7 @@ export class NirChain {
       if (transaction.type === "transfer") {
         this.#applyTransfer(
           transaction, balances, nonces, block.feeRecipient, block.timestamp,
-          block.height, creditStakes, creditUsage, creditDelegations,
+          block.height, creditStakes, creditUsage, creditDelegations, protocolState.protocolVersion,
         );
       } else if (transaction.type === "candidate-bond") {
         this.#applyCandidateBond(

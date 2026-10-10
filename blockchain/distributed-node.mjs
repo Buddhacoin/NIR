@@ -44,6 +44,7 @@ import {
   MAX_TRANSACTIONS_PER_BLOCK,
   MIN_TRANSFER_FEE,
   SAFETY_POLICY_V1_COMMITMENT,
+  TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION,
 } from "./constants.mjs";
 import { canonicalJson, generateWallet, hashObject, publicWallet, verifyObject } from "./crypto.mjs";
 import {
@@ -521,6 +522,19 @@ export function invalidValidatorAdmissionsForNextBlock(transactions, {
     } catch { invalid.push(transaction); }
   }
   return invalid;
+}
+
+export function invalidGenesisBoundTransfersForNextBlock(transactions, {
+  chainIdentityGenesisHash, protocolVersion,
+} = {}) {
+  if (!Array.isArray(transactions) || !Number.isSafeInteger(protocolVersion) ||
+      !/^[0-9a-f]{64}$/.test(chainIdentityGenesisHash ?? "")) {
+    throw new Error("transfer pruning context is invalid");
+  }
+  return transactions.filter((transaction) => transaction?.type === "transfer" &&
+    (protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION
+      ? transaction.chainIdentityGenesisHash !== chainIdentityGenesisHash
+      : transaction.chainIdentityGenesisHash !== undefined));
 }
 
 function proposalFields(block) {
@@ -1491,13 +1505,17 @@ export class ValidatorReplica {
   #pruneInvalidValidatorAdmissions() {
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
     const nextProtocolVersion = this.#chain.buildBlock({ transactions: [], timestamp }).protocolVersion;
-    const invalid = invalidValidatorAdmissionsForNextBlock(this.#mempool.values(), {
+    const pending = this.#mempool.values();
+    const invalid = invalidValidatorAdmissionsForNextBlock(pending, {
       chainIdentityGenesisHash: this.#chain.blocks()[0].hash,
       currentHeight: this.#chain.height + 1,
       networkId: this.#chain.networkId,
       nextNonce: (address) => this.#chain.nextNonce(address),
       protocolVersion: nextProtocolVersion,
-    });
+    }).concat(invalidGenesisBoundTransfersForNextBlock(pending, {
+      chainIdentityGenesisHash: this.#chain.blocks()[0].hash,
+      protocolVersion: nextProtocolVersion,
+    }));
     this.#mempool.remove(invalid);
     for (const transaction of invalid) {
       const id = transactionId(transaction);
@@ -2139,13 +2157,17 @@ export class DistributedCoordinator {
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
     const nextProtocolVersion = this.#chain.buildBlock({ transactions: [], timestamp,
       protocolUpgrade }).protocolVersion;
-    const invalid = invalidValidatorAdmissionsForNextBlock(this.#mempool.values(), {
+    const pending = this.#mempool.values();
+    const invalid = invalidValidatorAdmissionsForNextBlock(pending, {
       chainIdentityGenesisHash: this.#chain.blocks()[0].hash,
       currentHeight: this.#chain.height + 1,
       networkId: this.#chain.networkId,
       nextNonce: (address) => this.#chain.nextNonce(address),
       protocolVersion: nextProtocolVersion,
-    });
+    }).concat(invalidGenesisBoundTransfersForNextBlock(pending, {
+      chainIdentityGenesisHash: this.#chain.blocks()[0].hash,
+      protocolVersion: nextProtocolVersion,
+    }));
     this.#mempool.remove(invalid);
     return invalid.length;
   }
