@@ -1,7 +1,9 @@
 import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from "./crypto.js";
 import { createSessionGuard, reloadAfterPendingWrite } from "./session-guard.js";
+import { applyStaticLocale, localize } from "./i18n.js";
 
 const STORE_KEY = "nirTestWallet";
+const LOCALE_KEY = "nirWalletLocale";
 const extensionApi = globalThis.browser ?? globalThis.chrome;
 const $ = (selector) => document.querySelector(selector);
 let profile = null;
@@ -14,6 +16,23 @@ let revealed = null;
 let sessionGeneration = 0;
 let sessionExpired = false;
 let profileWrite = null;
+let locale = "ru";
+let lastStatus = null;
+
+function refreshLocale() {
+  applyStaticLocale(locale);
+  if ($("#account-label").textContent) {
+    $("#account-label").textContent = localize(`Адрес ${selectedIndex + 1}`, locale);
+  }
+  for (const button of $("#account-list").querySelectorAll("button[data-index]")) {
+    const index = Number(button.dataset.index);
+    button.querySelector("strong").textContent = localize(`Адрес ${index + 1}${index === selectedIndex ? " ✓" : ""}`, locale);
+  }
+  for (const label of $("#confirm-fields").querySelectorAll("label[data-position]")) {
+    label.firstChild.textContent = localize(`Слово № ${Number(label.dataset.position) + 1}`, locale);
+  }
+  if (lastStatus) $("#status").textContent = localize(lastStatus, locale);
+}
 
 function assertSession(generation) {
   if (sessionExpired || generation !== sessionGeneration) throw new Error("Сеанс кошелька завершён");
@@ -47,12 +66,14 @@ function screen(name) {
   if (name !== "restore") $("#restore-form").reset();
   for (const section of document.querySelectorAll("main > section")) section.hidden = section.id !== name;
   $("#status").textContent = "";
+  lastStatus = null;
   $("#status").classList.remove("ok");
   if (name !== "reveal") hideRevealed();
 }
 
 function status(message, ok = false) {
-  $("#status").textContent = message;
+  lastStatus = message;
+  $("#status").textContent = localize(message, locale);
   $("#status").classList.toggle("ok", ok);
 }
 
@@ -98,7 +119,7 @@ async function renderHome() {
   const generation = sessionGeneration;
   const account = await currentAccount();
   assertSession(generation);
-  $("#account-label").textContent = `Адрес ${selectedIndex + 1}`;
+  $("#account-label").textContent = localize(`Адрес ${selectedIndex + 1}`, locale);
   $("#short-address").textContent = shortAddress(account.address);
   $("#full-address").textContent = account.address;
   screen("home");
@@ -112,10 +133,11 @@ async function renderAccounts() {
     assertSession(generation);
     const button = document.createElement("button");
     const title = document.createElement("strong");
-    title.textContent = `Адрес ${index + 1}${index === selectedIndex ? " ✓" : ""}`;
+    title.textContent = localize(`Адрес ${index + 1}${index === selectedIndex ? " ✓" : ""}`, locale);
     const detail = document.createElement("small");
     detail.textContent = shortAddress(account.address);
     button.append(title, detail);
+    button.dataset.index = String(index);
     button.addEventListener("click", () => run(async () => {
       selectedIndex = index;
       await saveProfile({ ...profile, selectedIndex });
@@ -191,6 +213,8 @@ $("#backup-next").addEventListener("click", () => {
   const fields = [3, 11, 19].map((position) => {
     const label = document.createElement("label");
     label.textContent = `Слово № ${position + 1}`;
+    label.dataset.position = String(position);
+    label.textContent = localize(label.textContent, locale);
     const input = document.createElement("input");
     input.name = `word${position}`;
     input.autocomplete = "off";
@@ -302,7 +326,18 @@ $("#copy-revealed").addEventListener("click", () => run(async () => {
 if (extensionApi.storage.local.setAccessLevel) {
   await extensionApi.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
 }
-const stored = (await extensionApi.storage.local.get(STORE_KEY))[STORE_KEY];
+const settings = await extensionApi.storage.local.get([STORE_KEY, LOCALE_KEY]);
+locale = settings[LOCALE_KEY] === "en" ? "en" : "ru";
+refreshLocale();
+for (const language of ["ru", "en"]) {
+  $(`#locale-${language}`).addEventListener("click", async () => {
+    locale = language;
+    refreshLocale();
+    try { await extensionApi.storage.local.set({ [LOCALE_KEY]: language }); }
+    catch { status("Не удалось сохранить язык интерфейса"); }
+  });
+}
+const stored = settings[STORE_KEY];
 if (stored !== undefined) {
   if (!stored || typeof stored !== "object" || !stored.vault ||
       !Number.isInteger(stored.accountCount) || stored.accountCount < 1 || stored.accountCount > 16 ||

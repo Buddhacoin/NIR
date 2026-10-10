@@ -110,6 +110,13 @@ def restore_on_clean_device(browser, words, expected_address, expected_second_ad
     browser.install_addon(str(PACKAGE), temporary=True)
     wallet_tab(browser)
     visible(browser, "#welcome")
+    click(browser, "#locale-en")
+    assert browser.find_element(By.CSS_SELECTOR, "html").get_attribute("lang") == "en"
+    assert "no real funds" in browser.find_element(By.CSS_SELECTOR, ".notice").text
+    browser.refresh()
+    visible(browser, "#welcome")
+    assert browser.find_element(By.CSS_SELECTOR, "html").get_attribute("lang") == "en"
+    click(browser, "#locale-ru")
     click(browser, "#start-restore")
     fill(browser, "#restore-form [name=phrase]", "sensitive words must not persist")
     click(browser, "#restore [data-back=welcome]")

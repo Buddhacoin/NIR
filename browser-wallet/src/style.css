@@ -4,7 +4,10 @@ body { width:390px; min-height:560px; margin:0; }
 .wallet { min-height:560px; padding:18px 20px 28px; background:linear-gradient(#fff,#f7f7f9); }
 header { display:flex; align-items:center; gap:9px; font-weight:850; font-size:20px; letter-spacing:.12em; }
 header img { border-radius:50%; } header small { display:block; margin-top:-4px; font-size:9px; letter-spacing:.24em; }
-header b { margin-left:auto; padding:5px 8px; border-radius:99px; background:#fff0dd; color:#9d5900; font-size:10px; letter-spacing:.08em; }
+header b { padding:5px 8px; border-radius:99px; background:#fff0dd; color:#9d5900; font-size:10px; letter-spacing:.08em; }
+.locale-switch { display:flex; margin-left:auto; padding:2px; border:1px solid #e5e5e8; border-radius:10px; gap:2px; letter-spacing:normal; }
+.locale-switch button { min-width:29px; min-height:27px; padding:2px; border:0; border-radius:7px; background:transparent; color:#555; font-size:10px; font-weight:800; }
+.locale-switch button[aria-pressed="true"] { background:#171717; color:#fff; }
 .notice { margin:8px 0 22px; color:#777; font-size:11px; }
 [hidden] { display:none !important; }
 h1 { margin:8px 0 11px; font-size:25px; line-height:1.15; letter-spacing:-.035em; }

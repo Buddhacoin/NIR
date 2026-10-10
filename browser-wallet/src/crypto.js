@@ -116,7 +116,7 @@ async function passwordKey(password, salt) {
 }
 
 export async function encryptPhrase(phrase, password) {
-  if (!validPassword(password)) throw new Error("Пароль: минимум 12 разных символов");
+  if (!validPassword(password)) throw new Error("Пароль: минимум 12 символов, включая 4 разных");
   const canonical = await normalizePhrase(phrase);
   const { address } = await accountFromPhrase(canonical);
   const salt = crypto.getRandomValues(new Uint8Array(32));
