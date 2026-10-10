@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self' http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>NIR Wallet</title>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="app.js"></script>
@@ -57,9 +57,12 @@
     <section id="home" hidden>
       <div class="account-head"><span id="account-label">Адрес 1</span><button id="open-accounts" aria-label="Выбрать адрес">⌄</button></div>
       <button class="address-pill" id="copy-address" title="Скопировать адрес"><span id="short-address"></span> <span>▣</span></button>
-      <div class="balance"><p>Баланс</p><strong>—</strong><small>Сеть пока не подключена</small></div>
+      <div class="balance"><p>Сетевой баланс</p><strong id="verified-balance">—</strong><small id="balance-detail">Не подтверждён расширением</small></div>
+      <div class="card observer-report" id="observer-report" hidden><h2>Сообщение локального процесса</h2>
+        <p><span class="report-lead">Локальный наблюдатель сообщил </span><strong id="observer-amount"></strong><span class="report-middle"> тестовых NIR на высоте </span><span id="observer-height"></span><span class="report-tail">. Расширение не проверяло подписи самостоятельно; актуальность сети и доступность средств не подтверждены. Это не начисление за майнинг.</span></p>
+      </div>
       <div class="action-row"><button id="receive">↓<span>Получить</span></button><button id="send" disabled>↑<span>Отправить</span></button><button id="mine" disabled>✦<span>Майнинг</span></button></div>
-      <div class="card"><h2>Безопасность</h2><p>Адрес уже можно скопировать. Переводы, баланс и майнинг появятся только после подключения проверенной сети.</p></div>
+      <div class="card"><h2>Безопасность</h2><p>Адрес уже можно скопировать. Переводы и майнинг недоступны. Локальное сообщение наблюдателя не является независимой проверкой расширения или актуальным балансом сети.</p></div>
       <nav><button id="nav-home" class="active">Главная</button><button id="nav-settings">Настройки</button></nav>
     </section>
 
@@ -69,6 +72,18 @@
 
     <section id="settings" hidden>
       <button class="back" data-back="home">← Назад</button><h1>Настройки</h1>
+      <div class="card observer-card"><h2>Локальный наблюдатель · инженерный просмотр</h2>
+        <p>Для опытных операторов тестовой сети. Наблюдатель должен быть отдельно запущен и закреплён за этим адресом, origin расширения и проверенным genesis. Он не получает фразу или право подписи. Публичной сети и реальных средств нет.</p>
+        <p>Origin расширения: <code id="extension-origin"></code></p>
+        <form id="observer-form">
+          <label>Адрес наблюдателя<input name="url" type="url" placeholder="http://127.0.0.1:8787" required></label>
+          <label>Отдельный токен наблюдателя<input name="token" type="password" autocomplete="off" spellcheck="false" required></label>
+          <label>Идентификатор сети<input name="networkId" type="text" autocomplete="off" spellcheck="false" required></label>
+          <label>Genesis hash из доверенного источника<input name="genesisHash" type="text" autocomplete="off" spellcheck="false" required></label>
+          <button class="secondary" type="submit">Получить локальное сообщение</button>
+        </form>
+        <p>Токен хранится только в памяти открытого окна. Нужна ручная настройка отдельного процесса с доверенным genesis; автоматической установки пока нет. Ответ процесса не подтверждает актуальность сети.</p>
+      </div>
       <div class="card"><h2>Фраза восстановления</h2><p>Для просмотра ещё раз введите пароль. Никому не показывайте эти слова.</p><button class="secondary" id="show-phrase-form">Показать фразу</button></div>
       <button class="secondary" id="lock-wallet">Заблокировать кошелёк</button>
     </section>

@@ -15,6 +15,8 @@ test("Chromium and Firefox builds have distinct supported backgrounds", () => {
   assert.deepEqual(firefox.browser_specific_settings.gecko.data_collection_permissions.required, ["none"]);
   assert.equal(chromium.permissions.includes("storage"), true);
   assert.equal(firefox.permissions.includes("storage"), true);
+  assert.deepEqual(chromium.host_permissions, ["http://127.0.0.1/*"]);
+  assert.deepEqual(firefox.host_permissions, ["http://127.0.0.1/*"]);
 });
 
 test("store icons have the dimensions advertised in both manifests", async () => {

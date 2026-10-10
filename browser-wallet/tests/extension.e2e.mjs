@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createServer } from "node:http";
 import test from "node:test";
 import { chromium } from "playwright";
 import { staticTranslationTargets } from "../src/i18n.js";
@@ -80,6 +81,62 @@ test("Chromium extension creates, locks, unlocks and restores a phrase wallet wi
     assert.equal(JSON.stringify(stored).includes(words.map((word) => word.replace(/^\d+\./, "")).join(" ")), false);
     const firstAddress = await page.locator("#full-address").textContent();
     assert.match(firstAddress, /^nir1[0-9a-f]{64}$/);
+    const observerToken = "b".repeat(64);
+    const observerGenesis = "c".repeat(64);
+    const observerNetwork = "nir-ui-test";
+    let observerReply = {
+      verified: true, address: firstAddress, networkId: observerNetwork,
+      genesisHash: observerGenesis,
+      statement: { networkId: observerNetwork, height: 1, tipHash: "d".repeat(64),
+        account: { address: firstAddress, atomicBalance: "999999999999999" } },
+    };
+    const fakeRequests = [];
+    const fakeObserver = createServer((request, response) => {
+      fakeRequests.push({ method: request.method, origin: request.headers.origin, url: request.url });
+      const headers = {
+        "access-control-allow-origin": extensionOrigin,
+        "access-control-allow-headers": "content-type, x-nir-observer-token",
+        "access-control-allow-methods": "POST, OPTIONS",
+        "content-type": "application/json",
+      };
+      if (request.method === "OPTIONS") {
+        response.writeHead(204, headers);
+        response.end();
+        return;
+      }
+      assert.equal(request.url, "/v1/refresh-account");
+      assert.equal(request.headers["x-nir-observer-token"], observerToken);
+      response.writeHead(200, headers);
+      response.end(JSON.stringify(observerReply));
+    });
+    await new Promise((done) => fakeObserver.listen(0, "127.0.0.1", done));
+    try {
+      await page.getByRole("button", { name: "Настройки" }).click();
+      await page.locator("#observer-form [name=url]").fill(
+        `http://127.0.0.1:${fakeObserver.address().port}`);
+      await page.locator("#observer-form [name=token]").fill(observerToken);
+      await page.locator("#observer-form [name=networkId]").fill(observerNetwork);
+      await page.locator("#observer-form [name=genesisHash]").fill(observerGenesis);
+      await page.locator("#observer-form button[type=submit]").click();
+      await page.waitForFunction(() => document.querySelector("#observer-report")?.hidden === false ||
+        document.querySelector("#status")?.textContent.length > 0);
+      assert.equal(await page.locator("#status").textContent(), "",
+        `fake localhost response should reach the observer-only report: ${JSON.stringify(fakeRequests)}`);
+      await page.locator("#observer-report").waitFor({ state: "visible" });
+      assert.equal(await page.locator("#verified-balance").textContent(), "—",
+        "a forged localhost observer must not change the network balance");
+      assert.equal(await page.locator("#observer-amount").textContent(), "9999999.99999999");
+      assert.match(await page.locator("#observer-report").textContent(), /не проверяло подписи самостоятельно/);
+      observerReply = { ...observerReply, address: `nir1${"e".repeat(64)}` };
+      await page.getByRole("button", { name: "Настройки" }).click();
+      await page.locator("#observer-form button[type=submit]").click();
+      await page.waitForFunction(() => document.querySelector("#status")?.textContent.length > 0);
+      assert.equal(await page.locator("#observer-report").isVisible(), false);
+      assert.equal(await page.locator("#verified-balance").textContent(), "—");
+      await page.locator("#settings [data-back=home]").click();
+    } finally {
+      await new Promise((done) => fakeObserver.close(done));
+    }
     await page.getByRole("button", { name: "Выбрать адрес" }).click();
     await page.evaluate(() => {
       window.__originalStorageSet = chrome.storage.local.set;

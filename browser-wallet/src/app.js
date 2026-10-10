@@ -2,6 +2,7 @@ import { accountFromPhrase, createPhrase, decryptPhrase, encryptPhrase } from ".
 import { createSessionGuard, reloadAfterPendingWrite } from "./session-guard.js";
 import { applyStaticLocale, localize, safeUiError } from "./i18n.js";
 import { createLocaleWriteQueue } from "./locale-write-queue.js";
+import { formatAtomicBalance, parseObserverSettings, refreshObserverAccount } from "./observer-client.js";
 
 const STORE_KEY = "nirTestWallet";
 const LOCALE_KEY = "nirWalletLocale";
@@ -20,6 +21,14 @@ let sessionExpired = false;
 let profileWrite = null;
 let locale = "ru";
 let lastStatus = null;
+let observerSettings = null;
+
+function clearVerifiedBalance() {
+  $("#verified-balance").textContent = "—";
+  $("#observer-report").hidden = true;
+  $("#observer-amount").textContent = "";
+  $("#observer-height").textContent = "";
+}
 
 function refreshLocale() {
   applyStaticLocale(locale);
@@ -44,6 +53,8 @@ function clearSensitiveFields() {
   phrase = null;
   pending = null;
   revealed = null;
+  observerSettings = null;
+  clearVerifiedBalance();
   for (const form of document.querySelectorAll("form")) form.reset();
   for (const selector of ["#phrase-grid", "#confirm-fields", "#reveal-grid", "#account-list"]) {
     $(selector).replaceChildren();
@@ -119,6 +130,7 @@ async function saveProfile(next) {
 
 async function renderHome() {
   const generation = sessionGeneration;
+  clearVerifiedBalance();
   const account = await currentAccount();
   assertSession(generation);
   $("#account-label").textContent = localize(`Адрес ${selectedIndex + 1}`, locale);
@@ -312,6 +324,32 @@ $("#receive").addEventListener("click", () => screen("receive-view"));
 $("#copy-full-address").addEventListener("click", () => run(async () => copy((await currentAccount()).address, "Адрес")));
 $("#nav-home").addEventListener("click", () => screen("home"));
 $("#nav-settings").addEventListener("click", () => screen("settings"));
+$("#observer-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  run(async (assertCurrent) => {
+    clearVerifiedBalance();
+    const account = await currentAccount();
+    const settings = parseObserverSettings({
+      url: form.elements.url.value.trim(),
+      token: form.elements.token.value.trim(),
+      networkId: form.elements.networkId.value.trim(),
+      genesisHash: form.elements.genesisHash.value.trim(),
+    });
+    observerSettings = settings;
+    const balance = await refreshObserverAccount(settings, account.address);
+    assertCurrent();
+    const current = await currentAccount();
+    assertCurrent();
+    if (current.address !== account.address || observerSettings !== settings) {
+      throw new Error("Доказательство баланса не совпадает с адресом или сетью");
+    }
+    $("#observer-amount").textContent = formatAtomicBalance(balance.atomicBalance);
+    $("#observer-height").textContent = String(balance.height);
+    $("#observer-report").hidden = false;
+    screen("home");
+  });
+});
 $("#show-phrase-form").addEventListener("click", () => screen("reveal"));
 $("#lock-wallet").addEventListener("click", expireSession);
 
@@ -339,6 +377,7 @@ if (extensionApi.storage.local.setAccessLevel) {
 const settings = await extensionApi.storage.local.get([STORE_KEY, LOCALE_KEY]);
 locale = settings[LOCALE_KEY] === "en" ? "en" : "ru";
 refreshLocale();
+$("#extension-origin").textContent = window.location.origin;
 for (const language of ["ru", "en"]) {
   $(`#locale-${language}`).addEventListener("click", async () => {
     locale = language;
