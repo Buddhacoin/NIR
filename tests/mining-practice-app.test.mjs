@@ -275,7 +275,9 @@ test("mining lab serves a pinned-model UI with no secret or code input", async (
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
     assert.match(html, /id="start"/);
-    assert.doesNotMatch(html, /<input|<textarea|<form/i);
+    assert.deepEqual([...html.matchAll(/<input\b[^>]*>/gi)].map(([input]) => input),
+      ['<input id="qwen-replay-file" type="file" accept="application/json,.json">']);
+    assert.doesNotMatch(html, /<textarea|<form|type="(?:text|password)"/i);
     assert.match(html, /Проверка модели Iris/);
     assert.match(html, /Независимых операторов, скрытых заданий/);
     assert.match(html, /id="connection"/);

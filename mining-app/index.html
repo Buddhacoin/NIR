@@ -37,6 +37,10 @@
       <p id="qwen-answer" class="model-answer" hidden></p>
       <p id="qwen-identity" class="catalog-note" hidden></p>
       <button id="qwen-export" class="secondary" type="button" hidden data-i18n="qwenExport">Скачать запись для локального повторного запуска (не доказательство награды)</button>
+      <label for="qwen-replay-file" data-i18n="qwenReplayLabel">Запись другого запуска (.json, не более 16 КБ)</label>
+      <input id="qwen-replay-file" type="file" accept="application/json,.json">
+      <button id="qwen-replay" class="secondary" type="button" disabled data-i18n="qwenReplay">Повторить запуск на этом Mac</button>
+      <p id="qwen-replay-state" role="status" aria-live="polite"></p>
     </section>
     <section id="progress" class="result" hidden aria-live="polite">
       <div class="spinner" aria-hidden="true"></div>

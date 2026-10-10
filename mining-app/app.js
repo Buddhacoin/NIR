@@ -14,6 +14,9 @@ const qwenState = document.querySelector("#qwen-state");
 const qwenAnswer = document.querySelector("#qwen-answer");
 const qwenIdentity = document.querySelector("#qwen-identity");
 const qwenExport = document.querySelector("#qwen-export");
+const qwenReplayFile = document.querySelector("#qwen-replay-file");
+const qwenReplay = document.querySelector("#qwen-replay");
+const qwenReplayState = document.querySelector("#qwen-replay-state");
 
 function canonicalReplayJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalReplayJson).join(",")}]`;
@@ -39,7 +42,24 @@ async function fetchQwenJson(path, options = {}) {
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
     const response = await fetch(path, { ...options, signal: controller.signal });
-    return { response, data: await response.json() };
+    if (!response.body?.getReader) return { response, data: await response.json() };
+    const reader = response.body.getReader();
+    const chunks = [];
+    let length = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > 16_384) {
+        await reader.cancel();
+        throw new Error("oversized local response");
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return { response, data: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) };
   } finally {
     clearTimeout(timeout);
   }
@@ -84,6 +104,12 @@ const copy = {
     qwenAnswer: (answer) => `Ответ локального сервиса (не независимое свидетельство): ${answer}`,
     qwenIdentity: (identity) => `Идентификатор локального пакета (не доказательство выполнения): ${identity}`,
     qwenExport: "Скачать запись для локального повторного запуска (не доказательство награды)",
+    qwenReplayLabel: "Запись другого запуска (.json, не более 16 КБ)",
+    qwenReplay: "Повторить запуск на этом Mac",
+    qwenReplayRunning: "Повторно скачиваем закреплённую модель и сравниваем ответ. Это локальный повтор, не независимое подтверждение или награда.",
+    qwenReplayMatched: "Локальный повтор совпал по пакету и ответу. Запись не подписана; независимой проверки и награды нет.",
+    qwenReplayFailed: "Повтор не завершился или ответ отличается. Независимая проверка и награда отсутствуют.",
+    qwenReplayInvalid: "Выберите действительную запись JSON до 16 КБ. Файл не является доказательством выполнения.",
     qwenRuntimeChecking: "Проверяем локальную среду Qwen без загрузки модели…",
     qwenRuntimeUnavailable: "Не удалось проверить среду Qwen. Перезапустите приложение из доверенной копии NIR.",
     qwenUnsupported: "Для Qwen нужен Mac с Apple Silicon. На этом устройстве запуск недоступен.",
@@ -129,6 +155,12 @@ const copy = {
     qwenAnswer: (answer) => `Local service answer (not independent evidence): ${answer}`,
     qwenIdentity: (identity) => `Local package ID (not proof of execution): ${identity}`,
     qwenExport: "Download local replay record (not reward proof)",
+    qwenReplayLabel: "Another run's record (.json, at most 16 KB)",
+    qwenReplay: "Rerun on this Mac",
+    qwenReplayRunning: "Downloading the pinned model again and comparing its answer. This is a local rerun, not independent attestation or a reward.",
+    qwenReplayMatched: "Local rerun matched package and answer. The record is unsigned; there is no independent verification or reward.",
+    qwenReplayFailed: "Rerun failed or the answer differed. No independent verification or reward.",
+    qwenReplayInvalid: "Choose a valid JSON record up to 16 KB. The file is not execution proof.",
     qwenRuntimeChecking: "Checking the local Qwen runtime without downloading a model…",
     qwenRuntimeUnavailable: "Could not check the Qwen runtime. Restart the app from a trusted NIR checkout.",
     qwenUnsupported: "Qwen requires an Apple Silicon Mac. It cannot run on this device.",
@@ -151,6 +183,8 @@ let qwenRunning = false;
 let qwenStatus = null;
 let qwenLastResult = null;
 let qwenRuntime = { status: "checking-runtime" };
+let replayRunning = false;
+let replayStatus = null;
 
 function qwenRuntimeMessage(t) {
   const status = qwenRuntime?.status;
@@ -242,13 +276,18 @@ function render() {
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
   connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
   if (qwenStart) {
-    qwenStart.disabled = !connected || qwenRunning || !progress.hidden ||
+    qwenStart.disabled = !connected || qwenRunning || replayRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
     qwenState.textContent = qwenStatus ? t[qwenStatus] : qwenRuntimeMessage(t);
     if (qwenLastResult) {
       qwenAnswer.textContent = t.qwenAnswer(qwenLastResult.answer);
       qwenIdentity.textContent = t.qwenIdentity(qwenLastResult.packageIdentity);
     }
+  }
+  if (qwenReplay) {
+    qwenReplay.disabled = !connected || qwenRunning || replayRunning || !progress.hidden ||
+      qwenRuntime.status !== "pinned-qwen-runtime-ready" || !qwenReplayFile.files?.length;
+    qwenReplayState.textContent = replayStatus ? t[replayStatus] : "";
   }
   if (errorKind) errorMessage.textContent = t[errorKind];
   if (lastResult) {
@@ -349,7 +388,7 @@ start.addEventListener("click", async () => {
 });
 
 if (qwenStart) qwenStart.addEventListener("click", async () => {
-  if (!connected || qwenRunning || !progress.hidden ||
+  if (!connected || qwenRunning || replayRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready") return;
   if (!window.confirm(copy[locale].qwenConfirm)) return;
   qwenRunning = true;
@@ -410,6 +449,63 @@ if (qwenStart) qwenStart.addEventListener("click", async () => {
     qwenStatus = reason?.message === "invalid qwen result" ? "qwenInvalid" : "qwenFailed";
   } finally {
     qwenRunning = false;
+    start.disabled = !connected;
+    render();
+  }
+});
+
+if (qwenReplayFile) qwenReplayFile.addEventListener("change", () => {
+  replayStatus = null;
+  render();
+});
+if (qwenReplay) qwenReplay.addEventListener("click", async () => {
+  if (!connected || qwenRunning || replayRunning || !progress.hidden ||
+      qwenRuntime.status !== "pinned-qwen-runtime-ready") return;
+  const file = qwenReplayFile.files?.[0];
+  if (!file || file.size < 1 || file.size > 16_384) {
+    replayStatus = "qwenReplayInvalid";
+    render();
+    return;
+  }
+  if (!window.confirm(copy[locale].qwenConfirm)) return;
+  replayRunning = true;
+  replayStatus = "qwenReplayRunning";
+  start.disabled = true;
+  render();
+  try {
+    const bytes = await file.text();
+    if (new TextEncoder().encode(bytes).length !== file.size) throw new Error("invalid record");
+    let imported;
+    try { imported = JSON.parse(bytes); } catch { throw new Error("invalid record"); }
+    if (!(await matchesReplayHash(imported))) throw new Error("invalid record");
+    const { response, data: started } = await fetchQwenJson("/open-model/replay", {
+      method: "POST", body: bytes, headers: { "Content-Type": "application/json",
+        "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" },
+    });
+    if (response.status === 400 || response.status === 403) throw new Error("invalid record");
+    if (response.status !== 202 || started.status !== "running" ||
+        !/^[a-f0-9]{32}$/.test(started.jobId)) throw new Error("replay failed");
+    const deadline = Date.now() + 30 * 60_000;
+    let matched = false;
+    while (Date.now() < deadline) {
+      const { response: check, data } = await fetchQwenJson(
+        `/open-model/jobs/${started.jobId}`, { cache: "no-store" });
+      if (check.status === 200) {
+        matched = data.status === "local-replay-matched" &&
+          data.recordHash === imported.recordHash &&
+          data.rewardEligible === false && data.networkSubmitted === false &&
+          data.independentlyVerified === false;
+        break;
+      }
+      if (check.status !== 202 || data.status !== "running") throw new Error("replay failed");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    if (!matched) throw new Error("replay failed");
+    replayStatus = "qwenReplayMatched";
+  } catch (reason) {
+    replayStatus = reason?.message === "invalid record" ? "qwenReplayInvalid" : "qwenReplayFailed";
+  } finally {
+    replayRunning = false;
     start.disabled = !connected;
     render();
   }
