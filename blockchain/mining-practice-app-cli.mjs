@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import process from "node:process";
 import { promisify } from "node:util";
 
@@ -28,12 +28,11 @@ if (!report.ready) {
       const url = `http://127.0.0.1:${server.address().port}/${embedded ? "?local-app=1" : ""}`;
       if (embedded) {
         console.log(`NIR_MODEL_LAB_URL=${url}`);
+        console.log(`NIR_MODEL_LAB_SESSION=${server.localSessionToken}`);
         return;
       }
-      console.log(`Открываю локальное приложение проверки моделей: ${url}`);
+      console.log(`Откройте этот локальный адрес вручную в браузере: ${url}#session=${server.localSessionToken}`);
       console.log("Iris доступна локально; Qwen требует отдельного согласия и дополнительных библиотек. Это не публичный майнинг и не начисляет NIR. Закройте терминал, чтобы остановить приложение.");
-      const opener = spawn("/usr/bin/open", [url], { stdio: "ignore" });
-      opener.on("error", () => console.error(`Не удалось открыть браузер автоматически. Откройте ${url}`));
     });
   } catch {
     console.error("Для локальной проверки нужна Python 3.11+ и неизменённые встроенные Iris-файлы из доверенной копии NIR. Проверьте `python3 --version` и переустановите исходный код; приложение не запускалось.");

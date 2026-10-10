@@ -13,7 +13,7 @@ const root = join(import.meta.dirname, "..");
 async function serve(runModel) {
   const server = createMiningPracticeApp({ root, runModel });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { server, base: `http://127.0.0.1:${server.address().port}` };
+  return { server, base: `http://127.0.0.1:${server.address().port}`, token: server.localSessionToken };
 }
 async function stop(server) {
   server.closeAllConnections?.();
@@ -46,7 +46,8 @@ test("pinned Qwen route requires explicit same-origin download consent and refus
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const request = (origin, consent, body = "") => fetch(`${base}/open-model/qwen-check`, {
-    method: "POST", body, headers: { origin, ...(consent ? { "X-NIR-Download-Consent": consent } : {}) },
+    method: "POST", body, headers: { origin, "X-NIR-Session": server.localSessionToken,
+      ...(consent ? { "X-NIR-Download-Consent": consent } : {}) },
   });
   try {
     assert.equal((await request(base)).status, 403);
@@ -69,6 +70,69 @@ test("pinned Qwen route requires explicit same-origin download consent and refus
     assert.equal(completedResult.record.scope, "non-reward-local-replay");
     assert.equal(calls, 1);
   } finally { await stop(server); }
+});
+
+test("each service has a private session; forged origin or consent cannot launch model work", async () => {
+  let calls = 0;
+  let refreshes = 0;
+  const make = () => createMiningPracticeApp({ root,
+    runModel: async () => { calls++; throw new Error("not reached"); },
+    runOpenModel: async () => { calls++; throw new Error("not reached"); },
+    runReplay: async () => { calls++; throw new Error("not reached"); },
+    catalog: { get: async () => ({ status: "read-only-open-model-catalog" }),
+      refresh: async () => { refreshes++; return { status: "read-only-open-model-catalog" }; } },
+  });
+  const first = make();
+  const second = make();
+  await Promise.all([first, second].map((server) =>
+    new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))));
+  const base = `http://127.0.0.1:${second.address().port}`;
+  const invoke = (path, token, origin = base) => fetch(`${base}${path}`, {
+    method: "POST", body: "", headers: { origin,
+      "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib",
+      ...(token === undefined ? {} : { "X-NIR-Session": token }) },
+  });
+  try {
+    assert.notEqual(first.localSessionToken, second.localSessionToken);
+    for (const path of ["/model-check", "/catalog/refresh", "/open-model/qwen-check"]) {
+      assert.equal((await invoke(path)).status, 403, `${path}: missing token`);
+      assert.equal((await invoke(path, "0".repeat(64))).status, 403, `${path}: wrong token`);
+      assert.equal((await invoke(path, first.localSessionToken)).status, 403,
+        `${path}: previous service token`);
+      assert.equal((await invoke(path, second.localSessionToken, "https://evil.example")).status,
+        403, `${path}: foreign origin`);
+    }
+    const replay = await fetch(`${base}/open-model/replay`, { method: "POST", body: "{}",
+      headers: { origin: base, "Content-Type": "application/json",
+        "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" } });
+    assert.equal(replay.status, 403);
+    assert.equal(calls, 0);
+    assert.equal(refreshes, 0);
+    for (const path of ["/", "/app.js", "/status", "/catalog", "/open-model/runtime"]) {
+      const response = await fetch(`${base}${path}`);
+      assert.equal((await response.text()).includes(second.localSessionToken), false,
+        `${path}: secret must not be served`);
+    }
+  } finally { await Promise.all([stop(first), stop(second)]); }
+});
+
+test("restarting the service on the same port invalidates its previous session", async () => {
+  let calls = 0;
+  const first = createMiningPracticeApp({ root, runModel: async () => { calls++; } });
+  await new Promise((resolve) => first.listen(0, "127.0.0.1", resolve));
+  const port = first.address().port;
+  const oldToken = first.localSessionToken;
+  await stop(first);
+  const second = createMiningPracticeApp({ root, runModel: async () => { calls++; } });
+  await new Promise((resolve) => second.listen(port, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    assert.notEqual(second.localSessionToken, oldToken);
+    const response = await fetch(`${base}/model-check`, { method: "POST", body: "",
+      headers: { origin: base, "X-NIR-Session": oldToken } });
+    assert.equal(response.status, 403);
+    assert.equal(calls, 0);
+  } finally { await stop(second); }
 });
 
 test("Qwen runtime preflight gives a read-only reason before any download", async () => {
@@ -95,7 +159,8 @@ test("Qwen route refuses a transcript whose hash would fail independent local re
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     const start = await fetch(`${base}/open-model/qwen-check`, { method: "POST", body: "",
-      headers: { origin: base, "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" } });
+      headers: { origin: base, "X-NIR-Session": server.localSessionToken,
+        "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib" } });
     const { jobId } = await start.json();
     let result;
     for (let i = 0; i < 50; i++) {
@@ -219,7 +284,8 @@ test("pinned Qwen route rejects forged rewards and conflicting local jobs", asyn
   const base = `http://127.0.0.1:${server.address().port}`;
   const request = () => fetch(`${base}/open-model/qwen-check`, {
     method: "POST", body: "", headers: {
-      origin: base, "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib",
+      origin: base, "X-NIR-Session": server.localSessionToken,
+      "X-NIR-Download-Consent": "qwen3-0.6b-up-to-4gib",
     },
   });
   try {
@@ -403,9 +469,9 @@ test("model endpoint refuses cross-origin, input bodies, and concurrent runs", a
     calls++;
     return new Promise((resolve) => { finish = resolve; });
   };
-  const { server, base } = await serve(model);
+  const { server, base, token } = await serve(model);
   const request = (origin, body = "") => fetch(`${base}/model-check`, {
-    method: "POST", body, headers: { origin },
+    method: "POST", body, headers: { origin, "X-NIR-Session": token },
   });
   try {
     assert.equal((await request("https://other.example")).status, 403);
@@ -429,10 +495,10 @@ test("model endpoint refuses cross-origin, input bodies, and concurrent runs", a
 });
 
 test("pinned Iris endpoint runs trained classifiers and never reports a reward", async () => {
-  const { server, base } = await serve();
+  const { server, base, token } = await serve();
   try {
     const response = await fetch(`${base}/model-check`, {
-      method: "POST", body: "", headers: { origin: base },
+      method: "POST", body: "", headers: { origin: base, "X-NIR-Session": token },
     });
     assert.equal(response.status, 200);
     const result = await response.json();
@@ -446,7 +512,7 @@ test("pinned Iris endpoint runs trained classifiers and never reports a reward",
 });
 
 test("forged model success cannot be presented as verified or reward eligible", async () => {
-  const { server, base } = await serve(async () => ({
+  const { server, base, token } = await serve(async () => ({
     status: "pinned-local-model-evaluation", scope: "local-public-iris-example-only",
     baselineAccuracyBps: 9000, candidateAccuracyBps: 9666, caseCount: 30,
     bundleHash: "a".repeat(64), bundleVerified: true, independentOperators: false,
@@ -455,7 +521,7 @@ test("forged model success cannot be presented as verified or reward eligible", 
   }));
   try {
     const response = await fetch(`${base}/model-check`, {
-      method: "POST", body: "", headers: { origin: base },
+      method: "POST", body: "", headers: { origin: base, "X-NIR-Session": token },
     });
     assert.equal(response.status, 500);
     assert.match((await response.json()).error, /награда не начислена/);

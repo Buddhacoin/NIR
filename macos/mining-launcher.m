@@ -98,15 +98,28 @@
             [owner.pending appendData:chunk];
             NSString *text = [[NSString alloc] initWithData:owner.pending encoding:NSUTF8StringEncoding];
             if (!text) return;
-            NSRange end = [text rangeOfString:@"\n"];
-            if (end.location == NSNotFound) return;
-            NSString *line = [text substringToIndex:end.location];
+            NSRange firstEnd = [text rangeOfString:@"\n"];
+            if (firstEnd.location == NSNotFound) return;
+            NSRange secondEnd = [text rangeOfString:@"\n" options:0
+                range:NSMakeRange(NSMaxRange(firstEnd), text.length - NSMaxRange(firstEnd))];
+            if (secondEnd.location == NSNotFound) return;
+            NSString *line = [text substringToIndex:firstEnd.location];
+            NSString *sessionLine = [text substringWithRange:NSMakeRange(NSMaxRange(firstEnd),
+                secondEnd.location - NSMaxRange(firstEnd))];
             owner.output.readabilityHandler = nil;
             if (![line hasPrefix:@"NIR_MODEL_LAB_URL=http://127.0.0.1:"]) {
                 [owner stopWithMessage:@"Локальная проверка модели не прошла предварительную проверку."];
                 return;
             }
             NSString *url = [line substringFromIndex:@"NIR_MODEL_LAB_URL=".length];
+            NSString *prefix = @"NIR_MODEL_LAB_SESSION=";
+            NSString *token = [sessionLine hasPrefix:prefix] ? [sessionLine substringFromIndex:prefix.length] : @"";
+            NSRegularExpression *tokenPattern = [NSRegularExpression regularExpressionWithPattern:@"^[0-9a-f]{64}$"
+                options:0 error:nil];
+            if ([tokenPattern numberOfMatchesInString:token options:0 range:NSMakeRange(0, token.length)] != 1) {
+                [owner stopWithMessage:@"Локальный сеанс не прошёл проверку."];
+                return;
+            }
             NSURLComponents *parts = [NSURLComponents componentsWithString:url];
             if (![parts.scheme isEqualToString:@"http"] ||
                 ![parts.host isEqualToString:@"127.0.0.1"] ||
@@ -118,6 +131,11 @@
                 return;
             }
             owner.localURL = parts.URL;
+            NSString *source = [NSString stringWithFormat:
+                @"Object.defineProperty(window, '__NIR_MODEL_SESSION', {value: '%@', writable: false});", token];
+            WKUserScript *script = [[WKUserScript alloc] initWithSource:source
+                injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
+            [owner.web.configuration.userContentController addUserScript:script];
             [owner.web loadRequest:[NSURLRequest requestWithURL:owner.localURL]];
         });
     };

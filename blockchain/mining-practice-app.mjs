@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -199,6 +199,12 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   catalog = createOpenModelCatalog() } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
+  const sessionToken = randomBytes(32);
+  function authorized(request) {
+    const supplied = request.headers["x-nir-session"];
+    return typeof supplied === "string" && /^[0-9a-f]{64}$/.test(supplied) &&
+      timingSafeEqual(Buffer.from(supplied, "hex"), sessionToken);
+  }
   const openModelJobs = new Map();
   const server = createServer(async (request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
@@ -260,7 +266,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       return;
     }
     if (request.method === "POST" && path === "/catalog/refresh" && request.url === "/catalog/refresh") {
-      if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
           request.headers["transfer-encoding"]) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
@@ -269,7 +275,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       return;
     }
     if (request.method === "POST" && path === "/model-check") {
-      if (request.headers.origin !== origin ||
+      if (!authorized(request) || request.headers.origin !== origin ||
           request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
@@ -291,7 +297,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "POST" && path === "/open-model/qwen-check" &&
         request.url === "/open-model/qwen-check") {
-      if (request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
           request.headers["transfer-encoding"] ||
           request.headers["x-nir-download-consent"] !== "qwen3-0.6b-up-to-4gib") {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
@@ -322,7 +328,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     if (request.method === "POST" && path === "/open-model/replay" &&
         request.url === "/open-model/replay") {
       const declared = Number(request.headers["content-length"]);
-      if (request.headers.origin !== origin ||
+      if (!authorized(request) || request.headers.origin !== origin ||
           request.headers["content-type"] !== "application/json" ||
           request.headers["x-nir-download-consent"] !== "qwen3-0.6b-up-to-4gib" ||
           request.headers["transfer-encoding"] ||
@@ -377,5 +383,6 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     send(404, "text/plain; charset=utf-8", "Not found");
   });
+  Object.defineProperty(server, "localSessionToken", { value: sessionToken.toString("hex") });
   return server;
 }

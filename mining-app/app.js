@@ -19,6 +19,13 @@ const qwenReplay = document.querySelector("#qwen-replay");
 const qwenReplayState = document.querySelector("#qwen-replay-state");
 const nativeApp = typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("local-app") === "1";
+// Native shell injects this before page scripts. The terminal-only browser mode
+// receives it in a fragment, which is never sent to HTTP and is removed here.
+const fragmentSession = typeof location !== "undefined" &&
+  /^#session=[0-9a-f]{64}$/.test(location.hash) ? location.hash.slice(9) : "";
+if (fragmentSession) history.replaceState(null, "", `${location.pathname}${location.search}`);
+const localSession = nativeApp && typeof window !== "undefined" ? window.__NIR_MODEL_SESSION : fragmentSession;
+const sessionHeaders = () => ({ "X-NIR-Session": localSession ?? "" });
 
 function canonicalReplayJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalReplayJson).join(",")}]`;
@@ -43,7 +50,8 @@ async function fetchQwenJson(path, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await fetch(path, { ...options, signal: controller.signal });
+    const response = await fetch(path, { ...options,
+      headers: { ...options.headers, ...sessionHeaders() }, signal: controller.signal });
     if (!response.body?.getReader) return { response, data: await response.json() };
     const reader = response.body.getReader();
     const chunks = [];
@@ -265,7 +273,8 @@ async function loadCatalog(refresh = false) {
   renderCatalog();
   try {
     const response = await fetch(refresh ? "/catalog/refresh" : "/catalog", {
-      method: refresh ? "POST" : "GET", ...(refresh ? { body: "" } : {}), cache: "no-store",
+      method: refresh ? "POST" : "GET", ...(refresh ? { body: "", headers: sessionHeaders() } : {}),
+      cache: "no-store",
     });
     const data = await response.json();
     if (!response.ok || data.status !== "read-only-open-model-catalog" ||
@@ -375,7 +384,7 @@ start.addEventListener("click", async () => {
   error.hidden = true;
   errorKind = null;
   try {
-    const response = await fetch("/model-check", { method: "POST", body: "" });
+    const response = await fetch("/model-check", { method: "POST", body: "", headers: sessionHeaders() });
     const data = await response.json();
     if (!response.ok) throw new Error("model-check failed");
     if (data.status !== "pinned-local-model-evaluation" ||

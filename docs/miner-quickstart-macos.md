@@ -61,7 +61,11 @@ From the repository root, run:
 npm run mine:app
 ```
 
-The command checks the Mac and opens a small local app in your browser. Press
+The command checks the Mac and prints a local session address. Copy the complete
+address into your browser; the one-run session fragment is removed from the
+address bar by the app before its first request. Do not share that address or
+paste it into logs: it authorizes local model work, including a Qwen download
+after the UI asks for confirmation. Press
 **Проверить модель Iris**. The app runs its bundled, digest-pinned Iris baseline
 and candidate on 30 held-out examples, creates six local transcripts, rebuilds
 and verifies the evaluation bundle, then displays both accuracy scores and the
@@ -80,7 +84,7 @@ temporary local chain. That is not a live payout.
 
 Keep the Terminal process running while using the page. If the page shows that
 the local service is disconnected, run `npm run mine:app` again and use the
-**new tab/address** it opens; refreshing an old random-port URL is not a fix.
+**new complete address** it prints; refreshing an old random-port URL is not a fix.
 The page has a RU/EN switch. It defaults to the browser language and remembers
 your choice only for that particular local browser address, not across ports.
 

@@ -6,6 +6,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const root = new URL("..", import.meta.url).pathname;
+const sessions = new Map();
 const record = {
   format: "nir-local-open-model-replay-v1", scope: "non-reward-local-replay",
   repository: "Qwen/Qwen3-0.6B", revision: "c1899de289a04d12100db370d81485cdf75e47ca",
@@ -21,8 +22,10 @@ async function withServer(runReplay, action) {
   const server = createMiningPracticeApp({ root, runReplay });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
+  sessions.set(base, server.localSessionToken);
   try { await action(base); }
   finally {
+    sessions.delete(base);
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
@@ -30,7 +33,7 @@ async function withServer(runReplay, action) {
 
 async function submit(base, body, headers = {}) {
   return fetch(`${base}/open-model/replay`, { method: "POST", body,
-    headers: { origin: base, "content-type": "application/json",
+    headers: { origin: base, "x-nir-session": sessions.get(base), "content-type": "application/json",
       "x-nir-download-consent": "qwen3-0.6b-up-to-4gib", ...headers } });
 }
 

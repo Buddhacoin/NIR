@@ -177,16 +177,16 @@ test("packaged embedded service starts outside source checkout and runs real pin
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
           output += chunk;
-          const match = output.match(/^NIR_MODEL_LAB_URL=(http:\/\/127\.0\.0\.1:\d+\/\?local-app=1)\n/);
-          if (match) resolve(match[1]);
+          const match = output.match(/^NIR_MODEL_LAB_URL=(http:\/\/127\.0\.0\.1:\d+\/\?local-app=1)\nNIR_MODEL_LAB_SESSION=([0-9a-f]{64})\n/);
+          if (match) resolve({ url: match[1], token: match[2] });
         });
         child.once("exit", (code) => reject(new Error(`embedded service exited ${code}`)));
       }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("embedded service timed out")), 10_000)),
     ]);
-    const origin = new URL(url).origin;
+    const origin = new URL(url.url).origin;
     const response = await fetch(`${origin}/model-check`, { method: "POST", headers: {
-      Origin: origin, "Content-Length": "0",
+      Origin: origin, "Content-Length": "0", "X-NIR-Session": url.token,
     } });
     assert.equal(response.status, 200);
     const result = await response.json();
