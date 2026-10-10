@@ -67,8 +67,8 @@ function secureOpenFlags(directory = false) {
 
 function readPrivateJson(path, description) {
   const target = resolve(path);
-  const activation = lstatSync(target);
-  if (activation.isSymbolicLink() && activation.nlink !== 1) {
+  const activation = lstatSync(target, { bigint: true });
+  if (activation.isSymbolicLink() && activation.nlink !== 1n) {
     throw new Error(`${description} is invalid or unsafe`);
   }
   let source = target;
@@ -96,8 +96,8 @@ function readPrivateJson(path, description) {
       throw new Error(`${description} changed while it was read`);
     }
     if (link !== null) {
-      const current = lstatSync(target);
-      if (!current.isSymbolicLink() || !sameIdentity(current, activation) ||
+      const current = lstatSync(target, { bigint: true });
+      if (!current.isSymbolicLink() || !sameActivationVersion(current, activation) ||
           readlinkSync(target) !== link) throw new Error(`${description} activation changed`);
     }
     return JSON.parse(bytes.toString("utf8"));
@@ -190,21 +190,21 @@ function writePrivateJsonExclusive(path, value, { _beforeActivate } = {}) {
       throw new Error("wallet private-file paths changed before activation");
     }
     symlinkSync(basename(generation), target, "file");
-    activationIdentity = lstatSync(target);
+    activationIdentity = lstatSync(target, { bigint: true });
     if (!activationIdentity.isSymbolicLink() || readlinkSync(target) !== basename(generation)) {
       throw new Error("wallet private-file activation is inconsistent");
     }
     fsyncSync(parentDescriptor);
-    const activated = lstatSync(target);
-    if (!activated.isSymbolicLink() || !sameIdentity(activated, activationIdentity) ||
+    const activated = lstatSync(target, { bigint: true });
+    if (!activated.isSymbolicLink() || !sameActivationVersion(activated, activationIdentity) ||
         readlinkSync(target) !== basename(generation)) {
       throw new Error("wallet private-file activation changed");
     }
   } catch (error) {
     if (activationIdentity !== null) {
       try {
-        const current = lstatSync(target);
-        if (current.isSymbolicLink() && sameIdentity(current, activationIdentity) &&
+        const current = lstatSync(target, { bigint: true });
+        if (current.isSymbolicLink() && sameActivationVersion(current, activationIdentity) &&
             readlinkSync(target) === basename(generation)) unlinkSync(target);
       } catch (cleanupError) {
         if (cleanupError?.code !== "ENOENT") error.activationCleanupError = cleanupError.message;

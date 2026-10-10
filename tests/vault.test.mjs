@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
-  chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  chmodSync, linkSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   readlinkSync, renameSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -320,6 +320,20 @@ test("a replaced activation link is not overwritten by password rotation", () =>
     assert.equal(readlinkSync(path), originalLink);
     assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
     assert.equal(readdirSync(directory).filter((name) => name.includes("nir-private-")).length, 1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("same-inode activation metadata mutation aborts password rotation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-version-"));
+  const path = join(directory, "personal.nirvault.json");
+  const oldPassword = "old-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: "new-personal-password-2026", personalWallet: true,
+      _beforeActivate: () => { lutimesSync(path, new Date(0), new Date(0)); } }),
+    /activation changed/);
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
