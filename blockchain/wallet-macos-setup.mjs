@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { createLocalTestWallet, listLocalTestBackups, listLocalTestWallets, openLocalTestWallet, renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode } from "./wallet-onboarding.mjs";
 import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
+import { walletSetupNotice } from "./wallet-macos-notices.mjs";
 
 const ONBOARDING = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
 const STORAGE_ROOT = join(homedir(), "Library", "Application Support", "NIR Wallet");
@@ -31,6 +32,7 @@ if (process.platform !== "darwin") {
   }
 
   let unseenRecoveryAddress = null;
+  let currentLanguage = "ru";
   try {
     const createOnly = process.argv[2] === "--create-only";
     if (process.argv.length > (createOnly ? 3 : 2)) throw new Error("unsupported wallet setup arguments");
@@ -49,6 +51,10 @@ if (process.platform !== "darwin") {
       if (!choice || !["create", "restore", "open", "renew"].includes(choice.mode)) {
         throw new Error("invalid onboarding selection");
       }
+      if (choice.language !== "ru" && choice.language !== "en") {
+        throw new Error("invalid onboarding language");
+      }
+      currentLanguage = choice.language;
       if (createOnly && choice.mode !== "create") {
         throw new Error("new-account wizard did not create an account");
       }
@@ -67,8 +73,8 @@ if (process.platform !== "darwin") {
         const verification = verifyRecoveryExportReceipt(JSON.parse(exportReceipt), result.backupPath,
           fingerprint, result.address);
         unseenRecoveryAddress = null;
-        try { notice("Резервная копия проверена",
-          `Для восстановления этого адреса нужны зашифрованная копия и отдельный код. Для каждого нового адреса нужна своя копия. Приложение не подтверждает физическую независимость носителя.${verification.unsafePermissions ? " Внимание: выбранный носитель допускает чтение файла другими пользователями; храните копию в безопасном месте." : ""}`); }
+        try { const copy = walletSetupNotice("recovery-export", currentLanguage, verification);
+          notice(copy.title, copy.message); }
         catch { /* The verified export is complete even if this notice is closed. */ }
       } else if (choice.mode === "renew") {
         const opened = openLocalTestWallet({ wallets: availableWallets,
@@ -86,8 +92,8 @@ if (process.platform !== "darwin") {
         const verification = verifyRecoveryExportReceipt(JSON.parse(exportReceipt), renewed.backupPath,
           fingerprint, renewed.address);
         unseenRecoveryAddress = null;
-        try { notice("Резервная копия проверена",
-          `Для восстановления этого адреса нужны зашифрованная копия и отдельный код. Старые копия и код продолжают действовать. Приложение не подтверждает физическую независимость хранилища.${verification.unsafePermissions ? " Внимание: выбранный носитель допускает чтение файла другими пользователями; храните копию в безопасном месте." : ""}`); }
+        try { const copy = walletSetupNotice("recovery-renewal", currentLanguage, verification);
+          notice(copy.title, copy.message); }
         catch { /* The verified export is complete even if this notice is closed. */ }
         result = opened;
       } else if (choice.mode === "restore") {
@@ -107,8 +113,8 @@ if (process.platform !== "darwin") {
         } catch (error) {
           if (error?.message !== "vault password, contents, or integrity check is invalid") throw error;
           preferredPath = choice.path;
-          notice("Не удалось открыть кошелёк",
-            "Проверьте пароль выбранного адреса. Если пароль верен, восстановите кошелёк из резервной копии.");
+          const copy = walletSetupNotice("open-failed", currentLanguage);
+          notice(copy.title, copy.message);
         }
       }
     }
@@ -119,9 +125,10 @@ if (process.platform !== "darwin") {
       String(error?.message ?? "").includes("User canceled");
     if (!cancelled || unseenRecoveryAddress) {
       const message = unseenRecoveryAddress
-        ? `Кошелёк ${unseenRecoveryAddress} сохранён, но настройка резервной копии не завершена или не прошла проверку. Откройте этот адрес с паролем и нажмите «Новый код восстановления». Не используйте адрес для средств до сохранения зашифрованной копии и отдельного кода.`
+        ? walletSetupNotice("incomplete-recovery", currentLanguage,
+          { address: unseenRecoveryAddress }).message
         : String(error?.message ?? "unknown error").slice(0, 500);
-      try { notice("Настройка не завершена", message); }
+      try { notice(currentLanguage === "en" ? "Setup did not finish" : "Настройка не завершена", message); }
       catch { /* The user may have closed all dialogs. */ }
       process.stderr.write("NIR test wallet setup did not complete.\n");
       process.exitCode = 1;

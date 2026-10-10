@@ -174,7 +174,10 @@ test("native onboarding submits a selection instead of silently treating it as c
     assert.equal(built.status, 0, built.stderr);
     const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(run.stdout), { mode: "create", password: "test-only-123" });
+    const selection = JSON.parse(run.stdout);
+    assert.ok(["ru", "en"].includes(selection.language));
+    delete selection.language;
+    assert.deepEqual(selection, { mode: "create", password: "test-only-123" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -194,6 +197,7 @@ test("native restore submits backup, recovery code, address, and new password", 
     assert.equal(run.status, 0, run.stderr);
     const selection = JSON.parse(run.stdout);
     assert.equal(selection.mode, "restore");
+    assert.ok(["ru", "en"].includes(selection.language));
     assert.equal(selection.path, "/tmp/test-backup.nirvault.json");
     assert.equal(selection.newPassword, "new-test-123");
     assert.match(selection.recoveryCode, /^ABCDE-/);
@@ -222,7 +226,10 @@ test("native opening selects an account by address without a file chooser", () =
       preferredPath: wallets[1].path }),
       encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(run.stdout), { mode: "open", path: wallets[1].path,
+    const selection = JSON.parse(run.stdout);
+    assert.ok(["ru", "en"].includes(selection.language));
+    delete selection.language;
+    assert.deepEqual(selection, { mode: "open", path: wallets[1].path,
       password: "selected-account-test-password" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -244,7 +251,10 @@ test("native opening can request a replacement recovery code with the selected v
     const run = spawnSync(binary, [], { input: JSON.stringify({ wallets: [vault] }),
       encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(run.stdout), { mode: "renew", path: vault.path,
+    const selection = JSON.parse(run.stdout);
+    assert.ok(["ru", "en"].includes(selection.language));
+    delete selection.language;
+    assert.deepEqual(selection, { mode: "renew", path: vault.path,
       password: "selected-account-test-password" });
     const nativeSource = readFileSync(source, "utf8");
     assert.match(nativeSource, /Старые копия и код продолжат работать/);

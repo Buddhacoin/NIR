@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 
-#if defined(NIR_ONBOARDING_LOCALE_SMOKE_TEST) || defined(NIR_ONBOARDING_LOCALE_UI_TEST)
+#if defined(NIR_ONBOARDING_LOCALE_SMOKE_TEST) || defined(NIR_ONBOARDING_LOCALE_UI_TEST) || defined(NIR_ONBOARDING_LOCALE_CHOICE_TEST)
 static CFStringRef const NIRPreferenceDomain = CFSTR("org.nir.wallet-locale-smoke-test");
 #else
 static CFStringRef const NIRPreferenceDomain = CFSTR("org.nir.wallet-setup-test");
@@ -557,7 +557,9 @@ static NSString *NIRTranslate(NSString *source) {
 }
 
 - (void)submitResult:(NSDictionary *)result {
-    NSData *bytes = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+    NSMutableDictionary *response = [result mutableCopy];
+    response[@"language"] = NIREnglish() ? @"en" : @"ru";
+    NSData *bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
     if (!bytes) exit(1);
     fwrite(bytes.bytes, 1, bytes.length, stdout);
     fputc('\n', stdout);
@@ -579,6 +581,16 @@ static NSString *NIRTranslate(NSString *source) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+#ifdef NIR_ONBOARDING_LOCALE_CHOICE_TEST
+        CFPropertyListRef previous = CFPreferencesCopyAppValue(CFSTR("language"), NIRPreferenceDomain);
+        NIRSetEnglish(YES);
+        NIRSetup *choiceDelegate = [NIRSetup new];
+        [choiceDelegate submitResult:@{ @"mode": @"create" }];
+        CFPreferencesSetAppValue(CFSTR("language"), previous, NIRPreferenceDomain);
+        CFPreferencesAppSynchronize(NIRPreferenceDomain);
+        if (previous) CFRelease(previous);
+        return 0;
+#endif
 #ifdef NIR_ONBOARDING_LOCALE_SMOKE_TEST
         CFPropertyListRef previous = CFPreferencesCopyAppValue(CFSTR("language"), NIRPreferenceDomain);
         NIRSetEnglish(YES);
