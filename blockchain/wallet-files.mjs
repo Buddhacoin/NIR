@@ -208,15 +208,14 @@ function writePrivateJsonExclusive(path, value, { _beforeActivate } = {}) {
         if (current.isSymbolicLink() && sameActivationVersion(current, activationIdentity) &&
             readlinkSync(target) === basename(generation)) {
           unlinkSync(target);
-          mayRemoveGeneration = true;
         }
       } catch (cleanupError) {
-        if (cleanupError?.code === "ENOENT") mayRemoveGeneration = true;
-        else error.activationCleanupError = cleanupError.message;
+        if (cleanupError?.code !== "ENOENT") error.activationCleanupError = cleanupError.message;
       }
     }
-    // A concurrent replacement may still point at our bytes. Prefer an orphaned
-    // private generation over leaving any surviving activation link broken.
+    // After activation, a fresh link could target this generation at any point.
+    // Keep the private generation on failure rather than creating a broken link.
+    // Before activation, still avoid deleting an attacker-linked generation.
     if (mayRemoveGeneration) {
       try {
         const current = lstatSync(target);

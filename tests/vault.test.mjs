@@ -515,6 +515,32 @@ test("wallet creation cleanup keeps a generation referenced by a replacement act
   }
 });
 
+test("post-activation failure keeps private generation for a later activation race", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-post-activation-fail-"));
+  const target = join(directory, "wallet.json");
+  const originalFsync = fs.fsyncSync;
+  let generation;
+  try {
+    fs.fsyncSync = (descriptor) => {
+      if (fstatSync(descriptor).isDirectory() && generation === undefined) {
+        generation = join(directory, readlinkSync(target));
+        throw new Error("synthetic directory fsync failure");
+      }
+      return originalFsync(descriptor);
+    };
+    syncBuiltinESMExports();
+    assert.throws(() => createWalletFile({ path: target,
+      password: "post-activation-failure-password-long" }), /synthetic directory fsync failure/);
+    assert.ok(generation);
+    assert.equal(statSync(generation).isFile(), true);
+    assert.equal(readdirSync(directory).includes("wallet.json"), false);
+  } finally {
+    fs.fsyncSync = originalFsync;
+    syncBuiltinESMExports();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("restore cleanup never deletes a target replaced after activation", () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-restore-swap-"));
   const source = join(directory, "source.json");
