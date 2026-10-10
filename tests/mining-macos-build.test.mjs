@@ -14,7 +14,8 @@ test("model app build has a bounded source allowlist and explicit nonreward mark
   assert.doesNotMatch(source, /cpSync\(|readdirSync\(/);
   assert.match(source, /checkedSource\(relative\)/);
   assert.match(source, /rewardEligible":false/);
-  assert.throws(() => buildMacMiningApp("/tmp/not-an-app"), /NIR Model Lab\.app/);
+  assert.throws(() => buildMacMiningApp("/tmp/not-an-app"),
+    process.platform === "darwin" ? /NIR Model Lab\.app/ : /requires macOS/);
   const native = readFileSync(new URL("../macos/mining-launcher.m", import.meta.url), "utf8");
   assert.match(native, /WKWebView/);
   assert.match(native, /NSMakeRect\(0, 0, 430, 800\)/);
