@@ -16,6 +16,16 @@ const extensionManifest = JSON.parse(readFileSync(
   new URL("../wallet-ui/manifest.json", import.meta.url), "utf8",
 ));
 
+test("unpriced NIR shows an empty market chart, not a fabricated zero quote", () => {
+  const market = html.match(/<section class="card market" id="market"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(market, "home screen must expose the market state");
+  assert.match(market, /Нет рыночных данных/);
+  assert.match(market, /Цена: —/);
+  assert.match(market, /Сделок и заявок нет/);
+  assert.doesNotMatch(market, /\$\s*0(?:\.00)?|Купить|Продать/);
+  assert.match(styles, /\.market-chart/);
+});
+
 test("wallet browser module parses as valid JavaScript", () => {
   execFileSync(process.execPath, ["--check", new URL("../wallet-ui/app.js", import.meta.url).pathname]);
 });
@@ -363,13 +373,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=33/);
-  assert.match(serviceWorker, /style\.css\?v=33/);
+  assert.match(html, /style\.css\?v=34/);
+  assert.match(serviceWorker, /style\.css\?v=34/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
   assert.match(html, /app\.js\?v=41/);
   assert.match(serviceWorker, /app\.js\?v=41/);
-  assert.match(serviceWorker, /nir-wallet-shell-v43/);
+  assert.match(serviceWorker, /nir-wallet-shell-v44/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
