@@ -47,8 +47,9 @@ static NSString *lexicalPath(NSString *path) {
     for (NSString *part in [path componentsSeparatedByString:@"/"]) {
         if (part.length == 0 || [part isEqualToString:@"."]) continue;
         if ([part isEqualToString:@".."]) {
-            if (parts.count == 0) return nil;
-            [parts removeLastObject];
+            // POSIX absolute paths and Node path.resolve clamp excess parent
+            // components at filesystem root rather than becoming invalid.
+            if (parts.count > 0) [parts removeLastObject];
         } else [parts addObject:part];
     }
     return [@"/" stringByAppendingString:[parts componentsJoinedByString:@"/"]];

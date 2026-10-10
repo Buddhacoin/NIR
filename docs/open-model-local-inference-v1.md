@@ -39,7 +39,11 @@ and Python executables, their exact symlink chains, the virtual environment and
 the external Python base-prefix tree. A signed native verifier repeats these
 checks before external Node.js starts. It rejects changed targets, bytes,
 `pyvenv.cfg`, added or changed `site-packages`, broken-link state, or an
-over-limit tree. The launcher also removes Node/Python path-injection variables
+over-limit tree. At build time it resolves every ancestor directory of each
+runtime and records that canonical launch path while retaining the final
+`bin/python` symlink needed for virtual-environment discovery. Changing a
+convenience alias such as `venv-current` therefore cannot redirect the signed
+app from the selected environment to another one. The launcher also removes Node/Python path-injection variables
 and disables the user site and bytecode writes. This is a fail-closed **local
 consistency guard**, not immutable runtime attestation: verification and exec
 are separate operations, the OS loader and system dynamic libraries are not in

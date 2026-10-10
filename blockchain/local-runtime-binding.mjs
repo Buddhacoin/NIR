@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readlinkSync, readdirSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024;
 const MAX_TREE_BYTES = 8 * 1024 * 1024 * 1024;
@@ -23,17 +23,23 @@ export function executableBinding(logicalPath) {
   if (typeof logicalPath !== "string" || !isAbsolute(logicalPath)) {
     throw new Error("runtime executable path must be absolute");
   }
+  const requested = resolve(logicalPath);
+  // Pin every directory component now, while retaining the final executable
+  // symlink itself.  A virtual environment needs bin/python's symlink name for
+  // sys.prefix discovery, but a mutable ancestor alias must never decide which
+  // environment the signed launcher executes later.
+  const pinnedPath = join(realpathSync(dirname(requested)), basename(requested));
   const links = [];
-  let cursor = resolve(logicalPath);
+  let cursor = pinnedPath;
   for (let depth = 0; depth < 16 && lstatSync(cursor).isSymbolicLink(); depth += 1) {
     const target = readlinkSync(cursor);
     links.push({ path: cursor, target });
     cursor = resolve(dirname(cursor), target);
   }
   if (lstatSync(cursor).isSymbolicLink()) throw new Error("runtime symlink chain is too deep");
-  const realPath = realpathSync(logicalPath);
+  const realPath = realpathSync(pinnedPath);
   if (cursor !== realPath) throw new Error("runtime symlink resolution is ambiguous");
-  return { logicalPath: resolve(logicalPath), realPath, links, ...sha256File(realPath) };
+  return { logicalPath: pinnedPath, realPath, links, ...sha256File(realPath) };
 }
 
 function inside(root, path) {

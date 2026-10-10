@@ -84,10 +84,64 @@ test("selected symlinked Python venv keeps its own site-packages path", () => {
     process.env.NIR_MINING_PYTHON = python;
     const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"), { sign: false });
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
-    assert.equal(runtime.pythonExecutable.logicalPath, python);
+    assert.equal(runtime.pythonExecutable.logicalPath,
+      join(realpathSync(join(venv, "bin")), "python"));
     const prefix = spawnSync(runtime.pythonExecutable.logicalPath, ["-c", "import sys; print(sys.prefix)"], { encoding: "utf8" });
     assert.equal(prefix.status, 0, prefix.stderr);
     assert.equal(realpathSync(prefix.stdout.trim()), realpathSync(venv));
+  } finally {
+    if (previous === undefined) delete process.env.NIR_MINING_PYTHON;
+    else process.env.NIR_MINING_PYTHON = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("signed model app pins the selected venv behind a mutable ancestor symlink", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync("/private/tmp/nir-model-ancestor-proof-test-");
+  const previous = process.env.NIR_MINING_PYTHON;
+  try {
+    const venvA = join(directory, "venv-a");
+    const venvB = join(directory, "venv-b");
+    for (const venv of [venvA, venvB]) {
+      const created = spawnSync("python3", ["-m", "venv", venv, "--symlinks"], { encoding: "utf8" });
+      assert.equal(created.status, 0, created.stderr);
+    }
+    const current = join(directory, "venv-current");
+    symlinkSync("venv-a", current);
+    const selectedPython = join(current, "bin", "python");
+    process.env.NIR_MINING_PYTHON = selectedPython;
+
+    const bSite = spawnSync(join(venvB, "bin", "python"),
+      ["-c", "import site; print(site.getsitepackages()[0])"], { encoding: "utf8" });
+    assert.equal(bSite.status, 0, bSite.stderr);
+    writeFileSync(join(bSite.stdout.trim(), "nir_ancestor_substitution.py"), "VALUE = 'venv-b'\n");
+
+    const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"));
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    const pinnedPython = runtime.pythonExecutable.logicalPath;
+    assert.equal(pinnedPython, join(realpathSync(join(current, "bin")), "python"),
+      "the launch path must pin the selected environment, not its mutable ancestor alias");
+    assert.equal(pinnedPython.includes("venv-current"), false);
+    const launcher = join(app, "Contents/MacOS/launcher");
+    assert.equal(spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8" }).status, 0);
+
+    unlinkSync(current);
+    symlinkSync("venv-b", current);
+    assert.equal(spawnSync(selectedPython,
+      ["-c", "import nir_ancestor_substitution; print(nir_ancestor_substitution.VALUE)"],
+      { encoding: "utf8" }).stdout.trim(), "venv-b",
+    "the original user-selected alias must demonstrate the adversarial switch to venv-b");
+    const pinnedImport = spawnSync(pinnedPython,
+      ["-c", "import nir_ancestor_substitution"], { encoding: "utf8" });
+    assert.notEqual(pinnedImport.status, 0,
+      "the manifest launch path must remain in venv-a after the ancestor alias changes");
+    const pinnedPrefix = spawnSync(pinnedPython,
+      ["-c", "import os,sys; print(os.path.realpath(sys.prefix))"], { encoding: "utf8" });
+    assert.equal(pinnedPrefix.status, 0, pinnedPrefix.stderr);
+    assert.equal(pinnedPrefix.stdout.trim(), realpathSync(venvA));
+    assert.equal(spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8" }).status, 0,
+      "switching an unused alias must not affect the pinned and verified runtime");
   } finally {
     if (previous === undefined) delete process.env.NIR_MINING_PYTHON;
     else process.env.NIR_MINING_PYTHON = previous;
@@ -109,7 +163,8 @@ test("signed model app rejects a changed external Python runtime", () => {
     assert.equal(created.status, 0, created.stderr);
     process.env.NIR_MINING_PYTHON = join(venv, "bin", "python");
     const nodeLink = join(directory, "node");
-    symlinkSync(process.execPath, nodeLink);
+    const nodeTarget = `${"../".repeat(30)}${process.execPath.slice(1)}`;
+    symlinkSync(nodeTarget, nodeLink);
     process.env.NIR_MINING_NODE = nodeLink;
     const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"));
     const runtimePath = join(app, "Contents/Resources/NIR-RUNTIME.json");
@@ -136,7 +191,7 @@ test("signed model app rejects a changed external Python runtime", () => {
     assert.equal(spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app],
       { encoding: "utf8" }).status, 0, "external Node substitution must preserve the app seal");
     unlinkSync(nodeLink);
-    symlinkSync(process.execPath, nodeLink);
+    symlinkSync(nodeTarget, nodeLink);
     assert.equal(verify().status, 0);
 
     const pythonLink = process.env.NIR_MINING_PYTHON;
