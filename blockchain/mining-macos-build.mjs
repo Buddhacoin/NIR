@@ -127,7 +127,8 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
       '{"format":"nir-local-model-build-v1","distribution":"not-a-public-installer","rewardEligible":false}\n');
     icon(resources);
     command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
-      "Foundation", "-framework", "WebKit", checkedSource("macos/mining-launcher.m"),
+      "Foundation", "-framework", "Security", "-framework", "WebKit",
+      checkedSource("macos/mining-launcher.m"),
       "-o", join(contents, "MacOS", "launcher")], "native model app build");
     command("/usr/bin/clang", [checkedSource("macos/mining-runner.c"), "-o",
       join(contents, "MacOS", "mining-runner")], "native process-group runner build");

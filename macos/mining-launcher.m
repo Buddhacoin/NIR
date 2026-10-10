@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <Security/Security.h>
 #import <WebKit/WebKit.h>
 #import <signal.h>
 
@@ -16,6 +17,14 @@
 @implementation NIRModelLauncher
 
 + (BOOL)verifyRuntimeAtResources:(NSString *)resources {
+    SecStaticCodeRef ownCode = NULL;
+    OSStatus created = SecStaticCodeCreateWithPath((__bridge CFURLRef)NSBundle.mainBundle.bundleURL,
+        kSecCSDefaultFlags, &ownCode);
+    if (created != errSecSuccess || !ownCode) return NO;
+    SecCSFlags flags = kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode;
+    OSStatus valid = SecStaticCodeCheckValidity(ownCode, flags, NULL);
+    CFRelease(ownCode);
+    if (valid != errSecSuccess) return NO;
     NSString *verifier = [[NSBundle mainBundle].executablePath.stringByDeletingLastPathComponent
         stringByAppendingPathComponent:@"runtime-verifier"];
     NSString *configuration = [resources stringByAppendingPathComponent:@"NIR-RUNTIME.json"];

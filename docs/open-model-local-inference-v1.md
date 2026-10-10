@@ -46,7 +46,10 @@ are separate operations, the OS loader and system dynamic libraries are not in
 the measured closure, and a privileged or racing same-user process can still
 change external files after verification. The app is ad-hoc signed, so this
 does not prove publisher identity and an attacker able to rewrite and re-sign
-the app can replace the manifest and verifier. Rebuild after any intentional
+the app can replace the manifest and verifier. A hostile parent can also inject
+code through loader controls such as `DYLD_INSERT_LIBRARIES` before the first
+line of the verifier runs; preventing that requires hardened, identified release
+signing rather than an ad-hoc local signature. Rebuild after any intentional
 runtime update; do not use this guard as reward evidence or secure distribution.
 
 After a Qwen run, the app can download a small JSON local replay record. It

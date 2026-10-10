@@ -8,6 +8,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { buildMacMiningApp } from "../blockchain/mining-macos-build.mjs";
+import { executableBinding } from "../blockchain/local-runtime-binding.mjs";
 
 test("model app build has a bounded source allowlist and explicit nonreward marker", () => {
   const source = readFileSync(new URL("../blockchain/mining-macos-build.mjs", import.meta.url), "utf8");
@@ -108,12 +109,22 @@ test("signed model app rejects a changed external Python runtime", () => {
     symlinkSync(process.execPath, nodeLink);
     process.env.NIR_MINING_NODE = nodeLink;
     const app = buildMacMiningApp(join(directory, "NIR Model Lab.app"));
-    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    const runtimePath = join(app, "Contents/Resources/NIR-RUNTIME.json");
+    const originalRuntime = readFileSync(runtimePath);
+    const runtime = JSON.parse(originalRuntime);
     assert.equal(runtime.format, "nir-local-runtime-binding-v1");
     assert.match(runtime.nodeExecutable.sha256, /^[0-9a-f]{64}$/);
     assert.match(runtime.pythonEnvironment.treeSha256, /^[0-9a-f]{64}$/);
     const launcher = join(app, "Contents/MacOS/launcher");
     const verify = () => spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8" });
+    assert.equal(verify().status, 0);
+
+    writeFileSync(runtimePath, `${JSON.stringify({ ...runtime,
+      nodeExecutable: executableBinding("/bin/echo") })}\n`);
+    assert.notEqual(spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app],
+      { encoding: "utf8" }).status, 0, "manifest substitution must break the app seal");
+    assert.notEqual(verify().status, 0, "a substituted signed manifest must fail closed");
+    writeFileSync(runtimePath, originalRuntime);
     assert.equal(verify().status, 0);
 
     unlinkSync(nodeLink);
