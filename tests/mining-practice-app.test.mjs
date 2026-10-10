@@ -86,6 +86,11 @@ test("operator console shows only real local stages, roles, and runnable models"
   assert.match(html, /data-i18n="localOnly"/);
   assert.match(html, /id="iris-evidence-file" type="file" accept="application\/json,\.json"/);
   assert.match(html, /id="iris-evidence-verify"[^>]*disabled/);
+  assert.match(html, /id="iris-recheck-receipt"[^>]*maxlength="16384"/);
+  assert.match(html, /data-i18n="irisPairLabel">Дополнительно: вставьте подписанный JSON/);
+  assert.match(script, /irisPairLabel: "Optional: paste the address-signed receipt JSON from the wallet"/);
+  assert.match(html, /id="iris-pair-recheck"[^>]*disabled/);
+  assert.match(script, /irisPairMatched: \(address\) => .*не независимый оператор.*не награда/);
   assert.match(script, /irisImportMatched: \(hash\) => .*Личность оператора не подтверждена/);
   assert.match(html, /id="candidate-file" type="file" accept="application\/json,\.json"/);
   assert.match(html, /href="\/iris-linear-sample\.json"/);
@@ -475,7 +480,7 @@ test("app preflight requires model files but not unrelated demo or wallet files"
       "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
       "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
       "blockchain/operator-model-receipt.mjs",
-      "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
+      "blockchain/consensus-codec.mjs", "blockchain/consensus-json.mjs", "blockchain/constants.mjs",
       "blockchain/model-provider-capabilities.mjs",
       "blockchain/synthetic-transfer.mjs",
       "nir/open_model_local_run.py", "nir/open_model_fetch.py",
@@ -515,6 +520,7 @@ test("mining lab serves bounded model identifier input with no secret or code in
       '<textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька">',
       '<textarea id="iris-receipt-intent" readonly aria-label="Локальный intent Iris">',
       '<textarea id="iris-receipt-signed" maxlength="16384" spellcheck="false">',
+      '<textarea id="iris-recheck-receipt" maxlength="16384" spellcheck="false">',
     ]);
     assert.doesNotMatch(html, /<form|type="password"|приватный ключ.*введите|введите.*пароль/i);
     assert.match(html, /подтверждённый адрес/i);

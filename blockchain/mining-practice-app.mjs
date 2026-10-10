@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ const APP_FILES = Object.freeze([
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
   "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
   "blockchain/operator-model-receipt.mjs",
-  "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
+  "blockchain/consensus-codec.mjs", "blockchain/consensus-json.mjs", "blockchain/constants.mjs",
   "blockchain/model-provider-capabilities.mjs",
   "blockchain/synthetic-transfer.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
@@ -359,7 +360,8 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
           chunks.push(chunk);
         }
         if (length !== declared) throw new Error("truncated proof");
-        const proof = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        const proof = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
         linkedWalletAddress = verifyOperatorWalletProof(proof, {
           challenge: challenge.value, now: Date.now(),
         });
@@ -538,7 +540,8 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         if (lastIrisReceiptIntent !== intent || lastIrisEvidence !== evidenceAtStart ||
             linkedWalletAddress !== intent.recipient || lastIrisReceipt)
           throw new Error("local run changed during receipt submission");
-        const receipt = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        const receipt = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
         verifyLocalIrisRunReceipt(receipt, {
           intent, evidenceBytes: Buffer.from(evidenceAtStart, "utf8"),
         });
@@ -744,6 +747,65 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
       } catch {
         if (!response.destroyed)
           send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local Iris evidence" }));
+      } finally { clearTimeout(deadline); running = false; }
+      return;
+    }
+    if (request.method === "POST" && path === "/model-run-receipt/recheck" &&
+        request.url === path) {
+      const declared = Number(request.headers["content-length"]);
+      const maxBody = Math.ceil(MAX_IRIS_EVIDENCE_BYTES * 4 / 3) + 16_384;
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > maxBody) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      running = true;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared || length > maxBody) throw new Error("oversized local receipt recheck");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated local receipt recheck");
+        clearTimeout(deadline);
+        const input = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
+        if (!input || Array.isArray(input) || Object.keys(input).sort().join(",") !==
+            "evidenceBase64,receipt" || typeof input.evidenceBase64 !== "string" ||
+            input.evidenceBase64.length > Math.ceil(MAX_IRIS_EVIDENCE_BYTES * 4 / 3) + 4)
+          throw new Error("invalid local receipt recheck envelope");
+        const bytes = Buffer.from(input.evidenceBase64, "base64");
+        if (bytes.length < 1 || bytes.length > MAX_IRIS_EVIDENCE_BYTES ||
+            bytes.toString("base64") !== input.evidenceBase64)
+          throw new Error("noncanonical local evidence encoding");
+        const binding = verifyLocalIrisRunReceipt(input.receipt, { evidenceBytes: bytes });
+        const checked = await verifyIris(root, bytes);
+        if (checked?.status !== "local-iris-evidence-matched" ||
+            checked.bundleHash !== input.receipt.bundleHash ||
+            checked.independentlyVerified !== false || checked.networkSubmitted !== false ||
+            checked.rewardEligible !== false || Object.keys(checked).sort().join(",") !==
+            "bundleHash,independentlyVerified,networkSubmitted,rewardEligible,status")
+          throw new Error("local Iris replay did not match signed evidence");
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          status: "local-iris-recheck-with-address-binding",
+          recipient: binding.recipient, bundleHash: checked.bundleHash,
+          evidenceDigest: input.receipt.evidenceDigest,
+          signatureValid: true, evidenceBytesBound: true, localReplayMatched: true,
+          executionVerified: false, independentlyVerified: false,
+          networkSubmitted: false, rewardEligible: false,
+        }));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local Iris receipt or evidence" }));
       } finally { clearTimeout(deadline); running = false; }
       return;
     }

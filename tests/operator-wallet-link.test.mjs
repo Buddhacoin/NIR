@@ -153,6 +153,18 @@ test("wallet bridge signs once and Model Lab consumes proof without crediting co
       headers: { ...headers, "content-type": "application/json" },
     });
     assert.equal(replay.status, 410);
+    const duplicateChallenge = (await (await fetch(`${labBase}/wallet-link/challenge`, {
+      method: "POST", body: "", headers,
+    })).json()).challenge;
+    const duplicateProof = createOperatorWalletProof({ wallet: generateWallet(),
+      challenge: duplicateChallenge });
+    const duplicateAddress = generateWallet().address;
+    const duplicateProofText = JSON.stringify(duplicateProof).replace(
+      `"address":"${duplicateProof.address}"`,
+      `"address":"${duplicateAddress}","address":"${duplicateProof.address}"`);
+    assert.equal((await fetch(`${labBase}/wallet-link/complete`, { method: "POST",
+      body: duplicateProofText,
+      headers: { ...headers, "content-type": "application/json" } })).status, 400);
   } finally {
     for (const server of [bridge, lab]) {
       if (server.listening) {
@@ -231,6 +243,12 @@ test("Iris run receipt intent requires a pre-linked address and cannot be redire
     assert.equal((await completeReceipt({ ...signed, evidenceDigest: "f".repeat(64) })).status, 400);
     assert.equal((await completeReceipt({ ...signed, recipient: walletB.address })).status, 400);
     assert.equal((await completeReceipt({ ...signed, rewardEligible: true })).status, 400);
+    const duplicateReceiptText = JSON.stringify(signed).replace(
+      `"recipient":"${walletA.address}"`,
+      `"recipient":"${walletB.address}","recipient":"${walletA.address}"`);
+    assert.equal((await fetch(`${base}/model-run-receipt/complete`, { method: "POST",
+      body: duplicateReceiptText,
+      headers: { ...headers, "content-type": "application/json" } })).status, 400);
     const complete = await completeReceipt(signed);
     assert.equal(complete.status, 200);
     assert.equal((await complete.json()).rewardEligible, false);
