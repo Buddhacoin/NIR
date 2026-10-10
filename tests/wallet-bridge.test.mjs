@@ -199,6 +199,48 @@ test("creating another account blocks native security before a second Mac passwo
   }
 });
 
+test("a delayed signing body cannot pass an earlier native-security check", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-security-body-race-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-native-security-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const server = createWalletBridgeServer({ authorize: async () => null,
+    origin, sessionToken: token, vaultPath,
+    nativeSecurity: async () => { started(); await blocked; return true; },
+  });
+  let outgoing;
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    const signing = new Promise((resolve, reject) => {
+      outgoing = httpRequest({ hostname: "127.0.0.1", port, path: "/v1/sign",
+        method: "POST", headers: { origin, "x-nir-bridge-token": token,
+          "content-type": "application/json", "transfer-encoding": "chunked" } },
+      (response) => { response.resume(); response.once("end", () => resolve(response.statusCode)); });
+      outgoing.once("error", reject);
+    });
+    await new Promise((resolve) => outgoing.write("{", resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const native = request(`http://127.0.0.1:${port}/v1/native-security`, origin,
+      token, { method: "POST" });
+    await entered;
+    outgoing.end("}");
+    assert.equal(await signing, 409);
+    release();
+    assert.equal((await native).status, 200);
+  } finally {
+    outgoing?.destroy();
+    release();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("generic paired bridge advertises no native recovery action", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-generic-recovery-"));
   const vaultPath = join(directory, "wallet.nirvault.json");

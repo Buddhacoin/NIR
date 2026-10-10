@@ -1013,6 +1013,9 @@ export function createWalletBridgeServer({
           throw new Error("bridge signing requests require application/json");
         }
         const body = await readAuthenticatedBody(16 * 1024);
+        if (securityPending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
         const { simulationId: _simulationId, ...unsignedBody } = body ?? {};
         const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(unsignedBody)
           : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(unsignedBody)
