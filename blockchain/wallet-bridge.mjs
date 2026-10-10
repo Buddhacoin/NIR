@@ -94,7 +94,7 @@ function publicBridgeError(error) {
 function send(response, status, value, origin) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
-    "access-control-allow-origin": origin,
+    ...(origin ? { "access-control-allow-origin": origin } : {}),
     "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
     "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
@@ -331,6 +331,7 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  firefoxPairing = false,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -350,6 +351,7 @@ export function createWalletBridgeServer({
         accounts.length > 100 || accounts.some((account) =>
           typeof account?.path !== "string" || !ADDRESS.test(account?.address ?? "")))) ||
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
+      typeof firefoxPairing !== "boolean" || (firefoxPairing && pairingCode === undefined) ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
       (trustAnchor !== undefined &&
         (typeof trustAnchor?.expectedNetworkId !== "string" ||
@@ -454,6 +456,7 @@ export function createWalletBridgeServer({
   let pairingAvailable = pairingCode !== undefined;
   let pairingPending = false;
   let sessionActive = pairingCode === undefined;
+  let pairedFirefoxOrigin = null;
   let sessionGeneration = 0;
   let accountActionPending = false;
   const activateAccount = (id) => {
@@ -471,6 +474,7 @@ export function createWalletBridgeServer({
     signResults.clear();
   };
   const pairingDeadline = Date.now() + pairingLifetimeMs;
+  const configuredOrigin = origin;
   const server = createServer(async (request, response) => {
     const requestGeneration = sessionGeneration;
     const readAuthenticatedBody = async (limit) => {
@@ -481,13 +485,30 @@ export function createWalletBridgeServer({
       return body;
     };
     const requestOrigin = request.headers.origin;
+    const firefoxCandidate = firefoxPairing && pairedFirefoxOrigin === null &&
+      !sessionActive && pairingAvailable && Date.now() <= pairingDeadline &&
+      pairingAttempts < 5 &&
+      /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestOrigin ?? "") &&
+      ["/v1/pair", "/v1/pairing-prompt"].includes(request.url) &&
+      ["POST", "OPTIONS"].includes(request.method);
+    // A candidate can only attempt one-time pairing; the successful exact origin
+    // is then frozen for every privileged request for the remainder of the session.
+    const origin = firefoxPairing
+      ? (pairedFirefoxOrigin ?? (firefoxCandidate ? requestOrigin : null))
+      : configuredOrigin;
     const host = request.headers.host ?? "";
     const remoteAddress = request.socket.remoteAddress ?? "";
-    if (requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
+    if (!origin || requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
         !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress)) {
       return send(response, 403, { error: "bridge origin or host is not allowed" }, origin);
     }
     if (request.method === "OPTIONS") {
+      if (firefoxCandidate &&
+          (request.headers["access-control-request-method"] !== "POST" ||
+           ![undefined, "content-type"].includes(
+             request.headers["access-control-request-headers"]?.toLowerCase()))) {
+        return send(response, 403, { error: "bridge pairing preflight is invalid" }, origin);
+      }
       response.writeHead(204, {
         "access-control-allow-headers": "content-type, x-nir-bridge-token",
         "access-control-allow-methods": "DELETE, GET, POST, OPTIONS",
@@ -531,6 +552,7 @@ export function createWalletBridgeServer({
           throw new Error("pairing code is invalid");
         }
         pairingAvailable = false;
+        if (firefoxPairing) pairedFirefoxOrigin = requestOrigin;
         sessionActive = true;
         return send(response, 200, { sessionToken }, origin);
       } catch (error) {
