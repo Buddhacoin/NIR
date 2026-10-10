@@ -49,6 +49,12 @@ header, .title { display: flex; align-items: center; justify-content: space-betw
 .onboarding > p { margin: 9px 0; }
 .onboarding ol { margin: 9px 0 11px; padding-left: 21px; }
 .onboarding li + li { margin-top: 6px; }
+.market { min-height: 0; }
+.market h2 { margin: 0; }
+.market-price { margin: 18px 0 12px; font-size: 24px; font-weight: 650; }
+.market-chart { display: grid; place-items: center; min-height: 130px; border: 1px solid var(--border); border-radius: 14px; color: var(--muted); font-size: 13px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 32px, var(--border) 33px), var(--surface-soft); }
+.market-chart span { padding: 7px 10px; border-radius: 9px; background: var(--surface); }
+.market-note { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .eyebrow { color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .step { flex: none; padding: 6px 9px; border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
 .onboarding-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
