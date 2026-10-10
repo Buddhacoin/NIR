@@ -377,9 +377,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=34/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=41/);
-  assert.match(serviceWorker, /app\.js\?v=41/);
-  assert.match(serviceWorker, /nir-wallet-shell-v44/);
+  assert.match(html, /app\.js\?v=42/);
+  assert.match(serviceWorker, /app\.js\?v=42/);
+  assert.match(serviceWorker, /nir-wallet-shell-v45/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
@@ -406,6 +406,9 @@ test("wallet provides safe onboarding, recovery guidance, and session revocation
   assert.match(html, /id="settings-secrets"/);
   assert.match(html, /Создать новый код восстановления/);
   assert.match(script, /bridgeRequest\("\/v1\/native-security", \{ method: "POST" \}/);
+  assert.match(html, /id="settings-password-change"/);
+  assert.match(script, /bridgeRequest\("\/v1\/native-password-change", \{ method: "POST" \}/);
+  assert.match(html, /Старые экспортированные копии и коды/);
   assert.doesNotMatch(html, /<input[^>]+(?:privateKey|recoveryCode)/i);
 });
 
@@ -422,12 +425,18 @@ test("settings hide Mac-only recovery when the paired bridge lacks native capabi
   runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
   context.renderWalletConnection();
   assert.equal(controls.get("#settings-secrets").hidden, true);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
   context.walletInfo.nativeSecurityAvailable = true;
   context.renderWalletConnection();
   assert.equal(controls.get("#settings-secrets").hidden, false);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
+  context.walletInfo.nativePasswordChangeAvailable = true;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-password-change").hidden, false);
   context.bridgeSession = null;
   context.renderWalletConnection();
   assert.equal(controls.get("#settings-secrets").hidden, true);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
 });
 
 test("wallet limits browser privileges and supports accessible system settings", () => {

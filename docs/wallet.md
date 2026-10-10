@@ -15,8 +15,10 @@ The repository also contains a library for creating distinct local-test wallet
 addresses with separate encrypted backups and recovery codes. It verifies each
 backup by restoring it into a temporary file before reporting success. This is
 not yet a downloadable wallet app, a cloud account, or a public mining address.
-The personal-wallet creation policy accepts at least 12 characters; the default
-high-value vault creation policy remains at least 16 characters.
+The personal local-test wallet creation policy accepts at least 9 non-trivial
+characters (not a numeric-only PIN); longer unique passwords are safer. The
+default founder, protocol, and validator vault creation policy remains at least
+16 characters.
 
 The initial backup is stored in a separate folder on the **same Mac**, so it
 does not protect against loss of that computer. Copy the backup to independent
@@ -30,6 +32,15 @@ file path. Keep that file, open it with the same password, and create and verify
 a new backup before using the address. Restoring into a new file with a new
 password keeps both copies selectable; a shared address does not make their
 passwords interchangeable.
+Changing the active local wallet-file password preserves its address but does
+not revoke separately exported backups and recovery codes. Older backup/code
+pairs can still restore the same key; suspected key exposure requires a new
+address and a deliberate transfer. The native password-change path has only
+been exercised with synthetic wallets, not as a public-network recovery claim.
+An interrupted password change can leave a private rotation lock. The app fails
+closed instead of deleting that lock automatically. Close all wallet processes,
+verify the address and an independent backup, and diagnose the interrupted
+operation before any recovery action; do not blindly remove the lock.
 
 ```bash
 npm run wallet:create -- /absolute/path/personal.nirvault.json

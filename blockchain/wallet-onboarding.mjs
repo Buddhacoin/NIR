@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import {
+  changeWalletFilePassword,
   createVerifiedWalletBackup,
   createRecoveryCodeWalletBackup,
   createPhraseWalletFile,
@@ -277,6 +278,17 @@ export function renewLocalTestRecoveryCode({ storageRoot, walletPath, password }
   });
   if (created.address !== verified.address) throw new Error("wallet address changed during backup");
   return { address: created.address, backupPath, recoveryCode };
+}
+
+export function changeLocalTestWalletPassword({ storageRoot, walletPath,
+  oldPassword, newPassword }) {
+  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/") ||
+      typeof walletPath !== "string" ||
+      !listLocalTestWallets(storageRoot).some((wallet) => wallet.path === walletPath)) {
+    throw new Error("selected wallet is not in the local account list");
+  }
+  return changeWalletFilePassword({ path: walletPath, oldPassword, newPassword,
+    personalWallet: true });
 }
 
 export function restoreLocalTestWallet({ storageRoot, backupPath, expectedAddress, password }) {

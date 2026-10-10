@@ -9,6 +9,7 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -49,7 +50,12 @@ function privateGenerationPattern(target) {
 }
 
 function sameIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
+  return BigInt(left.dev) === BigInt(right.dev) && BigInt(left.ino) === BigInt(right.ino);
+}
+
+function sameActivationVersion(left, right) {
+  return sameIdentity(left, right) && left.ctimeNs === right.ctimeNs &&
+    left.birthtimeNs === right.birthtimeNs;
 }
 
 function secureOpenFlags(directory = false) {
@@ -61,8 +67,8 @@ function secureOpenFlags(directory = false) {
 
 function readPrivateJson(path, description) {
   const target = resolve(path);
-  const activation = lstatSync(target);
-  if (activation.isSymbolicLink() && activation.nlink !== 1) {
+  const activation = lstatSync(target, { bigint: true });
+  if (activation.isSymbolicLink() && activation.nlink !== 1n) {
     throw new Error(`${description} is invalid or unsafe`);
   }
   let source = target;
@@ -90,8 +96,8 @@ function readPrivateJson(path, description) {
       throw new Error(`${description} changed while it was read`);
     }
     if (link !== null) {
-      const current = lstatSync(target);
-      if (!current.isSymbolicLink() || !sameIdentity(current, activation) ||
+      const current = lstatSync(target, { bigint: true });
+      if (!current.isSymbolicLink() || !sameActivationVersion(current, activation) ||
           readlinkSync(target) !== link) throw new Error(`${description} activation changed`);
     }
     return JSON.parse(bytes.toString("utf8"));
@@ -112,11 +118,11 @@ function realpathSafeLink(target) {
 
 function capturePrivateActivation(path) {
   const target = resolve(path);
-  const activation = lstatSync(target);
+  const activation = lstatSync(target, { bigint: true });
   const link = realpathSafeLink(target);
   const generation = join(dirname(target), link);
   const generationIdentity = lstatSync(generation);
-  if (!activation.isSymbolicLink() || activation.nlink !== 1 ||
+  if (!activation.isSymbolicLink() || activation.nlink !== 1n ||
       !generationIdentity.isFile() || generationIdentity.isSymbolicLink()) {
     throw new Error("wallet private-file activation is unsafe");
   }
@@ -124,8 +130,8 @@ function capturePrivateActivation(path) {
 }
 
 function removePrivateActivation(created) {
-  const current = lstatSync(created.target);
-  if (!current.isSymbolicLink() || !sameIdentity(current, created.activation) ||
+  const current = lstatSync(created.target, { bigint: true });
+  if (!current.isSymbolicLink() || !sameActivationVersion(current, created.activation) ||
       readlinkSync(created.target) !== created.link) return;
   unlinkSync(created.target);
   const generation = lstatSync(created.generation);
@@ -184,27 +190,46 @@ function writePrivateJsonExclusive(path, value, { _beforeActivate } = {}) {
       throw new Error("wallet private-file paths changed before activation");
     }
     symlinkSync(basename(generation), target, "file");
-    activationIdentity = lstatSync(target);
+    activationIdentity = lstatSync(target, { bigint: true });
     if (!activationIdentity.isSymbolicLink() || readlinkSync(target) !== basename(generation)) {
       throw new Error("wallet private-file activation is inconsistent");
     }
     fsyncSync(parentDescriptor);
-    const activated = lstatSync(target);
-    if (!activated.isSymbolicLink() || !sameIdentity(activated, activationIdentity) ||
+    const activated = lstatSync(target, { bigint: true });
+    if (!activated.isSymbolicLink() || !sameActivationVersion(activated, activationIdentity) ||
         readlinkSync(target) !== basename(generation)) {
       throw new Error("wallet private-file activation changed");
     }
   } catch (error) {
+    let mayRemoveGeneration = activationIdentity === null;
     if (activationIdentity !== null) {
       try {
-        const current = lstatSync(target);
-        if (current.isSymbolicLink() && sameIdentity(current, activationIdentity) &&
-            readlinkSync(target) === basename(generation)) unlinkSync(target);
+        const current = lstatSync(target, { bigint: true });
+        if (current.isSymbolicLink() && sameActivationVersion(current, activationIdentity) &&
+            readlinkSync(target) === basename(generation)) {
+          unlinkSync(target);
+        }
       } catch (cleanupError) {
         if (cleanupError?.code !== "ENOENT") error.activationCleanupError = cleanupError.message;
       }
     }
-    if (generationCreated && generationIdentity !== null) {
+    // After activation, a fresh link could target this generation at any point.
+    // Keep the private generation on failure rather than creating a broken link.
+    // Before activation, still avoid deleting an attacker-linked generation.
+    if (mayRemoveGeneration) {
+      try {
+        const current = lstatSync(target);
+        if (current.isSymbolicLink() && readlinkSync(target) === basename(generation)) {
+          mayRemoveGeneration = false;
+        }
+      } catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") {
+          mayRemoveGeneration = false;
+          error.activationCleanupError = cleanupError.message;
+        }
+      }
+    }
+    if (mayRemoveGeneration && generationCreated && generationIdentity !== null) {
       try {
         const current = lstatSync(generation);
         if (current.isFile() && !current.isSymbolicLink() && sameIdentity(current, generationIdentity)) {
@@ -278,6 +303,157 @@ export function verifyWalletFile({ path, password }) {
   } finally {
     wallet.privateKey = "";
   }
+}
+
+// Rotate only the active local vault. Exported backups are independent copies and
+// remain usable with their original recovery factors; this is not key rotation.
+export function changeWalletFilePassword({ path, oldPassword, newPassword,
+  personalWallet = false, _beforeActivate }) {
+  const target = resolve(path);
+  const directory = dirname(target);
+  const lock = join(directory, `.${basename(target)}.nir-password-rotation.lock`);
+  const parentDescriptor = openSync(directory, secureOpenFlags(true));
+  let lockDescriptor;
+  let lockIdentity;
+  try {
+    lockDescriptor = openSync(lock, constants.O_WRONLY | constants.O_CREAT |
+      constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    lockIdentity = fstatSync(lockDescriptor);
+    fchmodSync(lockDescriptor, 0o600);
+    fsyncSync(parentDescriptor);
+  } catch (error) {
+    if (lockDescriptor !== undefined) {
+      closeSync(lockDescriptor);
+      try {
+        const current = lstatSync(lock);
+        if (sameIdentity(current, lockIdentity) && current.isFile() &&
+            !current.isSymbolicLink()) unlinkSync(lock);
+      } catch { /* Preserve the original error; a stale lock fails closed. */ }
+    }
+    closeSync(parentDescriptor);
+    if (error?.code === "EEXIST") {
+      const locked = new Error("wallet password rotation lock exists (EEXIST); close other wallet processes and inspect before recovery", { cause: error });
+      locked.code = "NIR_WALLET_PASSWORD_CHANGE_LOCKED";
+      throw locked;
+    }
+    throw error;
+  }
+  try {
+    return changeWalletFilePasswordLocked({ path: target, oldPassword, newPassword,
+      personalWallet, _beforeActivate });
+  } finally {
+    let cleanupError;
+    try {
+      closeSync(lockDescriptor);
+      const current = lstatSync(lock);
+      if (sameIdentity(current, lockIdentity) && current.isFile() &&
+          !current.isSymbolicLink()) {
+        unlinkSync(lock);
+        fsyncSync(parentDescriptor);
+      } else {
+        throw new Error("wallet password rotation lock changed");
+      }
+    } catch (error) { cleanupError = error; }
+    try { closeSync(parentDescriptor); }
+    catch (error) { cleanupError ??= error; }
+    if (cleanupError) {
+      const uncertain = new Error("wallet password change may have activated; reopen and verify the address",
+        { cause: cleanupError });
+      uncertain.code = "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
+      throw uncertain;
+    }
+  }
+}
+
+function changeWalletFilePasswordLocked({ path, oldPassword, newPassword,
+  personalWallet, _beforeActivate }) {
+  if (oldPassword === newPassword) throw new Error("new wallet password must differ");
+  const original = capturePrivateActivation(path);
+  const oldVault = readVault(path);
+  const oldWallet = decryptWallet(oldVault, oldPassword);
+  let replacement;
+  try {
+    replacement = encryptWallet(oldWallet, newPassword,
+      { label: oldVault.label, personalWallet });
+  } finally { oldWallet.privateKey = ""; }
+  if (replacement.address !== oldVault.address ||
+      replacement.publicKey !== oldVault.publicKey) {
+    throw new Error("wallet identity changed during password rotation");
+  }
+
+  const directory = dirname(original.target);
+  const parentDescriptor = openSync(directory, secureOpenFlags(true));
+  const parentIdentity = fstatSync(parentDescriptor);
+  const generation = join(directory,
+    `.${basename(original.target)}.nir-private-${randomBytes(16).toString("hex")}`);
+  const activation = join(directory,
+    `.${basename(original.target)}.nir-activation-${randomBytes(16).toString("hex")}`);
+  let generationIdentity = null;
+  let activated = false;
+  try {
+    const descriptor = openSync(generation, constants.O_WRONLY | constants.O_CREAT |
+      constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    generationIdentity = fstatSync(descriptor);
+    try {
+      fchmodSync(descriptor, 0o600);
+      writeFileSync(descriptor, `${JSON.stringify(replacement, null, 2)}\n`, "utf8");
+      fsyncSync(descriptor);
+    } finally { closeSync(descriptor); }
+    const staged = readPrivateJson(generation, "replacement wallet vault");
+    const verified = decryptWallet(staged, newPassword);
+    try {
+      if (verified.address !== oldVault.address || verified.publicKey !== oldVault.publicKey) {
+        throw new Error("replacement wallet identity changed");
+      }
+    } finally { verified.privateKey = ""; }
+    if (_beforeActivate !== undefined) {
+      if (typeof _beforeActivate !== "function") throw new Error("wallet activation hook is invalid");
+      _beforeActivate({ generation, target: original.target });
+    }
+    const current = capturePrivateActivation(original.target);
+    if (!sameActivationVersion(current.activation, original.activation) ||
+        !sameIdentity(current.generationIdentity, original.generationIdentity) ||
+        current.link !== original.link ||
+        !sameIdentity(fstatSync(parentDescriptor), parentIdentity) ||
+        !sameIdentity(lstatSync(directory), parentIdentity)) {
+      throw new Error("wallet activation changed during password rotation");
+    }
+    symlinkSync(basename(generation), activation, "file");
+    renameSync(activation, original.target);
+    activated = true;
+    fsyncSync(parentDescriptor);
+    const currentVault = verifyWalletFile({ path: original.target, password: newPassword });
+    if (currentVault.address !== oldVault.address) {
+      throw new Error("activated wallet identity changed");
+    }
+    const oldGeneration = lstatSync(original.generation);
+    if (!sameIdentity(oldGeneration, original.generationIdentity) ||
+        !oldGeneration.isFile() || oldGeneration.isSymbolicLink()) {
+      throw new Error("old wallet generation changed after activation");
+    }
+    unlinkSync(original.generation);
+    fsyncSync(parentDescriptor);
+    return { address: currentVault.address, path: original.target };
+  } catch (error) {
+    if (activated) {
+      const uncertain = new Error("wallet password change may have activated; reopen and verify the address", { cause: error });
+      uncertain.code = "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
+      throw uncertain;
+    }
+    try { unlinkSync(activation); } catch (cleanup) {
+      if (cleanup?.code !== "ENOENT") error.activationCleanupError = cleanup.message;
+    }
+    if (generationIdentity) {
+      try {
+        const current = lstatSync(generation);
+        if (sameIdentity(current, generationIdentity) && current.isFile() &&
+            !current.isSymbolicLink()) unlinkSync(generation);
+      } catch (cleanup) {
+        if (cleanup?.code !== "ENOENT") error.generationCleanupError = cleanup.message;
+      }
+    }
+    throw error;
+  } finally { closeSync(parentDescriptor); }
 }
 
 export function signValidatorAdmissionWithWalletFiles({

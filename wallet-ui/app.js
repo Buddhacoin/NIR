@@ -157,6 +157,8 @@ function renderWalletConnection() {
   document.querySelector("#settings-connect").hidden = connected;
   document.querySelector("#settings-secrets").hidden = !connected ||
     walletInfo.nativeSecurityAvailable !== true;
+  document.querySelector("#settings-password-change").hidden = !connected ||
+    walletInfo.nativePasswordChangeAvailable !== true;
   document.querySelector("#security-state").textContent = connected
     ? `Кошелёк подключён · ${walletInfo.address.slice(0, 16)}…`
     : "Кошелёк не подключён";
@@ -1633,6 +1635,21 @@ document.querySelector("#settings-secrets").onclick = async (event) => {
   } catch (error) {
     status.textContent = error.name === "AbortError"
       ? "Окно Mac не ответило вовремя." : "Не удалось завершить действие. Проверьте окно Mac.";
+  } finally { button.disabled = false; }
+};
+document.querySelector("#settings-password-change").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#settings-password-status");
+  button.disabled = true;
+  status.textContent = "Введите старый и новый пароль только в отдельном окне Mac.";
+  try {
+    const result = await bridgeRequest("/v1/native-password-change", { method: "POST" }, 600_000);
+    status.textContent = result.changed ? "Пароль активного файла изменён. Старые копии не отозваны."
+      : "Действие отменено. Пароль не изменён.";
+  } catch (error) {
+    status.textContent = error.name === "AbortError"
+      ? "Окно Mac не ответило вовремя. Перезапустите кошелёк и проверьте доступ."
+      : "Не удалось завершить смену пароля. Проверьте окно Mac и доступ после перезапуска.";
   } finally { button.disabled = false; }
 };
 document.querySelector("#setup-connect").onclick = () => {

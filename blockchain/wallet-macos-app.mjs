@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import { createWalletBridgeServer } from "./wallet-bridge.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
-import { listLocalTestWallets, renewLocalTestRecoveryCode } from "./wallet-onboarding.mjs";
+import { changeLocalTestWalletPassword, listLocalTestWallets,
+  renewLocalTestRecoveryCode } from "./wallet-onboarding.mjs";
 import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
 
@@ -149,6 +150,54 @@ async function nativeSecurity({ vaultPath, signal }) {
   }
 }
 
+async function nativePasswordChange({ vaultPath, signal }) {
+  const english = await nativeLanguage() === "en";
+  const cancel = english ? "Cancel" : "Отмена";
+  const proceed = english ? "Continue" : "Продолжить";
+  let committed = false;
+  try {
+    const decision = await nativeDialog(`on run argv\n set answer to display alert (item 1 of argv) message (item 2 of argv) buttons {(item 3 of argv), (item 4 of argv)} default button (item 3 of argv) as warning\n return button returned of answer\nend run`,
+      [english ? "Change this wallet's password?" : "Сменить пароль этого кошелька?",
+        english ? "This changes only the active encrypted file on this Mac. Earlier exported backups and recovery codes still grant access; a compromised key needs a new address." :
+          "Изменится только активный зашифрованный файл на этом Mac. Ранее экспортированные копии и коды остаются действительными; если ключ раскрыт, нужен новый адрес.",
+        cancel, proceed], signal);
+    if (decision !== proceed || signal?.aborted) return false;
+    const ask = (message) => nativeDialog(`on run argv\n set answer to display dialog (item 1 of argv) default answer "" with hidden answer buttons {(item 2 of argv), (item 3 of argv)} default button (item 3 of argv)\n return text returned of answer\nend run`,
+      [message, cancel, proceed], signal);
+    const oldPassword = await ask(english ? "Current wallet password" : "Текущий пароль кошелька");
+    if (signal?.aborted) return false;
+    const newPassword = await ask(english ? "New password: at least 9 non-trivial characters" :
+      "Новый пароль: не менее 9 нетривиальных символов");
+    if (signal?.aborted) return false;
+    const confirmation = await ask(english ? "Repeat the new password" : "Повторите новый пароль");
+    if (signal?.aborted) return false;
+    if (newPassword !== confirmation) throw new Error("new wallet passwords do not match");
+    const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
+    const before = walletPublicInfo(vaultPath).address;
+    const changed = changeLocalTestWalletPassword({ storageRoot, walletPath: vaultPath,
+      oldPassword, newPassword });
+    committed = true;
+    if (changed.address !== before || walletPublicInfo(vaultPath).address !== before) {
+      throw new Error("wallet identity changed during password change");
+    }
+    return true;
+  } catch (error) {
+    if (!committed && (signal?.aborted || String(error?.message ?? "").includes("User canceled") ||
+        String(error?.message ?? "").includes("-128"))) return false;
+    const uncertain = committed || error?.code === "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
+    const locked = error?.code === "NIR_WALLET_PASSWORD_CHANGE_LOCKED";
+    try { await notify(english ? "Password change needs checking" : "Проверьте смену пароля",
+      uncertain ? (english ? "Reopen the wallet and verify the address and which password works. Do not delete any backup." :
+        "Откройте кошелёк снова, проверьте адрес и какой пароль подходит. Не удаляйте резервные копии.") :
+        locked ? (english ? "Another wallet process may be changing this file, or a previous change stopped unexpectedly. Close every NIR Wallet instance, confirm a verified backup, and seek diagnostics. Do not delete the lock manually." :
+          "Возможно, другой процесс меняет файл или прежняя смена прервалась. Закройте все окна NIR Wallet, проверьте резервную копию и обратитесь за диагностикой. Не удаляйте блокировку вручную.") :
+        (english ? "Check the current password and new password rules. The active vault was not replaced." :
+          "Проверьте текущий пароль и требования к новому. Активный файл не был заменён.")); }
+    catch { /* Keep bridge response generic. */ }
+    throw new Error("native password change did not complete");
+  }
+}
+
 async function main() {
   if (process.platform !== "darwin") throw new Error("this visual wallet runs on macOS only");
   const setup = fileURLToPath(new URL("./wallet-macos-setup.mjs", import.meta.url));
@@ -190,6 +239,7 @@ async function main() {
       accounts: listLocalTestWallets(storageRoot),
       authorize: authorizeSigning,
       createAccount,
+      nativePasswordChange,
       nativeSecurity,
       origin,
       pairingCode,

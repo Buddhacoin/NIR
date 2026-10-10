@@ -33,7 +33,7 @@ static NSString *NIRTranslate(NSString *source) {
             @"Восстановление": @"Recovery", @"Код восстановления": @"Recovery code",
             @"Код, записанный при создании кошелька": @"Code saved when the wallet was created",
             @"Пароль": @"Password", @"Новый пароль": @"New password",
-            @"От 12 символов": @"At least 12 characters",
+            @"От 9 символов": @"At least 9 characters",
             @"Введите пароль кошелька": @"Enter wallet password",
             @"Повторите пароль": @"Repeat password",
             @"Повторите новый пароль": @"Repeat new password",
@@ -63,7 +63,7 @@ static NSString *NIRTranslate(NSString *source) {
             @"На этом Mac нет сохранённого кошелька. Выберите «Создать».": @"No saved wallet on this Mac. Select Create.",
             @"Введите пароль выбранного кошелька.": @"Enter the selected wallet password.",
             @"Выберите копию из списка или нажмите «Другой файл…».": @"Select a listed backup or choose Another file…",
-            @"Пароль слишком короткий: нужно от 12 символов.": @"Password too short: at least 12 characters required.",
+            @"Пароль слишком короткий: нужно от 9 символов.": @"Password too short: at least 9 characters required.",
             @"Пароли не совпадают. Проверьте ввод.": @"Passwords do not match. Check your entry.",
             @"Введите полный адрес, записанный при создании кошелька.": @"Enter the full address recorded when the wallet was created.",
             @"Введите код восстановления.": @"Enter the recovery code.",
@@ -208,7 +208,7 @@ static NSString *NIRTranslate(NSString *source) {
                                     size:13 color:NSColor.secondaryLabelColor];
     [content addSubview:self.passwordLabel];
     self.password = (NSSecureTextField *)[self input:NSMakeRect(28, 198, 434, 30) secure:YES];
-    self.password.placeholderString = @"От 12 символов";
+    self.password.placeholderString = @"От 9 символов";
     [content addSubview:self.password];
     self.secondLabel = [self label:@"Повторите пароль" frame:NSMakeRect(28, 169, 434, 20)
                                   size:13 color:NSColor.secondaryLabelColor];
@@ -452,7 +452,7 @@ static NSString *NIRTranslate(NSString *source) {
     self.password.enabled = !opening || self.wallets.count > 0;
     self.password.frame = opening ? NSMakeRect(28, 281, 334, 36) : self.password.frame;
     self.passwordLabel.frame = opening ? NSMakeRect(28, 321, 334, 20) : self.passwordLabel.frame;
-    self.password.placeholderString = opening ? @"Введите пароль кошелька" : @"От 12 символов";
+    self.password.placeholderString = opening ? @"Введите пароль кошелька" : @"От 9 символов";
     self.confirmation.hidden = opening;
     self.address.hidden = ![[self mode] isEqualToString:@"restore"];
     self.addressLabel.hidden = self.address.hidden;
@@ -539,8 +539,8 @@ static NSString *NIRTranslate(NSString *source) {
         return;
     }
     if (![mode isEqualToString:@"open"]) {
-        if (self.password.stringValue.length < 12) {
-            [self showError:@"Пароль слишком короткий: нужно от 12 символов."];
+        if ([self.password.stringValue lengthOfBytesUsingEncoding:NSUTF32LittleEndianStringEncoding] / 4 < 9) {
+            [self showError:@"Пароль слишком короткий: нужно от 9 символов."];
             return;
         }
         if (![self.password.stringValue isEqualToString:self.confirmation.stringValue]) {

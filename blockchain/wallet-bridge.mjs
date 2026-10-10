@@ -331,6 +331,7 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  nativePasswordChange,
   nativeSecurity,
   origin,
   pairingCode,
@@ -345,6 +346,7 @@ export function createWalletBridgeServer({
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       (createAccount !== undefined && typeof createAccount !== "function") ||
+      (nativePasswordChange !== undefined && typeof nativePasswordChange !== "function") ||
       (nativeSecurity !== undefined && typeof nativeSecurity !== "function") ||
       (presentPairingCode !== undefined &&
         (typeof presentPairingCode !== "function" || pairingCode === undefined)) ||
@@ -559,8 +561,10 @@ export function createWalletBridgeServer({
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
-      if (request.method === "POST" && url.pathname === "/v1/native-security") {
-        if (!nativeSecurity) return send(response, 404, { error: "native security is unavailable" }, origin);
+      if (request.method === "POST" && ["/v1/native-security", "/v1/native-password-change"].includes(url.pathname)) {
+        const changingPassword = url.pathname === "/v1/native-password-change";
+        const action = changingPassword ? nativePasswordChange : nativeSecurity;
+        if (!action) return send(response, 404, { error: "native security is unavailable" }, origin);
         if (securityPending || pending || accountActionPending) {
           return send(response, 409, { error: "finish the pending wallet action first" }, origin);
         }
@@ -569,12 +573,13 @@ export function createWalletBridgeServer({
         const securityTimeout = setTimeout(() => securityController?.abort(), 540_000);
         const generation = sessionGeneration;
         try {
-          const completed = await nativeSecurity({ vaultPath: activeVaultPath,
+          const completed = await action({ vaultPath: activeVaultPath,
             signal: securityController.signal });
           if (!sessionActive || generation !== sessionGeneration) {
             return send(response, 409, { error: "wallet session ended" }, origin);
           }
-          return send(response, 200, { opened: completed === true }, origin);
+          return send(response, 200, changingPassword ? { changed: completed === true } :
+            { opened: completed === true }, origin);
         } finally {
           clearTimeout(securityTimeout);
           securityPending = false;
@@ -658,7 +663,8 @@ export function createWalletBridgeServer({
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, { ...walletPublicInfo(activeVaultPath),
-          nativeSecurityAvailable: Boolean(nativeSecurity) }, origin);
+          nativeSecurityAvailable: Boolean(nativeSecurity),
+          nativePasswordChangeAvailable: Boolean(nativePasswordChange) }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
