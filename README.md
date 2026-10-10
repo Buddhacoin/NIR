@@ -39,7 +39,9 @@ The one-click experience requires an official browser-store listing or a signed 
 
 Existing developer ZIPs require manual installation and are **not** one-click installers, audited wallets, or automatically updated releases. General users should wait for the official Firefox Add-ons listing and must not install purported NIR Wallet apps from third-party sites. The earlier Mac desktop demo is a local prototype, not a public installer. See the [wallet safety guide](docs/wallet.md).
 
-Developers can run `npm run wallet:firefox-stage -- /absolute/new-directory` to create an unsigned Firefox-specific source directory, then validate it with `web-ext lint --source-dir /absolute/new-directory`. The command refuses an existing destination and leaves the Chrome production manifest unchanged. Do not distribute this directory as a usable wallet: the local bridge and node still reject Firefox's per-installation `moz-extension://` origin.
+Developers can run `npm run wallet:firefox-stage -- /absolute/new-directory` to create an unsigned Firefox-specific source directory, then validate it with `web-ext lint --source-dir /absolute/new-directory`. The command refuses an existing destination and leaves the Chrome production manifest unchanged. Do not distribute this directory as a usable wallet: normal bridge startup and node services still reject Firefox's per-installation `moz-extension://` origin.
+
+In a local developer run, `npm run wallet:bridge -- <test-vault> 8788 --firefox-pairing` admits only a canonical Firefox extension origin to attempt the existing one-time code. A successful attempt pins that exact origin for the bridge session; other origins are rejected. This does not authenticate the extension's publisher, work in production mode, enable Firefox node read/transaction ingress, or provide an installable release.
 
 ## Current status
 
