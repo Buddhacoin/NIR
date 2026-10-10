@@ -109,7 +109,6 @@ function validateInputs({
   if (canonicalJson(genesis) !== canonicalJson(compiled.genesis)) {
     throw new Error("compiled genesis does not match the verified ceremony");
   }
-  assertApprovedPublicGenesisRewardPolicy(plan, genesis);
   verifyCeremonyRegistryAnchorForLatestPlan(
     anchor, plan, compiled.genesisHash, releaseOptions,
   );
@@ -180,6 +179,7 @@ function serializedJson(value) { return Buffer.from(`${canonicalJson(value)}\n`)
 
 export function initializeValidatorFromCeremony(targetPath, inputs) {
   const verified = validateInputs(inputs);
+  assertApprovedPublicGenesisRewardPolicy(inputs.plan, verified.compiled.genesis);
   const target = resolve(targetPath);
   const parent = dirname(target);
   const parentOpened = openDirectory(parent, "validator ceremony parent");
