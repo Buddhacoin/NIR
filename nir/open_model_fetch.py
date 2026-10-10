@@ -93,8 +93,10 @@ def _download_hub(*, repo_id: str, filename: str, revision: str,
                     raise FetchError("bounded transport read is unavailable")
                 if response.status != 200:
                     raise FetchError("model download returned a non-success status")
+                if response.headers.get("Transfer-Encoding") is not None:
+                    raise FetchError("chunked model download is not accepted")
                 length = response.headers.get("Content-Length")
-                if length is not None and (not length.isdigit() or int(length) != expected_size):
+                if length is None or not length.isdigit() or int(length) != expected_size:
                     raise FetchError("model download length differs from pinned metadata")
                 if response.headers.get("Content-Encoding", "identity").lower() != "identity":
                     raise FetchError("compressed model download is not accepted")

@@ -182,7 +182,7 @@ class FetchTests(unittest.TestCase):
                 self.assertIn(f"/resolve/{REVISION}/{name}", request.full_url)
                 self.assertEqual(timeout, 15)
                 response = Response(body)
-                response.headers = headers or {}
+                response.headers = {"Content-Length": str(expected)} if headers is None else headers
                 return response
             return open_response
 
@@ -201,8 +201,12 @@ class FetchTests(unittest.TestCase):
             run(b"A" * expected, {"Content-Length": str(expected + 1)})
         self.assertEqual((folder / name).stat().st_size, 0)
         (folder / name).unlink()
+        with self.assertRaisesRegex(FetchError, "length differs"):
+            run(b"A" * expected, {})
+        (folder / name).unlink()
         with self.assertRaisesRegex(FetchError, "compressed"):
-            run(b"A" * expected, {"Content-Encoding": "gzip"})
+            run(b"A" * expected, {"Content-Length": str(expected),
+                                   "Content-Encoding": "gzip"})
         (folder / name).unlink()
         with self.assertRaisesRegex(FetchError, "ended before"):
             run(b"A" * (expected - 1))
@@ -228,7 +232,7 @@ class FetchTests(unittest.TestCase):
     def test_slow_trickle_exceeds_overall_deadline_before_more_writes(self):
         class SlowResponse:
             status = 200
-            headers = {}
+            headers = {"Content-Length": "1000000"}
             reads = 0
 
             def __enter__(self):
@@ -293,6 +297,48 @@ class FetchTests(unittest.TestCase):
                               deadline=start + 0.25)
             self.assertLess(monotonic() - start, 1.0)
             self.assertLess((folder / "config.json").stat().st_size, 100)
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_real_chunked_response_is_rejected_without_waiting_for_body(self):
+        class ChunkedTrickle(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                try:
+                    self.wfile.write(b"1\r\nA\r\n")
+                    self.wfile.flush()
+                    sleep(1)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ChunkedTrickle)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        folder = self.root / "chunked"
+        folder.mkdir()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+
+        def open_response(_request, timeout):
+            connection.request("GET", "/model")
+            return connection.getresponse()
+
+        start = monotonic()
+        try:
+            with self.assertRaisesRegex(FetchError, "chunked"):
+                _download_hub(repo_id=REPO, filename="config.json", revision=REVISION,
+                              token=False, local_dir=str(folder), endpoint="https://huggingface.co",
+                              expected_size=1_000_000, open_response=open_response,
+                              deadline=start + 0.1)
+            self.assertLess(monotonic() - start, 0.8)
+            self.assertEqual((folder / "config.json").stat().st_size, 0)
         finally:
             connection.close()
             server.shutdown()

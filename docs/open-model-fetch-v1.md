@@ -16,6 +16,9 @@ malformed hashes, or a reported core set over 4 GiB. It rejects a response
 that exceeds the pinned size *before writing excess bytes*, and accepts only
 HTTPS redirects to Hub-controlled hosts. A single 20-minute deadline covers
 all selected file downloads; each network read has a 15-second timeout. The
+downloader requires an exact `Content-Length` and rejects chunked transfer:
+buffered chunk parsing can otherwise outlive the deadline. A Hub endpoint that
+offers only chunked data fails closed rather than being treated as installable. The
 downloaded bytes are copied
 through no-follow file descriptors into a separate temporary package;
 Git blob OIDs or LFS raw SHA-256 and sizes are checked. The copied package is
