@@ -85,6 +85,15 @@ function renderWalletConnection() {
 
 function clearAccountNumbers() {
   networkProofVerified = false;
+  networkButton.textContent = "○ Сеть не подтверждена";
+  networkButton.classList.add("offline");
+  networkButton.classList.remove("connected");
+  messages.network = ["Сеть не подтверждена", "Доказательство сети и баланса требует повторной проверки."];
+  const receiveDialog = document.querySelector("#receive-panel");
+  if (receiveDialog.open) receiveDialog.close();
+  document.querySelector("#receive-address").textContent = "";
+  document.querySelector("#receive-network").textContent = "";
+  document.querySelector("#receive-qr").hidden = true;
   document.querySelector("#balance-value").textContent = "—";
   document.querySelector("#resource-stake").textContent = "—";
   document.querySelector("#resource-credits").textContent = "—";
@@ -530,6 +539,10 @@ async function refreshAccount() {
       `Кворум подтвердил баланс · блок ${account.proofHeight}`;
     renderTransactions(account);
     networkProofVerified = true;
+    networkButton.textContent = `● ${networkInfo.agreeingNodes}/${networkInfo.availableNodes} · h${networkInfo.height}`;
+    networkButton.classList.add("connected");
+    networkButton.classList.remove("offline");
+    messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Доказательство баланса проверено.`];
     return true;
   } catch {
     if (!isCurrent()) return false;
@@ -1180,6 +1193,7 @@ function receive() {
   }
   document.querySelector("#receive-address").textContent = walletInfo.address;
   document.querySelector("#receive-network").textContent = `Сеть: ${networkInfo.networkId}`;
+  document.querySelector("#receive-qr").hidden = false;
   drawQr(document.querySelector("#receive-qr"), `nir:${walletInfo.address}`, `QR публичного адреса ${walletInfo.address}; сеть ${networkInfo.networkId}`);
   document.querySelector("#payment-request-result").hidden = true;
   document.querySelector("#payment-request-simulation").hidden = true;
@@ -1727,6 +1741,8 @@ async function refreshNodeStatus() {
   networkInfo = null;
   activeNodeUrl = null;
   clearAccountNumbers();
+  networkButton.textContent = "○ Проверка сети…";
+  messages.network = ["Сеть проверяется", "Старое подтверждение сброшено; ждём новое доказательство сети и баланса."];
   document.querySelector("#wallet-state").textContent = "Проверяем сеть и баланс…";
   try {
     await selectActiveNode(refreshSequence);

@@ -354,9 +354,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=40/);
-  assert.match(serviceWorker, /app\.js\?v=40/);
-  assert.match(serviceWorker, /nir-wallet-shell-v42/);
+  assert.match(html, /app\.js\?v=41/);
+  assert.match(serviceWorker, /app\.js\?v=41/);
+  assert.match(serviceWorker, /nir-wallet-shell-v43/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -531,11 +531,16 @@ test("wallet never displays an unverified node balance or stale verified balance
     if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false, disabled: false });
     return nodes.get(selector);
   } };
+  const classes = new Set(["connected"]);
   nodes.set("#balance-value", { textContent: "5.00000000" });
   const context = {
     document, accountEpoch: 0, accountRefreshSequence: 0,
+    networkButton: { textContent: "● 1/1 · h3", classList: {
+      add(value) { classes.add(value); }, remove(value) { classes.delete(value); },
+    } },
+    messages: { network: [] },
     walletInfo: { address: `nir1${"a".repeat(64)}` },
-    networkInfo: { height: 3 },
+    networkInfo: { height: 3, networkId: "nir-test", agreeingNodes: 1, availableNodes: 1 },
     readAccount: async () => ({ atomicBalance: "100000000000000", proofVerified: false,
       resources: { atomicStake: "500000000", availableTransferCredits: "99",
         pendingUnstake: { amount: "100000000", unlockHeight: 4 } } }),
@@ -546,6 +551,7 @@ test("wallet never displays an unverified node balance or stale verified balance
   await context.refreshAccount();
   assert.equal(nodes.get("#balance-value").textContent, "—");
   assert.equal(context.networkProofVerified, false);
+  assert.equal(classes.has("connected"), false);
   assert.equal(nodes.get("#resource-stake").textContent, "—");
   assert.equal(nodes.get("#resource-credits").textContent, "—");
   assert.equal(nodes.get("#resource-unstake").textContent, "—");
@@ -558,12 +564,14 @@ test("wallet never displays an unverified node balance or stale verified balance
   await context.refreshAccount();
   assert.equal(nodes.get("#balance-value").textContent, "5");
   assert.equal(context.networkProofVerified, true);
+  assert.equal(classes.has("connected"), true);
   assert.match(nodes.get("#wallet-state").textContent, /Кворум подтвердил баланс/);
 
   context.readAccount = async () => { throw new Error("node offline"); };
   await context.refreshAccount();
   assert.equal(nodes.get("#balance-value").textContent, "—");
   assert.equal(context.networkProofVerified, false);
+  assert.equal(classes.has("connected"), false);
   assert.equal(nodes.get("#resource-credits").textContent, "—");
   assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
 
@@ -745,6 +753,63 @@ test("receive does not expose a provisional network while account proof is pendi
   assert.equal(nodes.get("#receive-network")?.textContent ?? "", "");
   finishProof(false);
   assert.equal(await refreshing, false);
+});
+
+test("losing account proof dismisses an already open receive screen", () => {
+  const source = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const nodes = new Map();
+  const dialog = { open: true, close() { this.open = false; } };
+  nodes.set("#receive-panel", dialog);
+  nodes.set("#receive-address", { textContent: "nir1old" });
+  nodes.set("#receive-network", { textContent: "Сеть: nir-old" });
+  nodes.set("#receive-qr", { hidden: false });
+  const context = {
+    networkProofVerified: true,
+    networkButton: { textContent: "● 1/1 · h77", classList: { add() {}, remove() {} } },
+    messages: { network: ["Узлы NIR подключены", "старое состояние"] },
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false, disabled: false });
+      return nodes.get(selector);
+    } },
+  };
+  runInNewContext(`${source}\nglobalThis.clearAccountNumbers = clearAccountNumbers;`, context);
+  context.clearAccountNumbers();
+  assert.equal(context.networkProofVerified, false);
+  assert.equal(dialog.open, false);
+  assert.equal(nodes.get("#receive-address").textContent, "");
+  assert.equal(nodes.get("#receive-network").textContent, "");
+  assert.equal(nodes.get("#receive-qr").hidden, true);
+});
+
+test("a pending node refresh immediately removes the old connected badge", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const source = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const classes = new Set(["connected"]);
+  const nodes = new Map();
+  const context = {
+    accountEpoch: 0, accountRefreshSequence: 0, nodeRefreshSequence: 0,
+    networkProofVerified: true, networkInfo: { networkId: "nir-old", height: 77 },
+    activeNodeUrl: "http://127.0.0.1:8787",
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { textContent: "", dataset: {} });
+      return nodes.get(selector);
+    } },
+    networkButton: { textContent: "● 1/1 · h77", classList: {
+      add(value) { classes.add(value); }, remove(value) { classes.delete(value); },
+    } },
+    messages: { network: ["Узлы NIR подключены", "старое состояние"] },
+    selectActiveNode: () => new Promise(() => {}),
+    refreshAccount: async () => true,
+  };
+  runInNewContext(`${clearSource}\n${source}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`, context);
+  context.refreshNodeStatus();
+  assert.equal(context.networkProofVerified, false);
+  assert.equal(classes.has("connected"), false);
+  assert.match(context.networkButton.textContent, /провер/i);
+  assert.doesNotMatch(context.messages.network[0], /подключены/i);
 });
 
 test("superseded node refresh cannot authorize a testnet submission", async () => {
