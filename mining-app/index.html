@@ -9,8 +9,18 @@
 </head>
 <body>
   <main class="app">
-    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MODEL LAB</small></span><div class="header-actions"><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
+    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MODEL LAB</small></span><div class="header-actions"><button id="settings-open" class="language" type="button" aria-pressed="false" data-i18n="settingsButton">Настройки</button><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
     <p id="connection" class="connection" role="status" aria-live="polite">Проверяем подключение к локальному сервису…</p>
+    <section id="settings-page" class="catalog" aria-labelledby="settings-heading" hidden>
+      <h2 id="settings-heading" data-i18n="settingsTitle">Версия и обновления</h2>
+      <p data-i18n="settingsIntro">Здесь показана локальная сборка Model Lab. Номер версии сам по себе не доказывает подлинность приложения.</p>
+      <p><strong data-i18n="installedVersionLabel">Версия:</strong> <span id="installed-version">—</span></p>
+      <p><strong data-i18n="installedBuildLabel">Идентификатор сборки:</strong> <code id="installed-build-id">—</code></p>
+      <button id="check-updates" class="secondary" type="button" data-i18n="checkUpdates">Проверить обновления</button>
+      <p id="update-result" role="status" aria-live="polite">Доверенный канал обновлений пока не настроен.</p>
+      <button id="settings-back" class="secondary" type="button" data-i18n="settingsBack">Назад к проверке моделей</button>
+    </section>
+    <div id="lab-content">
     <section class="catalog" aria-labelledby="wallet-link-heading">
       <h2 id="wallet-link-heading" data-i18n="walletLinkTitle">Адрес оператора</h2>
       <p data-i18n="walletLinkIntro">Подтвердите владение адресом через установленный NIR Wallet. Пароль и ключ остаются в кошельке. Это локальная привязка без сетевой заявки и начисления.</p>
@@ -127,6 +137,7 @@
       <p id="iris-verify-state" role="status" aria-live="polite"></p>
     </section>
     <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
+    </div>
     <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.</footer>
   </main>
 </body>
