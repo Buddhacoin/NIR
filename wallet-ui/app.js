@@ -1800,10 +1800,10 @@ document.querySelector("#wallet-check-updates").onclick = async (event) => {
     if (!/^\d+\.\d+\.\d+$/.test(build.version) ||
         !Number.isSafeInteger(build.localBuildSequence) || build.localBuildSequence < 1 ||
         build.updateChannel !== "unavailable") throw new Error("Неверные сведения о сборке.");
-    status.textContent = `Установлена локальная сборка ${build.version} · ревизия ${build.localBuildSequence}. ` +
+    status.textContent = `Запущенный локальный сервис: версия ${build.version} · ревизия ${build.localBuildSequence}. ` +
       "Доверенный канал обновлений не настроен; наличие новой версии не проверено. Приложение не изменено.";
   } catch {
-    status.textContent = "Не удалось проверить сведения об установленной сборке. Приложение не изменено.";
+    status.textContent = "Не удалось получить сведения о запущенном сервисе. Приложение не изменено.";
   } finally { button.disabled = false; }
 };
 document.querySelector("#settings-secrets").onclick = async (event) => {

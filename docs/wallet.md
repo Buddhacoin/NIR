@@ -345,7 +345,7 @@ The bundled launcher also depends on the recorded external Node.js path;
 changing that runtime can make a local build fail to start.
 Because it is outside the signed bundle and bundle hash, replacing that
 runtime can also execute attacker-controlled code with access to the local
-wallet. The local Settings button reports the installed build identity and
+wallet. The local Settings button reports the running local service build identity and
 the absence of a trusted update channel; it does not download or install an
 update or claim that this version is latest. Each later reviewed local build
 must deliberately increase `walletBuildSequence` in `package.json`.
