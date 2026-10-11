@@ -308,7 +308,7 @@ export function verifyWalletFile({ path, password }) {
 // Rotate only the active local vault. Exported backups are independent copies and
 // remain usable with their original recovery factors; this is not key rotation.
 export function changeWalletFilePassword({ path, oldPassword, newPassword,
-  personalWallet = false, _beforeActivate }) {
+  personalWallet = false, _beforeActivate, _afterLegacyBackup, _afterActivate }) {
   const target = resolve(path);
   const directory = dirname(target);
   const lock = join(directory, `.${basename(target)}.nir-password-rotation.lock`);
@@ -340,7 +340,7 @@ export function changeWalletFilePassword({ path, oldPassword, newPassword,
   }
   try {
     return changeWalletFilePasswordLocked({ path: target, oldPassword, newPassword,
-      personalWallet, _beforeActivate });
+      personalWallet, _beforeActivate, _afterLegacyBackup, _afterActivate });
   } finally {
     let cleanupError;
     try {
@@ -366,9 +366,14 @@ export function changeWalletFilePassword({ path, oldPassword, newPassword,
 }
 
 function changeWalletFilePasswordLocked({ path, oldPassword, newPassword,
-  personalWallet, _beforeActivate }) {
+  personalWallet, _beforeActivate, _afterLegacyBackup, _afterActivate }) {
   if (oldPassword === newPassword) throw new Error("new wallet password must differ");
-  const original = capturePrivateActivation(path);
+  const initial = lstatSync(path, { bigint: true });
+  const legacy = initial.isFile() && !initial.isSymbolicLink();
+  const original = legacy ? { activation: initial, target: path } : capturePrivateActivation(path);
+  if (legacy && (initial.nlink !== 1n || (initial.mode & 0o077n) !== 0n)) {
+    throw new Error("legacy wallet vault is not a private unlinked regular file");
+  }
   const oldVault = readVault(path);
   const oldWallet = decryptWallet(oldVault, oldPassword);
   let replacement;
@@ -390,6 +395,7 @@ function changeWalletFilePasswordLocked({ path, oldPassword, newPassword,
     `.${basename(original.target)}.nir-activation-${randomBytes(16).toString("hex")}`);
   let generationIdentity = null;
   let activated = false;
+  let legacyBackup = null;
   try {
     const descriptor = openSync(generation, constants.O_WRONLY | constants.O_CREAT |
       constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -410,28 +416,74 @@ function changeWalletFilePasswordLocked({ path, oldPassword, newPassword,
       if (typeof _beforeActivate !== "function") throw new Error("wallet activation hook is invalid");
       _beforeActivate({ generation, target: original.target });
     }
-    const current = capturePrivateActivation(original.target);
-    if (!sameActivationVersion(current.activation, original.activation) ||
-        !sameIdentity(current.generationIdentity, original.generationIdentity) ||
-        current.link !== original.link ||
+    const current = legacy ? lstatSync(original.target, { bigint: true }) :
+      capturePrivateActivation(original.target);
+    if ((legacy ? (!current.isFile() || current.isSymbolicLink() ||
+          current.nlink !== 1n || !sameActivationVersion(current, original.activation)) :
+        (!sameActivationVersion(current.activation, original.activation) ||
+          !sameIdentity(current.generationIdentity, original.generationIdentity) ||
+          current.link !== original.link)) ||
         !sameIdentity(fstatSync(parentDescriptor), parentIdentity) ||
         !sameIdentity(lstatSync(directory), parentIdentity)) {
       throw new Error("wallet activation changed during password rotation");
+    }
+    if (legacy) {
+      // Copy only encrypted vault bytes. Hard-linking would make the active
+      // legacy file temporarily unreadable under the nlink=1 safety rule.
+      const backupPath = join(directory,
+        `.${basename(original.target)}.nir-legacy-${randomBytes(16).toString("hex")}`);
+      const backupDescriptor = openSync(backupPath, constants.O_WRONLY | constants.O_CREAT |
+        constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      legacyBackup = { path: backupPath, identity: fstatSync(backupDescriptor) };
+      try {
+        fchmodSync(backupDescriptor, 0o600);
+        writeFileSync(backupDescriptor, `${JSON.stringify(oldVault, null, 2)}\n`, "utf8");
+        fsyncSync(backupDescriptor);
+      } finally { closeSync(backupDescriptor); }
+      if (verifyWalletFile({ path: backupPath, password: oldPassword }).address !== oldVault.address) {
+        throw new Error("legacy wallet recovery copy changed identity");
+      }
+      fsyncSync(parentDescriptor);
+      if (_afterLegacyBackup !== undefined) {
+        if (typeof _afterLegacyBackup !== "function") throw new Error("wallet backup hook is invalid");
+        _afterLegacyBackup({ backupPath, target: original.target });
+      }
+      const beforeRename = lstatSync(original.target, { bigint: true });
+      const backup = lstatSync(backupPath);
+      if (!sameActivationVersion(beforeRename, original.activation) ||
+          beforeRename.nlink !== 1n || !backup.isFile() ||
+          backup.isSymbolicLink() || backup.nlink !== 1 ||
+          !sameIdentity(backup, legacyBackup.identity)) {
+        throw new Error("legacy wallet vault changed before activation");
+      }
     }
     symlinkSync(basename(generation), activation, "file");
     renameSync(activation, original.target);
     activated = true;
     fsyncSync(parentDescriptor);
+    if (_afterActivate !== undefined) {
+      if (typeof _afterActivate !== "function") throw new Error("wallet activation hook is invalid");
+      _afterActivate({ target: original.target, backupPath: legacyBackup?.path ?? null });
+    }
     const currentVault = verifyWalletFile({ path: original.target, password: newPassword });
     if (currentVault.address !== oldVault.address) {
       throw new Error("activated wallet identity changed");
     }
-    const oldGeneration = lstatSync(original.generation);
-    if (!sameIdentity(oldGeneration, original.generationIdentity) ||
-        !oldGeneration.isFile() || oldGeneration.isSymbolicLink()) {
-      throw new Error("old wallet generation changed after activation");
+    if (legacy) {
+      const oldFile = lstatSync(legacyBackup.path);
+      if (!sameIdentity(oldFile, legacyBackup.identity) || !oldFile.isFile() ||
+          oldFile.isSymbolicLink() || oldFile.nlink !== 1) {
+        throw new Error("legacy wallet recovery file changed after activation");
+      }
+      unlinkSync(legacyBackup.path);
+    } else {
+      const oldGeneration = lstatSync(original.generation);
+      if (!sameIdentity(oldGeneration, original.generationIdentity) ||
+          !oldGeneration.isFile() || oldGeneration.isSymbolicLink()) {
+        throw new Error("old wallet generation changed after activation");
+      }
+      unlinkSync(original.generation);
     }
-    unlinkSync(original.generation);
     fsyncSync(parentDescriptor);
     return { address: currentVault.address, path: original.target };
   } catch (error) {
@@ -439,6 +491,21 @@ function changeWalletFilePasswordLocked({ path, oldPassword, newPassword,
       const uncertain = new Error("wallet password change may have activated; reopen and verify the address", { cause: error });
       uncertain.code = "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
       throw uncertain;
+    }
+    if (legacyBackup !== null) {
+      try {
+        const active = lstatSync(original.target, { bigint: true });
+        const backup = lstatSync(legacyBackup.path);
+        if (active.isFile() && !active.isSymbolicLink() &&
+            sameActivationVersion(active, original.activation) &&
+            backup.isFile() && !backup.isSymbolicLink() &&
+            sameIdentity(backup, legacyBackup.identity) && backup.nlink === 1) {
+          unlinkSync(legacyBackup.path);
+          fsyncSync(parentDescriptor);
+        }
+      } catch (cleanup) {
+        if (cleanup?.code !== "ENOENT") error.legacyBackupCleanupError = cleanup.message;
+      }
     }
     try { unlinkSync(activation); } catch (cleanup) {
       if (cleanup?.code !== "ENOENT") error.activationCleanupError = cleanup.message;
