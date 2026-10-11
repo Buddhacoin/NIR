@@ -811,6 +811,7 @@ export function createWalletBridgeServer({
       if (request.method === "GET" && url.pathname === "/v1/trust-info") {
         return send(response, 200, {
           enabled: Boolean(accountTrust),
+          chainIdentityAvailable: Boolean(accountTrust && genesisCheckpoint),
           minimumHeight: verifiedFinalityTip?.height ?? trustCheckpoint?.height ??
             genesisCheckpoint?.height ?? 0,
           networkId: accountTrust?.expectedNetworkId ?? null,

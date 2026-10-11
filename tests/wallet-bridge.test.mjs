@@ -122,7 +122,7 @@ test("Firefox pairing binds one exact installation origin before exposing a brid
     assert.equal(unanchored.status, 200);
     assert.deepEqual(await unanchored.json(), {
       enabled: false, minimumHeight: 0, networkId: null, tipHash: null,
-      chainIdentityGenesisHash: null,
+      chainIdentityAvailable: false, chainIdentityGenesisHash: null,
     });
     assert.equal((await request(`${base}/v1/wallet`, first, token)).status, 200);
     assert.equal((await request(`${base}/v1/wallet`, second, token)).status, 403);
@@ -535,6 +535,7 @@ test("wallet checkpoint advances only through a verified finality header chain",
     const base = `http://127.0.0.1:${server.address().port}`;
     const initialTrust = await request(`${base}/v1/trust-info`, origin, token);
     assert.equal(initialTrust.status, 200);
+    assert.equal((await initialTrust.clone().json()).chainIdentityAvailable, true);
     assert.equal((await initialTrust.json()).chainIdentityGenesisHash, genesisBlock.hash);
     const derivedAsset = await request(`${base}/v1/derive-asset-id`, origin, token, {
       body: JSON.stringify({ networkId, nonce: 0 }), method: "POST",
@@ -879,6 +880,12 @@ test("wallet account trust advances through verified validator handoffs", async 
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    const partialTrust = await request(`${base}/v1/trust-info`, origin, token);
+    assert.equal(partialTrust.status, 200);
+    assert.deepEqual(await partialTrust.json(), {
+      enabled: true, chainIdentityAvailable: false,
+      minimumHeight: 0, networkId, chainIdentityGenesisHash: null, tipHash: null,
+    });
     const updated = await request(`${base}/v1/update-validator-trust`, origin, token, {
       body: JSON.stringify({ handoffs: [handoff] }), method: "POST",
     });
