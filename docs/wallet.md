@@ -41,6 +41,15 @@ An interrupted password change can leave a private rotation lock. The app fails
 closed instead of deleting that lock automatically. Close all wallet processes,
 verify the address and an independent backup, and diagnose the interrupted
 operation before any recovery action; do not blindly remove the lock.
+For a legacy regular-file wallet, migration to the current activation format
+first stages a separate private copy of the *encrypted* old vault. Before the
+atomic switch, the original file remains readable with the old password. An
+interruption after the switch may leave a hidden `.nir-legacy-*` copy in the
+same private `Wallets` directory, still protected by the old password. The
+normal account list deliberately does not import hidden recovery copies.
+Preserve them and the rotation lock for diagnosis; do not rename, delete, or
+open a copy through an unverified tool. Verify the public address and which
+password opens the active wallet before seeking assisted recovery.
 
 ```bash
 npm run wallet:create -- /absolute/path/personal.nirvault.json
