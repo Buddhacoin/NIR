@@ -291,10 +291,20 @@ This creates a new backup/code pair; it does not revoke any older pair. If an
 older pair may have leaked, use a new address and migrate any funds instead.
 The app starts a loopback-only interface on a fresh port for each launch and
 displays it in its own nonpersistent macOS WebKit window, not a browser tab.
-Navigation outside that exact local origin is refused. The app does not keep a
-persistent service worker and starts a signing bridge. Clicking
-**Connect** brings a native eight-digit pairing code to the front; the code is
-never returned to the browser. Multiple vault files, including restored copies
+Navigation outside the exact local wallet document is refused. The app does not
+keep a persistent service worker and starts a signing bridge. In this
+source-built native window, the intended flow passes a fresh 256-bit one-time
+bootstrap secret
+only the private child-to-launcher pipe and is injected into the exact main
+WebKit document, then exchanged once for a separate in-memory session token.
+The source UI hides the onboarding card and no longer invokes the eight-digit
+pairing dialog in this native path; the standalone browser/CLI path still
+requires its manual pairing code. The complete handshake has not yet been
+manually verified in a built WKWebView app or in the user's installed app. If
+the native handshake fails, close and reopen the app rather
+than entering a secret on a web page. This does not protect a modified app
+bundle or a malicious process running as the same macOS user. Multiple vault
+files, including restored copies
 of one address, remain distinct selectable entries. Creating another vault in
 the browser opens the same native setup flow. The password stays in the native
 process and local child pipe; it is not sent to the browser.

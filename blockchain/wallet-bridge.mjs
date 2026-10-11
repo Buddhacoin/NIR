@@ -366,7 +366,7 @@ export function createWalletBridgeServer({
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.tipHash ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.stateRoot ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))))) ||
-      (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
+      (pairingCode !== undefined && !/^(?:[0-9]{8}|[0-9a-f]{64})$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
       (headerHistoryPath !== undefined && typeof headerHistoryPath !== "string") ||
       (trustHistoryPath !== undefined && typeof trustHistoryPath !== "string") ||

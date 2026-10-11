@@ -189,12 +189,12 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     assert.equal(inert.images, 0);
     assert.match(inert.text, /<img/);
 
-    await send("Page.navigate", { url: `${origin}/index.html?local-app=1` });
+    await send("Page.navigate", { url: `${origin}/?local-demo=1&local-app=1` });
     const macDeadline = Date.now() + 5_000;
     while (true) {
       try {
         const rendered = await evaluate(send,
-          `location.search === "?local-app=1" && document.querySelector('[data-action="mine"]')?.textContent.includes("О майнинге")`);
+          `location.search === "?local-demo=1&local-app=1" && document.querySelector('[data-action="mine"]')?.textContent.includes("О майнинге")`);
         if (rendered) break;
       } catch { /* Navigation can replace the execution context. */ }
       if (Date.now() >= macDeadline) throw new Error("Chromium local Mac mode did not render");
@@ -204,6 +204,10 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
       document.querySelector('[data-action="mine"]').click();
       return {
         onboardingSteps: document.querySelector("#onboarding ol").children.length,
+        onboardingHidden: getComputedStyle(document.querySelector("#onboarding")).display,
+        nativeError: document.querySelector("#native-connection-error").textContent,
+        nativeErrorHidden: document.querySelector("#native-connection-error").hidden,
+        bootstrapPresent: Object.hasOwn(window, "__nirNativeBootstrap"),
         setupHidden: getComputedStyle(document.querySelector("#setup-panel .setup-steps")).display,
         title: document.querySelector("#onboarding-title").textContent,
         connect: document.querySelector('#onboarding [data-action="connect"]').textContent,
@@ -215,13 +219,17 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
       };
     })()`);
     assert.equal(macCopy.onboardingSteps, 0);
+    assert.equal(macCopy.onboardingHidden, "none");
+    assert.equal(macCopy.nativeErrorHidden, false);
+    assert.match(macCopy.nativeError, /откройте NIR Wallet снова/);
+    assert.equal(macCopy.bootstrapPresent, false);
     assert.equal(macCopy.setupHidden, "none");
     assert.equal(macCopy.title, "Подключите защищённый файл кошелька");
     assert.equal(macCopy.connect, "Подключить кошелёк");
     assert.equal(macCopy.balance, "—");
-    assert.match(macCopy.balanceStatus, /не подтверждён/);
+    assert.doesNotMatch(macCopy.balanceStatus, /Кворум подтвердил баланс/);
     assert.doesNotMatch(macCopy.nodes, /Nodes|Local testnet/);
-    assert.match(macCopy.bridge, /окна macOS/);
+    assert.match(macCopy.bridge, /автоматически/);
     assert.match(macCopy.mining, /не начисляет NIR/);
     const settingsPage = await evaluate(send, `(() => {
       document.querySelector('[data-nav="settings"]').click();
@@ -258,8 +266,8 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
         document.querySelector('#home-page').hidden;
       document.querySelector('[data-nav="home"]').click();
       document.querySelector('[data-action="receive"]').click();
-      const connect = document.querySelector('#bridge-panel').open &&
-        !document.querySelector('#bridge-panel').matches(':modal');
+      const connect = !document.querySelector('#bridge-panel').open &&
+        document.querySelector('#wallet-state').textContent.includes('закройте и откройте NIR Wallet снова');
       document.querySelector('[data-nav="settings"]').click();
       document.querySelector('[data-nav="home"]').click();
       document.querySelector('[data-nav="settings"]').click();
@@ -289,6 +297,12 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     socket?.close();
     await closeChrome(chrome);
     await close(server).catch(() => {});
-    rmSync(profile, { recursive: true, force: true });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try { rmSync(profile, { recursive: true, force: true }); break; }
+      catch (error) {
+        if ((error.code !== "ENOTEMPTY" && error.code !== "EBUSY") || attempt === 9) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
   }
 });
