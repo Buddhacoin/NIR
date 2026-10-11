@@ -354,9 +354,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=39/);
-  assert.match(serviceWorker, /app\.js\?v=39/);
-  assert.match(serviceWorker, /nir-wallet-shell-v41/);
+  assert.match(html, /app\.js\?v=40/);
+  assert.match(serviceWorker, /app\.js\?v=40/);
+  assert.match(serviceWorker, /nir-wallet-shell-v42/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -614,6 +614,94 @@ test("wallet clears a previously proven balance when node selection fails", asyn
   assert.equal(nodes.get("#resource-stake").textContent, "—");
   assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
   assert.equal(context.networkInfo, null);
+  context.selectActiveNode = async () => { throw new Error("trusted genesis anchor unavailable"); };
+  assert.equal(await context.refreshNodeStatus(), false);
+  assert.match(nodes.get("#wallet-state").textContent, /нет закреплённого genesis/);
+  assert.match(context.networkButton.textContent, /Сеть не подтверждена/);
+});
+
+test("reachable node health cannot make an unanchored wallet appear connected", async () => {
+  const source = script.slice(script.indexOf("async function selectActiveNode("),
+    script.indexOf("async function refreshNodeStatus()"));
+  for (const trust of [null, { enabled: true, chainIdentityAvailable: false,
+    networkId: "unanchored", tipHash: null, chainIdentityGenesisHash: null },
+  { enabled: true, chainIdentityAvailable: true, networkId: "unanchored",
+    tipHash: "f".repeat(64), chainIdentityGenesisHash: "not-a-hash" }]) {
+    let fetched = 0;
+    const context = {
+      accountEpoch: 0, nodeRefreshSequence: 1, bridgeSession: trust ? { token: "local" } : null,
+      activeNodeUrl: null, networkInfo: null,
+      loadNodePolicy: async () => ({ nodes: ["http://127.0.0.1:8787"], minimumAgreement: 1 }),
+      bridgeRequest: async () => trust,
+      fetch: async () => { fetched += 1; return { ok: true, json: async () => ({
+        status: "ready", networkId: "unanchored", height: 1, tipHash: "f".repeat(64),
+      }) }; },
+      selectNodeHealth: () => ({ url: "http://127.0.0.1:8787",
+        health: { networkId: "unanchored", height: 1 }, agreeingNodes: 1,
+        availableNodes: 1 }),
+      AbortController, setTimeout, clearTimeout,
+    };
+    runInNewContext(`${source}\nglobalThis.selectActiveNode = selectActiveNode;`, context);
+    await assert.rejects(() => context.selectActiveNode(1), /genesis anchor/);
+    assert.equal(fetched, 0);
+    assert.equal(context.activeNodeUrl, null);
+    assert.equal(context.networkInfo, null);
+  }
+  let fetched = 0;
+  const anchored = { enabled: true, chainIdentityAvailable: true,
+    networkId: "nir-local-test", minimumHeight: 0, tipHash: "a".repeat(64),
+    chainIdentityGenesisHash: "b".repeat(64) };
+  const context = {
+    accountEpoch: 0, nodeRefreshSequence: 1, bridgeSession: { token: "local" },
+    activeNodeUrl: null, networkInfo: null,
+    loadNodePolicy: async () => ({ nodes: ["http://127.0.0.1:8787"], minimumAgreement: 1 }),
+    bridgeRequest: async () => anchored,
+    fetch: async () => { fetched += 1; return { ok: true, json: async () => ({
+      status: "ready", networkId: anchored.networkId, height: 0, tipHash: anchored.tipHash,
+    }) }; },
+    selectNodeHealth: (_entries, policy) => {
+      assert.equal(policy.expectedNetworkId, anchored.networkId);
+      assert.equal(policy.trustedTipHash, anchored.tipHash);
+      return { url: "http://127.0.0.1:8787",
+        health: { networkId: anchored.networkId, height: 0 }, agreeingNodes: 1,
+        availableNodes: 1 };
+    },
+    AbortController, setTimeout, clearTimeout,
+  };
+  runInNewContext(`${source}\nglobalThis.selectActiveNode = selectActiveNode;`, context);
+  assert.equal((await context.selectActiveNode(1)).networkId, anchored.networkId);
+  assert.equal(fetched, 1);
+});
+
+test("reachable anchored node stays unconfirmed when account proof fails", async () => {
+  const source = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const classes = new Set();
+  const nodes = new Map();
+  const context = {
+    accountEpoch: 0, accountRefreshSequence: 0, nodeRefreshSequence: 0,
+    networkInfo: null, activeNodeUrl: null,
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { textContent: "", dataset: {} });
+      return nodes.get(selector);
+    } },
+    clearAccountNumbers() {},
+    networkButton: { textContent: "", classList: {
+      add(value) { classes.add(value); }, remove(value) { classes.delete(value); },
+    } },
+    messages: { network: [] },
+    selectActiveNode: async () => {
+      context.activeNodeUrl = "http://127.0.0.1:8787";
+      context.networkInfo = { networkId: "nir-local-test", height: 1,
+        agreeingNodes: 1, availableNodes: 1 };
+    },
+    refreshAccount: async () => false,
+  };
+  runInNewContext(`${source}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`, context);
+  assert.equal(await context.refreshNodeStatus(), false);
+  assert.equal(classes.has("connected"), false);
+  assert.equal(context.networkInfo, null);
+  assert.match(context.networkButton.textContent, /не подтверждена/);
 });
 
 test("superseded node refresh cannot authorize a testnet submission", async () => {
@@ -634,7 +722,7 @@ test("superseded node refresh cannot authorize a testnet submission", async () =
     networkButton: { textContent: "", classList: { add() {}, remove() {} } },
     messages: { network: [] }, assetsStatus: { textContent: "" },
     selectActiveNode: () => new Promise((resolve) => pending.push(resolve)),
-    refreshAccount: async () => {},
+    refreshAccount: async () => true, // This path models a verified account proof.
   };
   runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`,
     context);
