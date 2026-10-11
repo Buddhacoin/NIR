@@ -166,6 +166,7 @@ const copy = new Map(Object.entries({
   "Майнинг интеллекта": "Intelligence mining",
   "Здесь можно будет выбрать роль, проверить оборудование и получить назначенное задание. Сейчас доступен только локальный демонстрационный режим.": "You will be able to select a role, check your hardware and receive an assigned task here. Only a local demonstration is available now.",
   "История операций": "Activity history",
+  "Страница или операция изменилась; повторите отправку.": "Page or operation changed; submit again.",
   "Симуляция недоступна: состояние не подтверждено кворумом.": "Simulation unavailable: state is not verified by a quorum.",
   "Bridge вернул некорректную подписанную операцию.": "The bridge returned an invalid signed operation.",
   "Состояние или nonce изменились после проверки. Подпись отменена.": "State or nonce changed after review. Signing was cancelled.",
