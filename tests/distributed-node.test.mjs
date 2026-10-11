@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { blockHash, createTransfer, finalizeBlock, nativeAssetId, NirChain, transactionId } from "../blockchain/chain.mjs";
-import { ATOMIC_UNITS } from "../blockchain/constants.mjs";
+import { ATOMIC_UNITS, MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {
   createValidatorAdmission,
@@ -52,6 +52,51 @@ class RecordingScheduler {
     return { active: 0, queued: 0 };
   }
 }
+
+test("an empty mempool cannot strand a scheduled protocol upgrade", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-empty-upgrade-"));
+  const layout = initializeDistributedDevnet(join(temporary, "network"));
+  const replicas = layout.validatorDirectories.map((directory) => new ValidatorReplica(directory));
+  const servers = replicas.map(createValidatorHttpServer);
+  try {
+    const urls = await Promise.all(servers.map((server) => listen(server)));
+    let coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    const untouched = generateWallet().address;
+    const before = coordinator.account(untouched);
+    const activationHeight = coordinator.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+    await assert.rejects(() => coordinator.produceBlock({ protocolUpgrade: {
+      activationHeight, format: "nir-protocol-upgrade-v1", version: 26,
+    } }), /protocol upgrade schedule is invalid/);
+    assert.equal(coordinator.height, 0);
+    assert.equal(coordinator.pendingProtocolUpgrade, null);
+    assert.deepEqual(coordinator.account(untouched), before);
+    const scheduled = await coordinator.produceBlock({ protocolUpgrade: {
+      activationHeight, format: "nir-protocol-upgrade-v1", version: 25,
+    } });
+    assert.equal(scheduled.height, 1);
+    await close(servers[0]);
+    replicas[0].closeSecurityState();
+    replicas[0] = new ValidatorReplica(layout.validatorDirectories[0]);
+    servers[0] = createValidatorHttpServer(replicas[0]);
+    urls[0] = await listen(servers[0]);
+    coordinator = new DistributedCoordinator(layout.coordinatorDirectory, urls);
+    assert.equal(coordinator.pendingProtocolUpgrade.activationHeight, activationHeight);
+    assert.equal(replicas[0].pendingProtocolUpgrade.activationHeight, activationHeight);
+    const validatorProposal = replicas[0].buildProposal();
+    assert.equal(validatorProposal.transactions.length, 0);
+    while (coordinator.height < activationHeight) await coordinator.produceBlock();
+    assert.equal(coordinator.protocolVersion, 25);
+    assert.equal(coordinator.pendingProtocolUpgrade, null);
+    assert.deepEqual(coordinator.account(untouched), before);
+    await assert.rejects(() => coordinator.produceBlock(), /mempool is empty/);
+    assert.equal(coordinator.height, activationHeight);
+    assert.throws(() => replicas[0].buildProposal(), /validator mempool is empty/);
+  } finally {
+    await Promise.all(servers.map(close));
+    replicas.forEach((replica) => replica.closeSecurityState());
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
 
 test("validator admission pruning is one pass and preserves future nonce dependencies", () => {
   const admissions = Array.from({ length: 512 }, (_, nonce) => ({
