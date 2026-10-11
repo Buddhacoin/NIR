@@ -40,6 +40,8 @@ test("locale never rewrites values, addresses, proof IDs or unknown errors", () 
 });
 
 test("critical dynamic wallet copy is English and native warnings are translated", () => {
+  assert.equal(translateWalletText("Запущенный локальный сервис: версия 0.2.0 · ревизия 1. Доверенный канал обновлений не настроен; наличие новой версии не проверено. Приложение не изменено.", "en"),
+    "Running local service: version 0.2.0 · revision 1. No trusted update channel is configured; a newer version was not checked. The app was not changed.");
   for (const [, value] of app.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/g)) {
     if (/[А-Яа-яЁё]/.test(value)) {
       assert.notEqual(translateWalletText(value, "en"), value,

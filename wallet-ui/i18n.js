@@ -51,6 +51,14 @@ const copy = new Map(Object.entries({
   "Подтверждённых операций нет": "No verified activity",
   "История проверена по финализированным заголовкам.": "History verified against finalized headers.",
   "Главная": "Home", "История": "History", "Ресурсы": "Resources", "Настройки": "Settings",
+  "Версия и обновления": "Version and updates",
+  "Сейчас нет доверенного канала выпуска. Проверка не скачивает и не устанавливает приложение.": "No trusted release channel is configured. This action does not download or install the app.",
+  "Обновить сведения о версии": "Refresh version information",
+  "Сведения о запущенном сервисе ещё не получены.": "Running service information has not been retrieved yet.",
+  "Нет активного сеанса кошелька.": "No active wallet session.",
+  "Неверные сведения о сборке.": "Invalid build information.",
+  "Доверенный канал обновлений не настроен; наличие новой версии не проверено. Приложение не изменено.": "No trusted update channel is configured; a newer version was not checked. The app was not changed.",
+  "Не удалось получить сведения о запущенном сервисе. Приложение не изменено.": "Could not retrieve running service information. The app was not changed.",
   "Основная навигация": "Main navigation", "Закрыть": "Close", "Понятно": "OK",
   "Ваши кошельки": "Your wallets", "Добавить адрес": "Add address",
   "Каждый новый адрес имеет свой ключ, код восстановления и резервную копию. Восстановленная копия может иметь тот же адрес, но другой пароль.": "Each new address has its own key, recovery code and backup. A restored backup may have the same address but a different password.",
@@ -307,6 +315,7 @@ const copy = new Map(Object.entries({
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
 const patterns = [
+  [/^Запущенный локальный сервис: версия (\d+\.\d+\.\d+) · ревизия (\d+)\. Доверенный канал обновлений не настроен; наличие новой версии не проверено\. Приложение не изменено\.$/, "Running local service: version $1 · revision $2. No trusted update channel is configured; a newer version was not checked. The app was not changed."],
   [/^Кворум подтвердил баланс · блок (\d+)$/, "Quorum verified balance · block $1"],
   [/^Проверено: блок (\d+)$/, "Verified: block $1"],
   [/^Кошелёк подключён · (.+)$/, "Wallet connected · $1"],

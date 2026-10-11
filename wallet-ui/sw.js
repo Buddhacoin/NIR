@@ -1,4 +1,4 @@
-const CACHE="nir-wallet-shell-v49";
+const CACHE="nir-wallet-shell-v50";
 const ASSETS=["./","./index.html","./style.css?v=35","./app.js?v=46","./i18n.js","./address-book.js","./qr.js","./transaction-decoder.js","./submission-status.js","./offline-signing.js","./node-selection.js","./nir-coin-icon.png?v=24","./manifest.webmanifest"];
 self.addEventListener("install",event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
