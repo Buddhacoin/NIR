@@ -350,13 +350,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=32/);
-  assert.match(serviceWorker, /style\.css\?v=32/);
+  assert.match(html, /style\.css\?v=33/);
+  assert.match(serviceWorker, /style\.css\?v=33/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=41/);
-  assert.match(serviceWorker, /app\.js\?v=41/);
-  assert.match(serviceWorker, /nir-wallet-shell-v43/);
+  assert.match(html, /app\.js\?v=42/);
+  assert.match(serviceWorker, /app\.js\?v=42/);
+  assert.match(serviceWorker, /nir-wallet-shell-v44/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -441,7 +441,7 @@ test("wallet exposes native resource staking and delegation controls", () => {
   assert.match(html, /id="resource-signed-json"/);
   assert.match(html, /id="submit-resource"[^>]*>Отправить в local testnet/);
   assert.match(script, /signedResourceTransaction = signed\.transaction/);
-  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
+  assert.match(script, /health\.networkId !== transaction\.networkId/);
 });
 
 test("submission responses cannot claim transaction finality", () => {
@@ -464,8 +464,90 @@ test("submission responses cannot claim transaction finality", () => {
 test("only explicit submit actions use the configured local ingress", () => {
   assert.equal((script.match(/fetch\(transactionSubmissionUrl\(nodePolicy\)/g) ?? []).length, 2);
   assert.doesNotMatch(script, /fetch\(nodeUrl\("\/v1\/transactions"\)/);
-  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
-  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /health\.networkId !== transaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== transaction\.networkId/);
+});
+
+test("an old submit click cannot broadcast a different signed transfer after page navigation", async () => {
+  const start = script.indexOf('document.querySelector("#submit-signed").onclick = async () => {');
+  const end = script.indexOf('document.querySelector("#copy-signed").onclick', start);
+  assert.ok(start >= 0 && end > start);
+  const button = { disabled: false, hidden: false };
+  const page = {};
+  const posted = [];
+  let releaseHealth;
+  let healthRequested;
+  const waitingForHealth = new Promise((resolve) => { healthRequested = resolve; });
+  const delayedHealth = new Promise((resolve) => { releaseHealth = resolve; });
+  const context = {
+    accountEpoch: 1, pageNavigationEpoch: 1, activePage: page, sendPanel: page,
+    signedTransaction: { networkId: "nir-test", nonce: 1 },
+    sendStatus: { textContent: "" },
+    document: { querySelector: () => button },
+    refreshNodeStatus: async () => true,
+    nodeUrl: (path) => path,
+    nodePolicy: {},
+    transactionSubmissionUrl: () => "/submit",
+    submissionStatus: () => "queued",
+    fetch: async (url, options) => {
+      if (url === "/health") { healthRequested(); return delayedHealth; }
+      if (url === "/submit") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ status: "queued" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  };
+  runInNewContext(script.slice(start, end), context);
+  const submit = button.onclick();
+  await waitingForHealth;
+  context.pageNavigationEpoch += 1;
+  context.signedTransaction = { networkId: "nir-test", nonce: 2 };
+  releaseHealth({ ok: true, json: async () => ({ valueMode: "valueless-devnet", networkId: "nir-test" }) });
+  await submit;
+  assert.deepEqual(posted, []);
+  assert.equal(context.signedTransaction.nonce, 2);
+});
+
+test("an old resource submit cannot broadcast a replacement signed operation", async () => {
+  const start = script.indexOf('document.querySelector("#submit-resource").onclick = async (event) => {');
+  const end = script.indexOf('document.querySelector("#discard-resource").onclick', start);
+  assert.ok(start >= 0 && end > start);
+  const button = { disabled: false };
+  const page = {};
+  const posted = [];
+  let releaseHealth;
+  let healthRequested;
+  const waitingForHealth = new Promise((resolve) => { healthRequested = resolve; });
+  const delayedHealth = new Promise((resolve) => { releaseHealth = resolve; });
+  const context = {
+    accountEpoch: 1, pageNavigationEpoch: 1, activePage: page, resourcesPanel: page,
+    signedResourceTransaction: { networkId: "nir-test", nonce: 1 },
+    resourcesStatus: { textContent: "" },
+    document: { querySelector: (selector) => selector === "#submit-resource" ? button : { hidden: false } },
+    refreshNodeStatus: async () => true,
+    nodeUrl: (path) => path,
+    nodePolicy: {},
+    transactionSubmissionUrl: () => "/submit",
+    submissionStatus: () => "queued",
+    fetch: async (url, options) => {
+      if (url === "/health") { healthRequested(); return delayedHealth; }
+      if (url === "/submit") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ status: "queued" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  };
+  runInNewContext(script.slice(start, end), context);
+  const submit = button.onclick({ currentTarget: button });
+  await waitingForHealth;
+  context.pageNavigationEpoch += 1;
+  context.signedResourceTransaction = { networkId: "nir-test", nonce: 2 };
+  releaseHealth({ json: async () => ({ valueMode: "valueless-devnet", networkId: "nir-test" }) });
+  await submit;
+  assert.deepEqual(posted, []);
+  assert.equal(context.signedResourceTransaction.nonce, 2);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {
@@ -500,7 +582,7 @@ test("wallet requires a proof-backed simulation before a separate testnet-only b
   assert.match(script, /signButton\.disabled = false/);
   assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
   assert.match(script, /currentNetwork\.valueMode !== "valueless-devnet"/);
-  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== transaction\.networkId/);
   assert.match(script, /fetch\(transactionSubmissionUrl\(nodePolicy\)/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
 });
@@ -916,5 +998,5 @@ test("wallet exposes proof-backed native assets without browser signing or broad
   assert.match(html, /Браузер не подписывает и не отправляет asset-операции/);
   assert.match(html, /Загрузка доказанных активов/);
   assert.match(script, /Устарело или ошибка доказательства/);
-  assert.match(styles, /#assets-panel \{ max-height: calc\(100vh - 28px\); overflow-y: auto/);
+  assert.match(styles, /#assets-panel \{ max-height: none; overflow: visible/);
 });
