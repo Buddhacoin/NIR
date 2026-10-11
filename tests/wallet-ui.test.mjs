@@ -354,9 +354,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=32/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=40/);
-  assert.match(serviceWorker, /app\.js\?v=40/);
-  assert.match(serviceWorker, /nir-wallet-shell-v42/);
+  assert.match(html, /app\.js\?v=41/);
+  assert.match(serviceWorker, /app\.js\?v=41/);
+  assert.match(serviceWorker, /nir-wallet-shell-v43/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -745,6 +745,31 @@ test("receive does not expose a provisional network while account proof is pendi
   assert.equal(nodes.get("#receive-network")?.textContent ?? "", "");
   finishProof(false);
   assert.equal(await refreshing, false);
+});
+
+test("losing account proof dismisses an already open receive screen", () => {
+  const source = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const nodes = new Map();
+  const dialog = { open: true, close() { this.open = false; } };
+  nodes.set("#receive-panel", dialog);
+  nodes.set("#receive-address", { textContent: "nir1old" });
+  nodes.set("#receive-network", { textContent: "Сеть: nir-old" });
+  nodes.set("#receive-qr", { hidden: false });
+  const context = {
+    networkProofVerified: true,
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false, disabled: false });
+      return nodes.get(selector);
+    } },
+  };
+  runInNewContext(`${source}\nglobalThis.clearAccountNumbers = clearAccountNumbers;`, context);
+  context.clearAccountNumbers();
+  assert.equal(context.networkProofVerified, false);
+  assert.equal(dialog.open, false);
+  assert.equal(nodes.get("#receive-address").textContent, "");
+  assert.equal(nodes.get("#receive-network").textContent, "");
+  assert.equal(nodes.get("#receive-qr").hidden, true);
 });
 
 test("superseded node refresh cannot authorize a testnet submission", async () => {

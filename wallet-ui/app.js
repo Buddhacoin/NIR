@@ -85,6 +85,11 @@ function renderWalletConnection() {
 
 function clearAccountNumbers() {
   networkProofVerified = false;
+  const receiveDialog = document.querySelector("#receive-panel");
+  if (receiveDialog.open) receiveDialog.close();
+  document.querySelector("#receive-address").textContent = "";
+  document.querySelector("#receive-network").textContent = "";
+  document.querySelector("#receive-qr").hidden = true;
   document.querySelector("#balance-value").textContent = "—";
   document.querySelector("#resource-stake").textContent = "—";
   document.querySelector("#resource-credits").textContent = "—";
@@ -1180,6 +1185,7 @@ function receive() {
   }
   document.querySelector("#receive-address").textContent = walletInfo.address;
   document.querySelector("#receive-network").textContent = `Сеть: ${networkInfo.networkId}`;
+  document.querySelector("#receive-qr").hidden = false;
   drawQr(document.querySelector("#receive-qr"), `nir:${walletInfo.address}`, `QR публичного адреса ${walletInfo.address}; сеть ${networkInfo.networkId}`);
   document.querySelector("#payment-request-result").hidden = true;
   document.querySelector("#payment-request-simulation").hidden = true;
