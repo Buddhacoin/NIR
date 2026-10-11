@@ -175,7 +175,8 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
       copyFileSync(checkedSource(relative), destination);
     }
     if (sign) {
-      command("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], "ad-hoc signing");
+      command("/usr/bin/codesign", ["--force", "--deep", "--options", "runtime", "--sign", "-", app],
+        "ad-hoc hardened-runtime signing");
       command("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], "signature check");
     }
     renameSync(app, target);

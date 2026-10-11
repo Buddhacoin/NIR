@@ -119,6 +119,34 @@ test("signed Mac wallet launcher rejects a substituted runtime descriptor before
   }
 });
 
+test("signed Mac wallet launcher rejects inherited dynamic-library injection", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-dyld-gate-"));
+  try {
+    const app = join(directory, "NIR Wallet.app");
+    buildMacWallet(app);
+    const signature = spawnSync("/usr/bin/codesign", ["-dv", "--verbose=4", app],
+      { encoding: "utf8" });
+    assert.equal(signature.status, 0, signature.stderr);
+    assert.match(signature.stderr, /flags=0x[0-9a-f]+\([^)]*\bruntime\b/);
+    const probe = join(directory, "probe.dylib");
+    const source = join(directory, "probe.c");
+    writeFileSync(source, '#include <stdio.h>\n__attribute__((constructor)) static void probe(void) { fputs("NIR_DYLD_PROBE_RAN\\n", stderr); }\n');
+    const compiled = spawnSync("/usr/bin/clang", ["-dynamiclib", source, "-o", probe],
+      { encoding: "utf8" });
+    assert.equal(compiled.status, 0, compiled.stderr);
+    const launcher = join(app, "Contents/MacOS/launcher");
+    const injected = spawnSync(launcher, ["--verify-runtime"], {
+      encoding: "utf8", timeout: 30_000,
+      env: { ...process.env, DYLD_INSERT_LIBRARIES: probe },
+    });
+    assert.equal(injected.status, 0, injected.stderr);
+    assert.doesNotMatch(injected.stderr, /NIR_DYLD_PROBE_RAN/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("native app uses a fresh UI origin and disables persistent service-worker caching", async () => {
   const native = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
   const browser = readFileSync(new URL("../wallet-ui/app.js", import.meta.url), "utf8");
