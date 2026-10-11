@@ -75,7 +75,7 @@ if (localApp) {
   document.querySelector("#onboarding > p").textContent =
     "Кошелёк создаётся и открывается в отдельном окне macOS до появления этой страницы. Ключ хранится в зашифрованном файле на этом Mac.";
   document.querySelector("#bridge-panel > p").textContent =
-    "Локальный bridge уже запущен приложением. Нажмите «Подключить» и введите восьмизначный код из отдельного окна macOS. Пароль вводится только в системном окне подтверждения.";
+    "Приложение подключает локальный кошелёк автоматически. Пароль вводится только в системном окне подтверждения операции.";
   document.querySelector("#settings-panel > p").textContent =
     "Пароль и приватный ключ не вводятся в этой странице. Закрытие приложения удаляет session token из памяти окна.";
   document.querySelector("#setup-panel > p").textContent =
@@ -242,20 +242,24 @@ let paymentRequestQrIndex = 0;
 let offlineSigningPackage = null;
 let offlinePackageQrFrames = [];
 let offlinePackageQrIndex = 0;
+let nativeConnectionError = null;
 
 function renderWalletConnection() {
   const connected = Boolean(walletInfo && bridgeSession);
-  onboarding.hidden = connected;
+  onboarding.hidden = connected || localApp;
+  const nativeError = document.querySelector("#native-connection-error");
+  nativeError.hidden = !localApp || connected || !nativeConnectionError;
+  nativeError.textContent = nativeError.hidden ? "" : nativeConnectionError;
   accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
-  document.querySelector("#settings-connect").hidden = connected;
+  document.querySelector("#settings-connect").hidden = connected || localApp;
   document.querySelector("#settings-secrets").hidden = !connected ||
     walletInfo.nativeSecurityAvailable !== true;
   document.querySelector("#settings-password-change").hidden = !connected ||
     walletInfo.nativePasswordChangeAvailable !== true;
   document.querySelector("#security-state").textContent = connected
     ? `Кошелёк подключён · ${walletInfo.address.slice(0, 16)}…`
-    : "Кошелёк не подключён";
+    : (localApp && nativeConnectionError) || "Кошелёк не подключён";
 }
 
 function clearAccountNumbers() {
@@ -309,6 +313,9 @@ function resetAccountView(message) {
 }
 
 function clearWalletSession(message = "Кошелёк отключён · ключи и session token отсутствуют в странице") {
+  if (localApp && bridgeSession && !nativeConnectionError) {
+    nativeConnectionError = "Сеанс закрыт. Чтобы подключиться снова, перезапустите NIR Wallet.";
+  }
   bridgeSession = null;
   walletInfo = null;
   resetAccountView(message);
@@ -1211,6 +1218,13 @@ document.querySelector("#claim-unstake").onclick = async (event) => {
 };
 
 function openBridgePanel() {
+  if (localApp) {
+    nativeConnectionError = "Нет защищённой связи с приложением. Закройте и откройте NIR Wallet снова.";
+    renderWalletConnection();
+    document.querySelector("#wallet-state").textContent =
+      "Защищённая связь с приложением недоступна · закройте и откройте NIR Wallet снова";
+    return;
+  }
   bridgeStatus.textContent = "";
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
@@ -1218,6 +1232,38 @@ function openBridgePanel() {
   // Native Mac app brings its pairing code above the browser. The standalone
   // CLI has no such endpoint; its terminal code remains the fallback.
   void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
+}
+
+async function connectNativeWallet() {
+  if (!localApp) return;
+  const code = window.__nirNativeBootstrap;
+  delete window.__nirNativeBootstrap;
+  nativeConnectionError = null;
+  if (!/^[0-9a-f]{64}$/.test(code ?? "")) {
+    nativeConnectionError = "Нет защищённой связи с приложением. Закройте и откройте NIR Wallet снова.";
+    clearWalletSession("Нет защищённой связи с приложением · откройте кошелёк через NIR Wallet");
+    return;
+  }
+  clearWalletSession("Подключаем локальный кошелёк…");
+  const epoch = accountEpoch;
+  try {
+    const token = await pairBridge(DEFAULT_BRIDGE_URL, code);
+    if (epoch !== accountEpoch) return;
+    bridgeSession = { token, url: DEFAULT_BRIDGE_URL };
+    walletInfo = await bridgeRequest("/v1/wallet");
+    if (epoch !== accountEpoch) return;
+    if (await renderAccounts() !== true || epoch !== accountEpoch) {
+      throw new Error("wallet account changed during native pairing");
+    }
+    nativeConnectionError = null;
+    renderWalletConnection();
+    await refreshNodeStatus();
+  } catch {
+    if (epoch === accountEpoch) {
+      nativeConnectionError = "Подключение не подтверждено. Закройте и откройте NIR Wallet снова.";
+      clearWalletSession("Подключение не подтверждено · закройте и откройте NIR Wallet снова");
+    }
+  }
 }
 
 async function renderAccounts() {
@@ -1783,6 +1829,7 @@ document.querySelector("#disconnect-wallet").onclick = async (event) => {
   } catch {
     // Local state is still erased if the bridge has already stopped or the session expired.
   } finally {
+    if (localApp) nativeConnectionError = "Сеанс закрыт. Чтобы подключиться снова, перезапустите NIR Wallet.";
     clearWalletSession();
     event.currentTarget.disabled = false;
     settingsPanel.close();
@@ -1896,6 +1943,7 @@ async function refreshNodeStatus() {
 }
 refreshNodeStatus();
 renderWalletConnection();
+void connectNativeWallet();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   if (localApp) {

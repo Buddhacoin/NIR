@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile, spawn } from "node:child_process";
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -71,24 +71,6 @@ async function authorizeSigning(intent, { signal } = {}) {
   } catch {
     return null;
   }
-}
-
-let pairingPrompt = null;
-function showPairingCode(code) {
-  const executable = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
-  return new Promise((resolve, reject) => {
-    if (pairingPrompt && pairingPrompt.exitCode === null) pairingPrompt.kill("SIGTERM");
-    const child = spawn(executable, ["--show-pairing"], { stdio: ["pipe", "ignore", "ignore"] });
-    pairingPrompt = child;
-    child.once("error", reject);
-    child.once("close", (status) => {
-      if (pairingPrompt === child) pairingPrompt = null;
-      if (status === 0 || child.killed) resolve();
-      else reject(new Error("pairing window failed"));
-    });
-    child.stdin.on("error", reject);
-    child.stdin.end(JSON.stringify({ code }));
-  });
 }
 
 function showNativeRecoveryCode(secret, backupPath, signal) {
@@ -227,7 +209,9 @@ async function main() {
     return { address: created.address, path: created.walletPath };
   };
 
-  const pairingCode = randomInt(0, 100_000_000).toString().padStart(8, "0");
+  // Hand the one-time secret only to the native launcher through its private
+  // stdout pipe. It is never served over HTTP or placed in a URL.
+  const pairingCode = randomBytes(32).toString("hex");
   const ui = createWalletPreviewServer();
   // A fresh loopback origin per launch cannot be controlled by an older
   // cache-first service worker left behind by a prior preview installation.
@@ -244,7 +228,6 @@ async function main() {
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,
-      presentPairingCode: () => { void showPairingCode(pairingCode).catch(() => {}); },
       sessionToken: randomBytes(32).toString("hex"),
       vaultPath: selected.walletPath,
     });
@@ -259,7 +242,7 @@ async function main() {
   }
   // The native shell embeds this exact fresh loopback origin in a nonpersistent
   // WKWebView. Do not open a system browser with the wallet session.
-  process.stdout.write(`${origin}/?local-demo=1&local-app=1\n`);
+  process.stdout.write(`${origin}/?local-demo=1&local-app=1\t${pairingCode}\n`);
 }
 
 main().catch(async (error) => {

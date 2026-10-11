@@ -41,6 +41,19 @@ static NSURL *NIRLocalWalletURL(NSString *line) {
     return components.URL;
 }
 
+static NSURL *NIRLocalWalletStartup(NSString *line, NSString **secret) {
+    NSArray<NSString *> *parts = [line componentsSeparatedByString:@"\t"];
+    if (parts.count != 2) return nil;
+    NSURL *url = NIRLocalWalletURL(parts[0]);
+    NSString *candidate = parts[1];
+    NSRegularExpression *format = [NSRegularExpression regularExpressionWithPattern:@"^[0-9a-f]{64}$"
+        options:0 error:nil];
+    if (!url || [format numberOfMatchesInString:candidate options:0
+        range:NSMakeRange(0, candidate.length)] != 1) return nil;
+    *secret = candidate;
+    return url;
+}
+
 static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
                                       NSURL *frameURL, NSURL *origin) {
     if (![name isEqualToString:@"nirLanguage"] || !mainFrame ||
@@ -61,6 +74,7 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
 @property NSPipe *output;
 @property NSMutableData *startupData;
 @property NSURL *origin;
+@property NSString *bootstrapSecret;
 @property (strong) dispatch_source_t terminationSignal;
 @property BOOL walletGroupStopped;
 @end
@@ -100,6 +114,17 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
 - (void)showWalletAtURL:(NSURL *)url {
     WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
     configuration.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    if (self.bootstrapSecret) {
+        // The secret arrives through the private child stdout pipe, never a
+        // URL, command line, localStorage, or HTTP response. Only the exact
+        // wallet document's main frame receives it.
+        NSString *bootstrapScript = [NSString stringWithFormat:
+            @"if (location.href === '%@') Object.defineProperty(window, '__nirNativeBootstrap', { value: '%@', configurable: true });",
+            url.absoluteString, self.bootstrapSecret];
+        WKUserScript *bootstrap = [[WKUserScript alloc] initWithSource:bootstrapScript
+            injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
+        [configuration.userContentController addUserScript:bootstrap];
+    }
     // The onboarding helper writes only this non-secret preference. Seed the
     // ephemeral WKWebView before app.js runs; no key or URL parameter is used.
     NSString *localeScript = [NSString stringWithFormat:
@@ -152,12 +177,14 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
     if (end == NSNotFound) return;
     NSString *line = [[NSString alloc] initWithData:[self.startupData subdataWithRange:NSMakeRange(0, end)]
                                          encoding:NSUTF8StringEncoding];
-    NSURL *url = NIRLocalWalletURL(line);
+    NSString *secret = nil;
+    NSURL *url = NIRLocalWalletStartup(line, &secret);
     if (!url) {
         [self failWithMessage:@"Локальный сервис прислал некорректный адрес."];
         return;
     }
     NSInteger port = url.port.integerValue;
+    self.bootstrapSecret = secret;
     self.origin = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%ld", (long)port]];
     [self showWalletAtURL:url];
 }
@@ -224,11 +251,11 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action
  decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     NSURL *url = action.request.URL;
-    BOOL sameOrigin = [url.scheme isEqualToString:@"http"] &&
-        [url.host isEqualToString:@"127.0.0.1"] &&
-        url.port.integerValue == self.origin.port.integerValue &&
-        !url.user && !url.password;
-    decisionHandler(sameOrigin ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+    NSURL *page = NIRLocalWalletURL(url.absoluteString);
+    BOOL exactPage = page && [page.scheme isEqualToString:self.origin.scheme] &&
+        [page.host isEqualToString:self.origin.host] &&
+        page.port.integerValue == self.origin.port.integerValue;
+    decisionHandler(exactPage ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
@@ -255,6 +282,17 @@ int main(void) {
         ];
         if (!NIRLocalWalletURL(@"http://127.0.0.1:1234/?local-demo=1&local-app=1")) return 1;
         for (NSString *line in bad) if (NIRLocalWalletURL(line)) return 2;
+        NSString *secret = nil;
+        NSString *candidate = [@"ab" stringByPaddingToLength:64 withString:@"ab" startingAtIndex:0];
+        NSString *launch = [NSString stringWithFormat:
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=1\t%@", candidate];
+        if (!NIRLocalWalletStartup(launch, &secret) || ![secret isEqualToString:candidate]) return 6;
+        for (NSString *badLaunch in @[
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=1",
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=1\tabcd",
+            [launch stringByAppendingString:@"\tmore"],
+            [@"http://evil.test:1234/?local-demo=1&local-app=1\t" stringByAppendingString:candidate]
+        ]) if (NIRLocalWalletStartup(badLaunch, &secret)) return 7;
         NSURL *origin = [NSURL URLWithString:@"http://127.0.0.1:1234"];
         NSURL *page = [NSURL URLWithString:@"http://127.0.0.1:1234/?local-demo=1&local-app=1"];
         if (!NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en", page, origin)) return 3;

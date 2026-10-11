@@ -30,6 +30,53 @@ test("wallet browser module parses as valid JavaScript", () => {
   execFileSync(process.execPath, ["--check", new URL("../wallet-ui/app.js", import.meta.url).pathname]);
 });
 
+test("native wallet consumes its injected one-time secret without showing onboarding", async () => {
+  assert.match(script, /onboarding\.hidden = connected \|\| localApp/);
+  const source = script.slice(script.indexOf("async function connectNativeWallet()"),
+    script.indexOf("async function renderAccounts()"));
+  const secret = "ab".repeat(32);
+  let calls = 0;
+  const context = {
+    localApp: true, window: { __nirNativeBootstrap: secret }, accountEpoch: 0,
+    bridgeSession: null, walletInfo: null, DEFAULT_BRIDGE_URL: "http://127.0.0.1:8788",
+    clearWalletSession() { context.accountEpoch += 1; context.bridgeSession = null; context.walletInfo = null; },
+    async pairBridge(url, code) { assert.equal(url, context.DEFAULT_BRIDGE_URL);
+      assert.equal(code, secret); calls += 1; return "cd".repeat(32); },
+    async bridgeRequest(path) { assert.equal(path, "/v1/wallet");
+      return { address: `nir1${"a".repeat(64)}` }; },
+    async renderAccounts() { return true; },
+    renderWalletConnection() {}, async refreshNodeStatus() {},
+  };
+  runInNewContext(source, context);
+  await context.connectNativeWallet();
+  assert.equal(calls, 1);
+  assert.equal(Object.hasOwn(context.window, "__nirNativeBootstrap"), false);
+  assert.equal(context.bridgeSession.token, "cd".repeat(32));
+  await context.connectNativeWallet();
+  assert.equal(calls, 1, "the consumed bootstrap cannot be reused");
+});
+
+test("native wallet keeps a visible restart instruction when bootstrap is absent", () => {
+  const source = script.slice(script.indexOf("function renderWalletConnection()"),
+    script.indexOf("function clearAccountNumbers()"));
+  const nodes = new Map();
+  const context = {
+    localApp: true, nativeConnectionError: "Restart NIR Wallet", bridgeSession: null,
+    walletInfo: null, onboarding: { hidden: false }, accountOpen: { hidden: false },
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { hidden: false, textContent: "" });
+      return nodes.get(selector);
+    } },
+  };
+  runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
+  context.renderWalletConnection();
+  assert.equal(context.onboarding.hidden, true);
+  assert.equal(nodes.get("#settings-connect").hidden, true);
+  assert.equal(nodes.get("#native-connection-error").hidden, false);
+  assert.equal(nodes.get("#native-connection-error").textContent, "Restart NIR Wallet");
+  assert.equal(nodes.get("#security-state").textContent, "Restart NIR Wallet");
+});
+
 test("a verified account proof does not depend on an unauthenticated account response", async () => {
   const source = script.slice(script.indexOf("async function readAccount()"),
     script.indexOf("function renderTransactions("));
@@ -420,7 +467,8 @@ test("settings hide Mac-only recovery when the paired bridge lacks native capabi
     if (!controls.has(selector)) controls.set(selector, { hidden: false, textContent: "" });
     return controls.get(selector);
   } };
-  const context = { document, onboarding: { hidden: false }, accountOpen: { hidden: false },
+  const context = { document, localApp: false, nativeConnectionError: null,
+    onboarding: { hidden: false }, accountOpen: { hidden: false },
     bridgeSession: { token: "a" }, walletInfo: { address: `nir1${"a".repeat(64)}` } };
   runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
   context.renderWalletConnection();

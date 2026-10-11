@@ -58,7 +58,9 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     }
     const launcher = readFileSync(new URL("../macos/wallet-launcher.m", import.meta.url), "utf8");
     assert.match(launcher, /\[WKWebsiteDataStore nonPersistentDataStore\]/);
-    assert.match(launcher, /\[url\.host isEqualToString:@"127\.0\.0\.1"\]/);
+    assert.match(launcher, /\[components\.host isEqualToString:@"127\.0\.0\.1"\]/);
+    assert.match(launcher, /NIRLocalWalletStartup\(line, &secret\)/);
+    assert.match(launcher, /forMainFrameOnly:YES/);
     assert.match(launcher, /kill\(-leader, SIGTERM\)/);
     assert.match(launcher, /terminationHandler = [\s\S]*?\[weakSelf stopWalletGroup\]/);
     assert.match(launcher, /WKNavigationActionPolicyCancel/);

@@ -1398,6 +1398,35 @@ test("wallet bridge disables pairing after five incorrect attempts", async () =>
   }
 });
 
+test("native bootstrap requires a full one-time secret and never exposes a session to a blind caller", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-native-bootstrap-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "wallet-bridge-password-long" });
+  const origin = "http://127.0.0.1:8765";
+  const code = "ab".repeat(32);
+  const token = "cd".repeat(32);
+  const server = createWalletBridgeServer({ authorize: async () => null, origin,
+    pairingCode: code, sessionToken: token, vaultPath });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    assert.equal((await request(`${base}/v1/wallet`, origin, token)).status, 401);
+    const blind = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code: "ab".repeat(31) }), method: "POST",
+    });
+    assert.equal(blind.status, 400);
+    const paired = await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code }), method: "POST",
+    });
+    assert.equal(paired.status, 200);
+    assert.deepEqual(await paired.json(), { sessionToken: token });
+    assert.equal((await request(`${base}/v1/wallet`, origin, token)).status, 200);
+    assert.equal((await request(`${base}/v1/pair`, origin, "", {
+      body: JSON.stringify({ code }), method: "POST",
+    })).status, 400);
+  } finally { await close(server); rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("bridge restart invalidates the previous pairing code and session token", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bridge-restart-test-"));
   const vaultPath = join(directory, "wallet.nirvault.json");
