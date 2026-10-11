@@ -84,6 +84,11 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
     assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
       { nodeExecutable: process.execPath });
+    const sourcePackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
+    const bundledPackage = JSON.parse(readFileSync(join(app, "Contents/Resources/app/package.json")));
+    const buildMarker = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-LOCAL-BUILD.json")));
+    assert.equal(buildMarker.sequence, sourcePackage.walletBuildSequence);
+    assert.equal(bundledPackage.walletBuildSequence, buildMarker.sequence);
     const info = readFileSync(join(app, "Contents/Info.plist"), "utf8");
     assert.match(info, /<key>CFBundleShortVersionString<\/key><string>0\.2\.0<\/string>/);
     assert.match(launcher, /app\/blockchain\/wallet-macos-app\.mjs/);

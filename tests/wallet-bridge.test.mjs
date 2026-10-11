@@ -93,6 +93,12 @@ test("native security requires the paired origin and session, returns no secret,
     assert.equal(calls, 0);
     assert.equal((await (await request(`http://127.0.0.1:${server.address().port}/v1/wallet`,
       origin, token)).json()).nativeSecurityAvailable, true);
+    const buildEndpoint = `http://127.0.0.1:${server.address().port}/v1/app-build`;
+    assert.equal((await request(buildEndpoint, origin, "b".repeat(64))).status, 401);
+    assert.equal((await request(buildEndpoint, "http://127.0.0.1:9999", token)).status, 403);
+    assert.deepEqual(await (await request(buildEndpoint, origin, token)).json(), {
+      version: "0.2.0", localBuildSequence: 1, updateChannel: "unavailable",
+    });
     const result = await request(endpoint, origin, token, { method: "POST" });
     assert.equal(result.status, 200);
     const body = await result.text();

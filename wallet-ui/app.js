@@ -1790,6 +1790,22 @@ document.querySelector("#settings-connect").onclick = () => {
   openBridgePanel();
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
+document.querySelector("#wallet-check-updates").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#wallet-update-status");
+  button.disabled = true;
+  try {
+    if (!bridgeSession) throw new Error("Нет активного сеанса кошелька.");
+    const build = await bridgeRequest("/v1/app-build");
+    if (!/^\d+\.\d+\.\d+$/.test(build.version) ||
+        !Number.isSafeInteger(build.localBuildSequence) || build.localBuildSequence < 1 ||
+        build.updateChannel !== "unavailable") throw new Error("Неверные сведения о сборке.");
+    status.textContent = `Установлена локальная сборка ${build.version} · ревизия ${build.localBuildSequence}. ` +
+      "Доверенный канал обновлений не настроен; наличие новой версии не проверено. Приложение не изменено.";
+  } catch {
+    status.textContent = "Не удалось проверить сведения об установленной сборке. Приложение не изменено.";
+  } finally { button.disabled = false; }
+};
 document.querySelector("#settings-secrets").onclick = async (event) => {
   const button = event.currentTarget;
   const status = document.querySelector("#settings-secrets-status");

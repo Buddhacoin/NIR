@@ -142,9 +142,14 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
     const payload = join(resources, "app");
     mkdirSync(join(contents, "MacOS"), { recursive: true });
     mkdirSync(payload, { recursive: true });
-    const version = JSON.parse(readFileSync(checkedSource("package.json"), "utf8")).version;
+    const metadata = JSON.parse(readFileSync(checkedSource("package.json"), "utf8"));
+    const version = metadata.version;
+    const sequence = metadata.walletBuildSequence;
     if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version ?? "")) {
       throw new Error("wallet package version must be three numeric components");
+    }
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error("wallet build sequence must be a positive reviewed integer");
     }
     const info = readFileSync(checkedSource("macos/Info.plist"), "utf8")
       .replace(/(<key>CFBundleShortVersionString<\/key><string>)[^<]+(<\/string>)/,
@@ -153,7 +158,8 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
         (_, before, after) => `${before}${version}${after}`);
     writeFileSync(join(contents, "Info.plist"), info);
     writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
-      '{"format":"nir-local-test-build-v1","distribution":"not-a-public-installer"}\n');
+      `${JSON.stringify({ format: "nir-local-test-build-v2",
+        distribution: "not-a-public-installer", sequence })}\n`);
     writeFileSync(join(resources, "NIR-RUNTIME.json"),
       `${JSON.stringify({ nodeExecutable: process.execPath })}\n`);
     writeIcon(resources);

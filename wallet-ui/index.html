@@ -175,6 +175,12 @@
     <p>Смена пароля меняет только активный файл этого Mac. Старые экспортированные копии и коды по-прежнему открывают тот же адрес.</p>
     <p class="form-status" id="settings-secrets-status" role="status" aria-live="polite"></p>
     <p class="form-status" id="settings-password-status" role="status" aria-live="polite"></p>
+    <section aria-labelledby="wallet-update-title">
+      <h3 id="wallet-update-title">Версия и обновления</h3>
+      <p>Сейчас нет доверенного канала выпуска. Проверка не скачивает и не устанавливает приложение.</p>
+      <button class="secondary" id="wallet-check-updates" type="button">Проверить обновления</button>
+      <p class="form-status" id="wallet-update-status" role="status" aria-live="polite">Версия этой сборки ещё не проверена.</p>
+    </section>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить кошелёк</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">
@@ -190,5 +196,5 @@
     <p class="warning">Не храните пароль рядом с файлом кошелька. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=44"></script>
+  <script type="module" src="app.js?v=45"></script>
 </body></html>

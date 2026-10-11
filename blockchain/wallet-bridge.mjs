@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { nativeAssetId } from "./chain.mjs";
 
@@ -49,6 +50,7 @@ import {
 } from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
+const walletPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const NETWORK = /^[a-zA-Z0-9._:-]{3,128}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
 const SIMULATION_ID = /^[0-9a-f]{64}$/;
@@ -665,6 +667,13 @@ export function createWalletBridgeServer({
         return send(response, 200, { ...walletPublicInfo(activeVaultPath),
           nativeSecurityAvailable: Boolean(nativeSecurity),
           nativePasswordChangeAvailable: Boolean(nativePasswordChange) }, origin);
+      }
+      if (request.method === "GET" && url.pathname === "/v1/app-build") {
+        return send(response, 200, {
+          version: walletPackage.version,
+          localBuildSequence: walletPackage.walletBuildSequence ?? null,
+          updateChannel: "unavailable",
+        }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {

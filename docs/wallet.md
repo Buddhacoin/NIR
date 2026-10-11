@@ -322,6 +322,30 @@ The builder packages only an explicit reviewed file list and refuses
 secret-named files in the source tree. It refuses to overwrite an app. This
 local rehearsal uses an ad-hoc signature and an external Node.js installation;
 it is **not** notarized, downloadable, a public installer, a mainnet wallet, or
-a source of real-value NIR. It intentionally excludes local auto-update,
+a source of real-value NIR. It intentionally excludes public auto-update,
 cloud sync and mining rewards. Back up the recovery file to a separate medium
 and keep its recovery code separately; a copy on the same Mac is not enough.
+
+For this Mac's **operator-controlled local rehearsal only**, a separate
+`wallet:macos-local-install` command can replace one existing `NIR Wallet.app`
+in place after the app is closed. It requires independently pinned SHA-256
+hashes of both complete bundles, verifies their local markers, bundle identity,
+ad-hoc signatures, ownership, and increasing local build sequence, then uses a
+macOS same-volume atomic exchange. The previous app remains at the private
+staging path for recovery; it is never deleted by the updater. Wallets and
+backups under Application Support are outside this exchange. The app must be
+built from a reviewed checkout and staged in a separate private directory on
+the same volume; a browser or the app itself cannot supply an update PID or
+invoke this command. `inspect` can display a bundle hash, but reading a hash
+from an untrusted candidate does **not** authenticate its publisher. An ad-hoc
+signature only checks local integrity, not who built the app. Until Developer
+ID signing, notarization, a published authenticated update channel and an
+installed-app launch drill exist, this is not a secure consumer auto-updater.
+The bundled launcher also depends on the recorded external Node.js path;
+changing that runtime can make a local build fail to start.
+Because it is outside the signed bundle and bundle hash, replacing that
+runtime can also execute attacker-controlled code with access to the local
+wallet. The local Settings button reports the installed build identity and
+the absence of a trusted update channel; it does not download or install an
+update or claim that this version is latest. Each later reviewed local build
+must deliberately increase `walletBuildSequence` in `package.json`.
