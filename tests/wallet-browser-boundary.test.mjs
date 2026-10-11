@@ -226,10 +226,16 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
       document.querySelector('[data-action="receive"]').click();
       const connect = document.querySelector('#bridge-panel').open &&
         !document.querySelector('#bridge-panel').matches(':modal');
-      return { openedSetup, backToSettings, home, history, mine, connect };
+      document.querySelector('[data-nav="settings"]').click();
+      document.querySelector('[data-nav="home"]').click();
+      document.querySelector('[data-nav="settings"]').click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const rapidReopen = document.querySelector('#settings-panel').open &&
+        !document.querySelector('#settings-panel').hidden && document.querySelector('#home-page').hidden;
+      return { openedSetup, backToSettings, home, history, mine, connect, rapidReopen };
     })()`);
     assert.deepEqual(pageNavigation, { openedSetup: true, backToSettings: true,
-      home: true, history: true, mine: true, connect: true });
+      home: true, history: true, mine: true, connect: true, rapidReopen: true });
 
     await send("Page.navigate", { url: `${origin}/frame.html` });
     await new Promise((resolve) => setTimeout(resolve, 250));
