@@ -115,6 +115,8 @@ test("Model Lab has an inline version/settings page, not an unverified download 
   assert.match(html, /Доверенный канал обновлений пока не настроен/);
   assert.match(html, /Обновить сведения о версии/);
   assert.doesNotMatch(html, /Проверить обновления/);
+  assert.match(html, /Заявленный локальный ID \(не проверен\)/);
+  assert.match(js, /Declared local ID \(not verified\)/);
   assert.match(js, /Refresh version info/);
   assert.doesNotMatch(js, /Check for updates/);
   assert.doesNotMatch(html, /href="[^"]*\.app/);

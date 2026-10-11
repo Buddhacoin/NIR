@@ -106,8 +106,11 @@ open "$PWD/NIR Model Lab.app"
 
 The builder refuses to overwrite an existing app. The window is intentionally
 narrow and tall, with a RU/EN switch. **Настройки → Версия и обновления** shows
-the version and a local build identifier derived from the bundled pre-signing
-files. The **Обновить сведения о версии** button only rechecks that local identity:
+the version and a declared local build identifier derived from the bundled
+pre-signing files when built. The displayed identifier is read from a mutable
+local marker and is **not recomputed or independently verified** by this page;
+it is not proof of installed-app integrity or publisher identity. The
+**Обновить сведения о версии** button only rereads that local marker:
 there is no authenticated Model Lab update feed, so it must not claim that a
 newer version is available or that this one is current. It downloads and
 installs nothing. Different local builds may share the same `0.2.0` version;

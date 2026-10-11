@@ -128,7 +128,7 @@ const copy = {
   ru: {
     settingsButton: "Настройки", settingsTitle: "Версия и обновления",
     settingsIntro: "Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.",
-    installedVersionLabel: "Версия:", installedBuildLabel: "Идентификатор сборки:",
+    installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
     checkUpdates: "Обновить сведения о версии", settingsBack: "Назад к проверке моделей",
     versionSource: "Исходный код, не установленная сборка",
     versionUnavailable: "Не удалось определить версию этого экземпляра Model Lab.",
@@ -247,7 +247,7 @@ const copy = {
   en: {
     settingsButton: "Settings", settingsTitle: "Version and updates",
     settingsIntro: "This is local information about the running Model Lab. The version number alone does not prove the app is authentic.",
-    installedVersionLabel: "Version:", installedBuildLabel: "Build identifier:",
+    installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
     checkUpdates: "Refresh version info", settingsBack: "Back to model checks",
     versionSource: "Source checkout, not an installed build",
     versionUnavailable: "Could not identify this Model Lab instance version.",
