@@ -39,6 +39,95 @@ const setupPanel = document.querySelector("#setup-panel");
 const contactsPanel = document.querySelector("#contacts-panel");
 const offlineSigningPanel = document.querySelector("#offline-signing-panel");
 const onboarding = document.querySelector("#onboarding");
+const homePage = document.querySelector("#home-page");
+const pageHost = document.querySelector("#page-host");
+const pageDialogs = [panel, accountsPanel, bridgePanel, receivePanel, sendPanel,
+  offlineSigningPanel, contactsPanel, resourcesPanel, assetsPanel, settingsPanel, setupPanel];
+let activePage = null;
+let pageTrail = [];
+let activeTab = "home";
+for (const page of pageDialogs) {
+  page.classList.add("page-view");
+  page.hidden = true;
+  pageHost.append(page);
+  const back = page.querySelector(":scope > .close");
+  if (back) { back.textContent = "←"; back.setAttribute("aria-label", "Назад"); }
+  page.addEventListener("close", () => {
+    page.hidden = true;
+    if (activePage !== page) return;
+    activePage = null;
+    while (pageTrail.length) {
+      const previous = pageTrail.pop();
+      if (previous.open) {
+        previous.hidden = false;
+        activePage = previous;
+        focusPageHeading(previous);
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return;
+      }
+    }
+    showHomeTab(activeTab === "history" ? "history" : "home");
+  });
+}
+
+function focusPageHeading(page) {
+  const heading = page.querySelector(":scope > h2");
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+}
+
+function setActiveTab(destination) {
+  activeTab = destination;
+  for (const button of document.querySelectorAll("[data-nav]")) {
+    const selected = button.dataset.nav === destination;
+    button.classList.toggle("active", selected);
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+}
+
+function clearOpenPages() {
+  activePage = null;
+  pageTrail = [];
+  for (const page of pageDialogs) {
+    page.hidden = true;
+    if (page.open) page.close();
+  }
+}
+
+function showHomeTab(destination = "home") {
+  clearOpenPages();
+  homePage.hidden = false;
+  homePage.dataset.view = destination;
+  document.querySelector("#history .title h2").textContent =
+    destination === "history" ? "История операций" : "Последние операции";
+  setActiveTab(destination);
+  if (destination === "history") {
+    const heading = document.querySelector("#history .title h2");
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+function openPage(page, tab = null) {
+  if (activePage === page) return;
+  if (tab) {
+    clearOpenPages();
+    setActiveTab(tab);
+  } else if (activePage) {
+    activePage.hidden = true;
+    pageTrail.push(activePage);
+  }
+  homePage.hidden = true;
+  if (!page.open) page.show();
+  page.hidden = false;
+  activePage = page;
+  focusPageHeading(page);
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
 const bridgeStatus = document.querySelector("#bridge-status");
 const receiveStatus = document.querySelector("#receive-status");
 const sendStatus = document.querySelector("#send-status");
@@ -223,11 +312,11 @@ async function recheckSimulation(intent, previous) {
   return refreshed;
 }
 
-function showMessage(key, copy = null) {
+function showMessage(key, copy = null, tab = null) {
   const [title, defaultCopy] = messages[key];
   panelTitle.textContent = title;
   panelCopy.textContent = copy ?? defaultCopy;
-  if (!panel.open) panel.showModal();
+  openPage(panel, tab);
 }
 
 function exactLoopbackUrl(value) {
@@ -616,7 +705,7 @@ function openContacts() {
     document.querySelector("#contacts-status").textContent = "";
     document.querySelector("#address-change-warning").hidden = true;
     pendingAddressChange = null;
-    setContactForm(); renderContacts(); contactsPanel.showModal();
+    setContactForm(); renderContacts(); openPage(contactsPanel);
   } catch (error) { sendStatus.textContent = error.message; }
 }
 
@@ -675,14 +764,14 @@ async function exportOfflineSigningPackage(intent, simulation) {
     document.querySelector("#offline-signed-result").hidden = true;
     document.querySelector("#offline-signed-input").value = "";
     status.textContent = "Пакет создан. Его создание не подписывает и не отправляет операцию.";
-    if (!offlineSigningPanel.open) offlineSigningPanel.showModal();
+    openPage(offlineSigningPanel);
   } catch (error) { status.textContent = error.message; }
 }
 
 async function openResources() {
   if (!walletInfo) return openBridgePanel();
   resourcesStatus.textContent = "Обновление…";
-  resourcesPanel.showModal();
+  openPage(resourcesPanel, "resources");
   await refreshAccount();
   resourcesStatus.textContent = "";
 }
@@ -802,8 +891,7 @@ async function refreshAssets() {
 
 async function openAssets() {
   if (!walletInfo) return openBridgePanel();
-  resourcesPanel.close();
-  assetsPanel.showModal();
+  openPage(assetsPanel);
   await refreshAssets();
 }
 
@@ -1032,7 +1120,7 @@ function openBridgePanel() {
   bridgeStatus.textContent = "";
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
-  bridgePanel.showModal();
+  openPage(bridgePanel);
   // Native Mac app brings its pairing code above the browser. The standalone
   // CLI has no such endpoint; its terminal code remains the fallback.
   void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
@@ -1120,7 +1208,7 @@ async function changeAccount(id) {
 
 accountOpen.onclick = async () => {
   accountsStatus.textContent = "";
-  try { if (await renderAccounts() === true && bridgeSession && walletInfo) accountsPanel.showModal(); }
+  try { if (await renderAccounts() === true && bridgeSession && walletInfo) openPage(accountsPanel); }
   catch (error) { showMessage("settings", error.message); }
 };
 
@@ -1144,13 +1232,12 @@ document.querySelector("#add-account").onclick = async (event) => {
 };
 
 function openSetupPanel() {
-  if (settingsPanel.open) settingsPanel.close();
-  setupPanel.showModal();
+  openPage(setupPanel);
 }
 
 function openSettingsPanel() {
   renderWalletConnection();
-  settingsPanel.showModal();
+  openPage(settingsPanel, "settings");
 }
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
@@ -1202,7 +1289,7 @@ function receive() {
   document.querySelector("#payment-request-json").value = "";
   paymentRequestQrFrames = [];
   receiveStatus.textContent = "";
-  receivePanel.showModal();
+  openPage(receivePanel);
 }
 
 document.querySelector("#payment-request-form").addEventListener("submit", async (event) => {
@@ -1296,7 +1383,7 @@ function openSend() {
   const submitButton = document.querySelector("#submit-signed");
   submitButton.disabled = false;
   submitButton.hidden = false;
-  sendPanel.showModal();
+  openPage(sendPanel);
 }
 
 document.querySelector("#verify-payment-request").onclick = async (event) => {
@@ -1532,6 +1619,8 @@ document.querySelectorAll("[data-action]").forEach((button) => {
     else if (button.dataset.action === "send") openSend();
     else if (button.dataset.action === "connect") openBridgePanel();
     else if (button.dataset.action === "setup") openSetupPanel();
+    else if (button.dataset.action === "history") showHomeTab("history");
+    else if (button.dataset.action === "mine") showMessage("mine", null, "mine");
     else showMessage(button.dataset.action);
   });
 });
@@ -1541,7 +1630,6 @@ document.querySelectorAll("[data-close]").forEach((button) => {
   button.onclick = () => document.querySelector(`#${button.dataset.close}`).close();
 });
 document.querySelector("#settings-connect").onclick = () => {
-  settingsPanel.close();
   openBridgePanel();
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
@@ -1636,7 +1724,6 @@ document.querySelector("#copy-iris-receipt").onclick = async () => {
   }
 };
 document.querySelector("#setup-connect").onclick = () => {
-  setupPanel.close();
   openBridgePanel();
 };
 document.querySelector("#disconnect-wallet").onclick = async (event) => {
@@ -1654,20 +1741,11 @@ document.querySelector("#disconnect-wallet").onclick = async (event) => {
 
 const navigationButtons = [...document.querySelectorAll("[data-nav]")];
 navigationButtons.forEach((button) => button.addEventListener("click", () => {
-  navigationButtons.forEach((candidate) => {
-    const selected = candidate === button;
-    candidate.classList.toggle("active", selected);
-    if (selected) candidate.setAttribute("aria-current", "page");
-    else candidate.removeAttribute("aria-current");
-  });
   const destination = button.dataset.nav;
-  if (destination === "home") window.scrollTo({ top: 0, behavior: "smooth" });
+  if (destination === "home" || destination === "history") showHomeTab(destination);
   else if (destination === "resources") openResources();
-  else if (destination === "history") {
-    document.querySelector("#history").scrollIntoView({ behavior: "smooth", block: "center" });
-    showMessage("history");
-  } else if (destination === "settings") openSettingsPanel();
-  else showMessage(destination);
+  else if (destination === "settings") openSettingsPanel();
+  else showMessage(destination, null, destination);
 }));
 
 const themeButton = document.querySelector("#theme");
