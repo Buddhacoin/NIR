@@ -23,7 +23,7 @@ if (!report.ready) {
       encoding: "utf8", timeout: 5_000, maxBuffer: 2048,
     });
     if (JSON.parse(stdout).status !== "pinned-iris-ready") throw new Error("invalid model preflight");
-    const server = createMiningPracticeApp({ root });
+    const server = createMiningPracticeApp({ root, embedded });
     server.listen(0, "127.0.0.1", () => {
       const url = `http://127.0.0.1:${server.address().port}/${embedded ? "?local-app=1" : ""}`;
       if (embedded) {

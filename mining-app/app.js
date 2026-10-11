@@ -20,6 +20,14 @@ const recheckRun = document.querySelector("#recheck-run");
 const recheckState = document.querySelector("#recheck-state");
 const connection = document.querySelector("#connection");
 const languageButton = document.querySelector("#language");
+const settingsOpen = document.querySelector("#settings-open");
+const settingsBack = document.querySelector("#settings-back");
+const settingsPage = document.querySelector("#settings-page");
+const labContent = document.querySelector("#lab-content");
+const installedVersion = document.querySelector("#installed-version");
+const installedBuildId = document.querySelector("#installed-build-id");
+const checkUpdates = document.querySelector("#check-updates");
+const updateResult = document.querySelector("#update-result");
 const walletLinkStart = document.querySelector("#wallet-link-start");
 const walletLinkChallenge = document.querySelector("#wallet-link-challenge");
 const walletLinkCopy = document.querySelector("#wallet-link-copy");
@@ -118,6 +126,15 @@ async function fetchQwenJson(path, options = {}) {
 
 const copy = {
   ru: {
+    settingsButton: "Настройки", settingsTitle: "Версия и обновления",
+    settingsIntro: "Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.",
+    installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
+    checkUpdates: "Обновить сведения о версии", settingsBack: "Назад к проверке моделей",
+    versionSource: "Исходный код, не установленная сборка",
+    versionUnavailable: "Не удалось определить версию этого экземпляра Model Lab.",
+    buildSource: "Недоступен для запуска из исходного кода",
+    updateNotConfigured: "Доверенный канал обновлений пока не настроен. Наличие новой версии проверить нельзя; ничего не скачано и не установлено.",
+    updateOffline: "Локальный сервис не ответил. Наличие обновлений не проверено; ничего не скачано и не установлено.",
     consoleTitle: "Локальная панель оператора", localBadge: "НЕ СЕТЬ",
     roleLabel: "РОЛЬ", roleValue: "Локальный оператор", networkLabel: "ПУБЛИЧНАЯ СЕТЬ",
     networkValue: "Не подключена", rewardLabel: "НАГРАДА", rewardValue: "Недоступна",
@@ -228,6 +245,15 @@ const copy = {
     qwenReady: "Среда проверена локально. Загрузка модели начнётся только после подтверждения.",
   },
   en: {
+    settingsButton: "Settings", settingsTitle: "Version and updates",
+    settingsIntro: "This is local information about the running Model Lab. The version number alone does not prove the app is authentic.",
+    installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
+    checkUpdates: "Refresh version info", settingsBack: "Back to model checks",
+    versionSource: "Source checkout, not an installed build",
+    versionUnavailable: "Could not identify this Model Lab instance version.",
+    buildSource: "Unavailable when running from source",
+    updateNotConfigured: "No trusted update channel is configured. A newer version cannot be checked; nothing was downloaded or installed.",
+    updateOffline: "The local service did not respond. Updates were not checked; nothing was downloaded or installed.",
     consoleTitle: "Local operator console", localBadge: "NOT A NETWORK",
     roleLabel: "ROLE", roleValue: "Local operator", networkLabel: "PUBLIC NETWORK",
     networkValue: "Not connected", rewardLabel: "REWARD", rewardValue: "Unavailable",
@@ -341,6 +367,8 @@ const copy = {
 let locale = typeof navigator !== "undefined" && !/^ru\b/i.test(navigator.language || "") ? "en" : "ru";
 try { const saved = localStorage.getItem("nir-mining-locale"); if (saved === "en" || saved === "ru") locale = saved; } catch {}
 let connected = false;
+let versionInfo = null;
+let versionCheckFailed = false;
 let checking = false;
 let statusRequestRunning = false;
 let errorKind = null;
@@ -369,6 +397,41 @@ let recheckHash = null;
 const localEvents = [];
 let lastServiceState = null;
 let lastRuntimeState = null;
+
+function renderVersion() {
+  if (!installedVersion || !installedBuildId || !updateResult) return;
+  const t = copy[locale];
+  installedVersion.textContent = versionInfo?.status === "source-checkout"
+    ? `${versionInfo.version} · ${t.versionSource}`
+    : versionInfo?.status === "local-build" ? versionInfo.version : t.versionUnavailable;
+  installedBuildId.textContent = versionInfo?.status === "local-build"
+    ? versionInfo.buildId : versionInfo?.status === "source-checkout" ? t.buildSource : "—";
+  updateResult.textContent = versionCheckFailed ? t.updateOffline : t.updateNotConfigured;
+}
+
+async function loadVersionInfo() {
+  if (!checkUpdates) return;
+  checkUpdates.disabled = true;
+  try {
+    const { response, data } = await fetchQwenJson("/app-version", { cache: "no-store" });
+    if (!response.ok || !["source-checkout", "local-build", "identity-unavailable"].includes(data?.status) ||
+        data.updateChannel !== "unconfigured" || data.availableUpdate !== null ||
+        (data.status === "local-build" && (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(data.version) ||
+          !/^sha256:[0-9a-f]{64}$/.test(data.buildId))) ||
+        (data.status === "source-checkout" && (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(data.version) ||
+          data.buildId !== null)) ||
+        (data.status === "identity-unavailable" && (data.version !== null || data.buildId !== null)))
+      throw new Error("invalid version response");
+    versionInfo = data;
+    versionCheckFailed = false;
+  } catch {
+    versionInfo = null;
+    versionCheckFailed = true;
+  } finally {
+    checkUpdates.disabled = false;
+    renderVersion();
+  }
+}
 
 const eventCopy = {
   ru: {
@@ -526,6 +589,7 @@ function render() {
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
   if (providerKind?.options?.length) providerKind.options[0].textContent = t.providerChoose;
   connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
+  renderVersion();
   if (providerExport) {
     providerExport.disabled = !connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim();
     providerState.textContent = providerMessage ? t[providerMessage] : "";
@@ -691,6 +755,19 @@ languageButton.addEventListener("click", () => {
   render();
   renderCatalog();
 });
+settingsOpen?.addEventListener("click", () => {
+  labContent.hidden = true;
+  settingsPage.hidden = false;
+  settingsOpen.setAttribute("aria-pressed", "true");
+  settingsPage.scrollIntoView({ block: "start" });
+});
+settingsBack?.addEventListener("click", () => {
+  settingsPage.hidden = true;
+  labContent.hidden = false;
+  settingsOpen.setAttribute("aria-pressed", "false");
+  settingsOpen.focus();
+});
+checkUpdates?.addEventListener("click", () => { void loadVersionInfo(); });
 if (catalogModel) {
   catalogModel.addEventListener("change", () => { catalogVersion.value = ""; renderCatalog(); });
   catalogVersion.addEventListener("change", renderCatalog);
@@ -1209,6 +1286,7 @@ walletLinkComplete?.addEventListener("click", async () => {
 
 recordLocalEvent("ui-ready");
 render();
+void loadVersionInfo();
 void checkConnection();
 void loadQwenRuntime();
 void loadProviderRegistry();

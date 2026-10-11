@@ -15,7 +15,7 @@ test("model app build has a bounded source allowlist and explicit nonreward mark
   assert.match(source, /const FILES = Object\.freeze/);
   assert.doesNotMatch(source, /cpSync\(|readdirSync\(/);
   assert.match(source, /checkedSource\(relative\)/);
-  assert.match(source, /rewardEligible":false/);
+  assert.match(source, /rewardEligible: false/);
   assert.throws(() => buildMacMiningApp("/tmp/not-an-app"),
     process.platform === "darwin" ? /NIR Model Lab\.app/ : /requires macOS/);
   const native = readFileSync(new URL("../macos/mining-launcher.m", import.meta.url), "utf8");
@@ -65,6 +65,9 @@ test("double-click model app build includes only local UI and model code, withou
     const marker = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-LOCAL-BUILD.json")));
     assert.equal(marker.rewardEligible, false);
     assert.equal(marker.distribution, "not-a-public-installer");
+    assert.equal(marker.version, "0.2.0");
+    assert.match(marker.buildId, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(marker.updateChannel, "unconfigured");
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
     assert.equal(runtime.nodeExecutable.logicalPath, process.execPath);
     assert.match(runtime.pythonExecutable.logicalPath, /^\//);
@@ -390,6 +393,16 @@ test("packaged embedded service starts outside source checkout and runs real pin
         `embedded service timed out after 30s: ${diagnostic}`)), 30_000)),
     ]);
     const origin = new URL(url.url).origin;
+    const version = await fetch(`${origin}/app-version`, {
+      headers: { "X-NIR-Session": url.token },
+    });
+    assert.equal(version.status, 200);
+    const buildInfo = await version.json();
+    assert.equal(buildInfo.status, "local-build");
+    assert.equal(buildInfo.version, "0.2.0");
+    assert.match(buildInfo.buildId, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(buildInfo.updateChannel, "unconfigured");
+    assert.equal(buildInfo.availableUpdate, null);
     const runtimeCheck = await fetch(`${origin}/open-model/runtime`);
     assert.equal(runtimeCheck.status, 200);
     const response = await fetch(`${origin}/model-check`, { method: "POST", headers: {

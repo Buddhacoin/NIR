@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local tester source build only: no bundled runtime, notarization, or public release.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
   renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve } from "node:path";
@@ -126,8 +127,6 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
         (_, before, after) => `${before}${version}${after}`);
     writeFileSync(join(contents, "Info.plist"), info);
     writeFileSync(join(resources, "NIR-RUNTIME.json"), `${JSON.stringify(runtimeBinding(node, python))}\n`);
-    writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
-      '{"format":"nir-local-model-build-v1","distribution":"not-a-public-installer","rewardEligible":false}\n');
     icon(resources);
     command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
       "Foundation", "-framework", "Security", "-framework", "WebKit",
@@ -143,6 +142,22 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
       mkdirSync(dirname(destination), { recursive: true });
       copyFileSync(checkedSource(relative), destination);
     }
+    // Distinguish same-version local builds by their exact pre-signing bundled
+    // bytes. This is an identifier, not a publisher signature or update trust.
+    const included = ["Contents/Info.plist", "Contents/Resources/NIR-RUNTIME.json",
+      "Contents/Resources/NIR.icns", "Contents/MacOS/launcher",
+      "Contents/MacOS/mining-runner", "Contents/MacOS/runtime-verifier",
+      ...FILES.map((relative) => `Contents/Resources/app/${relative}`)].sort();
+    const digest = createHash("sha256").update("NIR_MODEL_LAB_LOCAL_BUILD_V1\0");
+    for (const relative of included) {
+      const bytes = readFileSync(join(app, relative));
+      digest.update(relative).update("\0").update(String(bytes.length)).update("\0").update(bytes);
+    }
+    writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"), `${JSON.stringify({
+      format: "nir-local-model-build-v1", distribution: "not-a-public-installer",
+      rewardEligible: false, version, buildId: `sha256:${digest.digest("hex")}`,
+      updateChannel: "unconfigured",
+    })}\n`);
     if (sign) {
       command("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], "ad-hoc signing");
       command("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], "signature check");

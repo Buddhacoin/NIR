@@ -72,6 +72,96 @@ test("one Model Lab service exposes wallet ownership, recheck role, and provider
   } finally { await stop(server); }
 });
 
+test("version check is local, authenticated, and cannot claim an available update", async () => {
+  const { server, base, token } = await serve();
+  try {
+    assert.equal((await fetch(`${base}/app-version`)).status, 403);
+    assert.equal((await fetch(`${base}/app-version`, {
+      headers: { "X-NIR-Session": "0".repeat(64) },
+    })).status, 403);
+    const response = await fetch(`${base}/app-version`, {
+      headers: { "X-NIR-Session": token },
+    });
+    assert.equal(response.status, 200);
+    const info = await response.json();
+    assert.equal(info.status, "source-checkout");
+    assert.equal(info.version, "0.2.0");
+    assert.equal(info.buildId, null);
+    assert.equal(info.updateChannel, "unconfigured");
+    assert.equal(info.availableUpdate, null);
+  } finally { await stop(server); }
+});
+
+test("embedded Model Lab without a valid build marker fails closed on identity", async () => {
+  const server = createMiningPracticeApp({ root, embedded: true });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/app-version`, {
+      headers: { "X-NIR-Session": server.localSessionToken },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: "identity-unavailable",
+      version: null, buildId: null, updateChannel: "unconfigured", availableUpdate: null });
+  } finally { await stop(server); }
+});
+
+test("Model Lab has an inline version/settings page, not an unverified download control", () => {
+  const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
+  const js = readFileSync(join(root, "mining-app/app.js"), "utf8");
+  for (const id of ["settings-open", "settings-back", "settings-page", "lab-content",
+    "installed-version", "installed-build-id", "check-updates", "update-result"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /Доверенный канал обновлений пока не настроен/);
+  assert.match(html, /Обновить сведения о версии/);
+  assert.doesNotMatch(html, /Проверить обновления/);
+  assert.match(html, /Заявленный локальный ID \(не проверен\)/);
+  assert.match(js, /Declared local ID \(not verified\)/);
+  assert.match(js, /Refresh version info/);
+  assert.doesNotMatch(js, /Check for updates/);
+  assert.doesNotMatch(html, /href="[^"]*\.app/);
+  assert.match(js, /updateChannel !== "unconfigured"/);
+});
+
+test("settings check shows local identity and never says an update was found", async () => {
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection",
+    "language", "settings-open", "settings-back", "settings-page", "lab-content",
+    "installed-version", "installed-build-id", "check-updates", "update-result", "score", "technical"]) {
+    nodes.set(`#${id}`, { hidden: id === "settings-page", disabled: false, dataset: {},
+      textContent: "", setAttribute(name, value) { this[name] = value; }, focus() {},
+      scrollIntoView() {}, addEventListener(_, listener) { this.click = listener; } });
+  }
+  const buildId = `sha256:${"b".repeat(64)}`;
+  let requests = 0;
+  runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
+      querySelectorAll: () => [] }, navigator: { language: "ru-RU" }, AbortController,
+    fetch: async (path) => {
+      if (path === "/app-version") { requests++; return { ok: true,
+        json: async () => ({ status: "local-build", version: "0.2.0", buildId,
+          updateChannel: "unconfigured", availableUpdate: null }) }; }
+      if (path === "/status") return { ok: true, json: async () => ({ status: "local-model-service-ready" }) };
+      if (path === "/open-model/runtime") return { ok: true,
+        json: async () => ({ status: "python-3.13-required" }) };
+      throw new Error(`unexpected ${path}`);
+    }, setInterval: () => 0, setTimeout, clearTimeout,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nodes.get("#installed-version").textContent, "0.2.0");
+  assert.equal(nodes.get("#installed-build-id").textContent, buildId);
+  await nodes.get("#settings-open").click();
+  assert.equal(nodes.get("#settings-page").hidden, false);
+  assert.equal(nodes.get("#lab-content").hidden, true);
+  await nodes.get("#check-updates").click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests, 2);
+  assert.match(nodes.get("#update-result").textContent, /Наличие новой версии проверить нельзя/);
+  await nodes.get("#settings-back").click();
+  assert.equal(nodes.get("#settings-page").hidden, true);
+  assert.equal(nodes.get("#lab-content").hidden, false);
+});
+
 test("operator console shows only real local stages, roles, and runnable models", () => {
   const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
   const css = readFileSync(join(root, "mining-app/style.css"), "utf8");

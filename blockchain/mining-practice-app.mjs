@@ -256,7 +256,7 @@ export async function checkPinnedQwenRuntime(root) {
   return result;
 }
 
-export function createMiningPracticeApp({ root, runModel = runPinnedModel,
+export function createMiningPracticeApp({ root, embedded = false, runModel = runPinnedModel,
   runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
   runReplay = replayPinnedQwen, verifyIris = verifyPinnedIrisEvidence,
   catalog = createOpenModelCatalog() } = {}) {
@@ -302,6 +302,36 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
     }
     if (request.method === "GET" && path === "/status") {
       send(200, "application/json; charset=utf-8", JSON.stringify({ status: "local-model-service-ready" }));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/app-version") {
+      if (!authorized(request)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      let version = null;
+      let buildId = null;
+      let status = "identity-unavailable";
+      try {
+        const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+        if (pkg.name !== "nir-protocol" || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(pkg.version))
+          throw new Error("invalid package version");
+        if (!embedded) {
+          version = pkg.version;
+          status = "source-checkout";
+        } else {
+          const marker = JSON.parse(readFileSync(join(root, "..", "NIR-LOCAL-BUILD.json"), "utf8"));
+          if (marker.format !== "nir-local-model-build-v1" ||
+              marker.distribution !== "not-a-public-installer" ||
+              marker.rewardEligible !== false || marker.version !== pkg.version ||
+              !/^sha256:[0-9a-f]{64}$/.test(marker.buildId)) throw new Error("invalid local build");
+          version = marker.version;
+          buildId = marker.buildId;
+          status = "local-build";
+        }
+      } catch {}
+      send(200, "application/json; charset=utf-8", JSON.stringify({ status, version, buildId,
+        updateChannel: "unconfigured", availableUpdate: null }));
       return;
     }
     if (request.method === "POST" && path === "/wallet-link/challenge" &&
