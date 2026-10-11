@@ -124,6 +124,7 @@ const pageDialogs = [panel, accountsPanel, bridgePanel, receivePanel, sendPanel,
 let activePage = null;
 let pageTrail = [];
 let activeTab = "home";
+let pageNavigationEpoch = 0;
 for (const page of pageDialogs) {
   page.classList.add("page-view");
   page.hidden = true;
@@ -131,8 +132,10 @@ for (const page of pageDialogs) {
   const back = page.querySelector(":scope > .close");
   if (back) { back.textContent = "←"; back.setAttribute("aria-label", "Назад"); }
   page.addEventListener("close", () => {
+    if (page.open) return;
     page.hidden = true;
     if (activePage !== page) return;
+    pageNavigationEpoch += 1;
     activePage = null;
     while (pageTrail.length) {
       const previous = pageTrail.pop();
@@ -176,6 +179,7 @@ function clearOpenPages() {
 }
 
 function showHomeTab(destination = "home") {
+  pageNavigationEpoch += 1;
   clearOpenPages();
   homePage.hidden = false;
   homePage.dataset.view = destination;
@@ -192,6 +196,7 @@ function showHomeTab(destination = "home") {
 
 function openPage(page, tab = null) {
   if (activePage === page) return;
+  pageNavigationEpoch += 1;
   if (tab) {
     clearOpenPages();
     setActiveTab(tab);
@@ -1107,30 +1112,44 @@ document.querySelector("#edit-resource-simulation").onclick = () => {
 
 document.querySelector("#submit-resource").onclick = async (event) => {
   if (!signedResourceTransaction) return;
+  const transaction = signedResourceTransaction;
+  const navigationEpoch = pageNavigationEpoch;
+  const walletEpoch = accountEpoch;
+  const assertCurrent = () => {
+    if (pageNavigationEpoch !== navigationEpoch || accountEpoch !== walletEpoch ||
+        activePage !== resourcesPanel || signedResourceTransaction !== transaction) {
+      throw new Error("Страница или операция изменилась; повторите отправку.");
+    }
+  };
   event.currentTarget.disabled = true;
   resourcesStatus.textContent = "Повторная проверка тестовой сети…";
   try {
     if (!(await refreshNodeStatus())) {
       throw new Error("Сеть не подтверждена; транзакция не отправлена.");
     }
+    assertCurrent();
     const health = await fetch(nodeUrl("/health")).then((response) => response.json());
+    assertCurrent();
     if (health.valueMode !== "valueless-devnet" ||
-        health.networkId !== signedResourceTransaction.networkId) {
+        health.networkId !== transaction.networkId) {
       throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
     }
     const response = await fetch(transactionSubmissionUrl(nodePolicy), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(signedResourceTransaction),
+      body: JSON.stringify(transaction),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Узел отклонил операцию.");
-    resourcesStatus.textContent = submissionStatus(result);
-    signedResourceTransaction = null;
-    document.querySelector("#resource-signed").hidden = true;
+    if (signedResourceTransaction === transaction) {
+      resourcesStatus.textContent = submissionStatus(result);
+      signedResourceTransaction = null;
+      document.querySelector("#resource-signed").hidden = true;
+    }
     await refreshNodeStatus();
-  } catch (error) { resourcesStatus.textContent = error.message; }
-  finally { event.currentTarget.disabled = false; }
+  } catch (error) {
+    if (signedResourceTransaction === transaction && activePage === resourcesPanel) resourcesStatus.textContent = error.message;
+  } finally { if (signedResourceTransaction === transaction) event.currentTarget.disabled = false; }
 };
 
 document.querySelector("#discard-resource").onclick = () => {
@@ -1649,6 +1668,15 @@ document.querySelector("#request-signature").onclick = async () => {
 
 document.querySelector("#submit-signed").onclick = async () => {
   if (!signedTransaction) return;
+  const transaction = signedTransaction;
+  const navigationEpoch = pageNavigationEpoch;
+  const walletEpoch = accountEpoch;
+  const assertCurrent = () => {
+    if (pageNavigationEpoch !== navigationEpoch || accountEpoch !== walletEpoch ||
+        activePage !== sendPanel || signedTransaction !== transaction) {
+      throw new Error("Страница или операция изменилась; повторите отправку.");
+    }
+  };
   const submitButton = document.querySelector("#submit-signed");
   submitButton.disabled = true;
   sendStatus.textContent = "Повторная проверка тестовой сети…";
@@ -1656,30 +1684,35 @@ document.querySelector("#submit-signed").onclick = async () => {
     if (!(await refreshNodeStatus())) {
       throw new Error("Сеть не подтверждена; транзакция не отправлена.");
     }
+    assertCurrent();
     const healthResponse = await fetch(nodeUrl("/health"));
     if (!healthResponse.ok) throw new Error("Локальный узел не отвечает.");
     const currentNetwork = await healthResponse.json();
+    assertCurrent();
     if (currentNetwork.valueMode !== "valueless-devnet") {
       throw new Error("Отправка разрешена только в сети без реальной стоимости.");
     }
-    if (currentNetwork.networkId !== signedTransaction.networkId) {
+    if (currentNetwork.networkId !== transaction.networkId) {
       throw new Error("Сеть узла не совпадает с сетью подписанной транзакции.");
     }
     const response = await fetch(transactionSubmissionUrl(nodePolicy), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(signedTransaction),
+      body: JSON.stringify(transaction),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Узел отклонил транзакцию.");
-    sendStatus.textContent = submissionStatus(result);
-    submitButton.hidden = true;
-    signedTransaction = null;
+    if (signedTransaction === transaction) {
+      sendStatus.textContent = submissionStatus(result);
+      submitButton.hidden = true;
+      signedTransaction = null;
+    }
     await refreshNodeStatus();
   } catch (error) {
-    sendStatus.textContent = error.message;
-    submitButton.disabled = false;
-  }
+    if (signedTransaction === transaction && activePage === sendPanel) {
+      sendStatus.textContent = error.message;
+    }
+  } finally { if (signedTransaction === transaction) submitButton.disabled = false; }
 };
 
 document.querySelector("#copy-signed").onclick = async () => {
