@@ -657,56 +657,6 @@ int main(int argc, const char *argv[]) {
         return 0;
         }
 #endif
-        if (argc == 2 && strcmp(argv[1], "--show-pairing") == 0) {
-            NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
-            NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
-            NSString *code = [payload isKindOfClass:NSDictionary.class] ? payload[@"code"] : nil;
-            if (![code isKindOfClass:NSString.class] || code.length != 8) return 1;
-            for (NSUInteger index = 0; index < code.length; index++) {
-                if ([code characterAtIndex:index] < '0' || [code characterAtIndex:index] > '9') return 1;
-            }
-            NSApplication *app = [NSApplication sharedApplication];
-            [app setActivationPolicy:NSApplicationActivationPolicyRegular];
-            NSAlert *alert = [NSAlert new];
-            alert.messageText = NIRTranslate(@"Подключите кошелёк");
-            alert.informativeText = NIRTranslate(@"Введите эти 8 цифр в окне браузера. Это не код восстановления. Код действует 10 минут.");
-            NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 250, 42)];
-            field.stringValue = code;
-            field.editable = NO;
-            field.selectable = YES;
-            field.alignment = NSTextAlignmentCenter;
-            field.font = [NSFont monospacedDigitSystemFontOfSize:28 weight:NSFontWeightMedium];
-            alert.accessoryView = field;
-            [alert addButtonWithTitle:NIRTranslate(@"Готово")];
-            [alert addButtonWithTitle:NIRTranslate(@"Копировать код")];
-            // Safari is opened immediately before this helper. Keep the short-lived
-            // pairing prompt above that browser window, including when Safari has
-            // an in-page connection dialog open.
-            NSWindow *pairingWindow = alert.window;
-            pairingWindow.level = NSFloatingWindowLevel;
-            pairingWindow.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
-            [pairingWindow orderFrontRegardless];
-            [app activateIgnoringOtherApps:YES];
-            [pairingWindow makeKeyAndOrderFront:nil];
-            // NSAlert creates its modal session only inside runModal. Activate
-            // again from that event loop so Safari cannot reclaim focus first.
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [[NSRunningApplication currentApplication]
-                    activateWithOptions:0];
-                [pairingWindow makeKeyAndOrderFront:nil];
-                [pairingWindow orderFrontRegardless];
-            });
-            while (YES) {
-                NSModalResponse choice = [alert runModal];
-                if (choice == NSAlertFirstButtonReturn) break;
-                if (choice == NSAlertSecondButtonReturn) {
-                    NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
-                    [clipboard clearContents];
-                    [clipboard setString:code forType:NSPasteboardTypeString];
-                }
-            }
-            return 0;
-        }
         if (argc == 2 && strcmp(argv[1], "--show-secret") == 0) {
             NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
             NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
