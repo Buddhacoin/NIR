@@ -272,6 +272,15 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
   let lastIrisReceipt = null;
   let irisReceiptCompleting = false;
   let pendingCandidate = null;
+  function publicCandidateCommitment(candidate, now = Date.now()) {
+    return {
+      status: "local-model-committed", modelHash: candidate.modelHash,
+      commitHash: candidate.commitHash, challengeId: candidate.challengeId,
+      expiresInSeconds: Math.ceil((candidate.expiresAt - now) / 1_000),
+      independentOperators: false, hiddenChallenges: false,
+      networkSubmitted: false, rewardEligible: false, walletChanged: false,
+    };
+  }
   let pendingWalletChallenge = null;
   let linkedWalletAddress = null;
   const syntheticTransfers = createSyntheticTransferSession();
@@ -605,7 +614,7 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
       }
-      if (running || (pendingCandidate && pendingCandidate.expiresAt > Date.now())) {
+      if (running) {
         send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A candidate is pending" }));
         return;
       }
@@ -623,17 +632,23 @@ export function createMiningPracticeApp({ root, runModel = runPinnedModel,
         if (length !== declared) throw new Error("truncated Iris model");
         clearTimeout(deadline);
         const bytes = Buffer.concat(chunks, length);
+        const now = Date.now();
+        if (pendingCandidate && pendingCandidate.expiresAt > now) {
+          if (!bytes.equals(pendingCandidate.bytes)) {
+            send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A candidate is pending" }));
+            return;
+          }
+          send(200, "application/json; charset=utf-8",
+            JSON.stringify(publicCandidateCommitment(pendingCandidate, now)));
+          return;
+        }
         const checked = evaluateIrisLinearCandidate(root, bytes);
         const challengeId = randomBytes(16).toString("hex");
         pendingCandidate = { bytes, challengeId, modelHash: checked.modelHash,
           commitHash: hashIrisModelCommit(bytes), seed: randomBytes(32),
           expiresAt: Date.now() + 10 * 60_000 };
-        send(200, "application/json; charset=utf-8", JSON.stringify({
-          status: "local-model-committed", modelHash: pendingCandidate.modelHash,
-          commitHash: pendingCandidate.commitHash, challengeId, expiresInSeconds: 600,
-          independentOperators: false, hiddenChallenges: false,
-          networkSubmitted: false, rewardEligible: false, walletChanged: false,
-        }));
+        send(200, "application/json; charset=utf-8",
+          JSON.stringify(publicCandidateCommitment(pendingCandidate)));
       } catch {
         if (!response.destroyed)
           send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid data-only Iris model" }));
