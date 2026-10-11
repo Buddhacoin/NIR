@@ -223,6 +223,53 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     assert.doesNotMatch(macCopy.nodes, /Nodes|Local testnet/);
     assert.match(macCopy.bridge, /окна macOS/);
     assert.match(macCopy.mining, /не начисляет NIR/);
+    const settingsPage = await evaluate(send, `(() => {
+      document.querySelector('[data-nav="settings"]').click();
+      const page = document.querySelector('#settings-panel');
+      const pageRect = page.getBoundingClientRect();
+      const shellRect = document.querySelector('.shell').getBoundingClientRect();
+      return { open: page.open, modal: page.matches(':modal'),
+        homeHidden: document.querySelector('#home-page')?.hidden ?? false,
+        backdrop: getComputedStyle(page, '::backdrop').backgroundColor,
+        inFlow: getComputedStyle(page).position === 'static' &&
+          pageRect.left >= shellRect.left && pageRect.right <= shellRect.right,
+        headingFocused: document.activeElement === page.querySelector('h2') };
+    })()`);
+    assert.deepEqual(settingsPage, { open: true, modal: false, homeHidden: true,
+      backdrop: "rgba(0, 0, 0, 0)", inFlow: true, headingFocused: true });
+    const pageNavigation = await evaluate(send, `(async () => {
+      document.querySelector('#settings-setup').click();
+      const setup = document.querySelector('#setup-panel');
+      const openedSetup = setup.open && !setup.hidden && !setup.matches(':modal') &&
+        document.querySelector('#settings-panel').hidden;
+      setup.querySelector('.close').click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const backToSettings = !document.querySelector('#settings-panel').hidden &&
+        document.querySelector('#settings-panel').open && !setup.open;
+      document.querySelector('[data-nav="home"]').click();
+      const home = !document.querySelector('#home-page').hidden &&
+        !document.querySelector('#settings-panel').open;
+      document.querySelector('[data-nav="history"]').click();
+      const history = document.querySelector('#home-page').dataset.view === 'history' &&
+        getComputedStyle(document.querySelector('.balance')).display === 'none' &&
+        document.querySelector('#history .title h2').textContent === 'История операций';
+      document.querySelector('[data-nav="mine"]').click();
+      const mine = document.querySelector('#panel').open && !document.querySelector('#panel').matches(':modal') &&
+        document.querySelector('#home-page').hidden;
+      document.querySelector('[data-nav="home"]').click();
+      document.querySelector('[data-action="receive"]').click();
+      const connect = document.querySelector('#bridge-panel').open &&
+        !document.querySelector('#bridge-panel').matches(':modal');
+      document.querySelector('[data-nav="settings"]').click();
+      document.querySelector('[data-nav="home"]').click();
+      document.querySelector('[data-nav="settings"]').click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const rapidReopen = document.querySelector('#settings-panel').open &&
+        !document.querySelector('#settings-panel').hidden && document.querySelector('#home-page').hidden;
+      return { openedSetup, backToSettings, home, history, mine, connect, rapidReopen };
+    })()`);
+    assert.deepEqual(pageNavigation, { openedSetup: true, backToSettings: true,
+      home: true, history: true, mine: true, connect: true, rapidReopen: true });
 
     await send("Page.navigate", { url: `${origin}/frame.html` });
     await new Promise((resolve) => setTimeout(resolve, 250));
