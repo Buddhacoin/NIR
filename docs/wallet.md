@@ -118,8 +118,9 @@ broadcast anything or authorize the eventual payment.
 When started with an explicit genesis file, the bridge also verifies account
 statements signed by a validator quorum. The browser then shows a confirmed
 height instead of trusting the balance reported by one node. Omitting the
-genesis path leaves this check disabled and the interface labels the result as
-single-node data. Before checking a balance, the wallet automatically downloads
+genesis path leaves this check disabled; the interface must not mark a node as
+connected merely because its unauthenticated `/health` endpoint responds.
+Before checking a balance, the wallet automatically downloads
 the handoff history from its node. The bridge accepts only a cryptographically
 valid extension rooted in genesis and stores it as `<vault>.handoffs.json`; the
 optional command-line history remains an offline recovery input. Every
@@ -282,6 +283,11 @@ never returned to the browser. Multiple vault files, including restored copies
 of one address, remain distinct selectable entries. Creating another vault in
 the browser opens the same native setup flow. The password stays in the native
 process and local child pipe; it is not sent to the browser.
+This source-built Mac app currently supplies no genesis trust anchor to its
+bridge. It therefore shows **Сеть не подтверждена** and no node-supplied balance
+or connected-network state, even if a local `/health` endpoint responds. A
+publicly verified genesis and release-pinned trust path remain separate launch
+gates; a locally chosen file or matching node responses cannot replace them.
 
 The builder packages only an explicit reviewed file list and refuses
 secret-named files in the source tree. It refuses to overwrite an app. This

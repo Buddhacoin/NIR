@@ -51,6 +51,7 @@ let accountRefreshSequence = 0;
 let nodeRefreshSequence = 0;
 let accountTransitionPending = false;
 let networkInfo = null;
+let networkProofVerified = false;
 let activeNodeUrl = null;
 let nodePolicy = null;
 let pendingIntent = null;
@@ -83,6 +84,7 @@ function renderWalletConnection() {
 }
 
 function clearAccountNumbers() {
+  networkProofVerified = false;
   document.querySelector("#balance-value").textContent = "—";
   document.querySelector("#resource-stake").textContent = "—";
   document.querySelector("#resource-credits").textContent = "—";
@@ -494,7 +496,7 @@ function renderTransactions(account) {
 }
 
 async function refreshAccount() {
-  if (!walletInfo || !networkInfo) return;
+  if (!walletInfo || !networkInfo) return false;
   const expectedAddress = walletInfo.address;
   const epoch = accountEpoch;
   const expectedNetwork = networkInfo;
@@ -506,11 +508,11 @@ async function refreshAccount() {
   document.querySelector("#wallet-state").textContent = "Проверяем доказательство баланса…";
   try {
     const account = await readAccount();
-    if (!isCurrent()) return;
+    if (!isCurrent()) return false;
     if (!account.proofVerified) {
       document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · ответ узла скрыт";
       renderTransactions(account);
-      return;
+      return false;
     }
     document.querySelector("#balance-value").textContent = formatAtomic(account.atomicBalance);
     const resources = account.resources ?? {};
@@ -527,11 +529,14 @@ async function refreshAccount() {
     document.querySelector("#wallet-state").textContent =
       `Кворум подтвердил баланс · блок ${account.proofHeight}`;
     renderTransactions(account);
+    networkProofVerified = true;
+    return true;
   } catch {
-    if (!isCurrent()) return;
+    if (!isCurrent()) return false;
     clearAccountNumbers();
     document.querySelector("#wallet-state").textContent =
       "Баланс не подтверждён · локальный узел недоступен";
+    return false;
   }
 }
 
@@ -541,7 +546,7 @@ function randomRequestId() {
 }
 
 function activeNetworkId() {
-  if (!networkInfo?.networkId) throw new Error("Сначала подключите и проверьте сеть.");
+  if (!networkProofVerified || !networkInfo?.networkId) throw new Error("Сначала подключите и проверьте сеть.");
   return networkInfo.networkId;
 }
 
@@ -1169,7 +1174,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
 
 function receive() {
   if (!walletInfo) return openBridgePanel();
-  if (!networkInfo?.networkId) {
+  if (!networkProofVerified || !networkInfo?.networkId) {
     receiveStatus.textContent = "Сначала дождитесь проверки сети, затем откройте получение снова.";
     return;
   }
@@ -1192,7 +1197,7 @@ document.querySelector("#payment-request-form").addEventListener("submit", async
   button.disabled = true;
   receiveStatus.textContent = "Симуляция платёжного запроса…";
   try {
-    if (!networkInfo || networkInfo.valueMode !== "valueless-devnet") {
+    if (!networkProofVerified || !networkInfo || networkInfo.valueMode !== "valueless-devnet") {
       throw new Error("Подключите локальную тестовую сеть.");
     }
     const minutes = Number(document.querySelector("#request-minutes").value);
@@ -1284,7 +1289,7 @@ document.querySelector("#verify-payment-request").onclick = async (event) => {
   event.currentTarget.disabled = true;
   sendStatus.textContent = "Проверка постквантовой подписи…";
   try {
-    if (!networkInfo) throw new Error("Локальный узел не подключён.");
+    if (!networkProofVerified || !networkInfo) throw new Error("Локальный узел не подключён.");
     let encoded = document.querySelector("#payment-request-input").value.trim();
     if (encoded.length < 2 || encoded.length > 16_000) {
       throw new Error("Размер платёжного запроса недопустим.");
@@ -1414,7 +1419,7 @@ document.querySelector("#verify-offline-signed").onclick = async (event) => {
     let signedPackage;
     try { signedPackage = JSON.parse(encoded); } catch { throw new Error("Подписанный пакет не является корректным JSON."); }
     const local = await validateOfflineSignedEnvelope(signedPackage, { expected: offlineSigningPackage });
-    if (!networkInfo || local.packet.networkId !== networkInfo.networkId) throw new Error("Сеть подписанного пакета не совпадает с подключённой сетью.");
+    if (!networkProofVerified || !networkInfo || local.packet.networkId !== networkInfo.networkId) throw new Error("Сеть подписанного пакета не совпадает с подключённой сетью.");
     status.textContent = "Независимая публичная проверка подписи…";
     const verified = await publicBridgeRequest("/v1/verify-offline-signed-package", {
       method: "POST", body: JSON.stringify({ networkId: local.packet.networkId, signedPackage }),
@@ -1676,10 +1681,14 @@ async function selectActiveNode(refreshSequence) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2_500);
   try {
-    let trust = { minimumHeight: 0, networkId: null };
-    if (bridgeSession) {
-      const candidate = await bridgeRequest("/v1/trust-info");
-      if (candidate.enabled) trust = candidate;
+    if (!bridgeSession) throw new Error("trusted genesis anchor unavailable");
+    const trust = await bridgeRequest("/v1/trust-info");
+    if (trust?.enabled !== true || trust.chainIdentityAvailable !== true ||
+        !/^[0-9a-f]{64}$/.test(trust.chainIdentityGenesisHash ?? "") ||
+        !/^[0-9a-f]{64}$/.test(trust.tipHash ?? "") ||
+        typeof trust.networkId !== "string" || trust.networkId.length < 3 ||
+        !Number.isSafeInteger(trust.minimumHeight) || trust.minimumHeight < 0) {
+      throw new Error("trusted genesis anchor unavailable");
     }
     const responses = await Promise.allSettled(policy.nodes.map(async (url) => {
       const response = await fetch(`${url}/health`, { signal: controller.signal, cache: "no-store" });
@@ -1714,6 +1723,7 @@ async function refreshNodeStatus() {
   const epoch = accountEpoch;
   const refreshSequence = ++nodeRefreshSequence;
   accountRefreshSequence += 1;
+  networkProofVerified = false;
   networkInfo = null;
   activeNodeUrl = null;
   clearAccountNumbers();
@@ -1728,22 +1738,33 @@ async function refreshNodeStatus() {
       assetCheckpoint.textContent = `Доказательства устарели · проверено на блоке ${assetCheckpoint.dataset.height}, текущий блок ${networkInfo.height}`;
       assetsStatus.textContent = "Обновите asset proofs перед просмотром или новой операцией.";
     }
+    if (!(await refreshAccount())) throw new Error("account proof unavailable");
+    if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
+    networkProofVerified = true;
     networkButton.textContent = `● ${networkInfo.agreeingNodes}/${networkInfo.availableNodes} · h${networkInfo.height}`;
     networkButton.classList.add("connected");
     networkButton.classList.remove("offline");
     messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
-    await refreshAccount();
     return epoch === accountEpoch && refreshSequence === nodeRefreshSequence;
-  } catch {
+  } catch (error) {
     if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
     networkInfo = null;
     activeNodeUrl = null;
     clearAccountNumbers();
-    document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · узлы недоступны";
-    networkButton.textContent = "○ Nodes offline";
+    const unanchored = error?.message === "trusted genesis anchor unavailable";
+    const unproven = error?.message === "account proof unavailable";
+    document.querySelector("#wallet-state").textContent = unanchored
+      ? "Баланс не подтверждён · нет закреплённого genesis"
+      : unproven ? "Баланс не подтверждён · доказательство недоступно"
+      : "Баланс не подтверждён · узлы недоступны";
+    networkButton.textContent = unanchored || unproven
+      ? "○ Сеть не подтверждена" : "○ Nodes offline";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
-    messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
+    messages.network = unanchored
+      ? ["Сеть не подтверждена", "Кошелёк не получил закреплённый genesis. Ответы /health не подтверждают сеть или баланс."]
+      : unproven ? ["Сеть не подтверждена", "Узел ответил, но кошелёк не проверил доказательство баланса и финализации."]
+      : ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
     return false;
   }
 }
