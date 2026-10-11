@@ -1497,7 +1497,12 @@ export class ValidatorReplica {
     this.#assertOperatorEventsJournal();
     const transactions = this.#mempool.take();
     const events = this.#operatorEvents?.events ?? null;
-    if (transactions.length === 0 && events === null) throw new Error("validator mempool is empty");
+    const pendingUpgrade = this.#chain.pendingProtocolUpgrade;
+    const upgradeNeedsBlock = pendingUpgrade !== null &&
+      this.#chain.height + 1 <= pendingUpgrade.activationHeight;
+    if (transactions.length === 0 && events === null && !upgradeNeedsBlock) {
+      throw new Error("validator mempool is empty");
+    }
     const timestamp = Math.max(Date.now(), this.#chain.blocks().at(-1).timestamp);
     return this.#chain.buildBlock({ ...(events ?? {}), transactions, timestamp });
   }
@@ -2279,9 +2284,12 @@ export class DistributedCoordinator {
     await this.#recoverPeerTransactions();
     this.#pruneInvalidValidatorAdmissions({ protocolUpgrade });
     const transactions = this.#mempool.take();
+    const pendingUpgrade = this.#chain.pendingProtocolUpgrade;
+    const upgradeNeedsBlock = protocolUpgrade !== null ||
+      (pendingUpgrade !== null && this.#chain.height + 1 <= pendingUpgrade.activationHeight);
     if (transactions.length === 0 && rewardClaims.length === 0 &&
         epochRandomnessCommits.length === 0 && epochRandomnessReveals.length === 0 &&
-        progressBeacons.length === 0) throw new Error("mempool is empty");
+        progressBeacons.length === 0 && !upgradeNeedsBlock) throw new Error("mempool is empty");
     const syncResults = await boundedAllSettled(this.#peers, (_, index) =>
       this.#synchronizePeer(index));
     const available = syncResults.map((result, index) => result.status === "fulfilled" ? index : -1)
