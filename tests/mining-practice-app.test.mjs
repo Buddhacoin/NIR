@@ -113,6 +113,10 @@ test("Model Lab has an inline version/settings page, not an unverified download 
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /Доверенный канал обновлений пока не настроен/);
+  assert.match(html, /Обновить сведения о версии/);
+  assert.doesNotMatch(html, /Проверить обновления/);
+  assert.match(js, /Refresh version info/);
+  assert.doesNotMatch(js, /Check for updates/);
   assert.doesNotMatch(html, /href="[^"]*\.app/);
   assert.match(js, /updateChannel !== "unconfigured"/);
 });
