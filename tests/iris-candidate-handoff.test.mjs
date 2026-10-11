@@ -40,6 +40,11 @@ test("user Iris model handoff binds exact bytes, signed address and target genes
   assert.equal(verifyIrisCandidateHandoff(signed, { root, modelBytes: sample,
     postCommitRecord: record, expectedNetworkId: networkId,
     expectedGenesisHash: genesisHash }).rewardEligible, false);
+  const reformattedRecord = JSON.parse(JSON.stringify(record, null, 2));
+  assert.notEqual(JSON.stringify(record), JSON.stringify(record, null, 2));
+  assert.equal(verifyIrisCandidateHandoff(signed, { root, modelBytes: sample,
+    postCommitRecord: reformattedRecord, expectedNetworkId: networkId,
+    expectedGenesisHash: genesisHash }).localReplayMatched, true);
   assert.throws(() => verifyIrisCandidateHandoff(signed, { root, modelBytes: sample,
     postCommitRecord: record, expectedNetworkId: networkId, expectedGenesisHash: "b".repeat(64) }),
   /genesis|context/i);
