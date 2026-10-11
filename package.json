@@ -1,6 +1,7 @@
 {
   "name": "nir-protocol",
   "version": "0.2.0",
+  "walletBuildSequence": 1,
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -118,6 +119,7 @@
     "protocol:manifest-verify": "node blockchain/protocol-conformance-cli.mjs verify . protocol/conformance-manifest.json",
     "wallet:preview": "python3 -m http.server 8765 --bind 127.0.0.1 --directory wallet-ui",
     "wallet:macos-build": "node blockchain/wallet-macos-build.mjs",
+    "wallet:macos-local-install": "node blockchain/wallet-macos-local-install.mjs",
     "benchmark:history": "node benchmarks/account-history-storage.mjs",
     "benchmark:storage-lifecycle": "node benchmarks/storage-lifecycle.mjs",
     "formal:consensus": "node formal/check-consensus.mjs",

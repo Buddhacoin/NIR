@@ -319,6 +319,18 @@ test("double-click Mac mode removes terminal setup and false mining claims", () 
   assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
 });
 
+test("update control reports unavailable trusted channel without installing", () => {
+  assert.match(html, /id="wallet-check-updates"/);
+  assert.match(html, /Обновить сведения о версии/);
+  assert.match(html, /Сейчас нет доверенного канала выпуска/);
+  assert.match(script, /bridgeRequest\("\/v1\/app-build"\)/);
+  assert.match(script, /Запущенный локальный сервис: версия/);
+  assert.doesNotMatch(script, /Установлена локальная сборка/);
+  assert.doesNotMatch(script, /об установленной сборке/);
+  assert.match(script, /Доверенный канал обновлений не настроен; наличие новой версии не проверено/);
+  assert.doesNotMatch(script, /wallet-check-updates[\s\S]{0,1000}wallet:macos-local-install/);
+});
+
 test("wallet navigation has five interactive destinations", () => {
   for (const destination of ["home", "history", "resources", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
@@ -424,9 +436,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=35/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=44/);
-  assert.match(serviceWorker, /app\.js\?v=44/);
-  assert.match(serviceWorker, /nir-wallet-shell-v47/);
+  assert.match(html, /app\.js\?v=46/);
+  assert.match(serviceWorker, /app\.js\?v=46/);
+  assert.match(serviceWorker, /nir-wallet-shell-v50/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);

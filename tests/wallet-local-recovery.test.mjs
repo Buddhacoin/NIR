@@ -1,17 +1,94 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createWalletFile, restoreRecoveryCodeWalletBackup, verifyWalletFile } from "../blockchain/wallet-files.mjs";
+import { generateWallet } from "../blockchain/crypto.mjs";
+import { changeWalletFilePassword, createWalletFile, restoreRecoveryCodeWalletBackup, verifyWalletFile } from "../blockchain/wallet-files.mjs";
 import {
   changeLocalTestWalletPassword, createLocalTestWallet, createWalletWithRecoveryDrill,
   listLocalTestWallets, openLocalTestWallet,
   renewLocalTestRecoveryCode, restoreLocalTestWalletWithRecoveryCode,
 } from "../blockchain/wallet-onboarding.mjs";
-import { validPassword, validPersonalWalletPassword } from "../blockchain/vault.mjs";
+import { encryptWallet, validPassword, validPersonalWalletPassword } from "../blockchain/vault.mjs";
+
+test("password change accepts a readable legacy regular-file vault", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-local-legacy-password-"));
+  const storageRoot = join(root, "wallet");
+  const walletDirectory = join(storageRoot, "Wallets");
+  const walletPath = join(walletDirectory, "legacy.nirvault.json");
+  const oldPassword = "old-legacy-password-2026";
+  const newPassword = "aB7!xK2#q";
+  try {
+    mkdirSync(walletDirectory, { recursive: true, mode: 0o700 });
+    const wallet = generateWallet();
+    const address = wallet.address;
+    const vault = encryptWallet(wallet, oldPassword, { label: "Legacy test wallet", personalWallet: true });
+    wallet.privateKey = "";
+    writeFileSync(walletPath, `${JSON.stringify(vault)}\n`, { mode: 0o600, flag: "wx" });
+    assert.equal(verifyWalletFile({ path: walletPath, password: oldPassword }).address, address);
+    assert.throws(() => changeLocalTestWalletPassword({ storageRoot, walletPath,
+      oldPassword: "incorrect-old-password-2026", newPassword }), /invalid/);
+    assert.throws(() => changeLocalTestWalletPassword({ storageRoot, walletPath,
+      oldPassword, newPassword: "short" }), /password/i);
+    assert.equal(lstatSync(walletPath).isFile(), true);
+    assert.equal(verifyWalletFile({ path: walletPath, password: oldPassword }).address, address);
+    assert.equal(readdirSync(walletDirectory).filter((name) => name.includes(".nir-legacy-")).length, 0);
+    assert.equal(changeLocalTestWalletPassword({ storageRoot, walletPath,
+      oldPassword, newPassword }).address, address);
+    assert.equal(verifyWalletFile({ path: walletPath, password: newPassword }).address, address);
+    assert.throws(() => verifyWalletFile({ path: walletPath, password: oldPassword }), /invalid/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("crash before legacy activation leaves the old regular vault readable", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-legacy-before-activation-"));
+  const path = join(root, "legacy.nirvault.json");
+  const oldPassword = "legacy-old-password-2026";
+  const newPassword = "aB7!xK2#q";
+  try {
+    const wallet = generateWallet();
+    const address = wallet.address;
+    const vault = encryptWallet(wallet, oldPassword, { personalWallet: true });
+    wallet.privateKey = "";
+    writeFileSync(path, `${JSON.stringify(vault)}\n`, { mode: 0o600, flag: "wx" });
+    const source = new URL("../blockchain/wallet-files.mjs", import.meta.url).href;
+    const code = `import { changeWalletFilePassword } from ${JSON.stringify(source)};
+      changeWalletFilePassword({ path: process.argv[1], oldPassword: ${JSON.stringify(oldPassword)},
+        newPassword: ${JSON.stringify(newPassword)}, personalWallet: true,
+        _afterLegacyBackup: () => process.exit(73) });`;
+    const crash = spawnSync(process.execPath, ["--input-type=module", "-e", code, path],
+      { encoding: "utf8", timeout: 20_000 });
+    assert.equal(crash.status, 73, crash.stderr);
+    assert.equal(lstatSync(path).nlink, 1);
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, address);
+    assert.throws(() => verifyWalletFile({ path, password: newPassword }), /invalid/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("failure after legacy activation preserves the old encrypted recovery copy", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-legacy-after-activation-"));
+  const path = join(root, "legacy.nirvault.json");
+  const oldPassword = "legacy-old-password-2026";
+  const newPassword = "aB7!xK2#q";
+  try {
+    const wallet = generateWallet();
+    const address = wallet.address;
+    const vault = encryptWallet(wallet, oldPassword, { personalWallet: true });
+    wallet.privateKey = "";
+    writeFileSync(path, `${JSON.stringify(vault)}\n`, { mode: 0o600, flag: "wx" });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword, newPassword,
+      personalWallet: true, _afterActivate: () => { throw new Error("simulated failure"); } }),
+    (error) => error.code === "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN");
+    assert.equal(verifyWalletFile({ path, password: newPassword }).address, address);
+    const copies = readdirSync(root).filter((name) => name.includes(".nir-legacy-"));
+    assert.equal(copies.length, 1);
+    assert.equal(verifyWalletFile({ path: join(root, copies[0]), password: oldPassword }).address, address);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("personal wallet password policy does not weaken high-value vault creation", () => {
   const password = "test-only-12";
