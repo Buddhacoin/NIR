@@ -814,6 +814,10 @@ export function createWalletBridgeServer({
           minimumHeight: verifiedFinalityTip?.height ?? trustCheckpoint?.height ??
             genesisCheckpoint?.height ?? 0,
           networkId: accountTrust?.expectedNetworkId ?? null,
+          // Unlike the advancing tip, this remains the locally configured genesis
+          // anchor. No anchor means no chain-identity claim, even after pairing.
+          chainIdentityGenesisHash: accountTrust && genesisCheckpoint
+            ? genesisCheckpoint.tipHash : null,
           tipHash: verifiedFinalityTip?.tipHash ?? trustCheckpoint?.tipHash ??
             genesisCheckpoint?.tipHash ?? null,
         }, origin);

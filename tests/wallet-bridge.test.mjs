@@ -118,6 +118,12 @@ test("Firefox pairing binds one exact installation origin before exposing a brid
     assert.equal(paired.status, 200);
     assert.equal(paired.headers.get("access-control-allow-origin"), first);
     assert.equal((await paired.json()).sessionToken, token);
+    const unanchored = await request(`${base}/v1/trust-info`, first, token);
+    assert.equal(unanchored.status, 200);
+    assert.deepEqual(await unanchored.json(), {
+      enabled: false, minimumHeight: 0, networkId: null, tipHash: null,
+      chainIdentityGenesisHash: null,
+    });
     assert.equal((await request(`${base}/v1/wallet`, first, token)).status, 200);
     assert.equal((await request(`${base}/v1/wallet`, second, token)).status, 403);
     assert.equal((await fetch(`${base}/v1/wallet`, { method: "OPTIONS", headers: {
@@ -527,6 +533,9 @@ test("wallet checkpoint advances only through a verified finality header chain",
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    const initialTrust = await request(`${base}/v1/trust-info`, origin, token);
+    assert.equal(initialTrust.status, 200);
+    assert.equal((await initialTrust.json()).chainIdentityGenesisHash, genesisBlock.hash);
     const derivedAsset = await request(`${base}/v1/derive-asset-id`, origin, token, {
       body: JSON.stringify({ networkId, nonce: 0 }), method: "POST",
     });
@@ -549,6 +558,11 @@ test("wallet checkpoint advances only through a verified finality header chain",
       body: JSON.stringify({ proofs: [createFinalityProof(firstBlock)] }), method: "POST",
     });
     assert.equal(firstSync.status, 200);
+    const advancedTrust = await request(`${base}/v1/trust-info`, origin, token);
+    assert.equal(advancedTrust.status, 200);
+    const trustContext = await advancedTrust.json();
+    assert.equal(trustContext.tipHash, firstBlock.hash);
+    assert.equal(trustContext.chainIdentityGenesisHash, genesisBlock.hash);
     const bootstrap = await request(`${base}/v1/verify-account-proof`, origin, token, {
       body: JSON.stringify({ address: wallet.address, minimumHeight: 1, proof: account(1) }),
       method: "POST",
