@@ -51,6 +51,7 @@ let accountRefreshSequence = 0;
 let nodeRefreshSequence = 0;
 let accountTransitionPending = false;
 let networkInfo = null;
+let networkProofVerified = false;
 let activeNodeUrl = null;
 let nodePolicy = null;
 let pendingIntent = null;
@@ -83,6 +84,7 @@ function renderWalletConnection() {
 }
 
 function clearAccountNumbers() {
+  networkProofVerified = false;
   document.querySelector("#balance-value").textContent = "—";
   document.querySelector("#resource-stake").textContent = "—";
   document.querySelector("#resource-credits").textContent = "—";
@@ -527,6 +529,7 @@ async function refreshAccount() {
     document.querySelector("#wallet-state").textContent =
       `Кворум подтвердил баланс · блок ${account.proofHeight}`;
     renderTransactions(account);
+    networkProofVerified = true;
     return true;
   } catch {
     if (!isCurrent()) return false;
@@ -543,7 +546,7 @@ function randomRequestId() {
 }
 
 function activeNetworkId() {
-  if (!networkInfo?.networkId) throw new Error("Сначала подключите и проверьте сеть.");
+  if (!networkProofVerified || !networkInfo?.networkId) throw new Error("Сначала подключите и проверьте сеть.");
   return networkInfo.networkId;
 }
 
@@ -1171,7 +1174,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
 
 function receive() {
   if (!walletInfo) return openBridgePanel();
-  if (!networkInfo?.networkId) {
+  if (!networkProofVerified || !networkInfo?.networkId) {
     receiveStatus.textContent = "Сначала дождитесь проверки сети, затем откройте получение снова.";
     return;
   }
@@ -1194,7 +1197,7 @@ document.querySelector("#payment-request-form").addEventListener("submit", async
   button.disabled = true;
   receiveStatus.textContent = "Симуляция платёжного запроса…";
   try {
-    if (!networkInfo || networkInfo.valueMode !== "valueless-devnet") {
+    if (!networkProofVerified || !networkInfo || networkInfo.valueMode !== "valueless-devnet") {
       throw new Error("Подключите локальную тестовую сеть.");
     }
     const minutes = Number(document.querySelector("#request-minutes").value);
@@ -1286,7 +1289,7 @@ document.querySelector("#verify-payment-request").onclick = async (event) => {
   event.currentTarget.disabled = true;
   sendStatus.textContent = "Проверка постквантовой подписи…";
   try {
-    if (!networkInfo) throw new Error("Локальный узел не подключён.");
+    if (!networkProofVerified || !networkInfo) throw new Error("Локальный узел не подключён.");
     let encoded = document.querySelector("#payment-request-input").value.trim();
     if (encoded.length < 2 || encoded.length > 16_000) {
       throw new Error("Размер платёжного запроса недопустим.");
@@ -1416,7 +1419,7 @@ document.querySelector("#verify-offline-signed").onclick = async (event) => {
     let signedPackage;
     try { signedPackage = JSON.parse(encoded); } catch { throw new Error("Подписанный пакет не является корректным JSON."); }
     const local = await validateOfflineSignedEnvelope(signedPackage, { expected: offlineSigningPackage });
-    if (!networkInfo || local.packet.networkId !== networkInfo.networkId) throw new Error("Сеть подписанного пакета не совпадает с подключённой сетью.");
+    if (!networkProofVerified || !networkInfo || local.packet.networkId !== networkInfo.networkId) throw new Error("Сеть подписанного пакета не совпадает с подключённой сетью.");
     status.textContent = "Независимая публичная проверка подписи…";
     const verified = await publicBridgeRequest("/v1/verify-offline-signed-package", {
       method: "POST", body: JSON.stringify({ networkId: local.packet.networkId, signedPackage }),
@@ -1720,6 +1723,7 @@ async function refreshNodeStatus() {
   const epoch = accountEpoch;
   const refreshSequence = ++nodeRefreshSequence;
   accountRefreshSequence += 1;
+  networkProofVerified = false;
   networkInfo = null;
   activeNodeUrl = null;
   clearAccountNumbers();
@@ -1736,6 +1740,7 @@ async function refreshNodeStatus() {
     }
     if (!(await refreshAccount())) throw new Error("account proof unavailable");
     if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;
+    networkProofVerified = true;
     networkButton.textContent = `● ${networkInfo.agreeingNodes}/${networkInfo.availableNodes} · h${networkInfo.height}`;
     networkButton.classList.add("connected");
     networkButton.classList.remove("offline");

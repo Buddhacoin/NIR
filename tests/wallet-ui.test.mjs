@@ -545,6 +545,7 @@ test("wallet never displays an unverified node balance or stale verified balance
   runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshAccount = refreshAccount;`, context);
   await context.refreshAccount();
   assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(context.networkProofVerified, false);
   assert.equal(nodes.get("#resource-stake").textContent, "—");
   assert.equal(nodes.get("#resource-credits").textContent, "—");
   assert.equal(nodes.get("#resource-unstake").textContent, "—");
@@ -556,11 +557,13 @@ test("wallet never displays an unverified node balance or stale verified balance
       pendingUnstake: null } });
   await context.refreshAccount();
   assert.equal(nodes.get("#balance-value").textContent, "5");
+  assert.equal(context.networkProofVerified, true);
   assert.match(nodes.get("#wallet-state").textContent, /Кворум подтвердил баланс/);
 
   context.readAccount = async () => { throw new Error("node offline"); };
   await context.refreshAccount();
   assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(context.networkProofVerified, false);
   assert.equal(nodes.get("#resource-credits").textContent, "—");
   assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
 
@@ -702,6 +705,46 @@ test("reachable anchored node stays unconfirmed when account proof fails", async
   assert.equal(classes.has("connected"), false);
   assert.equal(context.networkInfo, null);
   assert.match(context.networkButton.textContent, /не подтверждена/);
+});
+
+test("receive does not expose a provisional network while account proof is pending", async () => {
+  const statusSource = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const receiveSource = script.slice(script.indexOf("function receive()"),
+    script.indexOf('document.querySelector("#payment-request-form").addEventListener'));
+  let finishProof;
+  const pendingProof = new Promise((resolve) => { finishProof = resolve; });
+  const nodes = new Map();
+  const context = {
+    accountEpoch: 0, accountRefreshSequence: 0, nodeRefreshSequence: 0,
+    networkInfo: null, activeNodeUrl: null, networkProofVerified: false,
+    walletInfo: { address: "nir-test-address" },
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { textContent: "", dataset: {} });
+      return nodes.get(selector);
+    } },
+    clearAccountNumbers() {}, receiveStatus: { textContent: "" },
+    receivePanel: { opened: false, showModal() { this.opened = true; } },
+    networkButton: { textContent: "", classList: { add() {}, remove() {} } },
+    messages: { network: [] },
+    selectActiveNode: async () => {
+      context.activeNodeUrl = "http://127.0.0.1:8787";
+      context.networkInfo = { networkId: "nir-unproven", height: 1,
+        agreeingNodes: 1, availableNodes: 1 };
+    },
+    refreshAccount: () => pendingProof,
+    drawQr() {},
+  };
+  runInNewContext(`${statusSource}\n${receiveSource}\nglobalThis.refreshNodeStatus = refreshNodeStatus; globalThis.receive = receive;`, context);
+  const refreshing = context.refreshNodeStatus();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(context.networkInfo?.networkId, "nir-unproven");
+  context.receive();
+  assert.equal(context.receivePanel.opened, false);
+  assert.equal(nodes.get("#receive-network")?.textContent ?? "", "");
+  finishProof(false);
+  assert.equal(await refreshing, false);
 });
 
 test("superseded node refresh cannot authorize a testnet submission", async () => {
