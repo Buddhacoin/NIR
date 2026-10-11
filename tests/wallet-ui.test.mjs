@@ -373,13 +373,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=34/);
-  assert.match(serviceWorker, /style\.css\?v=34/);
+  assert.match(html, /style\.css\?v=35/);
+  assert.match(serviceWorker, /style\.css\?v=35/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=42/);
-  assert.match(serviceWorker, /app\.js\?v=42/);
-  assert.match(serviceWorker, /nir-wallet-shell-v45/);
+  assert.match(html, /app\.js\?v=43/);
+  assert.match(serviceWorker, /app\.js\?v=43/);
+  assert.match(serviceWorker, /nir-wallet-shell-v46/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
@@ -778,5 +778,5 @@ test("wallet exposes proof-backed native assets without browser signing or broad
   assert.match(html, /Браузер не подписывает и не отправляет asset-операции/);
   assert.match(html, /Загрузка доказанных активов/);
   assert.match(script, /Устарело или ошибка доказательства/);
-  assert.match(styles, /#assets-panel \{ max-height: calc\(100vh - 28px\); overflow-y: auto/);
+  assert.match(styles, /#assets-panel \{ max-height: none; overflow: visible/);
 });
