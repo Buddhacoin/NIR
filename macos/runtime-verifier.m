@@ -201,6 +201,11 @@ static BOOL verifyEnvironment(NSDictionary *binding, NSString *pythonReal) {
 static BOOL verifyRuntime(NSString *configuration) {
     NSData *bytes = [NSData dataWithContentsOfFile:configuration options:NSDataReadingMappedIfSafe error:nil];
     NSDictionary *runtime = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
+    if ([runtime isKindOfClass:NSDictionary.class] &&
+        [runtime[@"format"] isEqualToString:@"nir-wallet-runtime-binding-v1"]) {
+        return exactKeys(runtime, @[@"format", @"nodeExecutable"]) &&
+            verifyExecutable(runtime[@"nodeExecutable"]);
+    }
     if (![runtime isKindOfClass:NSDictionary.class] || !exactKeys(runtime,
         @[@"format", @"nodeExecutable", @"pythonBaseEnvironment", @"pythonExecutable", @"pythonEnvironment"]) ||
         ![runtime[@"format"] isEqualToString:@"nir-local-runtime-binding-v2"] ||

@@ -35,6 +35,7 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.equal(buildMacWallet(app, { sign: false }), app);
     for (const relative of [
       "Contents/Info.plist", "Contents/MacOS/launcher", "Contents/MacOS/onboarding",
+      "Contents/MacOS/runtime-verifier",
       "Contents/Resources/NIR.icns",
       "Contents/Resources/NIR-LOCAL-BUILD.json",
       "Contents/Resources/NIR-RUNTIME.json",
@@ -54,11 +55,24 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
       assert.equal(existsSync(join(app, relative)), false, relative);
     }
     const launcher = readFileSync(new URL("../macos/wallet-launcher.m", import.meta.url), "utf8");
-    assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
-      { nodeExecutable: process.execPath });
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    assert.equal(runtime.format, "nir-wallet-runtime-binding-v1");
+    assert.equal(runtime.nodeExecutable.logicalPath, process.execPath);
+    assert.match(runtime.nodeExecutable.sha256, /^[0-9a-f]{64}$/);
+    const verifier = join(app, "Contents/MacOS/runtime-verifier");
+    const configuration = join(app, "Contents/Resources/NIR-RUNTIME.json");
+    assert.equal(spawnSync(verifier, [configuration]).status, 0);
+    const tampered = { ...runtime, nodeExecutable: { ...runtime.nodeExecutable,
+      sha256: "0".repeat(64) } };
+    writeFileSync(configuration, `${JSON.stringify(tampered)}\n`);
+    assert.notEqual(spawnSync(verifier, [configuration]).status, 0);
     const info = readFileSync(join(app, "Contents/Info.plist"), "utf8");
     assert.match(info, /<key>CFBundleShortVersionString<\/key><string>0\.2\.0<\/string>/);
     assert.match(launcher, /app\/blockchain\/wallet-macos-app\.mjs/);
+    assert.match(launcher, /verifyRuntimeAtResources/);
+    assert.match(launcher, /self\.wallet\.environment\s*=/);
+    assert.match(launcher, /@"HOME": NSHomeDirectory\(\)/);
+    assert.doesNotMatch(launcher, /self\.wallet\.environment\s*=\s*NSProcessInfo/);
     assert.match(launcher, /\[app run\]/);
     assert.doesNotMatch(launcher, /\.\.\/\.\.\/\.\.\/\.\./);
     const nativeSource = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
@@ -80,6 +94,26 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     const dangling = join(linkDir, "NIR Wallet.app");
     symlinkSync(join(directory, "missing-app"), dangling);
     assert.throws(() => buildMacWallet(dangling, { sign: false }), /new NIR Wallet\.app/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("signed Mac wallet launcher rejects a substituted runtime descriptor before opening", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-runtime-gate-"));
+  try {
+    const app = join(directory, "NIR Wallet.app");
+    buildMacWallet(app);
+    const launcher = join(app, "Contents/MacOS/launcher");
+    const configuration = join(app, "Contents/Resources/NIR-RUNTIME.json");
+    const healthy = spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8", timeout: 30_000 });
+    assert.equal(healthy.status, 0, healthy.stderr);
+    const runtime = JSON.parse(readFileSync(configuration, "utf8"));
+    runtime.nodeExecutable.sha256 = "0".repeat(64);
+    writeFileSync(configuration, `${JSON.stringify(runtime)}\n`);
+    const substituted = spawnSync(launcher, ["--verify-runtime"], { encoding: "utf8", timeout: 30_000 });
+    assert.notEqual(substituted.status, 0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
