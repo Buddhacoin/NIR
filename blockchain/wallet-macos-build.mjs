@@ -5,6 +5,7 @@ import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
   readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { executableBinding } from "./local-runtime-binding.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MODULES = Object.freeze(`
@@ -133,7 +134,7 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
   rejectSecretPaths();
   verifyModuleClosure();
   for (const relative of [...PACKAGE_FILES, "macos/Info.plist", "macos/wallet-launcher.m",
-    "macos/wallet-onboarding.m"]) checkedSource(relative);
+    "macos/wallet-onboarding.m", "macos/runtime-verifier.m"]) checkedSource(relative);
   const scratch = mkdtempSync(join(parent, ".nir-wallet-build-"));
   try {
     const app = join(scratch, "NIR Wallet.app");
@@ -155,21 +156,27 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
     writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
       '{"format":"nir-local-test-build-v1","distribution":"not-a-public-installer"}\n');
     writeFileSync(join(resources, "NIR-RUNTIME.json"),
-      `${JSON.stringify({ nodeExecutable: process.execPath })}\n`);
+      `${JSON.stringify({ format: "nir-wallet-runtime-binding-v1",
+        nodeExecutable: executableBinding(process.execPath) })}\n`);
     writeIcon(resources);
     for (const [source, name] of [["macos/wallet-launcher.m", "launcher"],
       ["macos/wallet-onboarding.m", "onboarding"]]) {
       command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
-        "Foundation", checkedSource(source), "-o", join(contents, "MacOS", name)],
+        "Foundation", "-framework", "Security", checkedSource(source),
+        "-o", join(contents, "MacOS", name)],
       `native ${name} build`);
     }
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "Foundation",
+      checkedSource("macos/runtime-verifier.m"), "-o", join(contents, "MacOS", "runtime-verifier")],
+    "native runtime verifier build");
     for (const relative of PACKAGE_FILES) {
       const destination = join(payload, relative);
       mkdirSync(dirname(destination), { recursive: true });
       copyFileSync(checkedSource(relative), destination);
     }
     if (sign) {
-      command("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], "ad-hoc signing");
+      command("/usr/bin/codesign", ["--force", "--deep", "--options", "runtime", "--sign", "-", app],
+        "ad-hoc hardened-runtime signing");
       command("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], "signature check");
     }
     renameSync(app, target);

@@ -291,7 +291,15 @@ gates; a locally chosen file or matching node responses cannot replace them.
 
 The builder packages only an explicit reviewed file list and refuses
 secret-named files in the source tree. It refuses to overwrite an app. This
-local rehearsal uses an ad-hoc signature and an external Node.js installation;
+local rehearsal pins the external Node.js executable and its non-system dynamic
+dependencies at build time, checks them before launch, and starts the wallet
+with a restricted environment that does not inherit `NODE_OPTIONS`. If that
+runtime changes, rebuild the app. The local ad-hoc app is signed with macOS
+hardened runtime so a parent `DYLD_INSERT_LIBRARIES` is not loaded into the
+launcher. That local guard is not a substitute for an independently
+authenticated Developer ID release and cannot eliminate a local
+check-to-launch race. This build still uses an ad-hoc signature and an external
+Node.js installation;
 it is **not** notarized, downloadable, a public installer, a mainnet wallet, or
 a source of real-value NIR. It intentionally excludes local auto-update,
 cloud sync and mining rewards. Back up the recovery file to a separate medium
