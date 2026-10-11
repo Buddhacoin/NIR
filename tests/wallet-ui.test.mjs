@@ -424,9 +424,9 @@ test("wallet shell cache uses the current asset version", () => {
   assert.match(serviceWorker, /style\.css\?v=35/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=43/);
-  assert.match(serviceWorker, /app\.js\?v=43/);
-  assert.match(serviceWorker, /nir-wallet-shell-v46/);
+  assert.match(html, /app\.js\?v=44/);
+  assert.match(serviceWorker, /app\.js\?v=44/);
+  assert.match(serviceWorker, /nir-wallet-shell-v47/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
