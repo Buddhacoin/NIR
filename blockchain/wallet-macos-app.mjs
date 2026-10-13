@@ -188,8 +188,11 @@ async function main() {
   const verifier = fileURLToPath(new URL("../../../MacOS/wallet-runtime-verifier", import.meta.url));
   const configuration = fileURLToPath(new URL("../../NIR-RUNTIME.json", import.meta.url));
   const runtime = JSON.parse(readFileSync(configuration, "utf8"));
-  if (runtime?.format !== "nir-local-wallet-runtime-v2" ||
-      runtime.nodeExecutable !== process.execPath ||
+  if (!(["nir-local-wallet-runtime-v2", "nir-local-wallet-runtime-v3"].includes(runtime?.format)) ||
+      (runtime.format === "nir-local-wallet-runtime-v3"
+        ? runtime.nodeExecutable !== "MacOS/node" ||
+          process.execPath !== fileURLToPath(new URL("../../../MacOS/node", import.meta.url))
+        : runtime.nodeExecutable !== process.execPath) ||
       !/^[0-9a-f]{64}$/.test(runtime.nodeSha256 ?? "")) {
     throw new Error("wallet runtime binding changed");
   }

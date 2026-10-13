@@ -98,6 +98,12 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
     if (![pin isKindOfClass:NSString.class] ||
         [format numberOfMatchesInString:pin options:0 range:NSMakeRange(0, pin.length)] != 1) return nil;
     self.nodeSha256 = pin;
+    if ([runtime[@"format"] isEqualToString:@"nir-local-wallet-runtime-v3"] &&
+        [path isEqualToString:@"MacOS/node"]) {
+        NSString *bundled = [[[NSBundle mainBundle] bundlePath]
+            stringByAppendingPathComponent:@"Contents/MacOS/node"];
+        return [files isExecutableFileAtPath:bundled] ? bundled : nil;
+    }
     return [path isKindOfClass:NSString.class] && [path hasPrefix:@"/"] &&
         [files isExecutableFileAtPath:path] ? path : nil;
 }
@@ -231,7 +237,7 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
         ![[NSFileManager defaultManager] isExecutableFileAtPath:runner] ||
         ![[NSFileManager defaultManager] isExecutableFileAtPath:verifier]) {
         [self failWithMessage:node ? @"Сборка приложения неполная." :
-            @"Node.js, использованный для локальной сборки, больше не найден. Соберите приложение заново."];
+            @"Встроенный Node.js не найден. Соберите локальное приложение заново."];
         return;
     }
     self.startupData = [NSMutableData data];

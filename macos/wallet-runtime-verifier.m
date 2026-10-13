@@ -128,10 +128,66 @@ static BOOL verifyExecutable(NSDictionary *binding) {
         verifyDependencies(dependencies) && verifyMissingDependencies(missingDependencies);
 }
 
+static NSString *bundledPath(NSString *contents, NSString *relative) {
+    if (!contents || ![relative isKindOfClass:NSString.class] ||
+        (![relative hasPrefix:@"Frameworks/"] && ![relative isEqualToString:@"MacOS/node"]) ||
+        [relative containsString:@".."] || [relative containsString:@"//"] ||
+        [relative hasSuffix:@"/"]) return nil;
+    NSString *path = [contents stringByAppendingPathComponent:relative];
+    return [canonicalRealPath(path) isEqualToString:path] ? path : nil;
+}
+
+static BOOL verifyBundledRuntime(NSDictionary *runtime, NSString *configuration) {
+    if (!exactKeys(runtime, @[@"format", @"nodeExecutable", @"nodeSha256", @"nodeBinding"]) ||
+        ![runtime[@"nodeExecutable"] isEqualToString:@"MacOS/node"]) return NO;
+    NSDictionary *binding = runtime[@"nodeBinding"];
+    if (![binding isKindOfClass:NSDictionary.class] ||
+        !exactKeys(binding, @[@"sha256", @"size", @"dependencies"]) ||
+        ![binding[@"sha256"] isKindOfClass:NSString.class] ||
+        [binding[@"sha256"] length] != 64 ||
+        ![binding[@"size"] isKindOfClass:NSNumber.class] ||
+        [binding[@"size"] longLongValue] <= 0 ||
+        ![binding[@"sha256"] isEqualToString:runtime[@"nodeSha256"]]) return NO;
+    NSString *contents = canonicalRealPath([configuration.stringByDeletingLastPathComponent
+        stringByDeletingLastPathComponent]);
+    NSString *node = bundledPath(contents, @"MacOS/node");
+    if (!node || ![[fileDigest(node, binding[@"size"]) lowercaseString]
+        isEqualToString:binding[@"sha256"]]) return NO;
+    NSArray *dependencies = binding[@"dependencies"];
+    if (![dependencies isKindOfClass:NSArray.class] || dependencies.count == 0 ||
+        dependencies.count > 512) return NO;
+    NSMutableSet *seen = [NSMutableSet set];
+    unsigned long long total = 0;
+    for (NSDictionary *dependency in dependencies) {
+        if (![dependency isKindOfClass:NSDictionary.class] ||
+            !exactKeys(dependency, @[@"path", @"sha256", @"size"])) return NO;
+        NSString *relative = dependency[@"path"];
+        NSString *path = bundledPath(contents, relative);
+        NSNumber *size = dependency[@"size"];
+        if (!path || ![relative hasPrefix:@"Frameworks/"] ||
+            [relative substringFromIndex:@"Frameworks/".length].length == 0 ||
+            [[relative substringFromIndex:@"Frameworks/".length] containsString:@"/"] ||
+            [seen containsObject:relative] ||
+            ![dependency[@"sha256"] isKindOfClass:NSString.class] ||
+            [dependency[@"sha256"] length] != 64 || ![size isKindOfClass:NSNumber.class] ||
+            size.longLongValue <= 0 ||
+            size.unsignedLongLongValue > 512ULL * 1024 * 1024 ||
+            total + size.unsignedLongLongValue > 2ULL * 1024 * 1024 * 1024 ||
+            ![[fileDigest(path, size) lowercaseString] isEqualToString:dependency[@"sha256"]]) return NO;
+        total += size.unsignedLongLongValue;
+        [seen addObject:relative];
+    }
+    return YES;
+}
+
 static BOOL verifyRuntime(NSString *configuration) {
     NSData *bytes = [NSData dataWithContentsOfFile:configuration options:NSDataReadingMappedIfSafe error:nil];
     NSDictionary *runtime = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
-    return [runtime isKindOfClass:NSDictionary.class] &&
+    if (![runtime isKindOfClass:NSDictionary.class]) return NO;
+    if ([runtime[@"format"] isEqualToString:@"nir-local-wallet-runtime-v3"]) {
+        return verifyBundledRuntime(runtime, configuration);
+    }
+    return
         exactKeys(runtime, @[@"format", @"nodeExecutable", @"nodeSha256", @"nodeBinding"]) &&
         [runtime[@"format"] isEqualToString:@"nir-local-wallet-runtime-v2"] &&
         [runtime[@"nodeExecutable"] isKindOfClass:NSString.class] &&

@@ -116,6 +116,33 @@ test("local Mac updater refuses a symlinked candidate and never changes the inst
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("local updater refuses a new app generation that still runs external Node", {
+  skip: process.platform !== "darwin" }, () => {
+  const root = mkdtempSync("/private/tmp/nir-wallet-external-candidate-");
+  try {
+    const installed = join(root, "installed");
+    const staged = join(root, ".staged");
+    mkdirSync(installed, { mode: 0o700 });
+    mkdirSync(staged, { mode: 0o700 });
+    const target = join(installed, "NIR Wallet.app");
+    const candidate = join(staged, "NIR Wallet.app");
+    buildMacWallet(target);
+    buildMacWallet(candidate);
+    writeFileSync(join(target, "Contents/Resources/NIR-LOCAL-BUILD.json"),
+      '{"format":"nir-local-test-build-v1","distribution":"not-a-public-installer"}\n');
+    execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", target]);
+    writeRuntimeBinding(candidate, process.execPath);
+    execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", candidate]);
+    const old = inspectLocalMacWallet(target);
+    const next = inspectLocalMacWallet(candidate);
+    assert.equal(next.runtimeFormat, "nir-local-wallet-runtime-v2");
+    assert.throws(() => installLocalMacWallet({ target, candidate,
+      expectedOldHash: old.hash, expectedNewHash: next.hash,
+      exchangeExecutable: join(root, "never-executed") }), /must bundle its Node runtime/);
+    assert.equal(inspectLocalMacWallet(target).hash, old.hash);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("local Mac inspection rejects external Node replacement without app changes", {
   skip: process.platform !== "darwin" }, () => {
   const root = mkdtempSync("/private/tmp/nir-wallet-runtime-pin-");
