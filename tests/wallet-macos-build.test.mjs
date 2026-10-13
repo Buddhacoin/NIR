@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -83,7 +84,8 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
     assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
     assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
-      { nodeExecutable: process.execPath });
+      { nodeExecutable: process.execPath,
+        nodeSha256: createHash("sha256").update(readFileSync(process.execPath)).digest("hex") });
     const sourcePackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
     const bundledPackage = JSON.parse(readFileSync(join(app, "Contents/Resources/app/package.json")));
     const buildMarker = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-LOCAL-BUILD.json")));

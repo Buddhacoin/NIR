@@ -330,7 +330,8 @@ For this Mac's **operator-controlled local rehearsal only**, a separate
 `wallet:macos-local-install` command can replace one existing `NIR Wallet.app`
 in place after the app is closed. It requires independently pinned SHA-256
 hashes of both complete bundles, verifies their local markers, bundle identity,
-ad-hoc signatures, ownership, and increasing local build sequence, then uses a
+ad-hoc signatures, ownership, the new app's signed pin of its external Node
+executable bytes, and increasing local build sequence, then uses a
 macOS same-volume atomic exchange. The previous app remains at the private
 staging path for recovery; it is never deleted by the updater. Wallets and
 backups under Application Support are outside this exchange. The app must be
@@ -342,10 +343,14 @@ signature only checks local integrity, not who built the app. Until Developer
 ID signing, notarization, a published authenticated update channel and an
 installed-app launch drill exist, this is not a secure consumer auto-updater.
 The bundled launcher also depends on the recorded external Node.js path;
-changing that runtime can make a local build fail to start.
-Because it is outside the signed bundle and bundle hash, replacing that
-runtime can also execute attacker-controlled code with access to the local
-wallet. The local Settings button reports the running local service build identity and
+the native runner checks its executable-byte pin immediately before launch.
+`inspect` also rejects changed bytes. An existing app without a pin requires
+the explicitly named `inspect-legacy` and `install-legacy` operator commands
+for migration; normal inspection and installation reject it. These checks do
+**not** bind Node's external dynamic libraries, prevent every same-user
+time-of-check/time-of-use swap, authenticate the publisher, or make this a safe
+public wallet. Do not use this source-built app with real-value funds. The local
+Settings button reports the running local service build identity and
 the absence of a trusted update channel; it does not download or install an
 update or claim that this version is latest. Each later reviewed local build
 must deliberately increase `walletBuildSequence` in `package.json`.

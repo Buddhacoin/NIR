@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 const OWN_BUNDLE_ID = "org.nir.wallet-setup-test";
 const MAX_FILES = 256;
 const MAX_BYTES = 32 * 1024 * 1024;
+const MAX_RUNTIME_BYTES = 256 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 function checkedPath(path) {
@@ -62,17 +63,37 @@ function bundleHash(path) {
   return hash.digest("hex");
 }
 
-function assertRuntime(path) {
+function assertRuntime(path, { allowLegacyRuntime = false } = {}) {
   const runtime = JSON.parse(readFileSync(join(path, "Contents/Resources/NIR-RUNTIME.json"), "utf8"));
   const executable = runtime?.nodeExecutable;
-  if (typeof executable !== "string" || !isAbsolute(executable)) {
+  if (typeof executable !== "string" || !isAbsolute(executable) ||
+      resolve(executable) !== executable) {
     throw new Error("wallet Node runtime path is invalid");
   }
-  const node = statSync(executable);
-  if (!node.isFile() || (node.mode & 0o111) === 0) throw new Error("wallet Node runtime is unavailable");
+  let component = sep;
+  for (const part of executable.split(sep).filter(Boolean)) {
+    component = join(component, part);
+    if (lstatSync(component).isSymbolicLink()) {
+      throw new Error("wallet Node runtime path contains a symlink");
+    }
+  }
+  const node = lstatSync(executable);
+  if (!node.isFile() || node.isSymbolicLink() || (node.mode & 0o111) === 0 ||
+      node.size <= 0 || node.size > MAX_RUNTIME_BYTES) {
+    throw new Error("wallet Node runtime is unavailable");
+  }
+  if (runtime?.nodeSha256 === undefined && allowLegacyRuntime) return false;
+  if (!SHA256.test(runtime?.nodeSha256 ?? "")) {
+    throw new Error("wallet Node runtime has no signed byte pin");
+  }
+  const bytes = readFileSync(executable);
+  if (createHash("sha256").update(bytes).digest("hex") !== runtime.nodeSha256) {
+    throw new Error("wallet Node runtime bytes differ from the signed app pin");
+  }
+  return true;
 }
 
-export function inspectLocalMacWallet(path) {
+export function inspectLocalMacWallet(path, { allowLegacyRuntime = false } = {}) {
   if (process.platform !== "darwin") throw new Error("local Mac wallet updates require macOS");
   checkedPath(path);
   const app = lstatSync(path);
@@ -88,10 +109,10 @@ export function inspectLocalMacWallet(path) {
     ["-c", "Print :CFBundleIdentifier", join(path, "Contents/Info.plist")],
     { encoding: "utf8", timeout: 5_000 }).trim();
   if (identifier !== OWN_BUNDLE_ID) throw new Error("wallet bundle identifier differs");
-  assertRuntime(path);
+  const runtimeBound = assertRuntime(path, { allowLegacyRuntime });
   execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", path],
     { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
-  return { hash: bundleHash(path), sequence };
+  return { hash: bundleHash(path), sequence, runtimeBound };
 }
 
 function noWalletProcess(target, candidate) {
@@ -117,7 +138,7 @@ function syncDirectory(path) {
 }
 
 export function installLocalMacWallet({ target, candidate, expectedOldHash, expectedNewHash,
-  exchangeExecutable }) {
+  exchangeExecutable, allowLegacyTarget = false }) {
   if (!SHA256.test(expectedOldHash ?? "") || !SHA256.test(expectedNewHash ?? "") ||
       expectedOldHash === expectedNewHash) throw new Error("distinct pinned bundle hashes are required");
   checkedPath(target);
@@ -132,14 +153,14 @@ export function installLocalMacWallet({ target, candidate, expectedOldHash, expe
     throw new Error("atomic exchange helper is required");
   }
   noWalletProcess(target, candidate);
-  const old = inspectLocalMacWallet(target);
+  const old = inspectLocalMacWallet(target, { allowLegacyRuntime: allowLegacyTarget });
   const next = inspectLocalMacWallet(candidate);
   if (old.hash !== expectedOldHash || next.hash !== expectedNewHash ||
       next.sequence <= old.sequence) throw new Error("wallet update pins or build sequence differ");
   // Recheck immediately before the atomic same-volume exchange. No PID is
   // accepted or signalled; the old app remains recoverable at candidate.
   noWalletProcess(target, candidate);
-  if (inspectLocalMacWallet(target).hash !== expectedOldHash ||
+  if (inspectLocalMacWallet(target, { allowLegacyRuntime: allowLegacyTarget }).hash !== expectedOldHash ||
       inspectLocalMacWallet(candidate).hash !== expectedNewHash) {
     throw new Error("wallet app changed during update preflight");
   }
@@ -148,7 +169,7 @@ export function installLocalMacWallet({ target, candidate, expectedOldHash, expe
     syncDirectory(dirname(target));
     syncDirectory(dirname(candidate));
     if (inspectLocalMacWallet(target).hash !== expectedNewHash ||
-        inspectLocalMacWallet(candidate).hash !== expectedOldHash) {
+        inspectLocalMacWallet(candidate, { allowLegacyRuntime: allowLegacyTarget }).hash !== expectedOldHash) {
       throw new Error("wallet update postcondition failed");
     }
   } catch (error) {
@@ -158,8 +179,8 @@ export function installLocalMacWallet({ target, candidate, expectedOldHash, expe
     let current;
     let previous;
     try {
-      current = inspectLocalMacWallet(target).hash;
-      previous = inspectLocalMacWallet(candidate).hash;
+      current = inspectLocalMacWallet(target, { allowLegacyRuntime: allowLegacyTarget }).hash;
+      previous = inspectLocalMacWallet(candidate, { allowLegacyRuntime: allowLegacyTarget }).hash;
     } catch (inspectionError) {
       throw new AggregateError([error, inspectionError],
         "wallet update state is uncertain; preserve both app bundles for recovery");
@@ -176,14 +197,14 @@ export function installLocalMacWallet({ target, candidate, expectedOldHash, expe
     } catch (rollbackError) {
       let restored = false;
       try {
-        restored = inspectLocalMacWallet(target).hash === expectedOldHash &&
+        restored = inspectLocalMacWallet(target, { allowLegacyRuntime: allowLegacyTarget }).hash === expectedOldHash &&
           inspectLocalMacWallet(candidate).hash === expectedNewHash;
       } catch { /* An unreadable generation requires manual recovery. */ }
       if (restored) throw error;
       throw new AggregateError([error, rollbackError],
         "wallet update failed and rollback needs manual recovery");
     }
-    if (inspectLocalMacWallet(target).hash !== expectedOldHash ||
+    if (inspectLocalMacWallet(target, { allowLegacyRuntime: allowLegacyTarget }).hash !== expectedOldHash ||
         inspectLocalMacWallet(candidate).hash !== expectedNewHash) {
       throw new AggregateError([error], "wallet rollback needs manual recovery");
     }
@@ -194,9 +215,10 @@ export function installLocalMacWallet({ target, candidate, expectedOldHash, expe
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (process.argv[2] === "inspect" && process.argv.length === 4) {
-      process.stdout.write(`${JSON.stringify(inspectLocalMacWallet(process.argv[3]))}\n`);
-    } else if (process.argv[2] === "install" && process.argv.length === 7) {
+    if (["inspect", "inspect-legacy"].includes(process.argv[2]) && process.argv.length === 4) {
+      process.stdout.write(`${JSON.stringify(inspectLocalMacWallet(process.argv[3],
+        { allowLegacyRuntime: process.argv[2] === "inspect-legacy" }))}\n`);
+    } else if (["install", "install-legacy"].includes(process.argv[2]) && process.argv.length === 7) {
       const scratch = mkdtempSync(join(tmpdir(), "nir-wallet-swap-"));
       try {
         const exchangeExecutable = join(scratch, "wallet-app-exchange");
@@ -205,10 +227,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
           "-o", exchangeExecutable], { timeout: 30_000 });
         const result = installLocalMacWallet({ target: process.argv[3], candidate: process.argv[4],
           expectedOldHash: process.argv[5], expectedNewHash: process.argv[6],
-          exchangeExecutable });
+          exchangeExecutable, allowLegacyTarget: process.argv[2] === "install-legacy" });
         process.stdout.write(`${JSON.stringify(result)}\n`);
       } finally { rmSync(scratch, { recursive: true, force: true }); }
-    } else throw new Error("usage: wallet:macos-local-install inspect <app> | install <current.app> <staged.app> <expected-old-sha256> <expected-new-sha256>");
+    } else throw new Error("usage: wallet:macos-local-install inspect|inspect-legacy <app> | install|install-legacy <current.app> <staged.app> <expected-old-sha256> <expected-new-sha256>");
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;
