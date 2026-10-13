@@ -10,10 +10,11 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
 import { executableBinding } from "./local-runtime-binding.mjs";
+import { relativeRuntimeBinding } from "./wallet-bundled-node.mjs";
 
 const OWN_BUNDLE_ID = "org.nir.wallet-setup-test";
 const MAX_FILES = 256;
-const MAX_BYTES = 32 * 1024 * 1024;
+const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_RUNTIME_BYTES = 256 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/;
 
@@ -67,6 +68,15 @@ function bundleHash(path) {
 
 function assertRuntime(path, { allowLegacyRuntime = false } = {}) {
   const runtime = JSON.parse(readFileSync(join(path, "Contents/Resources/NIR-RUNTIME.json"), "utf8"));
+  if (runtime?.format === "nir-local-wallet-runtime-v3") {
+    const contents = join(path, "Contents");
+    const executable = join(contents, "MacOS/node");
+    if (runtime.nodeExecutable !== "MacOS/node" ||
+        !isDeepStrictEqual(runtime, relativeRuntimeBinding(contents, executableBinding(executable)))) {
+      throw new Error("bundled wallet Node runtime differs from its app pin");
+    }
+    return "nir-local-wallet-runtime-v3";
+  }
   if (runtime?.format !== "nir-local-wallet-runtime-v2") {
     if (allowLegacyRuntime) return false;
     throw new Error("wallet runtime has no dependency-closure pin");
@@ -101,7 +111,7 @@ function assertRuntime(path, { allowLegacyRuntime = false } = {}) {
       runtime.nodeBinding?.sha256 !== runtime.nodeSha256) {
     throw new Error("wallet Node runtime dependency closure differs from the signed app pin");
   }
-  return true;
+  return "nir-local-wallet-runtime-v2";
 }
 
 export function inspectLocalMacWallet(path, { allowLegacyRuntime = false } = {}) {
@@ -120,10 +130,10 @@ export function inspectLocalMacWallet(path, { allowLegacyRuntime = false } = {})
     ["-c", "Print :CFBundleIdentifier", join(path, "Contents/Info.plist")],
     { encoding: "utf8", timeout: 5_000 }).trim();
   if (identifier !== OWN_BUNDLE_ID) throw new Error("wallet bundle identifier differs");
-  const runtimeBound = assertRuntime(path, { allowLegacyRuntime });
+  const runtimeFormat = assertRuntime(path, { allowLegacyRuntime });
   execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", path],
     { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
-  return { hash: bundleHash(path), sequence, runtimeBound };
+  return { hash: bundleHash(path), sequence, runtimeBound: Boolean(runtimeFormat), runtimeFormat };
 }
 
 function noWalletProcess(target, candidate) {
@@ -166,6 +176,9 @@ export function installLocalMacWallet({ target, candidate, expectedOldHash, expe
   noWalletProcess(target, candidate);
   const old = inspectLocalMacWallet(target, { allowLegacyRuntime: allowLegacyTarget });
   const next = inspectLocalMacWallet(candidate);
+  if (next.runtimeFormat !== "nir-local-wallet-runtime-v3") {
+    throw new Error("wallet update candidate must bundle its Node runtime");
+  }
   if (old.hash !== expectedOldHash || next.hash !== expectedNewHash ||
       next.sequence <= old.sequence) throw new Error("wallet update pins or build sequence differ");
   // Recheck immediately before the atomic same-volume exchange. No PID is

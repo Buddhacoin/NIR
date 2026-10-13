@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
-import { executableBinding } from "../blockchain/local-runtime-binding.mjs";
 import { inspectLocalTestWallets, listLocalTestWallets } from "../blockchain/wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "../blockchain/wallet-preview-cli.mjs";
 
@@ -90,9 +89,9 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
     assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
-    assert.equal(runtime.format, "nir-local-wallet-runtime-v2");
-    assert.deepEqual(runtime.nodeBinding, executableBinding(process.execPath));
-    assert.equal(runtime.nodeExecutable, runtime.nodeBinding.logicalPath);
+    assert.equal(runtime.format, "nir-local-wallet-runtime-v3");
+    assert.equal(runtime.nodeExecutable, "MacOS/node");
+    assert.ok(runtime.nodeBinding.dependencies.length > 0);
     assert.equal(runtime.nodeSha256, runtime.nodeBinding.sha256);
     const sourcePackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
     const bundledPackage = JSON.parse(readFileSync(join(app, "Contents/Resources/app/package.json")));
@@ -125,6 +124,55 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("local Mac wallet runtime never loads a Homebrew executable or dylib after installation", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bundled-runtime-"));
+  try {
+    const app = join(directory, "NIR Wallet.app");
+    buildMacWallet(app, { sign: false });
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    assert.equal(runtime.format, "nir-local-wallet-runtime-v3");
+    assert.equal(runtime.nodeExecutable, "MacOS/node");
+    const node = join(app, "Contents/MacOS/node");
+    assert.equal(existsSync(node), true);
+    const result = spawnSync(node, ["--version"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), process.version);
+    const loads = spawnSync("/usr/bin/otool", ["-L", node], { encoding: "utf8" });
+    assert.equal(loads.status, 0, loads.stderr);
+    assert.doesNotMatch(loads.stdout, /\/opt\/homebrew\//);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("relocated wallet checks its bundled Node and rejects a changed library", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bundle-relocation-"));
+  try {
+    const original = join(directory, "original");
+    const moved = join(directory, "moved");
+    mkdirSync(original);
+    mkdirSync(moved);
+    const app = join(original, "NIR Wallet.app");
+    buildMacWallet(app);
+    const destination = join(moved, "NIR Wallet.app");
+    renameSync(app, destination);
+    const config = join(destination, "Contents/Resources/NIR-RUNTIME.json");
+    const runtime = JSON.parse(readFileSync(config, "utf8"));
+    const verifier = join(destination, "Contents/MacOS/wallet-runtime-verifier");
+    const runner = join(destination, "Contents/MacOS/wallet-runner");
+    const node = join(destination, "Contents/MacOS/node");
+    const check = () => spawnSync(runner, [node, "--version", runtime.nodeSha256, verifier, config],
+      { encoding: "utf8", timeout: 10_000 });
+    const before = check();
+    assert.equal(before.status, 0, before.stderr);
+    assert.equal(before.stdout.trim(), process.version);
+    appendFileSync(join(destination, "Contents", runtime.nodeBinding.dependencies[0].path), "tampered");
+    const after = check();
+    assert.notEqual(after.status, 0);
+    assert.doesNotMatch(after.stdout, /v\d+\.\d+\.\d+/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () => {

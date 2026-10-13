@@ -5,7 +5,7 @@ import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
   readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { executableBinding } from "./local-runtime-binding.mjs";
+import { bundleLocalNode } from "./wallet-bundled-node.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MODULES = Object.freeze(`
@@ -174,13 +174,11 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
         runtimeFile.size <= 0 || runtimeFile.size > 256 * 1024 * 1024) {
       throw new Error("local wallet Node runtime is not a bounded executable file");
     }
-    // The runtime lives outside this source-built app. Bind its Mach-O
-    // dependency closure too; this remains a local build, not a public release.
-    const nodeBinding = executableBinding(process.execPath);
-    writeFileSync(join(resources, "NIR-RUNTIME.json"),
-      `${JSON.stringify({ format: "nir-local-wallet-runtime-v2",
-        nodeExecutable: nodeBinding.logicalPath, nodeSha256: nodeBinding.sha256,
-        nodeBinding })}\n`);
+    // Copy and relocate the complete non-system dependency closure. The
+    // runtime record uses paths relative to Contents so atomic app exchange
+    // does not preserve references to the staging directory.
+    const runtime = bundleLocalNode(contents, process.execPath);
+    writeFileSync(join(resources, "NIR-RUNTIME.json"), `${JSON.stringify(runtime)}\n`);
     writeIcon(resources);
     command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
       "Foundation", "-framework", "WebKit", checkedSource("macos/wallet-launcher.m"),
