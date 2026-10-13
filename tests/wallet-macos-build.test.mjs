@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
+import { executableBinding } from "../blockchain/local-runtime-binding.mjs";
 import { inspectLocalTestWallets, listLocalTestWallets } from "../blockchain/wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "../blockchain/wallet-preview-cli.mjs";
 
@@ -38,6 +38,7 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     for (const relative of [
       "Contents/Info.plist", "Contents/MacOS/launcher", "Contents/MacOS/wallet-runner",
       "Contents/MacOS/onboarding",
+      "Contents/MacOS/wallet-runtime-verifier",
       "Contents/Resources/NIR.icns",
       "Contents/Resources/NIR-LOCAL-BUILD.json",
       "Contents/Resources/NIR-RUNTIME.json",
@@ -63,12 +64,17 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(launcher, /NIRLocalWalletStartup\(line, &secret\)/);
     assert.match(launcher, /forMainFrameOnly:YES/);
     assert.match(launcher, /kill\(-leader, SIGTERM\)/);
+    assert.match(launcher, /getpwuid\(getuid\(\)\)/);
+    assert.match(launcher, /self\.wallet\.environment = @\{ @"HOME": home, @"PATH": @"\/usr\/bin:\/bin",/);
+    assert.doesNotMatch(launcher, /self\.wallet\.environment = NSProcessInfo\.processInfo\.environment/);
     assert.match(launcher, /terminationHandler = [\s\S]*?\[weakSelf stopWalletGroup\]/);
     assert.match(launcher, /WKNavigationActionPolicyCancel/);
     const nativeApp = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
     assert.match(nativeApp, /nativeSecurity,/);
     assert.match(nativeApp, /nativePasswordChange,/);
     assert.match(nativeApp, /changeLocalTestWalletPassword\(/);
+    assert.match(nativeApp, /const runSetup = \(\.\.\.args\) => execFileAsync\(runner,/);
+    assert.doesNotMatch(nativeApp, /execFileAsync\(process\.execPath, \[setup/);
     const changeSource = nativeApp.slice(nativeApp.indexOf("async function nativePasswordChange("),
       nativeApp.indexOf("async function main()"));
     assert.match(changeSource, /committed = true;[\s\S]*?return true;/);
@@ -83,9 +89,11 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.doesNotMatch(onboardingSource, /Пароль слишком короткий: нужно от 12 символов/);
     assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
     assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
-    assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
-      { nodeExecutable: process.execPath,
-        nodeSha256: createHash("sha256").update(readFileSync(process.execPath)).digest("hex") });
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    assert.equal(runtime.format, "nir-local-wallet-runtime-v2");
+    assert.deepEqual(runtime.nodeBinding, executableBinding(process.execPath));
+    assert.equal(runtime.nodeExecutable, runtime.nodeBinding.logicalPath);
+    assert.equal(runtime.nodeSha256, runtime.nodeBinding.sha256);
     const sourcePackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
     const bundledPackage = JSON.parse(readFileSync(join(app, "Contents/Resources/app/package.json")));
     const buildMarker = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-LOCAL-BUILD.json")));

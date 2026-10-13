@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Local rehearsal source build only. This is not a distributable or notarized app.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
   readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { executableBinding } from "./local-runtime-binding.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MODULES = Object.freeze(`
@@ -134,7 +134,8 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
   rejectSecretPaths();
   verifyModuleClosure();
   for (const relative of [...PACKAGE_FILES, "macos/Info.plist", "macos/wallet-launcher.m",
-    "macos/wallet-runner.c", "macos/wallet-onboarding.m"]) checkedSource(relative);
+    "macos/wallet-runner.c", "macos/wallet-runtime-verifier.m",
+    "macos/wallet-onboarding.m"]) checkedSource(relative);
   const scratch = mkdtempSync(join(parent, ".nir-wallet-build-"));
   try {
     const app = join(scratch, "NIR Wallet.app");
@@ -173,18 +174,22 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
         runtimeFile.size <= 0 || runtimeFile.size > 256 * 1024 * 1024) {
       throw new Error("local wallet Node runtime is not a bounded executable file");
     }
-    // The runtime lives outside this source-built app. Pin its bytes in the
-    // signed bundle so a later local install inspection can reject a swap.
-    // This does not pin Node's dynamic-library closure or make a public release.
+    // The runtime lives outside this source-built app. Bind its Mach-O
+    // dependency closure too; this remains a local build, not a public release.
+    const nodeBinding = executableBinding(process.execPath);
     writeFileSync(join(resources, "NIR-RUNTIME.json"),
-      `${JSON.stringify({ nodeExecutable: process.execPath,
-        nodeSha256: createHash("sha256").update(readFileSync(process.execPath)).digest("hex") })}\n`);
+      `${JSON.stringify({ format: "nir-local-wallet-runtime-v2",
+        nodeExecutable: nodeBinding.logicalPath, nodeSha256: nodeBinding.sha256,
+        nodeBinding })}\n`);
     writeIcon(resources);
     command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
       "Foundation", "-framework", "WebKit", checkedSource("macos/wallet-launcher.m"),
       "-o", join(contents, "MacOS/launcher")], "native launcher build");
     command("/usr/bin/clang", [checkedSource("macos/wallet-runner.c"), "-o",
       join(contents, "MacOS/wallet-runner")], "native runner build");
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "Foundation",
+      checkedSource("macos/wallet-runtime-verifier.m"), "-o",
+      join(contents, "MacOS/wallet-runtime-verifier")], "runtime verifier build");
     command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
       "Foundation", checkedSource("macos/wallet-onboarding.m"), "-o",
       join(contents, "MacOS/onboarding")], "native onboarding build");

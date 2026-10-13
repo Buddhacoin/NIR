@@ -8,6 +8,8 @@ import { closeSync, fsyncSync, lstatSync, mkdtempSync, openSync, readFileSync,
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { isDeepStrictEqual } from "node:util";
+import { executableBinding } from "./local-runtime-binding.mjs";
 
 const OWN_BUNDLE_ID = "org.nir.wallet-setup-test";
 const MAX_FILES = 256;
@@ -65,6 +67,10 @@ function bundleHash(path) {
 
 function assertRuntime(path, { allowLegacyRuntime = false } = {}) {
   const runtime = JSON.parse(readFileSync(join(path, "Contents/Resources/NIR-RUNTIME.json"), "utf8"));
+  if (runtime?.format !== "nir-local-wallet-runtime-v2") {
+    if (allowLegacyRuntime) return false;
+    throw new Error("wallet runtime has no dependency-closure pin");
+  }
   const executable = runtime?.nodeExecutable;
   if (typeof executable !== "string" || !isAbsolute(executable) ||
       resolve(executable) !== executable) {
@@ -89,6 +95,11 @@ function assertRuntime(path, { allowLegacyRuntime = false } = {}) {
   const bytes = readFileSync(executable);
   if (createHash("sha256").update(bytes).digest("hex") !== runtime.nodeSha256) {
     throw new Error("wallet Node runtime bytes differ from the signed app pin");
+  }
+  if (!isDeepStrictEqual(executableBinding(executable), runtime.nodeBinding) ||
+      runtime.nodeBinding?.logicalPath !== executable ||
+      runtime.nodeBinding?.sha256 !== runtime.nodeSha256) {
+    throw new Error("wallet Node runtime dependency closure differs from the signed app pin");
   }
   return true;
 }
