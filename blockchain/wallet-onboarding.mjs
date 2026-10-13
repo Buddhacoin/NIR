@@ -287,6 +287,18 @@ export function changeLocalTestWalletPassword({ storageRoot, walletPath,
       !listLocalTestWallets(storageRoot).some((wallet) => wallet.path === walletPath)) {
     throw new Error("selected wallet is not in the local account list");
   }
+  if (!validPersonalWalletPassword(newPassword)) {
+    const error = new Error("new personal wallet password does not meet the wallet policy");
+    error.code = "NIR_WALLET_NEW_PASSWORD_POLICY";
+    throw error;
+  }
+  try {
+    verifyWalletFile({ path: walletPath, password: oldPassword });
+  } catch (cause) {
+    const error = new Error("current wallet password or vault is invalid", { cause });
+    error.code = "NIR_WALLET_CURRENT_OPEN_FAILED";
+    throw error;
+  }
   return changeWalletFilePassword({ path: walletPath, oldPassword, newPassword,
     personalWallet: true });
 }

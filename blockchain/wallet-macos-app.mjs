@@ -149,12 +149,16 @@ async function nativePasswordChange({ vaultPath, signal }) {
       [message, cancel, proceed], signal);
     const oldPassword = await ask(english ? "Current wallet password" : "Текущий пароль кошелька");
     if (signal?.aborted) return false;
-    const newPassword = await ask(english ? "New password: at least 9 non-trivial characters" :
-      "Новый пароль: не менее 9 нетривиальных символов");
+    const newPassword = await ask(english ? "New password: 9+ characters, 5 distinct, letter and digit or symbol" :
+      "Новый пароль: от 9 символов, 5 разных, буква и цифра или знак");
     if (signal?.aborted) return false;
     const confirmation = await ask(english ? "Repeat the new password" : "Повторите новый пароль");
     if (signal?.aborted) return false;
-    if (newPassword !== confirmation) throw new Error("new wallet passwords do not match");
+    if (newPassword !== confirmation) {
+      const error = new Error("new wallet passwords do not match");
+      error.code = "NIR_WALLET_NEW_PASSWORD_MISMATCH";
+      throw error;
+    }
     const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
     const before = walletPublicInfo(vaultPath).address;
     const changed = changeLocalTestWalletPassword({ storageRoot, walletPath: vaultPath,
@@ -169,13 +173,22 @@ async function nativePasswordChange({ vaultPath, signal }) {
         String(error?.message ?? "").includes("-128"))) return false;
     const uncertain = committed || error?.code === "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
     const locked = error?.code === "NIR_WALLET_PASSWORD_CHANGE_LOCKED";
+    const policy = error?.code === "NIR_WALLET_NEW_PASSWORD_POLICY";
+    const currentOpenFailed = error?.code === "NIR_WALLET_CURRENT_OPEN_FAILED";
+    const mismatch = error?.code === "NIR_WALLET_NEW_PASSWORD_MISMATCH";
     try { await notify(english ? "Password change needs checking" : "Проверьте смену пароля",
       uncertain ? (english ? "Reopen the wallet and verify the address and which password works. Do not delete any backup." :
         "Откройте кошелёк снова, проверьте адрес и какой пароль подходит. Не удаляйте резервные копии.") :
         locked ? (english ? "Another wallet process may be changing this file, or a previous change stopped unexpectedly. Close every NIR Wallet instance, confirm a verified backup, and seek diagnostics. Do not delete the lock manually." :
           "Возможно, другой процесс меняет файл или прежняя смена прервалась. Закройте все окна NIR Wallet, проверьте резервную копию и обратитесь за диагностикой. Не удаляйте блокировку вручную.") :
-        (english ? "Check the current password and new password rules. The active vault was not replaced." :
-          "Проверьте текущий пароль и требования к новому. Активный файл не был заменён.")); }
+        policy ? (english ? "New password rejected: use 9 or more characters, at least 5 distinct characters, a letter and a digit or symbol. Avoid common prefixes, control characters and compatibility Unicode. This attempt did not replace the vault." :
+          "Новый пароль отклонён: нужно от 9 символов, минимум 5 разных, буква и цифра или знак. Не используйте распространённое начало, управляющие символы и совместимые варианты Unicode. Эта попытка не заменила файл.") :
+        currentOpenFailed ? (english ? "The selected vault could not be opened or verified. Check the current password, file access and integrity. This attempt did not replace the vault." :
+          "Выбранный файл не удалось открыть или проверить. Проверьте текущий пароль, доступ к файлу и его целостность. Эта попытка не заменила файл.") :
+        mismatch ? (english ? "The new password and confirmation differ. This attempt did not replace the vault." :
+          "Новый пароль и повторный ввод не совпали. Эта попытка не заменила файл.") :
+        (english ? "Password change could not be confirmed (PW-ROTATE). Reopen the wallet and check which password works; keep every backup and report this code." :
+          "Не удалось подтвердить смену пароля (PW-ROTATE). Откройте кошелёк заново и проверьте, какой пароль подходит; сохраните все копии и сообщите этот код.")); }
     catch { /* Keep bridge response generic. */ }
     throw new Error("native password change did not complete");
   }
