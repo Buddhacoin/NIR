@@ -75,6 +75,7 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
 @property NSMutableData *startupData;
 @property NSURL *origin;
 @property NSString *bootstrapSecret;
+@property NSString *nodeSha256;
 @property (strong) dispatch_source_t terminationSignal;
 @property BOOL walletGroupStopped;
 @end
@@ -88,6 +89,12 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
     NSData *bytes = [NSData dataWithContentsOfFile:config];
     NSDictionary *runtime = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
     NSString *path = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"nodeExecutable"] : nil;
+    NSString *pin = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"nodeSha256"] : nil;
+    NSRegularExpression *format = [NSRegularExpression regularExpressionWithPattern:@"^[0-9a-f]{64}$"
+        options:0 error:nil];
+    if (![pin isKindOfClass:NSString.class] ||
+        [format numberOfMatchesInString:pin options:0 range:NSMakeRange(0, pin.length)] != 1) return nil;
+    self.nodeSha256 = pin;
     return [path isKindOfClass:NSString.class] && [path hasPrefix:@"/"] &&
         [files isExecutableFileAtPath:path] ? path : nil;
 }
@@ -225,7 +232,7 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
     self.output = [NSPipe pipe];
     self.wallet = [NSTask new];
     self.wallet.executableURL = [NSURL fileURLWithPath:runner];
-    self.wallet.arguments = @[node, script];
+    self.wallet.arguments = @[node, script, self.nodeSha256];
     self.wallet.standardOutput = self.output;
     __weak NIRLauncher *weakSelf = self;
     self.output.fileHandleForReading.readabilityHandler = ^(NSFileHandle *handle) {

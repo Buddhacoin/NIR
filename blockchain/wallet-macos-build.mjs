@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Local rehearsal source build only. This is not a distributable or notarized app.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
   readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, normalize, resolve } from "node:path";
+import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -160,8 +161,24 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
     writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
       `${JSON.stringify({ format: "nir-local-test-build-v2",
         distribution: "not-a-public-installer", sequence })}\n`);
+    let runtimeComponent = sep;
+    for (const part of process.execPath.split(sep).filter(Boolean)) {
+      runtimeComponent = join(runtimeComponent, part);
+      if (lstatSync(runtimeComponent).isSymbolicLink()) {
+        throw new Error("local wallet Node runtime path contains a symlink");
+      }
+    }
+    const runtimeFile = lstatSync(process.execPath);
+    if (!runtimeFile.isFile() || (runtimeFile.mode & 0o111) === 0 ||
+        runtimeFile.size <= 0 || runtimeFile.size > 256 * 1024 * 1024) {
+      throw new Error("local wallet Node runtime is not a bounded executable file");
+    }
+    // The runtime lives outside this source-built app. Pin its bytes in the
+    // signed bundle so a later local install inspection can reject a swap.
+    // This does not pin Node's dynamic-library closure or make a public release.
     writeFileSync(join(resources, "NIR-RUNTIME.json"),
-      `${JSON.stringify({ nodeExecutable: process.execPath })}\n`);
+      `${JSON.stringify({ nodeExecutable: process.execPath,
+        nodeSha256: createHash("sha256").update(readFileSync(process.execPath)).digest("hex") })}\n`);
     writeIcon(resources);
     command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
       "Foundation", "-framework", "WebKit", checkedSource("macos/wallet-launcher.m"),
