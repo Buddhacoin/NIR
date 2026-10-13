@@ -11,6 +11,8 @@ import { executableBinding } from "../blockchain/local-runtime-binding.mjs";
 import { inspectLocalMacWallet, installLocalMacWallet } from
   "../blockchain/wallet-macos-local-install.mjs";
 
+const walletBuildSequence = JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).walletBuildSequence;
+
 function writeRuntimeBinding(app, executable) {
   const nodeBinding = executableBinding(executable);
   const manifest = join(app, "Contents/Resources/NIR-RUNTIME.json");
@@ -43,7 +45,7 @@ test("local Mac update exchanges one pinned app atomically and preserves the pre
     const old = inspectLocalMacWallet(target);
     const next = inspectLocalMacWallet(candidate);
     assert.equal(old.sequence, 0);
-    assert.equal(next.sequence, 1);
+    assert.equal(next.sequence, walletBuildSequence);
     assert.notEqual(old.hash, next.hash);
 
     assert.throws(() => installLocalMacWallet({ target, candidate,
@@ -70,7 +72,8 @@ test("local Mac update exchanges one pinned app atomically and preserves the pre
     const candidate2 = join(staged2, "NIR Wallet.app");
     cpSync(target, candidate2, { recursive: true });
     writeFileSync(join(candidate2, "Contents/Resources/NIR-LOCAL-BUILD.json"),
-      '{"format":"nir-local-test-build-v2","distribution":"not-a-public-installer","sequence":2}\n');
+      `${JSON.stringify({ format: "nir-local-test-build-v2",
+        distribution: "not-a-public-installer", sequence: walletBuildSequence + 1 })}\n`);
     execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", candidate2]);
     const second = inspectLocalMacWallet(candidate2);
     const flakyHelper = join(root, "exchange-then-error");
@@ -85,7 +88,7 @@ test("local Mac update exchanges one pinned app atomically and preserves the pre
     installLocalMacWallet({ target, candidate: candidate2,
       expectedOldHash: next.hash, expectedNewHash: second.hash,
       exchangeExecutable: helper });
-    assert.equal(inspectLocalMacWallet(target).sequence, 2);
+    assert.equal(inspectLocalMacWallet(target).sequence, walletBuildSequence + 1);
     assert.equal(inspectLocalMacWallet(candidate2).hash, next.hash);
     assert.throws(() => installLocalMacWallet({ target, candidate: candidate2,
       expectedOldHash: second.hash, expectedNewHash: next.hash,
@@ -163,7 +166,7 @@ test("local Mac inspection rejects external Node replacement without app changes
     renameSync(replacement, runtime);
     assert.throws(() => inspectLocalMacWallet(app), /runtime bytes differ/);
     assert.equal(readFileSync(manifest, "utf8"), signedManifest);
-    assert.equal(before.sequence, 1);
+    assert.equal(before.sequence, walletBuildSequence);
     writeFileSync(runtime, "");
     writeFileSync(manifest, `${JSON.stringify({ format: "nir-local-wallet-runtime-v2",
       nodeExecutable: runtime, nodeSha256: "0".repeat(64), nodeBinding: {} })}\n`);
