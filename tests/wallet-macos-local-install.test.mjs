@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { cpSync, chmodSync, copyFileSync, mkdtempSync, mkdirSync, readFileSync,
+import { cpSync, chmodSync, mkdtempSync, mkdirSync, readFileSync,
   renameSync, rmSync, symlinkSync,
   writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
+import { executableBinding } from "../blockchain/local-runtime-binding.mjs";
 import { inspectLocalMacWallet, installLocalMacWallet } from
   "../blockchain/wallet-macos-local-install.mjs";
+
+function writeRuntimeBinding(app, executable) {
+  const nodeBinding = executableBinding(executable);
+  const manifest = join(app, "Contents/Resources/NIR-RUNTIME.json");
+  writeFileSync(manifest, `${JSON.stringify({ format: "nir-local-wallet-runtime-v2",
+    nodeExecutable: nodeBinding.logicalPath, nodeSha256: nodeBinding.sha256,
+    nodeBinding })}\n`);
+  return manifest;
+}
 
 test("local Mac update exchanges one pinned app atomically and preserves the previous generation", {
   skip: process.platform !== "darwin" }, () => {
@@ -113,12 +122,12 @@ test("local Mac inspection rejects external Node replacement without app changes
   try {
     const app = join(root, "NIR Wallet.app");
     const runtime = join(root, "node-copy");
-    copyFileSync(process.execPath, runtime);
+    const source = join(root, "node-copy.c");
+    writeFileSync(source, "int main(void) { return 0; }\n");
+    execFileSync("/usr/bin/clang", [source, "-o", runtime]);
     buildMacWallet(app);
     const manifest = join(app, "Contents/Resources/NIR-RUNTIME.json");
-    const original = readFileSync(runtime);
-    writeFileSync(manifest, `${JSON.stringify({ nodeExecutable: runtime,
-      nodeSha256: createHash("sha256").update(original).digest("hex") })}\n`);
+    writeRuntimeBinding(app, runtime);
     execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app]);
     const before = inspectLocalMacWallet(app);
     const signedManifest = readFileSync(manifest, "utf8");
@@ -129,8 +138,8 @@ test("local Mac inspection rejects external Node replacement without app changes
     assert.equal(readFileSync(manifest, "utf8"), signedManifest);
     assert.equal(before.sequence, 1);
     writeFileSync(runtime, "");
-    writeFileSync(manifest, `${JSON.stringify({ nodeExecutable: runtime,
-      nodeSha256: createHash("sha256").update("").digest("hex") })}\n`);
+    writeFileSync(manifest, `${JSON.stringify({ format: "nir-local-wallet-runtime-v2",
+      nodeExecutable: runtime, nodeSha256: "0".repeat(64), nodeBinding: {} })}\n`);
     execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app]);
     assert.throws(() => inspectLocalMacWallet(app), /runtime is unavailable/);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -157,7 +166,7 @@ test("legacy unpinned app needs explicit migration and a pinned new generation",
     for (const app of [target, candidate]) {
       execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app]);
     }
-    assert.throws(() => inspectLocalMacWallet(target), /no signed byte pin/);
+    assert.throws(() => inspectLocalMacWallet(target), /no dependency-closure pin/);
     const old = inspectLocalMacWallet(target, { allowLegacyRuntime: true });
     const cli = new URL("../blockchain/wallet-macos-local-install.mjs", import.meta.url).pathname;
     const legacyInspection = JSON.parse(execFileSync(process.execPath,
@@ -173,7 +182,7 @@ test("legacy unpinned app needs explicit migration and a pinned new generation",
       "-o", helper]);
     const update = { target, candidate, expectedOldHash: old.hash,
       expectedNewHash: next.hash, exchangeExecutable: helper };
-    assert.throws(() => installLocalMacWallet(update), /no signed byte pin/);
+    assert.throws(() => installLocalMacWallet(update), /no dependency-closure pin/);
     const result = JSON.parse(execFileSync(process.execPath,
       [cli, "install-legacy", target, candidate, old.hash, next.hash], { encoding: "utf8" }));
     assert.equal(result.hash, next.hash);
@@ -192,15 +201,80 @@ test("native runner rejects a changed external executable before launching it", 
     const source = join(root, "runtime.c");
     writeFileSync(source, '#include <stdio.h>\nint main(int argc, char **argv) { puts(argc > 1 ? argv[1] : ""); return 0; }\n');
     execFileSync("/usr/bin/clang", [source, "-o", runtime]);
-    const pin = createHash("sha256").update(readFileSync(runtime)).digest("hex");
+    const manifest = writeRuntimeBinding(app, runtime);
+    const pin = executableBinding(runtime).sha256;
     const runner = join(app, "Contents/MacOS/wallet-runner");
-    assert.equal(execFileSync(runner, [runtime, "probe", pin], { encoding: "utf8" }).trim(),
+    const verifier = join(app, "Contents/MacOS/wallet-runtime-verifier");
+    assert.equal(execFileSync(runner, [runtime, "probe", pin, verifier, manifest], { encoding: "utf8" }).trim(),
       "probe");
     const replacement = join(root, "replacement");
     writeFileSync(source, "int main(void) { return 0; }\n");
     execFileSync("/usr/bin/clang", [source, "-o", replacement]);
     renameSync(replacement, runtime);
-    assert.throws(() => execFileSync(runner, [runtime, "probe", pin],
+    assert.throws(() => execFileSync(runner, [runtime, "probe", pin, verifier, manifest],
       { encoding: "utf8" }), /initialization failed/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("native runner rejects a changed external Mach-O dependency", {
+  skip: process.platform !== "darwin" }, () => {
+  const root = mkdtempSync("/private/tmp/nir-wallet-runtime-dependency-");
+  try {
+    const app = join(root, "NIR Wallet.app");
+    buildMacWallet(app);
+    const librarySource = join(root, "library.c");
+    const library = join(root, "libhelper.dylib");
+    const programSource = join(root, "program.c");
+    const program = join(root, "runtime");
+    writeFileSync(librarySource, "int answer(void) { return 7; }\n");
+    execFileSync("/usr/bin/clang", ["-dynamiclib", "-install_name", library,
+      librarySource, "-o", library]);
+    writeFileSync(programSource,
+      '#include <stdio.h>\nextern int answer(void);\nint main(void) { printf("%d\\n", answer()); return 0; }\n');
+    execFileSync("/usr/bin/clang", [programSource, library, "-o", program]);
+    const manifest = writeRuntimeBinding(app, program);
+    const pin = executableBinding(program).sha256;
+    const runner = join(app, "Contents/MacOS/wallet-runner");
+    const verifier = join(app, "Contents/MacOS/wallet-runtime-verifier");
+    assert.equal(execFileSync(runner, [program, "ignored", pin, verifier, manifest],
+      { encoding: "utf8" }).trim(), "7");
+    const replacement = join(root, "new-library.dylib");
+    writeFileSync(librarySource, "int answer(void) { return 9; }\n");
+    execFileSync("/usr/bin/clang", ["-dynamiclib", "-install_name", library,
+      librarySource, "-o", replacement]);
+    renameSync(replacement, library);
+    assert.throws(() => execFileSync(runner, [program, "ignored", pin, verifier, manifest],
+      { encoding: "utf8" }), /initialization failed/);
+    assert.equal(executableBinding(program).sha256, pin);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("native setup recheck stays in the wallet service process group", {
+  skip: process.platform !== "darwin" }, () => {
+  const root = mkdtempSync("/private/tmp/nir-wallet-setup-group-");
+  try {
+    const app = join(root, "NIR Wallet.app");
+    buildMacWallet(app);
+    const source = join(root, "group.c");
+    const program = join(root, "runtime");
+    writeFileSync(source,
+      '#include <stdio.h>\n#include <unistd.h>\nint main(void) { printf("%d\\n", getpgrp()); return 0; }\n');
+    execFileSync("/usr/bin/clang", [source, "-o", program]);
+    const manifest = writeRuntimeBinding(app, program);
+    const pin = executableBinding(program).sha256;
+    const runner = join(app, "Contents/MacOS/wallet-runner");
+    const verifier = join(app, "Contents/MacOS/wallet-runtime-verifier");
+    const parentGroup = execFileSync("/bin/ps", ["-o", "pgid=", "-p", String(process.pid)],
+      { encoding: "utf8" }).trim();
+    const childGroup = execFileSync(runner,
+      [program, "ignored", pin, verifier, manifest, "--child-setup"],
+      { encoding: "utf8" }).trim();
+    assert.equal(childGroup, parentGroup);
+    const initialGroup = execFileSync(runner, [program, "ignored", pin, verifier, manifest],
+      { encoding: "utf8" }).trim();
+    assert.notEqual(initialGroup, parentGroup);
+    assert.equal(execFileSync(runner,
+      [program, "ignored", pin, verifier, manifest, "--child-setup", "--create-only"],
+      { encoding: "utf8" }).trim(), parentGroup);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

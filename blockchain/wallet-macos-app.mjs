@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -183,11 +184,22 @@ async function nativePasswordChange({ vaultPath, signal }) {
 async function main() {
   if (process.platform !== "darwin") throw new Error("this visual wallet runs on macOS only");
   const setup = fileURLToPath(new URL("./wallet-macos-setup.mjs", import.meta.url));
+  const runner = fileURLToPath(new URL("../../../MacOS/wallet-runner", import.meta.url));
+  const verifier = fileURLToPath(new URL("../../../MacOS/wallet-runtime-verifier", import.meta.url));
+  const configuration = fileURLToPath(new URL("../../NIR-RUNTIME.json", import.meta.url));
+  const runtime = JSON.parse(readFileSync(configuration, "utf8"));
+  if (runtime?.format !== "nir-local-wallet-runtime-v2" ||
+      runtime.nodeExecutable !== process.execPath ||
+      !/^[0-9a-f]{64}$/.test(runtime.nodeSha256 ?? "")) {
+    throw new Error("wallet runtime binding changed");
+  }
+  const runSetup = (...args) => execFileAsync(runner, [process.execPath, setup,
+    runtime.nodeSha256, verifier, configuration, "--child-setup", ...args], {
+    encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
+  });
   let setupOutput;
   try {
-    ({ stdout: setupOutput } = await execFileAsync(process.execPath, [setup], {
-      encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
-    }));
+    ({ stdout: setupOutput } = await runSetup());
   } catch (error) {
     if (error.code === 2) return; // The user cancelled the native wizard.
     if (error.code === 1) { process.exitCode = 1; return; } // The wizard showed its own error.
@@ -199,9 +211,7 @@ async function main() {
 
   const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
   const createAccount = async () => {
-    const { stdout } = await execFileAsync(process.execPath, [setup, "--create-only"], {
-      encoding: "utf8", maxBuffer: 8 * 1024, timeout: 600_000,
-    });
+    const { stdout } = await runSetup("--create-only");
     const created = JSON.parse(noTrailingNewline(stdout));
     if (walletPublicInfo(created.walletPath).address !== created.address) {
       throw new Error("new wallet identity changed");

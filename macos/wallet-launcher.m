@@ -1,6 +1,8 @@
 #import <AppKit/AppKit.h>
 #import <WebKit/WebKit.h>
+#import <pwd.h>
 #import <signal.h>
+#import <unistd.h>
 
 #ifdef NIR_LAUNCHER_LOCALE_UI_TEST
 static CFStringRef const NIRLauncherPreferenceDomain = CFSTR("org.nir.wallet-locale-smoke-test");
@@ -23,6 +25,7 @@ static NSString *NIRLauncherText(NSString *russian) {
         @"Локальный сервис прислал некорректный адрес.": @"The local service returned an invalid address.",
         @"Сборка приложения неполная.": @"The app build is incomplete.",
         @"Node.js, использованный для локальной сборки, больше не найден. Соберите приложение заново.": @"The Node.js used for this local build is no longer available. Rebuild the app.",
+        @"Не удалось определить домашнюю папку пользователя.": @"The user's home folder could not be determined.",
         @"Локальный сервис завершился до открытия кошелька.": @"The local service stopped before the wallet opened.",
         @"NIR Wallet · локальный тест": @"NIR Wallet · local test",
     };
@@ -221,9 +224,12 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
     NSString *script = [resources stringByAppendingPathComponent:@"app/blockchain/wallet-macos-app.mjs"];
     NSString *runner = [[NSBundle mainBundle].executablePath
         stringByDeletingLastPathComponent];
+    NSString *verifier = [runner stringByAppendingPathComponent:@"wallet-runtime-verifier"];
     runner = [runner stringByAppendingPathComponent:@"wallet-runner"];
+    NSString *runtimeConfiguration = [resources stringByAppendingPathComponent:@"NIR-RUNTIME.json"];
     if (!node || ![[NSFileManager defaultManager] fileExistsAtPath:script] ||
-        ![[NSFileManager defaultManager] isExecutableFileAtPath:runner]) {
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:runner] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:verifier]) {
         [self failWithMessage:node ? @"Сборка приложения неполная." :
             @"Node.js, использованный для локальной сборки, больше не найден. Соберите приложение заново."];
         return;
@@ -232,7 +238,17 @@ static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
     self.output = [NSPipe pipe];
     self.wallet = [NSTask new];
     self.wallet.executableURL = [NSURL fileURLWithPath:runner];
-    self.wallet.arguments = @[node, script, self.nodeSha256];
+    self.wallet.arguments = @[node, script, self.nodeSha256, verifier, runtimeConfiguration];
+    // Never pass caller-supplied DYLD_*, NODE_OPTIONS, NODE_PATH, or other
+    // loader hooks into the verifier and wallet service.
+    struct passwd *account = getpwuid(getuid());
+    NSString *home = account && account->pw_dir ? @(account->pw_dir) : nil;
+    if (!home || ![home hasPrefix:@"/"]) {
+        [self failWithMessage:@"Не удалось определить домашнюю папку пользователя."];
+        return;
+    }
+    self.wallet.environment = @{ @"HOME": home, @"PATH": @"/usr/bin:/bin",
+        @"LANG": @"en_US.UTF-8" };
     self.wallet.standardOutput = self.output;
     __weak NIRLauncher *weakSelf = self;
     self.output.fileHandleForReading.readabilityHandler = ^(NSFileHandle *handle) {
