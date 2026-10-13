@@ -113,7 +113,13 @@ test("local password change keeps the same address and old recovery backup usabl
   try {
     const created = createLocalTestWallet({ storageRoot, password: oldPassword });
     assert.throws(() => changeLocalTestWalletPassword({ storageRoot,
-      walletPath: created.walletPath, oldPassword: "wrong-password-2026", newPassword }), /invalid/);
+      walletPath: created.walletPath, oldPassword: "wrong-password-2026", newPassword }),
+      { code: "NIR_WALLET_CURRENT_OPEN_FAILED" });
+    assert.equal(verifyWalletFile({ path: created.walletPath, password: oldPassword }).address,
+      created.address);
+    assert.throws(() => changeLocalTestWalletPassword({ storageRoot,
+      walletPath: created.walletPath, oldPassword, newPassword: "Abcdef123４" }),
+      { code: "NIR_WALLET_NEW_PASSWORD_POLICY" });
     assert.equal(verifyWalletFile({ path: created.walletPath, password: oldPassword }).address,
       created.address);
     const changed = changeLocalTestWalletPassword({ storageRoot,

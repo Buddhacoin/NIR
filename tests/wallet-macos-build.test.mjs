@@ -72,6 +72,11 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(nativeApp, /nativeSecurity,/);
     assert.match(nativeApp, /nativePasswordChange,/);
     assert.match(nativeApp, /changeLocalTestWalletPassword\(/);
+    assert.match(nativeApp, /error\?\.code === "NIR_WALLET_NEW_PASSWORD_POLICY"/);
+    assert.match(nativeApp, /error\?\.code === "NIR_WALLET_CURRENT_OPEN_FAILED"/);
+    assert.match(nativeApp, /error\?\.code === "NIR_WALLET_NEW_PASSWORD_MISMATCH"/);
+    assert.match(nativeApp, /PW-ROTATE/);
+    assert.match(nativeApp, /Новый пароль отклонён:/);
     assert.match(nativeApp, /const runSetup = \(\.\.\.args\) => execFileAsync\(runner,/);
     assert.doesNotMatch(nativeApp, /execFileAsync\(process\.execPath, \[setup/);
     const changeSource = nativeApp.slice(nativeApp.indexOf("async function nativePasswordChange("),
