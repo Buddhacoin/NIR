@@ -13,11 +13,14 @@ import json
 import os
 
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.support import expected_conditions as conditions
 from selenium.webdriver.support.ui import WebDriverWait
+
+from firefox_dom_wait import retry_dead_object
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,8 +51,9 @@ def wallet_tab(browser):
 
 
 def visible(browser, selector):
+    predicate = conditions.visibility_of_element_located((By.CSS_SELECTOR, selector))
     return WebDriverWait(browser, 20).until(
-        conditions.visibility_of_element_located((By.CSS_SELECTOR, selector))
+        lambda current: retry_dead_object(predicate, current, WebDriverException)
     )
 
 

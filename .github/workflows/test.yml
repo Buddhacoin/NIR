@@ -32,11 +32,26 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+      # Cover the Marionette dead-object report on 157.0.1 and the next
+      # observed version; never let an implicit latest move this gate.
       - uses: browser-actions/setup-firefox@v1
-      - name: Test actual Firefox extension onboarding and restoration
+        id: firefox157
+        with:
+          firefox-version: "157.0.1"
+      - name: Test actual Firefox 157.0.1 extension onboarding and restoration
+        env:
+          NIR_TEST_FIREFOX_BINARY: ${{ steps.firefox157.outputs.firefox-path }}
         run: |
           python3 -m pip install selenium==4.51.0
           python3 browser-wallet/tests/firefox.e2e.py
+      - uses: browser-actions/setup-firefox@v1
+        id: firefox158
+        with:
+          firefox-version: "158.0"
+      - name: Test actual Firefox 158.0 extension onboarding and restoration
+        env:
+          NIR_TEST_FIREFOX_BINARY: ${{ steps.firefox158.outputs.firefox-path }}
+        run: python3 browser-wallet/tests/firefox.e2e.py
       - name: Attach unsigned Firefox candidate, source, and provenance
         uses: actions/upload-artifact@v4
         with:
