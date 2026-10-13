@@ -44,6 +44,8 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
       "Contents/Resources/app/package.json",
       "Contents/Resources/app/blockchain/wallet-macos-app.mjs",
       "Contents/Resources/app/blockchain/wallet-preview-cli.mjs",
+      "Contents/Resources/app/blockchain/update-catalog.mjs",
+      "Contents/Resources/app/blockchain/update-trust-anchor.mjs",
       "Contents/Resources/app/blockchain/wallet-macos-setup.mjs",
       "Contents/Resources/app/blockchain/wallet-seed.mjs",
       "Contents/Resources/app/blockchain/bip39-english.txt",

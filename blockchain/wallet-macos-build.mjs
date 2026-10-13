@@ -22,6 +22,7 @@ blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs
 blockchain/transaction-tree.mjs blockchain/transfer-state-transition.mjs
+blockchain/update-catalog.mjs blockchain/update-trust-anchor.mjs
 blockchain/validator-admission-omission.mjs blockchain/validator-admission-readiness-auth.mjs
 blockchain/validator-admission.mjs blockchain/validator-equivocation.mjs
 blockchain/validator-handoff-store.mjs blockchain/validator-handoff.mjs
