@@ -17,9 +17,9 @@ export const PROOF_CHECK_PROFILE_V1 = Object.freeze({
   // An axiom is allowed by its exact declaration, not by its name: a file may
   // declare `axiom propext : False` under the allowed name.
   allowedAxioms: Object.freeze({
-    "Classical.choice": "1356cfd04b90f50f1724d3299942b4bab17fb968985fc14aac8bb38a53ed14a1",
-    "Quot.sound": "99693a2de33cf43e13cae212933b20cdf03f216bd067d9fd2e20cc745cea4f4a",
-    propext: "7406ce2c032a641b3fdd0add51aaf187380cafe212e15b29a183dee1fdc7d63d",
+    "Classical.choice": "67fbeffd7ec41424d88d3fc4cf57e944c0871d45458cf5d67e8884d49f3ae6ff",
+    "Quot.sound": "1bf4ea4b53a48f52be3e1eaf5cccdba96039584d34ee71ec1ac9a65004860c0c",
+    propext: "176064d441373d403641e821f7a0c1ae95a5385ad0f7d530ec8cbf4b3ff8fc20",
   }),
   statementName: "NIR.statement",
   solutionName: "NIR.solution",
@@ -56,7 +56,7 @@ function bool(value, label) {
   return value;
 }
 
-function digest(domain, value) {
+export function digest(domain, value) {
   return createHash("sha3-256").update(`NIR/PROOF/${domain}/v1\0`)
     .update(JSON.stringify(value)).digest("hex");
 }
@@ -68,6 +68,10 @@ class KernelExport {
     this.names = [{ components: [], hash: digest("NAME", []) }];
     this.levels = [{ hash: digest("LEVEL", ["zero"]) }];
     this.exprs = [];
+    // First index of each structurally distinct name and expression, for
+    // appending to an export the way Lean's exporter deduplicates.
+    this.nameIndex = new Map([[this.names[0].hash, 0]]);
+    this.exprIndex = new Map();
     this.declarations = new Map();
     this.meta = null;
   }
@@ -109,7 +113,9 @@ class KernelExport {
       record = record.num;
     }
     const components = [...this.name(record.pre, "name prefix").components, component];
-    this.names.push({ components, hash: digest("NAME", components) });
+    const hash = digest("NAME", components);
+    if (!this.nameIndex.has(hash)) this.nameIndex.set(hash, this.names.length);
+    this.names.push({ components, hash });
   }
 
   addLevel(kind, body, assigned) {
@@ -126,6 +132,14 @@ class KernelExport {
 
   addExpr(kind, body, assigned) {
     if (assigned !== this.exprs.length) fail("expression indices are not sequential");
+    const expr = this.exprShape(kind, body);
+    if (!this.exprIndex.has(expr.hash)) this.exprIndex.set(expr.hash, this.exprs.length);
+    this.exprs.push(expr);
+  }
+
+  // The content hash, referenced constants and children of an expression
+  // record, without adding it.
+  exprShape(kind, body) {
     let shape;
     const consts = [];
     const children = [];
@@ -154,15 +168,19 @@ class KernelExport {
         exactKeys(body, ["name", "type", "body", "binderInfo"], kind);
         if (!BINDER_INFOS.has(body.binderInfo)) fail(`${kind} binder info is invalid`);
         children.push(this.expr(body.type, "binder type"), this.expr(body.body, "binder body"));
-        shape = [kind, this.name(body.name, "binder name").hash, body.binderInfo,
-          children[0].hash, children[1].hash];
+        this.name(body.name, "binder name");
+        // Binder names and annotations do not affect type checking, and Lean's
+        // exporter shares expressions that differ only in them, so the same
+        // constant may carry different binder names in different exports.
+        shape = [kind, children[0].hash, children[1].hash];
         break;
       case "letE":
         exactKeys(body, ["name", "type", "value", "body", "nondep"], "let");
         children.push(this.expr(body.type, "let type"), this.expr(body.value, "let value"),
           this.expr(body.body, "let body"));
-        shape = ["letE", this.name(body.name, "let name").hash, bool(body.nondep, "let nondep"),
-          ...children.map((child) => child.hash)];
+        this.name(body.name, "let name");
+        bool(body.nondep, "let nondep");
+        shape = ["letE", ...children.map((child) => child.hash)];
         break;
       case "proj": {
         exactKeys(body, ["typeName", "idx", "struct"], "projection");
@@ -193,7 +211,7 @@ class KernelExport {
       default:
         fail(`expression kind ${kind} is unknown`);
     }
-    this.exprs.push({ hash: digest("EXPR", shape), consts, children });
+    return { hash: digest("EXPR", shape), consts, children };
   }
 
   declare(name, declaration) {
@@ -227,7 +245,7 @@ class KernelExport {
       const value = this.expr(body.value, "definition value");
       const all = this.nameList(body.all, "definition group").map((n) => n.hash);
       const shape = ["def", name.hash, levelParams, type.hash, value.hash, hints, all];
-      this.declare(name, { kind, hash: digest("DECL", shape), roots: [type, value], type, levelParams });
+      this.declare(name, { kind, hash: digest("DECL", shape), roots: [type, value], type, levelParams, hints });
     } else if (kind === "thm") {
       const { name, levelParams, type } = common(body, ["value", "all"], "theorem");
       const value = this.expr(body.value, "theorem value");
@@ -432,10 +450,16 @@ export function checkProofSolution(taskText, solutionText, profile = PROOF_CHECK
   }
   const theorem = lookup(solution, profile.solutionName);
   const statement = lookup(solution, profile.statementName);
-  const expectedType = digest("EXPR", ["const", statement.hash, []]);
+  const proves = digest("EXPR", ["const", statement.hash, []]);
+  // A solution may also refute the statement: `¬ NIR.statement`, with `Not`
+  // pinned like every other task declaration.
+  const refutes = digest("EXPR", ["app", digest("EXPR", ["const", nameHash("Not"), []]), proves]);
+  const outcome = !theorem ? null : theorem.declaration.type.hash === proves ? "proved"
+    : theorem.declaration.type.hash === refutes && task.file.declarations.has(nameHash("Not")) ? "refuted"
+      : null;
   if (!theorem || theorem.declaration.kind !== "thm" || theorem.declaration.levelParams.length !== 0 ||
-      theorem.declaration.type.hash !== expectedType) {
-    fail("must prove exactly NIR.statement as the theorem NIR.solution");
+      outcome === null) {
+    fail("must prove exactly NIR.statement or its negation as the theorem NIR.solution");
   }
   const axioms = [...dependencyClosure(solution, theorem.hash)]
     .map((hash) => solution.declarations.get(hash))
@@ -443,6 +467,7 @@ export function checkProofSolution(taskText, solutionText, profile = PROOF_CHECK
     .map((declaration) => declaration.displayName).sort();
   return {
     taskId: task.taskId,
+    outcome,
     solutionHash: createHash("sha3-256").update(solutionText).digest("hex"),
     axioms,
   };
