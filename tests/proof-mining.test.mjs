@@ -12,10 +12,10 @@ const fixture = (name) => readFileSync(new URL(`fixtures/proof-mining/${name}.nd
 const task = fixture("task");
 const valid = fixture("valid");
 
-// The kernel half needs the pinned nanoda checker binary; CI without it
-// still runs every policy test.
+// The kernel half needs the checker built by rust/proof-checker/build.sh; CI
+// without it still runs every policy test.
 const checkerPath = process.env.NIR_PROOF_CHECKER;
-const kernel = { skip: checkerPath ? false : "set NIR_PROOF_CHECKER to the pinned nanoda_bin" };
+const kernel = { skip: checkerPath ? false : "set NIR_PROOF_CHECKER to the nanoda_bin built by rust/proof-checker/build.sh" };
 
 function nextIndex(text, tag) {
   let next = tag === "ie" ? 0 : 1;
@@ -136,4 +136,18 @@ test("malformed exports fail closed before reaching the kernel", () => {
   assert.throws(() => parseKernelExport(otherLean), /Lean version/);
   assert.throws(() => parseKernelExport(valid, { ...PROOF_CHECK_PROFILE_V1, maxExportBytes: 1_000 }),
     /too large/);
+});
+
+test("the kernel step budget is deterministic and enforced", kernel, async () => {
+  const first = await runKernelCheck(valid, { checkerPath });
+  const second = await runKernelCheck(valid, { checkerPath });
+  assert.equal(first.accepted, true);
+  assert.equal(first.steps, second.steps);
+  assert.ok(first.steps > 0);
+  const tight = { ...PROOF_CHECK_PROFILE_V1, maxCheckSteps: first.steps - 1 };
+  const refused = await runKernelCheck(valid, { checkerPath, profile: tight });
+  assert.equal(refused.accepted, false);
+  assert.equal(refused.stepLimitExceeded, true);
+  const exact = { ...PROOF_CHECK_PROFILE_V1, maxCheckSteps: first.steps };
+  assert.equal((await runKernelCheck(valid, { checkerPath, profile: exact })).accepted, true);
 });

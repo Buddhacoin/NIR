@@ -11,6 +11,8 @@ export const PROOF_CHECK_PROFILE_V1 = Object.freeze({
     name: "nanoda_lib",
     version: "0.4.24",
     sourceRevision: "f67473ba5f9397266f89c7852082c9c914b5d219",
+    // rust/proof-checker/nanoda-step-limit.patch, applied by build.sh.
+    patchSha3: "c605c81df2d00fdc163ac813f56403a3c72f5ef8b3dc46eedcffe4ceab8c0260",
   }),
   // An axiom is allowed by its exact declaration, not by its name: a file may
   // declare `axiom propext : False` under the allowed name.
@@ -22,6 +24,9 @@ export const PROOF_CHECK_PROFILE_V1 = Object.freeze({
   statementName: "NIR.statement",
   solutionName: "NIR.solution",
   maxExportBytes: 32 * 1024 * 1024,
+  // Deterministic kernel steps per solution (docs/proof-mining.md §6).
+  // Provisional: to be calibrated on network task sizes.
+  maxCheckSteps: 50_000_000,
   maxNatLiteralDigits: 4_096,
   maxStringLiteralBytes: 65_536,
 });

@@ -9,8 +9,9 @@ import { PROOF_CHECK_PROFILE_V1 } from "./proof-export.mjs";
 // checker re-checks every declaration of an export the policy half already
 // accepted. The export is passed on stdin; the checker sees no other input.
 //
-// Not yet consensus: the checker has no deterministic step limit, so the
-// wall-clock timeout below is a local safeguard only (docs/proof-mining.md §6).
+// The step budget is the rule; it is counted deterministically by the patched
+// checker (rust/proof-checker). The wall-clock timeout is only a local guard
+// against a broken binary and must be far above what the budget allows.
 export async function runKernelCheck(exportText, {
   checkerPath,
   profile = PROOF_CHECK_PROFILE_V1,
@@ -31,6 +32,8 @@ export async function runKernelCheck(exportText, {
       num_threads: 1,
       print_success_message: false,
       print_axioms: false,
+      max_steps: profile.maxCheckSteps,
+      print_steps: true,
     }), { mode: 0o600 });
     return await new Promise((resolve, reject) => {
       const child = spawn(checkerPath, [configPath], {
@@ -45,7 +48,15 @@ export async function runKernelCheck(exportText, {
       });
       child.on("error", reject);
       child.on("close", (code, signal) => {
-        resolve({ accepted: code === 0 && signal === null, code, signal, stderr: stderr.slice(0, 4_096) });
+        const steps = /^steps: (\d+)$/mu.exec(stderr);
+        resolve({
+          accepted: code === 0 && signal === null && steps !== null,
+          steps: steps ? Number(steps[1]) : null,
+          stepLimitExceeded: /step limit of \d+ exceeded/u.test(stderr),
+          code,
+          signal,
+          stderr: stderr.slice(0, 4_096),
+        });
       });
       child.stdin.on("error", () => {});
       child.stdin.end(exportText);
