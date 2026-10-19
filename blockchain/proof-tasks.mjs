@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 
 import { PROOF_CHECK_PROFILE_V1, digest, nameHash, parseKernelExport } from "./proof-export.mjs";
 
-// Network-generated proof-mining tasks (docs/proof-mining.md §7.2). Every node
-// derives the same task from public randomness: no person chooses it and no
-// one knows its answer in advance. A task asks to prove or refute that a
+// The Lean form of network clique tasks (docs/proof-mining.md §7.2.2). Every
+// node derives the same task from public randomness: no person chooses it and
+// no one knows its answer in advance. A task asks to prove or refute that a
 // random graph has a clique of `k` vertices; both answers are finite and
-// decidable, so one of them always has a proof.
+// decidable, so one of them always has a proof. Issuance does not use this
+// form: it asks only to find a clique (clique-search.mjs), whose answer is a
+// few vertex numbers rather than a proof.
 
 const CLIQUE_LIBRARY_URL = new URL("../protocol/proof-tasks/clique-library.ndjson", import.meta.url);
 export const CLIQUE_LIBRARY_SHA3 = "6d0b09e54936a71b40265e0a9caf70983baf2c2922d64dedc7c697fa62d7e3b4";

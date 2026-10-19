@@ -1,10 +1,11 @@
+import { CLIQUE_SEARCH_V1 } from "./clique-search.mjs";
 import { MIN_REWARD_INTERVAL_MS } from "./constants.mjs";
-import { MAX_CLIQUE_VERTICES } from "./proof-tasks.mjs";
 
 // Difficulty adjustment for network-generated proof tasks
 // (docs/proof-mining.md §7.2.3). The network does not learn and does not know
 // who solves its tasks; it watches only how fast answers arrive and resizes
-// the next tasks. Stronger solvers therefore meet larger graphs.
+// the next tasks. Stronger solvers therefore meet harder levels: larger
+// cliques in graphs that hold fewer of them (clique-search.mjs).
 export const PROOF_DIFFICULTY_V1 = Object.freeze({
   // Tasks per adjustment; the decision uses their median solve time.
   window: 16,
@@ -13,9 +14,11 @@ export const PROOF_DIFFICULTY_V1 = Object.freeze({
   targetSolveMs: MIN_REWARD_INTERVAL_MS,
   // A task without an answer by then expires and counts as unsolved.
   expiryMs: 6 * MIN_REWARD_INTERVAL_MS,
-  initialVertices: 64,
-  minVertices: 16,
-  maxVertices: MAX_CLIQUE_VERTICES,
+  // Provisional: level 28 (13 vertices, ~65 expected cliques among 506)
+  // took 41-252 s with CaDiCaL on a 4-core machine.
+  initialLevel: 24,
+  minLevel: 0,
+  maxLevel: CLIQUE_SEARCH_V1.maxLevel,
 });
 
 function nonNegative(value, label) {
@@ -32,12 +35,12 @@ export function solveTime({ issuedAtMs, solvedAtMs }, params = PROOF_DIFFICULTY_
   return elapsed > params.expiryMs ? null : elapsed;
 }
 
-// The graph size for the next window, from the size used for the last window
-// and that window's tasks in issue order. Median, not mean: one miner holding
-// back answers or one lucky solve cannot move it.
-export function nextCliqueVertices(vertices, tasks, params = PROOF_DIFFICULTY_V1) {
-  if (!Number.isSafeInteger(vertices) || vertices < params.minVertices || vertices > params.maxVertices) {
-    throw new Error("current task size is out of range");
+// The level for the next window, from the level used for the last window and
+// that window's tasks in issue order. Median, not mean: one miner holding back
+// answers or one lucky solve cannot move it.
+export function nextSearchLevel(level, tasks, params = PROOF_DIFFICULTY_V1) {
+  if (!Number.isSafeInteger(level) || level < params.minLevel || level > params.maxLevel) {
+    throw new Error("current task level is out of range");
   }
   if (!Array.isArray(tasks) || tasks.length !== params.window) {
     throw new Error(`difficulty adjustment needs exactly ${params.window} tasks`);
@@ -46,16 +49,14 @@ export function nextCliqueVertices(vertices, tasks, params = PROOF_DIFFICULTY_V1
   const times = tasks.map((task) => solveTime(task, params))
     .sort((a, b) => (a === null ? 1 : b === null ? -1 : a - b));
   const median = times[(params.window - 1) >> 1];
-  // Hardness grows exponentially with the size. Far from the target, move by
-  // about 1/16 of the size so a large jump in solver strength is caught up in
-  // a few windows; near it, move by one vertex so the size settles instead of
-  // jumping across the target band.
+  // Levels are already geometric: each makes the search a few times harder.
+  // Far from the target move two levels, near it one, so the level settles
+  // instead of jumping across the target band.
   const target = params.targetSolveMs;
-  const far = Math.max(1, vertices >> 4);
-  let next = vertices;
-  if (median === null || median > 4 * target) next = vertices - far;
-  else if (median > 2 * target) next = vertices - 1;
-  else if (median * 4 <= target) next = vertices + far;
-  else if (median * 2 <= target) next = vertices + 1;
-  return Math.min(params.maxVertices, Math.max(params.minVertices, next));
+  let next = level;
+  if (median === null || median > 4 * target) next = level - 2;
+  else if (median > 2 * target) next = level - 1;
+  else if (median * 4 <= target) next = level + 2;
+  else if (median * 2 <= target) next = level + 1;
+  return Math.min(params.maxLevel, Math.max(params.minLevel, next));
 }
