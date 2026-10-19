@@ -53,6 +53,7 @@ import {
   VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
   VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
   RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION,
+  PROOF_MINING_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -144,6 +145,19 @@ import {
   normalizeAccountState,
 } from "./account-tree.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
+import { PROOF_DIFFICULTY_V1 } from "./proof-difficulty.mjs";
+import {
+  PROOF_MINING_V1,
+  applyProofAnswerCommit,
+  applyProofAnswerReveal,
+  createProofMiningState,
+  endProofMiningBlock,
+  escrowProofRewards,
+  issueProofTask,
+  matureProofRewards,
+  parseProofMiningSnapshot,
+  takeProofRewards,
+} from "./proof-mining-state.mjs";
 import {
   MAX_EVALUATION_ASSIGNMENTS,
   assertActiveEvaluationAssignmentRegistry,
@@ -551,6 +565,14 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "validator-exit-request": [[
     "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
   ]],
+  "proof-answer-commit": [[
+    "algorithm", "commitment", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "taskRound", "type",
+  ]],
+  "proof-answer-reveal": [[
+    "algorithm", "commitment", "fee", "networkId", "nonce", "publicKey", "recipient", "salt",
+    "sender", "signature", "type", "vertices",
+  ]],
   "validator-withdrawal-claim": [[
     "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
   ]],
@@ -835,6 +857,29 @@ export function createValidatorBond({
   };
   if (operatorId !== undefined) transaction.operatorId = operatorId;
   return { ...transaction, signature: signObject(transaction, wallet, "VALIDATOR_BOND") };
+}
+
+// Proof mining (docs/proof-mining.md §5): commit to an answer without showing
+// it, then reveal it. Build the commitment with `proofAnswerCommitment`.
+export function createProofAnswerCommit({
+  wallet, networkId, nonce, taskRound, commitment, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, commitment, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, taskRound, type: "proof-answer-commit",
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "PROOF_ANSWER_COMMIT_V1") };
+}
+
+export function createProofAnswerReveal({
+  wallet, networkId, nonce, commitment, recipient, salt, vertices, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, commitment, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, recipient, salt, sender: wallet.address,
+    type: "proof-answer-reveal", vertices,
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "PROOF_ANSWER_REVEAL_V1") };
 }
 
 export function createValidatorExitRequest({
@@ -1582,6 +1627,8 @@ export class NirChain {
   #registeredValidators;
   #pendingValidatorAdmissions;
   #validatorReadinessObservationFloor;
+  #proofMining;
+  #proofMiningInitialLevel;
   #recentValidatorTransition;
   #pendingValidatorExits;
   #retiredValidators;
@@ -1626,7 +1673,17 @@ export class NirChain {
     genesisTimestamp = Date.now(),
     genesisProtocolVersion = PROTOCOL_VERSION,
     protocolUpgradeReleaseAnchor = null,
+    // Starting difficulty for network proof tasks once v35 activates;
+    // null keeps PROOF_DIFFICULTY_V1.initialLevel. Fixed in genesis, so every
+    // node starts from the same level.
+    proofMiningInitialLevel = null,
   }, { supportedProtocolVersions } = {}) {
+    if (proofMiningInitialLevel !== null &&
+        (!Number.isSafeInteger(proofMiningInitialLevel) ||
+         proofMiningInitialLevel < PROOF_DIFFICULTY_V1.minLevel ||
+         proofMiningInitialLevel > PROOF_DIFFICULTY_V1.maxLevel)) {
+      throw new Error("proof mining initial level is out of range");
+    }
     if (
       typeof networkId !== "string" ||
       networkId.length === 0 ||
@@ -1692,8 +1749,10 @@ export class NirChain {
       ...(founderAddress === null ? {} : { founderAddress }),
       ...(founderImmediateBps === 0 ? {} : { founderImmediateBps }),
       ...(treasuryImmediateBps === 0 ? {} : { treasuryImmediateBps }),
+      ...(proofMiningInitialLevel === null ? {} : { proofMiningInitialLevel }),
       validators,
     });
+    this.#proofMiningInitialLevel = proofMiningInitialLevel ?? PROOF_DIFFICULTY_V1.initialLevel;
     this.#genesisTimestamp = genesisTimestamp;
     this.#treasuryAddress = treasuryAddress;
     this.#founderAddress = founderAddress;
@@ -1798,6 +1857,7 @@ export class NirChain {
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorAdmissions = new Map();
     this.#validatorReadinessObservationFloor = 0;
+    this.#proofMining = null;
     this.#recentValidatorTransition = null;
     this.#pendingValidatorExits = new Map();
     this.#retiredValidators = new Map();
@@ -2429,6 +2489,11 @@ export class NirChain {
          validatorReadinessObservationFloor < (state.peerRegistry?.activationHeight ?? 0))) {
       throw new Error("validator readiness observation floor snapshot is invalid");
     }
+    if ((state.protocolVersion >= PROOF_MINING_PROTOCOL_VERSION) !== Object.hasOwn(state, "proofMining")) {
+      throw new Error("proof mining snapshot schema is invalid");
+    }
+    const proofMining = Object.hasOwn(state, "proofMining")
+      ? parseProofMiningSnapshot(state.proofMining) : null;
     if (pendingValidatorAdmissions.size > MAX_PENDING_VALIDATOR_ADMISSIONS) {
       throw new Error("validator admission queue capacity is exceeded");
     }
@@ -2852,6 +2917,7 @@ export class NirChain {
     chain.#registeredValidators = registeredMembers;
     chain.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     chain.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
+    chain.#proofMining = proofMining;
     chain.#recentValidatorTransition = recentValidatorTransition;
     chain.#pendingValidatorExits = pendingValidatorExits;
     chain.#retiredValidators = retiredValidators;
@@ -3015,6 +3081,11 @@ export class NirChain {
     return structuredClone(this.#epochRandomness.snapshot());
   }
 
+  // Open tasks, current level and pending answers for miners; null before v35.
+  proofMiningStatus() {
+    return structuredClone(this.#proofMining);
+  }
+
   beaconAuthorityStatus() {
     const authorities = [...this.#beaconAuthorities.values()]
       .map((member) => structuredClone(member))
@@ -3131,6 +3202,9 @@ export class NirChain {
         validatorReadinessObservationFloor:
           overrides.validatorReadinessObservationFloor ??
             this.#validatorReadinessObservationFloor,
+      } : {}),
+      ...(protocolVersion >= PROOF_MINING_PROTOCOL_VERSION ? {
+        proofMining: overrides.proofMining ?? this.#proofMining,
       } : {}),
       ...(protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
         pendingValidatorExits:
@@ -3255,6 +3329,9 @@ export class NirChain {
         } : {}),
         ...(this.#protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION ? {
           validatorReadinessObservationFloor: this.#validatorReadinessObservationFloor,
+        } : {}),
+        ...(this.#protocolVersion >= PROOF_MINING_PROTOCOL_VERSION ? {
+          proofMining: this.#proofMining,
         } : {}),
         ...(this.#protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
           pendingValidatorExits: this.#pendingValidatorExits,
@@ -4781,6 +4858,40 @@ export class NirChain {
       !candidate.randomnessReveals?.has(address));
   }
 
+  #applyProofAnswer(transaction, balances, nonces, proofMining, proposer, height, index, timestampMs) {
+    if (proofMining === null) throw new Error("proof answers require protocol version 35");
+    const commit = transaction.type === "proof-answer-commit";
+    if (transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey,
+          commit ? "PROOF_ANSWER_COMMIT_V1" : "PROOF_ANSWER_REVEAL_V1")) {
+      throw new Error("proof answer transaction is invalid");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const fee = parseAtomic(transaction.fee, "fee");
+    const bond = commit ? PROOF_MINING_V1.commitBond : 0n;
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee + bond) {
+      throw new Error("proof answer fee or bond is invalid or unfunded");
+    }
+    if (commit) {
+      applyProofAnswerCommit(proofMining, { commitment: transaction.commitment,
+        height, index, sender: transaction.sender, taskRound: transaction.taskRound, timestampMs });
+    } else {
+      assertAddress(transaction.recipient, "proof reward recipient");
+      applyProofAnswerReveal(proofMining, { commitment: transaction.commitment, height,
+        networkId: this.#networkId, recipient: transaction.recipient, salt: transaction.salt,
+        vertices: transaction.vertices });
+    }
+    balances.set(transaction.sender, balance - fee - bond);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+  }
+
   #applyValidatorExitRequest(
     transaction, balances, nonces, validatorBonds, registeredValidators,
     disabledValidators, pendingValidatorExits, retiredValidators, candidateBonds,
@@ -5533,6 +5644,7 @@ export class NirChain {
     fork.#pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
       .map(([address, admission]) => [address, structuredClone(admission)]));
     fork.#validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
+    fork.#proofMining = structuredClone(this.#proofMining);
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#retiredValidators = new Map([...this.#retiredValidators]
@@ -5835,6 +5947,12 @@ export class NirChain {
       progressNoveltyReports.set(claim.evaluation.candidateId, novelty);
     }
 
+    if (protocolState.protocolVersion >= PROOF_MINING_PROTOCOL_VERSION &&
+        block.progressRewards.length > 0) {
+      // From v35 new NIR comes only from network proof tasks; escrows already
+      // created by evaluator committees still mature or face fraud proofs.
+      throw new Error("evaluator-committee issuance ended at protocol version 35");
+    }
     if (
       (block.progressRewards.length === 0 && block.issuanceEpoch !== null) ||
       (block.progressRewards.length > 0 && block.issuanceEpoch !== this.#rewardEpoch)
@@ -5929,6 +6047,7 @@ export class NirChain {
     const pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
       .map(([address, admission]) => [address, structuredClone(admission)]));
     let validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
+    let proofMining = structuredClone(this.#proofMining);
     const pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     const retiredValidators = new Map([...this.#retiredValidators]
@@ -5967,6 +6086,22 @@ export class NirChain {
       // before or after an A -> B -> A validator-set history.
       resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
       validatorReadinessObservationFloor = block.height;
+    }
+    if (protocolState.protocolVersion >= PROOF_MINING_PROTOCOL_VERSION &&
+        this.#protocolVersion < PROOF_MINING_PROTOCOL_VERSION) {
+      proofMining = createProofMiningState({
+        ...PROOF_DIFFICULTY_V1, initialLevel: this.#proofMiningInitialLevel,
+      });
+    }
+    // Each beacon round finalized from v35 on issues one network task.
+    if (proofMining !== null && epochRandomness.round > this.#epochRandomness.round) {
+      issueProofTask(proofMining, {
+        beaconValue: epochRandomness.previousSeed,
+        height: block.height,
+        networkId: this.#networkId,
+        round: epochRandomness.round - 1,
+        timestampMs: block.timestamp,
+      });
     }
     if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
         this.#protocolVersion < RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
@@ -6263,6 +6398,30 @@ export class NirChain {
       progressCommitments.delete(reward.evaluation.candidateId);
       evaluationAssignments.delete(reward.evaluation.candidateId);
     }
+    // Proof-task winners share the same epoch budget, halving and ten-minute
+    // spacing as every other issuance; the schedule is unchanged.
+    let proofRewardsIssued = false;
+    if (proofMining !== null) {
+      for (const { address, amount } of matureProofRewards(proofMining, block.height)) {
+        balances.set(address, (balances.get(address) ?? 0n) + amount);
+      }
+      if (proofMining.pendingRewards.length > 0 &&
+          block.timestamp >= this.#lastRewardTimestamp + MIN_REWARD_INTERVAL_MS) {
+        const allocations = allocateProgressRewards(
+          this.#rewardEpoch,
+          takeProofRewards(proofMining, MAX_PROGRESS_REWARDS_PER_BLOCK)
+            .map(({ fingerprint, recipient }) => ({ fingerprint, recipient, score: "1" })),
+          MINING_POOL - this.#mined - newlyMined,
+          this.#initialEpochReward(),
+        ).map(({ amount, fingerprint, recipient }) => ({
+          amount: parseAtomic(amount, "proof reward amount"), fingerprint, recipient,
+        })).filter(({ amount }) => amount > 0n);
+        escrowProofRewards(proofMining, allocations,
+          block.height + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS);
+        newlyMined += allocations.reduce((sum, { amount }) => sum + amount, 0n);
+        proofRewardsIssued = allocations.length > 0;
+      }
+    }
     if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
       throw new Error("hard supply cap exceeded");
     }
@@ -6537,6 +6696,10 @@ export class NirChain {
           transaction, nonces, creditUnstakes, balances, block.height,
           creditStakes, creditUsage, creditDelegations,
         );
+      } else if (transaction.type === "proof-answer-commit" ||
+          transaction.type === "proof-answer-reveal") {
+        this.#applyProofAnswer(transaction, balances, nonces, proofMining, block.feeRecipient,
+          block.height, block.transactions.indexOf(transaction), block.timestamp);
       } else if (transaction.type.startsWith("asset-")) {
         if (protocolState.protocolVersion < 25) {
           throw new Error("native assets require protocol version 25");
@@ -6991,8 +7154,18 @@ export class NirChain {
         unlockHeight: block.height + VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
       });
     }
-    const rewardEpochAfter = this.#rewardEpoch + (block.progressRewards.length > 0 ? 1 : 0);
-    const lastRewardTimestampAfter = block.progressRewards.length > 0
+    if (proofMining !== null) {
+      const { refunds, burned } = endProofMiningBlock(proofMining, {
+        height: block.height, networkId: this.#networkId, timestampMs: block.timestamp,
+      });
+      for (const { address, amount } of refunds) {
+        balances.set(address, (balances.get(address) ?? 0n) + amount);
+      }
+      newlyBurned += burned;
+    }
+    const issuedThisBlock = block.progressRewards.length > 0 || proofRewardsIssued;
+    const rewardEpochAfter = this.#rewardEpoch + (issuedThisBlock ? 1 : 0);
+    const lastRewardTimestampAfter = issuedThisBlock
       ? block.timestamp : this.#lastRewardTimestamp;
     // Every transition, including newly added transaction types, must preserve genesis vesting.
     for (const address of [this.#treasuryAddress, this.#founderAddress]) {
@@ -7039,6 +7212,7 @@ export class NirChain {
       pendingValidatorRotation: pendingValidatorRotationAfter,
       pendingValidatorAdmissions,
       validatorReadinessObservationFloor,
+      proofMining,
       pendingValidatorExits,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
@@ -7148,6 +7322,7 @@ export class NirChain {
     this.#registeredValidators = registeredValidators;
     this.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     this.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
+    this.#proofMining = proofMining;
     this.#pendingValidatorExits = pendingValidatorExits;
     this.#retiredValidators = retiredValidators;
     this.#recentValidatorTransition = recentValidatorTransitionAfter;

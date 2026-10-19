@@ -14,9 +14,12 @@ export const PROOF_DIFFICULTY_V1 = Object.freeze({
   targetSolveMs: MIN_REWARD_INTERVAL_MS,
   // A task without an answer by then expires and counts as unsolved.
   expiryMs: 6 * MIN_REWARD_INTERVAL_MS,
-  // Provisional: level 28 (13 vertices, ~65 expected cliques among 506)
-  // took 41-252 s with CaDiCaL on a 4-core machine.
-  initialLevel: 24,
+  // Provisional. Plain backtracking in JavaScript on one core solved level
+  // 40 (15 vertices among 1578) in 10-67 s and level 36 in 0.05-10 s; a SAT
+  // solver was 100-1000 times slower. Starting low is safer: fast windows
+  // raise the level within one window, while tasks that are too hard each
+  // take an hour to expire.
+  initialLevel: 40,
   minLevel: 0,
   maxLevel: CLIQUE_SEARCH_V1.maxLevel,
 });

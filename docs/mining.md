@@ -1,5 +1,11 @@
 # How NIR mining works
 
+> **From protocol v35 the issuance described below ends.** New NIR is issued
+> only for network clique tasks: find `k` pairwise adjacent vertices in a
+> random graph drawn from the beacon, answered by commit and reveal, with
+> difficulty that follows solver speed. See [proof-mining.md](proof-mining.md)
+> (in Russian). The roles below remain the history of protocols up to v34.
+
 Running an intelligence-mining role and joining the active validator finality
 set are separate operations. A selected or bonded validator still needs an
 authorized rotation. Protocol v30 implements testnet-gated validator exit and

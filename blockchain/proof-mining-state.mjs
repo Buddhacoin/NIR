@@ -38,7 +38,8 @@ function safeInteger(value, label) {
 }
 
 export function createProofMiningState(difficulty = PROOF_DIFFICULTY_V1) {
-  return { level: difficulty.initialLevel, tasks: new Map(), commits: new Map(), pendingRewards: [] };
+  return { level: difficulty.initialLevel, tasks: new Map(), commits: new Map(), pendingRewards: [],
+    escrows: new Map() };
 }
 
 export function proofTaskSeed({ networkId, round, beaconValue }) {
@@ -169,4 +170,103 @@ export function endProofMiningBlock(state, { networkId, height, timestampMs },
 // epoch budget equally among them.
 export function takeProofRewards(state, limit) {
   return state.pendingRewards.splice(0, safeInteger(limit, "reward limit"));
+}
+
+// Minted rewards wait in escrow before they can be spent, like progress
+// rewards; `allocations` come from the chain's shared epoch budget.
+export function escrowProofRewards(state, allocations, unlockHeight) {
+  for (const { amount, fingerprint, recipient } of allocations) {
+    if (state.escrows.has(fingerprint)) fail("reward was already escrowed");
+    state.escrows.set(fingerprint, { amount, recipient, unlockHeight: safeInteger(unlockHeight, "unlock height") });
+  }
+}
+
+export function matureProofRewards(state, height) {
+  const credits = [];
+  for (const [fingerprint, escrow] of [...state.escrows].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (height >= escrow.unlockHeight) {
+      credits.push({ address: escrow.recipient, amount: escrow.amount });
+      state.escrows.delete(fingerprint);
+    }
+  }
+  return credits;
+}
+
+// Rebuilds the state from a consensus snapshot, where maps are sorted
+// [key, value] lists and amounts are decimal strings. Rejects anything the
+// state machine itself could not have produced.
+export function parseProofMiningSnapshot(value, difficulty = PROOF_DIFFICULTY_V1, params = PROOF_MINING_V1) {
+  const object = (v, keys, label) => {
+    if (!v || typeof v !== "object" || Array.isArray(v) ||
+        Object.keys(v).sort().join("\0") !== [...keys].sort().join("\0")) {
+      fail(`snapshot ${label} is malformed`);
+    }
+    return v;
+  };
+  const entries = (v, label, max) => {
+    if (!Array.isArray(v) || v.length > max) fail(`snapshot ${label} is malformed`);
+    return v.map((entry) => {
+      if (!Array.isArray(entry) || entry.length !== 2) fail(`snapshot ${label} is malformed`);
+      return entry;
+    });
+  };
+  const amount = (v, label) => {
+    if (typeof v !== "string" || !/^(?:0|[1-9][0-9]{0,30})$/u.test(v)) fail(`snapshot ${label} is invalid`);
+    return BigInt(v);
+  };
+  const hex = (v, label) => {
+    if (typeof v !== "string" || !HEX64.test(v)) fail(`snapshot ${label} is invalid`);
+    return v;
+  };
+  const text = (v, label) => {
+    if (typeof v !== "string" || v.length === 0 || v.length > 256) fail(`snapshot ${label} is invalid`);
+    return v;
+  };
+  object(value, ["commits", "escrows", "level", "pendingRewards", "tasks"], "proof mining state");
+  const level = safeInteger(value.level, "snapshot level");
+  if (level < difficulty.minLevel || level > difficulty.maxLevel) fail("snapshot level is out of range");
+  const maxTasks = params.maxOpenTasks + difficulty.window * 4;
+  const tasks = new Map(entries(value.tasks, "tasks", maxTasks).map(([key, task]) => {
+    object(task, ["closesAtMs", "issuedAtMs", "issuedHeight", "level", "round", "seed", "solvedAtMs", "status"], "task");
+    if (task.round !== key || !["open", "solved", "expired"].includes(task.status) ||
+        (task.status === "solved") !== (task.solvedAtMs !== null)) {
+      fail("snapshot task is inconsistent");
+    }
+    return [safeInteger(key, "task round"), {
+      round: key, seed: hex(task.seed, "task seed"), level: safeInteger(task.level, "task level"),
+      issuedHeight: safeInteger(task.issuedHeight, "task height"),
+      issuedAtMs: safeInteger(task.issuedAtMs, "task time"),
+      closesAtMs: safeInteger(task.closesAtMs, "task close time"), status: task.status,
+      solvedAtMs: task.solvedAtMs === null ? null : safeInteger(task.solvedAtMs, "task solve time"),
+    }];
+  }));
+  const commits = new Map(entries(value.commits, "commits", params.maxOpenTasks * params.maxCommitsPerTask)
+    .map(([key, commit]) => {
+      object(commit, ["bond", "commitment", "height", "index", "recipient", "sender", "taskRound", "timestampMs"], "commit");
+      if (commit.commitment !== hex(key, "commitment") || !tasks.has(commit.taskRound)) {
+        fail("snapshot commit is inconsistent");
+      }
+      return [key, {
+        commitment: key, taskRound: commit.taskRound, sender: text(commit.sender, "commit sender"),
+        bond: amount(commit.bond, "commit bond"), height: safeInteger(commit.height, "commit height"),
+        index: safeInteger(commit.index, "commit index"),
+        timestampMs: safeInteger(commit.timestampMs, "commit time"),
+        recipient: commit.recipient === null ? null : text(commit.recipient, "commit recipient"),
+      }];
+    }));
+  if (!Array.isArray(value.pendingRewards) || value.pendingRewards.length > params.maxPendingRewards) {
+    fail("snapshot pending rewards are malformed");
+  }
+  const pendingRewards = value.pendingRewards.map((reward) => {
+    object(reward, ["fingerprint", "recipient", "taskRound"], "pending reward");
+    return { fingerprint: hex(reward.fingerprint, "reward fingerprint"),
+      recipient: text(reward.recipient, "reward recipient"), taskRound: safeInteger(reward.taskRound, "reward round") };
+  });
+  const escrows = new Map(entries(value.escrows, "escrows", params.maxPendingRewards).map(([key, escrow]) => {
+    object(escrow, ["amount", "recipient", "unlockHeight"], "escrow");
+    return [hex(key, "escrow fingerprint"), { amount: amount(escrow.amount, "escrow amount"),
+      recipient: text(escrow.recipient, "escrow recipient"),
+      unlockHeight: safeInteger(escrow.unlockHeight, "escrow unlock height") }];
+  }));
+  return { level, tasks, commits, pendingRewards, escrows };
 }
