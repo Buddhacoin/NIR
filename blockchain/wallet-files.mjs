@@ -22,6 +22,8 @@ import {
   createCreditStake,
   createCreditUnstakeClaim,
   createCreditUnstakeRequest,
+  createProofAnswerCommit,
+  createProofAnswerReveal,
   createTransfer,
 } from "./chain.mjs";
 import { addressFromPublicKey, generateWallet, hashObject } from "./crypto.mjs";
@@ -530,6 +532,26 @@ export function signWalletResourceOperation({ path, password, operation }) {
       return createCreditUnstakeClaim(common);
     }
     throw new Error("wallet resource operation is not supported");
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+// Proof-mining answers (docs/proof-mining.md §5): `commit` locks the bond and
+// hides the answer, `reveal` shows it later.
+export function signWalletProofAnswer({ path, password, operation }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    const common = { wallet, networkId: operation.networkId, nonce: operation.nonce,
+      commitment: operation.commitment };
+    if (operation.type === "proof-answer-commit") {
+      return createProofAnswerCommit({ ...common, taskRound: operation.taskRound });
+    }
+    if (operation.type === "proof-answer-reveal") {
+      return createProofAnswerReveal({ ...common, recipient: operation.recipient,
+        salt: operation.salt, vertices: operation.vertices });
+    }
+    throw new Error("proof answer operation is not supported");
   } finally {
     wallet.privateKey = "";
   }

@@ -130,6 +130,7 @@ import {
 } from "./certificate-runtime.mjs";
 import { selectCertificateHistoryCandidates } from "./certificate-lifecycle.mjs";
 import { installCertificateHistory } from "./certificate-lifecycle-store.mjs";
+import { proofMiningView } from "./proof-mining-state.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const MAX_MEMPOOL_TRANSACTIONS = 1_000;
@@ -949,6 +950,11 @@ export class ValidatorReplica {
         this.#validatorNonces.delete(address);
       }
     }
+  }
+
+  proofMining() {
+    return proofMiningView(this.#chain.proofMiningStatus(),
+      { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp });
   }
 
   account(address) {
@@ -2036,6 +2042,11 @@ export class DistributedCoordinator {
       .map(({ value }) => value.handoffs)];
     const selected = selectValidatorHandoffHistories(candidates, trustAnchor);
     return { handoffs: selected.handoffs, matchingSources: selected.matchingSources };
+  }
+
+  proofMining() {
+    return proofMiningView(this.#chain.proofMiningStatus(),
+      { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp });
   }
 
   account(address) {

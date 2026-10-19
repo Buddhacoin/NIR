@@ -270,3 +270,24 @@ export function parseProofMiningSnapshot(value, difficulty = PROOF_DIFFICULTY_V1
   }));
   return { level, tasks, commits, pendingRewards, escrows };
 }
+
+// What a miner needs, in plain JSON: the level, open tasks, the reveal
+// window, and the tip's height and time, so a miner times tasks by the chain's
+// clock rather than its own.
+export function proofMiningView(state, { height, timestampMs }, params = PROOF_MINING_V1) {
+  if (state === null) return { active: false, height, timestampMs };
+  return {
+    active: true,
+    height,
+    timestampMs,
+    level: state.level,
+    commitBond: params.commitBond.toString(),
+    revealDelayBlocks: params.revealDelayBlocks,
+    revealWindowBlocks: params.revealWindowBlocks,
+    openTasks: [...state.tasks.values()].filter((task) => task.status === "open")
+      .sort((a, b) => a.round - b.round)
+      .map(({ round, seed, level, issuedHeight, issuedAtMs, closesAtMs }) =>
+        ({ round, seed, level, issuedHeight, issuedAtMs, closesAtMs })),
+    pendingRewards: state.pendingRewards.length,
+  };
+}

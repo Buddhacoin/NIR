@@ -2991,6 +2991,10 @@ export class NirChain {
     return this.#blocks.at(-1).hash;
   }
 
+  get tipTimestamp() {
+    return this.#blocks.at(-1).timestamp;
+  }
+
   blocks() {
     return structuredClone(this.#blocks);
   }

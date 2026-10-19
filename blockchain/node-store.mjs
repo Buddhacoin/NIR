@@ -26,6 +26,7 @@ import { createAccountProof } from "./account-proof.mjs";
 import { createAssetProof } from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
+import { proofMiningView } from "./proof-mining-state.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -178,6 +179,11 @@ export class PersistentDevNode {
       pendingProtocolUpgrade: this.#chain.pendingProtocolUpgrade,
       protocolVersion: this.#chain.protocolVersion, stateRoot: this.#chain.stateRoot,
       tipHash: this.#chain.tipHash, validators, validatorWallets });
+  }
+
+  proofMining() {
+    return proofMiningView(this.#chain.proofMiningStatus(),
+      { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp });
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {

@@ -14,7 +14,7 @@ const DEVELOPER_POST_PATHS = new Set([
 ]);
 const WALLET_READ_PATH = /^\/v1\/(?:accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history))?|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof)$/;
 const WALLET_READ_EXACT = new Set(["/health", "/v1/validator-handoffs",
-  "/v1/finality-proofs", "/v1/fees"]);
+  "/v1/finality-proofs", "/v1/fees", "/v1/proof-mining"]);
 
 function send(response, status, value, origin = null) {
   const body = JSON.stringify(value);
@@ -159,6 +159,12 @@ export function createNodeHttpServer(node, options = {}) {
       if (request.method === "GET" && url.pathname === "/v1/fees") {
         return send(response, 200, node.feeQuote(url.searchParams.get("amount"),
           url.searchParams.get("fee") ?? undefined), origin);
+      }
+      if (request.method === "GET" && url.pathname === "/v1/proof-mining") {
+        if (typeof node.proofMining !== "function") {
+          return send(response, 501, { error: "proof mining status is unavailable" }, origin);
+        }
+        return send(response, 200, node.proofMining(), origin);
       }
       if (request.method === "GET" && url.pathname === "/metrics") {
         return send(response, 200, { httpIngress: httpIngress.metrics() }, origin);

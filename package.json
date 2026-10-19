@@ -13,6 +13,7 @@
     "mine:wizard": "node blockchain/miner-macos-wizard-cli.mjs",
     "mine:adapter-check": "python3 -m nir.adapter_check",
     "mine:demo": "node blockchain/demo.mjs",
+    "mine:clique": "node blockchain/clique-miner-cli.mjs",
     "vault:create": "node blockchain/vault-cli.mjs create",
     "vault:verify": "node blockchain/vault-cli.mjs verify",
     "wallet:create": "node blockchain/wallet-cli.mjs create",
