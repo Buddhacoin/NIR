@@ -141,7 +141,7 @@ function runLean(statement, tactic, timeoutSeconds) {
   const directory = mkdtempSync(join(tmpdir(), "nir-task-"));
   try {
     const file = join(directory, "Task.lean");
-    writeFileSync(file, `import Std.Tactic.BVDecide\n\ntheorem task : ${statement} := by\n  ${tactic}\n`);
+    writeFileSync(file, `import Std.Tactic.BVDecide\n\nset_option maxRecDepth 100000\nset_option maxHeartbeats 0\n\ntheorem task : ${statement} := by\n  ${tactic}\n`);
     const home = process.env.LEAN_HOME;
     const started = performance.now();
     const result = spawnSync(join(home, "bin", "lean"), [file], {
