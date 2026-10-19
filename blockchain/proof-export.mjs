@@ -15,9 +15,9 @@ export const PROOF_CHECK_PROFILE_V1 = Object.freeze({
   // An axiom is allowed by its exact declaration, not by its name: a file may
   // declare `axiom propext : False` under the allowed name.
   allowedAxioms: Object.freeze({
-    "Classical.choice": "PENDING",
-    "Quot.sound": "PENDING",
-    propext: "PENDING",
+    "Classical.choice": "1356cfd04b90f50f1724d3299942b4bab17fb968985fc14aac8bb38a53ed14a1",
+    "Quot.sound": "99693a2de33cf43e13cae212933b20cdf03f216bd067d9fd2e20cc745cea4f4a",
+    propext: "7406ce2c032a641b3fdd0add51aaf187380cafe212e15b29a183dee1fdc7d63d",
   }),
   statementName: "NIR.statement",
   solutionName: "NIR.solution",
