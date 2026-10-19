@@ -124,7 +124,7 @@ function clique(seed, size) {
   const count = Array.from({ length: size }, (_, i) => member(i)).join(" + ");
   return {
     statement: `∀ x : BitVec ${size}, ¬ ((${closed.join(" ∧ ")}) ∧ ${bits(k)} ≤ ${count})`,
-    tactics: ["bv_decide"],
+    tactics: ["bv_decide (config := { timeout := 1200 })"],
     note: `ω = ${best}, refuting a ${k}-clique`,
   };
 }
