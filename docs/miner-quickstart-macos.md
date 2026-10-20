@@ -110,10 +110,9 @@ the version and a declared local build identifier derived from the bundled
 pre-signing files when built. The displayed identifier is read from a mutable
 local marker and is **not recomputed or independently verified** by this page;
 it is not proof of installed-app integrity or publisher identity.
-**Проверить обновления** looks for a release signed by the NIR owner's pinned
-release key; **Обновить** rebuilds the app from exactly that signed commit,
-then quits, swaps and reopens it ([`docs/app-updates.md`](app-updates.md)).
-Without a pinned key it says updates are off and installs nothing. Closing its last window stops the local
+**Проверить обновления** looks for a newer version of `main`;
+**Обновить** rebuilds the app from exactly that commit, then quits, swaps and
+reopens it ([`docs/app-updates.md`](app-updates.md)). Closing its last window stops the local
 service. To try pinned Qwen instead of Iris, prepare the separately documented
 Python 3.13 MLX environment, then select it **before** building:
 

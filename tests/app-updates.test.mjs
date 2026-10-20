@@ -7,8 +7,14 @@ import test from "node:test";
 
 import { createKey, pinnedSignerInSource, signRelease } from "../blockchain/app-release-cli.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
-import { createSourceRelease, SOURCE_RELEASE_PATH, verifySourceRelease } from "../blockchain/source-release.mjs";
+import { createSourceRelease, verifySourceRelease } from "../blockchain/source-release.mjs";
 import { buildUpdateRecord, readUpdateRecord, SourceUpdater, startSwap } from "../blockchain/source-updater.mjs";
+
+function readUpdateRecordFrom(directory, record) {
+  const path = join(directory, "NIR-UPDATE.json");
+  writeFileSync(path, JSON.stringify(record));
+  return readUpdateRecord(path);
+}
 
 const git = (root, ...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
 const ANCHOR = 'export const pinnedUpdateSignerAddress = null;\n';
@@ -54,8 +60,70 @@ test("a source release verifies only under the pinned signer and exact fields", 
   assert.throws(() => verifySourceRelease(extra, { trustedAddress: owner.address }), /source release is invalid/);
 });
 
-test("the owner pins a key, signs main, and the app updates to exactly that commit", async () => {
-  const { directory, mac, owner } = repositories();
+test("the app follows main: it offers newer commits only and builds exactly the newest", async () => {
+  const { directory, mac, origin, owner } = repositories();
+  try {
+    // The installed app was built from the user's checkout of main.
+    const record = buildUpdateRecord({ product: "model-lab", root: mac, env: {} });
+    assert.equal(record.sourceRevision, git(mac, "rev-parse", "HEAD"));
+    assert.deepEqual(readUpdateRecordFrom(directory, record), record);
+    let built = null;
+    let restarted = null;
+    const appPath = join(directory, "Apps", "NIR Model Lab.app");
+    mkdirSync(appPath, { recursive: true });
+    const updater = new SourceUpdater({
+      appPath, record, sourceDirectory: join(directory, "updates", "model-lab.git"), sourceUrl: origin,
+      build: async (source, target, release) => {
+        built = { release, text: readFileSync(join(source, "app.txt"), "utf8") };
+        mkdirSync(target);
+      },
+      restart: (paths) => { restarted = paths; },
+    });
+    assert.equal((await updater.check()).available, false);
+
+    writeFileSync(join(owner, "app.txt"), "second\n");
+    git(owner, "commit", "--quiet", "-am", "second");
+    writeFileSync(join(owner, "app.txt"), "third\n");
+    git(owner, "commit", "--quiet", "-am", "third");
+    git(owner, "push", "--quiet", "origin", "HEAD:main");
+    const newest = git(owner, "rev-parse", "HEAD");
+    const status = await updater.check();
+    assert.equal(status.available, true);
+    assert.equal(status.release.changes, 2);
+    assert.equal(status.release.version, "0.2.0");
+    assert.equal(status.release.revision, newest.slice(0, 12));
+    assert.match(status.release.date, /^\d{4}-\d{2}-\d{2}$/);
+    await updater.apply();
+    assert.equal(built.text, "third\n");
+    assert.equal(built.release.sourceRevision, newest);
+    assert.equal(updater.status().state, "restarting");
+    assert.equal(restarted.appPath, appPath);
+    assert.ok(existsSync(restarted.stagedAppPath));
+    // The user's own checkout is never touched.
+    assert.equal(readFileSync(join(mac, "app.txt"), "utf8"), "first\n");
+
+    // A build already ahead of main is not offered an older main.
+    const ahead = new SourceUpdater({ appPath, record: { ...record, sourceRevision: newest },
+      sourceDirectory: join(directory, "updates", "model-lab.git"), sourceUrl: origin,
+      build: async () => assert.fail("must not build"), restart: () => {} });
+    assert.equal((await ahead.check()).available, false);
+    await assert.rejects(ahead.apply(), /no newer version/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a build without an update record says it must be rebuilt once", async () => {
+  const updater = new SourceUpdater({ appPath: "/Applications/NIR Wallet.app", record: null,
+    sourceDirectory: "/nonexistent", build: async () => {}, restart: () => {} });
+  const status = await updater.check();
+  assert.equal(status.error, "not-updatable-build");
+  assert.equal(status.available, false);
+  await assert.rejects(updater.apply(), /cannot update itself/);
+});
+
+test("with a release authority pinned, only its signed releases on main are installed", async () => {
+  const { directory, mac, origin, owner } = repositories();
   process.env.NIR_RELEASE_PASSWORD = PASSWORD;
   try {
     const keyPath = join(directory, "keys", "release.nirvault.json");
@@ -63,103 +131,39 @@ test("the owner pins a key, signs main, and the app updates to exactly that comm
     const signer = pinnedSignerInSource(owner);
     assert.match(signer, /^nir1[0-9a-f]{64}$/);
     await assert.rejects(createKey(join(directory, "other.json"), owner), /already pinned/);
-    // An uncommitted pin cannot be released.
     await assert.rejects(signRelease(keyPath, owner), /commit or discard/);
     git(owner, "commit", "--quiet", "-am", "Pin release key");
     git(owner, "push", "--quiet", "origin", "HEAD:main");
+    const record = buildUpdateRecord({ product: "wallet", root: mac, env: {} });
+    let builds = 0;
+    const updater = (trustedAddress) => new SourceUpdater({ appPath: join(directory, "NIR Wallet.app"), record,
+      sourceDirectory: join(directory, "updates", "wallet.git"), sourceUrl: origin, trustedAddress,
+      build: async (source, target) => { builds++; mkdirSync(target); }, restart: () => {} });
 
-    // The installed app was built from the user's checkout before the release.
-    const record = buildUpdateRecord({ product: "model-lab", root: mac, env: {} });
-    assert.equal(record.sourceRevision, git(mac, "rev-parse", "HEAD"));
-    assert.equal(record.releaseSequence, 0);
-    let built = null;
-    let restarted = null;
-    const updater = new SourceUpdater({
-      appPath: join(directory, "Apps", "NIR Model Lab.app"), record, trustedAddress: signer,
-      build: async (source, target, release) => {
-        built = { release, text: readFileSync(join(source, "app.txt"), "utf8") };
-        mkdirSync(target);
-      },
-      restart: (paths) => { restarted = paths; },
-    });
-    mkdirSync(join(directory, "Apps", "NIR Model Lab.app"), { recursive: true });
-    assert.equal((await updater.check()).release, null);
-
+    // Unsigned commits on main are not offered.
+    assert.equal((await updater(signer).check()).available, false);
     writeFileSync(join(owner, "app.txt"), "second\n");
     git(owner, "commit", "--quiet", "-am", "second");
     git(owner, "push", "--quiet", "origin", "HEAD:main");
     const released = git(owner, "rev-parse", "HEAD");
     assert.match(await signRelease(keyPath, owner), /sequence 1/);
     await assert.rejects(signRelease(keyPath, owner), /already released/);
-
-    const status = await updater.check();
+    // A different authority's app rejects the release.
+    const foreign = await updater(generateWallet().address).check();
+    assert.equal(foreign.state, "failed");
+    assert.match(foreign.error, /not trusted/);
+    const status = await updater(signer).check();
     assert.equal(status.available, true);
-    assert.deepEqual(status.release, { sequence: 1, version: "0.2.0" });
-    // Work in the user's checkout is untouched by checking or updating.
-    writeFileSync(join(mac, "local-note.txt"), "mine\n");
-    await updater.apply();
-    assert.equal(built.text, "second\n");
-    assert.equal(built.release.sourceRevision, released);
-    assert.equal(updater.status().state, "restarting");
-    assert.equal(restarted.appPath, join(directory, "Apps", "NIR Model Lab.app"));
-    assert.ok(existsSync(restarted.stagedAppPath));
-    assert.equal(readFileSync(join(mac, "app.txt"), "utf8"), "first\n");
-    assert.equal(readFileSync(join(mac, "local-note.txt"), "utf8"), "mine\n");
-    // The next real change is the next release.
+    assert.equal(status.signed, true);
+    assert.equal(status.release.revision, released.slice(0, 12));
+    await updater(signer).apply();
+    assert.equal(builds, 1);
     writeFileSync(join(owner, "app.txt"), "third\n");
     git(owner, "commit", "--quiet", "-am", "third");
     git(owner, "push", "--quiet", "origin", "HEAD:main");
     assert.match(await signRelease(keyPath, owner), /sequence 2/);
   } finally {
     delete process.env.NIR_RELEASE_PASSWORD;
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("releases by another key, replays, and unknown commits are refused", async () => {
-  const { directory, mac, owner } = repositories();
-  try {
-    const trusted = generateWallet();
-    const record = { builderNode: process.execPath, format: "nir-app-update-record-v1", product: "wallet",
-      releaseSequence: 4, sourceRevision: git(mac, "rev-parse", "HEAD"), sourceRoot: mac };
-    const publish = (envelope) => {
-      mkdirSync(join(owner, "releases"), { recursive: true });
-      writeFileSync(join(owner, SOURCE_RELEASE_PATH), JSON.stringify(envelope));
-      git(owner, "add", ".");
-      git(owner, "commit", "--quiet", "-m", "release");
-      git(owner, "push", "--quiet", "origin", "HEAD:main");
-    };
-    const head = git(owner, "rev-parse", "HEAD");
-    let builds = 0;
-    const updater = new SourceUpdater({ appPath: join(directory, "NIR Wallet.app"), record,
-      trustedAddress: trusted.address, build: async () => { builds++; }, restart: () => {} });
-
-    publish(createSourceRelease({ wallet: generateWallet(), sequence: 9, sourceRevision: head, version: "1.0.0" }));
-    const forged = await updater.check();
-    assert.equal(forged.state, "failed");
-    assert.match(forged.error, /not trusted/);
-
-    // An older release than the installed one is not offered.
-    publish(createSourceRelease({ wallet: trusted, sequence: 4, sourceRevision: head, version: "1.0.0" }));
-    assert.equal((await updater.check()).available, false);
-    await assert.rejects(updater.apply(), /no newer signed release/);
-
-    // A signed commit that main does not contain is refused before building.
-    publish(createSourceRelease({ wallet: trusted, sequence: 5, sourceRevision: "c".repeat(40), version: "1.0.0" }));
-    assert.equal((await updater.check()).available, true);
-    await assert.rejects(updater.apply());
-    assert.equal(builds, 0);
-
-    // No pinned key, or no checkout: updates are off and say why.
-    const unsigned = new SourceUpdater({ appPath: join(directory, "NIR Wallet.app"), record,
-      trustedAddress: null, build: async () => {}, restart: () => {} });
-    assert.equal((await unsigned.check()).error, "no-release-signer");
-    const noCheckout = new SourceUpdater({ appPath: join(directory, "NIR Wallet.app"),
-      record: { ...record, sourceRoot: null }, trustedAddress: trusted.address, build: async () => {},
-      restart: () => {} });
-    assert.equal((await noCheckout.check()).error, "no-source-checkout");
-    assert.throws(() => readUpdateRecord(join(directory, "missing.json")));
-  } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });

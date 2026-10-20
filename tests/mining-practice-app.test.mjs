@@ -105,7 +105,7 @@ test("embedded Model Lab without a valid build marker fails closed on identity",
   } finally { await stop(server); }
 });
 
-test("Model Lab updates only through owner-signed releases, never a download link", () => {
+test("Model Lab updates by rebuilding the published code, never through a download link", () => {
   const html = readFileSync(join(root, "mining-app/index.html"), "utf8");
   const js = readFileSync(join(root, "mining-app/app.js"), "utf8");
   for (const id of ["settings-open", "settings-back", "settings-page", "lab-content",
@@ -115,7 +115,6 @@ test("Model Lab updates only through owner-signed releases, never a download lin
   // The Update button stays hidden until the service reports a signed release.
   assert.match(html, /<button id="apply-update" type="button" hidden>/);
   assert.match(js, /applyUpdate\.hidden = !u\?\.available/);
-  assert.match(js, /подписанная ключом владельца NIR/);
   assert.match(html, /Заявленный локальный ID \(не проверен\)/);
   assert.match(js, /Declared local ID \(not verified\)/);
   assert.doesNotMatch(html, /href="[^"]*\.app/);
@@ -134,7 +133,7 @@ test("settings check shows local identity and never says an update was found", a
   }
   const buildId = `sha256:${"b".repeat(64)}`;
   let requests = 0;
-  let update = { available: false, configured: false, error: "no-release-signer", release: null, state: "idle" };
+  let update = { available: false, configured: false, error: "not-updatable-build", release: null, state: "idle" };
   const updateCalls = [];
   runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
     document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
@@ -160,19 +159,20 @@ test("settings check shows local identity and never says an update was found", a
   assert.equal(nodes.get("#settings-page").hidden, false);
   assert.equal(nodes.get("#lab-content").hidden, true);
   await new Promise((resolve) => setImmediate(resolve));
-  // Without a pinned release key the app says updates are off.
+  // An old build without an update record asks to be rebuilt once.
   assert.deepEqual(updateCalls, ["/app-update/check"]);
-  assert.match(nodes.get("#update-result").textContent, /ключ выпусков/);
+  assert.match(nodes.get("#update-result").textContent, /Соберите приложение один раз заново/);
   assert.equal(nodes.get("#apply-update").hidden, true);
-  // A newer signed release shows the Update button, which starts the update.
-  update = { available: true, configured: true, error: null, release: { sequence: 2, version: "0.3.0" },
-    state: "idle" };
+  // A newer version shows the Update button, which starts the update.
+  update = { available: true, configured: true, error: null,
+    release: { changes: 3, date: "2026-10-20", revision: "abcdef012345", version: "0.3.0" }, state: "idle" };
   await nodes.get("#check-updates").click();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(requests, 2);
-  assert.match(nodes.get("#update-result").textContent, /Доступна версия 0\.3\.0 \(выпуск 2\)/);
+  assert.match(nodes.get("#update-result").textContent,
+    /Доступна новая версия 0\.3\.0 от 2026-10-20 \(изменений: 3\)/);
   assert.equal(nodes.get("#apply-update").hidden, false);
-  assert.equal(nodes.get("#apply-update").textContent, "Обновить до 0.3.0");
+  assert.equal(nodes.get("#apply-update").textContent, "Обновить");
   update = { ...update, available: false, state: "building" };
   await nodes.get("#apply-update").click();
   await new Promise((resolve) => setImmediate(resolve));

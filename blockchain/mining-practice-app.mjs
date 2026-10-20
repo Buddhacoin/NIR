@@ -273,8 +273,8 @@ export async function checkPinnedQwenRuntime(root) {
   return result;
 }
 
-// The Update button of the built app: rebuild from the owner-signed release
-// with this app's own Node and Python, then swap and reopen.
+// The Update button of the built app: rebuild from the newest published
+// version with this app's own Node and Python, then swap and reopen.
 export function createModelLabUpdater({ root, embedded }) {
   let record = null;
   if (embedded) {
@@ -284,6 +284,7 @@ export function createModelLabUpdater({ root, embedded }) {
   return new SourceUpdater({
     appPath: join(root, "..", "..", ".."),
     record,
+    sourceDirectory: join(homedir(), "Library", "Application Support", "NIR Updates", "model-lab.git"),
     trustedAddress: pinnedUpdateSignerAddress,
     build: (source, target, release) => {
       const { nodeExecutable, pythonExecutable } = runtime();

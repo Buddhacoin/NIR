@@ -351,7 +351,6 @@ for migration; normal inspection and installation reject it. These checks do
 time-of-check/time-of-use swap, authenticate the publisher, or make this a safe
 public wallet. Do not use this source-built app with real-value funds. The local
 Settings button reports the running local service build identity and offers
-an update only when a release is signed by the NIR owner's pinned release key;
-it then rebuilds from exactly that signed commit and swaps the app
-([`docs/app-updates.md`](app-updates.md)). Each later reviewed local build
+an update when `main` has a newer version; it then rebuilds from exactly that
+commit and swaps the app ([`docs/app-updates.md`](app-updates.md)). Each later reviewed local build
 must deliberately increase `walletBuildSequence` in `package.json`.

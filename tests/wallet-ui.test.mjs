@@ -319,10 +319,10 @@ test("double-click Mac mode removes terminal setup and false mining claims", () 
   assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
 });
 
-test("update control installs only owner-signed releases through the bridge", () => {
+test("update control rebuilds the published code through the bridge", () => {
   assert.match(html, /id="wallet-check-updates"/);
   assert.match(html, /<button id="wallet-apply-update" type="button" hidden>/);
-  assert.match(html, /только из выпусков, подписанных ключом владельца NIR/);
+  assert.match(html, /скачивается из открытого кода NIR и собирается на этом Mac/);
   assert.match(script, /bridgeRequest\("\/v1\/app-build"\)/);
   assert.match(script, /followWalletUpdate\("\/v1\/app-update\/check"\)/);
   assert.match(script, /followWalletUpdate\("\/v1\/app-update\/apply"\)/);

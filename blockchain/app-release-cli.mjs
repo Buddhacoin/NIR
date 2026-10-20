@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// The owner's release commands (docs/app-updates.md):
+// Optional release-authority commands (docs/app-updates.md). Until a signer
+// is pinned, the apps follow main; once pinned, they install only releases
+// it signed:
 //   npm run app-release:key  -- [key file]   once: create the release key, pin it
 //   npm run app-release:sign -- [key file]   per release: sign origin/main, push
 // The key file is an encrypted wallet vault and never leaves this computer.

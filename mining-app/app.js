@@ -155,14 +155,12 @@ const copy = {
     settingsIntro: "Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.",
     installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
     checkUpdates: "Проверить обновления", settingsBack: "Назад к проверке моделей",
-    applyUpdate: "Обновить", applyUpdateTo: (v) => `Обновить до ${v}`,
-    updateNoSigner: "Владелец NIR ещё не создал ключ выпусков, поэтому обновления пока выключены. Ничего не скачано и не установлено.",
-    updateNoCheckout: "Это приложение собрано не из копии git-репозитория NIR, поэтому обновить его можно только новой сборкой.",
-    updateChecking: "Проверяем, есть ли новая подписанная версия…",
-    updateAvailable: (v, n) => `Доступна версия ${v} (выпуск ${n}), подписанная ключом владельца NIR.`,
-    updateCurrent: "Установлена последняя подписанная версия.",
-    updateNoRelease: "Подписанных выпусков ещё нет.",
-    updateDownloading: "Получаем подписанный исходный код…",
+    applyUpdate: "Обновить",
+    updateNotUpdatable: "Эта сборка ещё не умеет обновляться сама. Соберите приложение один раз заново — дальше хватит кнопки «Обновить».",
+    updateChecking: "Проверяем, есть ли новая версия…",
+    updateAvailable: (r) => `Доступна новая версия ${r.version ?? ""} от ${r.date}${r.changes ? ` (изменений: ${r.changes})` : ""}.`,
+    updateCurrent: "У вас последняя версия.",
+    updateDownloading: "Скачиваем новую версию…",
     updateBuilding: "Собираем новую версию. Это займёт несколько минут; приложение перезапустится само.",
     updateRestarting: "Перезапускаем приложение…",
     updateFailed: (e) => `Обновить не удалось: ${e}. Установленное приложение не изменено.`,
@@ -305,14 +303,12 @@ const copy = {
     settingsIntro: "This is local information about the running Model Lab. The version number alone does not prove the app is authentic.",
     installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
     checkUpdates: "Check for updates", settingsBack: "Back to model checks",
-    applyUpdate: "Update", applyUpdateTo: (v) => `Update to ${v}`,
-    updateNoSigner: "The NIR owner has not created a release key yet, so updates are off. Nothing was downloaded or installed.",
-    updateNoCheckout: "This app was not built from a git checkout of NIR, so only a new build can update it.",
-    updateChecking: "Checking for a newer signed version…",
-    updateAvailable: (v, n) => `Version ${v} (release ${n}) is available, signed by the NIR owner's key.`,
-    updateCurrent: "The latest signed version is installed.",
-    updateNoRelease: "There are no signed releases yet.",
-    updateDownloading: "Getting the signed source code…",
+    applyUpdate: "Update",
+    updateNotUpdatable: "This build cannot update itself yet. Build the app once more; from then on the Update button is enough.",
+    updateChecking: "Checking for a new version…",
+    updateAvailable: (r) => `A new version ${r.version ?? ""} from ${r.date} is available${r.changes ? ` (${r.changes} changes)` : ""}.`,
+    updateCurrent: "You have the latest version.",
+    updateDownloading: "Downloading the new version…",
     updateBuilding: "Building the new version. This takes a few minutes; the app restarts by itself.",
     updateRestarting: "Restarting the app…",
     updateFailed: (e) => `The update failed: ${e}. The installed app is unchanged.`,
@@ -500,18 +496,16 @@ function renderVersion() {
   const u = updateInfo;
   const working = ["checking", "downloading", "building", "restarting"].includes(u?.state);
   updateResult.textContent = versionCheckFailed || !u ? t.updateOffline
-    : u.error === "no-release-signer" ? t.updateNoSigner
-      : u.error === "no-source-checkout" ? t.updateNoCheckout
+    : u.error === "not-updatable-build" ? t.updateNotUpdatable
         : u.state === "checking" ? t.updateChecking
           : u.state === "downloading" ? t.updateDownloading
             : u.state === "building" ? t.updateBuilding
               : u.state === "restarting" ? t.updateRestarting
                 : u.state === "failed" ? t.updateFailed(u.error)
-                  : u.available ? t.updateAvailable(u.release.version, u.release.sequence)
-                    : u.release ? t.updateCurrent : t.updateNoRelease;
+                  : u.available ? t.updateAvailable(u.release) : t.updateCurrent;
   if (applyUpdate) {
     applyUpdate.hidden = !u?.available || working;
-    applyUpdate.textContent = u?.release ? t.applyUpdateTo(u.release.version) : t.applyUpdate;
+    applyUpdate.textContent = t.applyUpdate;
   }
   checkUpdates.disabled = working;
 }

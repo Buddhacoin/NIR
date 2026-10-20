@@ -211,14 +211,16 @@ async function nativePasswordChange({ vaultPath, signal }) {
   }
 }
 
-// The Update button: rebuild from the owner-signed release with the Node.js
-// this app was first built with, then swap and reopen (docs/app-updates.md).
+// The Update button: rebuild from the newest published version with the
+// Node.js this app was first built with, then swap and reopen
+// (docs/app-updates.md).
 function createWalletUpdater() {
   const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
   let record = null;
   try { record = readUpdateRecord(fileURLToPath(new URL(`../../${UPDATE_RECORD}`, import.meta.url))); } catch {}
   return new SourceUpdater({
     appPath, record, trustedAddress: pinnedUpdateSignerAddress,
+    sourceDirectory: join(homedir(), "Library", "Application Support", "NIR Updates", "wallet.git"),
     build: (source, target, release) => runBuilder({ node: record.builderNode,
       script: join(source, "blockchain", "wallet-macos-build.mjs"), target,
       env: updateBuildEnvironment(release, record) }),

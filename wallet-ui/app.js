@@ -1880,8 +1880,8 @@ document.querySelector("#copy-iris-receipt").onclick = async () => {
     document.querySelector("#iris-receipt-status").textContent = "Копирование недоступно. Скопируйте текст вручную.";
   }
 };
-// The Update button (docs/app-updates.md): the bridge installs only releases
-// signed by the owner key pinned in this app, then the wallet restarts.
+// The Update button (docs/app-updates.md): the bridge builds the newest
+// published version and the wallet restarts into it.
 const UPDATE_WORKING = ["checking", "downloading", "building", "restarting"];
 let walletBuild = null;
 let walletUpdate = null;
@@ -1892,19 +1892,16 @@ function renderWalletUpdate(failed = false) {
   const u = walletUpdate;
   const installed = walletBuild ? `Установлена версия ${walletBuild.version} · ревизия ${walletBuild.localBuildSequence}. ` : "";
   status.textContent = failed || !u ? "Не удалось получить сведения о запущенном сервисе. Приложение не изменено."
-    : installed + (u.error === "no-release-signer"
-      ? "Владелец NIR ещё не создал ключ выпусков, поэтому обновления пока выключены. Приложение не изменено."
-      : u.error === "no-source-checkout"
-        ? "Это приложение собрано не из копии git-репозитория NIR; обновить его можно только новой сборкой."
-        : u.state === "checking" ? "Проверяем, есть ли новая подписанная версия…"
-          : u.state === "downloading" ? "Получаем подписанный исходный код…"
+    : installed + (u.error === "not-updatable-build"
+      ? "Эта сборка ещё не умеет обновляться сама. Соберите кошелёк один раз заново — дальше хватит кнопки «Обновить»."
+        : u.state === "checking" ? "Проверяем, есть ли новая версия…"
+          : u.state === "downloading" ? "Скачиваем новую версию…"
             : u.state === "building" ? "Собираем новую версию. Это займёт несколько минут; кошелёк перезапустится сам."
               : u.state === "restarting" ? "Перезапускаем кошелёк…"
                 : u.state === "failed" ? "Обновить не удалось. Установленный кошелёк не изменён."
-                  : u.available ? `Доступна версия ${u.release.version} (выпуск ${u.release.sequence}), подписанная ключом владельца NIR.`
-                    : u.release ? "Установлена последняя подписанная версия." : "Подписанных выпусков ещё нет.");
+                  : u.available ? `Доступна новая версия ${u.release.version} от ${u.release.date}.`
+                    : "У вас последняя версия.");
   apply.hidden = !u?.available || UPDATE_WORKING.includes(u?.state);
-  apply.textContent = u?.release ? `Обновить до ${u.release.version}` : "Обновить";
   document.querySelector("#wallet-check-updates").disabled = UPDATE_WORKING.includes(u?.state);
 }
 async function followWalletUpdate(path) {
