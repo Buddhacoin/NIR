@@ -428,3 +428,23 @@ test("native opening can request a replacement recovery code with the selected v
     assert.match(nativeSource, /создайте новый адрес и переведите на него средства/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+test("wallet app build bundles every module the app imports", () => {
+  const source = readFileSync(new URL("../blockchain/wallet-macos-build.mjs", import.meta.url), "utf8");
+  const files = new Set(/const MODULES = Object\.freeze\(`([^`]*)`/.exec(source)[1].trim().split(/\s+/));
+  const root = new URL("../", import.meta.url);
+  const seen = new Set();
+  const pending = ["blockchain/wallet-macos-app.mjs", "blockchain/wallet-macos-setup.mjs",
+    "blockchain/wallet-preview-cli.mjs"];
+  while (pending.length) {
+    const relative = pending.pop();
+    if (seen.has(relative)) continue;
+    seen.add(relative);
+    const text = readFileSync(new URL(relative, root), "utf8");
+    for (const [, path] of text.matchAll(/(?:from\s+|import\s*\(\s*)"(\.{1,2}\/[^"]+\.mjs)"/g)) {
+      pending.push(new URL(path, new URL(relative, root)).href.slice(root.href.length));
+    }
+  }
+  assert.ok(seen.has("blockchain/source-updater.mjs"));
+  for (const relative of seen) assert.ok(files.has(relative), relative);
+});

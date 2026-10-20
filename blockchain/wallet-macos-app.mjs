@@ -14,6 +14,9 @@ import { changeLocalTestWalletPassword, listLocalTestWallets,
   renewLocalTestRecoveryCode } from "./wallet-onboarding.mjs";
 import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
+import { macLauncherPid, readUpdateRecord, runBuilder, SourceUpdater, startSwap, UPDATE_RECORD,
+  updateBuildEnvironment } from "./source-updater.mjs";
+import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
@@ -208,6 +211,22 @@ async function nativePasswordChange({ vaultPath, signal }) {
   }
 }
 
+// The Update button: rebuild from the owner-signed release with the Node.js
+// this app was first built with, then swap and reopen (docs/app-updates.md).
+function createWalletUpdater() {
+  const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
+  let record = null;
+  try { record = readUpdateRecord(fileURLToPath(new URL(`../../${UPDATE_RECORD}`, import.meta.url))); } catch {}
+  return new SourceUpdater({
+    appPath, record, trustedAddress: pinnedUpdateSignerAddress,
+    build: (source, target, release) => runBuilder({ node: record.builderNode,
+      script: join(source, "blockchain", "wallet-macos-build.mjs"), target,
+      env: updateBuildEnvironment(release, record) }),
+    restart: ({ stagedAppPath, backupPath }) => startSwap({ appPath, backupPath, stagedAppPath,
+      launcherPid: macLauncherPid(appPath) }),
+  });
+}
+
 async function main() {
   if (process.platform !== "darwin") throw new Error("this visual wallet runs on macOS only");
   const setup = fileURLToPath(new URL("./wallet-macos-setup.mjs", import.meta.url));
@@ -265,6 +284,7 @@ async function main() {
       createAccount,
       nativePasswordChange,
       nativeSecurity,
+      appUpdater: createWalletUpdater(),
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,

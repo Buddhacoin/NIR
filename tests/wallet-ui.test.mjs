@@ -319,15 +319,14 @@ test("double-click Mac mode removes terminal setup and false mining claims", () 
   assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
 });
 
-test("update control reports unavailable trusted channel without installing", () => {
+test("update control installs only owner-signed releases through the bridge", () => {
   assert.match(html, /id="wallet-check-updates"/);
-  assert.match(html, /Обновить сведения о версии/);
-  assert.match(html, /Сейчас нет доверенного канала выпуска/);
+  assert.match(html, /<button id="wallet-apply-update" type="button" hidden>/);
+  assert.match(html, /только из выпусков, подписанных ключом владельца NIR/);
   assert.match(script, /bridgeRequest\("\/v1\/app-build"\)/);
-  assert.match(script, /Запущенный локальный сервис: версия/);
-  assert.doesNotMatch(script, /Установлена локальная сборка/);
-  assert.doesNotMatch(script, /об установленной сборке/);
-  assert.match(script, /Доверенный канал обновлений не настроен; наличие новой версии не проверено/);
+  assert.match(script, /followWalletUpdate\("\/v1\/app-update\/check"\)/);
+  assert.match(script, /followWalletUpdate\("\/v1\/app-update\/apply"\)/);
+  assert.match(script, /apply\.hidden = !u\?\.available/);
   assert.doesNotMatch(script, /wallet-check-updates[\s\S]{0,1000}wallet:macos-local-install/);
 });
 

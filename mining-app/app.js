@@ -37,6 +37,7 @@ const installedVersion = document.querySelector("#installed-version");
 const installedBuildId = document.querySelector("#installed-build-id");
 const checkUpdates = document.querySelector("#check-updates");
 const updateResult = document.querySelector("#update-result");
+const applyUpdate = document.querySelector("#apply-update");
 const walletLinkStart = document.querySelector("#wallet-link-start");
 const walletLinkChallenge = document.querySelector("#wallet-link-challenge");
 const walletLinkCopy = document.querySelector("#wallet-link-copy");
@@ -153,7 +154,18 @@ const copy = {
     settingsButton: "Настройки", settingsTitle: "Версия и обновления",
     settingsIntro: "Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.",
     installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
-    checkUpdates: "Обновить сведения о версии", settingsBack: "Назад к проверке моделей",
+    checkUpdates: "Проверить обновления", settingsBack: "Назад к проверке моделей",
+    applyUpdate: "Обновить", applyUpdateTo: (v) => `Обновить до ${v}`,
+    updateNoSigner: "Владелец NIR ещё не создал ключ выпусков, поэтому обновления пока выключены. Ничего не скачано и не установлено.",
+    updateNoCheckout: "Это приложение собрано не из копии git-репозитория NIR, поэтому обновить его можно только новой сборкой.",
+    updateChecking: "Проверяем, есть ли новая подписанная версия…",
+    updateAvailable: (v, n) => `Доступна версия ${v} (выпуск ${n}), подписанная ключом владельца NIR.`,
+    updateCurrent: "Установлена последняя подписанная версия.",
+    updateNoRelease: "Подписанных выпусков ещё нет.",
+    updateDownloading: "Получаем подписанный исходный код…",
+    updateBuilding: "Собираем новую версию. Это займёт несколько минут; приложение перезапустится само.",
+    updateRestarting: "Перезапускаем приложение…",
+    updateFailed: (e) => `Обновить не удалось: ${e}. Установленное приложение не изменено.`,
     versionSource: "Исходный код, не установленная сборка",
     versionUnavailable: "Не удалось определить версию этого экземпляра Model Lab.",
     buildSource: "Недоступен для запуска из исходного кода",
@@ -292,7 +304,18 @@ const copy = {
     settingsButton: "Settings", settingsTitle: "Version and updates",
     settingsIntro: "This is local information about the running Model Lab. The version number alone does not prove the app is authentic.",
     installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
-    checkUpdates: "Refresh version info", settingsBack: "Back to model checks",
+    checkUpdates: "Check for updates", settingsBack: "Back to model checks",
+    applyUpdate: "Update", applyUpdateTo: (v) => `Update to ${v}`,
+    updateNoSigner: "The NIR owner has not created a release key yet, so updates are off. Nothing was downloaded or installed.",
+    updateNoCheckout: "This app was not built from a git checkout of NIR, so only a new build can update it.",
+    updateChecking: "Checking for a newer signed version…",
+    updateAvailable: (v, n) => `Version ${v} (release ${n}) is available, signed by the NIR owner's key.`,
+    updateCurrent: "The latest signed version is installed.",
+    updateNoRelease: "There are no signed releases yet.",
+    updateDownloading: "Getting the signed source code…",
+    updateBuilding: "Building the new version. This takes a few minutes; the app restarts by itself.",
+    updateRestarting: "Restarting the app…",
+    updateFailed: (e) => `The update failed: ${e}. The installed app is unchanged.`,
     versionSource: "Source checkout, not an installed build",
     versionUnavailable: "Could not identify this Model Lab instance version.",
     buildSource: "Unavailable when running from source",
@@ -433,6 +456,8 @@ try { const saved = localStorage.getItem("nir-mining-locale"); if (saved === "en
 let connected = false;
 let versionInfo = null;
 let versionCheckFailed = false;
+let updateInfo = null;
+let updatePoll = null;
 let checking = false;
 let statusRequestRunning = false;
 let errorKind = null;
@@ -472,7 +497,43 @@ function renderVersion() {
     : versionInfo?.status === "local-build" ? versionInfo.version : t.versionUnavailable;
   installedBuildId.textContent = versionInfo?.status === "local-build"
     ? versionInfo.buildId : versionInfo?.status === "source-checkout" ? t.buildSource : "—";
-  updateResult.textContent = versionCheckFailed ? t.updateOffline : t.updateNotConfigured;
+  const u = updateInfo;
+  const working = ["checking", "downloading", "building", "restarting"].includes(u?.state);
+  updateResult.textContent = versionCheckFailed || !u ? t.updateOffline
+    : u.error === "no-release-signer" ? t.updateNoSigner
+      : u.error === "no-source-checkout" ? t.updateNoCheckout
+        : u.state === "checking" ? t.updateChecking
+          : u.state === "downloading" ? t.updateDownloading
+            : u.state === "building" ? t.updateBuilding
+              : u.state === "restarting" ? t.updateRestarting
+                : u.state === "failed" ? t.updateFailed(u.error)
+                  : u.available ? t.updateAvailable(u.release.version, u.release.sequence)
+                    : u.release ? t.updateCurrent : t.updateNoRelease;
+  if (applyUpdate) {
+    applyUpdate.hidden = !u?.available || working;
+    applyUpdate.textContent = u?.release ? t.applyUpdateTo(u.release.version) : t.applyUpdate;
+  }
+  checkUpdates.disabled = working;
+}
+
+// Follows a check or an update until it settles.
+async function followUpdate(path) {
+  clearTimeout(updatePoll);
+  try {
+    const { response, data } = path
+      ? await fetchQwenJson(path, { method: "POST", body: "" })
+      : await fetchQwenJson("/app-update", { cache: "no-store" });
+    if (!response.ok || typeof data?.state !== "string") throw new Error("invalid update status");
+    updateInfo = data;
+    versionCheckFailed = false;
+  } catch {
+    // The service stops while the app restarts for an update.
+    if (updateInfo?.state !== "restarting") versionCheckFailed = true;
+  }
+  renderVersion();
+  if (["checking", "downloading", "building", "restarting"].includes(updateInfo?.state)) {
+    updatePoll = setTimeout(() => { void followUpdate(); }, 1_000);
+  }
 }
 
 async function loadVersionInfo() {
@@ -869,6 +930,7 @@ settingsOpen?.addEventListener("click", () => {
   settingsPage.hidden = false;
   settingsOpen.setAttribute("aria-pressed", "true");
   settingsPage.scrollIntoView({ block: "start" });
+  if (!updateInfo && !versionCheckFailed) void followUpdate("/app-update/check");
 });
 settingsBack?.addEventListener("click", () => {
   settingsPage.hidden = true;
@@ -876,7 +938,14 @@ settingsBack?.addEventListener("click", () => {
   settingsOpen.setAttribute("aria-pressed", "false");
   settingsOpen.focus();
 });
-checkUpdates?.addEventListener("click", () => { void loadVersionInfo(); });
+checkUpdates?.addEventListener("click", async () => {
+  await loadVersionInfo();
+  if (!versionCheckFailed) await followUpdate("/app-update/check");
+});
+applyUpdate?.addEventListener("click", () => {
+  applyUpdate.hidden = true;
+  void followUpdate("/app-update/apply");
+});
 if (syntheticStart) {
   syntheticStart.addEventListener("click", async () => {
     try {

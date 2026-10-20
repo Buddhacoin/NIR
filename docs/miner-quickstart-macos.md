@@ -109,13 +109,11 @@ narrow and tall, with a RU/EN switch. **Настройки → Версия и �
 the version and a declared local build identifier derived from the bundled
 pre-signing files when built. The displayed identifier is read from a mutable
 local marker and is **not recomputed or independently verified** by this page;
-it is not proof of installed-app integrity or publisher identity. The
-**Обновить сведения о версии** button only rereads that local marker:
-there is no authenticated Model Lab update feed, so it must not claim that a
-newer version is available or that this one is current. It downloads and
-installs nothing. Different local builds may share the same `0.2.0` version;
-the identifier is not a publisher signature. The Desktop copy remains unchanged
-until a separately verified replacement workflow exists. Closing its last window stops the local
+it is not proof of installed-app integrity or publisher identity.
+**Проверить обновления** looks for a release signed by the NIR owner's pinned
+release key; **Обновить** rebuilds the app from exactly that signed commit,
+then quits, swaps and reopens it ([`docs/app-updates.md`](app-updates.md)).
+Without a pinned key it says updates are off and installs nothing. Closing its last window stops the local
 service. To try pinned Qwen instead of Iris, prepare the separately documented
 Python 3.13 MLX environment, then select it **before** building:
 

@@ -13,6 +13,9 @@ import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
 import { verifyOperatorWalletProof } from "./operator-wallet-link.mjs";
 import { CliqueMiningSession } from "./clique-mining-session.mjs";
+import { readUpdateRecord, runBuilder, SourceUpdater, startSwap, macLauncherPid, UPDATE_RECORD,
+  updateBuildEnvironment } from "./source-updater.mjs";
+import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 
 // Where one-button mining keeps its local devnet and miner key.
 function defaultMiningDirectory() {
@@ -270,11 +273,34 @@ export async function checkPinnedQwenRuntime(root) {
   return result;
 }
 
+// The Update button of the built app: rebuild from the owner-signed release
+// with this app's own Node and Python, then swap and reopen.
+export function createModelLabUpdater({ root, embedded }) {
+  let record = null;
+  if (embedded) {
+    try { record = readUpdateRecord(join(root, "..", UPDATE_RECORD)); } catch {}
+  }
+  const runtime = () => JSON.parse(readFileSync(join(root, "..", "NIR-RUNTIME.json"), "utf8"));
+  return new SourceUpdater({
+    appPath: join(root, "..", "..", ".."),
+    record,
+    trustedAddress: pinnedUpdateSignerAddress,
+    build: (source, target, release) => {
+      const { nodeExecutable, pythonExecutable } = runtime();
+      return runBuilder({ node: nodeExecutable.logicalPath, script: join(source, "blockchain", "mining-macos-build.mjs"),
+        target, env: { ...updateBuildEnvironment(release, record), NIR_MINING_NODE: nodeExecutable.logicalPath,
+          NIR_MINING_PYTHON: pythonExecutable.logicalPath } });
+    },
+    restart: ({ appPath, stagedAppPath, backupPath }) => startSwap({ appPath, backupPath, stagedAppPath,
+      launcherPid: macLauncherPid(appPath) }),
+  });
+}
+
 export function createMiningPracticeApp({ root, embedded = false, runModel = runPinnedModel,
   runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
   runReplay = replayPinnedQwen, verifyIris = verifyPinnedIrisEvidence,
   catalog = createOpenModelCatalog(), miningDirectory = defaultMiningDirectory(),
-  miningHttpPort = 8787, miningTickMs = 2_000 } = {}) {
+  miningHttpPort = 8787, miningTickMs = 2_000, updater = createModelLabUpdater({ root, embedded }) } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
   let lastIrisEvidence = null;
@@ -415,6 +441,27 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       } catch {
         send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid wallet-link proof" }));
       } finally { clearTimeout(deadline); }
+      return;
+    }
+    if (request.method === "GET" && path === "/app-update" && request.url === path) {
+      if (!authorized(request)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      send(200, "application/json; charset=utf-8", JSON.stringify(updater.status()));
+      return;
+    }
+    if (request.method === "POST" && ["/app-update/check", "/app-update/apply"].includes(path) &&
+        request.url === path) {
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      // Fetching and building take a while; the page follows through GET /app-update.
+      const started = path === "/app-update/check" ? updater.check() : updater.apply();
+      started.catch(() => {});
+      send(202, "application/json; charset=utf-8", JSON.stringify(updater.status()));
       return;
     }
     if (request.method === "GET" && path === "/mining/status" && request.url === path) {

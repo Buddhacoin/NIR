@@ -10,10 +10,15 @@ import {
   verifyPinnedDownloadedUpdateBytes,
 } from "../blockchain/update-trust-anchor.mjs";
 
-test("unconfigured release trust anchor fails closed", () => {
-  assert.equal(pinnedUpdateSignerAddress, null);
-  assert.throws(() => verifyPinnedGithubUpdateRelease({}, {}),
-    /trust anchor is not configured/);
+// `npm run app-release:key` pins the owner's address once; until then updates
+// fail closed.
+test("release trust anchor is unset or one pinned address, and fails closed", () => {
+  if (pinnedUpdateSignerAddress === null) {
+    assert.throws(() => verifyPinnedGithubUpdateRelease({}, {}), /trust anchor is not configured/);
+  } else {
+    assert.match(pinnedUpdateSignerAddress, /^nir1[0-9a-f]{64}$/);
+    assert.throws(() => verifyPinnedGithubUpdateRelease({}, {}), /not trusted/);
+  }
   assert.throws(() => selectPinnedUpdate({}, {}), /not verified with the pinned/);
   assert.throws(() => verifyPinnedDownloadedUpdateBytes({}, {}, Buffer.alloc(1)),
     /not verified with the pinned/);
@@ -44,5 +49,5 @@ test("a caller-chosen release signer cannot smuggle a catalog into pinned update
   assert.throws(() => verifyPinnedDownloadedUpdateBytes(callerVerified, identity, bytes),
     /not verified with the pinned/);
   assert.throws(() => verifyPinnedGithubUpdateRelease(release, envelope),
-    /trust anchor is not configured/);
+    pinnedUpdateSignerAddress === null ? /trust anchor is not configured/ : /not trusted/);
 });

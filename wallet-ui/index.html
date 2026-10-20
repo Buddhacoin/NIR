@@ -195,9 +195,10 @@
     <p class="form-status" id="settings-password-status" role="status" aria-live="polite"></p>
     <section aria-labelledby="wallet-update-title">
       <h3 id="wallet-update-title">Версия и обновления</h3>
-      <p>Сейчас нет доверенного канала выпуска. Проверка не скачивает и не устанавливает приложение.</p>
-      <button class="secondary" id="wallet-check-updates" type="button">Обновить сведения о версии</button>
-      <p class="form-status" id="wallet-update-status" role="status" aria-live="polite">Сведения о запущенном сервисе ещё не получены.</p>
+      <p>Обновления ставятся только из выпусков, подписанных ключом владельца NIR. Файлы и ключи кошелька при обновлении не меняются.</p>
+      <button class="secondary" id="wallet-check-updates" type="button">Проверить обновления</button>
+      <p class="form-status" id="wallet-update-status" role="status" aria-live="polite">Обновления ещё не проверялись.</p>
+      <button id="wallet-apply-update" type="button" hidden>Обновить</button>
     </section>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить кошелёк</button>
   </dialog>

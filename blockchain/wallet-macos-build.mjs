@@ -6,21 +6,25 @@ import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundleLocalNode } from "./wallet-bundled-node.mjs";
+import { buildUpdateRecord, UPDATE_RECORD } from "./source-updater.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
+// Every module the app imports; tests/wallet-macos-build.test.mjs checks the closure.
 const MODULES = Object.freeze(`
 blockchain/account-history-database.mjs blockchain/account-history-index.mjs
 blockchain/account-history.mjs blockchain/account-proof.mjs blockchain/account-tree.mjs
 blockchain/admission-inclusion.mjs blockchain/archive-sync.mjs blockchain/asset-proof.mjs
 blockchain/backup-recovery.mjs blockchain/beacon-rotation.mjs blockchain/block-store.mjs
-blockchain/chain.mjs blockchain/consensus-codec.mjs blockchain/consensus-json.mjs
+blockchain/chain.mjs blockchain/clique-search.mjs blockchain/consensus-codec.mjs blockchain/consensus-json.mjs
 blockchain/constants.mjs blockchain/crypto.mjs blockchain/evaluation-assignment-tree.mjs
 blockchain/http-ingress.mjs blockchain/light-client.mjs blockchain/memory.mjs
 blockchain/offline-release-bundle.mjs blockchain/offline-release-governance.mjs
 blockchain/offline-signer.mjs blockchain/operators.mjs blockchain/payment-request.mjs
 blockchain/operator-wallet-link.mjs blockchain/operator-model-receipt.mjs
 blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
+blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
+blockchain/source-release.mjs blockchain/source-updater.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs
 blockchain/transaction-tree.mjs blockchain/transfer-state-transition.mjs
 blockchain/update-catalog.mjs blockchain/update-trust-anchor.mjs
@@ -164,6 +168,9 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
     writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
       `${JSON.stringify({ format: "nir-local-test-build-v2",
         distribution: "not-a-public-installer", sequence })}\n`);
+    // Where this build came from, for the app's Update button.
+    writeFileSync(join(resources, UPDATE_RECORD),
+      `${JSON.stringify(buildUpdateRecord({ product: "wallet", root: ROOT }))}\n`);
     let runtimeComponent = sep;
     for (const part of process.execPath.split(sep).filter(Boolean)) {
       runtimeComponent = join(runtimeComponent, part);

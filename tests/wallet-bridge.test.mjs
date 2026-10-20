@@ -1597,3 +1597,45 @@ test("native bootstrap requires a full one-time secret and never exposes a sessi
   } finally { await close(server); rmSync(directory, { recursive: true, force: true }); }
 });
 
+
+test("the bridge exposes owner-signed app updates only to the paired session", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-app-update-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "app-update-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  const calls = [];
+  const state = { available: true, configured: true, error: null, release: { sequence: 2, version: "0.3.0" },
+    state: "idle" };
+  const appUpdater = {
+    apply: async () => { calls.push("apply"); },
+    check: async () => { calls.push("check"); },
+    status: () => state,
+  };
+  const server = createWalletBridgeServer({ appUpdater, authorize: async () => null, origin,
+    sessionToken: token, vaultPath });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    assert.equal((await request(`${base}/v1/app-update`, origin, "b".repeat(64))).status, 401);
+    assert.equal((await request(`${base}/v1/app-update/apply`, origin, "b".repeat(64),
+      { method: "POST" })).status, 401);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(await (await request(`${base}/v1/app-update`, origin, token)).json(), state);
+    assert.equal((await request(`${base}/v1/app-update/check`, origin, token, { method: "POST" })).status, 202);
+    assert.equal((await request(`${base}/v1/app-update/apply`, origin, token, { method: "POST" })).status, 202);
+    assert.deepEqual(calls, ["check", "apply"]);
+    // Without an updater the routes do not exist.
+    const plain = createWalletBridgeServer({ authorize: async () => null, origin, sessionToken: token, vaultPath });
+    await new Promise((resolve) => plain.listen(0, "127.0.0.1", resolve));
+    try {
+      const plainBase = `http://127.0.0.1:${plain.address().port}`;
+      assert.equal((await request(`${plainBase}/v1/app-update`, origin, token)).status, 404);
+    } finally {
+      await close(plain);
+    }
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

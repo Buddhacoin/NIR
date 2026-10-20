@@ -8,6 +8,7 @@ import { basename, dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createRuntimeBinding } from "./local-runtime-binding.mjs";
+import { buildUpdateRecord, UPDATE_RECORD } from "./source-updater.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 // Every module the app imports (tests/mining-macos-build.test.mjs checks the
@@ -39,6 +40,8 @@ blockchain/offline-release-governance.mjs blockchain/operators.mjs blockchain/pe
 blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
 blockchain/protocol-upgrade-authorization.mjs blockchain/protocol-upgrade.mjs
 blockchain/release-manifest.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
+blockchain/source-release.mjs blockchain/source-updater.mjs blockchain/update-catalog.mjs
+blockchain/update-trust-anchor.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-tree.mjs
 blockchain/transfer-state-transition.mjs blockchain/validator-admission-omission.mjs
 blockchain/validator-admission-readiness-auth.mjs blockchain/validator-admission.mjs
@@ -185,6 +188,9 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
       rewardEligible: false, version, buildId: `sha256:${digest.digest("hex")}`,
       updateChannel: "unconfigured",
     })}\n`);
+    // Where this build came from, for the app's Update button.
+    writeFileSync(join(resources, UPDATE_RECORD), `${JSON.stringify(buildUpdateRecord({
+      product: "model-lab", root: ROOT, env: { NIR_UPDATE_BUILDER_NODE: node, ...process.env } }))}\n`);
     if (sign) {
       command("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], "ad-hoc signing");
       command("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], "signature check");

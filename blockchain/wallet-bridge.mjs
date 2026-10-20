@@ -351,6 +351,7 @@ export function createWalletBridgeServer({
   firefoxPairing = false,
   nativePasswordChange,
   nativeSecurity,
+  appUpdater = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -616,6 +617,20 @@ export function createWalletBridgeServer({
         simulations.clear();
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
+      }
+      // The Update button (docs/app-updates.md): owner-signed releases only.
+      if (request.method === "GET" && url.pathname === "/v1/app-update") {
+        if (!appUpdater) return send(response, 404, { error: "app updates are unavailable" }, origin);
+        return send(response, 200, appUpdater.status(), origin);
+      }
+      if (request.method === "POST" && ["/v1/app-update/check", "/v1/app-update/apply"].includes(url.pathname)) {
+        if (!appUpdater) return send(response, 404, { error: "app updates are unavailable" }, origin);
+        const applying = url.pathname === "/v1/app-update/apply";
+        if (applying && (pending || securityPending || accountActionPending)) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        (applying ? appUpdater.apply() : appUpdater.check()).catch(() => {});
+        return send(response, 202, appUpdater.status(), origin);
       }
       if (request.method === "POST" && ["/v1/native-security", "/v1/native-password-change"].includes(url.pathname)) {
         const changingPassword = url.pathname === "/v1/native-password-change";

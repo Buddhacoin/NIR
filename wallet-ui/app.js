@@ -1880,21 +1880,67 @@ document.querySelector("#copy-iris-receipt").onclick = async () => {
     document.querySelector("#iris-receipt-status").textContent = "Копирование недоступно. Скопируйте текст вручную.";
   }
 };
-document.querySelector("#wallet-check-updates").onclick = async (event) => {
-  const button = event.currentTarget;
+// The Update button (docs/app-updates.md): the bridge installs only releases
+// signed by the owner key pinned in this app, then the wallet restarts.
+const UPDATE_WORKING = ["checking", "downloading", "building", "restarting"];
+let walletBuild = null;
+let walletUpdate = null;
+let walletUpdatePoll = null;
+function renderWalletUpdate(failed = false) {
   const status = document.querySelector("#wallet-update-status");
-  button.disabled = true;
+  const apply = document.querySelector("#wallet-apply-update");
+  const u = walletUpdate;
+  const installed = walletBuild ? `Установлена версия ${walletBuild.version} · ревизия ${walletBuild.localBuildSequence}. ` : "";
+  status.textContent = failed || !u ? "Не удалось получить сведения о запущенном сервисе. Приложение не изменено."
+    : installed + (u.error === "no-release-signer"
+      ? "Владелец NIR ещё не создал ключ выпусков, поэтому обновления пока выключены. Приложение не изменено."
+      : u.error === "no-source-checkout"
+        ? "Это приложение собрано не из копии git-репозитория NIR; обновить его можно только новой сборкой."
+        : u.state === "checking" ? "Проверяем, есть ли новая подписанная версия…"
+          : u.state === "downloading" ? "Получаем подписанный исходный код…"
+            : u.state === "building" ? "Собираем новую версию. Это займёт несколько минут; кошелёк перезапустится сам."
+              : u.state === "restarting" ? "Перезапускаем кошелёк…"
+                : u.state === "failed" ? "Обновить не удалось. Установленный кошелёк не изменён."
+                  : u.available ? `Доступна версия ${u.release.version} (выпуск ${u.release.sequence}), подписанная ключом владельца NIR.`
+                    : u.release ? "Установлена последняя подписанная версия." : "Подписанных выпусков ещё нет.");
+  apply.hidden = !u?.available || UPDATE_WORKING.includes(u?.state);
+  apply.textContent = u?.release ? `Обновить до ${u.release.version}` : "Обновить";
+  document.querySelector("#wallet-check-updates").disabled = UPDATE_WORKING.includes(u?.state);
+}
+async function followWalletUpdate(path) {
+  clearTimeout(walletUpdatePoll);
+  let failed = false;
+  try {
+    const result = await bridgeRequest(path ?? "/v1/app-update", path ? { method: "POST" } : {});
+    if (typeof result?.state !== "string") throw new Error("Неверные сведения об обновлении.");
+    walletUpdate = result;
+  } catch {
+    // The bridge stops while the wallet restarts for an update.
+    failed = walletUpdate?.state !== "restarting";
+  }
+  renderWalletUpdate(failed);
+  if (UPDATE_WORKING.includes(walletUpdate?.state)) {
+    walletUpdatePoll = setTimeout(() => { void followWalletUpdate(); }, 1_000);
+  }
+}
+document.querySelector("#wallet-check-updates").onclick = async () => {
   try {
     if (!bridgeSession) throw new Error("Нет активного сеанса кошелька.");
     const build = await bridgeRequest("/v1/app-build");
     if (!/^\d+\.\d+\.\d+$/.test(build.version) ||
-        !Number.isSafeInteger(build.localBuildSequence) || build.localBuildSequence < 1 ||
-        build.updateChannel !== "unavailable") throw new Error("Неверные сведения о сборке.");
-    status.textContent = `Запущенный локальный сервис: версия ${build.version} · ревизия ${build.localBuildSequence}. ` +
-      "Доверенный канал обновлений не настроен; наличие новой версии не проверено. Приложение не изменено.";
+        !Number.isSafeInteger(build.localBuildSequence) || build.localBuildSequence < 1) {
+      throw new Error("Неверные сведения о сборке.");
+    }
+    walletBuild = build;
   } catch {
-    status.textContent = "Не удалось получить сведения о запущенном сервисе. Приложение не изменено.";
-  } finally { button.disabled = false; }
+    renderWalletUpdate(true);
+    return;
+  }
+  await followWalletUpdate("/v1/app-update/check");
+};
+document.querySelector("#wallet-apply-update").onclick = (event) => {
+  event.currentTarget.hidden = true;
+  void followWalletUpdate("/v1/app-update/apply");
 };
 document.querySelector("#settings-secrets").onclick = async (event) => {
   const button = event.currentTarget;
