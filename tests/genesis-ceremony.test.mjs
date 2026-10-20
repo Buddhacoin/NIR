@@ -1198,7 +1198,7 @@ test("genesis ceremony CLI plans, assembles, verifies, and compiles public artif
   const root = mkdtempSync(join(tmpdir(), "nir-genesis-ceremony-"));
   const cli = new URL("../blockchain/genesis-ceremony-cli.mjs", import.meta.url).pathname;
   try {
-    const values = fixture("cli");
+    const values = v5Fixture("cli");
     const inputPath = join(root, "input.json");
     const releasePath = join(root, "signed-release.json");
     const planPath = join(root, "plan.json");
@@ -1283,6 +1283,31 @@ test("genesis ceremony CLI plans, assembles, verifies, and compiles public artif
       anchorPath,
     ], { encoding: "utf8" });
     assert.equal(registryVerified.status, 0, registryVerified.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("genesis ceremony CLI refuses new v1-v4 plans without creating output", () => {
+  const root = mkdtempSync(join(tmpdir(), "nir-legacy-plan-reject-"));
+  const cli = new URL("../blockchain/genesis-ceremony-cli.mjs", import.meta.url).pathname;
+  try {
+    for (const [version, makeFixture] of [
+      [1, fixture], [2, v2Fixture], [3, v3Fixture], [4, v4Fixture],
+    ]) {
+      const values = makeFixture(`legacy-cli-${version}`);
+      const inputPath = join(root, `input-${version}.json`);
+      const releasePath = join(root, `release-${version}.json`);
+      const planPath = join(root, `plan-${version}.json`);
+      writeFileSync(inputPath, JSON.stringify(values.input));
+      writeFileSync(releasePath, JSON.stringify(values.releaseOptions.signedRelease));
+      const result = spawnSync(process.execPath, [
+        cli, "plan", inputPath, releasePath, values.releaseOptions.trustedAddress, planPath,
+      ], { encoding: "utf8" });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /new genesis plans require v5 and the 44 NIR reward schedule/);
+      assert.equal(existsSync(planPath), false);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

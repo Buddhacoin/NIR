@@ -23,14 +23,13 @@ export const PROTOCOL_TREASURY_BUDGET_BPS = Object.freeze({
   reserve: 50,
 });
 export const MINING_POOL = MAX_SUPPLY - TREASURY_ALLOCATION;
-export const LEGACY_INITIAL_EPOCH_REWARD = 50n * ATOMIC_UNITS;
 export const INITIAL_EPOCH_REWARD = 44n * ATOMIC_UNITS;
 export const HALVING_INTERVAL = 210_000;
 export const SIGNATURE_ALGORITHM = "ml-dsa-65";
 export const MULTISIG_ALGORITHM = "ml-dsa-65-multisig";
 export const MAX_MULTISIG_MEMBERS = 16;
 export const PROTOCOL_VERSION = 24;
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37]);
 export const RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION = 25;
 export const EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION = 26;
 export const EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION = 27;
@@ -41,6 +40,10 @@ export const VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION = 31;
 export const VALIDATOR_ADMISSION_EXPIRY_PROTOCOL_VERSION = 32;
 export const VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION = 33;
 export const RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION = 34;
+export const PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION = 35;
+export const TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION = 36;
+// Network clique tasks replace evaluator-committee issuance (docs/proof-mining.md).
+export const PROOF_MINING_PROTOCOL_VERSION = 37;
 // Provisional TESTNET parameter. Mainnet economics must ratify this separately.
 export const VALIDATOR_WITHDRAWAL_DELAY_BLOCKS = 64;
 export const EVALUATION_ASSIGNMENT_LIFETIME_BLOCKS = 256;
@@ -58,8 +61,8 @@ export const MAX_BLOCK_BYTES = 2_000_000;
 export const MAX_FUTURE_DRIFT_MS = 120_000;
 export const EPOCH_REVEAL_TIMEOUT_BLOCKS = 8;
 export const MIN_BEACON_BOND = 1_000n * ATOMIC_UNITS;
-// Keep the existing evaluator-bond rule independent of the reward schedule.
-export const MIN_EVALUATOR_BOND = LEGACY_INITIAL_EPOCH_REWARD;
+// Evaluator collateral is independent of the issuance schedule.
+export const MIN_EVALUATOR_BOND = 50n * ATOMIC_UNITS;
 export const EVALUATOR_ACTIVATION_DELAY_BLOCKS = 64;
 export const EVALUATOR_CREDENTIAL_LIFETIME_BLOCKS = 1_024;
 export const BEACON_NON_REVEAL_SLASH_BPS = 100n;
@@ -98,7 +101,7 @@ export function vestedTreasuryAtTimestamp(genesisTimestamp, timestamp) {
   return vestedAllocationAtTimestamp(TREASURY_ALLOCATION, genesisTimestamp, timestamp);
 }
 
-export function scheduledEpochBudget(epoch, initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
+export function scheduledEpochBudget(epoch, initialReward = INITIAL_EPOCH_REWARD) {
   if (!Number.isSafeInteger(epoch) || epoch < 0) {
     throw new Error("epoch must be a non-negative safe integer");
   }

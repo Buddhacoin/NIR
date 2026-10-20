@@ -10,7 +10,7 @@ import {
 } from "./chain.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import {
-  LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
+  FOUNDER_IMMEDIATE_BPS, INITIAL_EPOCH_REWARD, TESTER_REWARD_RESERVE_BPS,
   SAFETY_POLICY_V1_COMMITMENT, TREASURY_VESTING_MS,
 } from "./constants.mjs";
 import {
@@ -24,6 +24,7 @@ const validators = Array.from({ length: 4 }, generateWallet);
 const evaluators = Array.from({ length: 4 }, generateWallet);
 const beaconAuthorities = Array.from({ length: 4 }, generateWallet);
 const founder = generateWallet();
+const treasury = generateWallet();
 const alice = generateWallet();
 const genesisTimestamp = Date.now() - TREASURY_VESTING_MS;
 const baselineArtifact = `sha256:${createHash("sha256")
@@ -44,6 +45,8 @@ const chain = new NirChain({
     },
   ],
   genesisTimestamp,
+  founderAddress: founder.address,
+  founderImmediateBps: Number(FOUNDER_IMMEDIATE_BPS),
   networkId: "nir-localnet-1",
   safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
   validators: validators.map((wallet, index) => ({
@@ -54,7 +57,8 @@ const chain = new NirChain({
     ...publicWallet(wallet),
     operatorId: `evaluator-${index}`,
   })),
-  treasuryAddress: founder.address,
+  treasuryAddress: treasury.address,
+  treasuryImmediateBps: Number(TESTER_REWARD_RESERVE_BPS),
 });
 
 function quorumFor(block) {

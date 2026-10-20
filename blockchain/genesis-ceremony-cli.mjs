@@ -73,7 +73,11 @@ const [command, ...args] = process.argv.slice(2);
 try {
   if (command === "plan" && args.length === 4) {
     const [inputPath, releasePath, trustedAddress, outputPath] = args;
-    const plan = createGenesisPlan(readJson(inputPath, "genesis ceremony input"), {
+    const input = readJson(inputPath, "genesis ceremony input");
+    if (input?.format !== "nir-public-genesis-plan-v5") {
+      throw new Error("new genesis plans require v5 and the 44 NIR reward schedule");
+    }
+    const plan = createGenesisPlan(input, {
       signedRelease: readJson(releasePath, "signed source release"), trustedAddress,
     });
     writeExclusive(outputPath, plan);

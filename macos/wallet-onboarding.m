@@ -4,6 +4,95 @@
 #include <errno.h>
 #include <sys/stat.h>
 
+#if defined(NIR_ONBOARDING_LOCALE_SMOKE_TEST) || defined(NIR_ONBOARDING_LOCALE_UI_TEST) || defined(NIR_ONBOARDING_LOCALE_CHOICE_TEST)
+static CFStringRef const NIRPreferenceDomain = CFSTR("org.nir.wallet-locale-smoke-test");
+#else
+static CFStringRef const NIRPreferenceDomain = CFSTR("org.nir.wallet-setup-test");
+#endif
+static BOOL NIREnglish(void) {
+    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("language"), NIRPreferenceDomain);
+    BOOL english = value && CFGetTypeID(value) == CFStringGetTypeID() &&
+        [(__bridge NSString *)value isEqualToString:@"en"];
+    if (value) CFRelease(value);
+    return english;
+}
+static void NIRSetEnglish(BOOL english) {
+    CFPreferencesSetAppValue(CFSTR("language"), english ? CFSTR("en") : CFSTR("ru"), NIRPreferenceDomain);
+    CFPreferencesAppSynchronize(NIRPreferenceDomain);
+}
+static NSString *NIRTranslate(NSString *source) {
+    static NSDictionary<NSString *, NSString *> *copy;
+    static NSDictionary<NSString *, NSString *> *reverse;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        copy = @{
+            @"С возвращением!": @"Welcome back!",
+            @"NIR Wallet · локальная тестовая сеть": @"NIR Wallet · local test network",
+            @"Создать": @"Create", @"Открыть": @"Open", @"Восстановить": @"Restore",
+            @"Новый адрес NIR": @"New NIR address", @"Создайте новый кошелёк": @"Create a new wallet",
+            @"Восстановление": @"Recovery", @"Код восстановления": @"Recovery code",
+            @"Код, записанный при создании кошелька": @"Code saved when the wallet was created",
+            @"Пароль": @"Password", @"Новый пароль": @"New password",
+            @"От 9 символов": @"At least 9 characters",
+            @"Введите пароль кошелька": @"Enter wallet password",
+            @"Повторите пароль": @"Repeat password",
+            @"Повторите новый пароль": @"Repeat new password",
+            @"Введите тот же пароль": @"Enter the same password",
+            @"Ваш полный адрес": @"Your full address", @"Ваш адрес": @"Your address",
+            @"Полный адрес nir1… из вашей записи": @"Full nir1… address from your record",
+            @"Резервная копия этого адреса": @"Backup for this address",
+            @"Другой файл…": @"Another file…", @"Создать тестовый кошелёк": @"Create test wallet",
+            @"Создать кошелёк": @"Create wallet", @"Открыть NIR Wallet": @"Open NIR Wallet",
+            @"Восстановить кошелёк": @"Restore wallet", @"Отмена": @"Cancel",
+            @"← Назад": @"← Back", @"Создать новый": @"Create new",
+            @"Открыть существующий": @"Open existing wallet",
+            @"Новый код восстановления": @"New recovery code",
+            @"На этом Mac ещё нет кошелька": @"No wallet on this Mac yet",
+            @"Кошелёк не распознан": @"Wallet not recognized",
+            @"Не удаляйте файл. Восстановите из копии и кода.": @"Do not delete the file. Restore with your backup and code.",
+            @"Создать другой адрес?": @"Create a different address?",
+            @"Обнаружен файл кошелька, который не удалось распознать. Новый кошелёк получит другой адрес и не восстановит доступ к старому. Не удаляйте прежний файл. Если у вас есть копия и код, вернитесь к восстановлению.": @"An existing wallet file could not be recognized. A new wallet gets a different address and will not restore access to the old one. Do not delete the old file. If you have a backup and code, return to Restore.",
+            @"Вернуться к восстановлению": @"Return to Restore",
+            @"Создать другой адрес": @"Create different address",
+            @"Новый кошелёк получит другой адрес. Если кошелёк уже был, сначала восстановите его. После создания сохраните код и зашифрованную копию отдельно.": @"A new wallet gets a different address. If you already had one, restore it first. Save the new code and encrypted backup separately.",
+            @"Пароль откроет выбранный кошелёк. Для операций он потребуется снова.": @"The password opens the selected wallet. It will be needed again for operations.",
+            @"Доступный кошелёк не распознан. Файл может быть повреждён; восстановите адрес из копии и кода.": @"No usable wallet was recognized. A file may be damaged; restore the address with your backup and code.",
+            @"Нужны копия, код восстановления и ранее записанный адрес.": @"You need a backup, recovery code and the address you previously recorded.",
+            @"Выбрать": @"Select", @"Выберите резервную копию NIR": @"Select a NIR backup",
+            @"NIR Wallet · новый адрес": @"NIR Wallet · new address",
+            @"На этом Mac нет сохранённого кошелька. Выберите «Создать».": @"No saved wallet on this Mac. Select Create.",
+            @"Введите пароль выбранного кошелька.": @"Enter the selected wallet password.",
+            @"Выберите копию из списка или нажмите «Другой файл…».": @"Select a listed backup or choose Another file…",
+            @"Пароль слишком короткий: нужно от 9 символов.": @"Password too short: at least 9 characters required.",
+            @"Пароли не совпадают. Проверьте ввод.": @"Passwords do not match. Check your entry.",
+            @"Введите полный адрес, записанный при создании кошелька.": @"Enter the full address recorded when the wallet was created.",
+            @"Введите код восстановления.": @"Enter the recovery code.",
+            @"Выберите кошелёк и введите его пароль.": @"Select a wallet and enter its password.",
+            @"Проверьте данные": @"Check the information",
+            @"Создать новый код восстановления?": @"Create a new recovery code?",
+            @"Понадобится сохранить новую резервную копию отдельно от нового кода. Старые копия и код продолжат работать. Если они могли попасть к посторонним, создайте новый адрес и переведите на него средства.": @"Save a new backup separately from the new code. The old backup and code will continue to work. If someone else may have obtained them, create a new address and transfer your funds there.",
+            @"Продолжить": @"Continue", @"Подключите кошелёк": @"Connect wallet",
+            @"Введите эти 8 цифр в окне браузера. Это не код восстановления. Код действует 10 минут.": @"Enter these eight digits in the browser window. This is not a recovery code. The code expires in 10 minutes.",
+            @"Готово": @"Done", @"Копировать код": @"Copy code", @"Приватный ключ": @"Private key",
+            @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому.": @"This address needs BOTH the code AND an encrypted backup. The code alone cannot restore the wallet if this Mac is lost. Save the backup, preferably on separate media, and keep the code elsewhere. Every new address needs its own backup. Never send them to anyone.",
+            @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.": @"This is the full private key. Anyone who sees it can use this address. Show or copy it only in a safe place.",
+            @"Сохранить копию": @"Save backup", @"Копировать": @"Copy",
+            @"Показать код": @"Reveal code", @"Показать ключ": @"Reveal key",
+            @"Нажмите «Показать», когда рядом нет посторонних и экран не транслируется.": @"Select Reveal only when nobody else can see your screen and screen sharing is off.",
+            @"Закрыть": @"Close",
+            @"Отложить настройку": @"Set up later", @"Копия остаётся на том же диске": @"Backup remains on the same disk",
+            @"При потере или поломке этого Mac код без копии не восстановит адрес. Лучше выбрать отдельный носитель. Приложение не может проверить, где физически находится выбранное хранилище.": @"If this Mac is lost or fails, the code without a backup cannot restore the address. Separate media is safer. The app cannot verify the physical location of storage you choose.",
+            @"Выбрать другое место": @"Choose another location", @"Сохранить всё равно": @"Save anyway",
+            @"Не удалось сохранить копию": @"Could not save backup",
+            @"Выберите новое имя в доступной папке и повторите. Неудачный частичный файл может остаться — не используйте его как копию. Существующие файлы не заменяются.": @"Choose a new name in a writable folder and retry. A failed partial file may remain; do not use it as a backup. Existing files are not replaced.",
+        };
+        NSMutableDictionary *reversed = [NSMutableDictionary dictionaryWithCapacity:copy.count];
+        [copy enumerateKeysAndObjectsUsingBlock:^(NSString *ru, NSString *en, BOOL *stop) { reversed[en] = ru; }];
+        reverse = [reversed copy];
+    });
+    return NIREnglish() ? (copy[source] ?: source) : (reverse[source] ?: source);
+}
+
 // Local-test onboarding. Passwords leave this process only through the private
 // stdout pipe to the vault process, never through argv, URLs or browser storage.
 @interface NIRSetup : NSObject <NSApplicationDelegate, NSWindowDelegate>
@@ -26,6 +115,7 @@
 @property NSButton *importBackup;
 @property NSArray<NSDictionary *> *backups;
 @property BOOL createOnly;
+@property BOOL hasUnrecognizedWalletFiles;
 @property NSTextField *titleLabel;
 @property NSTextField *subtitleLabel;
 @property NSImageView *logo;
@@ -33,9 +123,11 @@
 @property NSButton *action;
 @property NSButton *back;
 @property NSButton *createLink;
+@property NSButton *openLink;
 @property NSButton *restoreLink;
 @property NSButton *renewButton;
 @property NSButton *cancelButton;
+@property NSPopUpButton *languageMenu;
 @property NSString *selectedPath;
 @property BOOL submitted;
 @end
@@ -72,6 +164,13 @@
     content.wantsLayer = YES;
     content.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.975 alpha:1].CGColor;
     self.window.contentView = content;
+    self.languageMenu = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(252, 538, 110, 30)
+                                                  pullsDown:NO];
+    [self.languageMenu addItemsWithTitles:@[@"Русский", @"English"]];
+    [self.languageMenu selectItemAtIndex:NIREnglish() ? 1 : 0];
+    self.languageMenu.target = self;
+    self.languageMenu.action = @selector(changeLanguage:);
+    [content addSubview:self.languageMenu];
 
     self.logo = [[NSImageView alloc] initWithFrame:NSMakeRect(213, 302, 64, 64)];
     NSString *iconPath = [[NSBundle mainBundle] pathForResource:@"NIR" ofType:@"icns"];
@@ -109,7 +208,7 @@
                                     size:13 color:NSColor.secondaryLabelColor];
     [content addSubview:self.passwordLabel];
     self.password = (NSSecureTextField *)[self input:NSMakeRect(28, 198, 434, 30) secure:YES];
-    self.password.placeholderString = @"От 12 символов";
+    self.password.placeholderString = @"От 9 символов";
     [content addSubview:self.password];
     self.secondLabel = [self label:@"Повторите пароль" frame:NSMakeRect(28, 169, 434, 20)
                                   size:13 color:NSColor.secondaryLabelColor];
@@ -175,6 +274,11 @@
     self.createLink.frame = NSMakeRect(40, 12, 180, 27);
     self.createLink.contentTintColor = NSColor.secondaryLabelColor;
     [content addSubview:self.createLink];
+    self.openLink = [NSButton buttonWithTitle:@"Открыть существующий" target:self action:@selector(openMode:)];
+    self.openLink.bordered = NO;
+    self.openLink.frame = NSMakeRect(28, 12, 156, 27);
+    self.openLink.contentTintColor = NSColor.secondaryLabelColor;
+    [content addSubview:self.openLink];
     self.restoreLink = [NSButton buttonWithTitle:@"Восстановить" target:self action:@selector(restoreMode:)];
     self.restoreLink.bordered = NO;
     self.restoreLink.frame = NSMakeRect(270, 12, 180, 27);
@@ -219,10 +323,14 @@
         NSUInteger selectedIndex = preferredIndex == NSNotFound ? 0 : preferredIndex;
         self.selectedPath = self.wallets[selectedIndex][@"path"];
         [self.accountMenu selectItemAtIndex:selectedIndex];
+    } else if (self.hasUnrecognizedWalletFiles) {
+        // Never imply that a damaged/unrecognized vault is absent. Start at
+        // recovery, with explicit opt-in required before creating a new address.
+        self.modes.selectedSegment = 2;
     }
     [self refresh];
     [self.window center];
-#if !defined(NIR_ONBOARDING_SMOKE_TEST) && !defined(NIR_ONBOARDING_SMOKE_RESTORE_TEST) && !defined(NIR_ONBOARDING_SMOKE_OPEN_TEST) && !defined(NIR_ONBOARDING_SMOKE_RENEW_TEST)
+#if !defined(NIR_ONBOARDING_SMOKE_TEST) && !defined(NIR_ONBOARDING_SMOKE_RESTORE_TEST) && !defined(NIR_ONBOARDING_SMOKE_OPEN_TEST) && !defined(NIR_ONBOARDING_SMOKE_RENEW_TEST) && !defined(NIR_ONBOARDING_ENTRY_TEST)
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
 #endif
@@ -232,13 +340,52 @@
     return @[@"create", @"open", @"restore"][(NSUInteger)self.modes.selectedSegment];
 }
 
+- (void)localizeControls {
+    self.window.title = NIRTranslate(self.window.title);
+    for (NSTextField *field in @[self.titleLabel, self.subtitleLabel, self.recoveryLabel,
+                                  self.passwordLabel, self.secondLabel, self.addressLabel,
+                                  self.pathLabel, self.backupLabel, self.hint]) {
+        field.stringValue = NIRTranslate(field.stringValue);
+    }
+    for (NSTextField *field in @[self.recoveryCode, self.password, self.confirmation, self.address]) {
+        if (field.placeholderString) field.placeholderString = NIRTranslate(field.placeholderString);
+    }
+    for (NSButton *button in @[self.importBackup, self.action, self.cancelButton, self.back,
+                                self.createLink, self.openLink, self.restoreLink, self.renewButton]) {
+        button.title = NIRTranslate(button.title);
+    }
+    self.action.attributedTitle = [[NSAttributedString alloc] initWithString:self.action.title
+        attributes:@{NSForegroundColorAttributeName:NSColor.whiteColor,
+                     NSFontAttributeName:[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold]}];
+    for (NSUInteger index = 0; index < MIN(self.wallets.count, self.accountMenu.numberOfItems); index++) {
+        NSString *address = self.wallets[index][@"address"];
+        NSString *shortAddress = [NSString stringWithFormat:@"%@…%@",
+            [address substringToIndex:MIN((NSUInteger)12, address.length)],
+            [address substringFromIndex:address.length - MIN((NSUInteger)8, address.length)]];
+        [self.accountMenu.itemArray[index] setTitle:[NSString stringWithFormat:@"%@ %lu · %@",
+            NIREnglish() ? @"Wallet" : @"Кошелёк", (unsigned long)(index + 1), shortAddress]];
+    }
+    for (NSUInteger index = 0; index < MIN(self.backups.count, self.backupMenu.numberOfItems); index++) {
+        NSString *address = self.backups[index][@"address"];
+        [self.backupMenu.itemArray[index] setTitle:[NSString stringWithFormat:@"%@ %lu · %@…%@",
+            NIREnglish() ? @"Backup" : @"Копия", (unsigned long)(index + 1),
+            [address substringToIndex:MIN((NSUInteger)12, address.length)],
+            [address substringFromIndex:address.length - MIN((NSUInteger)8, address.length)]]];
+    }
+}
+
+- (void)changeLanguage:(id)sender {
+    NIRSetEnglish(self.languageMenu.indexOfSelectedItem == 1);
+    [self refresh];
+}
+
 - (void)chooseFile {
     if (![[self mode] isEqualToString:@"restore"]) return;
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.canChooseDirectories = NO;
     panel.allowsMultipleSelection = NO;
-    panel.prompt = @"Выбрать";
-    panel.message = @"Выберите резервную копию NIR";
+    panel.prompt = NIRTranslate(@"Выбрать");
+    panel.message = NIRTranslate(@"Выберите резервную копию NIR");
     NSString *folder = [[NSHomeDirectory() stringByAppendingPathComponent:
         @"Library/Application Support/NIR Wallet"] stringByAppendingPathComponent:@"Backups"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:folder]) {
@@ -253,19 +400,26 @@
     BOOL opening = [[self mode] isEqualToString:@"open"];
     BOOL restoring = !creation && !opening;
     [self.window setContentSize:NSMakeSize(390, opening ? 580 : (creation ? 640 : 780))];
+    self.languageMenu.frame = NSMakeRect(252, (opening ? 580 : (creation ? 640 : 780)) - 42, 110, 30);
     self.logo.frame = NSMakeRect(163, opening ? 440 : (creation ? 522 : 655), 64, 64);
     self.titleLabel.frame = NSMakeRect(28, opening ? 387 : (creation ? 468 : 606), 334, 40);
     self.titleLabel.stringValue = opening ? @"С возвращением!" :
-        (creation ? (self.createOnly ? @"Новый адрес NIR" : @"Создайте кошелёк") :
-         @"Восстановление");
+        (creation ? (self.createOnly ? @"Новый адрес NIR" : @"Создайте новый кошелёк") :
+         (self.hasUnrecognizedWalletFiles && self.wallets.count == 0 ?
+          @"Кошелёк не распознан" : @"Восстановление"));
     self.subtitleLabel.frame = NSMakeRect(28, opening ? 359 : (creation ? 440 : 577), 334, 24);
-    self.subtitleLabel.stringValue = @"NIR Wallet · локальная тестовая сеть";
+    self.subtitleLabel.stringValue = restoring && self.hasUnrecognizedWalletFiles &&
+        self.wallets.count == 0 ? @"Не удаляйте файл. Восстановите из копии и кода." :
+        @"NIR Wallet · локальная тестовая сеть";
     self.modes.hidden = YES;
-    self.back.hidden = opening || self.createOnly || (creation && self.wallets.count == 0);
-    self.back.frame = NSMakeRect(23, restoring ? 730 : 588, 95, 28);
+    self.back.hidden = self.createOnly || (opening && self.wallets.count > 0) ||
+        (creation && self.wallets.count == 0);
+    self.back.frame = NSMakeRect(23, opening ? 528 : (restoring ? 730 : 588), 95, 28);
     self.createLink.hidden = !opening;
-    self.restoreLink.hidden = !opening;
+    self.openLink.hidden = self.createOnly || !creation;
+    self.restoreLink.hidden = self.createOnly || (!opening && !creation);
     self.createLink.frame = NSMakeRect(28, 22, 156, 28);
+    self.openLink.frame = NSMakeRect(28, 22, 156, 28);
     self.restoreLink.frame = NSMakeRect(206, 22, 156, 28);
     self.renewButton.hidden = !opening || self.createOnly || self.wallets.count == 0;
     self.renewButton.frame = NSMakeRect(28, 250, 334, 24);
@@ -282,7 +436,7 @@
     self.importBackup.frame = NSMakeRect(245, 466, 117, 36);
     self.addressLabel.frame = NSMakeRect(28, 170, 334, 20);
     self.address.frame = NSMakeRect(28, 130, 334, 36);
-    self.hint.frame = NSMakeRect(28, opening ? 142 : 169, 334, opening ? 32 : 45);
+    self.hint.frame = NSMakeRect(28, opening ? 130 : 169, 334, opening ? 50 : 45);
     self.hint.alignment = NSTextAlignmentCenter;
     self.action.frame = NSMakeRect(28, restoring ? 48 : (opening ? 78 : 99), 334, 46);
     self.backupLabel.hidden = !restoring;
@@ -290,14 +444,15 @@
     self.importBackup.hidden = !restoring;
     self.passwordLabel.hidden = NO;
     self.secondLabel.hidden = opening;
-    self.secondLabel.stringValue = creation ? @"Повторите пароль" : @"Повторите новый пароль";
-    self.passwordLabel.stringValue = [[self mode] isEqualToString:@"restore"] ? @"Новый пароль" : @"Пароль";
+    self.secondLabel.stringValue = @"Повторите новый пароль";
+    self.passwordLabel.stringValue = opening ? @"Пароль" : @"Новый пароль";
     self.recoveryLabel.hidden = ![[self mode] isEqualToString:@"restore"];
     self.recoveryCode.hidden = self.recoveryLabel.hidden;
     self.password.hidden = NO;
+    self.password.enabled = !opening || self.wallets.count > 0;
     self.password.frame = opening ? NSMakeRect(28, 281, 334, 36) : self.password.frame;
     self.passwordLabel.frame = opening ? NSMakeRect(28, 321, 334, 20) : self.passwordLabel.frame;
-    self.password.placeholderString = opening ? @"Введите пароль кошелька" : @"От 12 символов";
+    self.password.placeholderString = opening ? @"Введите пароль кошелька" : @"От 9 символов";
     self.confirmation.hidden = opening;
     self.address.hidden = ![[self mode] isEqualToString:@"restore"];
     self.addressLabel.hidden = self.address.hidden;
@@ -306,19 +461,21 @@
     self.accountMenu.hidden = !opening || self.wallets.count == 0;
     self.action.title = creation ? @"Создать кошелёк" :
         (opening ? @"Открыть NIR Wallet" : @"Восстановить кошелёк");
+    self.action.enabled = !opening || self.wallets.count > 0;
     self.action.attributedTitle = [[NSAttributedString alloc] initWithString:self.action.title
         attributes:@{NSForegroundColorAttributeName:NSColor.whiteColor,
                      NSFontAttributeName:[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold]}];
     self.hint.hidden = restoring;
     self.hint.stringValue = creation ?
-        @"Код восстановления покажем после создания. Сохраните его отдельно." :
+        @"Новый кошелёк получит другой адрес. Если кошелёк уже был, сначала восстановите его. После создания сохраните код и зашифрованную копию отдельно." :
         (opening ? (self.wallets.count ? @"Пароль откроет выбранный кошелёк. Для операций он потребуется снова." :
-            @"Создайте кошелёк, чтобы начать работу.") :
+            @"Доступный кошелёк не распознан. Файл может быть повреждён; восстановите адрес из копии и кода.") :
          @"Нужны копия, код восстановления и ранее записанный адрес.");
+    [self localizeControls];
 }
 
 - (void)openMode:(id)sender {
-    self.modes.selectedSegment = 1;
+    self.modes.selectedSegment = sender == self.back && self.wallets.count == 0 ? 0 : 1;
     [self changeMode:sender];
 }
 
@@ -382,8 +539,8 @@
         return;
     }
     if (![mode isEqualToString:@"open"]) {
-        if (self.password.stringValue.length < 12) {
-            [self showError:@"Пароль слишком короткий: нужно от 12 символов."];
+        if ([self.password.stringValue lengthOfBytesUsingEncoding:NSUTF32LittleEndianStringEncoding] / 4 < 9) {
+            [self showError:@"Пароль слишком короткий: нужно от 9 символов."];
             return;
         }
         if (![self.password.stringValue isEqualToString:self.confirmation.stringValue]) {
@@ -398,6 +555,19 @@
     if ([mode isEqualToString:@"restore"] && self.recoveryCode.stringValue.length == 0) {
         [self showError:@"Введите код восстановления."];
         return;
+    }
+    if ([mode isEqualToString:@"create"] && self.hasUnrecognizedWalletFiles) {
+#if !defined(NIR_ONBOARDING_SMOKE_TEST)
+        NSAlert *warning = [NSAlert new];
+        warning.messageText = NIRTranslate(@"Создать другой адрес?");
+        warning.informativeText = NIRTranslate(@"Обнаружен файл кошелька, который не удалось распознать. Новый кошелёк получит другой адрес и не восстановит доступ к старому. Не удаляйте прежний файл. Если у вас есть копия и код, вернитесь к восстановлению.");
+        [warning addButtonWithTitle:NIRTranslate(@"Вернуться к восстановлению")];
+        [warning addButtonWithTitle:NIRTranslate(@"Создать другой адрес")];
+        if ([warning runModal] != NSAlertSecondButtonReturn) {
+            [self restoreMode:nil];
+            return;
+        }
+#endif
     }
     NSMutableDictionary *result = [@{@"mode": mode} mutableCopy];
     if ([mode isEqualToString:@"create"]) result[@"password"] = self.password.stringValue;
@@ -418,10 +588,10 @@
     }
 #if !defined(NIR_ONBOARDING_SMOKE_RENEW_TEST)
     NSAlert *warning = [NSAlert new];
-    warning.messageText = @"Создать новый код восстановления?";
-    warning.informativeText = @"Понадобится сохранить новую резервную копию отдельно от нового кода. Старые копия и код продолжат работать. Если они могли попасть к посторонним, создайте новый адрес и переведите на него средства.";
-    [warning addButtonWithTitle:@"Продолжить"];
-    [warning addButtonWithTitle:@"Отмена"];
+    warning.messageText = NIRTranslate(@"Создать новый код восстановления?");
+    warning.informativeText = NIRTranslate(@"Понадобится сохранить новую резервную копию отдельно от нового кода. Старые копия и код продолжат работать. Если они могли попасть к посторонним, создайте новый адрес и переведите на него средства.");
+    [warning addButtonWithTitle:NIRTranslate(@"Продолжить")];
+    [warning addButtonWithTitle:NIRTranslate(@"Отмена")];
     if ([warning runModal] != NSAlertFirstButtonReturn) return;
 #endif
     [self submitResult:@{ @"mode": @"renew", @"path": self.selectedPath,
@@ -429,7 +599,9 @@
 }
 
 - (void)submitResult:(NSDictionary *)result {
-    NSData *bytes = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+    NSMutableDictionary *response = [result mutableCopy];
+    response[@"language"] = NIREnglish() ? @"en" : @"ru";
+    NSData *bytes = [NSJSONSerialization dataWithJSONObject:response options:0 error:nil];
     if (!bytes) exit(1);
     fwrite(bytes.bytes, 1, bytes.length, stdout);
     fputc('\n', stdout);
@@ -440,8 +612,8 @@
 
 - (void)showError:(NSString *)message {
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Проверьте данные";
-    alert.informativeText = message;
+    alert.messageText = NIRTranslate(@"Проверьте данные");
+    alert.informativeText = NIRTranslate(message);
     [alert runModal];
 }
 
@@ -451,56 +623,40 @@
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc == 2 && strcmp(argv[1], "--show-pairing") == 0) {
-            NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
-            NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
-            NSString *code = [payload isKindOfClass:NSDictionary.class] ? payload[@"code"] : nil;
-            if (![code isKindOfClass:NSString.class] || code.length != 8) return 1;
-            for (NSUInteger index = 0; index < code.length; index++) {
-                if ([code characterAtIndex:index] < '0' || [code characterAtIndex:index] > '9') return 1;
-            }
-            NSApplication *app = [NSApplication sharedApplication];
-            [app setActivationPolicy:NSApplicationActivationPolicyRegular];
-            NSAlert *alert = [NSAlert new];
-            alert.messageText = @"Подключите кошелёк";
-            alert.informativeText = @"Введите эти 8 цифр в окне браузера. Это не код восстановления. Код действует 10 минут.";
-            NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 250, 42)];
-            field.stringValue = code;
-            field.editable = NO;
-            field.selectable = YES;
-            field.alignment = NSTextAlignmentCenter;
-            field.font = [NSFont monospacedDigitSystemFontOfSize:28 weight:NSFontWeightMedium];
-            alert.accessoryView = field;
-            [alert addButtonWithTitle:@"Готово"];
-            [alert addButtonWithTitle:@"Копировать код"];
-            // Safari is opened immediately before this helper. Keep the short-lived
-            // pairing prompt above that browser window, including when Safari has
-            // an in-page connection dialog open.
-            NSWindow *pairingWindow = alert.window;
-            pairingWindow.level = NSFloatingWindowLevel;
-            pairingWindow.collectionBehavior |= NSWindowCollectionBehaviorMoveToActiveSpace;
-            [pairingWindow orderFrontRegardless];
-            [app activateIgnoringOtherApps:YES];
-            [pairingWindow makeKeyAndOrderFront:nil];
-            // NSAlert creates its modal session only inside runModal. Activate
-            // again from that event loop so Safari cannot reclaim focus first.
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [[NSRunningApplication currentApplication]
-                    activateWithOptions:0];
-                [pairingWindow makeKeyAndOrderFront:nil];
-                [pairingWindow orderFrontRegardless];
-            });
-            while (YES) {
-                NSModalResponse choice = [alert runModal];
-                if (choice == NSAlertFirstButtonReturn) break;
-                if (choice == NSAlertSecondButtonReturn) {
-                    NSPasteboard *clipboard = [NSPasteboard generalPasteboard];
-                    [clipboard clearContents];
-                    [clipboard setString:code forType:NSPasteboardTypeString];
-                }
-            }
-            return 0;
+#ifdef NIR_ONBOARDING_LOCALE_CHOICE_TEST
+        CFPropertyListRef previous = CFPreferencesCopyAppValue(CFSTR("language"), NIRPreferenceDomain);
+        NIRSetEnglish(YES);
+        NIRSetup *choiceDelegate = [NIRSetup new];
+        [choiceDelegate submitResult:@{ @"mode": @"create" }];
+        CFPreferencesSetAppValue(CFSTR("language"), previous, NIRPreferenceDomain);
+        CFPreferencesAppSynchronize(NIRPreferenceDomain);
+        if (previous) CFRelease(previous);
+        return 0;
+#endif
+#ifdef NIR_ONBOARDING_LOCALE_SMOKE_TEST
+        CFPropertyListRef previous = CFPreferencesCopyAppValue(CFSTR("language"), NIRPreferenceDomain);
+        NIRSetEnglish(YES);
+        if (!NIREnglish() || ![NIRTranslate(@"Код восстановления") isEqualToString:@"Recovery code"] ||
+            ![NIRTranslate(@"Копия остаётся на том же диске") isEqualToString:@"Backup remains on the same disk"]) return 20;
+        NIRSetEnglish(NO);
+        if (NIREnglish() || ![NIRTranslate(@"Recovery code") isEqualToString:@"Код восстановления"]) return 21;
+        CFPreferencesSetAppValue(CFSTR("language"), previous, NIRPreferenceDomain);
+        CFPreferencesAppSynchronize(NIRPreferenceDomain);
+        if (previous) CFRelease(previous);
+        return 0;
+#endif
+#ifdef NIR_ONBOARDING_LOCALE_UI_TEST
+        {
+        NSApplication *app = [NSApplication sharedApplication];
+        [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+        NIRSetup *delegate = [NIRSetup new];
+        delegate.wallets = @[];
+        delegate.backups = @[];
+        app.delegate = delegate;
+        [app run];
+        return 0;
         }
+#endif
         if (argc == 2 && strcmp(argv[1], "--show-secret") == 0) {
             NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
             NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
@@ -515,10 +671,10 @@ int main(int argc, const char *argv[]) {
             [app setActivationPolicy:NSApplicationActivationPolicyRegular];
             NSAlert *alert = [NSAlert new];
             BOOL recovery = [kind isEqualToString:@"recovery"];
-            alert.messageText = recovery ? @"Код восстановления" : @"Приватный ключ";
-            alert.informativeText = recovery ?
+            alert.messageText = NIRTranslate(recovery ? @"Код восстановления" : @"Приватный ключ");
+            alert.informativeText = NIRTranslate(recovery ?
                 @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." :
-                @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.";
+                @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.");
             NSString *shown = secret;
             if (recovery) {
                 NSArray *groups = [secret componentsSeparatedByString:@"-"];
@@ -531,20 +687,51 @@ int main(int argc, const char *argv[]) {
             scroll.hasVerticalScroller = YES;
             scroll.borderType = NSBezelBorder;
             NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
-            view.string = shown;
+            // Raising this helper window must never raise the secret itself.
+            // The user explicitly reveals it only after the neutral alert is visible.
+            view.string = NIRTranslate(@"Нажмите «Показать», когда рядом нет посторонних и экран не транслируется.");
             view.editable = NO;
             view.selectable = YES;
             view.font = [NSFont monospacedSystemFontOfSize:recovery ? 15 : 13 weight:NSFontWeightRegular];
             view.textContainer.widthTracksTextView = YES;
             scroll.documentView = view;
             alert.accessoryView = scroll;
-            [alert addButtonWithTitle:recovery ? @"Сохранить копию" : @"Готово"];
-            [alert addButtonWithTitle:@"Копировать"];
-            if (recovery) [alert addButtonWithTitle:@"Отложить настройку"];
+            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Показать код" : @"Показать ключ")];
+            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Отложить настройку" : @"Закрыть")];
             if (recovery && !backupPath) return 1;
+            // This helper starts only after the first wizard exits. Activate
+            // its actual modal window so the backup step is not left behind
+            // the wallet shell when the two-click flow changes processes.
+            NSWindow *secretWindow = alert.window;
+            [secretWindow orderFrontRegardless];
             [app activateIgnoringOtherApps:YES];
+            [secretWindow makeKeyAndOrderFront:nil];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSRunningApplication currentApplication] activateWithOptions:0];
+                [secretWindow makeKeyAndOrderFront:nil];
+                [secretWindow orderFrontRegardless];
+            });
+            BOOL revealed = NO;
             while (YES) {
                 NSModalResponse choice = [alert runModal];
+                if (!revealed) {
+                    if (choice != NSAlertFirstButtonReturn) return recovery ? 2 : 0;
+                    // NSAlert is one-shot on some macOS versions: re-running
+                    // the same instance after Reveal can leave a blank window.
+                    // Build a fresh modal only after the explicit user action.
+                    NSAlert *revealedAlert = [NSAlert new];
+                    revealedAlert.messageText = alert.messageText;
+                    revealedAlert.informativeText = alert.informativeText;
+                    alert.accessoryView = nil;
+                    view.string = shown;
+                    revealedAlert.accessoryView = scroll;
+                    [revealedAlert addButtonWithTitle:NIRTranslate(recovery ? @"Сохранить копию" : @"Готово")];
+                    [revealedAlert addButtonWithTitle:NIRTranslate(@"Копировать")];
+                    if (recovery) [revealedAlert addButtonWithTitle:NIRTranslate(@"Отложить настройку")];
+                    alert = revealedAlert;
+                    revealed = YES;
+                    continue;
+                }
                 if (choice == NSModalResponseCancel && recovery) return 2;
                 if (choice == NSAlertFirstButtonReturn && !recovery) break;
                 if (choice == NSAlertSecondButtonReturn) {
@@ -558,7 +745,7 @@ int main(int argc, const char *argv[]) {
                 } else if (choice == NSAlertFirstButtonReturn && recovery) {
                     NSSavePanel *panel = [NSSavePanel savePanel];
                     panel.nameFieldStringValue = @"NIR-address-recovery.nirvault.json";
-                    panel.prompt = @"Сохранить копию";
+                    panel.prompt = NIRTranslate(@"Сохранить копию");
                     if ([panel runModal] == NSModalResponseOK) {
                         NSData *backup = [NSData dataWithContentsOfFile:backupPath];
                         NSString *destination = panel.URL.path;
@@ -569,10 +756,10 @@ int main(int argc, const char *argv[]) {
                                 &directoryInfo) == 0 && sourceInfo.st_dev == directoryInfo.st_dev;
                         if (sameDisk) {
                             NSAlert *warning = [NSAlert new];
-                            warning.messageText = @"Копия остаётся на том же диске";
-                            warning.informativeText = @"При потере или поломке этого Mac код без копии не восстановит адрес. Лучше выбрать отдельный носитель. Приложение не может проверить, где физически находится выбранное хранилище.";
-                            [warning addButtonWithTitle:@"Выбрать другое место"];
-                            [warning addButtonWithTitle:@"Сохранить всё равно"];
+                            warning.messageText = NIRTranslate(@"Копия остаётся на том же диске");
+                            warning.informativeText = NIRTranslate(@"При потере или поломке этого Mac код без копии не восстановит адрес. Лучше выбрать отдельный носитель. Приложение не может проверить, где физически находится выбранное хранилище.");
+                            [warning addButtonWithTitle:NIRTranslate(@"Выбрать другое место")];
+                            [warning addButtonWithTitle:NIRTranslate(@"Сохранить всё равно")];
                             if ([warning runModal] != NSAlertSecondButtonReturn) continue;
                         }
                         int descriptor = backup && backup.length >= 2 && backup.length <= 64 * 1024 &&
@@ -611,8 +798,8 @@ int main(int argc, const char *argv[]) {
                         }
                         if (!saved) {
                             NSAlert *status = [NSAlert new];
-                            status.messageText = @"Не удалось сохранить копию";
-                            status.informativeText = @"Выберите новое имя в доступной папке и повторите. Неудачный частичный файл может остаться — не используйте его как копию. Существующие файлы не заменяются.";
+                            status.messageText = NIRTranslate(@"Не удалось сохранить копию");
+                            status.informativeText = NIRTranslate(@"Выберите новое имя в доступной папке и повторите. Неудачный частичный файл может остаться — не используйте его как копию. Существующие файлы не заменяются.");
                             [status runModal];
                         }
                         if (saved) {
@@ -636,10 +823,13 @@ int main(int argc, const char *argv[]) {
         NSArray *wallets = [payload isKindOfClass:NSDictionary.class] ? payload[@"wallets"] : nil;
         NSArray *backups = [payload isKindOfClass:NSDictionary.class] ? payload[@"backups"] : nil;
         NSNumber *createOnly = [payload isKindOfClass:NSDictionary.class] ? payload[@"createOnly"] : nil;
+        NSNumber *hasUnrecognizedWalletFiles = [payload isKindOfClass:NSDictionary.class] ?
+            payload[@"hasUnrecognizedWalletFiles"] : nil;
         NSString *preferredPath = [payload isKindOfClass:NSDictionary.class] ? payload[@"preferredPath"] : nil;
         if (wallets && ![wallets isKindOfClass:NSArray.class]) return 1;
         if (backups && ![backups isKindOfClass:NSArray.class]) return 1;
         if (preferredPath && ![preferredPath isKindOfClass:NSString.class]) return 1;
+        if (hasUnrecognizedWalletFiles && ![hasUnrecognizedWalletFiles isKindOfClass:NSNumber.class]) return 1;
         for (id wallet in wallets) {
             if (![wallet isKindOfClass:NSDictionary.class] ||
                 ![wallet[@"address"] isKindOfClass:NSString.class] ||
@@ -655,8 +845,27 @@ int main(int argc, const char *argv[]) {
         delegate.preferredPath = preferredPath;
         delegate.backups = backups ?: @[];
         delegate.createOnly = [createOnly isKindOfClass:NSNumber.class] && createOnly.boolValue;
+        delegate.hasUnrecognizedWalletFiles = hasUnrecognizedWalletFiles.boolValue;
         app.delegate = delegate;
-#ifdef NIR_ONBOARDING_SMOKE_TEST
+#ifdef NIR_ONBOARDING_ENTRY_TEST
+        [delegate applicationDidFinishLaunching:nil];
+        NSMutableDictionary *state = [@{ @"startMode": [delegate mode],
+            @"openVisibleOnCreate": @(!delegate.openLink.hidden),
+            @"restoreVisibleOnCreate": @(!delegate.restoreLink.hidden),
+            @"requiresNewAddressConfirmation": @(delegate.hasUnrecognizedWalletFiles) } mutableCopy];
+        [delegate openMode:nil];
+        state[@"openActionEnabled"] = @(delegate.action.enabled);
+        state[@"createVisibleOnOpen"] = @(!delegate.createLink.hidden);
+        state[@"restoreVisibleOnOpen"] = @(!delegate.restoreLink.hidden);
+        [delegate restoreMode:nil];
+        state[@"restoreMode"] = [delegate mode];
+        state[@"importVisibleOnRestore"] = @(!delegate.importBackup.hidden);
+        NSData *serialized = [NSJSONSerialization dataWithJSONObject:state options:0 error:nil];
+        if (!serialized) return 1;
+        fwrite(serialized.bytes, 1, serialized.length, stdout);
+        fputc('\n', stdout);
+        return 0;
+#elif defined(NIR_ONBOARDING_SMOKE_TEST)
         [delegate applicationDidFinishLaunching:nil];
         delegate.password.stringValue = @"test-only-123";
         delegate.confirmation.stringValue = @"test-only-123";

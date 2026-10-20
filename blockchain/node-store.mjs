@@ -4,6 +4,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join, resolve } from "node:path";
 
 import {
@@ -16,9 +17,17 @@ import {
 } from "./chain.mjs";
 import {
   ATOMIC_UNITS,
+  MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   MIN_TRANSFER_FEE,
+  PROOF_MINING_PROTOCOL_VERSION,
   SAFETY_POLICY_V1_COMMITMENT,
+  TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION,
 } from "./constants.mjs";
+import { protocolVersionAtNextHeight } from "./protocol-upgrade.mjs";
+import { devnetProtocolUpgrade } from "./devnet-upgrades.mjs";
+import { createReleaseAuthoritySet, createReleaseTransparencyAnchor }
+  from "./offline-release-governance.mjs";
+import { createEpochRandomnessCommit, createEpochRandomnessReveal } from "./operators.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
@@ -26,6 +35,7 @@ import { createAccountProof } from "./account-proof.mjs";
 import { createAssetProof } from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
+import { proofMiningView } from "./proof-mining-state.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -49,13 +59,21 @@ function referenceCapability() {
   };
 }
 
-export function initializeDevnet(directory, { networkId = "nir-local-devnet" } = {}) {
+// `proofMining: true` starts from v27 with local release and beacon keys,
+// upgrades to v35 at once, and lets `tick()` run the beacon, so network clique
+// tasks can be mined against this node (docs/proof-mining.md).
+export function initializeDevnet(directory, {
+  networkId = "nir-local-devnet", proofMining = false, proofMiningInitialLevel = 32,
+} = {}) {
   const root = resolve(directory);
   mkdirSync(root, { mode: 0o700 });
   const validators = Array.from({ length: 4 }, generateWallet);
   const evaluators = Array.from({ length: 4 }, generateWallet);
   const beacons = Array.from({ length: 4 }, generateWallet);
   const treasury = generateWallet();
+  const releases = proofMining ? Array.from({ length: 4 }, generateWallet) : [];
+  const releaseSet = proofMining ? createReleaseAuthoritySet({ authorities: members(releases, "release"),
+    generation: 1, rotationDelayEntries: 2, threshold: 3 }) : null;
   const genesis = {
     beaconAuthorities: members(beacons, "beacon"),
     capabilityReferences: [referenceCapability()],
@@ -65,11 +83,23 @@ export function initializeDevnet(directory, { networkId = "nir-local-devnet" } =
     safetyPolicyCommitments: [SAFETY_POLICY_V1_COMMITMENT],
     treasuryAddress: treasury.address,
     validators: members(validators, "validator"),
+    ...(proofMining ? {
+      evaluationEnvironment: { adapter_protocol: "nir-application-adapter-v1", cpu_limit: 2,
+        format: "nir-evaluation-environment-v1", image_digest: `sha256:${"3".repeat(64)}`,
+        memory_limit_bytes: 1 << 30, runner_digest: `sha256:${"4".repeat(64)}`, timeout_seconds: 60 },
+      genesisProtocolVersion: 27,
+      proofMiningInitialLevel,
+      protocolUpgradeReleaseAnchor: createReleaseTransparencyAnchor({ initialSet: releaseSet,
+        logId: "nir-protocol-releases", networkId }),
+    } : {}),
   };
   writeExclusive(join(root, CONFIG_FILE), genesis, 0o644);
-  writeExclusive(join(root, DEV_KEYS_FILE), { treasury, validators }, 0o600);
+  writeExclusive(join(root, DEV_KEYS_FILE), { treasury, validators,
+    ...(proofMining ? { beacons, releaseSet, releases } : {}) }, 0o600);
   initializeBlockStore(root, new NirChain(genesis));
-  return { directory: root, networkId, treasuryAddress: treasury.address };
+  if (proofMining) new PersistentDevNode(root).upgradeTo(PROOF_MINING_PROTOCOL_VERSION);
+  return { directory: root, networkId, treasuryAddress: treasury.address,
+    ...(proofMining ? { protocolVersion: PROOF_MINING_PROTOCOL_VERSION } : {}) };
 }
 
 function loadJson(path) {
@@ -180,12 +210,64 @@ export class PersistentDevNode {
       tipHash: this.#chain.tipHash, validators, validatorWallets });
   }
 
+  proofRewards(address) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
+    return this.#chain.proofRewardHistory(address);
+  }
+
+  proofMining() {
+    // Miners sign answers bound to this genesis.
+    return { ...proofMiningView(this.#chain.proofMiningStatus(),
+      { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp }),
+    chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash };
+  }
+
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {
     return quoteTransferFee(String(amount), String(fee));
   }
 
-  #commit(transactions) {
-    const block = this.#chain.buildBlock({ transactions, timestamp: Date.now() });
+  get proofMiningEnabled() {
+    return Array.isArray(this.#keys.beacons) && Array.isArray(this.#keys.releases);
+  }
+
+  // Schedules and activates every version up to `targetVersion` with the
+  // devnet's own release keys.
+  upgradeTo(targetVersion) {
+    if (!this.proofMiningEnabled) throw new Error("devnet holds no release keys");
+    while (this.#chain.protocolVersion < targetVersion) {
+      const activationHeight = this.#chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
+      this.#commit({ protocolUpgrade: devnetProtocolUpgrade(this.#chain, this.#keys.releaseSet,
+        this.#keys.releases, this.#chain.protocolVersion + 1, activationHeight) });
+      while (this.#chain.height < activationHeight) this.#commit({});
+    }
+  }
+
+  // One devnet heartbeat: run a beacon round when no task is open, so the
+  // network issues the next one; otherwise produce a block so reveal delays
+  // pass. A public network gets both from independent operators.
+  tick() {
+    const status = this.#chain.proofMiningStatus();
+    if (!this.proofMiningEnabled || status === null ||
+        [...status.tasks.values()].some((task) => task.status === "open")) {
+      return this.#commit({});
+    }
+    const { committee, round } = this.#chain.epochRandomnessStatus();
+    const wallets = committee.map((address) => this.#keys.beacons.find((w) => w.address === address));
+    const secrets = wallets.map(() => randomBytes(32).toString("hex"));
+    const networkId = this.#chain.networkId;
+    this.#commit({ epochRandomnessCommits: wallets.map((wallet, i) =>
+      createEpochRandomnessCommit({ networkId, round, secret: secrets[i], wallet })) });
+    return this.#commit({ epochRandomnessReveals: wallets.map((wallet, i) =>
+      createEpochRandomnessReveal({ networkId, round, secret: secrets[i], wallet })) });
+  }
+
+  #nextProtocolVersion() {
+    return protocolVersionAtNextHeight({ currentHeight: this.#chain.height,
+      currentVersion: this.#chain.protocolVersion, pendingUpgrade: this.#chain.pendingProtocolUpgrade });
+  }
+
+  #commit(options) {
+    const block = this.#chain.buildBlock({ timestamp: Date.now(), ...options });
     const finalized = finalizeBlock(block, validatorQuorum(block, this.#keys.validators));
     const verified = this.#chain.fork();
     verified.appendBlock(finalized);
@@ -196,7 +278,7 @@ export class PersistentDevNode {
   }
 
   submitTransaction(transaction) {
-    return { ...this.#commit([transaction]), transactionId: transactionId(transaction) };
+    return { ...this.#commit({ transactions: [transaction] }), transactionId: transactionId(transaction) };
   }
 
   faucet(recipient, amount = (10n * ATOMIC_UNITS).toString()) {
@@ -213,7 +295,10 @@ export class PersistentDevNode {
       recipient,
       amount: atomic.toString(),
       nonce: this.#chain.nextNonce(this.#keys.treasury.address),
+      // From v36 a transfer names the genesis it belongs to.
+      ...(this.#nextProtocolVersion() >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION
+        ? { chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash } : {}),
     });
-    return { ...this.#commit([transaction]), transactionId: transactionId(transaction) };
+    return { ...this.#commit({ transactions: [transaction] }), transactionId: transactionId(transaction) };
   }
 }

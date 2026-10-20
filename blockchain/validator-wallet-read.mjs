@@ -7,9 +7,11 @@ import { WALLET_EXTENSION_ORIGIN } from "./validator-transaction-ingress.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
+const EXACT_FIREFOX_ORIGIN = /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function exactWalletReadOrigin(value) {
-  if (value === WALLET_EXTENSION_ORIGIN) return value;
+  if (value === WALLET_EXTENSION_ORIGIN ||
+      (typeof value === "string" && EXACT_FIREFOX_ORIGIN.test(value))) return value;
   let url;
   try { url = new URL(value); }
   catch { throw new Error("wallet read requires an exact local browser origin"); }

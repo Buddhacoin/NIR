@@ -37,6 +37,8 @@ import {
   RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION,
   MULTISIG_ALGORITHM,
   PROTOCOL_VERSION,
+  PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION,
+  TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
   SIGNATURE_ALGORITHM,
   TREASURY_ALLOCATION,
@@ -44,7 +46,6 @@ import {
   FOUNDER_IMMEDIATE_BPS,
   FOUNDER_VESTED_ALLOCATION,
   INITIAL_EPOCH_REWARD,
-  LEGACY_INITIAL_EPOCH_REWARD,
   PROTOCOL_TREASURY_ALLOCATION,
   PROTOCOL_TREASURY_VESTED_ALLOCATION,
   TESTER_REWARD_RESERVE_BPS,
@@ -53,6 +54,7 @@ import {
   VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION,
   VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
   RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION,
+  PROOF_MINING_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -144,6 +146,19 @@ import {
   normalizeAccountState,
 } from "./account-tree.mjs";
 import { transactionRoot } from "./transaction-tree.mjs";
+import { PROOF_DIFFICULTY_V1 } from "./proof-difficulty.mjs";
+import {
+  PROOF_MINING_V1,
+  applyProofAnswerCommit,
+  applyProofAnswerReveal,
+  createProofMiningState,
+  endProofMiningBlock,
+  escrowProofRewards,
+  issueProofTask,
+  matureProofRewards,
+  parseProofMiningSnapshot,
+  takeProofRewards,
+} from "./proof-mining-state.mjs";
 import {
   MAX_EVALUATION_ASSIGNMENTS,
   assertActiveEvaluationAssignmentRegistry,
@@ -482,6 +497,9 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   ], [
     "algorithm", "amount", "candidateId", "candidateOwner", "fee", "networkId", "nonce",
     "publicKey", "purpose", "sender", "signature", "type",
+  ], [
+    "algorithm", "amount", "candidateId", "candidateOwner", "chainIdentityGenesisHash", "fee",
+    "networkId", "nonce", "publicKey", "purpose", "sender", "signature", "type",
   ]],
   "credit-delegation": [[
     "algorithm", "delegate", "fee", "limit", "networkId", "nonce", "publicKey",
@@ -501,6 +519,10 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "progress-commitment": [[
     "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId", "contentHash", "networkId",
     "nonce", "parents", "publicKey", "recipient", "sender", "signature", "suiteCommitment", "type",
+  ], [
+    "algorithm", "artifactHash", "baselineContentHash", "baselineHash", "candidateId",
+    "chainIdentityGenesisHash", "contentHash", "networkId", "nonce", "parents", "publicKey",
+    "recipient", "sender", "signature", "suiteCommitment", "type",
   ]],
   "evaluator-bond": [[
     "algorithm", "amount", "fee", "networkId", "nonce", "publicKey", "sender",
@@ -551,6 +573,14 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "validator-exit-request": [[
     "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
   ]],
+  "proof-answer-commit": [[
+    "algorithm", "chainIdentityGenesisHash", "commitment", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "taskRound", "type",
+  ]],
+  "proof-answer-reveal": [[
+    "algorithm", "chainIdentityGenesisHash", "commitment", "fee", "networkId", "nonce", "publicKey", "recipient", "salt",
+    "sender", "signature", "type", "vertices",
+  ]],
   "validator-withdrawal-claim": [[
     "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
   ]],
@@ -564,7 +594,7 @@ const TRANSACTION_SCHEMAS = Object.freeze({
       "algorithm", "amount", "fee", "memberPublicKeys", "networkId", "nonce",
       "recipient", "sender", "signatures", "threshold", "type",
     ],
-  ],
+  ].flatMap((fields) => [fields, [...fields, "chainIdentityGenesisHash"]]),
 });
 
 function requireExactTransactionSchema(transaction) {
@@ -604,10 +634,12 @@ export function createTransfer({
   amount,
   nonce,
   fee = MIN_TRANSFER_FEE.toString(),
+  chainIdentityGenesisHash,
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: String(fee),
     networkId,
     nonce,
@@ -691,6 +723,7 @@ export function createSponsoredTransfer({
   sponsorNonce,
   fee = MIN_TRANSFER_FEE.toString(),
   useCredits = false,
+  chainIdentityGenesisHash,
 }) {
   if (!sponsorWallet || sponsorWallet.address === wallet?.address) {
     throw new Error("a sponsored transfer requires a distinct fee payer");
@@ -698,6 +731,7 @@ export function createSponsoredTransfer({
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: useCredits ? "0" : String(fee),
     feePayer: sponsorWallet.address,
     feePayerAlgorithm: SIGNATURE_ALGORITHM,
@@ -721,10 +755,11 @@ export function createSponsoredTransfer({
   };
 }
 
-export function createCreditTransfer({ wallet, networkId, recipient, amount, nonce }) {
+export function createCreditTransfer({ wallet, networkId, recipient, amount, nonce, chainIdentityGenesisHash }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: "0",
     networkId,
     nonce,
@@ -738,13 +773,14 @@ export function createCreditTransfer({ wallet, networkId, recipient, amount, non
 }
 
 export function createDelegatedCreditTransfer({
-  wallet, creditOwner, networkId, recipient, amount, nonce,
+  wallet, creditOwner, networkId, recipient, amount, nonce, chainIdentityGenesisHash,
 }) {
   assertAddress(creditOwner, "credit owner");
   if (creditOwner === wallet?.address) throw new Error("delegated credit owner must be distinct");
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     creditOwner,
     fee: "0",
     networkId,
@@ -760,20 +796,27 @@ export function createDelegatedCreditTransfer({
 
 export function progressCandidateId({
   networkId, sender, recipient, artifactHash, baselineHash, baselineContentHash, contentHash, parents, suiteCommitment,
+  chainIdentityGenesisHash,
 }) {
-  return hashObject({
+  const payload = {
     artifactHash, baselineContentHash, baselineHash, contentHash, networkId, parents, recipient, sender, suiteCommitment,
-  }, "PROGRESS_CANDIDATE_ID");
+  };
+  if (chainIdentityGenesisHash === undefined) return hashObject(payload, "PROGRESS_CANDIDATE_ID");
+  if (!/^[0-9a-f]{64}$/.test(chainIdentityGenesisHash)) {
+    throw new Error("progress candidate genesis identity is invalid");
+  }
+  return hashObject({ ...payload, chainIdentityGenesisHash }, "PROGRESS_CANDIDATE_ID_V2");
 }
 
 export function createProgressCommitment({
   wallet, networkId, recipient, artifactHash, baselineHash, baselineContentHash, contentHash = artifactHash,
-  parents = [baselineHash], suiteCommitment, nonce,
+  parents = [baselineHash], suiteCommitment, nonce, chainIdentityGenesisHash,
 }) {
   const canonicalParents = [...parents].sort();
   const candidateId = progressCandidateId({
     networkId, sender: wallet.address, recipient, artifactHash, baselineHash, baselineContentHash, contentHash,
     parents: canonicalParents, suiteCommitment,
+    chainIdentityGenesisHash,
   });
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
@@ -781,6 +824,7 @@ export function createProgressCommitment({
     baselineContentHash,
     baselineHash,
     candidateId,
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     contentHash,
     networkId,
     nonce,
@@ -803,6 +847,7 @@ export function createCandidateBond({
   fee = MIN_TRANSFER_FEE.toString(),
   candidateOwner,
   purpose,
+  chainIdentityGenesisHash,
 }) {
   const transaction = {
     algorithm: SIGNATURE_ALGORITHM,
@@ -819,6 +864,7 @@ export function createCandidateBond({
     transaction.candidateOwner = candidateOwner;
     transaction.purpose = purpose;
   }
+  if (chainIdentityGenesisHash !== undefined) transaction.chainIdentityGenesisHash = chainIdentityGenesisHash;
   return {
     ...transaction,
     signature: signObject(transaction, wallet, "CANDIDATE_BOND"),
@@ -835,6 +881,31 @@ export function createValidatorBond({
   };
   if (operatorId !== undefined) transaction.operatorId = operatorId;
   return { ...transaction, signature: signObject(transaction, wallet, "VALIDATOR_BOND") };
+}
+
+// Proof mining (docs/proof-mining.md §5): commit to an answer without showing
+// it, then reveal it. Build the commitment with `proofAnswerCommitment`.
+// Proof answers start after v36, so they are always bound to their genesis.
+export function createProofAnswerCommit({
+  wallet, networkId, chainIdentityGenesisHash, nonce, taskRound, commitment, fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, chainIdentityGenesisHash, commitment, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, taskRound, type: "proof-answer-commit",
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "PROOF_ANSWER_COMMIT_V1") };
+}
+
+export function createProofAnswerReveal({
+  wallet, networkId, chainIdentityGenesisHash, nonce, commitment, recipient, salt, vertices,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, chainIdentityGenesisHash, commitment, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, recipient, salt, sender: wallet.address,
+    type: "proof-answer-reveal", vertices,
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, "PROOF_ANSWER_REVEAL_V1") };
 }
 
 export function createValidatorExitRequest({
@@ -965,11 +1036,13 @@ export function createMultisigTransfer({
   amount,
   nonce,
   fee = MIN_TRANSFER_FEE.toString(),
+  chainIdentityGenesisHash,
 }) {
   const descriptor = multisigDescriptor(memberPublicKeys, threshold);
   const transaction = {
     algorithm: MULTISIG_ALGORITHM,
     amount: String(amount),
+    ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     fee: String(fee),
     memberPublicKeys: descriptor.memberPublicKeys,
     networkId,
@@ -1378,7 +1451,7 @@ export function finalizeValidatorRecoveryBlock(block, reserveSigners, plan, {
 }
 
 export function allocateProgressRewards(epoch, claims, remaining = MINING_POOL,
-  initialReward = LEGACY_INITIAL_EPOCH_REWARD) {
+  initialReward = INITIAL_EPOCH_REWARD) {
   if (!Array.isArray(claims) || claims.length === 0) return [];
   if (claims.length > MAX_PROGRESS_REWARDS_PER_BLOCK) {
     throw new Error("too many progress rewards in one block");
@@ -1582,6 +1655,11 @@ export class NirChain {
   #registeredValidators;
   #pendingValidatorAdmissions;
   #validatorReadinessObservationFloor;
+  #proofMining;
+  #proofMiningInitialLevel;
+  // Not consensus state: the proof rewards each address received, for
+  // wallets. A node rebuilds it by replaying blocks.
+  #proofRewardLog = new Map();
   #recentValidatorTransition;
   #pendingValidatorExits;
   #retiredValidators;
@@ -1626,7 +1704,17 @@ export class NirChain {
     genesisTimestamp = Date.now(),
     genesisProtocolVersion = PROTOCOL_VERSION,
     protocolUpgradeReleaseAnchor = null,
+    // Starting difficulty for network proof tasks once v35 activates;
+    // null keeps PROOF_DIFFICULTY_V1.initialLevel. Fixed in genesis, so every
+    // node starts from the same level.
+    proofMiningInitialLevel = null,
   }, { supportedProtocolVersions } = {}) {
+    if (proofMiningInitialLevel !== null &&
+        (!Number.isSafeInteger(proofMiningInitialLevel) ||
+         proofMiningInitialLevel < PROOF_DIFFICULTY_V1.minLevel ||
+         proofMiningInitialLevel > PROOF_DIFFICULTY_V1.maxLevel)) {
+      throw new Error("proof mining initial level is out of range");
+    }
     if (
       typeof networkId !== "string" ||
       networkId.length === 0 ||
@@ -1692,8 +1780,10 @@ export class NirChain {
       ...(founderAddress === null ? {} : { founderAddress }),
       ...(founderImmediateBps === 0 ? {} : { founderImmediateBps }),
       ...(treasuryImmediateBps === 0 ? {} : { treasuryImmediateBps }),
+      ...(proofMiningInitialLevel === null ? {} : { proofMiningInitialLevel }),
       validators,
     });
+    this.#proofMiningInitialLevel = proofMiningInitialLevel ?? PROOF_DIFFICULTY_V1.initialLevel;
     this.#genesisTimestamp = genesisTimestamp;
     this.#treasuryAddress = treasuryAddress;
     this.#founderAddress = founderAddress;
@@ -1798,6 +1888,7 @@ export class NirChain {
     this.#registeredValidators = new Map(this.#validators);
     this.#pendingValidatorAdmissions = new Map();
     this.#validatorReadinessObservationFloor = 0;
+    this.#proofMining = null;
     this.#recentValidatorTransition = null;
     this.#pendingValidatorExits = new Map();
     this.#retiredValidators = new Map();
@@ -2258,8 +2349,12 @@ export class NirChain {
             candidate.randomnessReveals.length !== 0 || candidate.committee !== null
           )) ||
           (candidate.purpose === "safety" && (
-            candidate.candidateOwner !== candidate.submitter || candidate.admissionBound
-          ))) {
+            candidate.candidateOwner !== candidate.submitter || candidate.admissionBound ||
+            candidate.chainIdentityGenesisHash !== undefined
+          )) ||
+          (candidate.chainIdentityGenesisHash !== undefined &&
+            candidate.chainIdentityGenesisHash !== chain.#chainIdentityGenesisHash
+          )) {
         throw new Error("candidate bond snapshot is invalid");
       }
       const normalizedCandidate = {
@@ -2341,6 +2436,8 @@ export class NirChain {
         !/^[0-9a-f]{64}$/.test(commitment.suiteCommitment ?? "") ||
         !/^nir1[0-9a-f]{64}$/.test(commitment.sender ?? "") ||
         !/^nir1[0-9a-f]{64}$/.test(commitment.recipient ?? "") ||
+        (commitment.chainIdentityGenesisHash !== undefined &&
+          commitment.chainIdentityGenesisHash !== chain.#chainIdentityGenesisHash) ||
         progressSubmitters.has(commitment.sender) ||
         candidateId !== progressCandidateId({
           ...commitment,
@@ -2429,6 +2526,11 @@ export class NirChain {
          validatorReadinessObservationFloor < (state.peerRegistry?.activationHeight ?? 0))) {
       throw new Error("validator readiness observation floor snapshot is invalid");
     }
+    if ((state.protocolVersion >= PROOF_MINING_PROTOCOL_VERSION) !== Object.hasOwn(state, "proofMining")) {
+      throw new Error("proof mining snapshot schema is invalid");
+    }
+    const proofMining = Object.hasOwn(state, "proofMining")
+      ? parseProofMiningSnapshot(state.proofMining) : null;
     if (pendingValidatorAdmissions.size > MAX_PENDING_VALIDATOR_ADMISSIONS) {
       throw new Error("validator admission queue capacity is exceeded");
     }
@@ -2763,6 +2865,7 @@ export class NirChain {
     for (const [candidateId, commitment] of progressCommitments) {
       const bond = candidateBonds.get(candidateId);
       if (!bond || bond.purpose !== "progress" || !bond.admissionBound ||
+          bond.chainIdentityGenesisHash !== commitment.chainIdentityGenesisHash ||
           bond.candidateOwner !== commitment.sender ||
           [commitment.sender, commitment.recipient].some((address) =>
             chain.#evaluators.has(address) || registeredBeaconAuthorities.has(address) ||
@@ -2852,6 +2955,7 @@ export class NirChain {
     chain.#registeredValidators = registeredMembers;
     chain.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     chain.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
+    chain.#proofMining = proofMining;
     chain.#recentValidatorTransition = recentValidatorTransition;
     chain.#pendingValidatorExits = pendingValidatorExits;
     chain.#retiredValidators = retiredValidators;
@@ -2923,6 +3027,10 @@ export class NirChain {
 
   get tipHash() {
     return this.#blocks.at(-1).hash;
+  }
+
+  get tipTimestamp() {
+    return this.#blocks.at(-1).timestamp;
   }
 
   blocks() {
@@ -3013,6 +3121,16 @@ export class NirChain {
 
   epochRandomnessStatus() {
     return structuredClone(this.#epochRandomness.snapshot());
+  }
+
+  // Open tasks, current level and pending answers for miners; null before v35.
+  proofMiningStatus() {
+    return structuredClone(this.#proofMining);
+  }
+
+  // Proof rewards credited to `address`, newest first (at most 200).
+  proofRewardHistory(address) {
+    return [...(this.#proofRewardLog.get(address) ?? [])].reverse().map((entry) => ({ ...entry }));
   }
 
   beaconAuthorityStatus() {
@@ -3131,6 +3249,9 @@ export class NirChain {
         validatorReadinessObservationFloor:
           overrides.validatorReadinessObservationFloor ??
             this.#validatorReadinessObservationFloor,
+      } : {}),
+      ...(protocolVersion >= PROOF_MINING_PROTOCOL_VERSION ? {
+        proofMining: overrides.proofMining ?? this.#proofMining,
       } : {}),
       ...(protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
         pendingValidatorExits:
@@ -3255,6 +3376,9 @@ export class NirChain {
         } : {}),
         ...(this.#protocolVersion >= VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION ? {
           validatorReadinessObservationFloor: this.#validatorReadinessObservationFloor,
+        } : {}),
+        ...(this.#protocolVersion >= PROOF_MINING_PROTOCOL_VERSION ? {
+          proofMining: this.#proofMining,
         } : {}),
         ...(this.#protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
           pendingValidatorExits: this.#pendingValidatorExits,
@@ -3496,8 +3620,7 @@ export class NirChain {
   }
 
   #initialEpochReward() {
-    return this.#treasuryImmediateBps === Number(TESTER_REWARD_RESERVE_BPS)
-      ? INITIAL_EPOCH_REWARD : LEGACY_INITIAL_EPOCH_REWARD;
+    return INITIAL_EPOCH_REWARD;
   }
 
   randomnessFault(candidateId) {
@@ -4179,7 +4302,7 @@ export class NirChain {
 
   #applyTransfer(
     transaction, balances, nonces, proposer, timestamp, height,
-    creditStakes, creditUsage, creditDelegations,
+    creditStakes, creditUsage, creditDelegations, protocolVersion,
   ) {
     if (transaction.type !== "transfer") throw new Error("unknown transaction type");
     if (![SIGNATURE_ALGORITHM, MULTISIG_ALGORITHM].includes(transaction.algorithm)) {
@@ -4187,6 +4310,13 @@ export class NirChain {
     }
     if (transaction.networkId !== this.#networkId) {
       throw new Error("transaction belongs to another network");
+    }
+    if (protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION) {
+      if (transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+        throw new Error("transfer belongs to another genesis");
+      }
+    } else if (transaction.chainIdentityGenesisHash !== undefined) {
+      throw new Error("genesis-bound transfer is not active");
     }
     assertAddress(transaction.recipient, "transfer recipient");
     const unsigned = unsignedTransaction(transaction);
@@ -4352,11 +4482,20 @@ export class NirChain {
     });
   }
 
-  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp, height) {
+  #applyCandidateBond(transaction, balances, nonces, candidateBonds, proposer, timestamp, height,
+    protocolVersion) {
     if (transaction.type !== "candidate-bond" || transaction.algorithm !== SIGNATURE_ALGORITHM) {
       throw new Error("candidate bond transaction is invalid");
     }
     if (transaction.networkId !== this.#networkId) throw new Error("transaction belongs to another network");
+    const progressPurpose = transaction.purpose === "progress";
+    if (progressPurpose && protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION) {
+      if (transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+        throw new Error("progress candidate bond genesis identity mismatch");
+      }
+    } else if (transaction.chainIdentityGenesisHash !== undefined) {
+      throw new Error("candidate bond genesis identity is premature or invalid for purpose");
+    }
     if (!/^[0-9a-f]{64}$/.test(transaction.candidateId ?? "") || candidateBonds.has(transaction.candidateId)) {
       throw new Error("candidate bond id is invalid or duplicated");
     }
@@ -4371,7 +4510,6 @@ export class NirChain {
     if (transaction.nonce !== expectedNonce) throw new Error("unexpected nonce");
     const bond = parseAtomic(transaction.amount, "candidate bond");
     const fee = parseAtomic(transaction.fee, "fee");
-    const progressPurpose = transaction.purpose === "progress";
     if (progressPurpose) {
       assertAddress(transaction.candidateOwner, "progress candidate owner");
       if (bond < MIN_PROGRESS_CANDIDATE_BOND || fee !== 0n) {
@@ -4401,6 +4539,8 @@ export class NirChain {
       submitter: transaction.sender,
       candidateOwner: progressPurpose ? transaction.candidateOwner : transaction.sender,
       purpose: progressPurpose ? "progress" : "safety",
+      ...(progressPurpose && transaction.chainIdentityGenesisHash !== undefined
+        ? { chainIdentityGenesisHash: transaction.chainIdentityGenesisHash } : {}),
       admissionBound: false,
     });
   }
@@ -4410,7 +4550,7 @@ export class NirChain {
     progressEscrows, registeredValidators, evaluatorBonds, disabledEvaluators,
     evaluators, pendingEvaluatorRegistrations, registeredBeaconAuthorities,
     pendingBeaconAdmissions,
-    height, randomnessRound,
+    height, randomnessRound, protocolVersion,
   ) {
     if (
       transaction.type !== "progress-commitment" ||
@@ -4430,6 +4570,13 @@ export class NirChain {
     ) {
       throw new Error("progress commitment transaction is invalid");
     }
+    if (protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION) {
+      if (transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash) {
+        throw new Error("progress commitment genesis identity mismatch");
+      }
+    } else if (transaction.chainIdentityGenesisHash !== undefined) {
+      throw new Error("progress commitment genesis identity is premature");
+    }
     assertAddress(transaction.sender, "progress submitter");
     assertAddress(transaction.recipient, "progress recipient");
     if (this.#eligibleEvaluators(evaluatorBonds, disabledEvaluators, evaluators).size <
@@ -4447,6 +4594,7 @@ export class NirChain {
     if (
       !candidateBond || candidateBond.purpose !== "progress" ||
       candidateBond.candidateOwner !== transaction.sender ||
+      candidateBond.chainIdentityGenesisHash !== transaction.chainIdentityGenesisHash ||
       candidateBond.bond < MIN_PROGRESS_CANDIDATE_BOND ||
       candidateBond.admissionBound || candidateBond.committedHeight >= height
     ) {
@@ -4517,6 +4665,9 @@ export class NirChain {
       recipient: transaction.recipient,
       sender: transaction.sender,
       suiteCommitment: transaction.suiteCommitment,
+      ...(transaction.chainIdentityGenesisHash === undefined ? {} : {
+        chainIdentityGenesisHash: transaction.chainIdentityGenesisHash,
+      }),
     });
   }
 
@@ -4779,6 +4930,43 @@ export class NirChain {
       candidate?.purpose === "safety" &&
       candidate.randomnessCommits?.has(address) &&
       !candidate.randomnessReveals?.has(address));
+  }
+
+  #applyProofAnswer(transaction, balances, nonces, proofMining, proposer, height, index, timestampMs) {
+    if (proofMining === null) {
+      throw new Error(`proof answers require protocol version ${PROOF_MINING_PROTOCOL_VERSION}`);
+    }
+    const commit = transaction.type === "proof-answer-commit";
+    if (transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId ||
+        transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey,
+          commit ? "PROOF_ANSWER_COMMIT_V1" : "PROOF_ANSWER_REVEAL_V1")) {
+      throw new Error("proof answer transaction is invalid");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const fee = parseAtomic(transaction.fee, "fee");
+    const bond = commit ? PROOF_MINING_V1.commitBond : 0n;
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee + bond) {
+      throw new Error("proof answer fee or bond is invalid or unfunded");
+    }
+    if (commit) {
+      applyProofAnswerCommit(proofMining, { commitment: transaction.commitment,
+        height, index, sender: transaction.sender, taskRound: transaction.taskRound, timestampMs });
+    } else {
+      assertAddress(transaction.recipient, "proof reward recipient");
+      applyProofAnswerReveal(proofMining, { commitment: transaction.commitment, height,
+        networkId: this.#networkId, recipient: transaction.recipient, salt: transaction.salt,
+        vertices: transaction.vertices });
+    }
+    balances.set(transaction.sender, balance - fee - bond);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
   }
 
   #applyValidatorExitRequest(
@@ -5533,6 +5721,8 @@ export class NirChain {
     fork.#pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
       .map(([address, admission]) => [address, structuredClone(admission)]));
     fork.#validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
+    fork.#proofMining = structuredClone(this.#proofMining);
+    fork.#proofRewardLog = new Map([...this.#proofRewardLog].map(([address, entries]) => [address, [...entries]]));
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#retiredValidators = new Map([...this.#retiredValidators]
@@ -5822,6 +6012,10 @@ export class NirChain {
       epochRandomness.reveal(reveal, block.height);
     }
     for (const claim of block.progressRewards) {
+      if (protocolState.protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION &&
+          this.#progressCommitments.get(claim?.evaluation?.candidateId)?.chainIdentityGenesisHash === undefined) {
+        throw new Error("legacy progress commitment cannot earn a v35 reward");
+      }
       const novelty = this.#verifyProgressClaim(
         claim,
         block.height,
@@ -5835,6 +6029,12 @@ export class NirChain {
       progressNoveltyReports.set(claim.evaluation.candidateId, novelty);
     }
 
+    if (protocolState.protocolVersion >= PROOF_MINING_PROTOCOL_VERSION &&
+        block.progressRewards.length > 0) {
+      // From v35 new NIR comes only from network proof tasks; escrows already
+      // created by evaluator committees still mature or face fraud proofs.
+      throw new Error("evaluator-committee issuance ended at protocol version 35");
+    }
     if (
       (block.progressRewards.length === 0 && block.issuanceEpoch !== null) ||
       (block.progressRewards.length > 0 && block.issuanceEpoch !== this.#rewardEpoch)
@@ -5929,6 +6129,7 @@ export class NirChain {
     const pendingValidatorAdmissions = new Map([...this.#pendingValidatorAdmissions]
       .map(([address, admission]) => [address, structuredClone(admission)]));
     let validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
+    let proofMining = structuredClone(this.#proofMining);
     const pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     const retiredValidators = new Map([...this.#retiredValidators]
@@ -5967,6 +6168,22 @@ export class NirChain {
       // before or after an A -> B -> A validator-set history.
       resetValidatorAdmissionReadiness(pendingValidatorAdmissions);
       validatorReadinessObservationFloor = block.height;
+    }
+    if (protocolState.protocolVersion >= PROOF_MINING_PROTOCOL_VERSION &&
+        this.#protocolVersion < PROOF_MINING_PROTOCOL_VERSION) {
+      proofMining = createProofMiningState({
+        ...PROOF_DIFFICULTY_V1, initialLevel: this.#proofMiningInitialLevel,
+      });
+    }
+    // Each beacon round finalized from v35 on issues one network task.
+    if (proofMining !== null && epochRandomness.round > this.#epochRandomness.round) {
+      issueProofTask(proofMining, {
+        beaconValue: epochRandomness.previousSeed,
+        height: block.height,
+        networkId: this.#networkId,
+        round: epochRandomness.round - 1,
+        timestampMs: block.timestamp,
+      });
     }
     if (protocolState.protocolVersion >= RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
         this.#protocolVersion < RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION &&
@@ -6010,6 +6227,20 @@ export class NirChain {
       EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION
       ? new Map(this.#evaluationAssignments)
       : new Map();
+    if (protocolState.protocolVersion >= PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION &&
+        this.#protocolVersion < PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION) {
+      for (const [candidateId, commitment] of progressCommitments) {
+        if (commitment.chainIdentityGenesisHash !== undefined) continue;
+        const bond = candidateBonds.get(candidateId);
+        if (!bond || bond.purpose !== "progress" || !bond.admissionBound) {
+          throw new Error("legacy progress admission has no refundable candidate bond");
+        }
+        balances.set(bond.submitter, (balances.get(bond.submitter) ?? 0n) + bond.bond);
+        candidateBonds.delete(candidateId);
+        progressCommitments.delete(candidateId);
+        evaluationAssignments.delete(candidateId);
+      }
+    }
     if (protocolState.protocolVersion >= EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION &&
         this.#protocolVersion < EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION) {
       for (const [candidateId, commitment] of progressCommitments) {
@@ -6263,6 +6494,32 @@ export class NirChain {
       progressCommitments.delete(reward.evaluation.candidateId);
       evaluationAssignments.delete(reward.evaluation.candidateId);
     }
+    // Proof-task winners share the same epoch budget, halving and ten-minute
+    // spacing as every other issuance; the schedule is unchanged.
+    let proofRewardsIssued = false;
+    const proofRewardCredits = [];
+    if (proofMining !== null) {
+      for (const { address, amount } of matureProofRewards(proofMining, block.height)) {
+        balances.set(address, (balances.get(address) ?? 0n) + amount);
+        proofRewardCredits.push({ address, amount });
+      }
+      if (proofMining.pendingRewards.length > 0 &&
+          block.timestamp >= this.#lastRewardTimestamp + MIN_REWARD_INTERVAL_MS) {
+        const allocations = allocateProgressRewards(
+          this.#rewardEpoch,
+          takeProofRewards(proofMining, MAX_PROGRESS_REWARDS_PER_BLOCK)
+            .map(({ fingerprint, recipient }) => ({ fingerprint, recipient, score: "1" })),
+          MINING_POOL - this.#mined - newlyMined,
+          this.#initialEpochReward(),
+        ).map(({ amount, fingerprint, recipient }) => ({
+          amount: parseAtomic(amount, "proof reward amount"), fingerprint, recipient,
+        })).filter(({ amount }) => amount > 0n);
+        escrowProofRewards(proofMining, allocations,
+          block.height + PROGRESS_REWARD_ESCROW_DELAY_BLOCKS);
+        newlyMined += allocations.reduce((sum, { amount }) => sum + amount, 0n);
+        proofRewardsIssued = allocations.length > 0;
+      }
+    }
     if (TREASURY_ALLOCATION + this.#mined + newlyMined > MAX_SUPPLY) {
       throw new Error("hard supply cap exceeded");
     }
@@ -6317,12 +6574,12 @@ export class NirChain {
       if (transaction.type === "transfer") {
         this.#applyTransfer(
           transaction, balances, nonces, block.feeRecipient, block.timestamp,
-          block.height, creditStakes, creditUsage, creditDelegations,
+          block.height, creditStakes, creditUsage, creditDelegations, protocolState.protocolVersion,
         );
       } else if (transaction.type === "candidate-bond") {
         this.#applyCandidateBond(
           transaction, balances, nonces, candidateBonds, block.feeRecipient,
-          block.timestamp, block.height,
+          block.timestamp, block.height, protocolState.protocolVersion,
         );
       } else if (transaction.type === "progress-commitment") {
         this.#applyProgressCommitment(
@@ -6341,6 +6598,7 @@ export class NirChain {
           pendingBeaconAdmissions,
           block.height,
           epochRandomness.round,
+          protocolState.protocolVersion,
         );
       } else if (transaction.type === "validator-bond") {
         this.#applyValidatorBond(
@@ -6537,6 +6795,10 @@ export class NirChain {
           transaction, nonces, creditUnstakes, balances, block.height,
           creditStakes, creditUsage, creditDelegations,
         );
+      } else if (transaction.type === "proof-answer-commit" ||
+          transaction.type === "proof-answer-reveal") {
+        this.#applyProofAnswer(transaction, balances, nonces, proofMining, block.feeRecipient,
+          block.height, block.transactions.indexOf(transaction), block.timestamp);
       } else if (transaction.type.startsWith("asset-")) {
         if (protocolState.protocolVersion < 25) {
           throw new Error("native assets require protocol version 25");
@@ -6991,8 +7253,18 @@ export class NirChain {
         unlockHeight: block.height + VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
       });
     }
-    const rewardEpochAfter = this.#rewardEpoch + (block.progressRewards.length > 0 ? 1 : 0);
-    const lastRewardTimestampAfter = block.progressRewards.length > 0
+    if (proofMining !== null) {
+      const { refunds, burned } = endProofMiningBlock(proofMining, {
+        height: block.height, networkId: this.#networkId, timestampMs: block.timestamp,
+      });
+      for (const { address, amount } of refunds) {
+        balances.set(address, (balances.get(address) ?? 0n) + amount);
+      }
+      newlyBurned += burned;
+    }
+    const issuedThisBlock = block.progressRewards.length > 0 || proofRewardsIssued;
+    const rewardEpochAfter = this.#rewardEpoch + (issuedThisBlock ? 1 : 0);
+    const lastRewardTimestampAfter = issuedThisBlock
       ? block.timestamp : this.#lastRewardTimestamp;
     // Every transition, including newly added transaction types, must preserve genesis vesting.
     for (const address of [this.#treasuryAddress, this.#founderAddress]) {
@@ -7039,6 +7311,7 @@ export class NirChain {
       pendingValidatorRotation: pendingValidatorRotationAfter,
       pendingValidatorAdmissions,
       validatorReadinessObservationFloor,
+      proofMining,
       pendingValidatorExits,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
@@ -7148,6 +7421,13 @@ export class NirChain {
     this.#registeredValidators = registeredValidators;
     this.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     this.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
+    this.#proofMining = proofMining;
+    for (const { address, amount } of proofRewardCredits) {
+      const entries = this.#proofRewardLog.get(address) ?? [];
+      entries.push({ amount: amount.toString(), height: block.height, timestamp: block.timestamp });
+      if (entries.length > 200) entries.shift();
+      this.#proofRewardLog.set(address, entries);
+    }
     this.#pendingValidatorExits = pendingValidatorExits;
     this.#retiredValidators = retiredValidators;
     this.#recentValidatorTransition = recentValidatorTransitionAfter;

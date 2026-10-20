@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +16,8 @@ import {
   DistributedCoordinator,
   initializeDistributedDevnet,
   invalidValidatorAdmissionsForNextBlock,
+  invalidGenesisBoundTransfersForNextBlock,
+  TransactionMempool,
   ValidatorReplica,
 } from "../blockchain/distributed-node.mjs";
 import { createValidatorHttpServer } from "../blockchain/validator-service.mjs";
@@ -70,6 +72,65 @@ test("validator admission pruning is one pass and preserves future nonce depende
   assert.equal(verifications, admissions.length);
   assert.deepEqual(invalid, [admissions[7], admissions[19]]);
   assert.equal(invalid.includes(admissions[511]), false);
+});
+
+test("transfer mempool pruning respects v36 activation and pinned genesis", () => {
+  const wallet = generateWallet();
+  const recipient = generateWallet().address;
+  const genesis = "a".repeat(64);
+  const old = createTransfer({ wallet, networkId: "nir-prune-test", recipient,
+    amount: "1", nonce: 0 });
+  const bound = createTransfer({ wallet, networkId: "nir-prune-test", recipient,
+    amount: "1", nonce: 0, chainIdentityGenesisHash: genesis });
+  const foreign = createTransfer({ wallet, networkId: "nir-prune-test", recipient,
+    amount: "1", nonce: 0, chainIdentityGenesisHash: "b".repeat(64) });
+  const pool = new TransactionMempool();
+  pool.add(old);
+  assert.deepEqual(invalidGenesisBoundTransfersForNextBlock(pool.values(), {
+    chainIdentityGenesisHash: genesis, protocolVersion: 35 }), []);
+  assert.deepEqual(invalidGenesisBoundTransfersForNextBlock([old, bound, foreign], {
+    chainIdentityGenesisHash: genesis, protocolVersion: 36 }), [old, foreign]);
+  assert.deepEqual(invalidGenesisBoundTransfersForNextBlock([old, bound], {
+    chainIdentityGenesisHash: genesis, protocolVersion: 35 }), [bound]);
+  pool.remove(invalidGenesisBoundTransfersForNextBlock(pool.values(), {
+    chainIdentityGenesisHash: genesis, protocolVersion: 36 }));
+  assert.equal(pool.size, 0);
+  assert.throws(() => invalidGenesisBoundTransfersForNextBlock([], {
+    chainIdentityGenesisHash: "bad", protocolVersion: 36 }), /context/);
+});
+
+test("validator startup prunes a persisted wrong-era transfer and its receipt before restart", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "nir-transfer-era-prune-"));
+  let replica;
+  let reopened;
+  try {
+    const layout = initializeDistributedDevnet(join(temporary, "network"));
+    const directory = layout.validatorDirectories[0];
+    const genesis = JSON.parse(readFileSync(join(directory, "genesis.json"), "utf8"));
+    const genesisHash = new NirChain(genesis).blocks()[0].hash;
+    const transaction = createTransfer({ wallet: generateWallet(),
+      networkId: layout.networkId, recipient: generateWallet().address,
+      amount: "1", nonce: 0, chainIdentityGenesisHash: genesisHash });
+    const id = transactionId(transaction);
+    const transactionPath = join(directory, "mempool", `${id}.json`);
+    const receiptPath = join(directory, "mempool", `${id}.receipt.json`);
+    writeFileSync(transactionPath, JSON.stringify(transaction), { mode: 0o600 });
+    writeFileSync(receiptPath, "{}", { mode: 0o600 });
+    replica = new ValidatorReplica(directory);
+    assert.equal(replica.pendingTransactions().length, 0);
+    assert.throws(() => replica.buildProposal(), /validator mempool is empty/);
+    assert.equal(replica.pendingTransactions().length, 0);
+    assert.equal(existsSync(transactionPath), false);
+    assert.equal(existsSync(receiptPath), false);
+    replica.closeSecurityState();
+    replica = null;
+    reopened = new ValidatorReplica(directory);
+    assert.equal(reopened.pendingTransactions().length, 0);
+  } finally {
+    replica?.closeSecurityState();
+    reopened?.closeSecurityState();
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test("validator admission pruning evicts only wrong-era, expired, and finalized-nonce envelopes", () => {

@@ -1,10 +1,15 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { nativeAssetId } from "./chain.mjs";
+import { TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION } from "./constants.mjs";
+import { validateProtocolUpgradeReleaseAnchor } from "./protocol-upgrade-authorization.mjs";
 
 import {
   signWalletPaymentRequest,
+  signWalletOperatorLink,
+  signWalletLocalIrisReceipt,
   signWalletResourceOperation,
   signWalletTransfer,
   walletPublicInfo,
@@ -16,6 +21,7 @@ import {
   verifyOfflineSignedPackage,
 } from "./offline-signer.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
+import { validateLocalIrisRunIntent } from "./operator-model-receipt.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
 import { verifyAssetProof, MAX_ASSET_PROOF_BYTES } from "./asset-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
@@ -49,6 +55,7 @@ import {
 } from "./account-history.mjs";
 
 const ADDRESS = /^nir1[0-9a-f]{64}$/;
+const walletPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const NETWORK = /^[a-zA-Z0-9._:-]{3,128}$/;
 const REQUEST_ID = /^[0-9a-f]{64}$/;
 const SIMULATION_ID = /^[0-9a-f]{64}$/;
@@ -81,6 +88,8 @@ const SAFE_CLIENT_ERRORS = new Set([
   "account proof trust anchor does not match",
   "signing was rejected by the user",
   "bridge session ended before signing authorization completed",
+  "v36 transfer requires a trusted genesis checkpoint",
+  "v36 transfer requires a trusted release anchor",
   "wallet account changed during the request",
 ]);
 
@@ -94,7 +103,7 @@ function publicBridgeError(error) {
 function send(response, status, value, origin) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
-    "access-control-allow-origin": origin,
+    ...(origin ? { "access-control-allow-origin": origin } : {}),
     "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
     "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
@@ -108,10 +117,17 @@ function send(response, status, value, origin) {
   response.end(body);
 }
 
-function readBody(request, maximumBytes = 72 * 1024) {
+function readBody(request, maximumBytes = 72 * 1024, timeoutMs = 0) {
+  let timer;
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        reject(new Error("bridge pairing request timed out"));
+        request.destroy();
+      }, timeoutMs);
+    }
     request.on("data", (chunk) => {
       size += chunk.length;
       if (size > maximumBytes) reject(new Error("bridge request is too large"));
@@ -122,7 +138,8 @@ function readBody(request, maximumBytes = 72 * 1024) {
       catch { reject(new Error("bridge request is not valid JSON")); }
     });
     request.on("error", reject);
-  });
+    request.on("aborted", () => reject(new Error("bridge request was aborted")));
+  }).finally(() => clearTimeout(timer));
 }
 
 function validIntent(value) {
@@ -331,6 +348,12 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  firefoxPairing = false,
+  nativePasswordChange,
+  nativeSecurity,
+  appUpdater = null,
+  appConnect = false,
+  openMiner = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -344,12 +367,15 @@ export function createWalletBridgeServer({
 } = {}) {
   if (typeof authorize !== "function" || typeof vaultPath !== "string" ||
       (createAccount !== undefined && typeof createAccount !== "function") ||
+      (nativePasswordChange !== undefined && typeof nativePasswordChange !== "function") ||
+      (nativeSecurity !== undefined && typeof nativeSecurity !== "function") ||
       (presentPairingCode !== undefined &&
         (typeof presentPairingCode !== "function" || pairingCode === undefined)) ||
       (accounts !== undefined && (!Array.isArray(accounts) || accounts.length < 1 ||
         accounts.length > 100 || accounts.some((account) =>
           typeof account?.path !== "string" || !ADDRESS.test(account?.address ?? "")))) ||
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
+      typeof firefoxPairing !== "boolean" || (firefoxPairing && pairingCode === undefined) ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
       (trustAnchor !== undefined &&
         (typeof trustAnchor?.expectedNetworkId !== "string" ||
@@ -362,7 +388,7 @@ export function createWalletBridgeServer({
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.tipHash ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.stateRoot ?? "") ||
            !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))))) ||
-      (pairingCode !== undefined && !/^[0-9]{8}$/.test(pairingCode)) ||
+      (pairingCode !== undefined && !/^(?:[0-9]{8}|[0-9a-f]{64})$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
       (headerHistoryPath !== undefined && typeof headerHistoryPath !== "string") ||
       (trustHistoryPath !== undefined && typeof trustHistoryPath !== "string") ||
@@ -376,6 +402,12 @@ export function createWalletBridgeServer({
   } : null;
   const genesisCheckpoint = trustAnchor?.genesisCheckpoint
     ? structuredClone(trustAnchor.genesisCheckpoint) : null;
+  const protocolUpgradeReleaseAnchor = trustAnchor?.protocolUpgradeReleaseAnchor
+    ? validateProtocolUpgradeReleaseAnchor(trustAnchor.protocolUpgradeReleaseAnchor,
+      accountTrust.expectedNetworkId) : null;
+  if (protocolUpgradeReleaseAnchor && !genesisCheckpoint) {
+    throw new Error("protocol release anchor requires a genesis checkpoint");
+  }
   if (accountTrust) {
     advanceValidatorTrust(accountTrust);
   }
@@ -453,7 +485,14 @@ export function createWalletBridgeServer({
   let pairingAttempts = 0;
   let pairingAvailable = pairingCode !== undefined;
   let pairingPending = false;
+  let securityPending = false;
+  let appConnectPending = false;
+  let lastAppConnectAt = 0;
+  let securityController = null;
   let sessionActive = pairingCode === undefined;
+  let pairedFirefoxOrigin = null;
+  let firefoxPromptCount = 0;
+  let lastFirefoxPromptAt = 0;
   let sessionGeneration = 0;
   let accountActionPending = false;
   const activateAccount = (id) => {
@@ -471,6 +510,7 @@ export function createWalletBridgeServer({
     signResults.clear();
   };
   const pairingDeadline = Date.now() + pairingLifetimeMs;
+  const configuredOrigin = origin;
   const server = createServer(async (request, response) => {
     const requestGeneration = sessionGeneration;
     const readAuthenticatedBody = async (limit) => {
@@ -481,13 +521,81 @@ export function createWalletBridgeServer({
       return body;
     };
     const requestOrigin = request.headers.origin;
+    const firefoxCandidate = firefoxPairing && pairedFirefoxOrigin === null &&
+      !sessionActive && pairingAvailable && Date.now() <= pairingDeadline &&
+      pairingAttempts < 5 &&
+      /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestOrigin ?? "") &&
+      ["/v1/pair", "/v1/pairing-prompt"].includes(request.url) &&
+      ["POST", "OPTIONS"].includes(request.method);
+    // A candidate can only attempt one-time pairing; the successful exact origin
+    // is then frozen for every privileged request for the remainder of the session.
+    const origin = firefoxPairing
+      ? (pairedFirefoxOrigin ?? (firefoxCandidate ? requestOrigin : null))
+      : configuredOrigin;
     const host = request.headers.host ?? "";
     const remoteAddress = request.socket.remoteAddress ?? "";
-    if (requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
+    // One-click linking for NIR Model Lab on this Mac: its local service asks
+    // for an address proof, and the wallet shows its own confirmation and
+    // password dialog. Browsers always send Origin on POST, so web pages
+    // cannot use this route; the proof only shows address ownership.
+    if (appConnect && request.method === "POST" && request.url === "/v1/app-connect" &&
+        requestOrigin === undefined && /^127\.0\.0\.1:[0-9]{1,5}$/.test(host) &&
+        ["127.0.0.1", "::ffff:127.0.0.1"].includes(remoteAddress)) {
+      if (appConnectPending || pending || securityPending || accountActionPending ||
+          Date.now() - lastAppConnectAt < 5_000) {
+        return send(response, 429, { error: "the wallet is busy; try again in a few seconds" }, null);
+      }
+      appConnectPending = true;
+      lastAppConnectAt = Date.now();
+      try {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("wallet-link request requires application/json");
+        }
+        const body = await readBody(request, 256, 5_000);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !== "app,challenge" ||
+            body.app !== "model-lab" || !REQUEST_ID.test(body.challenge ?? "")) {
+          throw new Error("wallet-link request is invalid");
+        }
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const authorizationAbort = new AbortController();
+        let timeout;
+        const password = await Promise.race([
+          authorize({ type: "local-operator-wallet-link", address: expectedAddress,
+            challenge: body.challenge, requestId: body.challenge }, { signal: authorizationAbort.signal }),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+              authorizationAbort.abort();
+              reject(new Error("wallet-link confirmation expired"));
+            }, SIGN_CONFIRMATION_TIMEOUT_MS);
+          }),
+        ]).finally(() => clearTimeout(timeout));
+        if (typeof password !== "string") {
+          return send(response, 403, { error: "the link was declined in the wallet" }, null);
+        }
+        if (walletAddress !== expectedAddress || activeVaultPath !== expectedPath) {
+          throw new Error("wallet account changed during the request");
+        }
+        const proof = signWalletOperatorLink({ path: expectedPath, password,
+          challenge: body.challenge, expectedAddress });
+        return send(response, 200, { proof }, null);
+      } catch (error) {
+        return send(response, 400, { error: publicBridgeError(error) }, null);
+      } finally {
+        appConnectPending = false;
+      }
+    }
+    if (!origin || requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
         !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress)) {
       return send(response, 403, { error: "bridge origin or host is not allowed" }, origin);
     }
     if (request.method === "OPTIONS") {
+      if (firefoxCandidate &&
+          (request.headers["access-control-request-method"] !== "POST" ||
+           ![undefined, "content-type"].includes(
+             request.headers["access-control-request-headers"]?.toLowerCase()))) {
+        return send(response, 403, { error: "bridge pairing preflight is invalid" }, origin);
+      }
       response.writeHead(204, {
         "access-control-allow-headers": "content-type, x-nir-bridge-token",
         "access-control-allow-methods": "DELETE, GET, POST, OPTIONS",
@@ -506,8 +614,16 @@ export function createWalletBridgeServer({
           Date.now() > pairingDeadline || pairingAttempts >= 5) {
         return send(response, 409, { error: "pairing is unavailable; restart the bridge" }, origin);
       }
+      if (firefoxPairing && (firefoxPromptCount >= 3 ||
+          (lastFirefoxPromptAt !== 0 && Date.now() - lastFirefoxPromptAt < 10_000))) {
+        return send(response, 429, { error: "pairing prompt is temporarily limited" }, origin);
+      }
       try {
         presentPairingCode();
+        if (firefoxPairing) {
+          firefoxPromptCount += 1;
+          lastFirefoxPromptAt = Date.now();
+        }
         return send(response, 202, { shownOnDevice: true }, origin);
       } catch {
         return send(response, 503, { error: "pairing window could not be opened" }, origin);
@@ -525,15 +641,17 @@ export function createWalletBridgeServer({
         }
         pairingPending = true;
         pairingAttempts += 1;
-        const body = await readBody(request, 128);
+        const body = await readBody(request, 128, firefoxPairing ? 4_000 : 0);
         if (!body || Object.keys(body).length !== 1 || typeof body.code !== "string" ||
             !sameSecret(body.code, pairingCode)) {
           throw new Error("pairing code is invalid");
         }
         pairingAvailable = false;
+        if (firefoxPairing) pairedFirefoxOrigin = requestOrigin;
         sessionActive = true;
         return send(response, 200, { sessionToken }, origin);
       } catch (error) {
+        if (response.destroyed) return;
         return send(response, 400, { error: publicBridgeError(error) }, origin);
       } finally {
         pairingPending = false;
@@ -544,6 +662,7 @@ export function createWalletBridgeServer({
     }
     try {
       if (request.method === "DELETE" && url.pathname === "/v1/session") {
+        securityController?.abort();
         sessionActive = false;
         sessionGeneration += 1;
         pairingAvailable = false;
@@ -553,6 +672,54 @@ export function createWalletBridgeServer({
         simulations.clear();
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/open-miner") {
+        if (!openMiner) return send(response, 404, { error: "the miner cannot be opened from here" }, origin);
+        try {
+          await openMiner();
+          return send(response, 200, { opened: true }, origin);
+        } catch {
+          return send(response, 503, { error: "the miner could not be opened" }, origin);
+        }
+      }
+      // The Update button (docs/app-updates.md).
+      if (request.method === "GET" && url.pathname === "/v1/app-update") {
+        if (!appUpdater) return send(response, 404, { error: "app updates are unavailable" }, origin);
+        return send(response, 200, appUpdater.status(), origin);
+      }
+      if (request.method === "POST" && ["/v1/app-update/check", "/v1/app-update/apply"].includes(url.pathname)) {
+        if (!appUpdater) return send(response, 404, { error: "app updates are unavailable" }, origin);
+        const applying = url.pathname === "/v1/app-update/apply";
+        if (applying && (pending || securityPending || accountActionPending)) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        (applying ? appUpdater.apply() : appUpdater.check()).catch(() => {});
+        return send(response, 202, appUpdater.status(), origin);
+      }
+      if (request.method === "POST" && ["/v1/native-security", "/v1/native-password-change"].includes(url.pathname)) {
+        const changingPassword = url.pathname === "/v1/native-password-change";
+        const action = changingPassword ? nativePasswordChange : nativeSecurity;
+        if (!action) return send(response, 404, { error: "native security is unavailable" }, origin);
+        if (securityPending || pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        securityPending = true;
+        securityController = new AbortController();
+        const securityTimeout = setTimeout(() => securityController?.abort(), 540_000);
+        const generation = sessionGeneration;
+        try {
+          const completed = await action({ vaultPath: activeVaultPath,
+            signal: securityController.signal });
+          if (!sessionActive || generation !== sessionGeneration) {
+            return send(response, 409, { error: "wallet session ended" }, origin);
+          }
+          return send(response, 200, changingPassword ? { changed: completed === true } :
+            { opened: completed === true }, origin);
+        } finally {
+          clearTimeout(securityTimeout);
+          securityPending = false;
+          securityController = null;
+        }
       }
       if (accountActionPending) {
         return send(response, 409, { error: "finish creating the new account first" }, origin);
@@ -567,7 +734,7 @@ export function createWalletBridgeServer({
         }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/select-account") {
-        if (pending) return send(response, 409, { error: "finish signing before switching" }, origin);
+        if (pending || securityPending) return send(response, 409, { error: "finish the pending wallet action before switching" }, origin);
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("account selection requires application/json");
         }
@@ -576,7 +743,7 @@ export function createWalletBridgeServer({
             !/^[0-9a-f]{32}$/.test(body.id ?? "") || !accountEntries.has(body.id)) {
           throw new Error("selected account is invalid");
         }
-        if (pending || accountActionPending) {
+        if (pending || accountActionPending || securityPending) {
           return send(response, 409, { error: "finish the pending wallet action before switching" }, origin);
         }
         activateAccount(body.id);
@@ -584,7 +751,7 @@ export function createWalletBridgeServer({
       }
       if (request.method === "POST" && url.pathname === "/v1/create-account") {
         if (!createAccount) return send(response, 404, { error: "account creation is unavailable" }, origin);
-        if (pending || accountEntries.size >= 100) {
+        if (pending || securityPending || accountEntries.size >= 100) {
           return send(response, 409, { error: "finish the pending wallet action first" }, origin);
         }
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
@@ -594,7 +761,7 @@ export function createWalletBridgeServer({
         if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
           throw new Error("account creation body is invalid");
         }
-        if (pending || accountActionPending || accountEntries.size >= 100) {
+        if (pending || accountActionPending || securityPending || accountEntries.size >= 100) {
           return send(response, 409, { error: "finish the pending wallet action first" }, origin);
         }
         accountActionPending = true;
@@ -630,7 +797,123 @@ export function createWalletBridgeServer({
         return send(response, entry.status, entry.value, origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
-        return send(response, 200, walletPublicInfo(activeVaultPath), origin);
+        return send(response, 200, { ...walletPublicInfo(activeVaultPath),
+          nativeSecurityAvailable: Boolean(nativeSecurity),
+          nativePasswordChangeAvailable: Boolean(nativePasswordChange) }, origin);
+      }
+      if (request.method === "GET" && url.pathname === "/v1/app-build") {
+        return send(response, 200, {
+          version: walletPackage.version,
+          localBuildSequence: walletPackage.walletBuildSequence ?? null,
+          updateChannel: "unavailable",
+        }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/sign-operator-link") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("wallet-link request requires application/json");
+        }
+        const body = await readAuthenticatedBody(256);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !==
+            "challenge,requestId" || !/^[0-9a-f]{64}$/.test(body.challenge ?? "") ||
+            !REQUEST_ID.test(body.requestId ?? "")) {
+          throw new Error("wallet-link request is invalid");
+        }
+        if (pending || seen.has(body.requestId)) {
+          return send(response, 409, { error: "wallet-link request is pending or already used" }, origin);
+        }
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const signingGeneration = sessionGeneration;
+        const resultEntry = { completedAt: null, status: null, value: null };
+        signResults.set(body.requestId, resultEntry);
+        pending = true;
+        try {
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize({ type: "local-operator-wallet-link", address: expectedAddress,
+              challenge: body.challenge, requestId: body.requestId },
+            { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("wallet-link confirmation expired"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
+          if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration ||
+              walletAddress !== expectedAddress || activeVaultPath !== expectedPath) {
+            throw new Error("wallet account changed during the request");
+          }
+          const proof = signWalletOperatorLink({ path: expectedPath, password,
+            challenge: body.challenge, expectedAddress });
+          const value = { requestId: body.requestId, proof };
+          resultEntry.status = 200;
+          resultEntry.value = value;
+          resultEntry.completedAt = Date.now();
+          return send(response, 200, value, origin);
+        } catch (error) {
+          resultEntry.status = 400;
+          resultEntry.value = { error: publicBridgeError(error) };
+          resultEntry.completedAt = Date.now();
+          throw error;
+        } finally { pending = false; }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/sign-local-iris-receipt") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? ""))
+          throw new Error("local receipt request requires application/json");
+        const body = await readAuthenticatedBody(1_024);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !==
+            "intent,requestId" || !REQUEST_ID.test(body.requestId ?? ""))
+          throw new Error("local receipt request is invalid");
+        validateLocalIrisRunIntent(body.intent);
+        if (body.intent.recipient !== walletAddress)
+          throw new Error("local receipt recipient differs from wallet");
+        if (pending || seen.has(body.requestId))
+          return send(response, 409, { error: "local receipt request is pending or already used" }, origin);
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const signingGeneration = sessionGeneration;
+        const resultEntry = { completedAt: null, status: null, value: null };
+        signResults.set(body.requestId, resultEntry);
+        pending = true;
+        try {
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize({ type: "local-iris-run-receipt", address: expectedAddress,
+              nonce: body.intent.nonce, evidenceDigest: body.intent.evidenceDigest,
+              bundleHash: body.intent.bundleHash, requestId: body.requestId },
+            { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("local receipt confirmation expired"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
+          if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration ||
+              walletAddress !== expectedAddress || activeVaultPath !== expectedPath)
+            throw new Error("wallet account changed during the request");
+          const receipt = signWalletLocalIrisReceipt({ path: expectedPath, password,
+            intent: body.intent, expectedAddress });
+          const value = { requestId: body.requestId, receipt };
+          resultEntry.status = 200;
+          resultEntry.value = value;
+          resultEntry.completedAt = Date.now();
+          return send(response, 200, value, origin);
+        } catch (error) {
+          resultEntry.status = 400;
+          resultEntry.value = { error: publicBridgeError(error) };
+          resultEntry.completedAt = Date.now();
+          throw error;
+        } finally { pending = false; }
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
@@ -716,8 +999,11 @@ export function createWalletBridgeServer({
         const base = restartsFromPersisted ? persistedBase : (verifiedFinalityTip ?? persistedBase);
         const nextTip = verifyFinalityProofChain(body?.proofs, {
           checkpoint: base,
+          expectedChainIdentityGenesisHash: protocolUpgradeReleaseAnchor
+            ? genesisCheckpoint.tipHash : null,
           expectedNetworkId: accountTrust.expectedNetworkId,
           handoffs: accountTrust.handoffs,
+          protocolUpgradeReleaseAnchor,
           trustedValidators: accountTrust.trustedValidators,
         });
         if (headerHistoryPath) {
@@ -978,10 +1264,16 @@ export function createWalletBridgeServer({
       }
       if (request.method === "POST" &&
           ["/v1/sign", "/v1/sign-resource", "/v1/sign-payment-request"].includes(url.pathname)) {
+        if (securityPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("bridge signing requests require application/json");
         }
         const body = await readAuthenticatedBody(16 * 1024);
+        if (securityPending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
         const { simulationId: _simulationId, ...unsignedBody } = body ?? {};
         const intent = url.pathname === "/v1/sign-resource" ? validResourceIntent(unsignedBody)
           : url.pathname === "/v1/sign-payment-request" ? validPaymentRequestIntent(unsignedBody)
@@ -991,6 +1283,20 @@ export function createWalletBridgeServer({
         const reviewedSimulationId = simulationForSigning({
           body, intent, pathname: url.pathname, simulations, verifiedAccountStates, walletAddress,
         });
+        const signerProof = verifiedAccountStates.get(walletAddress);
+        const transferGenesisHash = url.pathname === "/v1/sign" &&
+          signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION
+          ? genesisCheckpoint?.tipHash : undefined;
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !transferGenesisHash) {
+          throw new Error("v36 transfer requires a trusted genesis checkpoint");
+        }
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !protocolUpgradeReleaseAnchor) {
+          throw new Error("v36 transfer requires a trusted release anchor");
+        }
         seen.add(intent.requestId);
         if (seen.size > 1_000) seen.delete(seen.values().next().value);
         pruneSignResults();
@@ -1014,6 +1320,12 @@ export function createWalletBridgeServer({
           if (!sessionActive || signingGeneration !== sessionGeneration) {
             throw new Error("bridge session ended before signing authorization completed");
           }
+          const currentSignerProof = verifiedAccountStates.get(walletAddress);
+          if (!currentSignerProof || currentSignerProof.tipHash !== signerProof.tipHash ||
+              currentSignerProof.stateRoot !== signerProof.stateRoot ||
+              currentSignerProof.protocolVersion !== signerProof.protocolVersion) {
+            throw new Error("wallet account changed during the request");
+          }
           const { requestId, ...payload } = intent;
           const transaction = url.pathname === "/v1/sign-resource"
             ? signWalletResourceOperation({ path: activeVaultPath, password, operation: payload })
@@ -1021,7 +1333,8 @@ export function createWalletBridgeServer({
               ? signWalletPaymentRequest({
                 path: activeVaultPath, password, intent: { ...payload, requestId },
               })
-              : signWalletTransfer({ path: activeVaultPath, password, ...payload });
+              : signWalletTransfer({ path: activeVaultPath, password, ...payload,
+                ...(transferGenesisHash === undefined ? {} : { chainIdentityGenesisHash: transferGenesisHash }) });
           const value = {
             requestId,
             ...(reviewedSimulationId ? { simulationId: reviewedSimulationId } : {}),

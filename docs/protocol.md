@@ -62,10 +62,9 @@ unissued; it is not reassigned or silently minted. Empty epochs and insufficient
 verified progress may leave more of the pool unissued. A future real-value
 network must separately ratify its exact genesis and emission rules.
 
-Legacy v1-v4 genesis plans keep their original 50 NIR initial budget and
-replay it unchanged. If every eligible epoch is rewarded, those networks
-exhaust their 18.48 million NIR pool after zero-based epoch 646,799, early
-in the fourth halving era; a v5 plan cannot retroactively change that history.
+All locally supported genesis formats now use the same 44 NIR issuance rule.
+Pre-launch test-chain reward blocks issued under the discarded rule will not
+replay under this version; those valueless chains must not be reused for launch.
 
 ## 3. Proof of Intelligence Progress
 
@@ -161,13 +160,46 @@ samples. Candidate collateral still requires vested or circulating NIR. Evaluato
 eligibility has no circular first-reward dependency: genesis deducts one fixed
 minimum bond per evaluator from the existing treasury allocation and commits the
 locked balances in state and in the public ceremony plan. That evaluator
-minimum remains 50 NIR independently of the 44 NIR initial reward; changing
-the reward schedule does not reinterpret signed earlier genesis plans.
+minimum remains 50 NIR independently of the 44 NIR initial reward. This does
+not preserve old reward history: valueless test chains that issued 50 NIR
+blocks cannot replay under the current rule. Back up test data before replacing it;
+there is no automatic conversion.
+
+Proposed protocol v35 (not active on the default v24 chain) binds only new
+progress-purpose `candidate-bond` and `progress-commitment` transactions to the
+exact genesis block hash in a signed `chainIdentityGenesisHash` field. The v35
+`candidateId` uses a new domain-separated preimage that includes this hash.
+Blocks before activation reject the new schema; blocks from activation reject
+legacy progress admissions and bonds, while historical v24–v34 blocks keep their
+original IDs and signatures. At activation, any still-pending legacy progress
+commitment is cancelled and its bond refunded to the sponsor. A pre-activation unbound bond cannot sponsor a
+v35 admission and returns to its sponsor under the existing 64-block timeout.
+This is **not** a genesis-binding fix for transfers or other transaction types,
+or for reward escrows accepted before activation. It does not establish a
+public network or independently earned reward.
+
+Proposed protocol v36 (not active on the default v24 chain) requires the signed
+`chainIdentityGenesisHash` on every new NIR `transfer`, including multisignature,
+sponsored, and transfer-credit variants. The first v36 block rejects unbound
+transfers; v24–v35 history retains its original signatures and replay rules.
+The local wallet bridge can derive this field only from a configured, trusted
+genesis checkpoint after verifying a matching v36 account/finality proof; a
+browser-provided genesis value is not a trust anchor. Operators must provision
+the genesis and authorized release anchor for upgrades before this path works.
+Nodes discard queued wrong-era transfers before proposing the activation block;
+an unbound transfer accepted into a v35 mempool is not carried into v36, and no
+fee or nonce is spent by that discard. If this leaves no transaction or operator
+event, the current coordinator's empty-mempool policy still requires fresh
+valid activity to advance height; the wallet must re-sign for v36.
+This does **not** bind native-asset transfers, other signed transaction types,
+legacy escrow claims, or offline signing packages; those remain separate review
+and migration blockers. A passing local transfer test is not a public network,
+test reward, or launch approval.
 
 The minimum bond is only an admission floor. A rewarded claim is accepted only
 when its exact allocated reward is no larger than its bound bond; otherwise the
-whole reward block is invalid. A lone claim in the first v5 issuance epoch must
-therefore have 44 NIR locked (50 NIR on legacy plans), while several claims
+whole reward block is invalid. A lone claim in the first issuance epoch must
+therefore have 44 NIR locked, while several claims
 may lock their smaller exact
 allocations. The bond and reward remain unavailable through the objective fraud
 window. Full assigned-committee equivocation burns both plus every equivocating
@@ -431,9 +463,8 @@ cannot increase the epoch budget. A non-empty rewarded block consumes exactly
 `min(scheduled_epoch_budget, remaining_mining_pool)`; an empty block consumes no
 issuance epoch. The ten-minute consensus interval still applies between
 rewarded blocks, and the 21 million NIR cap can truncate a final budget.
-Under a v5 genesis the full halving series approaches but does not exhaust
-the pool because every era uses integer atomic units. Legacy genesis plans
-retain the capped 50 NIR schedule described above.
+The full halving series approaches but does not exhaust the pool because every
+era uses integer atomic units, regardless of the local genesis format.
 
 Consensus additionally caps evaluator-reported positive gain at
 `100 × novelty_bps`, where `novelty_bps` is recomputed from the state-rooted

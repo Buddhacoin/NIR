@@ -70,7 +70,7 @@ turn an unknown field into an ignored field.
 ## Version changes and activation
 
 Encoding version 1 is the normative encoding for active protocol versions 24
-and 25. A later encoding is not a local configuration choice. It requires:
+through 37. A later encoding is not a local configuration choice. It requires:
 
 1. a published implementation and new language-neutral vectors;
 2. a sequential protocol version containing the exact new encoding rules;

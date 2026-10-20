@@ -63,7 +63,10 @@ test("types, domains, and structure are unambiguously separated", () => {
   assert.equal(consensusEncodingVersionForProtocol(32), 1);
   assert.equal(consensusEncodingVersionForProtocol(33), 1);
   assert.equal(consensusEncodingVersionForProtocol(34), 1);
-  assert.throws(() => consensusEncodingVersionForProtocol(35), /no consensus encoding/);
+  assert.equal(consensusEncodingVersionForProtocol(35), 1);
+  assert.equal(consensusEncodingVersionForProtocol(36), 1);
+  assert.equal(consensusEncodingVersionForProtocol(37), 1);
+  assert.throws(() => consensusEncodingVersionForProtocol(38), /no consensus encoding/);
 });
 
 test("ambiguous JavaScript values fail closed", () => {

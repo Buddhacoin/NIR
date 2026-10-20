@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import {
+  changeWalletFilePassword,
   createVerifiedWalletBackup,
   createRecoveryCodeWalletBackup,
   createPhraseWalletFile,
@@ -94,29 +95,38 @@ function privateDirectory(path) {
   }
 }
 
-export function listLocalTestWallets(storageRoot) {
+export function inspectLocalTestWallets(storageRoot) {
   if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
     throw new Error("wallet storage root must be absolute");
   }
   const directory = join(resolve(storageRoot), "Wallets");
-  if (!existsSync(directory)) return [];
+  if (!existsSync(directory)) return { wallets: [], unrecognizedWalletFiles: 0 };
   const stat = lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
     throw new Error("wallet storage directory is not private");
   }
+  let unrecognizedWalletFiles = 0;
   const candidates = readdirSync(directory).filter((name) => name.endsWith(".nirvault.json"))
     .flatMap((name) => {
       const path = join(directory, name);
       try { return [{ address: walletPublicInfo(path).address, path,
         modifiedAt: lstatSync(path).mtimeMs }]; }
-      catch { return []; } // A damaged entry must never become a selectable account.
+      catch {
+        unrecognizedWalletFiles += 1;
+        return []; // A damaged entry must never become a selectable account.
+      }
     });
   candidates.sort((left, right) => right.modifiedAt - left.modifiedAt ||
     left.path.localeCompare(right.path));
   // A restored copy can use a different password for the same address. Keep
   // each private file selectable; address de-duplication could hide the only
   // copy whose password its owner still knows.
-  return candidates.map(({ address, path }) => ({ address, path }));
+  return { wallets: candidates.map(({ address, path }) => ({ address, path })),
+    unrecognizedWalletFiles };
+}
+
+export function listLocalTestWallets(storageRoot) {
+  return inspectLocalTestWallets(storageRoot).wallets;
 }
 
 export function openLocalTestWallet({ wallets, path, password }) {
@@ -268,6 +278,29 @@ export function renewLocalTestRecoveryCode({ storageRoot, walletPath, password }
   });
   if (created.address !== verified.address) throw new Error("wallet address changed during backup");
   return { address: created.address, backupPath, recoveryCode };
+}
+
+export function changeLocalTestWalletPassword({ storageRoot, walletPath,
+  oldPassword, newPassword }) {
+  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/") ||
+      typeof walletPath !== "string" ||
+      !listLocalTestWallets(storageRoot).some((wallet) => wallet.path === walletPath)) {
+    throw new Error("selected wallet is not in the local account list");
+  }
+  if (!validPersonalWalletPassword(newPassword)) {
+    const error = new Error("new personal wallet password does not meet the wallet policy");
+    error.code = "NIR_WALLET_NEW_PASSWORD_POLICY";
+    throw error;
+  }
+  try {
+    verifyWalletFile({ path: walletPath, password: oldPassword });
+  } catch (cause) {
+    const error = new Error("current wallet password or vault is invalid", { cause });
+    error.code = "NIR_WALLET_CURRENT_OPEN_FAILED";
+    throw error;
+  }
+  return changeWalletFilePassword({ path: walletPath, oldPassword, newPassword,
+    personalWallet: true });
 }
 
 export function restoreLocalTestWallet({ storageRoot, backupPath, expectedAddress, password }) {

@@ -16,14 +16,331 @@ const extensionManifest = JSON.parse(readFileSync(
   new URL("../wallet-ui/manifest.json", import.meta.url), "utf8",
 ));
 
+test("unpriced NIR shows an empty market chart, not a fabricated zero quote", () => {
+  const market = html.match(/<section class="card market" id="market"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(market, "home screen must expose the market state");
+  assert.match(market, /Нет рыночных данных/);
+  assert.match(market, /Цена: —/);
+  assert.match(market, /В приложении нет проверенных данных о сделках или заявках/);
+  assert.doesNotMatch(market, /\$\s*0(?:\.00)?|Купить|Продать/);
+  assert.match(styles, /\.market-chart/);
+});
+
 test("wallet browser module parses as valid JavaScript", () => {
   execFileSync(process.execPath, ["--check", new URL("../wallet-ui/app.js", import.meta.url).pathname]);
 });
 
-test("wallet navigation has five interactive destinations", () => {
-  for (const destination of ["home", "history", "resources", "mine", "settings"]) {
+test("native wallet consumes its injected one-time secret without showing onboarding", async () => {
+  assert.match(script, /onboarding\.hidden = connected \|\| localApp/);
+  const source = script.slice(script.indexOf("async function connectNativeWallet()"),
+    script.indexOf("async function renderAccounts()"));
+  const secret = "ab".repeat(32);
+  let calls = 0;
+  const context = {
+    localApp: true, window: { __nirNativeBootstrap: secret }, accountEpoch: 0,
+    bridgeSession: null, walletInfo: null, DEFAULT_BRIDGE_URL: "http://127.0.0.1:8788",
+    clearWalletSession() { context.accountEpoch += 1; context.bridgeSession = null; context.walletInfo = null; },
+    async pairBridge(url, code) { assert.equal(url, context.DEFAULT_BRIDGE_URL);
+      assert.equal(code, secret); calls += 1; return "cd".repeat(32); },
+    async bridgeRequest(path) { assert.equal(path, "/v1/wallet");
+      return { address: `nir1${"a".repeat(64)}` }; },
+    async renderAccounts() { return true; },
+    renderWalletConnection() {}, async refreshNodeStatus() {},
+  };
+  runInNewContext(source, context);
+  await context.connectNativeWallet();
+  assert.equal(calls, 1);
+  assert.equal(Object.hasOwn(context.window, "__nirNativeBootstrap"), false);
+  assert.equal(context.bridgeSession.token, "cd".repeat(32));
+  await context.connectNativeWallet();
+  assert.equal(calls, 1, "the consumed bootstrap cannot be reused");
+});
+
+test("native wallet keeps a visible restart instruction when bootstrap is absent", () => {
+  const source = script.slice(script.indexOf("function renderWalletConnection()"),
+    script.indexOf("function clearAccountNumbers()"));
+  const nodes = new Map();
+  const context = {
+    localApp: true, nativeConnectionError: "Restart NIR Wallet", bridgeSession: null,
+    walletInfo: null, onboarding: { hidden: false }, accountOpen: { hidden: false },
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { hidden: false, textContent: "" });
+      return nodes.get(selector);
+    } },
+  };
+  runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
+  context.renderWalletConnection();
+  assert.equal(context.onboarding.hidden, true);
+  assert.equal(nodes.get("#settings-connect").hidden, true);
+  assert.equal(nodes.get("#native-connection-error").hidden, false);
+  assert.equal(nodes.get("#native-connection-error").textContent, "Restart NIR Wallet");
+  assert.equal(nodes.get("#security-state").textContent, "Restart NIR Wallet");
+});
+
+test("a verified account proof does not depend on an unauthenticated account response", async () => {
+  const source = script.slice(script.indexOf("async function readAccount()"),
+    script.indexOf("function renderTransactions("));
+  const address = `nir1${"a".repeat(64)}`;
+  const requests = [];
+  const context = {
+    walletInfo: { address }, networkInfo: { height: 1, networkId: "nir-test" },
+    nodeUrl: (path) => path,
+    fetch: async (path) => {
+      requests.push(path);
+      if (path === `/v1/accounts/${address}`) throw new Error("raw account unavailable");
+      if (path === "/v1/validator-handoffs") return { ok: false };
+      if (path === `/v1/accounts/${address}/proof`) return {
+        ok: true, json: async () => ({ signed: "proof" }),
+      };
+      if (path.startsWith(`/v1/accounts/${address}/history?`)) return {
+        ok: true, json: async () => ({ entries: [] }),
+      };
+      throw new Error(`unexpected request: ${path}`);
+    },
+    bridgeRequest: async (path) => {
+      if (path === "/v1/trust-info") return { enabled: false };
+      if (path === "/v1/verify-account-proof") return { verified: true, statement: {
+        account: { address, atomicBalance: "500000000", history: { count: 0 } },
+        height: 1, networkId: "nir-test", stateRoot: "b".repeat(64), tipHash: "c".repeat(64),
+      } };
+      if (path === "/v1/verify-account-history-page") return { verified: true, entries: [] };
+      throw new Error(`unexpected bridge request: ${path}`);
+    },
+  };
+  runInNewContext(`${source}\nglobalThis.readAccount = readAccount;`, context);
+  const account = await context.readAccount();
+  assert.equal(account.proofVerified, true);
+  assert.equal(account.atomicBalance, "500000000");
+  assert.ok(!requests.includes(`/v1/accounts/${address}`));
+
+  const originalBridgeRequest = context.bridgeRequest;
+  for (const change of [
+    (result) => { result.verified = false; },
+    (result) => { result.statement.account.address = `nir1${"d".repeat(64)}`; },
+    (result) => { result.statement.networkId = "another-network"; },
+    (result) => { result.statement.height = 0; },
+  ]) {
+    context.bridgeRequest = async (path) => {
+      const result = await originalBridgeRequest(path);
+      if (path === "/v1/verify-account-proof") change(result);
+      return result;
+    };
+    const rejected = await context.readAccount();
+    assert.equal(rejected.proofVerified, false);
+    assert.equal(rejected.atomicBalance, undefined);
+  }
+});
+
+test("a failed bridge reconnection clears a previously verified balance", async () => {
+  const source = script.slice(script.indexOf('document.querySelector("#bridge-form").addEventListener'),
+    script.indexOf("function receive()"));
+  let submit;
+  const balance = { textContent: "5.00000000" };
+  const state = { textContent: "Кворум подтвердил баланс · блок 7" };
+  const code = { value: "invalid" };
+  const context = {
+    accountEpoch: 0,
+    bridgeSession: { token: "old" }, walletInfo: { address: `nir1${"a".repeat(64)}` },
+    bridgeStatus: { textContent: "" }, bridgePanel: { open: false },
+    document: { querySelector(selector) {
+      if (selector === "#bridge-form") return { addEventListener(_event, handler) { submit = handler; } };
+      if (selector === "#bridge-code") return code;
+      if (selector === "#bridge-url") return { value: "bad-url" };
+      return null;
+    } },
+    exactLoopbackUrl: () => { throw new Error("invalid URL"); },
+    clearWalletSession: () => {
+      context.accountEpoch += 1;
+      context.bridgeSession = null;
+      context.walletInfo = null;
+      balance.textContent = "—";
+      state.textContent = "Vault отключён";
+    },
+  };
+  runInNewContext(source, context);
+  await submit({ preventDefault() {} });
+  assert.equal(context.bridgeSession, null);
+  assert.equal(context.walletInfo, null);
+  assert.equal(balance.textContent, "—");
+  assert.doesNotMatch(state.textContent, /Кворум подтвердил/);
+});
+
+test("a late pairing response cannot restore a superseded wallet session", async () => {
+  const source = script.slice(script.indexOf('document.querySelector("#bridge-form").addEventListener'),
+    script.indexOf("function receive()"));
+  let submit;
+  let resolvePair;
+  let bridgeCalls = 0;
+  const code = { value: "12345678" };
+  const balance = { textContent: "5.00000000" };
+  const context = {
+    accountEpoch: 0, bridgeSession: { token: "old" },
+    walletInfo: { address: `nir1${"a".repeat(64)}` },
+    bridgeStatus: { textContent: "" }, bridgePanel: { open: false },
+    document: { querySelector(selector) {
+      if (selector === "#bridge-form") return { addEventListener(_event, handler) { submit = handler; } };
+      if (selector === "#bridge-code") return code;
+      if (selector === "#bridge-url") return { value: "http://127.0.0.1:8788" };
+      return null;
+    } },
+    exactLoopbackUrl: (value) => value,
+    pairBridge: () => new Promise((resolve) => { resolvePair = resolve; }),
+    bridgeRequest: async () => { bridgeCalls += 1; throw new Error("stale bridge call"); },
+    clearWalletSession: () => {
+      context.accountEpoch += 1;
+      context.bridgeSession = null;
+      context.walletInfo = null;
+      balance.textContent = "—";
+    },
+  };
+  runInNewContext(source, context);
+  const first = submit({ preventDefault() {} });
+  assert.equal(typeof resolvePair, "function");
+  code.value = "bad";
+  await submit({ preventDefault() {} });
+  resolvePair("late-token");
+  await first;
+  assert.equal(bridgeCalls, 0);
+  assert.equal(context.bridgeSession, null);
+  assert.equal(context.walletInfo, null);
+  assert.equal(balance.textContent, "—");
+});
+
+test("an old bridge 401 cannot disconnect a newer pairing", async () => {
+  const source = script.slice(script.indexOf("async function bridgeRequest("),
+    script.indexOf("async function signWithRecovery("));
+  let finishFetch;
+  let cleared = 0;
+  const oldSession = { url: "http://127.0.0.1:8788", token: "old" };
+  const newSession = { url: "http://127.0.0.1:8789", token: "new" };
+  const context = {
+    bridgeSession: oldSession, AbortController, setTimeout, clearTimeout,
+    fetch: () => new Promise((resolve) => { finishFetch = resolve; }),
+    clearWalletSession: () => { cleared += 1; context.bridgeSession = null; },
+  };
+  runInNewContext(`${source}\nglobalThis.bridgeRequest = bridgeRequest;`, context);
+  const pending = context.bridgeRequest("/v1/accounts").catch(() => {});
+  context.bridgeSession = newSession;
+  finishFetch({ ok: false, status: 401, json: async () => ({ error: "expired" }) });
+  await pending;
+  assert.equal(cleared, 0);
+  assert.equal(context.bridgeSession, newSession);
+});
+
+test("a stale account-list response cannot replace the new wallet identity", async () => {
+  const source = script.slice(script.indexOf("async function renderAccounts()"),
+    script.indexOf("async function completeAccountChange()"));
+  let finishFetch;
+  const selected = { textContent: "New ▾", dataset: { activeId: "new" } };
+  const list = { replaceChildren() { this.rows = []; }, append(row) { this.rows.push(row); } };
+  const context = {
+    accountEpoch: 1, walletInfo: { address: `nir1${"a".repeat(64)}` },
+    bridgeSession: { token: "old" },
+    NIR_ADDRESS: /^nir1[0-9a-f]{64}$/, accountOpen: selected,
+    bridgeRequest: () => new Promise((resolve) => { finishFetch = resolve; }),
+    document: { querySelector: (query) => query === "#account-list" ? list : { hidden: false },
+      createElement: () => ({ append() {}, setAttribute() {} }) },
+    changeAccount() {},
+  };
+  runInNewContext(`${source}\nglobalThis.renderAccounts = renderAccounts;`, context);
+  const pending = context.renderAccounts();
+  context.accountEpoch += 1;
+  context.walletInfo = { address: `nir1${"b".repeat(64)}` };
+  finishFetch({ accounts: [{ id: "a".repeat(32), address: `nir1${"a".repeat(64)}`,
+    label: "OLD" }], activeId: "a".repeat(32), canCreate: false });
+  await pending;
+  assert.equal(selected.textContent, "New ▾");
+  assert.equal(selected.dataset.activeId, "new");
+  assert.equal(list.rows, undefined);
+});
+
+test("an old account-change response cannot overwrite a new bridge identity", async () => {
+  const source = script.slice(script.indexOf("async function completeAccountChange()"),
+    script.indexOf("async function changeAccount("));
+  let finishFetch;
+  let refreshes = 0;
+  const context = {
+    accountEpoch: 0, walletInfo: { address: "old" },
+    bridgeSession: { token: "old" },
+    resetAccountView: () => { context.accountEpoch += 1; },
+    bridgeRequest: () => new Promise((resolve) => { finishFetch = resolve; }),
+    renderWalletConnection() {}, renderAccounts: async () => true,
+    accountsPanel: { open: false },
+    refreshNodeStatus: async () => { refreshes += 1; },
+  };
+  runInNewContext(`${source}\nglobalThis.completeAccountChange = completeAccountChange;`, context);
+  const pending = context.completeAccountChange();
+  context.accountEpoch += 1;
+  context.bridgeSession = { token: "new" };
+  context.walletInfo = { address: "new" };
+  finishFetch({ address: "old" });
+  await pending;
+  assert.equal(context.walletInfo.address, "new");
+  assert.equal(refreshes, 0);
+});
+
+test("an old account-switch failure cannot cancel a newer pairing", async () => {
+  const source = script.slice(script.indexOf("async function completeAccountChange()"),
+    script.indexOf("accountOpen.onclick"));
+  let rejectOld;
+  let clears = 0;
+  const context = {
+    accountEpoch: 0, accountTransitionPending: false,
+    bridgeSession: { token: "old" }, walletInfo: { address: "old" },
+    accountOpen: { dataset: { activeId: "old" } },
+    accountsPanel: { close() {} }, accountsStatus: { textContent: "" },
+    resetAccountView: () => { context.accountEpoch += 1; },
+    clearWalletSession: () => { clears += 1; context.accountEpoch += 1; },
+    bridgeRequest: () => new Promise((resolve, reject) => { rejectOld = reject; }),
+    renderWalletConnection() {}, renderAccounts: async () => true,
+    refreshNodeStatus: async () => {},
+  };
+  runInNewContext(`${source}\nglobalThis.changeAccount = changeAccount;`, context);
+  const pending = context.changeAccount("new");
+  context.accountEpoch += 1;
+  context.bridgeSession = null;
+  context.walletInfo = null;
+  rejectOld(new Error("old session closed"));
+  await pending;
+  assert.equal(context.accountEpoch, 1);
+  assert.equal(clears, 0);
+});
+
+test("double-click Mac mode removes terminal setup and shows the real miner state", () => {
+  assert.match(script, /const localApp = new URLSearchParams\(location\.search\)\.get\("local-app"\) === "1"/);
+  assert.match(script, /if \(localApp\) \{[\s\S]*?#onboarding ol[\s\S]*?#bridge-panel > p[\s\S]*?#setup-panel \.setup-steps[\s\S]*?\[data-action=\\?"mine/);
+  // The Mining page reads the local test network, never a promised reward.
+  assert.match(html, /id="mining-panel"/);
+  assert.match(script, /\/v1\/proof-mining/);
+  assert.match(script, /entry\.recipient === walletInfo\.address/);
+  assert.match(html, /Тестовая сеть: эти NIR не имеют ценности/);
+  assert.match(script, /bridgeRequest\("\/v1\/open-miner", \{ method: "POST" \}\)/);
+  assert.match(styles, /\.setup-steps\[hidden\] \{ display: none; \}/);
+  assert.match(script, /Проверьте окно macOS/);
+  assert.match(html, /id="balance-value" data-i18n-ignore>—<\/span>/);
+  assert.match(html, /id="onboarding-title">Подключите защищённый файл кошелька/);
+  assert.match(html, /data-action="connect">Подключить кошелёк/);
+  assert.match(script, /networkButton\.textContent = "○ Нет связи с сетью"/);
+});
+
+test("update control rebuilds the published code through the bridge", () => {
+  assert.match(html, /id="wallet-check-updates"/);
+  assert.match(html, /<button id="wallet-apply-update" type="button" hidden>/);
+  assert.match(html, /скачивается из открытого кода NIR и собирается на этом Mac/);
+  assert.match(script, /bridgeRequest\("\/v1\/app-build"\)/);
+  assert.match(script, /followWalletUpdate\("\/v1\/app-update\/check"\)/);
+  assert.match(script, /followWalletUpdate\("\/v1\/app-update\/apply"\)/);
+  assert.match(script, /apply\.hidden = !u\?\.available/);
+  assert.doesNotMatch(script, /wallet-check-updates[\s\S]{0,1000}wallet:macos-local-install/);
+});
+
+test("wallet navigation has four destinations and resources live in settings", () => {
+  for (const destination of ["home", "history", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
   }
+  assert.doesNotMatch(html, /data-nav="resources"/);
+  assert.match(html, /id="settings-resources"/);
+  assert.match(script, /#settings-resources"\)\.addEventListener\("click", \(\) => \{ void openResources\(\); \}\)/);
   assert.match(script, /querySelectorAll\("\[data-nav\]"\)/);
   assert.match(script, /aria-current/);
 });
@@ -121,13 +438,14 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=32/);
-  assert.match(serviceWorker, /style\.css\?v=32/);
+  assert.match(html, /style\.css\?v=35/);
+  assert.match(serviceWorker, /style\.css\?v=35/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=37/);
-  assert.match(serviceWorker, /app\.js\?v=37/);
-  assert.match(serviceWorker, /nir-wallet-shell-v39/);
+  assert.match(html, /app\.js\?v=46/);
+  assert.match(serviceWorker, /app\.js\?v=46/);
+  assert.match(serviceWorker, /nir-wallet-shell-v50/);
+  assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -150,6 +468,41 @@ test("wallet provides safe onboarding, recovery guidance, and session revocation
   assert.match(script, /bridgeRequest\("\/v1\/session", \{ method: "DELETE" \}\)/);
   assert.match(script, /clearWalletSession/);
   assert.match(script, /onboarding\.hidden = connected/);
+  assert.match(html, /id="settings-secrets"/);
+  assert.match(html, /Создать новый код восстановления/);
+  assert.match(script, /bridgeRequest\("\/v1\/native-security", \{ method: "POST" \}/);
+  assert.match(html, /id="settings-password-change"/);
+  assert.match(script, /bridgeRequest\("\/v1\/native-password-change", \{ method: "POST" \}/);
+  assert.match(html, /Старые резервные копии и коды продолжают открывать тот же адрес/);
+  assert.doesNotMatch(html, /<input[^>]+(?:privateKey|recoveryCode)/i);
+});
+
+test("settings hide Mac-only recovery when the paired bridge lacks native capability", () => {
+  const source = script.slice(script.indexOf("function renderWalletConnection()"),
+    script.indexOf("function clearAccountNumbers()"));
+  const controls = new Map();
+  const document = { querySelector(selector) {
+    if (!controls.has(selector)) controls.set(selector, { hidden: false, textContent: "" });
+    return controls.get(selector);
+  } };
+  const context = { document, localApp: false, nativeConnectionError: null,
+    onboarding: { hidden: false }, accountOpen: { hidden: false },
+    bridgeSession: { token: "a" }, walletInfo: { address: `nir1${"a".repeat(64)}` } };
+  runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-secrets").hidden, true);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
+  context.walletInfo.nativeSecurityAvailable = true;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-secrets").hidden, false);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
+  context.walletInfo.nativePasswordChangeAvailable = true;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-password-change").hidden, false);
+  context.bridgeSession = null;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-secrets").hidden, true);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
 });
 
 test("wallet limits browser privileges and supports accessible system settings", () => {
@@ -212,7 +565,7 @@ test("wallet exposes native resource staking and delegation controls", () => {
   assert.match(html, /id="resource-signed-json"/);
   assert.match(html, /id="submit-resource"[^>]*>Отправить в local testnet/);
   assert.match(script, /signedResourceTransaction = signed\.transaction/);
-  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
+  assert.match(script, /health\.networkId !== transaction\.networkId/);
 });
 
 test("submission responses cannot claim transaction finality", () => {
@@ -235,8 +588,90 @@ test("submission responses cannot claim transaction finality", () => {
 test("only explicit submit actions use the configured local ingress", () => {
   assert.equal((script.match(/fetch\(transactionSubmissionUrl\(nodePolicy\)/g) ?? []).length, 2);
   assert.doesNotMatch(script, /fetch\(nodeUrl\("\/v1\/transactions"\)/);
-  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
-  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /health\.networkId !== transaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== transaction\.networkId/);
+});
+
+test("an old submit click cannot broadcast a different signed transfer after page navigation", async () => {
+  const start = script.indexOf('document.querySelector("#submit-signed").onclick = async () => {');
+  const end = script.indexOf('document.querySelector("#copy-signed").onclick', start);
+  assert.ok(start >= 0 && end > start);
+  const button = { disabled: false, hidden: false };
+  const page = {};
+  const posted = [];
+  let releaseHealth;
+  let healthRequested;
+  const waitingForHealth = new Promise((resolve) => { healthRequested = resolve; });
+  const delayedHealth = new Promise((resolve) => { releaseHealth = resolve; });
+  const context = {
+    accountEpoch: 1, pageNavigationEpoch: 1, activePage: page, sendPanel: page,
+    signedTransaction: { networkId: "nir-test", nonce: 1 },
+    sendStatus: { textContent: "" },
+    document: { querySelector: () => button },
+    refreshNodeStatus: async () => true,
+    nodeUrl: (path) => path,
+    nodePolicy: {},
+    transactionSubmissionUrl: () => "/submit",
+    submissionStatus: () => "queued",
+    fetch: async (url, options) => {
+      if (url === "/health") { healthRequested(); return delayedHealth; }
+      if (url === "/submit") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ status: "queued" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  };
+  runInNewContext(script.slice(start, end), context);
+  const submit = button.onclick();
+  await waitingForHealth;
+  context.pageNavigationEpoch += 1;
+  context.signedTransaction = { networkId: "nir-test", nonce: 2 };
+  releaseHealth({ ok: true, json: async () => ({ valueMode: "valueless-devnet", networkId: "nir-test" }) });
+  await submit;
+  assert.deepEqual(posted, []);
+  assert.equal(context.signedTransaction.nonce, 2);
+});
+
+test("an old resource submit cannot broadcast a replacement signed operation", async () => {
+  const start = script.indexOf('document.querySelector("#submit-resource").onclick = async (event) => {');
+  const end = script.indexOf('document.querySelector("#discard-resource").onclick', start);
+  assert.ok(start >= 0 && end > start);
+  const button = { disabled: false };
+  const page = {};
+  const posted = [];
+  let releaseHealth;
+  let healthRequested;
+  const waitingForHealth = new Promise((resolve) => { healthRequested = resolve; });
+  const delayedHealth = new Promise((resolve) => { releaseHealth = resolve; });
+  const context = {
+    accountEpoch: 1, pageNavigationEpoch: 1, activePage: page, resourcesPanel: page,
+    signedResourceTransaction: { networkId: "nir-test", nonce: 1 },
+    resourcesStatus: { textContent: "" },
+    document: { querySelector: (selector) => selector === "#submit-resource" ? button : { hidden: false } },
+    refreshNodeStatus: async () => true,
+    nodeUrl: (path) => path,
+    nodePolicy: {},
+    transactionSubmissionUrl: () => "/submit",
+    submissionStatus: () => "queued",
+    fetch: async (url, options) => {
+      if (url === "/health") { healthRequested(); return delayedHealth; }
+      if (url === "/submit") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ status: "queued" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  };
+  runInNewContext(script.slice(start, end), context);
+  const submit = button.onclick({ currentTarget: button });
+  await waitingForHealth;
+  context.pageNavigationEpoch += 1;
+  context.signedResourceTransaction = { networkId: "nir-test", nonce: 2 };
+  releaseHealth({ json: async () => ({ valueMode: "valueless-devnet", networkId: "nir-test" }) });
+  await submit;
+  assert.deepEqual(posted, []);
+  assert.equal(context.signedResourceTransaction.nonce, 2);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {
@@ -271,7 +706,7 @@ test("wallet requires a proof-backed simulation before a separate testnet-only b
   assert.match(script, /signButton\.disabled = false/);
   assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
   assert.match(script, /currentNetwork\.valueMode !== "valueless-devnet"/);
-  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== transaction\.networkId/);
   assert.match(script, /fetch\(transactionSubmissionUrl\(nodePolicy\)/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
 });
@@ -284,12 +719,151 @@ test("wallet reports the local node connection state", () => {
   assert.match(script, /networkButton\.classList\.add\("offline"\)/);
   assert.match(styles, /\.network\.connected/);
   assert.match(styles, /\.network\.offline/);
-  assert.match(script, /\/v1\/accounts\/\$\{encodeURIComponent\(walletInfo\.address\)\}\/proof/);
+  assert.match(script, /\/v1\/accounts\/\$\{encodeURIComponent\(address\)\}\/proof/);
   assert.match(script, /bridgeRequest\("\/v1\/verify-account-proof"/);
   assert.match(script, /\/v1\/validator-handoffs/);
   assert.match(script, /bridgeRequest\("\/v1\/update-validator-trust"/);
   assert.match(script, /Кворум подтвердил баланс/);
-  assert.match(script, /данные одного узла/);
+  assert.match(script, /Баланс не подтверждён · ответ узла скрыт/);
+});
+
+test("wallet never displays an unverified node balance or stale verified balance", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const refreshSource = script.slice(script.indexOf("async function refreshAccount()"),
+    script.indexOf("function randomRequestId()"));
+  const nodes = new Map();
+  const document = { querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false, disabled: false });
+    return nodes.get(selector);
+  } };
+  nodes.set("#balance-value", { textContent: "5.00000000" });
+  const context = {
+    document, accountEpoch: 0, accountRefreshSequence: 0,
+    walletInfo: { address: `nir1${"a".repeat(64)}` },
+    networkInfo: { height: 3 },
+    readAccount: async () => ({ atomicBalance: "100000000000000", proofVerified: false,
+      resources: { atomicStake: "500000000", availableTransferCredits: "99",
+        pendingUnstake: { amount: "100000000", unlockHeight: 4 } } }),
+    formatAtomic: (value) => (BigInt(value) / 100000000n).toString(),
+    renderTransactions: () => {},
+  };
+  runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshAccount = refreshAccount;`, context);
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(nodes.get("#resource-stake").textContent, "—");
+  assert.equal(nodes.get("#resource-credits").textContent, "—");
+  assert.equal(nodes.get("#resource-unstake").textContent, "—");
+  assert.equal(nodes.get("#claim-unstake").hidden, true);
+  assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
+
+  context.readAccount = async () => ({ atomicBalance: "500000000", proofVerified: true,
+    proofHeight: 3, resources: { atomicStake: "0", availableTransferCredits: "2",
+      pendingUnstake: null } });
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "5");
+  assert.match(nodes.get("#wallet-state").textContent, /Кворум подтвердил баланс/);
+
+  context.readAccount = async () => { throw new Error("node offline"); };
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(nodes.get("#resource-credits").textContent, "—");
+  assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
+
+  context.readAccount = async () => ({ atomicBalance: "500000000", proofVerified: true,
+    proofHeight: 3, resources: { atomicStake: "bad", availableTransferCredits: "2",
+      pendingUnstake: null } });
+  await context.refreshAccount();
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+
+  const pending = [];
+  context.readAccount = () => new Promise((resolve) => pending.push(resolve));
+  const older = context.refreshAccount();
+  const newer = context.refreshAccount();
+  pending[1]({ atomicBalance: "100000000", proofVerified: false });
+  await newer;
+  pending[0]({ atomicBalance: "99900000000", proofVerified: true,
+    proofHeight: 2, resources: { atomicStake: "0", availableTransferCredits: "0",
+      pendingUnstake: null } });
+  await older;
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+
+  const previousNetwork = context.refreshAccount();
+  context.networkInfo = { height: 4, networkId: "different" };
+  pending[2]({ atomicBalance: "77700000000", proofVerified: true,
+    proofHeight: 3, resources: { atomicStake: "0", availableTransferCredits: "0",
+      pendingUnstake: null } });
+  await previousNetwork;
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+});
+
+test("wallet clears a previously proven balance when node selection fails", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const refreshSource = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const nodes = new Map([["#balance-value", { textContent: "5.00000000" }],
+    ["#wallet-state", { textContent: "Кворум подтвердил баланс · блок 3" }]]);
+  const document = { querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false,
+      disabled: false, classList: { add() {}, remove() {} } });
+    return nodes.get(selector);
+  } };
+  const context = { document, accountEpoch: 0, accountRefreshSequence: 0,
+    nodeRefreshSequence: 0, networkInfo: { height: 3 }, activeNodeUrl: "http://127.0.0.1:1",
+    networkButton: { textContent: "", classList: { add() {}, remove() {} } },
+    messages: { network: [] }, selectActiveNode: async () => { throw new Error("offline"); } };
+  runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`,
+    context);
+  assert.equal(await context.refreshNodeStatus(), false);
+  assert.equal(nodes.get("#balance-value").textContent, "—");
+  assert.equal(nodes.get("#resource-stake").textContent, "—");
+  assert.match(nodes.get("#wallet-state").textContent, /не подтвержд/);
+  assert.equal(context.networkInfo, null);
+});
+
+test("superseded node refresh cannot authorize a testnet submission", async () => {
+  const clearSource = script.slice(script.indexOf("function clearAccountNumbers()"),
+    script.indexOf("function resetAccountView("));
+  const refreshSource = script.slice(script.indexOf("async function refreshNodeStatus()"),
+    script.indexOf("refreshNodeStatus();\nrenderWalletConnection();"));
+  const nodes = new Map();
+  const document = { querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, { textContent: "", hidden: false,
+      disabled: false, dataset: {}, classList: { add() {}, remove() {} } });
+    return nodes.get(selector);
+  } };
+  const pending = [];
+  const context = { document, accountEpoch: 0, accountRefreshSequence: 0,
+    nodeRefreshSequence: 0, networkInfo: { height: 3 },
+    activeNodeUrl: "http://127.0.0.1:1",
+    networkButton: { textContent: "", classList: { add() {}, remove() {} } },
+    messages: { network: [] }, assetsStatus: { textContent: "" },
+    selectActiveNode: () => new Promise((resolve) => pending.push(resolve)),
+    refreshAccount: async () => {},
+  };
+  runInNewContext(`${clearSource}\n${refreshSource}\nglobalThis.refreshNodeStatus = refreshNodeStatus;`,
+    context);
+  const first = context.refreshNodeStatus();
+  const second = context.refreshNodeStatus();
+  pending[0]();
+  assert.equal(await first, false);
+  assert.equal(context.networkInfo, null);
+  context.networkInfo = { height: 4, networkId: "test", agreeingNodes: 2,
+    availableNodes: 2 };
+  pending[1]();
+  assert.equal(await second, true);
+});
+
+test("both explicit testnet submissions recheck network through the fail-closed refresh", () => {
+  for (const id of ["submit-resource", "submit-signed"]) {
+    const start = script.indexOf(`document.querySelector("#${id}").onclick =`);
+    assert.notEqual(start, -1);
+    const section = script.slice(start, start + 1100);
+    assert.match(section, /if \(!\(await refreshNodeStatus\(\)\)\) \{/);
+    assert.match(section, /throw new Error\("Сеть не подтверждена; транзакция не отправлена\."\)/);
+    assert.doesNotMatch(section, /await selectActiveNode\(\)/);
+  }
 });
 
 test("wallet creates and verifies signed payment requests before filling a transfer", () => {
@@ -352,5 +926,5 @@ test("wallet exposes proof-backed native assets without browser signing or broad
   assert.match(html, /Браузер не подписывает и не отправляет asset-операции/);
   assert.match(html, /Загрузка доказанных активов/);
   assert.match(script, /Устарело или ошибка доказательства/);
-  assert.match(styles, /#assets-panel \{ max-height: calc\(100vh - 28px\); overflow-y: auto/);
+  assert.match(styles, /#assets-panel \{ max-height: none; overflow: visible/);
 });

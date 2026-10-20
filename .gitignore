@@ -15,3 +15,7 @@ COORDINATOR-KEY.json
 *.nirkey
 release-key.nir
 rust/**/target/
+browser-wallet/dist/
+browser-wallet/dist-firefox/
+browser-wallet/node_modules/
+browser-wallet/artifacts/

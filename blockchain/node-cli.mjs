@@ -47,7 +47,11 @@ function installListenerFailureHandler(server, releaseLock) {
 }
 try {
   if (command === "init-dev" && directory) {
-    console.log(JSON.stringify(initializeDevnet(directory), null, 2));
+    if (parameter !== undefined && parameter !== "" && parameter !== "--proof-mining") {
+      throw new Error("usage: node:init-dev <new-directory> [--proof-mining]");
+    }
+    console.log(JSON.stringify(initializeDevnet(directory,
+      { proofMining: parameter === "--proof-mining" }), null, 2));
   } else if (command === "serve" && directory) {
     const port = Number(parameter || 8787);
     const host = extra || "127.0.0.1";
@@ -73,6 +77,15 @@ try {
     server.listen(port, host, () => {
       console.log(`NIR ${node.networkId} node listening on http://${host}:${port} at height ${node.height}`);
     });
+    if (node.proofMiningEnabled) {
+      // A devnet with proof mining makes its own blocks and beacon rounds.
+      const interval = Number(process.env.NIR_DEVNET_BLOCK_MS ?? 2_000);
+      const timer = setInterval(() => {
+        try { node.tick(); } catch (error) { console.error(`devnet tick failed: ${error.message}`); }
+      }, interval);
+      timer.unref();
+      console.log(`proof mining: a block every ${interval} ms, a beacon round whenever no task is open`);
+    }
   } else if (command === "serve-production" && directory && parameter && extra &&
       remaining.length === 5) {
     const installationTarget = directory; const headStore = parameter;
@@ -138,7 +151,7 @@ try {
     });
     console.log(JSON.stringify(result, null, 2));
   } else {
-    throw new Error("usage: node:init-dev <new-directory> | node:serve <directory> [port] [host] | node:serve-production <installation> <head-store> <signed-release> <trusted-address> <runtime-directory> <port> <host> <external-anchor> | node:backup <directory> <new-backup-directory> | node:verify-backup <backup-directory> | snapshot-install <directory> <snapshot.json> [handoffs.json] | prune-plan|prune-stage|prune-verify|prune-finalize <directory> [handoffs.json]");
+    throw new Error("usage: node:init-dev <new-directory> [--proof-mining] | node:serve <directory> [port] [host] | node:serve-production <installation> <head-store> <signed-release> <trusted-address> <runtime-directory> <port> <host> <external-anchor> | node:backup <directory> <new-backup-directory> | node:verify-backup <backup-directory> | snapshot-install <directory> <snapshot.json> [handoffs.json] | prune-plan|prune-stage|prune-verify|prune-finalize <directory> [handoffs.json]");
   }
 } catch (error) {
   console.error(`Node operation failed: ${error.message}`);

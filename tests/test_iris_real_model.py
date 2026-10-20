@@ -159,6 +159,8 @@ class IrisRealModelTests(unittest.TestCase):
                            bundle.report.baseline_accuracy_bps)
         self.assertGreater(bundle.report.gain_ppm, 0)
         self.assertFalse(bundle.report.energy_attested)
+        self.assertFalse(bundle.report.critical_safety_pass)
+        self.assertEqual(bundle.report.safety_bps, 0)
         self.assertEqual(bundle.commitment.recipient, "nir1local-rehearsal-only")
 
 

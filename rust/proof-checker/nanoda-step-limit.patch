@@ -1,0 +1,164 @@
+From 9ea29699b3e7045e9837b11ef2ebb40b75cfa49a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 19 Oct 2026 12:56:11 +0000
+Subject: [PATCH] Add a deterministic step limit for NIR proof mining
+
+---
+ src/fuel.rs | 25 +++++++++++++++++++++++++
+ src/lib.rs  |  1 +
+ src/main.rs |  5 +++++
+ src/tc.rs   |  6 ++++++
+ src/util.rs | 11 +++++++++++
+ 5 files changed, 48 insertions(+)
+ create mode 100644 src/fuel.rs
+
+diff --git a/src/fuel.rs b/src/fuel.rs
+new file mode 100644
+index 0000000..74da468
+--- /dev/null
++++ b/src/fuel.rs
+@@ -0,0 +1,25 @@
++//! Deterministic step budget for NIR proof mining.
++//!
++//! Every entry to type inference, weak-head normalization and definitional
++//! equality, and every unfolding round inside `whnf`, costs one step. Checking
++//! is serial, the caches are deterministic, and hashing uses no random seed,
++//! so the same export costs the same number of steps on every machine. A
++//! wall-clock limit would not: two honest nodes could disagree.
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++
++static STEPS: AtomicU64 = AtomicU64::new(0);
++static LIMIT: AtomicU64 = AtomicU64::new(0);
++
++/// Sets the budget; `0` means unlimited.
++pub fn set_limit(limit: u64) { LIMIT.store(limit, Relaxed) }
++
++pub fn steps() -> u64 { STEPS.load(Relaxed) }
++
++#[inline]
++pub fn tick() {
++    let used = STEPS.fetch_add(1, Relaxed) + 1;
++    let limit = LIMIT.load(Relaxed);
++    if limit != 0 && used > limit {
++        panic!("step limit of {} exceeded", limit)
++    }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index f7ca1d9..3e1c71a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,6 +8,7 @@
+ pub mod debug_printer;
+ pub mod env;
+ pub mod expr;
++pub mod fuel;
+ pub mod inductive;
+ pub mod level;
+ pub mod name;
+diff --git a/src/main.rs b/src/main.rs
+index e4e0e78..9835299 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -21,6 +21,8 @@ fn main() -> Result<(), MainError> {
+ // Returns an optional success message.
+ fn use_config(config_path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+     let cfg = Config::try_from(config_path)?;
++    nanoda_lib::fuel::set_limit(cfg.max_steps);
++    let print_steps = cfg.print_steps;
+     // Make sure the target pretty printer destination is accessible before doing any real work.
+     let mut pp_destination = cfg.get_pp_destination()?;
+     let (export_file, skipped_axioms) = cfg.to_export_file()?;
+@@ -28,6 +30,9 @@ fn use_config(config_path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+     export_file.check_all_declars();
+     // Pretty print as necessary
+     let pp_errs = export_file.pp_selected_declars(pp_destination.as_mut());
++    if print_steps {
++        eprintln!("steps: {}", nanoda_lib::fuel::steps());
++    }
+     if export_file.config.print_success_message {
+         if pp_errs.is_empty() {
+             if skipped_axioms.is_empty() {
+diff --git a/src/tc.rs b/src/tc.rs
+index a6ad5a6..0b8448e 100644
+--- a/src/tc.rs
++++ b/src/tc.rs
+@@ -540,6 +540,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+     }
+ 
+     pub(crate) fn infer(&mut self, e: ExprPtr<'t>, flag: InferFlag) -> ExprPtr<'t> {
++        crate::fuel::tick();
+         if let Some(cached) = self.tc_cache.infer_cache_check.get(&e).copied() {
+             return cached
+         }
+@@ -791,6 +792,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+     }
+ 
+     pub fn whnf(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> {
++        crate::fuel::tick();
+         if matches!(self.ctx.read_expr(e), NatLit { .. } | StringLit { .. }) {
+             return e
+         }
+@@ -799,6 +801,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+         }
+         let mut cursor = e;
+         loop {
++            crate::fuel::tick();
+             let whnfd = self.whnf_no_unfolding(cursor);
+             if let Some(reduce_nat_ok) = self.try_reduce_nat(whnfd) {
+                 cursor = reduce_nat_ok;
+@@ -816,6 +819,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+     pub fn whnf_no_unfolding(&mut self, e: ExprPtr<'t>) -> ExprPtr<'t> { self.whnf_no_unfolding_aux(e, false) }
+ 
+     fn whnf_no_unfolding_aux(&mut self, e: ExprPtr<'t>, cheap_proj: bool) -> ExprPtr<'t> {
++        crate::fuel::tick();
+         if let Some(cached) = self.tc_cache.whnf_no_unfolding_cache.get(&e).copied() {
+             return cached
+         }
+@@ -984,6 +988,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+     pub fn assert_def_eq(&mut self, u: ExprPtr<'t>, v: ExprPtr<'t>) { assert!(self.def_eq(u, v)) }
+ 
+     pub fn def_eq(&mut self, x: ExprPtr<'t>, y: ExprPtr<'t>) -> bool {
++        crate::fuel::tick();
+         if let Some(easy) = self.def_eq_quick_check(x, y) {
+             return easy
+         }
+@@ -1303,6 +1308,7 @@ impl<'x, 't: 'x, 'p: 't> TypeChecker<'x, 't, 'p> {
+     /// to continue unfolding.
+     fn lazy_delta_step(&mut self, mut x: ExprPtr<'t>, mut y: ExprPtr<'t>) -> DeltaResult<'t> {
+         loop {
++            crate::fuel::tick();
+             if let Some(r) = self.delta_try_nat(x, y) {
+                 return r
+             }
+diff --git a/src/util.rs b/src/util.rs
+index 26745f3..bc92044 100644
+--- a/src/util.rs
++++ b/src/util.rs
+@@ -940,6 +940,14 @@ pub struct Config {
+     /// This is checked so as to be mutually exclusive with any of the axiom allow list/whitelist features.
+     #[serde(default)]
+     pub unsafe_permit_all_axioms: bool,
++
++    /// Deterministic step budget (see `fuel`); `0` means unlimited.
++    #[serde(default)]
++    pub max_steps: u64,
++
++    /// If `true`, print the number of steps used to stderr on success.
++    #[serde(default)]
++    pub print_steps: bool,
+ }
+ 
+ impl TryFrom<&Path> for Config {
+@@ -955,6 +963,9 @@ impl TryFrom<&Path> for Config {
+                 if config.export_file_path.is_some() && config.use_stdin {
+                     return Err(Box::from(format!("incompatible config options: if an export file path is given, `use_stdin` cannot be `true`")))
+                 }
++                if config.max_steps != 0 && config.num_threads > 1 {
++                    return Err(Box::from(format!("incompatible config options: a step limit requires serial checking (num_threads <= 1)")))
++                }
+                 if config.unsafe_permit_all_axioms {
+                     if config.unpermitted_axiom_hard_error {
+                         return Err(Box::from(format!("incompatible config options: unsafe_permit_all_axioms && unpermitted_axioms_hard_error")))
+-- 
+2.43.0
+

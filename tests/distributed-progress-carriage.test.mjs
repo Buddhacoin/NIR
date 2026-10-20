@@ -9,7 +9,7 @@ import {
   allocateProgressRewards, createCandidateBond, createProgressClaim,
   createProgressCommitment, finalizeBlock, NirChain,
 } from "../blockchain/chain.mjs";
-import { LEGACY_INITIAL_EPOCH_REWARD as INITIAL_EPOCH_REWARD,
+import { INITIAL_EPOCH_REWARD,
   SAFETY_POLICY_V1_COMMITMENT } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import {

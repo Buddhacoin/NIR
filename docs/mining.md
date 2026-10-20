@@ -1,5 +1,11 @@
 # How NIR mining works
 
+> **From protocol v37 the issuance described below ends.** New NIR is issued
+> only for network clique tasks: find `k` pairwise adjacent vertices in a
+> random graph drawn from the beacon, answered by commit and reveal, with
+> difficulty that follows solver speed. See [proof-mining.md](proof-mining.md)
+> (in Russian). The roles below remain the history of protocols up to v34.
+
 Running an intelligence-mining role and joining the active validator finality
 set are separate operations. A selected or bonded validator still needs an
 authorized rotation. Protocol v30 implements testnet-gated validator exit and
@@ -50,11 +56,11 @@ delta cannot be rewarded twice, while semantically equivalent but genuinely
 different representations remain an explicit limitation of the bounded
 canonicalizer and evaluator policy.
 
-V5 genesis parameters begin at 44 NIR per rewarded epoch, halve every
+The current rule begins at 44 NIR per rewarded epoch, halves every
 210,000 rewarded epochs, and never exceed the 18.48 million NIR mining pool.
 Even if every possible nonzero epoch is rewarded, atomic-unit rounding leaves
-0.01890000 NIR unissued. Legacy v1-v4 plans retain the original 50 NIR
-schedule and can exhaust the pool early in the fourth era.
+0.01890000 NIR unissued. Older valueless test-chain reward blocks made under
+the discarded rule are incompatible and must not be reused for launch.
 See [the emission schedule](protocol.md#2-monetary-constants)
 for the calculation; mainnet economics are not yet ratified.
 
