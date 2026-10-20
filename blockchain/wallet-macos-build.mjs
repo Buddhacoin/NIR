@@ -3,8 +3,9 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, lstatSync, mkdtempSync, mkdirSync, readFileSync,
   readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, normalize, resolve } from "node:path";
+import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { bundleLocalNode } from "./wallet-bundled-node.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MODULES = Object.freeze(`
@@ -22,6 +23,7 @@ blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs
 blockchain/transaction-tree.mjs blockchain/transfer-state-transition.mjs
+blockchain/update-catalog.mjs blockchain/update-trust-anchor.mjs
 blockchain/validator-admission-omission.mjs blockchain/validator-admission-readiness-auth.mjs
 blockchain/validator-admission.mjs blockchain/validator-equivocation.mjs
 blockchain/validator-handoff-store.mjs blockchain/validator-handoff.mjs
@@ -30,12 +32,13 @@ blockchain/validator-recovery-trust-store.mjs blockchain/validator-recovery.mjs
 blockchain/validator-rotation.mjs blockchain/validator-staking.mjs blockchain/vault.mjs
 blockchain/wallet-backup-export-check.mjs blockchain/wallet-bridge.mjs blockchain/wallet-files.mjs blockchain/wallet-header-store.mjs
 blockchain/wallet-macos-app.mjs blockchain/wallet-macos-setup.mjs
+blockchain/wallet-macos-notices.mjs
 blockchain/wallet-onboarding.mjs blockchain/wallet-preview-cli.mjs
 blockchain/wallet-seed.mjs
 blockchain/wallet-trust-store.mjs wallet-ui/node-selection.js
 `.trim().split(/\s+/));
 const UI_FILES = Object.freeze(`
-address-book.js app.js extension-background.js index.html manifest.json manifest.webmanifest
+address-book.js app.js i18n.js extension-background.js index.html manifest.json manifest.webmanifest
 nir-coin-icon.png nir-coin-icon.svg node-selection.js nodes.json offline-signing.js qr.js
 style.css submission-status.js sw.js transaction-decoder.js
 `.trim().split(/\s+/).map((name) => `wallet-ui/${name}`));
@@ -133,6 +136,7 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
   rejectSecretPaths();
   verifyModuleClosure();
   for (const relative of [...PACKAGE_FILES, "macos/Info.plist", "macos/wallet-launcher.m",
+    "macos/wallet-runner.c", "macos/wallet-runtime-verifier.m",
     "macos/wallet-onboarding.m"]) checkedSource(relative);
   const scratch = mkdtempSync(join(parent, ".nir-wallet-build-"));
   try {
@@ -142,9 +146,14 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
     const payload = join(resources, "app");
     mkdirSync(join(contents, "MacOS"), { recursive: true });
     mkdirSync(payload, { recursive: true });
-    const version = JSON.parse(readFileSync(checkedSource("package.json"), "utf8")).version;
+    const metadata = JSON.parse(readFileSync(checkedSource("package.json"), "utf8"));
+    const version = metadata.version;
+    const sequence = metadata.walletBuildSequence;
     if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(version ?? "")) {
       throw new Error("wallet package version must be three numeric components");
+    }
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error("wallet build sequence must be a positive reviewed integer");
     }
     const info = readFileSync(checkedSource("macos/Info.plist"), "utf8")
       .replace(/(<key>CFBundleShortVersionString<\/key><string>)[^<]+(<\/string>)/,
@@ -153,16 +162,37 @@ export function buildMacWallet(targetPath, { sign = true } = {}) {
         (_, before, after) => `${before}${version}${after}`);
     writeFileSync(join(contents, "Info.plist"), info);
     writeFileSync(join(resources, "NIR-LOCAL-BUILD.json"),
-      '{"format":"nir-local-test-build-v1","distribution":"not-a-public-installer"}\n');
-    writeFileSync(join(resources, "NIR-RUNTIME.json"),
-      `${JSON.stringify({ nodeExecutable: process.execPath })}\n`);
-    writeIcon(resources);
-    for (const [source, name] of [["macos/wallet-launcher.m", "launcher"],
-      ["macos/wallet-onboarding.m", "onboarding"]]) {
-      command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
-        "Foundation", checkedSource(source), "-o", join(contents, "MacOS", name)],
-      `native ${name} build`);
+      `${JSON.stringify({ format: "nir-local-test-build-v2",
+        distribution: "not-a-public-installer", sequence })}\n`);
+    let runtimeComponent = sep;
+    for (const part of process.execPath.split(sep).filter(Boolean)) {
+      runtimeComponent = join(runtimeComponent, part);
+      if (lstatSync(runtimeComponent).isSymbolicLink()) {
+        throw new Error("local wallet Node runtime path contains a symlink");
+      }
     }
+    const runtimeFile = lstatSync(process.execPath);
+    if (!runtimeFile.isFile() || (runtimeFile.mode & 0o111) === 0 ||
+        runtimeFile.size <= 0 || runtimeFile.size > 256 * 1024 * 1024) {
+      throw new Error("local wallet Node runtime is not a bounded executable file");
+    }
+    // Copy and relocate the complete non-system dependency closure. The
+    // runtime record uses paths relative to Contents so atomic app exchange
+    // does not preserve references to the staging directory.
+    const runtime = bundleLocalNode(contents, process.execPath);
+    writeFileSync(join(resources, "NIR-RUNTIME.json"), `${JSON.stringify(runtime)}\n`);
+    writeIcon(resources);
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
+      "Foundation", "-framework", "WebKit", checkedSource("macos/wallet-launcher.m"),
+      "-o", join(contents, "MacOS/launcher")], "native launcher build");
+    command("/usr/bin/clang", [checkedSource("macos/wallet-runner.c"), "-o",
+      join(contents, "MacOS/wallet-runner")], "native runner build");
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "Foundation",
+      checkedSource("macos/wallet-runtime-verifier.m"), "-o",
+      join(contents, "MacOS/wallet-runtime-verifier")], "runtime verifier build");
+    command("/usr/bin/clang", ["-fobjc-arc", "-framework", "AppKit", "-framework",
+      "Foundation", checkedSource("macos/wallet-onboarding.m"), "-o",
+      join(contents, "MacOS/onboarding")], "native onboarding build");
     for (const relative of PACKAGE_FILES) {
       const destination = join(payload, relative);
       mkdirSync(dirname(destination), { recursive: true });

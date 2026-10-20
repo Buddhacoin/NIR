@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync,
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync,
   unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { buildMacWallet } from "../blockchain/wallet-macos-build.mjs";
+import { inspectLocalTestWallets, listLocalTestWallets } from "../blockchain/wallet-onboarding.mjs";
 import { createWalletPreviewServer } from "../blockchain/wallet-preview-cli.mjs";
 
 test("local wallet bundle uses a strict source allowlist and refuses secret-named paths", () => {
@@ -34,18 +35,23 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     const app = join(directory, "NIR Wallet.app");
     assert.equal(buildMacWallet(app, { sign: false }), app);
     for (const relative of [
-      "Contents/Info.plist", "Contents/MacOS/launcher", "Contents/MacOS/onboarding",
+      "Contents/Info.plist", "Contents/MacOS/launcher", "Contents/MacOS/wallet-runner",
+      "Contents/MacOS/onboarding",
+      "Contents/MacOS/wallet-runtime-verifier",
       "Contents/Resources/NIR.icns",
       "Contents/Resources/NIR-LOCAL-BUILD.json",
       "Contents/Resources/NIR-RUNTIME.json",
       "Contents/Resources/app/package.json",
       "Contents/Resources/app/blockchain/wallet-macos-app.mjs",
       "Contents/Resources/app/blockchain/wallet-preview-cli.mjs",
+      "Contents/Resources/app/blockchain/update-catalog.mjs",
+      "Contents/Resources/app/blockchain/update-trust-anchor.mjs",
       "Contents/Resources/app/blockchain/wallet-macos-setup.mjs",
       "Contents/Resources/app/blockchain/wallet-seed.mjs",
       "Contents/Resources/app/blockchain/bip39-english.txt",
       "Contents/Resources/app/demo/wallet-nodes.local-demo.json",
       "Contents/Resources/app/wallet-ui/index.html",
+      "Contents/Resources/app/wallet-ui/i18n.js",
       "Contents/Resources/app/wallet-ui/nir-coin-icon.png",
     ]) assert.equal(existsSync(join(app, relative)), true, relative);
     for (const relative of ["Contents/Resources/app/blockchain/wallet-macos-local-update.mjs",
@@ -54,8 +60,51 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
       assert.equal(existsSync(join(app, relative)), false, relative);
     }
     const launcher = readFileSync(new URL("../macos/wallet-launcher.m", import.meta.url), "utf8");
-    assert.deepEqual(JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json"))),
-      { nodeExecutable: process.execPath });
+    assert.match(launcher, /\[WKWebsiteDataStore nonPersistentDataStore\]/);
+    assert.match(launcher, /\[components\.host isEqualToString:@"127\.0\.0\.1"\]/);
+    assert.match(launcher, /NIRLocalWalletStartup\(line, &secret\)/);
+    assert.match(launcher, /forMainFrameOnly:YES/);
+    assert.match(launcher, /kill\(-leader, SIGTERM\)/);
+    assert.match(launcher, /getpwuid\(getuid\(\)\)/);
+    assert.match(launcher, /self\.wallet\.environment = @\{ @"HOME": home, @"PATH": @"\/usr\/bin:\/bin",/);
+    assert.doesNotMatch(launcher, /self\.wallet\.environment = NSProcessInfo\.processInfo\.environment/);
+    assert.match(launcher, /terminationHandler = [\s\S]*?\[weakSelf stopWalletGroup\]/);
+    assert.match(launcher, /WKNavigationActionPolicyCancel/);
+    const nativeApp = readFileSync(new URL("../blockchain/wallet-macos-app.mjs", import.meta.url), "utf8");
+    assert.match(nativeApp, /nativeSecurity,/);
+    assert.match(nativeApp, /nativePasswordChange,/);
+    assert.match(nativeApp, /changeLocalTestWalletPassword\(/);
+    assert.match(nativeApp, /error\?\.code === "NIR_WALLET_NEW_PASSWORD_POLICY"/);
+    assert.match(nativeApp, /error\?\.code === "NIR_WALLET_CURRENT_OPEN_FAILED"/);
+    assert.match(nativeApp, /error\?\.code === "NIR_WALLET_NEW_PASSWORD_MISMATCH"/);
+    assert.match(nativeApp, /PW-ROTATE/);
+    assert.match(nativeApp, /Новый пароль отклонён:/);
+    assert.match(nativeApp, /const runSetup = \(\.\.\.args\) => execFileAsync\(runner,/);
+    assert.doesNotMatch(nativeApp, /execFileAsync\(process\.execPath, \[setup/);
+    const changeSource = nativeApp.slice(nativeApp.indexOf("async function nativePasswordChange("),
+      nativeApp.indexOf("async function main()"));
+    assert.match(changeSource, /committed = true;[\s\S]*?return true;/);
+    assert.doesNotMatch(changeSource.slice(changeSource.indexOf("committed = true;"),
+      changeSource.indexOf("return true;")), /await notify\(/);
+    assert.match(nativeApp, /renewLocalTestRecoveryCode\(/);
+    assert.match(nativeApp, /verifyRecoveryExportReceipt\(/);
+    assert.match(nativeApp, /with hidden answer/);
+    assert.doesNotMatch(nativeApp, /console\.(?:log|error)\([^\n]*(?:recoveryCode|password)/);
+    const onboardingSource = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+    assert.match(onboardingSource, /Пароль слишком короткий: нужно от 9 символов/);
+    assert.doesNotMatch(onboardingSource, /Пароль слишком короткий: нужно от 12 символов/);
+    assert.doesNotMatch(nativeApp, /execFileAsync\("\/usr\/bin\/open"/);
+    assert.match(nativeApp, /process\.stdout\.write\(`\$\{origin\}\/\?local-demo=1&local-app=1/);
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    assert.equal(runtime.format, "nir-local-wallet-runtime-v3");
+    assert.equal(runtime.nodeExecutable, "MacOS/node");
+    assert.ok(runtime.nodeBinding.dependencies.length > 0);
+    assert.equal(runtime.nodeSha256, runtime.nodeBinding.sha256);
+    const sourcePackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
+    const bundledPackage = JSON.parse(readFileSync(join(app, "Contents/Resources/app/package.json")));
+    const buildMarker = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-LOCAL-BUILD.json")));
+    assert.equal(buildMarker.sequence, sourcePackage.walletBuildSequence);
+    assert.equal(bundledPackage.walletBuildSequence, buildMarker.sequence);
     const info = readFileSync(join(app, "Contents/Info.plist"), "utf8");
     assert.match(info, /<key>CFBundleShortVersionString<\/key><string>0\.2\.0<\/string>/);
     assert.match(launcher, /app\/blockchain\/wallet-macos-app\.mjs/);
@@ -66,8 +115,7 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
     assert.match(nativeSource, /if \(!\[\[self mode\] isEqualToString:@"restore"\]\) return;/);
     assert.match(nativeSource, /self\.submitted = YES;\s*\[NSApp terminate:nil\]/);
     assert.match(nativeSource, /if \(!self\.submitted\) exit\(2\)/);
-    assert.match(nativeSource, /pairingWindow\.level = NSFloatingWindowLevel/);
-    assert.match(nativeSource, /NSWindowCollectionBehaviorMoveToActiveSpace/);
+    assert.doesNotMatch(nativeSource, /--show-pairing|pairingWindow/);
     const renewal = nativeSource.match(/self\.renewButton\.frame = NSMakeRect\(28, (\d+), 334, (\d+)\)/);
     const addressLabel = nativeSource.match(/self\.pathLabel\.frame = NSMakeRect\(28, (\d+), 334, (\d+)\)/);
     const openingPassword = nativeSource.match(/self\.password\.frame = opening \? NSMakeRect\(28, (\d+), 334, (\d+)\)/);
@@ -83,6 +131,165 @@ test("macOS wallet package includes code, UI, demo policy, and icon without over
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("local Mac wallet runtime never loads a Homebrew executable or dylib after installation", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bundled-runtime-"));
+  try {
+    const app = join(directory, "NIR Wallet.app");
+    buildMacWallet(app, { sign: false });
+    const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
+    assert.equal(runtime.format, "nir-local-wallet-runtime-v3");
+    assert.equal(runtime.nodeExecutable, "MacOS/node");
+    const node = join(app, "Contents/MacOS/node");
+    assert.equal(existsSync(node), true);
+    const result = spawnSync(node, ["--version"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), process.version);
+    const loads = spawnSync("/usr/bin/otool", ["-L", node], { encoding: "utf8" });
+    assert.equal(loads.status, 0, loads.stderr);
+    assert.doesNotMatch(loads.stdout, /\/opt\/homebrew\//);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("relocated wallet checks its bundled Node and rejects a changed library", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-bundle-relocation-"));
+  try {
+    const original = join(directory, "original");
+    const moved = join(directory, "moved");
+    mkdirSync(original);
+    mkdirSync(moved);
+    const app = join(original, "NIR Wallet.app");
+    buildMacWallet(app);
+    const destination = join(moved, "NIR Wallet.app");
+    renameSync(app, destination);
+    const config = join(destination, "Contents/Resources/NIR-RUNTIME.json");
+    const runtime = JSON.parse(readFileSync(config, "utf8"));
+    const verifier = join(destination, "Contents/MacOS/wallet-runtime-verifier");
+    const runner = join(destination, "Contents/MacOS/wallet-runner");
+    const node = join(destination, "Contents/MacOS/node");
+    const check = () => spawnSync(runner, [node, "--version", runtime.nodeSha256, verifier, config],
+      { encoding: "utf8", timeout: 10_000 });
+    const before = check();
+    assert.equal(before.status, 0, before.stderr);
+    assert.equal(before.stdout.trim(), process.version);
+    appendFileSync(join(destination, "Contents", runtime.nodeBinding.dependencies[0].path), "tampered");
+    const after = check();
+    assert.notEqual(after.status, 0);
+    assert.doesNotMatch(after.stdout, /v\d+\.\d+\.\d+/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("native wallet shell rejects foreign, malformed, and wrong-mode URLs", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-url-smoke-"));
+  try {
+    const binary = join(directory, "url-smoke");
+    const source = new URL("../macos/wallet-launcher.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_LAUNCHER_URL_SMOKE_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", "-framework", "WebKit",
+      source, "-o", binary], { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(run.status, 0, run.stderr);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("empty native wallet onboarding exposes existing-wallet and recovery choices", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  assert.match(native, /self\.openLink = \[NSButton buttonWithTitle:@"Открыть существующий"/);
+  assert.match(native, /self\.openLink\.hidden = self\.createOnly \|\| !creation/);
+  assert.match(native, /self\.restoreLink\.hidden = self\.createOnly \|\| \(!opening && !creation\)/);
+  assert.match(native, /self\.action\.enabled = !opening \|\| self\.wallets\.count > 0/);
+  assert.match(native, /Новый кошелёк получит другой адрес/);
+  assert.match(native, /Доступный кошелёк не распознан\. Файл может быть повреждён/);
+  assert.match(native, /if \(\[warning runModal\] != NSAlertSecondButtonReturn\)/);
+  assert.match(native, /self\.back\.frame = NSMakeRect\(23, opening \? 528/);
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-entry-smoke-"));
+  try {
+    const storage = join(directory, "storage");
+    mkdirSync(join(storage, "Wallets"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(storage, "Wallets", "synthetic-damaged.nirvault.json"), "{broken", { mode: 0o600 });
+    assert.deepEqual(listLocalTestWallets(storage), []);
+    const inventory = inspectLocalTestWallets(storage);
+    assert.deepEqual(inventory, { wallets: [], unrecognizedWalletFiles: 1 });
+    const binary = join(directory, "onboarding-entry-smoke");
+    const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_ONBOARDING_ENTRY_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", source, "-o", binary],
+    { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const launch = (payload) => {
+      const result = spawnSync(binary, [], { encoding: "utf8", input: JSON.stringify(payload), timeout: 10_000 });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    assert.deepEqual(launch({ wallets: [], backups: [] }), {
+      startMode: "create", openVisibleOnCreate: 1, restoreVisibleOnCreate: 1,
+      requiresNewAddressConfirmation: false,
+      openActionEnabled: false, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+    assert.deepEqual(launch({ wallets: inventory.wallets, backups: [],
+      hasUnrecognizedWalletFiles: inventory.unrecognizedWalletFiles > 0 }), {
+      startMode: "restore", openVisibleOnCreate: 0, restoreVisibleOnCreate: 0,
+      requiresNewAddressConfirmation: true,
+      openActionEnabled: false, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+    const synthetic = { address: `nir1${"a".repeat(64)}`, path: "/tmp/synthetic-wallet.nirvault.json" };
+    assert.deepEqual(launch({ wallets: [synthetic], backups: [] }), {
+      startMode: "open", openVisibleOnCreate: 0, restoreVisibleOnCreate: 1,
+      requiresNewAddressConfirmation: false,
+      openActionEnabled: true, createVisibleOnOpen: 1, restoreVisibleOnOpen: 1,
+      restoreMode: "restore", importVisibleOnRestore: 1,
+    });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("recovery export modal is raised in the fresh onboarding process", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  const start = native.indexOf('strcmp(argv[1], "--show-secret") == 0');
+  const end = native.indexOf("NSModalResponse choice = [alert runModal]", start);
+  assert.ok(start >= 0 && end > start);
+  const modal = native.slice(start, end);
+  assert.match(modal, /NSWindow \*secretWindow = alert\.window/);
+  assert.match(modal, /\[secretWindow orderFrontRegardless\]/);
+  assert.match(modal, /\[app activateIgnoringOtherApps:YES\]/);
+  assert.match(modal, /dispatch_async\(dispatch_get_main_queue\(\)/);
+  assert.doesNotMatch(modal, /NSFloatingWindowLevel|NSWindowCollectionBehaviorMoveToActiveSpace/);
+});
+
+test("a raised recovery or private-key dialog requires an explicit reveal before copy or export", () => {
+  const native = readFileSync(new URL("../macos/wallet-onboarding.m", import.meta.url), "utf8");
+  const start = native.indexOf('strcmp(argv[1], "--show-secret") == 0');
+  const end = native.indexOf("NSSavePanel *panel =", start);
+  assert.ok(start >= 0 && end > start);
+  const modal = native.slice(start, end);
+  assert.match(modal, /view\.string = NIRTranslate\(@"Нажмите «Показать»/);
+  assert.match(modal, /BOOL revealed = NO/);
+  assert.match(modal, /if \(!revealed\) \{\s*if \(choice != NSAlertFirstButtonReturn\) return recovery \? 2 : 0;/);
+  assert.match(modal, /NSAlert \*revealedAlert = \[NSAlert new\]/);
+  assert.ok(modal.indexOf("view.string = shown") > modal.indexOf("NSModalResponse choice = [alert runModal]"));
+  assert.ok(modal.indexOf("view.string = shown") < modal.indexOf("[NSPasteboard generalPasteboard]"));
+});
+
+test("native onboarding language preference and recovery warnings round-trip in an isolated domain", () => {
+  if (process.platform !== "darwin") return;
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-locale-smoke-"));
+  try {
+    const binary = join(directory, "onboarding-locale-smoke");
+    const source = new URL("../macos/wallet-onboarding.m", import.meta.url).pathname;
+    const built = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-DNIR_ONBOARDING_LOCALE_SMOKE_TEST",
+      "-framework", "AppKit", "-framework", "Foundation", source, "-o", binary],
+    { encoding: "utf8" });
+    assert.equal(built.status, 0, built.stderr);
+    const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(run.status, 0, run.stderr);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("native app uses a fresh UI origin and disables persistent service-worker caching", async () => {
@@ -134,7 +341,10 @@ test("native onboarding submits a selection instead of silently treating it as c
     assert.equal(built.status, 0, built.stderr);
     const run = spawnSync(binary, [], { encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(run.stdout), { mode: "create", password: "test-only-123" });
+    const selection = JSON.parse(run.stdout);
+    assert.ok(["ru", "en"].includes(selection.language));
+    delete selection.language;
+    assert.deepEqual(selection, { mode: "create", password: "test-only-123" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -154,6 +364,7 @@ test("native restore submits backup, recovery code, address, and new password", 
     assert.equal(run.status, 0, run.stderr);
     const selection = JSON.parse(run.stdout);
     assert.equal(selection.mode, "restore");
+    assert.ok(["ru", "en"].includes(selection.language));
     assert.equal(selection.path, "/tmp/test-backup.nirvault.json");
     assert.equal(selection.newPassword, "new-test-123");
     assert.match(selection.recoveryCode, /^ABCDE-/);
@@ -182,7 +393,10 @@ test("native opening selects an account by address without a file chooser", () =
       preferredPath: wallets[1].path }),
       encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(run.stdout), { mode: "open", path: wallets[1].path,
+    const selection = JSON.parse(run.stdout);
+    assert.ok(["ru", "en"].includes(selection.language));
+    delete selection.language;
+    assert.deepEqual(selection, { mode: "open", path: wallets[1].path,
       password: "selected-account-test-password" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -204,7 +418,10 @@ test("native opening can request a replacement recovery code with the selected v
     const run = spawnSync(binary, [], { input: JSON.stringify({ wallets: [vault] }),
       encoding: "utf8", timeout: 10_000 });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(run.stdout), { mode: "renew", path: vault.path,
+    const selection = JSON.parse(run.stdout);
+    assert.ok(["ru", "en"].includes(selection.language));
+    delete selection.language;
+    assert.deepEqual(selection, { mode: "renew", path: vault.path,
       password: "selected-account-test-password" });
     const nativeSource = readFileSync(source, "utf8");
     assert.match(nativeSource, /Старые копия и код продолжат работать/);

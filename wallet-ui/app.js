@@ -4,6 +4,7 @@ import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
+import { translateWalletText } from "./i18n.js";
 
 if (globalThis.top !== globalThis.self) {
   document.documentElement.replaceChildren();
@@ -11,15 +12,92 @@ if (globalThis.top !== globalThis.self) {
   throw new Error("NIR Wallet framing is forbidden");
 }
 
+// Presentation state is separate from proof/account state. Language changes
+// never trigger a network read, reveal a cached balance or change an intent.
+const languageControl = document.querySelector("#language");
+const localizedTextNodes = new WeakMap();
+const localizedAttributes = new WeakMap();
+const language = localStorage.getItem("nir-language") === "en" ? "en" : "ru";
+languageControl.value = language;
+document.documentElement.lang = language;
+
+function localizeNode(node) {
+  if (node.parentElement?.closest("script,style,code,pre,textarea,[data-i18n-ignore]")) return;
+  const previous = localizedTextNodes.get(node);
+  const source = previous && node.data === previous.rendered ? previous.source : node.data;
+  const rendered = translateWalletText(source, document.documentElement.lang);
+  localizedTextNodes.set(node, { source, rendered });
+  if (node.data !== rendered) node.data = rendered;
+}
+
+function localizeAttributes(element) {
+  const previous = localizedAttributes.get(element) ?? {};
+  const next = { ...previous };
+  for (const name of ["aria-label", "placeholder", "title"]) {
+    if (!element.hasAttribute(name)) continue;
+    const current = element.getAttribute(name);
+    const source = previous[name] && current === previous[name].rendered ? previous[name].source : current;
+    const rendered = translateWalletText(source, document.documentElement.lang);
+    next[name] = { source, rendered };
+    if (current !== rendered) element.setAttribute(name, rendered);
+  }
+  localizedAttributes.set(element, next);
+}
+
+function localizeDocument() {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) localizeNode(walker.currentNode);
+  for (const element of document.body.querySelectorAll("[aria-label],[placeholder],[title]")) {
+    localizeAttributes(element);
+  }
+}
+
+function setLanguage(value) {
+  const next = value === "en" ? "en" : "ru";
+  document.documentElement.lang = next;
+  languageControl.value = next;
+  localStorage.setItem("nir-language", next);
+  // The native shell persists this non-secret preference across its ephemeral
+  // web views. It accepts only ru/en from the exact local wallet page.
+  globalThis.window?.webkit?.messageHandlers?.nirLanguage?.postMessage(next);
+  localizeDocument();
+}
+
+languageControl.addEventListener("change", (event) => setLanguage(event.currentTarget.value));
+const languageObserver = new MutationObserver(() => localizeDocument());
+languageObserver.observe(document.body, { subtree: true, childList: true, characterData: true,
+  attributes: true, attributeFilter: ["aria-label", "placeholder", "title"] });
+localizeDocument();
+
+const localApp = new URLSearchParams(location.search).get("local-app") === "1";
+if (localApp) {
+  document.querySelector("#onboarding ol").replaceChildren();
+  document.querySelector("#onboarding > p").textContent =
+    "Кошелёк создаётся и открывается в отдельном окне macOS до появления этой страницы. Ключ хранится в зашифрованном файле на этом Mac.";
+  document.querySelector("#bridge-panel > p").textContent =
+    "Приложение подключает локальный кошелёк автоматически. Пароль вводится только в системном окне подтверждения операции.";
+  document.querySelector("#settings-panel > p").textContent =
+    "Пароль и приватный ключ не вводятся в этой странице. Закрытие приложения удаляет session token из памяти окна.";
+  document.querySelector("#setup-panel > p").textContent =
+    "Этот адрес уже выбран в отдельном окне macOS. Чтобы создать или восстановить другой кошелёк, закройте приложение и откройте его снова. Сохраните проверенную зашифрованную копию и код восстановления отдельно.";
+  document.querySelector("#setup-panel .setup-steps").hidden = true;
+  document.querySelector("#contacts-panel > p").textContent =
+    "Контакты доступны только пока открыто это локальное тестовое окно; после закрытия они не сохраняются. Пароль и ключи здесь не хранятся.";
+  document.querySelector('[data-action="mine"]').lastChild.textContent = "О майнинге";
+  document.querySelector('[data-nav="mine"] span').textContent = "О майнинге";
+}
+
 const messages = {
-  receive: ["Получить NIR", "Сначала подключите локальный vault, чтобы показать публичный адрес."],
-  send: ["Отправить NIR", "Подключите локальный vault. Перед подписью кошелёк покажет адрес, сумму, комиссию и процент комиссии."],
+  receive: ["Получить NIR", "Сначала подключите локальный кошелёк, чтобы показать публичный адрес."],
+  send: ["Отправить NIR", "Подключите локальный кошелёк. Перед подписью он покажет адрес, сумму, комиссию и процент комиссии."],
   mine: ["Майнинг интеллекта", "Здесь можно будет выбрать роль, проверить оборудование и получить назначенное задание. Сейчас доступен только локальный демонстрационный режим."],
   history: ["История операций", "Операций пока нет. После подключения узла здесь появятся подтверждённые переводы, комиссии и награды."],
   resources: ["Ресурсы сети", "Заблокируйте NIR, чтобы получать Transfer Credits или безопасно делегировать лимит переводов другому адресу."],
   settings: ["Настройки", "Переключение темы уже работает. Session token хранится только в памяти страницы и исчезает при её закрытии."],
-  network: ["Local testnet", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
+  network: ["Локальная тестовая сеть", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
 };
+if (localApp) messages.mine = ["Майнинг недоступен",
+  "Эта локальная сборка кошелька не запускает проверку моделей, не отправляет доказательства операторам и не начисляет NIR."];
 
 const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8788";
 const NIR_ADDRESS = ADDRESS_PATTERN;
@@ -39,6 +117,100 @@ const setupPanel = document.querySelector("#setup-panel");
 const contactsPanel = document.querySelector("#contacts-panel");
 const offlineSigningPanel = document.querySelector("#offline-signing-panel");
 const onboarding = document.querySelector("#onboarding");
+const homePage = document.querySelector("#home-page");
+const pageHost = document.querySelector("#page-host");
+const pageDialogs = [panel, accountsPanel, bridgePanel, receivePanel, sendPanel,
+  offlineSigningPanel, contactsPanel, resourcesPanel, assetsPanel, settingsPanel, setupPanel];
+let activePage = null;
+let pageTrail = [];
+let activeTab = "home";
+let pageNavigationEpoch = 0;
+for (const page of pageDialogs) {
+  page.classList.add("page-view");
+  page.hidden = true;
+  pageHost.append(page);
+  const back = page.querySelector(":scope > .close");
+  if (back) { back.textContent = "←"; back.setAttribute("aria-label", "Назад"); }
+  page.addEventListener("close", () => {
+    if (page.open) return;
+    page.hidden = true;
+    if (activePage !== page) return;
+    pageNavigationEpoch += 1;
+    activePage = null;
+    while (pageTrail.length) {
+      const previous = pageTrail.pop();
+      if (previous.open) {
+        previous.hidden = false;
+        activePage = previous;
+        focusPageHeading(previous);
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return;
+      }
+    }
+    showHomeTab(activeTab === "history" ? "history" : "home");
+  });
+}
+
+function focusPageHeading(page) {
+  const heading = page.querySelector(":scope > h2");
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+}
+
+function setActiveTab(destination) {
+  activeTab = destination;
+  for (const button of document.querySelectorAll("[data-nav]")) {
+    const selected = button.dataset.nav === destination;
+    button.classList.toggle("active", selected);
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+}
+
+function clearOpenPages() {
+  activePage = null;
+  pageTrail = [];
+  for (const page of pageDialogs) {
+    page.hidden = true;
+    if (page.open) page.close();
+  }
+}
+
+function showHomeTab(destination = "home") {
+  pageNavigationEpoch += 1;
+  clearOpenPages();
+  homePage.hidden = false;
+  homePage.dataset.view = destination;
+  document.querySelector("#history .title h2").textContent =
+    destination === "history" ? "История операций" : "Последние операции";
+  setActiveTab(destination);
+  if (destination === "history") {
+    const heading = document.querySelector("#history .title h2");
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+function openPage(page, tab = null) {
+  if (activePage === page) return;
+  pageNavigationEpoch += 1;
+  if (tab) {
+    clearOpenPages();
+    setActiveTab(tab);
+  } else if (activePage) {
+    activePage.hidden = true;
+    pageTrail.push(activePage);
+  }
+  homePage.hidden = true;
+  if (!page.open) page.show();
+  page.hidden = false;
+  activePage = page;
+  focusPageHeading(page);
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
 const bridgeStatus = document.querySelector("#bridge-status");
 const receiveStatus = document.querySelector("#receive-status");
 const sendStatus = document.querySelector("#send-status");
@@ -70,16 +242,24 @@ let paymentRequestQrIndex = 0;
 let offlineSigningPackage = null;
 let offlinePackageQrFrames = [];
 let offlinePackageQrIndex = 0;
+let nativeConnectionError = null;
 
 function renderWalletConnection() {
   const connected = Boolean(walletInfo && bridgeSession);
-  onboarding.hidden = connected;
+  onboarding.hidden = connected || localApp;
+  const nativeError = document.querySelector("#native-connection-error");
+  nativeError.hidden = !localApp || connected || !nativeConnectionError;
+  nativeError.textContent = nativeError.hidden ? "" : nativeConnectionError;
   accountOpen.hidden = !connected;
   document.querySelector("#disconnect-wallet").hidden = !connected;
-  document.querySelector("#settings-connect").hidden = connected;
+  document.querySelector("#settings-connect").hidden = connected || localApp;
+  document.querySelector("#settings-secrets").hidden = !connected ||
+    walletInfo.nativeSecurityAvailable !== true;
+  document.querySelector("#settings-password-change").hidden = !connected ||
+    walletInfo.nativePasswordChangeAvailable !== true;
   document.querySelector("#security-state").textContent = connected
-    ? `Vault подключён · ${walletInfo.address.slice(0, 16)}…`
-    : "Vault не подключён";
+    ? `Кошелёк подключён · ${walletInfo.address.slice(0, 16)}…`
+    : (localApp && nativeConnectionError) || "Кошелёк не подключён";
 }
 
 function clearAccountNumbers() {
@@ -132,7 +312,10 @@ function resetAccountView(message) {
   activeNodeUrl = null;
 }
 
-function clearWalletSession(message = "Vault отключён · ключи и session token отсутствуют в странице") {
+function clearWalletSession(message = "Кошелёк отключён · ключи и session token отсутствуют в странице") {
+  if (localApp && bridgeSession && !nativeConnectionError) {
+    nativeConnectionError = "Сеанс закрыт. Чтобы подключиться снова, перезапустите NIR Wallet.";
+  }
   bridgeSession = null;
   walletInfo = null;
   resetAccountView(message);
@@ -151,9 +334,13 @@ function renderSimulation(target, simulation) {
   const fields = root.querySelector(".simulation-fields");
   const risks = root.querySelector(".simulation-risks");
   fields.replaceChildren(); risks.replaceChildren();
-  const add = (term, value) => {
+  const add = (term, value, { termContainsProtocol = false } = {}) => {
     const row = document.createElement("div");
     const dt = document.createElement("dt"); const dd = document.createElement("dd");
+    // The verifier supplied value is protocol data. Never translate it, even
+    // when an arbitrary role/risk happens to match a UI label.
+    dd.dataset.i18nIgnore = "";
+    if (termContainsProtocol) dt.dataset.i18nIgnore = "";
     dt.textContent = term; dd.textContent = value; row.append(dt, dd); fields.append(row);
   };
   add("Операция", simulation.type);
@@ -162,13 +349,14 @@ function renderSimulation(target, simulation) {
   add("Комиссия", `${formatAtomic(simulation.fee.amount)} NIR · платит ${simulation.fee.payer ?? "ресурс сети"}`);
   for (const effect of simulation.balance) {
     const sign = BigInt(effect.delta) > 0n ? "+" : "";
-    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`);
+    add(`Баланс: ${effect.role}`, `${effect.address ?? "получатель комиссии"}: ${sign}${effect.delta} atomic NIR`, { termContainsProtocol: true });
   }
-  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено");
+  for (const resource of simulation.resources) add(`Ресурс: ${resource.role}`, resource.details || "изменение подтверждено", { termContainsProtocol: true });
   for (const asset of simulation.assets ?? []) add("Актив", asset.details || `${asset.assetId}: изменение подтверждено`);
-  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`);
+  for (const nonce of simulation.nonces) add(`Nonce: ${nonce.role}`, `${nonce.address}: ${nonce.before} → ${nonce.after}`, { termContainsProtocol: true });
   for (const risk of simulation.risks) {
     const item = document.createElement("li"); item.className = "risk-info";
+    item.dataset.i18nIgnore = "";
     item.textContent = risk; risks.append(item);
   }
   root.hidden = false;
@@ -212,11 +400,11 @@ async function recheckSimulation(intent, previous) {
   return refreshed;
 }
 
-function showMessage(key, copy = null) {
+function showMessage(key, copy = null, tab = null) {
   const [title, defaultCopy] = messages[key];
   panelTitle.textContent = title;
   panelCopy.textContent = copy ?? defaultCopy;
-  if (!panel.open) panel.showModal();
+  openPage(panel, tab);
 }
 
 function exactLoopbackUrl(value) {
@@ -229,7 +417,7 @@ function exactLoopbackUrl(value) {
 }
 
 async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
-  if (!bridgeSession) throw new Error("Сначала подключите vault.");
+  if (!bridgeSession) throw new Error("Сначала подключите кошелёк.");
   const session = bridgeSession;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -245,7 +433,7 @@ async function bridgeRequest(path, options = {}, timeoutMs = 30_000) {
     const result = await response.json();
     if (!response.ok) {
       if (response.status === 401 && bridgeSession === session) {
-        clearWalletSession("Сессия vault завершена · подключитесь снова");
+        clearWalletSession("Сессия кошелька завершена · подключитесь снова");
       }
       throw new Error(result.error || "Локальный bridge отклонил запрос.");
     }
@@ -274,7 +462,9 @@ async function signWithRecovery(path, intent, simulationId, onWait) {
       }
       await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
-    if (!result) throw new Error("Время подтверждения истекло. Проверьте терминал и начните новый запрос.");
+    if (!result) throw new Error(localApp
+      ? "Время подтверждения истекло. Проверьте окно macOS и начните новый запрос."
+      : "Время подтверждения истекло. Проверьте терминал и начните новый запрос.");
   }
   if (result.requestId !== requestId) throw new Error("Bridge вернул результат другого запроса подписи.");
   return result;
@@ -343,7 +533,7 @@ function nodeUrl(path) {
 }
 
 async function readAccount() {
-  if (!walletInfo || !networkInfo) throw new Error("Подключите vault и локальный узел.");
+  if (!walletInfo || !networkInfo) throw new Error("Подключите кошелёк и локальный узел.");
   const address = walletInfo.address;
   const { height: minimumHeight, networkId } = networkInfo;
   try {
@@ -598,7 +788,7 @@ function openContacts() {
     document.querySelector("#contacts-status").textContent = "";
     document.querySelector("#address-change-warning").hidden = true;
     pendingAddressChange = null;
-    setContactForm(); renderContacts(); contactsPanel.showModal();
+    setContactForm(); renderContacts(); openPage(contactsPanel);
   } catch (error) { sendStatus.textContent = error.message; }
 }
 
@@ -657,14 +847,14 @@ async function exportOfflineSigningPackage(intent, simulation) {
     document.querySelector("#offline-signed-result").hidden = true;
     document.querySelector("#offline-signed-input").value = "";
     status.textContent = "Пакет создан. Его создание не подписывает и не отправляет операцию.";
-    if (!offlineSigningPanel.open) offlineSigningPanel.showModal();
+    openPage(offlineSigningPanel);
   } catch (error) { status.textContent = error.message; }
 }
 
 async function openResources() {
   if (!walletInfo) return openBridgePanel();
   resourcesStatus.textContent = "Обновление…";
-  resourcesPanel.showModal();
+  openPage(resourcesPanel, "resources");
   await refreshAccount();
   resourcesStatus.textContent = "";
 }
@@ -738,6 +928,7 @@ function renderVerifiedAssets(statements) {
   }
   for (const statement of visible) {
     const row = document.createElement("article"); row.className = "asset-row";
+    row.dataset.i18nIgnore = "";
     const title = document.createElement("b"); title.textContent = `${statement.balance} units`;
     const id = document.createElement("span"); id.textContent = `ID ${statement.assetId}`;
     const metadata = document.createElement("span"); metadata.textContent = `metadata ${statement.asset.metadataHash}`;
@@ -784,8 +975,7 @@ async function refreshAssets() {
 
 async function openAssets() {
   if (!walletInfo) return openBridgePanel();
-  resourcesPanel.close();
-  assetsPanel.showModal();
+  openPage(assetsPanel);
   await refreshAssets();
 }
 
@@ -906,9 +1096,12 @@ document.querySelector("#confirm-resource-simulation").onclick = async (event) =
   resourcesStatus.textContent = "Повторная симуляция перед подписью…";
   try {
     const refreshed = await recheckSimulation(pendingResourceIntent, pendingSimulation);
-    resourcesStatus.textContent = "Подтвердите параметры и пароль только в терминале bridge…";
+    resourcesStatus.textContent = localApp
+      ? "Подтвердите параметры и пароль только в отдельном окне macOS…"
+      : "Подтвердите параметры и пароль только в терминале bridge…";
     const signed = await signWithRecovery("/v1/sign-resource", pendingResourceIntent,
-      refreshed.simulationId, () => { resourcesStatus.textContent = "Ожидание подтверждения в терминале…"; });
+      refreshed.simulationId, () => { resourcesStatus.textContent = localApp
+        ? "Ожидание подтверждения в окне macOS…" : "Ожидание подтверждения в терминале…"; });
     assertSignedMatchesIntent(signed.transaction, pendingResourceIntent);
     signedResourceTransaction = signed.transaction;
     document.querySelector("#resource-signed-json").value = JSON.stringify(signedResourceTransaction, null, 2);
@@ -926,30 +1119,44 @@ document.querySelector("#edit-resource-simulation").onclick = () => {
 
 document.querySelector("#submit-resource").onclick = async (event) => {
   if (!signedResourceTransaction) return;
+  const transaction = signedResourceTransaction;
+  const navigationEpoch = pageNavigationEpoch;
+  const walletEpoch = accountEpoch;
+  const assertCurrent = () => {
+    if (pageNavigationEpoch !== navigationEpoch || accountEpoch !== walletEpoch ||
+        activePage !== resourcesPanel || signedResourceTransaction !== transaction) {
+      throw new Error("Страница или операция изменилась; повторите отправку.");
+    }
+  };
   event.currentTarget.disabled = true;
   resourcesStatus.textContent = "Повторная проверка тестовой сети…";
   try {
     if (!(await refreshNodeStatus())) {
       throw new Error("Сеть не подтверждена; транзакция не отправлена.");
     }
+    assertCurrent();
     const health = await fetch(nodeUrl("/health")).then((response) => response.json());
+    assertCurrent();
     if (health.valueMode !== "valueless-devnet" ||
-        health.networkId !== signedResourceTransaction.networkId) {
+        health.networkId !== transaction.networkId) {
       throw new Error("Сеть изменилась после подписи; транзакция не отправлена.");
     }
     const response = await fetch(transactionSubmissionUrl(nodePolicy), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(signedResourceTransaction),
+      body: JSON.stringify(transaction),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Узел отклонил операцию.");
-    resourcesStatus.textContent = submissionStatus(result);
-    signedResourceTransaction = null;
-    document.querySelector("#resource-signed").hidden = true;
+    if (signedResourceTransaction === transaction) {
+      resourcesStatus.textContent = submissionStatus(result);
+      signedResourceTransaction = null;
+      document.querySelector("#resource-signed").hidden = true;
+    }
     await refreshNodeStatus();
-  } catch (error) { resourcesStatus.textContent = error.message; }
-  finally { event.currentTarget.disabled = false; }
+  } catch (error) {
+    if (signedResourceTransaction === transaction && activePage === resourcesPanel) resourcesStatus.textContent = error.message;
+  } finally { if (signedResourceTransaction === transaction) event.currentTarget.disabled = false; }
 };
 
 document.querySelector("#discard-resource").onclick = () => {
@@ -1011,13 +1218,52 @@ document.querySelector("#claim-unstake").onclick = async (event) => {
 };
 
 function openBridgePanel() {
+  if (localApp) {
+    nativeConnectionError = "Нет защищённой связи с приложением. Закройте и откройте NIR Wallet снова.";
+    renderWalletConnection();
+    document.querySelector("#wallet-state").textContent =
+      "Защищённая связь с приложением недоступна · закройте и откройте NIR Wallet снова";
+    return;
+  }
   bridgeStatus.textContent = "";
   document.querySelector("#bridge-url").value = bridgeSession?.url ?? DEFAULT_BRIDGE_URL;
   document.querySelector("#bridge-code").value = "";
-  bridgePanel.showModal();
+  openPage(bridgePanel);
   // Native Mac app brings its pairing code above the browser. The standalone
   // CLI has no such endpoint; its terminal code remains the fallback.
   void fetch(`${DEFAULT_BRIDGE_URL}/v1/pairing-prompt`, { method: "POST" }).catch(() => {});
+}
+
+async function connectNativeWallet() {
+  if (!localApp) return;
+  const code = window.__nirNativeBootstrap;
+  delete window.__nirNativeBootstrap;
+  nativeConnectionError = null;
+  if (!/^[0-9a-f]{64}$/.test(code ?? "")) {
+    nativeConnectionError = "Нет защищённой связи с приложением. Закройте и откройте NIR Wallet снова.";
+    clearWalletSession("Нет защищённой связи с приложением · откройте кошелёк через NIR Wallet");
+    return;
+  }
+  clearWalletSession("Подключаем локальный кошелёк…");
+  const epoch = accountEpoch;
+  try {
+    const token = await pairBridge(DEFAULT_BRIDGE_URL, code);
+    if (epoch !== accountEpoch) return;
+    bridgeSession = { token, url: DEFAULT_BRIDGE_URL };
+    walletInfo = await bridgeRequest("/v1/wallet");
+    if (epoch !== accountEpoch) return;
+    if (await renderAccounts() !== true || epoch !== accountEpoch) {
+      throw new Error("wallet account changed during native pairing");
+    }
+    nativeConnectionError = null;
+    renderWalletConnection();
+    await refreshNodeStatus();
+  } catch {
+    if (epoch === accountEpoch) {
+      nativeConnectionError = "Подключение не подтверждено. Закройте и откройте NIR Wallet снова.";
+      clearWalletSession("Подключение не подтверждено · закройте и откройте NIR Wallet снова");
+    }
+  }
 }
 
 async function renderAccounts() {
@@ -1028,7 +1274,7 @@ async function renderAccounts() {
     throw new Error("Не удалось проверить список кошельков.");
   }
   if (accounts.find((account) => account.id === activeId).address !== walletInfo.address) {
-    throw new Error("Выбранный адрес не совпадает с подключённым vault.");
+    throw new Error("Выбранный адрес не совпадает с подключённым кошельком.");
   }
   const list = document.querySelector("#account-list");
   list.replaceChildren();
@@ -1042,7 +1288,7 @@ async function renderAccounts() {
     const title = document.createElement("strong");
     title.textContent = `${account.label}${account.id === activeId ? " · выбран" : ""}`;
     const detail = document.createElement("small");
-    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный vault`;
+    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный файл кошелька`;
     button.append(title, detail);
     button.onclick = () => changeAccount(account.id);
     list.append(button);
@@ -1102,7 +1348,7 @@ async function changeAccount(id) {
 
 accountOpen.onclick = async () => {
   accountsStatus.textContent = "";
-  try { if (await renderAccounts() === true && bridgeSession && walletInfo) accountsPanel.showModal(); }
+  try { if (await renderAccounts() === true && bridgeSession && walletInfo) openPage(accountsPanel); }
   catch (error) { showMessage("settings", error.message); }
 };
 
@@ -1126,18 +1372,17 @@ document.querySelector("#add-account").onclick = async (event) => {
 };
 
 function openSetupPanel() {
-  if (settingsPanel.open) settingsPanel.close();
-  setupPanel.showModal();
+  openPage(setupPanel);
 }
 
 function openSettingsPanel() {
   renderWalletConnection();
-  settingsPanel.showModal();
+  openPage(settingsPanel, "settings");
 }
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  clearWalletSession("Переподключение vault · ожидаем подтверждения нового сеанса");
+  clearWalletSession("Переподключение кошелька · ожидаем подтверждения нового сеанса");
   const pairingEpoch = accountEpoch;
   bridgeStatus.textContent = "Подключение…";
   const codeInput = document.querySelector("#bridge-code");
@@ -1161,7 +1406,7 @@ document.querySelector("#bridge-form").addEventListener("submit", async (event) 
     setTimeout(() => bridgePanel.open && bridgePanel.close(), 450);
   } catch (error) {
     if (pairingEpoch !== accountEpoch) return;
-    clearWalletSession("Подключение vault не подтверждено · баланс скрыт");
+    clearWalletSession("Подключение кошелька не подтверждено · баланс скрыт");
     codeInput.value = "";
     bridgeStatus.textContent = error.name === "AbortError" ? "Bridge не ответил вовремя." : error.message;
   }
@@ -1183,7 +1428,7 @@ function receive() {
   document.querySelector("#payment-request-json").value = "";
   paymentRequestQrFrames = [];
   receiveStatus.textContent = "";
-  receivePanel.showModal();
+  openPage(receivePanel);
 }
 
 document.querySelector("#payment-request-form").addEventListener("submit", async (event) => {
@@ -1220,7 +1465,8 @@ document.querySelector("#confirm-payment-request-simulation").onclick = async (e
     const refreshed = await simulateIntent(pendingPaymentRequest.intent, account);
     if (!sameSimulation(refreshed, pendingPaymentRequest.simulation)) throw new Error("Результат симуляции изменился. Подпись отменена.");
     const result = await signWithRecovery("/v1/sign-payment-request", pendingPaymentRequest.intent,
-      refreshed.simulationId, () => { receiveStatus.textContent = "Ожидание подтверждения в терминале…"; });
+      refreshed.simulationId, () => { receiveStatus.textContent = localApp
+        ? "Ожидание подтверждения в окне macOS…" : "Ожидание подтверждения в терминале…"; });
     const verifiedRequest = await bridgeRequest("/v1/verify-payment-request", {
       method: "POST", body: JSON.stringify({ networkId: pendingPaymentRequest.intent.networkId, request: result.paymentRequest }),
     });
@@ -1277,7 +1523,7 @@ function openSend() {
   const submitButton = document.querySelector("#submit-signed");
   submitButton.disabled = false;
   submitButton.hidden = false;
-  sendPanel.showModal();
+  openPage(sendPanel);
 }
 
 document.querySelector("#verify-payment-request").onclick = async (event) => {
@@ -1443,11 +1689,14 @@ document.querySelector("#request-signature").onclick = async () => {
   if (!pendingIntent || !pendingSimulation) return;
   const signButton = document.querySelector("#request-signature");
   signButton.disabled = true;
-  sendStatus.textContent = "Подтвердите запрос и введите пароль в терминале bridge…";
+  sendStatus.textContent = localApp
+    ? "Подтвердите запрос и введите пароль в отдельном окне macOS…"
+    : "Подтвердите запрос и введите пароль в терминале bridge…";
   try {
     const refreshed = await recheckSimulation(pendingIntent, pendingSimulation);
     const result = await signWithRecovery("/v1/sign", pendingIntent, refreshed.simulationId,
-      () => { sendStatus.textContent = "Ожидание подтверждения в терминале…"; });
+      () => { sendStatus.textContent = localApp
+        ? "Ожидание подтверждения в окне macOS…" : "Ожидание подтверждения в терминале…"; });
     assertSignedMatchesIntent(result.transaction, pendingIntent);
     document.querySelector("#signed-json").value = JSON.stringify(result.transaction, null, 2);
     signedTransaction = result.transaction;
@@ -1465,6 +1714,15 @@ document.querySelector("#request-signature").onclick = async () => {
 
 document.querySelector("#submit-signed").onclick = async () => {
   if (!signedTransaction) return;
+  const transaction = signedTransaction;
+  const navigationEpoch = pageNavigationEpoch;
+  const walletEpoch = accountEpoch;
+  const assertCurrent = () => {
+    if (pageNavigationEpoch !== navigationEpoch || accountEpoch !== walletEpoch ||
+        activePage !== sendPanel || signedTransaction !== transaction) {
+      throw new Error("Страница или операция изменилась; повторите отправку.");
+    }
+  };
   const submitButton = document.querySelector("#submit-signed");
   submitButton.disabled = true;
   sendStatus.textContent = "Повторная проверка тестовой сети…";
@@ -1472,30 +1730,35 @@ document.querySelector("#submit-signed").onclick = async () => {
     if (!(await refreshNodeStatus())) {
       throw new Error("Сеть не подтверждена; транзакция не отправлена.");
     }
+    assertCurrent();
     const healthResponse = await fetch(nodeUrl("/health"));
     if (!healthResponse.ok) throw new Error("Локальный узел не отвечает.");
     const currentNetwork = await healthResponse.json();
+    assertCurrent();
     if (currentNetwork.valueMode !== "valueless-devnet") {
       throw new Error("Отправка разрешена только в сети без реальной стоимости.");
     }
-    if (currentNetwork.networkId !== signedTransaction.networkId) {
+    if (currentNetwork.networkId !== transaction.networkId) {
       throw new Error("Сеть узла не совпадает с сетью подписанной транзакции.");
     }
     const response = await fetch(transactionSubmissionUrl(nodePolicy), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(signedTransaction),
+      body: JSON.stringify(transaction),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Узел отклонил транзакцию.");
-    sendStatus.textContent = submissionStatus(result);
-    submitButton.hidden = true;
-    signedTransaction = null;
+    if (signedTransaction === transaction) {
+      sendStatus.textContent = submissionStatus(result);
+      submitButton.hidden = true;
+      signedTransaction = null;
+    }
     await refreshNodeStatus();
   } catch (error) {
-    sendStatus.textContent = error.message;
-    submitButton.disabled = false;
-  }
+    if (signedTransaction === transaction && activePage === sendPanel) {
+      sendStatus.textContent = error.message;
+    }
+  } finally { if (signedTransaction === transaction) submitButton.disabled = false; }
 };
 
 document.querySelector("#copy-signed").onclick = async () => {
@@ -1513,6 +1776,8 @@ document.querySelectorAll("[data-action]").forEach((button) => {
     else if (button.dataset.action === "send") openSend();
     else if (button.dataset.action === "connect") openBridgePanel();
     else if (button.dataset.action === "setup") openSetupPanel();
+    else if (button.dataset.action === "history") showHomeTab("history");
+    else if (button.dataset.action === "mine") showMessage("mine", null, "mine");
     else showMessage(button.dataset.action);
   });
 });
@@ -1522,7 +1787,6 @@ document.querySelectorAll("[data-close]").forEach((button) => {
   button.onclick = () => document.querySelector(`#${button.dataset.close}`).close();
 });
 document.querySelector("#settings-connect").onclick = () => {
-  settingsPanel.close();
   openBridgePanel();
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
@@ -1616,8 +1880,52 @@ document.querySelector("#copy-iris-receipt").onclick = async () => {
     document.querySelector("#iris-receipt-status").textContent = "Копирование недоступно. Скопируйте текст вручную.";
   }
 };
+document.querySelector("#wallet-check-updates").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#wallet-update-status");
+  button.disabled = true;
+  try {
+    if (!bridgeSession) throw new Error("Нет активного сеанса кошелька.");
+    const build = await bridgeRequest("/v1/app-build");
+    if (!/^\d+\.\d+\.\d+$/.test(build.version) ||
+        !Number.isSafeInteger(build.localBuildSequence) || build.localBuildSequence < 1 ||
+        build.updateChannel !== "unavailable") throw new Error("Неверные сведения о сборке.");
+    status.textContent = `Запущенный локальный сервис: версия ${build.version} · ревизия ${build.localBuildSequence}. ` +
+      "Доверенный канал обновлений не настроен; наличие новой версии не проверено. Приложение не изменено.";
+  } catch {
+    status.textContent = "Не удалось получить сведения о запущенном сервисе. Приложение не изменено.";
+  } finally { button.disabled = false; }
+};
+document.querySelector("#settings-secrets").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#settings-secrets-status");
+  button.disabled = true;
+  status.textContent = "Подтвердите действие в отдельном окне Mac; секрет здесь не появится.";
+  try {
+    const result = await bridgeRequest("/v1/native-security", { method: "POST" }, 600_000);
+    status.textContent = result.opened ? "Новая зашифрованная копия проверена в окне Mac."
+      : "Действие отменено. Существующие копии не изменены.";
+  } catch (error) {
+    status.textContent = error.name === "AbortError"
+      ? "Окно Mac не ответило вовремя." : "Не удалось завершить действие. Проверьте окно Mac.";
+  } finally { button.disabled = false; }
+};
+document.querySelector("#settings-password-change").onclick = async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#settings-password-status");
+  button.disabled = true;
+  status.textContent = "Введите старый и новый пароль только в отдельном окне Mac.";
+  try {
+    const result = await bridgeRequest("/v1/native-password-change", { method: "POST" }, 600_000);
+    status.textContent = result.changed ? "Пароль активного файла изменён. Старые копии не отозваны."
+      : "Действие отменено. Пароль не изменён.";
+  } catch (error) {
+    status.textContent = error.name === "AbortError"
+      ? "Окно Mac не ответило вовремя. Перезапустите кошелёк и проверьте доступ."
+      : "Не удалось завершить смену пароля. Проверьте окно Mac и доступ после перезапуска.";
+  } finally { button.disabled = false; }
+};
 document.querySelector("#setup-connect").onclick = () => {
-  setupPanel.close();
   openBridgePanel();
 };
 document.querySelector("#disconnect-wallet").onclick = async (event) => {
@@ -1627,6 +1935,7 @@ document.querySelector("#disconnect-wallet").onclick = async (event) => {
   } catch {
     // Local state is still erased if the bridge has already stopped or the session expired.
   } finally {
+    if (localApp) nativeConnectionError = "Сеанс закрыт. Чтобы подключиться снова, перезапустите NIR Wallet.";
     clearWalletSession();
     event.currentTarget.disabled = false;
     settingsPanel.close();
@@ -1635,20 +1944,11 @@ document.querySelector("#disconnect-wallet").onclick = async (event) => {
 
 const navigationButtons = [...document.querySelectorAll("[data-nav]")];
 navigationButtons.forEach((button) => button.addEventListener("click", () => {
-  navigationButtons.forEach((candidate) => {
-    const selected = candidate === button;
-    candidate.classList.toggle("active", selected);
-    if (selected) candidate.setAttribute("aria-current", "page");
-    else candidate.removeAttribute("aria-current");
-  });
   const destination = button.dataset.nav;
-  if (destination === "home") window.scrollTo({ top: 0, behavior: "smooth" });
+  if (destination === "home" || destination === "history") showHomeTab(destination);
   else if (destination === "resources") openResources();
-  else if (destination === "history") {
-    document.querySelector("#history").scrollIntoView({ behavior: "smooth", block: "center" });
-    showMessage("history");
-  } else if (destination === "settings") openSettingsPanel();
-  else showMessage(destination);
+  else if (destination === "settings") openSettingsPanel();
+  else showMessage(destination, null, destination);
 }));
 
 const themeButton = document.querySelector("#theme");
@@ -1740,7 +2040,7 @@ async function refreshNodeStatus() {
     activeNodeUrl = null;
     clearAccountNumbers();
     document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · узлы недоступны";
-    networkButton.textContent = "○ Nodes offline";
+    networkButton.textContent = "○ Узлы недоступны";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
     messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
@@ -1749,9 +2049,10 @@ async function refreshNodeStatus() {
 }
 refreshNodeStatus();
 renderWalletConnection();
+void connectNativeWallet();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  if (new URLSearchParams(location.search).get("local-app") === "1") {
+  if (localApp) {
     // The native launcher uses an ephemeral origin. Never keep a cache-first
     // worker for a later build that might reuse this port.
     navigator.serviceWorker.getRegistrations()

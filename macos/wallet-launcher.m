@@ -1,10 +1,86 @@
 #import <AppKit/AppKit.h>
+#import <WebKit/WebKit.h>
+#import <pwd.h>
+#import <signal.h>
+#import <unistd.h>
 
-// Keep a real AppKit event loop alive while the local wallet service and its
-// native setup window run. A shell/Node executable alone can appear frozen in
-// the Dock even while its HTTP server is healthy.
-@interface NIRLauncher : NSObject <NSApplicationDelegate>
+#ifdef NIR_LAUNCHER_LOCALE_UI_TEST
+static CFStringRef const NIRLauncherPreferenceDomain = CFSTR("org.nir.wallet-locale-smoke-test");
+#else
+static CFStringRef const NIRLauncherPreferenceDomain = CFSTR("org.nir.wallet-setup-test");
+#endif
+
+static NSString *NIRPreferredLanguage(void) {
+    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("language"), NIRLauncherPreferenceDomain);
+    NSString *language = value && CFGetTypeID(value) == CFStringGetTypeID() &&
+        [(__bridge NSString *)value isEqualToString:@"en"] ? @"en" : @"ru";
+    if (value) CFRelease(value);
+    return language;
+}
+
+static NSString *NIRLauncherText(NSString *russian) {
+    if (![NIRPreferredLanguage() isEqualToString:@"en"]) return russian;
+    NSDictionary<NSString *, NSString *> *copy = @{
+        @"NIR Wallet не запущен": @"NIR Wallet could not start",
+        @"Локальный сервис прислал некорректный адрес.": @"The local service returned an invalid address.",
+        @"Сборка приложения неполная.": @"The app build is incomplete.",
+        @"Node.js, использованный для локальной сборки, больше не найден. Соберите приложение заново.": @"The Node.js used for this local build is no longer available. Rebuild the app.",
+        @"Не удалось определить домашнюю папку пользователя.": @"The user's home folder could not be determined.",
+        @"Локальный сервис завершился до открытия кошелька.": @"The local service stopped before the wallet opened.",
+        @"NIR Wallet · локальный тест": @"NIR Wallet · local test",
+    };
+    return copy[russian] ?: russian;
+}
+
+static NSURL *NIRLocalWalletURL(NSString *line) {
+    NSURLComponents *components = line ? [NSURLComponents componentsWithString:line] : nil;
+    NSInteger port = components.port.integerValue;
+    if (![components.scheme isEqualToString:@"http"] ||
+        ![components.host isEqualToString:@"127.0.0.1"] ||
+        !components.port || port < 1 || port > 65535 ||
+        ![components.path isEqualToString:@"/"] ||
+        ![components.query isEqualToString:@"local-demo=1&local-app=1"] ||
+        components.user || components.password || components.fragment) return nil;
+    return components.URL;
+}
+
+static NSURL *NIRLocalWalletStartup(NSString *line, NSString **secret) {
+    NSArray<NSString *> *parts = [line componentsSeparatedByString:@"\t"];
+    if (parts.count != 2) return nil;
+    NSURL *url = NIRLocalWalletURL(parts[0]);
+    NSString *candidate = parts[1];
+    NSRegularExpression *format = [NSRegularExpression regularExpressionWithPattern:@"^[0-9a-f]{64}$"
+        options:0 error:nil];
+    if (!url || [format numberOfMatchesInString:candidate options:0
+        range:NSMakeRange(0, candidate.length)] != 1) return nil;
+    *secret = candidate;
+    return url;
+}
+
+static BOOL NIRTrustedLanguageMessage(NSString *name, BOOL mainFrame, id body,
+                                      NSURL *frameURL, NSURL *origin) {
+    if (![name isEqualToString:@"nirLanguage"] || !mainFrame ||
+        ![body isKindOfClass:NSString.class] ||
+        ![@[@"ru", @"en"] containsObject:body] || !origin) return NO;
+    NSURL *source = NIRLocalWalletURL(frameURL.absoluteString);
+    return source && [source.scheme isEqualToString:origin.scheme] &&
+        [source.host isEqualToString:origin.host] &&
+        source.port.integerValue == origin.port.integerValue;
+}
+
+// The Node service starts in its own process group. Closing the app must also
+// close an in-progress native onboarding dialog, not orphan a signing bridge.
+@interface NIRLauncher : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler>
 @property NSTask *wallet;
+@property NSWindow *window;
+@property WKWebView *webView;
+@property NSPipe *output;
+@property NSMutableData *startupData;
+@property NSURL *origin;
+@property NSString *bootstrapSecret;
+@property NSString *nodeSha256;
+@property (strong) dispatch_source_t terminationSignal;
+@property BOOL walletGroupStopped;
 @end
 
 @implementation NIRLauncher
@@ -16,45 +92,254 @@
     NSData *bytes = [NSData dataWithContentsOfFile:config];
     NSDictionary *runtime = bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil] : nil;
     NSString *path = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"nodeExecutable"] : nil;
+    NSString *pin = [runtime isKindOfClass:NSDictionary.class] ? runtime[@"nodeSha256"] : nil;
+    NSRegularExpression *format = [NSRegularExpression regularExpressionWithPattern:@"^[0-9a-f]{64}$"
+        options:0 error:nil];
+    if (![pin isKindOfClass:NSString.class] ||
+        [format numberOfMatchesInString:pin options:0 range:NSMakeRange(0, pin.length)] != 1) return nil;
+    self.nodeSha256 = pin;
+    if ([runtime[@"format"] isEqualToString:@"nir-local-wallet-runtime-v3"] &&
+        [path isEqualToString:@"MacOS/node"]) {
+        NSString *bundled = [[[NSBundle mainBundle] bundlePath]
+            stringByAppendingPathComponent:@"Contents/MacOS/node"];
+        return [files isExecutableFileAtPath:bundled] ? bundled : nil;
+    }
     return [path isKindOfClass:NSString.class] && [path hasPrefix:@"/"] &&
         [files isExecutableFileAtPath:path] ? path : nil;
 }
 
+- (void)failWithMessage:(NSString *)message {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = NIRLauncherText(@"NIR Wallet не запущен");
+    alert.informativeText = NIRLauncherText(message);
+    [alert runModal];
+    [NSApp terminate:nil];
+}
+
+- (void)stopWalletGroup {
+    if (self.walletGroupStopped || !self.wallet) return;
+    self.walletGroupStopped = YES;
+    pid_t leader = self.wallet.processIdentifier;
+    if (leader <= 0) return;
+    // NSTask can report a dead leader while onboarding/signing descendants are
+    // still alive. The group id remains the original leader's pid until all
+    // members exit; signal it once, immediately, before that id can be reused.
+    if (kill(-leader, SIGTERM) != 0 && self.wallet.isRunning) [self.wallet terminate];
+}
+
+- (void)showWalletAtURL:(NSURL *)url {
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
+    configuration.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    if (self.bootstrapSecret) {
+        // The secret arrives through the private child stdout pipe, never a
+        // URL, command line, localStorage, or HTTP response. Only the exact
+        // wallet document's main frame receives it.
+        NSString *bootstrapScript = [NSString stringWithFormat:
+            @"if (location.href === '%@') Object.defineProperty(window, '__nirNativeBootstrap', { value: '%@', configurable: true });",
+            url.absoluteString, self.bootstrapSecret];
+        WKUserScript *bootstrap = [[WKUserScript alloc] initWithSource:bootstrapScript
+            injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
+        [configuration.userContentController addUserScript:bootstrap];
+    }
+    // The onboarding helper writes only this non-secret preference. Seed the
+    // ephemeral WKWebView before app.js runs; no key or URL parameter is used.
+    NSString *localeScript = [NSString stringWithFormat:
+        @"try { localStorage.setItem('nir-language', '%@'); } catch (_) {}",
+        NIRPreferredLanguage()];
+    WKUserScript *language = [[WKUserScript alloc] initWithSource:localeScript
+        injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
+    [configuration.userContentController addUserScript:language];
+    [configuration.userContentController addScriptMessageHandler:self name:@"nirLanguage"];
+    self.webView = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 480, 760)
+                                       configuration:configuration];
+    self.webView.navigationDelegate = self;
+    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 480, 760)
+        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                  NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
+        backing:NSBackingStoreBuffered defer:NO];
+    self.window.title = NIRLauncherText(@"NIR Wallet · локальный тест");
+    self.window.contentMinSize = NSMakeSize(360, 600);
+    self.window.contentView = self.webView;
+    [self.window center];
+    [self.window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [self.webView loadRequest:[NSURLRequest requestWithURL:url
+        cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:20]];
+}
+
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (!NIRTrustedLanguageMessage(message.name, message.frameInfo.isMainFrame,
+        message.body, message.frameInfo.request.URL, self.origin)) return;
+    CFPreferencesSetAppValue(CFSTR("language"),
+        [message.body isEqualToString:@"en"] ? CFSTR("en") : CFSTR("ru"),
+        NIRLauncherPreferenceDomain);
+    CFPreferencesAppSynchronize(NIRLauncherPreferenceDomain);
+    self.window.title = NIRLauncherText(@"NIR Wallet · локальный тест");
+}
+
+- (void)consumeStartupData:(NSData *)data {
+    if (self.origin || data.length == 0) return;
+    if (self.startupData.length + data.length > 512) {
+        [self failWithMessage:@"Локальный сервис прислал некорректный адрес."];
+        return;
+    }
+    [self.startupData appendData:data];
+    const unsigned char *bytes = self.startupData.bytes;
+    NSUInteger end = NSNotFound;
+    for (NSUInteger index = 0; index < self.startupData.length; index++) {
+        if (bytes[index] == '\n') { end = index; break; }
+    }
+    if (end == NSNotFound) return;
+    NSString *line = [[NSString alloc] initWithData:[self.startupData subdataWithRange:NSMakeRange(0, end)]
+                                         encoding:NSUTF8StringEncoding];
+    NSString *secret = nil;
+    NSURL *url = NIRLocalWalletStartup(line, &secret);
+    if (!url) {
+        [self failWithMessage:@"Локальный сервис прислал некорректный адрес."];
+        return;
+    }
+    NSInteger port = url.port.integerValue;
+    self.bootstrapSecret = secret;
+    self.origin = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%ld", (long)port]];
+    [self showWalletAtURL:url];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
-    NSString *node = [self nodeExecutable];
-    NSString *script = [[NSBundle mainBundle].resourcePath
-        stringByAppendingPathComponent:@"app/blockchain/wallet-macos-app.mjs"];
-    if (!node || ![[NSFileManager defaultManager] fileExistsAtPath:script]) {
-        NSAlert *alert = [NSAlert new];
-        alert.messageText = @"NIR Wallet не запущен";
-        alert.informativeText = node ? @"Сборка приложения неполная." :
-            @"Node.js, использованный для локальной сборки, больше не найден. Соберите приложение заново.";
-        [alert runModal];
+#ifdef NIR_LAUNCHER_LOCALE_UI_TEST
+    NSString *port = NSProcessInfo.processInfo.environment[@"NIR_LOCALE_FIXTURE_PORT"] ?: @"8765";
+    NSInteger portNumber = port.integerValue;
+    if (portNumber < 1 || portNumber > 65535 ||
+        ![port isEqualToString:[NSString stringWithFormat:@"%ld", (long)portNumber]]) {
         [NSApp terminate:nil];
         return;
     }
+    self.origin = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%@", port]];
+    [self showWalletAtURL:NIRLocalWalletURL([NSString stringWithFormat:
+        @"http://127.0.0.1:%@/?local-demo=1&local-app=1", port])];
+    return;
+#endif
+    signal(SIGTERM, SIG_IGN);
+    self.terminationSignal = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0,
+        dispatch_get_main_queue());
+    dispatch_source_set_event_handler(self.terminationSignal, ^{ [NSApp terminate:nil]; });
+    dispatch_resume(self.terminationSignal);
+
+    NSString *node = [self nodeExecutable];
+    NSString *resources = [NSBundle mainBundle].resourcePath;
+    NSString *script = [resources stringByAppendingPathComponent:@"app/blockchain/wallet-macos-app.mjs"];
+    NSString *runner = [[NSBundle mainBundle].executablePath
+        stringByDeletingLastPathComponent];
+    NSString *verifier = [runner stringByAppendingPathComponent:@"wallet-runtime-verifier"];
+    runner = [runner stringByAppendingPathComponent:@"wallet-runner"];
+    NSString *runtimeConfiguration = [resources stringByAppendingPathComponent:@"NIR-RUNTIME.json"];
+    if (!node || ![[NSFileManager defaultManager] fileExistsAtPath:script] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:runner] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:verifier]) {
+        [self failWithMessage:node ? @"Сборка приложения неполная." :
+            @"Встроенный Node.js не найден. Соберите локальное приложение заново."];
+        return;
+    }
+    self.startupData = [NSMutableData data];
+    self.output = [NSPipe pipe];
     self.wallet = [NSTask new];
-    self.wallet.executableURL = [NSURL fileURLWithPath:node];
-    self.wallet.arguments = @[script];
+    self.wallet.executableURL = [NSURL fileURLWithPath:runner];
+    self.wallet.arguments = @[node, script, self.nodeSha256, verifier, runtimeConfiguration];
+    // Never pass caller-supplied DYLD_*, NODE_OPTIONS, NODE_PATH, or other
+    // loader hooks into the verifier and wallet service.
+    struct passwd *account = getpwuid(getuid());
+    NSString *home = account && account->pw_dir ? @(account->pw_dir) : nil;
+    if (!home || ![home hasPrefix:@"/"]) {
+        [self failWithMessage:@"Не удалось определить домашнюю папку пользователя."];
+        return;
+    }
+    self.wallet.environment = @{ @"HOME": home, @"PATH": @"/usr/bin:/bin",
+        @"LANG": @"en_US.UTF-8" };
+    self.wallet.standardOutput = self.output;
+    __weak NIRLauncher *weakSelf = self;
+    self.output.fileHandleForReading.readabilityHandler = ^(NSFileHandle *handle) {
+        NSData *data = [handle availableData];
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf consumeStartupData:data]; });
+    };
     self.wallet.terminationHandler = ^(NSTask *task) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf stopWalletGroup];
+            if (!weakSelf.origin) {
+                [weakSelf failWithMessage:@"Локальный сервис завершился до открытия кошелька."];
+            } else {
+                [NSApp terminate:nil];
+            }
+        });
     };
     NSError *error = nil;
     if (![self.wallet launchAndReturnError:&error]) {
-        NSAlert *alert = [NSAlert new];
-        alert.messageText = @"NIR Wallet не запущен";
-        alert.informativeText = @"Не удалось запустить локальный кошелёк.";
-        [alert runModal];
-        [NSApp terminate:nil];
+        [self failWithMessage:@"Не удалось запустить локальный кошелёк."];
     }
 }
 
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action
+ decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    NSURL *url = action.request.URL;
+    NSURL *page = NIRLocalWalletURL(url.absoluteString);
+    BOOL exactPage = page && [page.scheme isEqualToString:self.origin.scheme] &&
+        [page.host isEqualToString:self.origin.host] &&
+        page.port.integerValue == self.origin.port.integerValue;
+    decisionHandler(exactPage ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
+}
+
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
+
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
-    if (self.wallet.isRunning) [self.wallet terminate];
+    self.output.fileHandleForReading.readabilityHandler = nil;
+    [self stopWalletGroup];
     return NSTerminateNow;
 }
 @end
 
+#ifdef NIR_LAUNCHER_URL_SMOKE_TEST
+int main(void) {
+    @autoreleasepool {
+        NSArray<NSString *> *bad = @[
+            @"http://localhost:1234/?local-demo=1&local-app=1",
+            @"http://127.0.0.1:8788/?local-demo=1&local-app=1#fragment",
+            @"http://evil.test:1234/?local-demo=1&local-app=1",
+            @"https://127.0.0.1:1234/?local-demo=1&local-app=1",
+            @"http://127.0.0.1:0/?local-demo=1&local-app=1",
+            @"http://127.0.0.1:1234/other?local-demo=1&local-app=1",
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=0",
+            @"http://user@127.0.0.1:1234/?local-demo=1&local-app=1"
+        ];
+        if (!NIRLocalWalletURL(@"http://127.0.0.1:1234/?local-demo=1&local-app=1")) return 1;
+        for (NSString *line in bad) if (NIRLocalWalletURL(line)) return 2;
+        NSString *secret = nil;
+        NSString *candidate = [@"ab" stringByPaddingToLength:64 withString:@"ab" startingAtIndex:0];
+        NSString *launch = [NSString stringWithFormat:
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=1\t%@", candidate];
+        if (!NIRLocalWalletStartup(launch, &secret) || ![secret isEqualToString:candidate]) return 6;
+        for (NSString *badLaunch in @[
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=1",
+            @"http://127.0.0.1:1234/?local-demo=1&local-app=1\tabcd",
+            [launch stringByAppendingString:@"\tmore"],
+            [@"http://evil.test:1234/?local-demo=1&local-app=1\t" stringByAppendingString:candidate]
+        ]) if (NIRLocalWalletStartup(badLaunch, &secret)) return 7;
+        NSURL *origin = [NSURL URLWithString:@"http://127.0.0.1:1234"];
+        NSURL *page = [NSURL URLWithString:@"http://127.0.0.1:1234/?local-demo=1&local-app=1"];
+        if (!NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en", page, origin)) return 3;
+        if (!NIRTrustedLanguageMessage(@"nirLanguage", YES, @"ru", page, origin)) return 4;
+        if (NIRTrustedLanguageMessage(@"nirLanguage", NO, @"en", page, origin) ||
+            NIRTrustedLanguageMessage(@"other", YES, @"en", page, origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"fr", page, origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @42, page, origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en",
+                [NSURL URLWithString:@"http://127.0.0.1:5678/?local-demo=1&local-app=1"], origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en",
+                [NSURL URLWithString:@"http://evil.test:1234/?local-demo=1&local-app=1"], origin) ||
+            NIRTrustedLanguageMessage(@"nirLanguage", YES, @"en",
+                [NSURL URLWithString:@"http://127.0.0.1:1234/?local-demo=1&local-app=0"], origin)) return 5;
+    }
+    return 0;
+}
+#else
 int main(void) {
     @autoreleasepool {
         NSApplication *app = [NSApplication sharedApplication];
@@ -65,3 +350,4 @@ int main(void) {
     }
     return 0;
 }
+#endif

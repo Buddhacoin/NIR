@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
 import {
-  chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  chmodSync, fstatSync, linkSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   readlinkSync, renameSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,6 +16,7 @@ import {
 } from "../blockchain/vault.mjs";
 import { createVaultSet, verifyVaultSet } from "../blockchain/vault-files.mjs";
 import {
+  changeWalletFilePassword,
   createVerifiedWalletBackup,
   createWalletFile,
   restoreVerifiedWalletBackup,
@@ -264,6 +268,126 @@ test("native wallet file is private and signs a network-bound transfer", () => {
   }
 });
 
+test("changing a personal wallet password keeps the address and revokes the active old password", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-change-"));
+  const path = join(directory, "personal.nirvault.json");
+  const oldPassword = "old-personal-password-2026";
+  const newPassword = "new-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: oldPassword, personalWallet: true }), /must differ/);
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: "123456789", personalWallet: true }), /at least 9|non-trivial/);
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword: "incorrect-password-2026",
+      newPassword, personalWallet: true }), /invalid|password/i);
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
+    const changed = changeWalletFilePassword({ path, oldPassword, newPassword,
+      personalWallet: true });
+    assert.equal(changed.address, created.address);
+    assert.equal(verifyWalletFile({ path, password: newPassword }).address, created.address);
+    assert.throws(() => verifyWalletFile({ path, password: oldPassword }), /invalid/);
+    assert.equal(readdirSync(directory).filter((name) => name.includes("nir-private-")).length, 1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("failed password change before activation preserves the old vault", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-failure-"));
+  const path = join(directory, "personal.nirvault.json");
+  const oldPassword = "old-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    const link = readlinkSync(path);
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: "new-personal-password-2026", personalWallet: true,
+      _beforeActivate: () => { throw new Error("synthetic power loss"); } }), /synthetic power loss/);
+    assert.equal(readlinkSync(path), link);
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
+    assert.equal(readdirSync(directory).filter((name) => name.includes("nir-private-")).length, 1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("a replaced activation link is not overwritten by password rotation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-race-"));
+  const path = join(directory, "personal.nirvault.json");
+  const oldPassword = "old-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    const originalLink = readlinkSync(path);
+    const heldActivation = join(directory, "held-activation");
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: "new-personal-password-2026", personalWallet: true,
+      _beforeActivate: () => { renameSync(path, heldActivation); symlinkSync(originalLink, path); } }),
+    /activation changed/);
+    assert.equal(readlinkSync(path), originalLink);
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
+    assert.equal(readdirSync(directory).filter((name) => name.includes("nir-private-")).length, 1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("same-inode activation metadata mutation aborts password rotation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-version-"));
+  const path = join(directory, "personal.nirvault.json");
+  const oldPassword = "old-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: "new-personal-password-2026", personalWallet: true,
+      _beforeActivate: () => { lutimesSync(path, new Date(0), new Date(0)); } }),
+    /activation changed/);
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("lost rotation lock after activation reports uncertain, never unchanged", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-lock-loss-"));
+  const path = join(directory, "personal.nirvault.json");
+  const lock = join(directory, ".personal.nirvault.json.nir-password-rotation.lock");
+  const oldPassword = "old-personal-password-2026";
+  const newPassword = "new-personal-password-2026";
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword, personalWallet: true,
+      _beforeActivate: () => { rmSync(lock); } }), (error) =>
+      error.code === "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN");
+    assert.equal(verifyWalletFile({ path, password: newPassword }).address, created.address);
+    assert.throws(() => verifyWalletFile({ path, password: oldPassword }), /invalid/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("a second process cannot change the same wallet while its rotation lock is held", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-password-lock-"));
+  const path = join(directory, "personal.nirvault.json");
+  const lock = join(directory, ".personal.nirvault.json.nir-password-rotation.lock");
+  const oldPassword = "old-personal-password-2026";
+  let child;
+  try {
+    const created = createWalletFile({ path, password: oldPassword, personalWallet: true });
+    child = spawn(process.execPath, ["-e", `
+      const fs = require('node:fs');
+      const lock = process.argv[1];
+      const descriptor = fs.openSync(lock, 'wx', 0o600);
+      process.stdout.write('locked\\n');
+      process.stdin.once('data', () => { fs.closeSync(descriptor); fs.unlinkSync(lock); process.stdin.destroy(); });
+    `, lock], { stdio: ["pipe", "pipe", "pipe"] });
+    await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", (data) => data.toString().includes("locked") ? resolve() :
+        reject(new Error("rotation-lock child did not start")));
+    });
+    assert.throws(() => changeWalletFilePassword({ path, oldPassword,
+      newPassword: "new-personal-password-2026", personalWallet: true }),
+    (error) => error.code === "NIR_WALLET_PASSWORD_CHANGE_LOCKED");
+    assert.equal(verifyWalletFile({ path, password: oldPassword }).address, created.address);
+    child.stdin.write("done");
+    await new Promise((resolve) => child.once("exit", resolve));
+  } finally {
+    child?.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("wallet backups bind network, address and monotonic generation", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-backup-test-"));
   const source = join(directory, "wallet.nirvault.json");
@@ -359,6 +483,60 @@ test("single-file wallet activation cannot follow a raced target symlink", () =>
     assert.deepEqual(readFileSync(join(foreign, "marker")), marker);
     assert.equal(readdirSync(directory).some((name) => name.includes(".nir-private-")), false);
   } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wallet creation cleanup keeps a generation referenced by a replacement activation", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-activation-cleanup-"));
+  const target = join(directory, "wallet.json");
+  const held = join(directory, "held-activation");
+  const password = "activation-cleanup-password-long";
+  let generation;
+  const originalFsync = fs.fsyncSync;
+  try {
+    fs.fsyncSync = (descriptor) => {
+      if (fstatSync(descriptor).isDirectory() && generation === undefined) {
+        generation = join(directory, readlinkSync(target));
+        renameSync(target, held);
+        symlinkSync(readlinkSync(held), target, "file");
+      }
+      return originalFsync(descriptor);
+    };
+    syncBuiltinESMExports();
+    assert.throws(() => createWalletFile({ path: target, password }), /activation changed/);
+    assert.equal(readlinkSync(target), readlinkSync(held));
+    assert.equal(statSync(generation).isFile(), true);
+    assert.match(verifyWalletFile({ path: target, password }).address, /^nir1/);
+  } finally {
+    fs.fsyncSync = originalFsync;
+    syncBuiltinESMExports();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("post-activation failure keeps private generation for a later activation race", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-post-activation-fail-"));
+  const target = join(directory, "wallet.json");
+  const originalFsync = fs.fsyncSync;
+  let generation;
+  try {
+    fs.fsyncSync = (descriptor) => {
+      if (fstatSync(descriptor).isDirectory() && generation === undefined) {
+        generation = join(directory, readlinkSync(target));
+        throw new Error("synthetic directory fsync failure");
+      }
+      return originalFsync(descriptor);
+    };
+    syncBuiltinESMExports();
+    assert.throws(() => createWalletFile({ path: target,
+      password: "post-activation-failure-password-long" }), /synthetic directory fsync failure/);
+    assert.ok(generation);
+    assert.equal(statSync(generation).isFile(), true);
+    assert.equal(readdirSync(directory).includes("wallet.json"), false);
+  } finally {
+    fs.fsyncSync = originalFsync;
+    syncBuiltinESMExports();
     rmSync(directory, { recursive: true, force: true });
   }
 });

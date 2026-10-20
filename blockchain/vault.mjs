@@ -24,13 +24,13 @@ const DISPLAY_CONTROL = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028\u2029\u202
 
 export function validPassword(password, { creation = false } = {}) {
   if (!creation && Buffer.isBuffer(password)) {
-    if (password.length < 12 || password.length > PASSWORD_MAXIMUM_BYTES) return false;
+    if (password.length < 9 || password.length > PASSWORD_MAXIMUM_BYTES) return false;
     for (const byte of password) {
       if (byte <= 0x1f || byte === 0x7f) return false;
     }
     return true;
   }
-  const minimum = creation ? PASSWORD_MINIMUM : 12;
+  const minimum = creation ? PASSWORD_MINIMUM : 9;
   if (typeof password !== "string" || [...password].length < minimum ||
       Buffer.byteLength(password) > PASSWORD_MAXIMUM_BYTES || DISPLAY_CONTROL.test(password)) return false;
   if (!creation) return true;
@@ -42,8 +42,10 @@ export function validPassword(password, { creation = false } = {}) {
 // and all other vault creation keeps the stricter default policy above.
 export function validPersonalWalletPassword(password) {
   return typeof password === "string" && validPassword(password) &&
-    password.normalize("NFKC") === password && new Set(password).size >= 4 &&
-    !/^(.)\1+$/u.test(password);
+    password.normalize("NFKC") === password && new Set(password).size >= 5 &&
+    !/^(.)\1+$/u.test(password) && /\p{L}/u.test(password) &&
+    /[^\p{L}]/u.test(password) && !/^\d+$/u.test(password) &&
+    !/^(?:123456789|987654321|password|qwerty)/iu.test(password);
 }
 
 function exactKeys(value, expected) {
@@ -123,7 +125,7 @@ function vaultMetadata(wallet, label) {
 export function encryptWallet(wallet, password, { label = "NIR vault", personalWallet = false } = {}) {
   if (!(personalWallet ? validPersonalWalletPassword(password)
     : validPassword(password, { creation: true }))) {
-    throw new Error(`vault password must be canonical, non-trivial, and contain at least ${personalWallet ? 12 : 16} characters`);
+    throw new Error(`vault password must be canonical, non-trivial, and contain at least ${personalWallet ? 9 : 16} characters`);
   }
   validateMetadata(vaultMetadata(wallet, label));
   decodeBase64(wallet.privateKey, "wallet private key", 1, 8_192);

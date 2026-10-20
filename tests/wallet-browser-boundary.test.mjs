@@ -189,6 +189,96 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     assert.equal(inert.images, 0);
     assert.match(inert.text, /<img/);
 
+    await send("Page.navigate", { url: `${origin}/?local-demo=1&local-app=1` });
+    const macDeadline = Date.now() + 5_000;
+    while (true) {
+      try {
+        const rendered = await evaluate(send,
+          `location.search === "?local-demo=1&local-app=1" && document.querySelector('[data-action="mine"]')?.textContent.includes("О майнинге")`);
+        if (rendered) break;
+      } catch { /* Navigation can replace the execution context. */ }
+      if (Date.now() >= macDeadline) throw new Error("Chromium local Mac mode did not render");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const macCopy = await evaluate(send, `(() => {
+      document.querySelector('[data-action="mine"]').click();
+      return {
+        onboardingSteps: document.querySelector("#onboarding ol").children.length,
+        onboardingHidden: getComputedStyle(document.querySelector("#onboarding")).display,
+        nativeError: document.querySelector("#native-connection-error").textContent,
+        nativeErrorHidden: document.querySelector("#native-connection-error").hidden,
+        bootstrapPresent: Object.hasOwn(window, "__nirNativeBootstrap"),
+        setupHidden: getComputedStyle(document.querySelector("#setup-panel .setup-steps")).display,
+        title: document.querySelector("#onboarding-title").textContent,
+        connect: document.querySelector('#onboarding [data-action="connect"]').textContent,
+        balance: document.querySelector("#balance-value").textContent,
+        balanceStatus: document.querySelector("#wallet-state").textContent,
+        nodes: document.querySelector(".network").textContent,
+        bridge: document.querySelector("#bridge-panel > p").textContent,
+        mining: document.querySelector("#panel-copy").textContent,
+      };
+    })()`);
+    assert.equal(macCopy.onboardingSteps, 0);
+    assert.equal(macCopy.onboardingHidden, "none");
+    assert.equal(macCopy.nativeErrorHidden, false);
+    assert.match(macCopy.nativeError, /откройте NIR Wallet снова/);
+    assert.equal(macCopy.bootstrapPresent, false);
+    assert.equal(macCopy.setupHidden, "none");
+    assert.equal(macCopy.title, "Подключите защищённый файл кошелька");
+    assert.equal(macCopy.connect, "Подключить кошелёк");
+    assert.equal(macCopy.balance, "—");
+    assert.doesNotMatch(macCopy.balanceStatus, /Кворум подтвердил баланс/);
+    assert.doesNotMatch(macCopy.nodes, /Nodes|Local testnet/);
+    assert.match(macCopy.bridge, /автоматически/);
+    assert.match(macCopy.mining, /не начисляет NIR/);
+    const settingsPage = await evaluate(send, `(() => {
+      document.querySelector('[data-nav="settings"]').click();
+      const page = document.querySelector('#settings-panel');
+      const pageRect = page.getBoundingClientRect();
+      const shellRect = document.querySelector('.shell').getBoundingClientRect();
+      return { open: page.open, modal: page.matches(':modal'),
+        homeHidden: document.querySelector('#home-page')?.hidden ?? false,
+        backdrop: getComputedStyle(page, '::backdrop').backgroundColor,
+        inFlow: getComputedStyle(page).position === 'static' &&
+          pageRect.left >= shellRect.left && pageRect.right <= shellRect.right,
+        headingFocused: document.activeElement === page.querySelector('h2') };
+    })()`);
+    assert.deepEqual(settingsPage, { open: true, modal: false, homeHidden: true,
+      backdrop: "rgba(0, 0, 0, 0)", inFlow: true, headingFocused: true });
+    const pageNavigation = await evaluate(send, `(async () => {
+      document.querySelector('#settings-setup').click();
+      const setup = document.querySelector('#setup-panel');
+      const openedSetup = setup.open && !setup.hidden && !setup.matches(':modal') &&
+        document.querySelector('#settings-panel').hidden;
+      setup.querySelector('.close').click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const backToSettings = !document.querySelector('#settings-panel').hidden &&
+        document.querySelector('#settings-panel').open && !setup.open;
+      document.querySelector('[data-nav="home"]').click();
+      const home = !document.querySelector('#home-page').hidden &&
+        !document.querySelector('#settings-panel').open;
+      document.querySelector('[data-nav="history"]').click();
+      const history = document.querySelector('#home-page').dataset.view === 'history' &&
+        getComputedStyle(document.querySelector('.balance')).display === 'none' &&
+        document.querySelector('#history .title h2').textContent === 'История операций';
+      document.querySelector('[data-nav="mine"]').click();
+      const mine = document.querySelector('#panel').open && !document.querySelector('#panel').matches(':modal') &&
+        document.querySelector('#home-page').hidden;
+      document.querySelector('[data-nav="home"]').click();
+      document.querySelector('[data-action="receive"]').click();
+      const connect = !document.querySelector('#bridge-panel').open &&
+        document.querySelector('#wallet-state').textContent.includes('закройте и откройте NIR Wallet снова');
+      document.querySelector('[data-nav="settings"]').click();
+      document.querySelector('[data-nav="home"]').click();
+      document.querySelector('[data-nav="settings"]').click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const rapidReopen = document.querySelector('#settings-panel').open &&
+        !document.querySelector('#settings-panel').hidden && document.querySelector('#home-page').hidden;
+      return { openedSetup, backToSettings, home, history, mine, connect, rapidReopen };
+    })()`);
+    assert.deepEqual(pageNavigation, { openedSetup: true, backToSettings: true,
+      home: true, history: true, mine: true, connect: true, rapidReopen: true });
+
     await send("Page.navigate", { url: `${origin}/frame.html` });
     await new Promise((resolve) => setTimeout(resolve, 250));
     const framed = await evaluate(send, `(async () => {
@@ -207,6 +297,12 @@ test("real Chromium enforces wallet CSP, inert rendering and frame refusal", {
     socket?.close();
     await closeChrome(chrome);
     await close(server).catch(() => {});
-    rmSync(profile, { recursive: true, force: true });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try { rmSync(profile, { recursive: true, force: true }); break; }
+      catch (error) {
+        if ((error.code !== "ENOTEMPTY" && error.code !== "EBUSY") || attempt === 9) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
   }
 });

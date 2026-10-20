@@ -16,8 +16,65 @@ const extensionManifest = JSON.parse(readFileSync(
   new URL("../wallet-ui/manifest.json", import.meta.url), "utf8",
 ));
 
+test("unpriced NIR shows an empty market chart, not a fabricated zero quote", () => {
+  const market = html.match(/<section class="card market" id="market"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(market, "home screen must expose the market state");
+  assert.match(market, /Нет рыночных данных/);
+  assert.match(market, /Цена: —/);
+  assert.match(market, /В приложении нет проверенных данных о сделках или заявках/);
+  assert.doesNotMatch(market, /\$\s*0(?:\.00)?|Купить|Продать/);
+  assert.match(styles, /\.market-chart/);
+});
+
 test("wallet browser module parses as valid JavaScript", () => {
   execFileSync(process.execPath, ["--check", new URL("../wallet-ui/app.js", import.meta.url).pathname]);
+});
+
+test("native wallet consumes its injected one-time secret without showing onboarding", async () => {
+  assert.match(script, /onboarding\.hidden = connected \|\| localApp/);
+  const source = script.slice(script.indexOf("async function connectNativeWallet()"),
+    script.indexOf("async function renderAccounts()"));
+  const secret = "ab".repeat(32);
+  let calls = 0;
+  const context = {
+    localApp: true, window: { __nirNativeBootstrap: secret }, accountEpoch: 0,
+    bridgeSession: null, walletInfo: null, DEFAULT_BRIDGE_URL: "http://127.0.0.1:8788",
+    clearWalletSession() { context.accountEpoch += 1; context.bridgeSession = null; context.walletInfo = null; },
+    async pairBridge(url, code) { assert.equal(url, context.DEFAULT_BRIDGE_URL);
+      assert.equal(code, secret); calls += 1; return "cd".repeat(32); },
+    async bridgeRequest(path) { assert.equal(path, "/v1/wallet");
+      return { address: `nir1${"a".repeat(64)}` }; },
+    async renderAccounts() { return true; },
+    renderWalletConnection() {}, async refreshNodeStatus() {},
+  };
+  runInNewContext(source, context);
+  await context.connectNativeWallet();
+  assert.equal(calls, 1);
+  assert.equal(Object.hasOwn(context.window, "__nirNativeBootstrap"), false);
+  assert.equal(context.bridgeSession.token, "cd".repeat(32));
+  await context.connectNativeWallet();
+  assert.equal(calls, 1, "the consumed bootstrap cannot be reused");
+});
+
+test("native wallet keeps a visible restart instruction when bootstrap is absent", () => {
+  const source = script.slice(script.indexOf("function renderWalletConnection()"),
+    script.indexOf("function clearAccountNumbers()"));
+  const nodes = new Map();
+  const context = {
+    localApp: true, nativeConnectionError: "Restart NIR Wallet", bridgeSession: null,
+    walletInfo: null, onboarding: { hidden: false }, accountOpen: { hidden: false },
+    document: { querySelector(selector) {
+      if (!nodes.has(selector)) nodes.set(selector, { hidden: false, textContent: "" });
+      return nodes.get(selector);
+    } },
+  };
+  runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
+  context.renderWalletConnection();
+  assert.equal(context.onboarding.hidden, true);
+  assert.equal(nodes.get("#settings-connect").hidden, true);
+  assert.equal(nodes.get("#native-connection-error").hidden, false);
+  assert.equal(nodes.get("#native-connection-error").textContent, "Restart NIR Wallet");
+  assert.equal(nodes.get("#security-state").textContent, "Restart NIR Wallet");
 });
 
 test("a verified account proof does not depend on an unauthenticated account response", async () => {
@@ -249,6 +306,31 @@ test("an old account-switch failure cannot cancel a newer pairing", async () => 
   assert.equal(clears, 0);
 });
 
+test("double-click Mac mode removes terminal setup and false mining claims", () => {
+  assert.match(script, /const localApp = new URLSearchParams\(location\.search\)\.get\("local-app"\) === "1"/);
+  assert.match(script, /if \(localApp\) \{[\s\S]*?#onboarding ol[\s\S]*?#bridge-panel > p[\s\S]*?#setup-panel \.setup-steps[\s\S]*?\[data-action=\\?"mine/);
+  assert.match(script, /if \(localApp\) messages\.mine = \["Майнинг недоступен"/);
+  assert.match(script, /не начисляет NIR/);
+  assert.match(styles, /\.setup-steps\[hidden\] \{ display: none; \}/);
+  assert.match(script, /Проверьте окно macOS/);
+  assert.match(html, /id="balance-value" data-i18n-ignore>—<\/span>/);
+  assert.match(html, /id="onboarding-title">Подключите защищённый файл кошелька/);
+  assert.match(html, /data-action="connect">Подключить кошелёк/);
+  assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
+});
+
+test("update control reports unavailable trusted channel without installing", () => {
+  assert.match(html, /id="wallet-check-updates"/);
+  assert.match(html, /Обновить сведения о версии/);
+  assert.match(html, /Сейчас нет доверенного канала выпуска/);
+  assert.match(script, /bridgeRequest\("\/v1\/app-build"\)/);
+  assert.match(script, /Запущенный локальный сервис: версия/);
+  assert.doesNotMatch(script, /Установлена локальная сборка/);
+  assert.doesNotMatch(script, /об установленной сборке/);
+  assert.match(script, /Доверенный канал обновлений не настроен; наличие новой версии не проверено/);
+  assert.doesNotMatch(script, /wallet-check-updates[\s\S]{0,1000}wallet:macos-local-install/);
+});
+
 test("wallet navigation has five interactive destinations", () => {
   for (const destination of ["home", "history", "resources", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
@@ -350,13 +432,14 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=32/);
-  assert.match(serviceWorker, /style\.css\?v=32/);
+  assert.match(html, /style\.css\?v=35/);
+  assert.match(serviceWorker, /style\.css\?v=35/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
-  assert.match(html, /app\.js\?v=39/);
-  assert.match(serviceWorker, /app\.js\?v=39/);
-  assert.match(serviceWorker, /nir-wallet-shell-v41/);
+  assert.match(html, /app\.js\?v=46/);
+  assert.match(serviceWorker, /app\.js\?v=46/);
+  assert.match(serviceWorker, /nir-wallet-shell-v50/);
+  assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.match(serviceWorker, /clients\.claim/);
@@ -379,6 +462,41 @@ test("wallet provides safe onboarding, recovery guidance, and session revocation
   assert.match(script, /bridgeRequest\("\/v1\/session", \{ method: "DELETE" \}\)/);
   assert.match(script, /clearWalletSession/);
   assert.match(script, /onboarding\.hidden = connected/);
+  assert.match(html, /id="settings-secrets"/);
+  assert.match(html, /Создать новый код восстановления/);
+  assert.match(script, /bridgeRequest\("\/v1\/native-security", \{ method: "POST" \}/);
+  assert.match(html, /id="settings-password-change"/);
+  assert.match(script, /bridgeRequest\("\/v1\/native-password-change", \{ method: "POST" \}/);
+  assert.match(html, /Старые экспортированные копии и коды/);
+  assert.doesNotMatch(html, /<input[^>]+(?:privateKey|recoveryCode)/i);
+});
+
+test("settings hide Mac-only recovery when the paired bridge lacks native capability", () => {
+  const source = script.slice(script.indexOf("function renderWalletConnection()"),
+    script.indexOf("function clearAccountNumbers()"));
+  const controls = new Map();
+  const document = { querySelector(selector) {
+    if (!controls.has(selector)) controls.set(selector, { hidden: false, textContent: "" });
+    return controls.get(selector);
+  } };
+  const context = { document, localApp: false, nativeConnectionError: null,
+    onboarding: { hidden: false }, accountOpen: { hidden: false },
+    bridgeSession: { token: "a" }, walletInfo: { address: `nir1${"a".repeat(64)}` } };
+  runInNewContext(`${source}\nglobalThis.renderWalletConnection = renderWalletConnection;`, context);
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-secrets").hidden, true);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
+  context.walletInfo.nativeSecurityAvailable = true;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-secrets").hidden, false);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
+  context.walletInfo.nativePasswordChangeAvailable = true;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-password-change").hidden, false);
+  context.bridgeSession = null;
+  context.renderWalletConnection();
+  assert.equal(controls.get("#settings-secrets").hidden, true);
+  assert.equal(controls.get("#settings-password-change").hidden, true);
 });
 
 test("wallet limits browser privileges and supports accessible system settings", () => {
@@ -441,7 +559,7 @@ test("wallet exposes native resource staking and delegation controls", () => {
   assert.match(html, /id="resource-signed-json"/);
   assert.match(html, /id="submit-resource"[^>]*>Отправить в local testnet/);
   assert.match(script, /signedResourceTransaction = signed\.transaction/);
-  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
+  assert.match(script, /health\.networkId !== transaction\.networkId/);
 });
 
 test("submission responses cannot claim transaction finality", () => {
@@ -464,8 +582,90 @@ test("submission responses cannot claim transaction finality", () => {
 test("only explicit submit actions use the configured local ingress", () => {
   assert.equal((script.match(/fetch\(transactionSubmissionUrl\(nodePolicy\)/g) ?? []).length, 2);
   assert.doesNotMatch(script, /fetch\(nodeUrl\("\/v1\/transactions"\)/);
-  assert.match(script, /health\.networkId !== signedResourceTransaction\.networkId/);
-  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /health\.networkId !== transaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== transaction\.networkId/);
+});
+
+test("an old submit click cannot broadcast a different signed transfer after page navigation", async () => {
+  const start = script.indexOf('document.querySelector("#submit-signed").onclick = async () => {');
+  const end = script.indexOf('document.querySelector("#copy-signed").onclick', start);
+  assert.ok(start >= 0 && end > start);
+  const button = { disabled: false, hidden: false };
+  const page = {};
+  const posted = [];
+  let releaseHealth;
+  let healthRequested;
+  const waitingForHealth = new Promise((resolve) => { healthRequested = resolve; });
+  const delayedHealth = new Promise((resolve) => { releaseHealth = resolve; });
+  const context = {
+    accountEpoch: 1, pageNavigationEpoch: 1, activePage: page, sendPanel: page,
+    signedTransaction: { networkId: "nir-test", nonce: 1 },
+    sendStatus: { textContent: "" },
+    document: { querySelector: () => button },
+    refreshNodeStatus: async () => true,
+    nodeUrl: (path) => path,
+    nodePolicy: {},
+    transactionSubmissionUrl: () => "/submit",
+    submissionStatus: () => "queued",
+    fetch: async (url, options) => {
+      if (url === "/health") { healthRequested(); return delayedHealth; }
+      if (url === "/submit") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ status: "queued" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  };
+  runInNewContext(script.slice(start, end), context);
+  const submit = button.onclick();
+  await waitingForHealth;
+  context.pageNavigationEpoch += 1;
+  context.signedTransaction = { networkId: "nir-test", nonce: 2 };
+  releaseHealth({ ok: true, json: async () => ({ valueMode: "valueless-devnet", networkId: "nir-test" }) });
+  await submit;
+  assert.deepEqual(posted, []);
+  assert.equal(context.signedTransaction.nonce, 2);
+});
+
+test("an old resource submit cannot broadcast a replacement signed operation", async () => {
+  const start = script.indexOf('document.querySelector("#submit-resource").onclick = async (event) => {');
+  const end = script.indexOf('document.querySelector("#discard-resource").onclick', start);
+  assert.ok(start >= 0 && end > start);
+  const button = { disabled: false };
+  const page = {};
+  const posted = [];
+  let releaseHealth;
+  let healthRequested;
+  const waitingForHealth = new Promise((resolve) => { healthRequested = resolve; });
+  const delayedHealth = new Promise((resolve) => { releaseHealth = resolve; });
+  const context = {
+    accountEpoch: 1, pageNavigationEpoch: 1, activePage: page, resourcesPanel: page,
+    signedResourceTransaction: { networkId: "nir-test", nonce: 1 },
+    resourcesStatus: { textContent: "" },
+    document: { querySelector: (selector) => selector === "#submit-resource" ? button : { hidden: false } },
+    refreshNodeStatus: async () => true,
+    nodeUrl: (path) => path,
+    nodePolicy: {},
+    transactionSubmissionUrl: () => "/submit",
+    submissionStatus: () => "queued",
+    fetch: async (url, options) => {
+      if (url === "/health") { healthRequested(); return delayedHealth; }
+      if (url === "/submit") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ status: "queued" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  };
+  runInNewContext(script.slice(start, end), context);
+  const submit = button.onclick({ currentTarget: button });
+  await waitingForHealth;
+  context.pageNavigationEpoch += 1;
+  context.signedResourceTransaction = { networkId: "nir-test", nonce: 2 };
+  releaseHealth({ json: async () => ({ valueMode: "valueless-devnet", networkId: "nir-test" }) });
+  await submit;
+  assert.deepEqual(posted, []);
+  assert.equal(context.signedResourceTransaction.nonce, 2);
 });
 
 test("wallet pairs with a local bridge without exposing or persisting secrets", () => {
@@ -500,7 +700,7 @@ test("wallet requires a proof-backed simulation before a separate testnet-only b
   assert.match(script, /signButton\.disabled = false/);
   assert.match(html, /id="submit-signed"[^>]*>Отправить в local testnet/);
   assert.match(script, /currentNetwork\.valueMode !== "valueless-devnet"/);
-  assert.match(script, /currentNetwork\.networkId !== signedTransaction\.networkId/);
+  assert.match(script, /currentNetwork\.networkId !== transaction\.networkId/);
   assert.match(script, /fetch\(transactionSubmissionUrl\(nodePolicy\)/);
   assert.match(script, /Автоматическая отправка намеренно отключена/);
 });
@@ -720,5 +920,5 @@ test("wallet exposes proof-backed native assets without browser signing or broad
   assert.match(html, /Браузер не подписывает и не отправляет asset-операции/);
   assert.match(html, /Загрузка доказанных активов/);
   assert.match(script, /Устарело или ошибка доказательства/);
-  assert.match(styles, /#assets-panel \{ max-height: calc\(100vh - 28px\); overflow-y: auto/);
+  assert.match(styles, /#assets-panel \{ max-height: none; overflow: visible/);
 });

@@ -15,8 +15,10 @@ The repository also contains a library for creating distinct local-test wallet
 addresses with separate encrypted backups and recovery codes. It verifies each
 backup by restoring it into a temporary file before reporting success. This is
 not yet a downloadable wallet app, a cloud account, or a public mining address.
-The personal-wallet creation policy accepts at least 12 characters; the default
-high-value vault creation policy remains at least 16 characters.
+The personal local-test wallet creation policy accepts at least 9 non-trivial
+characters (not a numeric-only PIN); longer unique passwords are safer. The
+default founder, protocol, and validator vault creation policy remains at least
+16 characters.
 
 The initial backup is stored in a separate folder on the **same Mac**, so it
 does not protect against loss of that computer. Copy the backup to independent
@@ -30,6 +32,24 @@ file path. Keep that file, open it with the same password, and create and verify
 a new backup before using the address. Restoring into a new file with a new
 password keeps both copies selectable; a shared address does not make their
 passwords interchangeable.
+Changing the active local wallet-file password preserves its address but does
+not revoke separately exported backups and recovery codes. Older backup/code
+pairs can still restore the same key; suspected key exposure requires a new
+address and a deliberate transfer. The native password-change path has only
+been exercised with synthetic wallets, not as a public-network recovery claim.
+An interrupted password change can leave a private rotation lock. The app fails
+closed instead of deleting that lock automatically. Close all wallet processes,
+verify the address and an independent backup, and diagnose the interrupted
+operation before any recovery action; do not blindly remove the lock.
+For a legacy regular-file wallet, migration to the current activation format
+first stages a separate private copy of the *encrypted* old vault. Before the
+atomic switch, the original file remains readable with the old password. An
+interruption after the switch may leave a hidden `.nir-legacy-*` copy in the
+same private `Wallets` directory, still protected by the old password. The
+normal account list deliberately does not import hidden recovery copies.
+Preserve them and the rotation lock for diagnosis; do not rename, delete, or
+open a copy through an unverified tool. Verify the public address and which
+password opens the active wallet before seeking assisted recovery.
 
 ```bash
 npm run wallet:create -- /absolute/path/personal.nirvault.json
@@ -267,7 +287,10 @@ npm run wallet:macos-build -- "$PWD/dist/NIR Wallet.app"
 open "$PWD/dist/NIR Wallet.app"
 ```
 
-After that one-time source build, the native setup window creates a personal
+After that one-time source build, `NIR Wallet.app` can be copied to the Desktop
+and opened by double-clicking it on **the same Mac**, while the Node.js runtime
+used for the build remains installed at its recorded absolute path. It is not
+a portable app for another Mac. The native setup window creates a personal
 encrypted vault, opens an existing vault, or restores one from a backup and
 recovery code without asking the user to use Terminal. New keys and backups
 remain in `~/Library/Application Support/NIR Wallet/`, outside the app bundle.
@@ -275,10 +298,22 @@ If the first recovery-code window fails or the code was not saved, reopen the
 same local vault with its password and choose **Новый код восстановления**.
 This creates a new backup/code pair; it does not revoke any older pair. If an
 older pair may have leaked, use a new address and migrate any funds instead.
-The app starts a loopback-only browser interface on a fresh port for each
-launch, without a persistent service worker, and a signing bridge. Clicking
-**Connect** brings a native eight-digit pairing code to the front; the code is
-never returned to the browser. Multiple vault files, including restored copies
+The app starts a loopback-only interface on a fresh port for each launch and
+displays it in its own nonpersistent macOS WebKit window, not a browser tab.
+Navigation outside the exact local wallet document is refused. The app does not
+keep a persistent service worker and starts a signing bridge. In this
+source-built native window, the intended flow passes a fresh 256-bit one-time
+bootstrap secret
+only the private child-to-launcher pipe and is injected into the exact main
+WebKit document, then exchanged once for a separate in-memory session token.
+The source UI hides the onboarding card and no longer invokes the eight-digit
+pairing dialog in this native path; the standalone browser/CLI path still
+requires its manual pairing code. The complete handshake has not yet been
+manually verified in a built WKWebView app or in the user's installed app. If
+the native handshake fails, close and reopen the app rather
+than entering a secret on a web page. This does not protect a modified app
+bundle or a malicious process running as the same macOS user. Multiple vault
+files, including restored copies
 of one address, remain distinct selectable entries. Creating another vault in
 the browser opens the same native setup flow. The password stays in the native
 process and local child pipe; it is not sent to the browser.
@@ -287,6 +322,35 @@ The builder packages only an explicit reviewed file list and refuses
 secret-named files in the source tree. It refuses to overwrite an app. This
 local rehearsal uses an ad-hoc signature and an external Node.js installation;
 it is **not** notarized, downloadable, a public installer, a mainnet wallet, or
-a source of real-value NIR. It intentionally excludes local auto-update,
+a source of real-value NIR. It intentionally excludes public auto-update,
 cloud sync and mining rewards. Back up the recovery file to a separate medium
 and keep its recovery code separately; a copy on the same Mac is not enough.
+
+For this Mac's **operator-controlled local rehearsal only**, a separate
+`wallet:macos-local-install` command can replace one existing `NIR Wallet.app`
+in place after the app is closed. It requires independently pinned SHA-256
+hashes of both complete bundles, verifies their local markers, bundle identity,
+ad-hoc signatures, ownership, the new app's signed pin of its external Node
+executable bytes, and increasing local build sequence, then uses a
+macOS same-volume atomic exchange. The previous app remains at the private
+staging path for recovery; it is never deleted by the updater. Wallets and
+backups under Application Support are outside this exchange. The app must be
+built from a reviewed checkout and staged in a separate private directory on
+the same volume; a browser or the app itself cannot supply an update PID or
+invoke this command. `inspect` can display a bundle hash, but reading a hash
+from an untrusted candidate does **not** authenticate its publisher. An ad-hoc
+signature only checks local integrity, not who built the app. Until Developer
+ID signing, notarization, a published authenticated update channel and an
+installed-app launch drill exist, this is not a secure consumer auto-updater.
+The bundled launcher also depends on the recorded external Node.js path;
+the native runner checks its executable-byte pin immediately before launch.
+`inspect` also rejects changed bytes. An existing app without a pin requires
+the explicitly named `inspect-legacy` and `install-legacy` operator commands
+for migration; normal inspection and installation reject it. These checks do
+**not** bind Node's external dynamic libraries, prevent every same-user
+time-of-check/time-of-use swap, authenticate the publisher, or make this a safe
+public wallet. Do not use this source-built app with real-value funds. The local
+Settings button reports the running local service build identity and
+the absence of a trusted update channel; it does not download or install an
+update or claim that this version is latest. Each later reviewed local build
+must deliberately increase `walletBuildSequence` in `package.json`.
