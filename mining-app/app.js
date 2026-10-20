@@ -39,6 +39,7 @@ const checkUpdates = document.querySelector("#check-updates");
 const updateResult = document.querySelector("#update-result");
 const applyUpdate = document.querySelector("#apply-update");
 const walletLinkStart = document.querySelector("#wallet-link-start");
+const walletLinkConnect = document.querySelector("#wallet-link-connect");
 const walletLinkChallenge = document.querySelector("#wallet-link-challenge");
 const walletLinkCopy = document.querySelector("#wallet-link-copy");
 const walletLinkProof = document.querySelector("#wallet-link-proof");
@@ -178,7 +179,15 @@ const copy = {
     irisScope: "Встроенная проверка", qwenScope: "Закреплённый локальный запуск",
     bundled: "ВСТРОЕНА", reportedReady: "СООБЩАЕТ: ГОТОВА", checkingShort: "ПРОВЕРКА", unavailableShort: "НЕДОСТУПНА",
     localOnly: "Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.",
-    walletLinkTitle: "Адрес оператора", walletLinkIntro: "Подтвердите владение адресом через установленный NIR Wallet. Пароль и ключ остаются в кошельке. Это локальная привязка без сетевой заявки и начисления.",
+    walletLinkTitle: "Ваш NIR Wallet", walletLinkIntro: "Нажмите кнопку — NIR Wallet спросит подтверждение и пароль. После этого награды за майнинг будут приходить прямо в ваш кошелёк. Ключ и пароль остаются в кошельке.",
+    developerTools: "Проверка моделей и инструменты разработчика",
+    walletLinkConnect: "Подключить NIR Wallet", walletLinkManual: "Кошелёк на другом компьютере? Привязать вручную",
+    walletConnectWaiting: "Подтвердите привязку в окне NIR Wallet и введите пароль кошелька…",
+    walletConnected: (a) => `Подключён кошелёк ${a.slice(0, 12)}…${a.slice(-6)}. Награды за майнинг приходят в него.`,
+    walletConnectErrors: { "wallet-not-open": "Откройте NIR Wallet на этом Mac и нажмите ещё раз.",
+      "wallet-declined": "Привязка отклонена в кошельке.",
+      "wallet-busy": "Кошелёк занят. Попробуйте через несколько секунд.",
+      "wallet-failed": "Не получилось. Проверьте пароль кошелька и попробуйте ещё раз." },
     walletLinkStart: "Создать одноразовый запрос", walletLinkCopy: "Скопировать запрос",
     walletLinkProofLabel: "Подписанное доказательство из настроек кошелька",
     walletLinkComplete: "Проверить адрес",
@@ -326,7 +335,15 @@ const copy = {
     irisScope: "Bundled check", qwenScope: "Pinned local run",
     bundled: "BUNDLED", reportedReady: "REPORTS READY", checkingShort: "CHECKING", unavailableShort: "UNAVAILABLE",
     localOnly: "No wallet address is connected. This console shows actions on this Mac only: it submits no claim and promises no NIR.",
-    walletLinkTitle: "Operator address", walletLinkIntro: "Prove address ownership using the installed NIR Wallet. Your password and key stay in the wallet. This is a local link, with no network claim or reward.",
+    walletLinkTitle: "Your NIR Wallet", walletLinkIntro: "Press the button and NIR Wallet asks you to confirm and enter its password. Mining rewards then go straight to your wallet. The key and password stay in the wallet.",
+    developerTools: "Model checks and developer tools",
+    walletLinkConnect: "Connect NIR Wallet", walletLinkManual: "Wallet on another computer? Link manually",
+    walletConnectWaiting: "Confirm the link in the NIR Wallet window and enter the wallet password…",
+    walletConnected: (a) => `Wallet ${a.slice(0, 12)}…${a.slice(-6)} is connected. Mining rewards go to it.`,
+    walletConnectErrors: { "wallet-not-open": "Open NIR Wallet on this Mac and press again.",
+      "wallet-declined": "The link was declined in the wallet.",
+      "wallet-busy": "The wallet is busy. Try again in a few seconds.",
+      "wallet-failed": "That did not work. Check the wallet password and try again." },
     walletLinkStart: "Create one-time challenge", walletLinkCopy: "Copy challenge",
     walletLinkProofLabel: "Signed proof from wallet settings", walletLinkComplete: "Verify address",
     syntheticTitle: "Transfer rehearsal — not NIR",
@@ -1572,6 +1589,25 @@ if (qwenExport) qwenExport.addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
+walletLinkConnect?.addEventListener("click", async () => {
+  const t = copy[locale];
+  walletLinkConnect.disabled = true;
+  walletLinkState.textContent = t.walletConnectWaiting;
+  try {
+    // The wallet waits for its password dialog, so this takes as long as the user does.
+    const response = await fetch("/wallet-link/connect", { method: "POST", body: "", cache: "no-store",
+      headers: sessionHeaders(), signal: AbortSignal.timeout(200_000) });
+    const data = await response.json();
+    if (!response.ok || !/^nir1[0-9a-f]{64}$/.test(data.address ?? "")) {
+      throw Object.assign(new Error("not linked"), { code: data.error });
+    }
+    walletLinkAddress = data.address;
+    syntheticSnapshot = null;
+    walletLinkState.textContent = t.walletConnected(data.address);
+  } catch (error) {
+    walletLinkState.textContent = t.walletConnectErrors[error.code] ?? t.walletConnectErrors["wallet-failed"];
+  } finally { walletLinkConnect.disabled = false; render(); void loadSyntheticState(); }
+});
 walletLinkStart?.addEventListener("click", async () => {
   walletLinkLinking = true;
   walletLinkAddress = null;

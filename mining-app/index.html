@@ -41,16 +41,22 @@
       <ol id="mining-events" class="event-log mining-events" aria-live="polite"></ol>
     </section>
     <section class="catalog" aria-labelledby="wallet-link-heading">
-      <h2 id="wallet-link-heading" data-i18n="walletLinkTitle">Адрес оператора</h2>
-      <p data-i18n="walletLinkIntro">Подтвердите владение адресом через установленный NIR Wallet. Пароль и ключ остаются в кошельке. Это локальная привязка без сетевой заявки и начисления.</p>
+      <h2 id="wallet-link-heading" data-i18n="walletLinkTitle">Ваш NIR Wallet</h2>
+      <p data-i18n="walletLinkIntro">Нажмите кнопку — NIR Wallet спросит подтверждение и пароль. После этого награды за майнинг будут приходить прямо в ваш кошелёк. Ключ и пароль остаются в кошельке.</p>
+      <button id="wallet-link-connect" type="button" data-i18n="walletLinkConnect">Подключить NIR Wallet</button>
+      <p id="wallet-link-state" role="status"></p>
+      <details class="manual-link">
+      <summary data-i18n="walletLinkManual">Кошелёк на другом компьютере? Привязать вручную</summary>
       <button id="wallet-link-start" class="secondary" type="button" data-i18n="walletLinkStart">Создать одноразовый запрос</button>
       <textarea id="wallet-link-challenge" readonly hidden aria-label="Одноразовый запрос для кошелька"></textarea>
       <button id="wallet-link-copy" class="secondary" type="button" hidden data-i18n="walletLinkCopy">Скопировать запрос</button>
       <label for="wallet-link-proof" data-i18n="walletLinkProofLabel">Подписанное доказательство из настроек кошелька</label>
       <textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька"></textarea>
       <button id="wallet-link-complete" class="secondary" type="button" data-i18n="walletLinkComplete">Проверить адрес</button>
-      <p id="wallet-link-state" role="status"></p>
+      </details>
     </section>
+    <details id="developer-tools" class="developer-tools">
+    <summary data-i18n="developerTools">Проверка моделей и инструменты разработчика</summary>
     <section id="operator-console" class="operator-console" aria-labelledby="operator-heading">
       <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="operator-heading" data-i18n="consoleTitle">Локальная панель оператора</h2><b data-i18n="localBadge">НЕ СЕТЬ</b></div>
       <div class="console-grid">
@@ -182,6 +188,7 @@
       <button id="iris-pair-recheck" class="secondary" type="button" disabled data-i18n="irisPairButton">Перепроверить свидетельство и подпись вместе</button>
       <p id="iris-pair-state" role="status" aria-live="polite"></p>
     </section>
+    </details>
     <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
     </div>
     <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.</footer>

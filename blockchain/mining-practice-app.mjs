@@ -301,7 +301,8 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
   runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
   runReplay = replayPinnedQwen, verifyIris = verifyPinnedIrisEvidence,
   catalog = createOpenModelCatalog(), miningDirectory = defaultMiningDirectory(),
-  miningHttpPort = 8787, miningTickMs = 2_000, updater = createModelLabUpdater({ root, embedded }) } = {}) {
+  miningHttpPort = 8787, miningTickMs = 2_000, updater = createModelLabUpdater({ root, embedded }),
+  walletBridgeUrl = "http://127.0.0.1:8788" } = {}) {
   if (!root) throw new Error("repository root is required");
   let running = false;
   let lastIrisEvidence = null;
@@ -386,6 +387,35 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       } catch {}
       send(200, "application/json; charset=utf-8", JSON.stringify({ status, version, buildId,
         updateChannel: "unconfigured", availableUpdate: null }));
+      return;
+    }
+    // One click: ask the NIR Wallet open on this Mac for an address proof. The
+    // wallet shows its own confirmation and password dialog.
+    if (request.method === "POST" && path === "/wallet-link/connect" && request.url === path) {
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-length"] !== "0" || request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const challenge = randomBytes(32).toString("hex");
+      let answer;
+      try {
+        answer = await fetch(`${walletBridgeUrl}/v1/app-connect`, { method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ app: "model-lab", challenge }), signal: AbortSignal.timeout(180_000) });
+      } catch {
+        send(503, "application/json; charset=utf-8", JSON.stringify({ error: "wallet-not-open" }));
+        return;
+      }
+      try {
+        const data = await answer.json();
+        if (answer.status === 403) throw Object.assign(new Error("declined"), { code: "wallet-declined" });
+        if (!answer.ok) throw Object.assign(new Error("failed"), { code: answer.status === 429 ? "wallet-busy" : "wallet-failed" });
+        linkedWalletAddress = verifyOperatorWalletProof(data.proof, { challenge, now: Date.now() });
+        send(200, "application/json; charset=utf-8", JSON.stringify({ address: linkedWalletAddress }));
+      } catch (error) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: error.code ?? "wallet-failed" }));
+      }
       return;
     }
     if (request.method === "POST" && path === "/wallet-link/challenge" &&

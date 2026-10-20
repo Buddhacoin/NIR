@@ -352,6 +352,7 @@ export function createWalletBridgeServer({
   nativePasswordChange,
   nativeSecurity,
   appUpdater = null,
+  appConnect = false,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -484,6 +485,8 @@ export function createWalletBridgeServer({
   let pairingAvailable = pairingCode !== undefined;
   let pairingPending = false;
   let securityPending = false;
+  let appConnectPending = false;
+  let lastAppConnectAt = 0;
   let securityController = null;
   let sessionActive = pairingCode === undefined;
   let pairedFirefoxOrigin = null;
@@ -530,6 +533,57 @@ export function createWalletBridgeServer({
       : configuredOrigin;
     const host = request.headers.host ?? "";
     const remoteAddress = request.socket.remoteAddress ?? "";
+    // One-click linking for NIR Model Lab on this Mac: its local service asks
+    // for an address proof, and the wallet shows its own confirmation and
+    // password dialog. Browsers always send Origin on POST, so web pages
+    // cannot use this route; the proof only shows address ownership.
+    if (appConnect && request.method === "POST" && request.url === "/v1/app-connect" &&
+        requestOrigin === undefined && /^127\.0\.0\.1:[0-9]{1,5}$/.test(host) &&
+        ["127.0.0.1", "::ffff:127.0.0.1"].includes(remoteAddress)) {
+      if (appConnectPending || pending || securityPending || accountActionPending ||
+          Date.now() - lastAppConnectAt < 5_000) {
+        return send(response, 429, { error: "the wallet is busy; try again in a few seconds" }, null);
+      }
+      appConnectPending = true;
+      lastAppConnectAt = Date.now();
+      try {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("wallet-link request requires application/json");
+        }
+        const body = await readBody(request, 256, 5_000);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !== "app,challenge" ||
+            body.app !== "model-lab" || !REQUEST_ID.test(body.challenge ?? "")) {
+          throw new Error("wallet-link request is invalid");
+        }
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const authorizationAbort = new AbortController();
+        let timeout;
+        const password = await Promise.race([
+          authorize({ type: "local-operator-wallet-link", address: expectedAddress,
+            challenge: body.challenge, requestId: body.challenge }, { signal: authorizationAbort.signal }),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+              authorizationAbort.abort();
+              reject(new Error("wallet-link confirmation expired"));
+            }, SIGN_CONFIRMATION_TIMEOUT_MS);
+          }),
+        ]).finally(() => clearTimeout(timeout));
+        if (typeof password !== "string") {
+          return send(response, 403, { error: "the link was declined in the wallet" }, null);
+        }
+        if (walletAddress !== expectedAddress || activeVaultPath !== expectedPath) {
+          throw new Error("wallet account changed during the request");
+        }
+        const proof = signWalletOperatorLink({ path: expectedPath, password,
+          challenge: body.challenge, expectedAddress });
+        return send(response, 200, { proof }, null);
+      } catch (error) {
+        return send(response, 400, { error: publicBridgeError(error) }, null);
+      } finally {
+        appConnectPending = false;
+      }
+    }
     if (!origin || requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
         !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress)) {
       return send(response, 403, { error: "bridge origin or host is not allowed" }, origin);

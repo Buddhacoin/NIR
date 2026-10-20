@@ -63,11 +63,10 @@ async function authorizeSigning(intent, { signal } = {}) {
     "Подпись привяжет адрес к байтам файла, но не докажет выполнение модели. Не заявка в сеть и не награда.",
     "Подписывайте, только если запускали Iris в Model Lab и сверили адрес и hash.",
   ].join("\n") : intent.type === "local-operator-wallet-link" ? [
-    "Подтвердить адрес для NIR Model Lab?",
+    "NIR Model Lab просит подключить этот кошелёк.",
     `Адрес: ${intent.address}`,
-    `Одноразовый запрос: ${intent.challenge}`,
-    "Только локальное доказательство владения адресом. Не перевод, не заявка и не награда.",
-    "Отклоните, если вы не начинали привязку в Model Lab.",
+    "Награды за майнинг будут приходить на этот адрес. Model Lab узнает только адрес: ни ключ, ни пароль не передаются, монеты не списываются.",
+    "Отклоните, если вы не нажимали «Подключить NIR Wallet» в Model Lab.",
   ].join("\n") : [
     "Подписать операцию NIR?",
     `Тип: ${intent.type ?? "transfer"}`,
@@ -287,6 +286,7 @@ async function main() {
       nativePasswordChange,
       nativeSecurity,
       appUpdater: createWalletUpdater(),
+      appConnect: true,
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,

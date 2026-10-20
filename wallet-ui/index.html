@@ -169,6 +169,8 @@
     <p>Пароль и приватный ключ никогда не вводятся в браузере. Закрытие или отключение удаляет session token из памяти страницы.</p>
     <button class="primary" id="settings-connect" type="button">Подключить кошелёк</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>
+    <p>NIR Model Lab на этом Mac подключается к кошельку сам: нажмите в нём «Подключить NIR Wallet» и подтвердите в окне кошелька.</p>
+    <details class="request-import"><summary>Ручная привязка Model Lab и подпись Iris (для разработчиков)</summary>
     <section class="request-import" aria-labelledby="operator-link-title">
       <h3 id="operator-link-title">Адрес для Model Lab</h3>
       <p>Вставьте одноразовый запрос из локального Model Lab. Кошелёк попросит отдельное подтверждение и пароль. Подпись подтверждает только владение адресом: она не переводит средства и не даёт награды. Скопированное доказательство содержит публичный адрес и доступно другим приложениям через буфер обмена.</p>
@@ -187,6 +189,7 @@
       <button class="secondary" id="copy-iris-receipt" type="button" hidden>Скопировать квитанцию</button>
       <p id="iris-receipt-status" role="status"></p>
     </section>
+    </details>
     <button class="secondary" id="settings-secrets" type="button" hidden>Создать новый код восстановления</button>
     <button class="secondary" id="settings-password-change" type="button" hidden>Сменить пароль</button>
     <p>Существующий код нельзя повторно показать: он не хранится в приложении. Новый код действует с новой зашифрованной копией; прежние копии и коды не отзываются. Пароль вводится только в окне macOS.</p>

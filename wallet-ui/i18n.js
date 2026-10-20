@@ -349,6 +349,8 @@ const copy = new Map(Object.entries({
   "Проверяем, есть ли новая версия…": "Checking for a new version…",
   "Скачиваем новую версию…": "Downloading the new version…",
   "У вас последняя версия.": "You have the latest version.",
+  "NIR Model Lab на этом Mac подключается к кошельку сам: нажмите в нём «Подключить NIR Wallet» и подтвердите в окне кошелька.": "NIR Model Lab on this Mac connects to the wallet by itself: press “Connect NIR Wallet” there and confirm in the wallet window.",
+  "Ручная привязка Model Lab и подпись Iris (для разработчиков)": "Manual Model Lab link and Iris signature (for developers)",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));

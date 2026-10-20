@@ -24,7 +24,7 @@ const copy = {
     committing: "Клика найдена! Отправляю запечатанный ответ…",
     revealing: "Раскрываю ответ сети…",
     linked: (a) => `Награды идут прямо в NIR Wallet: ${a.slice(0, 12)}…${a.slice(-6)}`,
-    unlinked: "Кошелёк не привязан: награды копятся на ключе майнера. Привяжите адрес NIR Wallet ниже — и отправьте их туда кнопкой.",
+    unlinked: "Кошелёк не подключён: награды пока копятся в Model Lab. Нажмите ниже «Подключить NIR Wallet» — и они смогут уйти в кошелёк.",
     valueless: "Локальная тестовая сеть: эти NIR не имеют ценности и не переходят в основную сеть.",
     events: {
       "network-create": () => "Создаю локальную сеть NIR",
@@ -49,7 +49,7 @@ const copy = {
     committing: "Clique found! Sending the sealed answer…",
     revealing: "Revealing the answer to the network…",
     linked: (a) => `Rewards go straight to NIR Wallet: ${a.slice(0, 12)}…${a.slice(-6)}`,
-    unlinked: "No wallet linked: rewards stay on the miner key. Link your NIR Wallet address below, then send them there.",
+    unlinked: "No wallet connected: rewards collect in Model Lab for now. Press “Connect NIR Wallet” below to send them to your wallet.",
     valueless: "Local test network: these NIR have no value and do not carry over to a main network.",
     events: {
       "network-create": () => "Creating a local NIR network",

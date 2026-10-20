@@ -103,3 +103,10 @@ footer { padding-top:18px;border-top:1px solid #3d443f;color:#aeb8b0;font-size:1
 .mining #mining-withdraw { position:relative;display:block;width:calc(100% - 26px);margin:0 13px 10px; }
 .mining-events { position:relative;margin:0 13px 13px; }
 .mining-events time { color:var(--lime); }
+
+.developer-tools { margin:22px 0; }
+.developer-tools > summary, .manual-link > summary { cursor:pointer;padding:12px 13px;border:1px solid var(--line);border-radius:4px;color:#aeb8b0;font-size:13px;letter-spacing:.04em; }
+.developer-tools[open] > summary { margin-bottom:16px; }
+.manual-link { margin-top:14px; }
+.manual-link[open] > summary { margin-bottom:12px; }
+#wallet-link-connect { width:100%; }
