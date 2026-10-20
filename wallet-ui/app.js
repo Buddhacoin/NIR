@@ -76,15 +76,13 @@ if (localApp) {
     "Кошелёк создаётся и открывается в отдельном окне macOS до появления этой страницы. Ключ хранится в зашифрованном файле на этом Mac.";
   document.querySelector("#bridge-panel > p").textContent =
     "Приложение подключает локальный кошелёк автоматически. Пароль вводится только в системном окне подтверждения операции.";
-  document.querySelector("#settings-panel > p").textContent =
-    "Пароль и приватный ключ не вводятся в этой странице. Закрытие приложения удаляет session token из памяти окна.";
   document.querySelector("#setup-panel > p").textContent =
     "Этот адрес уже выбран в отдельном окне macOS. Чтобы создать или восстановить другой кошелёк, закройте приложение и откройте его снова. Сохраните проверенную зашифрованную копию и код восстановления отдельно.";
   document.querySelector("#setup-panel .setup-steps").hidden = true;
   document.querySelector("#contacts-panel > p").textContent =
     "Контакты доступны только пока открыто это локальное тестовое окно; после закрытия они не сохраняются. Пароль и ключи здесь не хранятся.";
-  document.querySelector('[data-action="mine"]').lastChild.textContent = "О майнинге";
-  document.querySelector('[data-nav="mine"] span').textContent = "О майнинге";
+  document.querySelector('[data-action="mine"]').lastChild.textContent = "Майнинг";
+  document.querySelector('[data-nav="mine"] span').textContent = "Майнинг";
 }
 
 const messages = {
@@ -96,8 +94,6 @@ const messages = {
   settings: ["Настройки", "Переключение темы уже работает. Session token хранится только в памяти страницы и исчезает при её закрытии."],
   network: ["Локальная тестовая сеть", "Это локальная тестовая сеть. Реальные NIR и вывод средств отключены."],
 };
-if (localApp) messages.mine = ["Майнинг недоступен",
-  "Эта локальная сборка кошелька не запускает проверку моделей, не отправляет доказательства операторам и не начисляет NIR."];
 
 const DEFAULT_BRIDGE_URL = "http://127.0.0.1:8788";
 const NIR_ADDRESS = ADDRESS_PATTERN;
@@ -119,8 +115,9 @@ const offlineSigningPanel = document.querySelector("#offline-signing-panel");
 const onboarding = document.querySelector("#onboarding");
 const homePage = document.querySelector("#home-page");
 const pageHost = document.querySelector("#page-host");
+const miningPanel = document.querySelector("#mining-panel");
 const pageDialogs = [panel, accountsPanel, bridgePanel, receivePanel, sendPanel,
-  offlineSigningPanel, contactsPanel, resourcesPanel, assetsPanel, settingsPanel, setupPanel];
+  offlineSigningPanel, contactsPanel, resourcesPanel, assetsPanel, settingsPanel, setupPanel, miningPanel];
 let activePage = null;
 let pageTrail = [];
 let activeTab = "home";
@@ -1777,7 +1774,7 @@ document.querySelectorAll("[data-action]").forEach((button) => {
     else if (button.dataset.action === "connect") openBridgePanel();
     else if (button.dataset.action === "setup") openSetupPanel();
     else if (button.dataset.action === "history") showHomeTab("history");
-    else if (button.dataset.action === "mine") showMessage("mine", null, "mine");
+    else if (button.dataset.action === "mine") openMiningPanel();
     else showMessage(button.dataset.action);
   });
 });
@@ -1991,6 +1988,7 @@ navigationButtons.forEach((button) => button.addEventListener("click", () => {
   if (destination === "home" || destination === "history") showHomeTab(destination);
   else if (destination === "resources") openResources();
   else if (destination === "settings") openSettingsPanel();
+  else if (destination === "mine") openMiningPanel();
   else showMessage(destination, null, destination);
 }));
 
@@ -2001,7 +1999,7 @@ const setTheme = (theme) => {
   themeButton.setAttribute("aria-label", theme === "light" ? "Включить тёмную тему" : "Включить дневную тему");
   localStorage.setItem("nir-theme", theme);
 };
-setTheme(localStorage.getItem("nir-theme") || "light");
+setTheme(localStorage.getItem("nir-theme") || "dark");
 themeButton.onclick = () => setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
 
 const networkButton = document.querySelector(".network");
@@ -2071,7 +2069,7 @@ async function refreshNodeStatus() {
       assetCheckpoint.textContent = `Доказательства устарели · проверено на блоке ${assetCheckpoint.dataset.height}, текущий блок ${networkInfo.height}`;
       assetsStatus.textContent = "Обновите asset proofs перед просмотром или новой операцией.";
     }
-    networkButton.textContent = `● ${networkInfo.agreeingNodes}/${networkInfo.availableNodes} · h${networkInfo.height}`;
+    networkButton.textContent = `● Тестовая сеть · блок ${networkInfo.height}`;
     networkButton.classList.add("connected");
     networkButton.classList.remove("offline");
     messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
@@ -2083,7 +2081,7 @@ async function refreshNodeStatus() {
     activeNodeUrl = null;
     clearAccountNumbers();
     document.querySelector("#wallet-state").textContent = "Баланс не подтверждён · узлы недоступны";
-    networkButton.textContent = "○ Узлы недоступны";
+    networkButton.textContent = "○ Нет связи с сетью";
     networkButton.classList.add("offline");
     networkButton.classList.remove("connected");
     messages.network = ["Узлы NIR не подтверждены", "Нет достаточного числа доступных узлов с совпадающим финализированным состоянием."];
@@ -2105,3 +2103,64 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("./sw.js");
   }
 }
+
+// Mining (NIR Майнер on this Mac): what the local test network says about
+// this wallet's rewards, and a button that opens the miner app.
+let miningSnapshot = null;
+function renderMining() {
+  const state = document.querySelector("#mining-card-state");
+  const note = document.querySelector("#mining-card-note");
+  const view = miningSnapshot;
+  const mine = view?.active && walletInfo
+    ? (view.escrows ?? []).filter((entry) => entry.recipient === walletInfo.address) : [];
+  const incoming = mine.reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
+  if (!view) {
+    state.textContent = "Майнер не запущен";
+    note.textContent = "Откройте NIR Майнер и нажмите «Начать майнинг».";
+  } else if (!view.active) {
+    state.textContent = "Майнинг в этой сети не включён";
+    note.textContent = "";
+  } else {
+    state.textContent = `● Сеть майнинга работает · уровень ${view.level}`;
+    note.textContent = incoming > 0n
+      ? `В пути к вам: ${formatAtomic(incoming)} NIR. Придут в течение нескольких минут.`
+      : "Награды приходят на подключённый в майнере кошелёк.";
+  }
+  document.querySelector("#mining-status").textContent = !view ? "Не запущен" : view.active ? "Работает" : "Выключен";
+  document.querySelector("#mining-level").textContent = view?.active ? String(view.level) : "—";
+  document.querySelector("#mining-height").textContent = view ? String(view.height) : "—";
+  document.querySelector("#mining-incoming").textContent = view?.active
+    ? `${formatAtomic(incoming).replace(/\.?0+$/, "")} NIR` : "—";
+  document.querySelector("#mining-incoming-note").textContent = mine.length
+    ? "Награда ждёт 64 блока после решения задачи, затем зачисляется на баланс." : "";
+}
+async function loadMining() {
+  try {
+    const response = await fetch(`${activeNodeUrl ?? "http://127.0.0.1:8787"}/v1/proof-mining`,
+      { cache: "no-store", signal: AbortSignal.timeout(3_000) });
+    const view = await response.json();
+    miningSnapshot = response.ok && typeof view?.active === "boolean" ? view : null;
+  } catch {
+    miningSnapshot = null;
+  }
+  renderMining();
+}
+function openMiningPanel() {
+  openPage(miningPanel, "mine");
+  void loadMining();
+}
+document.querySelector("#mining-card").addEventListener("click", openMiningPanel);
+document.querySelector("#header-settings").addEventListener("click", openSettingsPanel);
+document.querySelector("#settings-resources").addEventListener("click", () => { void openResources(); });
+document.querySelector("#open-miner").addEventListener("click", async (event) => {
+  const status = document.querySelector("#open-miner-status");
+  event.currentTarget.disabled = true;
+  try {
+    await bridgeRequest("/v1/open-miner", { method: "POST" });
+    status.textContent = "";
+  } catch {
+    status.textContent = "Не удалось открыть NIR Майнер. Откройте его из папки «Программы».";
+  } finally { event.currentTarget.disabled = false; }
+});
+void loadMining();
+setInterval(() => { void loadMining(); }, 15_000);

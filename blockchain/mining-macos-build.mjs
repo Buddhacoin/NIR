@@ -52,6 +52,7 @@ blockchain/validator-rotation.mjs blockchain/validator-staking.mjs
 blockchain/validator-transaction-ingress.mjs blockchain/validator-wallet-read.mjs
 mining-app/mining.js
 `.trim().split(/\s+/));
+const APP_NAMES = Object.freeze(["NIR Miner.app", "NIR Model Lab.app"]);
 const BUILD_FILES = Object.freeze(["macos/mining-Info.plist", "macos/mining-launcher.m",
   "macos/mining-runner.c", "macos/runtime-verifier.m", "blockchain/local-runtime-binding.mjs"]);
 
@@ -132,17 +133,19 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
     throw new Error("model app destination must be an absolute path");
   }
   const target = resolve(targetPath);
-  if (basename(target) !== "NIR Model Lab.app") throw new Error("destination must be NIR Model Lab.app");
+  // "NIR Model Lab.app" is the name of builds made before the rename; their
+  // updates keep it.
+  if (!APP_NAMES.includes(basename(target))) throw new Error("destination must be NIR Miner.app");
   const parent = dirname(target);
   if (!lstatSync(parent).isDirectory()) throw new Error("destination parent is not a directory");
-  try { lstatSync(target); throw new Error("destination must be a new NIR Model Lab.app path"); }
+  try { lstatSync(target); throw new Error("destination must be a new NIR Miner.app path"); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   for (const relative of [...FILES, ...BUILD_FILES]) checkedSource(relative);
   const python = pythonExecutable();
   const node = nodeExecutable();
   const scratch = mkdtempSync(join(parent, ".nir-model-build-"));
   try {
-    const app = join(scratch, "NIR Model Lab.app");
+    const app = join(scratch, basename(target));
     const contents = join(app, "Contents");
     const resources = join(contents, "Resources");
     const payload = join(resources, "app");
@@ -202,7 +205,7 @@ export function buildMacMiningApp(targetPath, { sign = true } = {}) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (process.argv.length !== 3) throw new Error("usage: mine:macos-build /absolute/path/NIR Model Lab.app");
+    if (process.argv.length !== 3) throw new Error("usage: mine:macos-build /absolute/path/NIR Miner.app");
     process.stdout.write(`${buildMacMiningApp(process.argv[2])}\n`);
   } catch (error) {
     process.stderr.write(`${error.message}\n`);

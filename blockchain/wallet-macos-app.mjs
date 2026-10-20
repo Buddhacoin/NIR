@@ -287,6 +287,8 @@ async function main() {
       nativeSecurity,
       appUpdater: createWalletUpdater(),
       appConnect: true,
+      // The Mining page's "Open NIR Майнер" button, by bundle identifier.
+      openMiner: () => execFileAsync("/usr/bin/open", ["-b", "org.nir.model-lab-local-test"], { timeout: 10_000 }),
       origin,
       pairingCode,
       pairingLifetimeMs: 300_000,

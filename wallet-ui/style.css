@@ -228,3 +228,35 @@ dialog textarea { min-height: 130px; padding: 12px; resize: vertical; font-famil
   button, .card, nav, dialog, input, textarea { border: 1px solid ButtonText; }
   .network.connected, .network.offline, .form-status { color: CanvasText; }
 }
+
+/* Variant A (approved 2026-10-20): NIR dark look shared with NIR Майнер;
+   the light theme stays one tap away in Settings. */
+:root { --accent: #e8770c; --accent-ink: #fff; --good: #1f9d55; }
+:root[data-theme="dark"] { --bg: #0d0f0e; --surface: #161a18; --surface-soft: #1d221f; --border: #2a312d; --text: #eef3ef; --muted: #8d998f; --inverse: #0d0f0e; --accent: #b9ff5a; --accent-ink: #0c140c; --good: #b9ff5a; }
+:root[data-theme="dark"] body { background: var(--bg); }
+:root[data-theme="dark"] .header-actions button, :root[data-theme="dark"] .title button { background: var(--surface); border-color: var(--border); box-shadow: none; }
+:root[data-theme="dark"] nav { border-color: var(--border); background: #141816ee; }
+:root[data-theme="dark"] nav .active i { color: var(--accent); }
+:root[data-theme="dark"] .network.connected { color: var(--accent); }
+.header-actions .gear { width: 40px; padding: 0; display: grid; place-items: center; }
+.header-actions .gear svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.network { font-size: 12px; font-weight: 650; }
+.actions button[data-action="mine"] i { background: var(--accent); color: var(--accent-ink); }
+.mining-card { cursor: pointer; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, var(--surface)), var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.mining-card-state { margin: 4px 0 6px; font-size: 18px; font-weight: 700; color: var(--text); }
+.mining-card-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.mining-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+.mining-stats div { padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-soft); }
+.mining-stats span { display: block; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.mining-stats b { display: block; margin-top: 4px; font-size: 18px; }
+.settings-group { margin: 16px 0; padding: 4px 0; }
+.settings-group h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.settings-row:first-of-type { border-top: 0; }
+.settings-row button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-soft); color: var(--text); }
+.settings-row #theme { width: auto; min-width: 44px; }
+#settings-resources { width: 100%; }
+nav { grid-template-columns: repeat(4, 1fr); }
+.mining-card-state { color: var(--good); }
+#native-connection-error { min-height: 0; }
+dialog h2[tabindex="-1"]:focus { outline: none; }

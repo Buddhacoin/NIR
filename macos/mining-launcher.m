@@ -43,7 +43,7 @@
 - (void)stopWithMessage:(NSString *)message {
     [self stopServiceGroup];
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"NIR Model Lab не запущен";
+    alert.messageText = @"NIR Майнер не запущен";
     alert.informativeText = message;
     [alert runModal];
     [NSApp terminate:nil];
@@ -91,7 +91,7 @@
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                   NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"NIR Model Lab · локальный тест";
+    self.window.title = @"NIR Майнер · тестовая сеть";
     self.window.minSize = NSMakeSize(390, 600);
     [self.window center];
     WKWebViewConfiguration *config = [WKWebViewConfiguration new];

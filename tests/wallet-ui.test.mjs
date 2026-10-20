@@ -306,17 +306,21 @@ test("an old account-switch failure cannot cancel a newer pairing", async () => 
   assert.equal(clears, 0);
 });
 
-test("double-click Mac mode removes terminal setup and false mining claims", () => {
+test("double-click Mac mode removes terminal setup and shows the real miner state", () => {
   assert.match(script, /const localApp = new URLSearchParams\(location\.search\)\.get\("local-app"\) === "1"/);
   assert.match(script, /if \(localApp\) \{[\s\S]*?#onboarding ol[\s\S]*?#bridge-panel > p[\s\S]*?#setup-panel \.setup-steps[\s\S]*?\[data-action=\\?"mine/);
-  assert.match(script, /if \(localApp\) messages\.mine = \["Майнинг недоступен"/);
-  assert.match(script, /не начисляет NIR/);
+  // The Mining page reads the local test network, never a promised reward.
+  assert.match(html, /id="mining-panel"/);
+  assert.match(script, /\/v1\/proof-mining/);
+  assert.match(script, /entry\.recipient === walletInfo\.address/);
+  assert.match(html, /Тестовая сеть: эти NIR не имеют ценности/);
+  assert.match(script, /bridgeRequest\("\/v1\/open-miner", \{ method: "POST" \}\)/);
   assert.match(styles, /\.setup-steps\[hidden\] \{ display: none; \}/);
   assert.match(script, /Проверьте окно macOS/);
   assert.match(html, /id="balance-value" data-i18n-ignore>—<\/span>/);
   assert.match(html, /id="onboarding-title">Подключите защищённый файл кошелька/);
   assert.match(html, /data-action="connect">Подключить кошелёк/);
-  assert.match(script, /networkButton\.textContent = "○ Узлы недоступны"/);
+  assert.match(script, /networkButton\.textContent = "○ Нет связи с сетью"/);
 });
 
 test("update control rebuilds the published code through the bridge", () => {
@@ -330,10 +334,13 @@ test("update control rebuilds the published code through the bridge", () => {
   assert.doesNotMatch(script, /wallet-check-updates[\s\S]{0,1000}wallet:macos-local-install/);
 });
 
-test("wallet navigation has five interactive destinations", () => {
-  for (const destination of ["home", "history", "resources", "mine", "settings"]) {
+test("wallet navigation has four destinations and resources live in settings", () => {
+  for (const destination of ["home", "history", "mine", "settings"]) {
     assert.match(html, new RegExp(`data-nav="${destination}"`));
   }
+  assert.doesNotMatch(html, /data-nav="resources"/);
+  assert.match(html, /id="settings-resources"/);
+  assert.match(script, /#settings-resources"\)\.addEventListener\("click", \(\) => \{ void openResources\(\); \}\)/);
   assert.match(script, /querySelectorAll\("\[data-nav\]"\)/);
   assert.match(script, /aria-current/);
 });
@@ -466,7 +473,7 @@ test("wallet provides safe onboarding, recovery guidance, and session revocation
   assert.match(script, /bridgeRequest\("\/v1\/native-security", \{ method: "POST" \}/);
   assert.match(html, /id="settings-password-change"/);
   assert.match(script, /bridgeRequest\("\/v1\/native-password-change", \{ method: "POST" \}/);
-  assert.match(html, /Старые экспортированные копии и коды/);
+  assert.match(html, /Старые резервные копии и коды продолжают открывать тот же адрес/);
   assert.doesNotMatch(html, /<input[^>]+(?:privateKey|recoveryCode)/i);
 });
 

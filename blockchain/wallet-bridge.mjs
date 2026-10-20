@@ -353,6 +353,7 @@ export function createWalletBridgeServer({
   nativeSecurity,
   appUpdater = null,
   appConnect = false,
+  openMiner = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -672,7 +673,16 @@ export function createWalletBridgeServer({
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
-      // The Update button (docs/app-updates.md): owner-signed releases only.
+      if (request.method === "POST" && url.pathname === "/v1/open-miner") {
+        if (!openMiner) return send(response, 404, { error: "the miner cannot be opened from here" }, origin);
+        try {
+          await openMiner();
+          return send(response, 200, { opened: true }, origin);
+        } catch {
+          return send(response, 503, { error: "the miner could not be opened" }, origin);
+        }
+      }
+      // The Update button (docs/app-updates.md).
       if (request.method === "GET" && url.pathname === "/v1/app-update") {
         if (!appUpdater) return send(response, 404, { error: "app updates are unavailable" }, origin);
         return send(response, 200, appUpdater.status(), origin);

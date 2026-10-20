@@ -153,9 +153,11 @@ async function fetchQwenJson(path, options = {}) {
 const copy = {
   ru: {
     settingsButton: "Настройки", settingsTitle: "Версия и обновления",
-    settingsIntro: "Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.",
+    appName: "МАЙНЕР", networkChip: "Тестовая сеть", tabMining: "Майнинг", tabModels: "Модели",
+    modelsIntro: "Проверка моделей ИИ на этом Mac и инструменты для разработчиков. Для майнинга они не нужны.",
+    settingsIntro: "Версия этого приложения и обновления.",
     installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
-    checkUpdates: "Проверить обновления", settingsBack: "Назад к проверке моделей",
+    checkUpdates: "Проверить обновления", settingsBack: "Назад",
     applyUpdate: "Обновить",
     updateNotUpdatable: "Эта сборка ещё не умеет обновляться сама. Соберите приложение один раз заново — дальше хватит кнопки «Обновить».",
     updateChecking: "Проверяем, есть ли новая версия…",
@@ -254,7 +256,7 @@ const copy = {
     recheckInvalid: "Файлы отклонены: нужен исходный файл модели и неизменённая запись испытания.",
     recheckFailed: "Повторная проверка не завершилась. Награды нет.",
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
-    footer: "Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.",
+    footer: "Тестовая сеть: NIR здесь не имеют ценности. Публичный майнинг и реальные NIR пока недоступны.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
     offline: "● Локальный сервис отключён",
     offlineMessage: "Локальный сервис NIR недоступен. Повторно запустите `npm run mine:app` из доверенной копии NIR и используйте новую вкладку, которую откроет приложение. Старый адрес может больше не работать.",
@@ -309,9 +311,11 @@ const copy = {
   },
   en: {
     settingsButton: "Settings", settingsTitle: "Version and updates",
-    settingsIntro: "This is local information about the running Model Lab. The version number alone does not prove the app is authentic.",
+    appName: "MINER", networkChip: "Test network", tabMining: "Mining", tabModels: "Models",
+    modelsIntro: "AI model checks on this Mac and developer tools. Mining does not need them.",
+    settingsIntro: "This app's version and updates.",
     installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
-    checkUpdates: "Check for updates", settingsBack: "Back to model checks",
+    checkUpdates: "Check for updates", settingsBack: "Back",
     applyUpdate: "Update",
     updateNotUpdatable: "This build cannot update itself yet. Build the app once more; from then on the Update button is enough.",
     updateChecking: "Checking for a new version…",
@@ -409,7 +413,7 @@ const copy = {
     recheckInvalid: "Files rejected: supply the original model file and unmodified check record.",
     recheckFailed: "Local replay did not finish. No reward exists.",
     technicalTitle: "Technical result", errorTitle: "Local check failed",
-    footer: "Public mining and real NIR are unavailable. Iris is bundled; Qwen runs only after separate consent and a pinned download. This is not a sandbox and does not accept arbitrary code.",
+    footer: "Test network: NIR here has no value. Public mining and real NIR are unavailable yet.",
     checking: "Checking the local service…", online: "● Local service connected",
     offline: "● Local service disconnected",
     offlineMessage: "The local NIR service is unavailable. Run `npm run mine:app` again from a trusted NIR checkout and use the new browser tab it opens. The old address may no longer work.",
@@ -940,13 +944,37 @@ settingsOpen?.addEventListener("click", () => {
   labContent.hidden = true;
   settingsPage.hidden = false;
   settingsOpen.setAttribute("aria-pressed", "true");
+  for (const button of document.querySelectorAll("[data-tab]")) {
+    button.classList?.toggle("active", button.dataset?.tab === "settings");
+  }
   settingsPage.scrollIntoView({ block: "start" });
   if (!updateInfo && !versionCheckFailed) void followUpdate("/app-update/check");
 });
+// Bottom tabs: Mining and Models live in the main view; Settings is its own page.
+let currentTab = "mining";
+function showTab(name) {
+  currentTab = name;
+  for (const button of document.querySelectorAll("[data-tab]")) {
+    button.classList?.toggle("active", button.dataset?.tab === name);
+  }
+  for (const panel of document.querySelectorAll("[data-tab-panel]")) {
+    if (panel.dataset?.tabPanel) panel.hidden = panel.dataset.tabPanel !== name;
+  }
+}
+for (const button of document.querySelectorAll("[data-tab]")) {
+  if (button.dataset?.tab === undefined || button.dataset.tab === "settings") continue;
+  button.addEventListener("click", () => {
+    if (settingsPage) settingsPage.hidden = true;
+    if (labContent) labContent.hidden = false;
+    settingsOpen?.setAttribute("aria-pressed", "false");
+    showTab(button.dataset.tab);
+  });
+}
 settingsBack?.addEventListener("click", () => {
   settingsPage.hidden = true;
   labContent.hidden = false;
   settingsOpen.setAttribute("aria-pressed", "false");
+  showTab(currentTab);
   settingsOpen.focus();
 });
 checkUpdates?.addEventListener("click", async () => {

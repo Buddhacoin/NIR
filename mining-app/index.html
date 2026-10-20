@@ -3,38 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NIR · Проверка модели</title>
+  <title>NIR Майнер</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
   <script type="module" src="/mining.js"></script>
 </head>
 <body>
   <main class="app">
-    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MODEL LAB</small></span><div class="header-actions"><button id="settings-open" class="language" type="button" aria-pressed="false" data-i18n="settingsButton">Настройки</button><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
+    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span class="brand">NIR <small data-i18n="appName">МАЙНЕР</small></span><div class="header-actions"><span class="net-chip"><i aria-hidden="true"></i><span data-i18n="networkChip">Тестовая сеть</span></span><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button></div></header>
     <p id="connection" class="connection" role="status" aria-live="polite">Проверяем подключение к локальному сервису…</p>
     <section id="settings-page" class="catalog" aria-labelledby="settings-heading" hidden>
       <h2 id="settings-heading" data-i18n="settingsTitle">Версия и обновления</h2>
-      <p data-i18n="settingsIntro">Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.</p>
+      <p data-i18n="settingsIntro">Версия этого приложения и обновления.</p>
       <p><strong data-i18n="installedVersionLabel">Версия:</strong> <span id="installed-version">—</span></p>
       <p><strong data-i18n="installedBuildLabel">Заявленный локальный ID (не проверен):</strong> <code id="installed-build-id">—</code></p>
       <button id="check-updates" class="secondary" type="button" data-i18n="checkUpdates">Проверить обновления</button>
       <p id="update-result" role="status" aria-live="polite">Обновления ещё не проверялись.</p>
       <button id="apply-update" type="button" hidden>Обновить</button>
-      <button id="settings-back" class="secondary" type="button" data-i18n="settingsBack">Назад к проверке моделей</button>
+      <button id="settings-back" class="secondary" type="button" data-i18n="settingsBack">Назад</button>
     </section>
     <div id="lab-content">
+    <div id="tab-mining" data-tab-panel="mining">
     <section id="mining" class="operator-console mining" aria-labelledby="mining-heading">
-      <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="mining-heading" data-mining="title">Майнинг NIR</h2><b data-mining="badge">ТЕСТОВАЯ СЕТЬ</b></div>
+      <h2 id="mining-heading" class="visually-hidden" data-mining="title">Майнинг NIR</h2>
       <canvas id="mining-sky" class="mining-sky" width="436" height="200" role="img" aria-label="Граф задачи и найденная клика"></canvas>
       <p id="mining-phase" class="mining-phase" role="status" aria-live="polite">Нажмите «Начать майнинг»</p>
-      <div class="console-grid mining-grid">
-        <div><span data-mining="levelLabel">УРОВЕНЬ</span><strong id="mining-level">—</strong></div>
-        <div><span data-mining="taskLabel">ЗАДАЧА</span><strong id="mining-task">—</strong></div>
-        <div><span data-mining="checkedLabel">ПРОВЕРЕНО</span><strong id="mining-checked">0</strong></div>
+      <div class="mining-grid">
+        <div><span data-mining="walletLabel">БАЛАНС</span><strong id="mining-wallet">—</strong></div>
         <div><span data-mining="foundLabel">НАЙДЕНО КЛИК</span><strong id="mining-found">0</strong></div>
-        <div><span data-mining="walletLabel">В КОШЕЛЬКЕ</span><strong id="mining-wallet">—</strong></div>
-        <div><span data-mining="heightLabel">БЛОК</span><strong id="mining-height">—</strong></div>
+        <div><span data-mining="levelLabel">УРОВЕНЬ</span><strong id="mining-level">—</strong></div>
+        <div><span data-mining="checkedLabel">ПРОВЕРЕНО</span><strong id="mining-checked">0</strong></div>
       </div>
+      <p class="mining-meta"><span data-mining="taskLabel">Задача</span> <b id="mining-task">—</b> · <span data-mining="heightLabel">блок</span> <b id="mining-height">—</b></p>
       <button id="mining-toggle" class="mining-toggle" type="button" data-mining="start">Начать майнинг</button>
       <p id="mining-recipient" class="mining-note"></p>
       <button id="mining-withdraw" class="secondary" type="button" hidden data-mining="withdraw">Отправить намайненное в NIR Wallet</button>
@@ -43,7 +43,7 @@
     <section class="catalog" aria-labelledby="wallet-link-heading">
       <h2 id="wallet-link-heading" data-i18n="walletLinkTitle">Ваш NIR Wallet</h2>
       <p data-i18n="walletLinkIntro">Нажмите кнопку — NIR Wallet спросит подтверждение и пароль. После этого награды за майнинг будут приходить прямо в ваш кошелёк. Ключ и пароль остаются в кошельке.</p>
-      <button id="wallet-link-connect" type="button" data-i18n="walletLinkConnect">Подключить NIR Wallet</button>
+      <button id="wallet-link-connect" type="button">Подключить NIR Wallet</button>
       <p id="wallet-link-state" role="status"></p>
       <details class="manual-link">
       <summary data-i18n="walletLinkManual">Кошелёк на другом компьютере? Привязать вручную</summary>
@@ -55,8 +55,9 @@
       <button id="wallet-link-complete" class="secondary" type="button" data-i18n="walletLinkComplete">Проверить адрес</button>
       </details>
     </section>
-    <details id="developer-tools" class="developer-tools">
-    <summary data-i18n="developerTools">Проверка моделей и инструменты разработчика</summary>
+    </div>
+    <div id="tab-models" data-tab-panel="models" hidden>
+    <p class="tab-intro" data-i18n="modelsIntro">Проверка моделей ИИ на этом Mac и инструменты для разработчиков. Для майнинга они не нужны.</p>
     <section id="operator-console" class="operator-console" aria-labelledby="operator-heading">
       <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="operator-heading" data-i18n="consoleTitle">Локальная панель оператора</h2><b data-i18n="localBadge">НЕ СЕТЬ</b></div>
       <div class="console-grid">
@@ -188,10 +189,11 @@
       <button id="iris-pair-recheck" class="secondary" type="button" disabled data-i18n="irisPairButton">Перепроверить свидетельство и подпись вместе</button>
       <p id="iris-pair-state" role="status" aria-live="polite"></p>
     </section>
-    </details>
+    </div>
     <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
     </div>
-    <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.</footer>
+    <footer data-i18n="footer">Тестовая сеть: NIR здесь не имеют ценности. Публичный майнинг и реальные NIR пока недоступны.</footer>
+    <nav class="tabbar" aria-label="Разделы"><button data-tab="mining" class="active" type="button"><i aria-hidden="true">✦</i><span data-i18n="tabMining">Майнинг</span></button><button data-tab="models" type="button"><i aria-hidden="true">◎</i><span data-i18n="tabModels">Модели</span></button><button id="settings-open" data-tab="settings" type="button" aria-pressed="false"><i aria-hidden="true">⚙︎</i><span data-i18n="settingsButton">Настройки</span></button></nav>
   </main>
 </body>
 </html>

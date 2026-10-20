@@ -289,5 +289,9 @@ export function proofMiningView(state, { height, timestampMs }, params = PROOF_M
       .map(({ round, seed, level, issuedHeight, issuedAtMs, closesAtMs }) =>
         ({ round, seed, level, issuedHeight, issuedAtMs, closesAtMs })),
     pendingRewards: state.pendingRewards.length,
+    // Rewards already won and waiting out their escrow, so wallets can show them.
+    escrows: [...state.escrows.values()].map(({ amount, recipient, unlockHeight }) =>
+      ({ amount: amount.toString(), recipient, unlockHeight }))
+      .sort((a, b) => a.unlockHeight - b.unlockHeight),
   };
 }

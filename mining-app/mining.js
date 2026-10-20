@@ -14,18 +14,18 @@ const field = (id) => document.querySelector(`#mining-${id}`);
 
 const copy = {
   ru: {
-    title: "Майнинг NIR", badge: "ТЕСТОВАЯ СЕТЬ", levelLabel: "УРОВЕНЬ", taskLabel: "ЗАДАЧА",
-    checkedLabel: "ПРОВЕРЕНО ВАРИАНТОВ", foundLabel: "НАЙДЕНО КЛИК", walletLabel: "В КОШЕЛЬКЕ", heightLabel: "БЛОК",
+    title: "Майнинг NIR", badge: "ТЕСТОВАЯ СЕТЬ", levelLabel: "УРОВЕНЬ", taskLabel: "Задача",
+    checkedLabel: "ПРОВЕРЕНО", foundLabel: "НАЙДЕНО КЛИК", walletLabel: "БАЛАНС", heightLabel: "блок",
+    connect: "Подключить NIR Wallet", connectOther: "Подключить другой кошелёк",
     start: "Начать майнинг", stop: "Остановить", withdraw: "Отправить намайненное в NIR Wallet",
     idle: "Нажмите «Начать майнинг»",
     preparing: "Поднимаю локальную сеть NIR… (в первый раз около 20 секунд)",
-    waiting: "Жду новую задачу от маяка сети…",
+    waiting: "Жду следующую задачу…",
     searching: (t) => `Ищу ${t.k} вершин, соединённых каждая с каждой, среди ${t.n}`,
     committing: "Клика найдена! Отправляю запечатанный ответ…",
     revealing: "Раскрываю ответ сети…",
     linked: (a) => `Награды идут прямо в NIR Wallet: ${a.slice(0, 12)}…${a.slice(-6)}`,
-    unlinked: "Кошелёк не подключён: награды пока копятся в Model Lab. Нажмите ниже «Подключить NIR Wallet» — и они смогут уйти в кошелёк.",
-    valueless: "Локальная тестовая сеть: эти NIR не имеют ценности и не переходят в основную сеть.",
+    unlinked: "Кошелёк не подключён — награды пока копятся в майнере. Подключите NIR Wallet ниже.",
     events: {
       "network-create": () => "Создаю локальную сеть NIR",
       "network-ready": (e) => `Сеть готова, блок ${e.height}`,
@@ -39,18 +39,18 @@ const copy = {
     },
   },
   en: {
-    title: "NIR mining", badge: "TEST NETWORK", levelLabel: "LEVEL", taskLabel: "TASK",
-    checkedLabel: "BRANCHES CHECKED", foundLabel: "CLIQUES FOUND", walletLabel: "IN WALLET", heightLabel: "BLOCK",
+    title: "NIR mining", badge: "TEST NETWORK", levelLabel: "LEVEL", taskLabel: "Task",
+    checkedLabel: "CHECKED", foundLabel: "CLIQUES FOUND", walletLabel: "BALANCE", heightLabel: "block",
+    connect: "Connect NIR Wallet", connectOther: "Connect another wallet",
     start: "Start mining", stop: "Stop", withdraw: "Send mined NIR to NIR Wallet",
     idle: "Press “Start mining”",
     preparing: "Starting a local NIR network… (about 20 seconds the first time)",
-    waiting: "Waiting for the network beacon to issue a task…",
+    waiting: "Waiting for the next task…",
     searching: (t) => `Looking for ${t.k} pairwise connected vertices among ${t.n}`,
     committing: "Clique found! Sending the sealed answer…",
     revealing: "Revealing the answer to the network…",
     linked: (a) => `Rewards go straight to NIR Wallet: ${a.slice(0, 12)}…${a.slice(-6)}`,
-    unlinked: "No wallet connected: rewards collect in Model Lab for now. Press “Connect NIR Wallet” below to send them to your wallet.",
-    valueless: "Local test network: these NIR have no value and do not carry over to a main network.",
+    unlinked: "No wallet connected — rewards collect in the miner for now. Connect NIR Wallet below.",
     events: {
       "network-create": () => "Creating a local NIR network",
       "network-ready": (e) => `Network ready at block ${e.height}`,
@@ -132,6 +132,8 @@ function render() {
     if (typeof value === "string") node.textContent = value;
   }
   toggle.textContent = status.running ? t.stop : t.start;
+  const connect = document.querySelector("#wallet-link-connect");
+  if (connect && !connect.disabled) connect.textContent = status.wallet ? t.connectOther : t.connect;
   toggle.dataset.running = String(status.running);
   const state = status.state ?? "idle";
   phase.textContent = state === "searching" && status.task ? t.searching(status.task) : t[state] ?? t.idle;
@@ -141,7 +143,7 @@ function render() {
   field("found").textContent = String(status.found ?? 0);
   field("wallet").textContent = nir(status.wallet?.balance ?? status.miner?.balance);
   field("height").textContent = status.network ? String(status.network.height) : "—";
-  recipientNote.textContent = `${status.wallet ? t.linked(status.wallet.address) : t.unlinked} ${t.valueless}`;
+  recipientNote.textContent = status.wallet ? t.linked(status.wallet.address) : t.unlinked;
   withdraw.hidden = !status.wallet || !status.miner;
   events.replaceChildren(...(status.events ?? []).slice(-6).reverse().map((event) => {
     const item = document.createElement("li");

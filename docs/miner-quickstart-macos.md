@@ -90,7 +90,7 @@ your choice only for that particular local browser address, not across ports.
 
 ### Double-click Mac app for a local operator rehearsal
 
-An experimental **source-built**, portrait `NIR Model Lab.app` opens its own
+An experimental **source-built**, portrait `NIR Miner.app` opens its own
 window without a Terminal or browser tab. It is not a notarized, signed public
 release, an independent evaluator, or a miner that pays NIR. The source builder
 packages an explicit allowlist of local UI, Iris and pinned Qwen code, and records the
@@ -100,8 +100,8 @@ the app refuses to start; a same-path runtime update is **not detected** or
 attested. Rebuild and retest after updates. Build only from a trusted source checkout:
 
 ```bash
-npm run mine:macos-build -- "$PWD/NIR Model Lab.app"
-open "$PWD/NIR Model Lab.app"
+npm run mine:macos-build -- "$PWD/NIR Miner.app"
+open "$PWD/NIR Miner.app"
 ```
 
 The builder refuses to overwrite an existing app. The window is intentionally
@@ -117,7 +117,7 @@ service. To try pinned Qwen instead of Iris, prepare the separately documented
 Python 3.13 MLX environment, then select it **before** building:
 
 ```bash
-NIR_MINING_PYTHON=/absolute/path/to/venv/bin/python npm run mine:macos-build -- "$PWD/NIR Model Lab.app"
+NIR_MINING_PYTHON=/absolute/path/to/venv/bin/python npm run mine:macos-build -- "$PWD/NIR Miner.app"
 ```
 
 The separate **transfer rehearsal** in Model Lab starts with 7 imaginary tokens

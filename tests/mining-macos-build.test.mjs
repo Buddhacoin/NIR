@@ -17,7 +17,7 @@ test("model app build has a bounded source allowlist and explicit nonreward mark
   assert.match(source, /checkedSource\(relative\)/);
   assert.match(source, /rewardEligible: false/);
   assert.throws(() => buildMacMiningApp("/tmp/not-an-app"),
-    process.platform === "darwin" ? /NIR Model Lab\.app/ : /requires macOS/);
+    process.platform === "darwin" ? /NIR Miner\.app/ : /requires macOS/);
   const native = readFileSync(new URL("../macos/mining-launcher.m", import.meta.url), "utf8");
   assert.match(native, /WKWebView/);
   assert.match(native, /NSMakeRect\(0, 0, 430, 800\)/);
@@ -74,7 +74,7 @@ test("double-click model app build includes only local UI and model code, withou
     const runtime = JSON.parse(readFileSync(join(app, "Contents/Resources/NIR-RUNTIME.json")));
     assert.equal(runtime.nodeExecutable.logicalPath, process.execPath);
     assert.match(runtime.pythonExecutable.logicalPath, /^\//);
-    assert.throws(() => buildMacMiningApp(app, { sign: false }), /new NIR Model Lab\.app/);
+    assert.throws(() => buildMacMiningApp(app, { sign: false }), /new NIR Miner\.app/);
     const syntax = spawnSync("/usr/bin/clang", ["-fobjc-arc", "-fsyntax-only",
       new URL("../macos/mining-launcher.m", import.meta.url).pathname], { encoding: "utf8" });
     assert.equal(syntax.status, 0, syntax.stderr);

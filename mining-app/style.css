@@ -110,3 +110,50 @@ footer { padding-top:18px;border-top:1px solid #3d443f;color:#aeb8b0;font-size:1
 .manual-link { margin-top:14px; }
 .manual-link[open] > summary { margin-bottom:12px; }
 #wallet-link-connect { width:100%; }
+
+/* Variant A (approved 2026-10-20): one dark NIR look shared with NIR Wallet. */
+:root { --bg:#0d0f0e;--card:#161a18;--card2:#1d221f;--line:#2a312d;--text:#eef3ef;--muted:#8d998f;--panel:var(--card);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,"Segoe UI",sans-serif;color:var(--text);background:var(--bg); }
+body { background:var(--bg); }
+.app { padding:18px 18px 96px;border:0;border-radius:0;background:transparent;box-shadow:none; }
+header { gap:10px;font-size:17px;letter-spacing:.08em; }
+header .brand small { display:inline;margin-left:6px;color:var(--text);font-size:17px;letter-spacing:.08em; }
+.logo { width:32px;height:32px; }
+.net-chip { display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #2f3b2f;border-radius:20px;color:var(--lime);font-size:12px;letter-spacing:0;font-weight:600;white-space:nowrap; }
+.net-chip i { width:7px;height:7px;border-radius:50%;background:var(--lime);box-shadow:0 0 8px var(--lime); }
+header .language { padding:6px 10px;border:1px solid var(--line);border-radius:20px;background:var(--card);color:var(--muted);letter-spacing:0; }
+.connection:not([data-state="offline"]) { display:none; }
+.connection { border-radius:12px;font-family:inherit; }
+.visually-hidden { position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap; }
+.operator-console.mining { margin:18px 0 16px;border:0;background:none;box-shadow:none;overflow:visible; }
+.operator-console.mining::before { display:none; }
+.mining-sky { border:1px solid var(--line);border-radius:20px;background:radial-gradient(circle at 50% 45%,#1b2a14 0,var(--bg) 70%);image-rendering:auto; }
+.mining-phase { margin:12px 0 10px;padding:0;border:0;min-height:0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:14px; }
+.mining-phase::before { content:">_ "; }
+.mining-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px;border:0; }
+.mining-grid > div, .mining-grid > div:nth-child(n) { display:block;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--card); }
+.mining-grid span { display:block;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase; }
+.mining-grid strong { display:block;margin-top:4px;font-size:20px;color:var(--text);overflow-wrap:anywhere; }
+.mining-meta { margin:10px 2px 0;color:var(--muted);font-size:12px; }
+.mining-meta b { color:var(--text);font-weight:600; }
+#mining .mining-toggle { width:100%;margin:14px 0 8px;border:0;border-radius:14px;box-shadow:0 0 22px #b9ff5a44;font-family:inherit;font-size:15px;font-weight:800; }
+#mining .mining-toggle[data-running="true"] { background:var(--lime);color:#0c140c;border:0; }
+.mining-note { margin:6px 2px 10px; }
+.mining #mining-withdraw { width:100%;margin:0 0 10px; }
+.mining-events { margin:0;padding:0; }
+.catalog,.result { padding:16px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:none; }
+button:not(.language) { border:0;border-radius:14px;box-shadow:none;justify-content:center;font-family:inherit;font-size:14px;font-weight:700; }
+.catalog .secondary,.result .secondary { border:1px solid var(--line);border-radius:14px;background:transparent;box-shadow:none; }
+.catalog .secondary:hover,.result .secondary:hover { background:var(--card2); }
+.catalog select,.catalog input,.catalog textarea { border-radius:12px!important;border-color:var(--line)!important;background:var(--bg)!important; }
+.manual-link > summary { border-radius:12px; }
+.tab-intro { margin:18px 2px 16px;font-size:13px; }
+footer { margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-family:inherit;color:var(--muted);font-size:12px; }
+.tabbar { position:fixed;left:50%;bottom:14px;transform:translateX(-50%);width:min(calc(100% - 28px),452px);display:grid;grid-template-columns:repeat(3,1fr);padding:8px 0;border:1px solid var(--line);border-radius:24px;background:#141816ee;backdrop-filter:blur(12px);z-index:5; }
+.tabbar button { margin:0;padding:4px 0;display:block;border:0;border-radius:0;background:none;color:var(--muted);font-size:11px;font-weight:600;text-align:center;box-shadow:none; }
+.tabbar button:hover { background:none;color:var(--text); }
+.tabbar button i { display:block;font-style:normal;font-size:18px;margin-bottom:2px; }
+.tabbar button.active { color:var(--text); }
+.tabbar button.active i { color:var(--lime); }
+#operator-console { margin-top:0; }
+@media (max-width:620px) { body { background:var(--bg); } .app { padding:16px 16px 96px; } header { flex-wrap:nowrap; } .mining-grid > div { display:block; } }

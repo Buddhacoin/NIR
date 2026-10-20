@@ -190,7 +190,7 @@ test("operator console shows only real local stages, roles, and runnable models"
   const script = readFileSync(join(root, "mining-app/app.js"), "utf8");
   for (const id of ["operator-console", "event-chart", "event-log", "operator-role",
     "iris-availability", "qwen-availability"]) assert.match(html, new RegExp(`id="${id}"`));
-  assert.match(html, /<title>NIR · Проверка модели<\/title>/);
+  assert.match(html, /<title>NIR Майнер<\/title>/);
   assert.match(html, /id="iris-availability" data-i18n="bundled">ВСТРОЕНА<\/b>/);
   assert.match(html, /отдельный закреплённый запуск Qwen доступен ниже/);
   assert.match(script, /bundled: "ВСТРОЕНА"/);

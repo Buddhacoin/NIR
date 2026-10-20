@@ -104,17 +104,17 @@ test("switching language while verified then offline cannot restore stale balanc
   // The data path clears its own number before reporting an offline state.
   balance.data = "—";
   state.data = "Баланс не подтверждён · узлы недоступны";
-  network.data = "○ Узлы недоступны";
+  network.data = "○ Нет связи с сетью";
   context.localizeForTest();
   assert.equal(balance.data, "—");
   assert.equal(state.data, "Balance not verified · nodes unavailable");
-  assert.equal(network.data, "○ Nodes unavailable");
+  assert.equal(network.data, "○ No network connection");
   assert.equal(untrustedMemo.data, "Получить");
 
   context.setLanguageForTest("ru");
   assert.equal(balance.data, "—");
   assert.equal(state.data, "Баланс не подтверждён · узлы недоступны");
-  assert.equal(network.data, "○ Узлы недоступны");
+  assert.equal(network.data, "○ Нет связи с сетью");
   assert.equal(untrustedAssetName.data, "Баланс");
   assert.equal(storage.get("nir-language"), "ru");
 });
