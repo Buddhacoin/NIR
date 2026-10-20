@@ -106,7 +106,8 @@ export class CliqueMiningSession {
   }
 
   #sign(operation) {
-    const common = { commitment: operation.commitment, networkId: operation.networkId,
+    const common = { chainIdentityGenesisHash: operation.chainIdentityGenesisHash,
+      commitment: operation.commitment, networkId: operation.networkId,
       nonce: operation.nonce, wallet: this.#miner };
     return operation.type === "proof-answer-commit"
       ? createProofAnswerCommit({ ...common, taskRound: operation.taskRound })
@@ -197,6 +198,7 @@ export class CliqueMiningSession {
     const amount = balance - MINER_RESERVE - MIN_TRANSFER_FEE;
     if (amount <= 0n) throw new Error("nothing to send above the miner reserve");
     const result = this.#node.submitTransaction(createTransfer({ amount: amount.toString(),
+      chainIdentityGenesisHash: this.#node.proofMining().chainIdentityGenesisHash,
       networkId: this.#node.networkId, nonce: this.#node.account(this.#miner.address).nextNonce,
       recipient, wallet: this.#miner }));
     this.#event("withdraw", { amount: formatNir(amount) });

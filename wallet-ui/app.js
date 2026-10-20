@@ -1568,6 +1568,54 @@ document.querySelector("#copy-operator-link-proof").onclick = async () => {
     document.querySelector("#operator-link-status").textContent = "Копирование недоступно. Скопируйте текст вручную.";
   }
 };
+document.querySelector("#sign-iris-receipt").onclick = async (event) => {
+  const status = document.querySelector("#iris-receipt-status");
+  const signedField = document.querySelector("#iris-receipt-signed");
+  const copy = document.querySelector("#copy-iris-receipt");
+  signedField.value = "";
+  signedField.hidden = true;
+  copy.hidden = true;
+  if (!walletInfo || !bridgeSession) {
+    status.textContent = "Сначала подключите vault к этому окну кошелька.";
+    return;
+  }
+  let intent;
+  try { intent = JSON.parse(document.querySelector("#iris-receipt-intent").value); }
+  catch { status.textContent = "Нужен точный JSON intent из Model Lab."; return; }
+  if (intent?.recipient !== walletInfo.address || intent?.scope !== "local-rehearsal-only" ||
+      intent?.networkSubmitted !== false || intent?.rewardEligible !== false ||
+      intent?.executionVerified !== false) {
+    status.textContent = "Intent не совпадает с адресом или обещает сетевую награду.";
+    return;
+  }
+  const expectedAddress = walletInfo.address;
+  event.currentTarget.disabled = true;
+  try {
+    const requestId = Array.from(crypto.getRandomValues(new Uint8Array(32)),
+      (byte) => byte.toString(16).padStart(2, "0")).join("");
+    status.textContent = "Подтвердите хэш свидетельства в системном окне кошелька.";
+    const result = await signWithRecovery("/v1/sign-local-iris-receipt", { intent, requestId },
+      undefined, () => { status.textContent = "Ожидаем подтверждения кошелька…"; });
+    if (walletInfo?.address !== expectedAddress || result.receipt?.recipient !== expectedAddress ||
+        result.receipt?.nonce !== intent.nonce ||
+        result.receipt?.evidenceDigest !== intent.evidenceDigest)
+      throw new Error("Квитанция не совпадает с intent.");
+    signedField.value = JSON.stringify(result.receipt);
+    signedField.hidden = false;
+    copy.hidden = false;
+    status.textContent = "Скопируйте подпись в Model Lab. Выполнение модели подписью не доказано; средства и сеть не изменились.";
+  } catch {
+    status.textContent = "Подпись не завершилась. Сетевая заявка и награда не созданы.";
+  } finally { event.currentTarget.disabled = false; }
+};
+document.querySelector("#copy-iris-receipt").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(document.querySelector("#iris-receipt-signed").value);
+    document.querySelector("#iris-receipt-status").textContent = "Квитанция скопирована. Вставьте её в Model Lab.";
+  } catch {
+    document.querySelector("#iris-receipt-status").textContent = "Копирование недоступно. Скопируйте текст вручную.";
+  }
+};
 document.querySelector("#setup-connect").onclick = () => {
   setupPanel.close();
   openBridgePanel();

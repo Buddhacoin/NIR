@@ -98,7 +98,7 @@ export function fixture(targetVersion = PROOF_MINING_PROTOCOL_VERSION, miner = g
   append(chain, { timestamp: TREASURY_VESTING_MS, transactions: [createTransfer({
     amount: "100000000", networkId, nonce: 0, recipient: miner.address, wallet: treasury,
   })] }, validators);
-  for (const version of [28, 29, 30, 31, 32, 33, 34, 35].filter((v) => v <= targetVersion)) {
+  for (const version of [28, 29, 30, 31, 32, 33, 34, 35, 36, 37].filter((v) => v <= targetVersion)) {
     const activationHeight = chain.height + 1 + MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS;
     append(chain, { protocolUpgrade: version === 28
       ? { activationHeight, format: "nir-protocol-upgrade-v1", version }

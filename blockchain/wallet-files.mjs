@@ -29,6 +29,7 @@ import {
 import { addressFromPublicKey, generateWallet, hashObject } from "./crypto.mjs";
 import { createPaymentRequest } from "./payment-request.mjs";
 import { createOperatorWalletProof } from "./operator-wallet-link.mjs";
+import { signLocalIrisRunReceipt } from "./operator-model-receipt.mjs";
 import { createSignedHistoryArchive } from "./archive-sync.mjs";
 import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { createValidatorAdmission } from "./validator-admission.mjs";
@@ -502,12 +503,14 @@ export function restoreVerifiedWalletBackup({
   }
 }
 
-export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee }) {
+export function signWalletTransfer({ path, password, networkId, recipient, amount, nonce, fee,
+  chainIdentityGenesisHash }) {
   const wallet = decryptWallet(readVault(path), password);
   try {
     return createTransfer({
       wallet, networkId, recipient, amount, nonce,
       ...(fee === undefined ? {} : { fee }),
+      ...(chainIdentityGenesisHash === undefined ? {} : { chainIdentityGenesisHash }),
     });
   } finally {
     wallet.privateKey = "";
@@ -544,7 +547,7 @@ export function signWalletProofAnswer({ path, password, operation }) {
   const wallet = decryptWallet(readVault(path), password);
   try {
     const common = { wallet, networkId: operation.networkId, nonce: operation.nonce,
-      commitment: operation.commitment };
+      chainIdentityGenesisHash: operation.chainIdentityGenesisHash, commitment: operation.commitment };
     if (operation.type === "proof-answer-commit") {
       return createProofAnswerCommit({ ...common, taskRound: operation.taskRound });
     }
@@ -577,6 +580,16 @@ export function signWalletOperatorLink({ path, password, challenge, expectedAddr
   } finally {
     wallet.privateKey = "";
   }
+}
+
+export function signWalletLocalIrisReceipt({ path, password, intent, expectedAddress }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    if (wallet.address !== expectedAddress || walletPublicInfo(path).address !== expectedAddress ||
+        intent?.recipient !== expectedAddress)
+      throw new Error("wallet account changed during the request");
+    return signLocalIrisRunReceipt({ wallet, intent });
+  } finally { wallet.privateKey = ""; }
 }
 
 export function signWalletHistoryArchive({ path, password, directory, chain, options }) {

@@ -5,9 +5,18 @@ const error = document.querySelector("#error");
 const errorMessage = document.querySelector("#error-message");
 const irisEvidenceExport = document.querySelector("#iris-evidence-export");
 const irisEvidenceState = document.querySelector("#iris-evidence-state");
+const irisReceiptPanel = document.querySelector("#iris-receipt-panel");
+const irisReceiptIntent = document.querySelector("#iris-receipt-intent");
+const irisReceiptCopy = document.querySelector("#iris-receipt-copy");
+const irisReceiptSigned = document.querySelector("#iris-receipt-signed");
+const irisReceiptComplete = document.querySelector("#iris-receipt-complete");
+const irisReceiptState = document.querySelector("#iris-receipt-state");
 const irisEvidenceFile = document.querySelector("#iris-evidence-file");
 const irisEvidenceVerify = document.querySelector("#iris-evidence-verify");
 const irisVerifyState = document.querySelector("#iris-verify-state");
+const irisRecheckReceipt = document.querySelector("#iris-recheck-receipt");
+const irisPairRecheck = document.querySelector("#iris-pair-recheck");
+const irisPairState = document.querySelector("#iris-pair-state");
 const candidateFile = document.querySelector("#candidate-file");
 const candidateCheck = document.querySelector("#candidate-check");
 const candidateState = document.querySelector("#candidate-state");
@@ -53,6 +62,19 @@ const qwenReplayState = document.querySelector("#qwen-replay-state");
 const eventPulses = document.querySelector("#event-pulses");
 const eventLog = document.querySelector("#event-log");
 const qwenAvailability = document.querySelector("#qwen-availability");
+const syntheticStart = document.querySelector("#synthetic-start");
+const syntheticSend = document.querySelector("#synthetic-send");
+const syntheticRecipient = document.querySelector("#synthetic-recipient");
+const syntheticAmount = document.querySelector("#synthetic-amount");
+const syntheticBalance = document.querySelector("#synthetic-balance");
+const syntheticState = document.querySelector("#synthetic-state");
+const syntheticHistory = document.querySelector("#synthetic-history");
+let syntheticSnapshot = null;
+let syntheticMessage = "";
+let syntheticStateLoading = false;
+let syntheticTransferBusy = false;
+let syntheticPendingTransfer = null;
+let walletLinkLinking = false;
 const nativeApp = typeof location !== "undefined" &&
   new URLSearchParams(location.search).get("local-app") === "1";
 // Native shell injects this before page scripts. The terminal-only browser mode
@@ -150,6 +172,16 @@ const copy = {
     walletLinkStart: "Создать одноразовый запрос", walletLinkCopy: "Скопировать запрос",
     walletLinkProofLabel: "Подписанное доказательство из настроек кошелька",
     walletLinkComplete: "Проверить адрес",
+    syntheticTitle: "Тренажёр перевода — не NIR",
+    syntheticIntro: "Отдельный учебный баланс: 7 условных жетонов. Это не результат проверки модели, не начисление сети и не средства в кошельке. Сценарий исчезнет при закрытии сервиса.",
+    syntheticStart: "Создать учебный сценарий", syntheticRecipientLabel: "Подтверждённый адрес получателя",
+    syntheticRecipientMissing: "Сначала подтвердите адрес в разделе выше.",
+    syntheticAmountLabel: "Учебных жетонов", syntheticSend: "Перевести только в тренажёре",
+    syntheticBalance: (state) => state?.started ? `Учебный остаток: ${state.remaining} из 7. Настоящий баланс кошелька не изменился.` : "Учебный сценарий ещё не создан.",
+    syntheticSuccess: "Учебный перевод записан на локально подтверждённый адрес. Настоящий кошелёк и сеть не изменились.",
+    syntheticFailure: "Учебный перевод отклонён. Проверьте адрес, сумму и остаток.",
+    syntheticUnknown: "Статус учебного перевода неизвестен: ответ или история недоступны. Не создавайте новую операцию; повторите запрос с тем же ID после восстановления связи. Это не NIR.",
+    syntheticHistoryItem: (entry) => `${entry.amount} учебных жетонов → ${entry.recipient} · не NIR`,
     test: "ТЕСТ", eyebrow: "Локальная тренировка", headline: "Проверка модели Iris",
     description: "Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.",
     start: "Проверить модель Iris", safety: "Не нужен кошелёк, пароль, секретная фраза или оплата.",
@@ -158,6 +190,10 @@ const copy = {
     doneTitle: "Локальная проверка завершена",
     doneBody: "Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.",
     irisEvidenceExport: "Скачать локальное свидетельство (не заявка и не награда)",
+    irisReceiptTitle: "Подтвердить хэш свидетельства адресом",
+    irisReceiptIntro: "Адрес подтверждён до запуска Iris. Подпись привяжет его к хэшу байтов свидетельства, но сама по себе не докажет выполнение модели. Скопируйте intent в NIR Wallet и вставьте подпись ниже. Это не заявка в сеть и не награда.",
+    irisReceiptCopy: "Скопировать intent", irisReceiptLabel: "Подписанная квитанция из кошелька",
+    irisReceiptComplete: "Проверить локальную подпись",
     irisEvidenceFailed: "Свидетельство недоступно. Повторите локальную проверку; заявки и награды нет.",
     irisImportTitle: "Повторить проверку Iris на этом Mac",
     irisImportIntro: "Выберите свидетельство с другого компьютера. Приложение заново запустит только встроенную Iris; файл не может указать программу или путь. Совпадение не доказывает независимость оператора и не даёт награды.",
@@ -167,6 +203,12 @@ const copy = {
     irisImportMatched: (hash) => `Локальный прогон совпал: ${hash}. Личность оператора не подтверждена; заявки и награды нет.`,
     irisImportFailed: "Файл не совпал с новым прогоном или проверка не завершилась. Заявки и награды нет.",
     irisImportInvalid: "Выберите JSON-свидетельство Iris размером до 1 МБ. Оно не является доказательством награды.",
+    irisPairLabel: "Дополнительно: вставьте подписанный JSON квитанции адреса из кошелька",
+    irisPairButton: "Перепроверить свидетельство и подпись вместе",
+    irisPairRunning: "Повторяем Iris локально и сверяем адрес, подпись и точные байты…",
+    irisPairMatched: (address) => `Локальный повтор и подпись байтов совпали для ${address}. Это не независимый оператор, не доказательство исходного выполнения и не награда.`,
+    irisPairFailed: "Пара не совпала или локальный повтор не завершился. Заявки и награды нет.",
+    irisPairInvalid: "Нужны свидетельство Iris до 1 МБ и подписанная JSON-квитанция до 16 КБ. Это не доказательство награды.",
     candidateTitle: "Проверить свой файл модели Iris",
     candidateIntro: "Принимаются только целочисленные веса и смещения линейного классификатора, без программы или ссылок на файлы. Все 30 проверочных примеров Iris публичны: этот результат нельзя использовать для награды.",
     candidateSample: "Скачать пример файла модели",
@@ -268,6 +310,16 @@ const copy = {
     walletLinkTitle: "Operator address", walletLinkIntro: "Prove address ownership using the installed NIR Wallet. Your password and key stay in the wallet. This is a local link, with no network claim or reward.",
     walletLinkStart: "Create one-time challenge", walletLinkCopy: "Copy challenge",
     walletLinkProofLabel: "Signed proof from wallet settings", walletLinkComplete: "Verify address",
+    syntheticTitle: "Transfer rehearsal — not NIR",
+    syntheticIntro: "Separate training balance: 7 imaginary tokens. This is not a model-check result, network reward, or wallet funds. The scenario disappears when this service closes.",
+    syntheticStart: "Create training scenario", syntheticRecipientLabel: "Verified recipient address",
+    syntheticRecipientMissing: "First verify the address in the section above.",
+    syntheticAmountLabel: "Imaginary units", syntheticSend: "Transfer in rehearsal only",
+    syntheticBalance: (state) => state?.started ? `Training remainder: ${state.remaining} of 7. Real wallet balance did not change.` : "Training scenario not created yet.",
+    syntheticSuccess: "Training transfer recorded for the locally verified address. Real wallet and network did not change.",
+    syntheticFailure: "Training transfer refused. Check address, amount, and remainder.",
+    syntheticUnknown: "Training transfer status is unknown: response or history is unavailable. Do not create a new operation; retry with the same ID after reconnection. This is not NIR.",
+    syntheticHistoryItem: (entry) => `${entry.amount} imaginary units → ${entry.recipient} · not NIR`,
     test: "TEST", eyebrow: "Local rehearsal", headline: "Check the Iris model",
     description: "Train two classifiers locally on 120 examples and check them against 30 held-out examples. Results and evidence are checked on this Mac.",
     start: "Check Iris model", safety: "No wallet, password, recovery phrase, or payment is needed.",
@@ -276,6 +328,10 @@ const copy = {
     doneTitle: "Local check complete",
     doneBody: "The evidence bundle was checked locally. There are no independent operators, hidden challenges, attested energy measurements, or network rewards.",
     irisEvidenceExport: "Download local evidence (not a claim or reward)",
+    irisReceiptTitle: "Bind the evidence hash to your address",
+    irisReceiptIntro: "The address was verified before Iris ran. The signature binds it to the evidence bytes hash; it does not itself prove model execution. Copy the intent into NIR Wallet, approve, and paste the signature below. No network claim or reward.",
+    irisReceiptCopy: "Copy intent", irisReceiptLabel: "Signed receipt from wallet",
+    irisReceiptComplete: "Verify local signature",
     irisEvidenceFailed: "Evidence is unavailable. Repeat the local check; no claim or reward exists.",
     irisImportTitle: "Rerun Iris evidence on this Mac",
     irisImportIntro: "Choose evidence from another computer. This app reruns only its bundled Iris code; the file cannot select a program or path. A match does not prove operator independence or earn a reward.",
@@ -285,6 +341,12 @@ const copy = {
     irisImportMatched: (hash) => `Local rerun matched: ${hash}. Operator identity is unverified; there is no claim or reward.`,
     irisImportFailed: "The file did not match a fresh run, or verification failed. No claim or reward exists.",
     irisImportInvalid: "Choose an Iris JSON evidence file up to 1 MB. It is not reward proof.",
+    irisPairLabel: "Optional: paste the address-signed receipt JSON from the wallet",
+    irisPairButton: "Recheck evidence and signature together",
+    irisPairRunning: "Rerunning Iris locally and checking address, signature, and exact bytes…",
+    irisPairMatched: (address) => `Local rerun and byte signature matched for ${address}. This is not an independent operator, proof of the original execution, or a reward.`,
+    irisPairFailed: "The pair did not match or local rerun failed. No claim or reward exists.",
+    irisPairInvalid: "Choose Iris evidence up to 1 MB and a signed JSON receipt up to 16 KB. This is not reward proof.",
     candidateTitle: "Check your Iris model file",
     candidateIntro: "Only integer weights and biases for a linear classifier are accepted, with no program or file paths. All 30 Iris evaluation examples are public: this result cannot earn a reward.",
     candidateSample: "Download a sample model file",
@@ -388,6 +450,8 @@ let replayStatus = null;
 let irisVerifyRunning = false;
 let irisVerifyStatus = null;
 let irisVerifyHash = null;
+let irisPairStatus = null;
+let irisPairAddress = null;
 let candidateRunning = false;
 let candidateStatus = null;
 let candidateResult = null;
@@ -603,6 +667,21 @@ function render() {
     qwenAvailability.dataset.state = ready ? "ready" : pending ? "checking" : "unavailable";
   }
   renderEventTrace();
+  if (syntheticStart) {
+    const verifiedRecipient = syntheticSnapshot?.verifiedRecipient;
+    const recipientReady = !!walletLinkAddress && verifiedRecipient === walletLinkAddress;
+    syntheticStart.disabled = !connected || !recipientReady || syntheticSnapshot?.started === true;
+    syntheticSend.disabled = syntheticTransferBusy || !connected || !recipientReady || syntheticSnapshot?.started !== true;
+    syntheticBalance.textContent = t.syntheticBalance(syntheticSnapshot);
+    syntheticRecipient.textContent = recipientReady ? verifiedRecipient : t.syntheticRecipientMissing;
+    syntheticState.textContent = syntheticMessage ? t[syntheticMessage] : "";
+    syntheticHistory.replaceChildren();
+    for (const entry of syntheticSnapshot?.history ?? []) {
+      const item = document.createElement("li");
+      item.textContent = t.syntheticHistoryItem(entry);
+      syntheticHistory.append(item);
+    }
+  }
   if (qwenStart) {
     qwenStart.disabled = !connected || qwenRunning || replayRunning || irisVerifyRunning || candidateRunning || !progress.hidden ||
       qwenRuntime.status !== "pinned-qwen-runtime-ready";
@@ -627,6 +706,12 @@ function render() {
       !progress.hidden || !irisEvidenceFile?.files?.length;
     irisVerifyState.textContent = irisVerifyStatus === "irisImportMatched" ?
       t.irisImportMatched(irisVerifyHash) : irisVerifyStatus ? t[irisVerifyStatus] : "";
+  }
+  if (irisPairRecheck) {
+    irisPairRecheck.disabled = !connected || irisVerifyRunning || candidateRunning || qwenRunning || replayRunning ||
+      !progress.hidden || !irisEvidenceFile?.files?.length || !irisRecheckReceipt?.value.trim();
+    irisPairState.textContent = irisPairStatus === "irisPairMatched" ?
+      t.irisPairMatched(irisPairAddress) : irisPairStatus ? t[irisPairStatus] : "";
   }
   if (candidateCheck) {
     candidateCheck.disabled = !connected || candidateRunning || irisVerifyRunning ||
@@ -705,6 +790,8 @@ function showOffline() {
   connected = false;
   walletLinkAddress = null;
   walletLinkPending = null;
+  if (irisReceiptPanel) irisReceiptPanel.hidden = true;
+  if (irisReceiptIntent) irisReceiptIntent.value = "";
   if (walletLinkChallenge) { walletLinkChallenge.value = ""; walletLinkChallenge.hidden = true; }
   if (walletLinkCopy) walletLinkCopy.hidden = true;
   if (walletLinkProof) walletLinkProof.value = "";
@@ -712,6 +799,8 @@ function showOffline() {
     ? "Локальный сервис остановился. Привязка адреса сброшена."
     : "Local service stopped. Address link was cleared.";
   checking = false;
+  syntheticSnapshot = null;
+  syntheticMessage = "";
   connection.dataset.state = "offline";
   progress.hidden = true;
   result.hidden = true;
@@ -724,6 +813,23 @@ function showOffline() {
     lastServiceState = "service-offline";
   }
   render();
+}
+
+async function loadSyntheticState() {
+  if (!connected || walletLinkLinking || walletLinkPending || syntheticStateLoading || syntheticSnapshot) return;
+  syntheticStateLoading = true;
+  try {
+    const { response, data } = await fetchQwenJson("/synthetic-transfer/state");
+    if (!walletLinkLinking && !walletLinkPending && response.ok &&
+        data?.simulationOnly === true && data?.walletChanged === false &&
+        data?.networkSubmitted === false && data?.transferableNir === "0" &&
+        (data.verifiedRecipient === null || /^nir1[0-9a-f]{64}$/.test(data.verifiedRecipient))) {
+      syntheticSnapshot = data;
+      walletLinkAddress = data.verifiedRecipient;
+      render();
+    }
+  } catch { /* Keep the training panel unavailable rather than guessing state. */ }
+  finally { syntheticStateLoading = false; }
 }
 
 async function checkConnection() {
@@ -747,6 +853,7 @@ async function checkConnection() {
       lastServiceState = "service-online";
     }
     render();
+    void loadSyntheticState();
   } catch { showOffline(); }
   finally { clearTimeout(timeout); statusRequestRunning = false; }
 }
@@ -770,6 +877,57 @@ settingsBack?.addEventListener("click", () => {
   settingsOpen.focus();
 });
 checkUpdates?.addEventListener("click", () => { void loadVersionInfo(); });
+if (syntheticStart) {
+  syntheticStart.addEventListener("click", async () => {
+    try {
+      const { response, data } = await fetchQwenJson("/synthetic-transfer/start", {
+        method: "POST", body: "",
+      });
+      if (!response.ok || data?.simulationOnly !== true || data?.walletChanged !== false) throw new Error("invalid training state");
+      syntheticSnapshot = data;
+      syntheticMessage = "";
+    } catch { syntheticMessage = "syntheticFailure"; }
+    render();
+  });
+  syntheticSend.addEventListener("click", async () => {
+    if (syntheticTransferBusy || !walletLinkAddress ||
+        syntheticSnapshot?.verifiedRecipient !== walletLinkAddress) return;
+    syntheticTransferBusy = true;
+    const input = syntheticPendingTransfer ?? { recipient: walletLinkAddress,
+      amount: syntheticAmount.value, id: crypto.randomUUID(), networkId: "nir-synthetic-local-1" };
+    syntheticPendingTransfer = input;
+    render();
+    let definitelyRejected = false;
+    try {
+      const { response, data } = await fetchQwenJson("/synthetic-transfer", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      });
+      definitelyRejected = !response.ok;
+      if (!response.ok || data?.entry?.simulationOnly !== true || data?.state?.walletChanged !== false)
+        throw new Error("invalid training transfer");
+      syntheticSnapshot = data.state;
+      syntheticPendingTransfer = null;
+      syntheticMessage = "syntheticSuccess";
+    } catch {
+      // A response may be lost after the local ledger committed. Reconcile by
+      // transfer ID; retries keep the same ID and cannot duplicate a debit.
+      try {
+        const { response, data } = await fetchQwenJson("/synthetic-transfer/state");
+        if (response.ok && data?.simulationOnly === true && data?.walletChanged === false) {
+          syntheticSnapshot = data;
+          if (data.history?.some((entry) => entry.id === input.id)) {
+            syntheticPendingTransfer = null;
+            syntheticMessage = "syntheticSuccess";
+          } else {
+            if (definitelyRejected) syntheticPendingTransfer = null;
+            syntheticMessage = definitelyRejected ? "syntheticFailure" : "syntheticUnknown";
+          }
+        } else syntheticMessage = "syntheticUnknown";
+      } catch { syntheticMessage = "syntheticUnknown"; }
+    } finally { syntheticTransferBusy = false; }
+    render();
+  });
+}
 if (catalogModel) {
   catalogModel.addEventListener("change", () => { catalogVersion.value = ""; renderCatalog(); });
   catalogVersion.addEventListener("change", renderCatalog);
@@ -788,6 +946,9 @@ start.addEventListener("click", async () => {
   error.hidden = true;
   errorKind = null;
   lastResult = null;
+  if (irisReceiptPanel) irisReceiptPanel.hidden = true;
+  if (irisReceiptIntent) irisReceiptIntent.value = "";
+  if (irisReceiptSigned) irisReceiptSigned.value = "";
   if (irisEvidenceState) irisEvidenceState.textContent = "";
   recordLocalEvent("iris-requested");
   try {
@@ -806,6 +967,23 @@ start.addEventListener("click", async () => {
       throw new Error("invalid result");
     }
     lastResult = data;
+    if (irisReceiptPanel && walletLinkAddress) {
+      try {
+        const intentResponse = await fetch("/model-run-receipt/intent", {
+          headers: sessionHeaders(), cache: "no-store",
+        });
+        if (intentResponse.ok) {
+          const intent = await intentResponse.json();
+          if (intent?.scope === "local-rehearsal-only" && intent.networkSubmitted === false &&
+              intent.rewardEligible === false && intent.executionVerified === false &&
+              intent.genesisHash === null &&
+              intent.bundleHash === data.bundleHash && intent.recipient === walletLinkAddress) {
+            irisReceiptIntent.value = JSON.stringify(intent);
+            irisReceiptPanel.hidden = false;
+          }
+        }
+      } catch { /* Optional receipt failure does not invalidate the completed local model run. */ }
+    }
     recordLocalEvent("iris-result");
     render();
     result.hidden = false;
@@ -822,6 +1000,63 @@ start.addEventListener("click", async () => {
     start.disabled = !connected;
     render();
   }
+});
+
+irisReceiptCopy?.addEventListener("click", async () => {
+  if (irisReceiptPanel.hidden || !irisReceiptIntent.value) return;
+  try {
+    await navigator.clipboard.writeText(irisReceiptIntent.value);
+    irisReceiptState.textContent = locale === "ru" ? "Intent скопирован. Подпишите его в настройках кошелька." :
+      "Intent copied. Sign it in wallet settings.";
+  } catch {
+    irisReceiptState.textContent = locale === "ru" ? "Копирование недоступно. Скопируйте JSON вручную." :
+      "Clipboard unavailable. Copy JSON manually.";
+  }
+});
+irisReceiptComplete?.addEventListener("click", async () => {
+  if (irisReceiptPanel.hidden) return;
+  irisReceiptComplete.disabled = true;
+  let submitted = false;
+  try {
+    const signed = JSON.parse(irisReceiptSigned.value);
+    const intent = JSON.parse(irisReceiptIntent.value);
+    if (signed?.recipient !== intent.recipient || signed?.nonce !== intent.nonce ||
+        signed?.evidenceDigest !== intent.evidenceDigest || signed?.rewardEligible !== false ||
+        signed?.executionVerified !== false)
+      throw new Error("receipt mismatch");
+    submitted = true;
+    const response = await fetch("/model-run-receipt/complete", { method: "POST",
+      body: JSON.stringify(signed), headers: { ...sessionHeaders(), "Content-Type": "application/json" } });
+    if (!response.ok) throw new Error(response.status === 400 ? "receipt rejected" : "receipt unknown");
+    irisReceiptState.textContent = locale === "ru" ?
+      "Подпись и хэш байтов проверены локально. Выполнение модели этим не доказано; сеть не получила заявку и награды нет." :
+      "Signature and bytes hash matched locally. This does not prove execution; no network claim or reward exists.";
+  } catch (reason) {
+    const unknown = submitted && reason?.message !== "receipt rejected";
+    let recovered = false;
+    if (unknown) {
+      try {
+        const response = await fetch("/model-run-receipt/status", {
+          headers: sessionHeaders(), cache: "no-store",
+        });
+        const status = response.ok ? await response.json() : null;
+        const intent = JSON.parse(irisReceiptIntent.value);
+        recovered = status?.status === "local-receipt-signature-checked" &&
+          status.recipient === intent.recipient && status.nonce === intent.nonce &&
+          status.evidenceDigest === intent.evidenceDigest &&
+          status.networkSubmitted === false && status.rewardEligible === false &&
+          status.executionVerified === false;
+      } catch { /* Preserve unknown status if the local service is unreachable. */ }
+    }
+    irisReceiptState.textContent = recovered ? (locale === "ru" ?
+      "Сервис подтвердил подпись и хэш этой локальной квитанции, но не выполнение модели. Сеть и награда не изменились." :
+      "The service confirms the signature and hash, not model execution. Network and reward are unchanged.") :
+      unknown ? (locale === "ru" ?
+      "Статус локальной квитанции неизвестен: ответ потерян. Не подписывайте повторно; проверьте текущую сессию или начните новый запуск после перезапуска." :
+      "Local receipt status is unknown: the response was lost. Do not sign again; inspect this session or restart with a new run.") :
+      (locale === "ru" ? "Квитанция отклонена: адрес, запуск или подпись не совпадают." :
+        "Receipt rejected: address, run, or signature does not match.");
+  } finally { irisReceiptComplete.disabled = false; }
 });
 
 if (irisEvidenceExport) irisEvidenceExport.addEventListener("click", async () => {
@@ -865,6 +1100,8 @@ if (irisEvidenceExport) irisEvidenceExport.addEventListener("click", async () =>
 if (irisEvidenceFile) irisEvidenceFile.addEventListener("change", () => {
   irisVerifyStatus = null;
   irisVerifyHash = null;
+  irisPairStatus = null;
+  irisPairAddress = null;
   render();
 });
 if (irisEvidenceVerify) irisEvidenceVerify.addEventListener("click", async () => {
@@ -905,6 +1142,60 @@ if (irisEvidenceVerify) irisEvidenceVerify.addEventListener("click", async () =>
     clearTimeout(deadline);
     irisVerifyRunning = false;
     start.disabled = !connected;
+    render();
+  }
+});
+
+irisRecheckReceipt?.addEventListener("input", () => {
+  irisPairStatus = null;
+  irisPairAddress = null;
+  render();
+});
+irisPairRecheck?.addEventListener("click", async () => {
+  const file = irisEvidenceFile?.files?.[0];
+  if (!connected || irisVerifyRunning || candidateRunning || qwenRunning || replayRunning ||
+      !progress.hidden || !file) return;
+  if (file.size < 1 || file.size > 1_000_000 ||
+      irisRecheckReceipt.value.length < 1 || irisRecheckReceipt.value.length > 16_384) {
+    irisPairStatus = "irisPairInvalid";
+    render();
+    return;
+  }
+  irisVerifyRunning = true;
+  irisPairStatus = "irisPairRunning";
+  irisPairAddress = null;
+  render();
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 35_000);
+  try {
+    const receipt = JSON.parse(irisRecheckReceipt.value);
+    if (receipt?.scope !== "local-rehearsal-only" || receipt.executionVerified !== false ||
+        receipt.rewardEligible !== false || receipt.networkSubmitted !== false ||
+        !/^nir1[0-9a-f]{64}$/.test(receipt.recipient ?? "")) throw new Error("invalid pair");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 8192)
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+    const response = await fetch("/model-run-receipt/recheck", { method: "POST",
+      body: JSON.stringify({ evidenceBase64: btoa(binary), receipt }),
+      headers: { ...sessionHeaders(), "Content-Type": "application/json" },
+      signal: controller.signal });
+    const checked = await response.json();
+    if (!response.ok || checked?.status !== "local-iris-recheck-with-address-binding" ||
+        checked.recipient !== receipt.recipient || checked.bundleHash !== receipt.bundleHash ||
+        checked.evidenceDigest !== receipt.evidenceDigest ||
+        checked.signatureValid !== true || checked.evidenceBytesBound !== true ||
+        checked.localReplayMatched !== true || checked.executionVerified !== false ||
+        checked.independentlyVerified !== false || checked.networkSubmitted !== false ||
+        checked.rewardEligible !== false) throw new Error("pair recheck failed");
+    irisPairAddress = checked.recipient;
+    irisPairStatus = "irisPairMatched";
+  } catch (reason) {
+    irisPairStatus = reason?.message === "invalid pair" || reason instanceof SyntaxError ?
+      "irisPairInvalid" : "irisPairFailed";
+  } finally {
+    clearTimeout(deadline);
+    irisVerifyRunning = false;
     render();
   }
 });
@@ -1219,7 +1510,12 @@ if (qwenExport) qwenExport.addEventListener("click", () => {
 });
 
 walletLinkStart?.addEventListener("click", async () => {
+  walletLinkLinking = true;
   walletLinkAddress = null;
+  if (irisReceiptPanel) irisReceiptPanel.hidden = true;
+  if (irisReceiptIntent) irisReceiptIntent.value = "";
+  syntheticSnapshot = null;
+  syntheticPendingTransfer = null;
   walletLinkPending = null;
   walletLinkChallenge.hidden = true;
   walletLinkCopy.hidden = true;
@@ -1242,7 +1538,7 @@ walletLinkStart?.addEventListener("click", async () => {
       : "Copy into NIR Wallet Settings → Model Lab address. Paste the signed proof here. Expires in 5 minutes.";
   } catch {
     walletLinkState.textContent = locale === "ru" ? "Не удалось создать запрос." : "Could not create challenge.";
-  } finally { walletLinkStart.disabled = false; render(); }
+  } finally { walletLinkLinking = false; walletLinkStart.disabled = false; render(); }
 });
 walletLinkCopy?.addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(walletLinkChallenge.value); }
@@ -1271,6 +1567,7 @@ walletLinkComplete?.addEventListener("click", async () => {
         data.networkSubmitted !== false || data.rewardEligible !== false ||
         data.walletChanged !== false) throw new Error("proof rejected");
     walletLinkAddress = data.address;
+    syntheticSnapshot = null;
     walletLinkPending = null;
     walletLinkChallenge.hidden = true;
     walletLinkCopy.hidden = true;
@@ -1283,7 +1580,7 @@ walletLinkComplete?.addEventListener("click", async () => {
     walletLinkState.textContent = locale === "ru"
       ? "Доказательство отклонено или истекло. Создайте новый запрос; награда не начислена."
       : "Proof rejected or expired. Create a new challenge; no reward was credited.";
-  } finally { walletLinkComplete.disabled = false; render(); }
+  } finally { walletLinkComplete.disabled = false; render(); void loadSyntheticState(); }
 });
 
 recordLocalEvent("ui-ready");

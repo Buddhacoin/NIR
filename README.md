@@ -62,7 +62,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | Run a pinned model check on a Mac | `npm run mine:app` runs local Iris classifiers and verifies a bundle; no network or reward; [beginner guide](docs/miner-quickstart-macos.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
-| Mine network clique tasks on a local devnet (protocol v35; no public network) | `npm run node:init-dev -- <dir> --proof-mining`, `npm run node:serve -- <dir>`, `npm run mine:clique -- --wallet <file>`; see [`docs/proof-mining.md`](docs/proof-mining.md) |
+| Mine network clique tasks on a local devnet (protocol v37; no public network) | `npm run node:init-dev -- <dir> --proof-mining`, `npm run node:serve -- <dir>`, `npm run mine:clique -- --wallet <file>`; see [`docs/proof-mining.md`](docs/proof-mining.md) |
 | Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
 | Follow every user feature step by step | [`docs/user-journeys.md`](docs/user-journeys.md) |
 | Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |

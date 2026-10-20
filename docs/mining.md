@@ -1,6 +1,6 @@
 # How NIR mining works
 
-> **From protocol v35 the issuance described below ends.** New NIR is issued
+> **From protocol v37 the issuance described below ends.** New NIR is issued
 > only for network clique tasks: find `k` pairwise adjacent vertices in a
 > random graph drawn from the beacon, answered by commit and reveal, with
 > difficulty that follows solver speed. See [proof-mining.md](proof-mining.md)

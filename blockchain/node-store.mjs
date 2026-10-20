@@ -21,7 +21,9 @@ import {
   MIN_TRANSFER_FEE,
   PROOF_MINING_PROTOCOL_VERSION,
   SAFETY_POLICY_V1_COMMITMENT,
+  TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION,
 } from "./constants.mjs";
+import { protocolVersionAtNextHeight } from "./protocol-upgrade.mjs";
 import { devnetProtocolUpgrade } from "./devnet-upgrades.mjs";
 import { createReleaseAuthoritySet, createReleaseTransparencyAnchor }
   from "./offline-release-governance.mjs";
@@ -209,8 +211,10 @@ export class PersistentDevNode {
   }
 
   proofMining() {
-    return proofMiningView(this.#chain.proofMiningStatus(),
-      { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp });
+    // Miners sign answers bound to this genesis.
+    return { ...proofMiningView(this.#chain.proofMiningStatus(),
+      { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp }),
+    chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash };
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {
@@ -252,6 +256,11 @@ export class PersistentDevNode {
       createEpochRandomnessReveal({ networkId, round, secret: secrets[i], wallet })) });
   }
 
+  #nextProtocolVersion() {
+    return protocolVersionAtNextHeight({ currentHeight: this.#chain.height,
+      currentVersion: this.#chain.protocolVersion, pendingUpgrade: this.#chain.pendingProtocolUpgrade });
+  }
+
   #commit(options) {
     const block = this.#chain.buildBlock({ timestamp: Date.now(), ...options });
     const finalized = finalizeBlock(block, validatorQuorum(block, this.#keys.validators));
@@ -281,6 +290,9 @@ export class PersistentDevNode {
       recipient,
       amount: atomic.toString(),
       nonce: this.#chain.nextNonce(this.#keys.treasury.address),
+      // From v36 a transfer names the genesis it belongs to.
+      ...(this.#nextProtocolVersion() >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION
+        ? { chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash } : {}),
     });
     return { ...this.#commit({ transactions: [transaction] }), transactionId: transactionId(transaction) };
   }

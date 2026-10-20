@@ -168,6 +168,15 @@
       <button class="secondary" id="copy-operator-link-proof" type="button" hidden>Скопировать доказательство</button>
       <p id="operator-link-status" role="status"></p>
     </section>
+    <section class="request-import" aria-labelledby="iris-receipt-title">
+      <h3 id="iris-receipt-title">Подтверждение хэша Iris адресом</h3>
+      <p>Вставьте intent из Model Lab после запуска Iris. Сверьте адрес, nonce и digest в системном запросе подписи. Подпись не доказывает выполнение модели; это не заявка в сеть и не награда.</p>
+      <label>Локальный intent (.json)<textarea id="iris-receipt-intent" maxlength="4096" spellcheck="false" autocomplete="off"></textarea></label>
+      <button class="secondary" id="sign-iris-receipt" type="button">Подписать хэш свидетельства</button>
+      <textarea id="iris-receipt-signed" readonly aria-label="Подписанная локальная квитанция Iris" hidden></textarea>
+      <button class="secondary" id="copy-iris-receipt" type="button" hidden>Скопировать квитанцию</button>
+      <p id="iris-receipt-status" role="status"></p>
+    </section>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить vault</button>
   </dialog>
   <dialog id="setup-panel" aria-labelledby="setup-title">

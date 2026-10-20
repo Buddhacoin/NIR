@@ -2,10 +2,13 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { nativeAssetId } from "./chain.mjs";
+import { TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION } from "./constants.mjs";
+import { validateProtocolUpgradeReleaseAnchor } from "./protocol-upgrade-authorization.mjs";
 
 import {
   signWalletPaymentRequest,
   signWalletOperatorLink,
+  signWalletLocalIrisReceipt,
   signWalletResourceOperation,
   signWalletTransfer,
   walletPublicInfo,
@@ -17,6 +20,7 @@ import {
   verifyOfflineSignedPackage,
 } from "./offline-signer.mjs";
 import { canonicalJson, hashObject } from "./crypto.mjs";
+import { validateLocalIrisRunIntent } from "./operator-model-receipt.mjs";
 import { verifyAccountProof } from "./account-proof.mjs";
 import { verifyAssetProof, MAX_ASSET_PROOF_BYTES } from "./asset-proof.mjs";
 import { advanceValidatorTrust } from "./validator-handoff.mjs";
@@ -82,6 +86,8 @@ const SAFE_CLIENT_ERRORS = new Set([
   "account proof trust anchor does not match",
   "signing was rejected by the user",
   "bridge session ended before signing authorization completed",
+  "v36 transfer requires a trusted genesis checkpoint",
+  "v36 transfer requires a trusted release anchor",
   "wallet account changed during the request",
 ]);
 
@@ -387,6 +393,12 @@ export function createWalletBridgeServer({
   } : null;
   const genesisCheckpoint = trustAnchor?.genesisCheckpoint
     ? structuredClone(trustAnchor.genesisCheckpoint) : null;
+  const protocolUpgradeReleaseAnchor = trustAnchor?.protocolUpgradeReleaseAnchor
+    ? validateProtocolUpgradeReleaseAnchor(trustAnchor.protocolUpgradeReleaseAnchor,
+      accountTrust.expectedNetworkId) : null;
+  if (protocolUpgradeReleaseAnchor && !genesisCheckpoint) {
+    throw new Error("protocol release anchor requires a genesis checkpoint");
+  }
   if (accountTrust) {
     advanceValidatorTrust(accountTrust);
   }
@@ -728,6 +740,59 @@ export function createWalletBridgeServer({
           throw error;
         } finally { pending = false; }
       }
+      if (request.method === "POST" && url.pathname === "/v1/sign-local-iris-receipt") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? ""))
+          throw new Error("local receipt request requires application/json");
+        const body = await readAuthenticatedBody(1_024);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !==
+            "intent,requestId" || !REQUEST_ID.test(body.requestId ?? ""))
+          throw new Error("local receipt request is invalid");
+        validateLocalIrisRunIntent(body.intent);
+        if (body.intent.recipient !== walletAddress)
+          throw new Error("local receipt recipient differs from wallet");
+        if (pending || seen.has(body.requestId))
+          return send(response, 409, { error: "local receipt request is pending or already used" }, origin);
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const signingGeneration = sessionGeneration;
+        const resultEntry = { completedAt: null, status: null, value: null };
+        signResults.set(body.requestId, resultEntry);
+        pending = true;
+        try {
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize({ type: "local-iris-run-receipt", address: expectedAddress,
+              nonce: body.intent.nonce, evidenceDigest: body.intent.evidenceDigest,
+              bundleHash: body.intent.bundleHash, requestId: body.requestId },
+            { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("local receipt confirmation expired"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
+          if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration ||
+              walletAddress !== expectedAddress || activeVaultPath !== expectedPath)
+            throw new Error("wallet account changed during the request");
+          const receipt = signWalletLocalIrisReceipt({ path: expectedPath, password,
+            intent: body.intent, expectedAddress });
+          const value = { requestId: body.requestId, receipt };
+          resultEntry.status = 200;
+          resultEntry.value = value;
+          resultEntry.completedAt = Date.now();
+          return send(response, 200, value, origin);
+        } catch (error) {
+          resultEntry.status = 400;
+          resultEntry.value = { error: publicBridgeError(error) };
+          resultEntry.completedAt = Date.now();
+          throw error;
+        } finally { pending = false; }
+      }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
           throw new Error("asset id derivation requires application/json");
@@ -812,8 +877,11 @@ export function createWalletBridgeServer({
         const base = restartsFromPersisted ? persistedBase : (verifiedFinalityTip ?? persistedBase);
         const nextTip = verifyFinalityProofChain(body?.proofs, {
           checkpoint: base,
+          expectedChainIdentityGenesisHash: protocolUpgradeReleaseAnchor
+            ? genesisCheckpoint.tipHash : null,
           expectedNetworkId: accountTrust.expectedNetworkId,
           handoffs: accountTrust.handoffs,
+          protocolUpgradeReleaseAnchor,
           trustedValidators: accountTrust.trustedValidators,
         });
         if (headerHistoryPath) {
@@ -1087,6 +1155,20 @@ export function createWalletBridgeServer({
         const reviewedSimulationId = simulationForSigning({
           body, intent, pathname: url.pathname, simulations, verifiedAccountStates, walletAddress,
         });
+        const signerProof = verifiedAccountStates.get(walletAddress);
+        const transferGenesisHash = url.pathname === "/v1/sign" &&
+          signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION
+          ? genesisCheckpoint?.tipHash : undefined;
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !transferGenesisHash) {
+          throw new Error("v36 transfer requires a trusted genesis checkpoint");
+        }
+        if (url.pathname === "/v1/sign" &&
+            signerProof?.protocolVersion >= TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION &&
+            !protocolUpgradeReleaseAnchor) {
+          throw new Error("v36 transfer requires a trusted release anchor");
+        }
         seen.add(intent.requestId);
         if (seen.size > 1_000) seen.delete(seen.values().next().value);
         pruneSignResults();
@@ -1110,6 +1192,12 @@ export function createWalletBridgeServer({
           if (!sessionActive || signingGeneration !== sessionGeneration) {
             throw new Error("bridge session ended before signing authorization completed");
           }
+          const currentSignerProof = verifiedAccountStates.get(walletAddress);
+          if (!currentSignerProof || currentSignerProof.tipHash !== signerProof.tipHash ||
+              currentSignerProof.stateRoot !== signerProof.stateRoot ||
+              currentSignerProof.protocolVersion !== signerProof.protocolVersion) {
+            throw new Error("wallet account changed during the request");
+          }
           const { requestId, ...payload } = intent;
           const transaction = url.pathname === "/v1/sign-resource"
             ? signWalletResourceOperation({ path: activeVaultPath, password, operation: payload })
@@ -1117,7 +1205,8 @@ export function createWalletBridgeServer({
               ? signWalletPaymentRequest({
                 path: activeVaultPath, password, intent: { ...payload, requestId },
               })
-              : signWalletTransfer({ path: activeVaultPath, password, ...payload });
+              : signWalletTransfer({ path: activeVaultPath, password, ...payload,
+                ...(transferGenesisHash === undefined ? {} : { chainIdentityGenesisHash: transferGenesisHash }) });
           const value = {
             requestId,
             ...(reviewedSimulationId ? { simulationId: reviewedSimulationId } : {}),

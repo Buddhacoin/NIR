@@ -102,6 +102,9 @@ export async function mineOneCliqueTask({ client, sign, address, recipient = add
   solve = solveCliqueTask, onTask = () => {} }) {
   const status = await client.proofMining();
   if (!status.active) return { result: "inactive" };
+  if (!/^[0-9a-f]{64}$/.test(status.chainIdentityGenesisHash ?? "")) {
+    throw new Error("the node did not report its genesis hash");
+  }
   // Task times are block times; translate the deadline to the local clock.
   const task = status.openTasks.find((candidate) => candidate.closesAtMs > status.timestampMs);
   if (!task) return { result: "no-open-task" };
@@ -115,7 +118,8 @@ export async function mineOneCliqueTask({ client, sign, address, recipient = add
   if (answer === null) return { result: "not-found", task };
   log(`task ${task.round}: found ${answer.vertices.length} vertices in ${now() - started} ms`);
   const nonce = (await client.account(address)).nextNonce;
-  await client.submit(sign({ commitment: answer.commitment, networkId, nonce,
+  const { chainIdentityGenesisHash } = status;
+  await client.submit(sign({ chainIdentityGenesisHash, commitment: answer.commitment, networkId, nonce,
     taskRound: task.round, type: "proof-answer-commit" }));
   // The commit is in once the nonce moves; reveal no sooner than the delay.
   let committedHeight = null;
@@ -124,7 +128,8 @@ export async function mineOneCliqueTask({ client, sign, address, recipient = add
     else await pause(pollMs);
   }
   while ((await client.health()).height < committedHeight + status.revealDelayBlocks) await pause(pollMs);
-  await client.submit(sign({ commitment: answer.commitment, networkId, nonce: nonce + 1,
+  await client.submit(sign({ chainIdentityGenesisHash, commitment: answer.commitment, networkId,
+    nonce: nonce + 1,
     recipient: answer.recipient, salt: answer.salt, type: "proof-answer-reveal",
     vertices: answer.vertices }));
   log(`task ${task.round}: revealed; the reward follows if this commit was the earliest`);

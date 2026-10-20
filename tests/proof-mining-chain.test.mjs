@@ -5,13 +5,14 @@ import {
   NirChain, createProofAnswerCommit, createProofAnswerReveal,
 } from "../blockchain/chain.mjs";
 import {
-  LEGACY_INITIAL_EPOCH_REWARD, MIN_REWARD_INTERVAL_MS, PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
+  MIN_REWARD_INTERVAL_MS, PROGRESS_REWARD_ESCROW_DELAY_BLOCKS,
   PROOF_MINING_PROTOCOL_VERSION, scheduledEpochBudget,
 } from "../blockchain/constants.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { PROOF_MINING_V1, proofAnswerCommitment } from "../blockchain/proof-mining-state.mjs";
 import { append, finalizeBeaconRound, findClique, fixture } from "./proof-mining-fixture.mjs";
 
+const genesisHash = (chain) => chain.blockAtHeight(0).hash;
 const openTask = (chain) => new Map(chain.proofMiningStatus().tasks.entries()).values().next().value;
 
 test("a beacon round issues a task, an answer is committed and revealed, and the reward matures", () => {
@@ -31,11 +32,15 @@ test("a beacon round issues a task, an answer is committed and revealed, and the
   const commitment = proofAnswerCommitment({ networkId: chain.networkId, recipient, salt,
     taskRound: task.round, vertices });
   const balanceBefore = chain.balance(miner.address);
-  append(chain, { transactions: [createProofAnswerCommit({ commitment, networkId: chain.networkId,
-    nonce: 0, taskRound: task.round, wallet: miner })] }, validators);
+  append(chain, { transactions: [createProofAnswerCommit({ chainIdentityGenesisHash: genesisHash(chain),
+    commitment, networkId: chain.networkId, nonce: 0, taskRound: task.round, wallet: miner })] }, validators);
   assert.equal(chain.balance(miner.address), balanceBefore - 1_000n - PROOF_MINING_V1.commitBond);
-  const reveal = createProofAnswerReveal({ commitment, networkId: chain.networkId, nonce: 1,
-    recipient, salt, vertices, wallet: miner });
+  const reveal = createProofAnswerReveal({ chainIdentityGenesisHash: genesisHash(chain), commitment,
+    networkId: chain.networkId, nonce: 1, recipient, salt, vertices, wallet: miner });
+  // An answer signed for another genesis is refused.
+  assert.throws(() => append(chain, { transactions: [createProofAnswerReveal({
+    chainIdentityGenesisHash: "0".repeat(64), commitment, networkId: chain.networkId, nonce: 1,
+    recipient, salt, vertices, wallet: miner })] }, validators), /proof answer transaction is invalid/);
   // Too early: the reveal must wait for its delay.
   assert.throws(() => append(chain, { transactions: [reveal] }, validators), /outside its window/);
   append(chain, {}, validators);
@@ -49,7 +54,7 @@ test("a beacon round issues a task, an answer is committed and revealed, and the
   const issuedBefore = chain.issued;
   const epoch = chain.nextIssuanceEpoch;
   append(chain, { timestamp: chain.blocks().at(-1).timestamp + MIN_REWARD_INTERVAL_MS }, validators);
-  const budget = scheduledEpochBudget(epoch, LEGACY_INITIAL_EPOCH_REWARD);
+  const budget = scheduledEpochBudget(epoch);
   assert.equal(chain.issued - issuedBefore, budget);
   assert.equal(chain.nextIssuanceEpoch, epoch + 1);
   assert.equal(chain.balance(recipient), 0n);
@@ -58,21 +63,21 @@ test("a beacon round issues a task, an answer is committed and revealed, and the
   assert.equal(chain.proofMiningStatus().escrows.size, 0);
 });
 
-test("proof answers are refused before protocol version 35", () => {
-  const { beacons, chain, miner, validators } = fixture(34);
+test("proof answers are refused before protocol version 37", () => {
+  const { beacons, chain, miner, validators } = fixture(PROOF_MINING_PROTOCOL_VERSION - 1);
   finalizeBeaconRound(chain, beacons, validators);
   assert.equal(chain.proofMiningStatus(), null);
   assert.throws(() => append(chain, { transactions: [createProofAnswerCommit({
-    commitment: "1".repeat(64), networkId: chain.networkId, nonce: 0, taskRound: 0, wallet: miner,
-  })] }, validators), /protocol version 35/);
+    chainIdentityGenesisHash: genesisHash(chain), commitment: "1".repeat(64), networkId: chain.networkId, nonce: 0, taskRound: 0, wallet: miner,
+  })] }, validators), /protocol version 37/);
 });
 
 test("proof mining state survives a verified snapshot restore", () => {
   const { beacons, chain, genesis, miner, validators } = fixture();
   finalizeBeaconRound(chain, beacons, validators);
   const task = openTask(chain);
-  append(chain, { transactions: [createProofAnswerCommit({ commitment: "7".repeat(64),
-    networkId: chain.networkId, nonce: 0, taskRound: task.round, wallet: miner })] }, validators);
+  append(chain, { transactions: [createProofAnswerCommit({ chainIdentityGenesisHash: genesisHash(chain),
+    commitment: "7".repeat(64), networkId: chain.networkId, nonce: 0, taskRound: task.round, wallet: miner })] }, validators);
   const snapshot = chain.consensusSnapshot();
   const restored = NirChain.fromVerifiedSnapshot(genesis, {
     capabilityMemory: snapshot.capabilityMemory, checkpoint: chain.blocks().at(-1),

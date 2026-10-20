@@ -40,7 +40,7 @@ test("the search finds valid cliques and stops when asked", () => {
     recipient: answer.recipient, salt: answer.salt, taskRound: 3, vertices: answer.vertices }));
 });
 
-// A real v35 chain behind the real developer HTTP service, with blocks
+// A real v37 chain behind the real developer HTTP service, with blocks
 // produced on a timer as a network would.
 test("the miner solves a network task through a node and its wallet file", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-clique-miner-"));
@@ -56,8 +56,9 @@ test("the miner solves a network task through a node and its wallet file", async
     get tipHash() { return chain.tipHash; },
     account: (who) => ({ address: who, atomicBalance: chain.balance(who).toString(),
       nextNonce: chain.nextNonce(who) }),
-    proofMining: () => proofMiningView(chain.proofMiningStatus(),
+    proofMining: () => ({ ...proofMiningView(chain.proofMiningStatus(),
       { height: chain.height, timestampMs: chain.tipTimestamp }),
+    chainIdentityGenesisHash: chain.blockAtHeight(0).hash }),
     submitTransaction: (transaction) => {
       const block = append(chain, { transactions: [transaction] }, validators);
       return { blockHash: block.hash, height: block.height, transactionId: transactionId(transaction) };
@@ -83,7 +84,7 @@ test("the miner solves a network task through a node and its wallet file", async
   }
 });
 
-test("a node before v35 reports mining as inactive", async () => {
+test("a node before v37 reports mining as inactive", async () => {
   const outcome = await mineOneCliqueTask({ address: "nir1" + "b".repeat(64), sign: () => assert.fail(),
     client: { proofMining: async () => proofMiningView(null, { height: 5, timestampMs: 0 }) } });
   assert.equal(outcome.result, "inactive");

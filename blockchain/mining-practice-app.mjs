@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+import { parseConsensusJson } from "./consensus-json.mjs";
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,8 @@ function defaultMiningDirectory() {
   return process.env.NIR_MODEL_LAB_DATA ??
     join(homedir(), "Library", "Application Support", "NIR Model Lab", "mining");
 }
+import { createLocalIrisRunIntent, verifyLocalIrisRunReceipt } from "./operator-model-receipt.mjs";
+import { createSyntheticTransferSession } from "./synthetic-transfer.mjs";
 
 const execFileAsync = promisify(execFile);
 const MAX_IRIS_EVIDENCE_BYTES = 1_000_000;
@@ -36,8 +39,10 @@ const APP_FILES = Object.freeze([
   "examples/iris_model_adapter.py", "examples/iris.data",
   "examples/iris_integer_linear.json", "blockchain/iris-linear-candidate.mjs",
   "blockchain/operator-wallet-link.mjs", "blockchain/crypto.mjs",
-  "blockchain/consensus-codec.mjs", "blockchain/constants.mjs",
+  "blockchain/operator-model-receipt.mjs",
+  "blockchain/consensus-codec.mjs", "blockchain/consensus-json.mjs", "blockchain/constants.mjs",
   "blockchain/model-provider-capabilities.mjs",
+  "blockchain/synthetic-transfer.mjs",
   "nir/open_model_local_run.py", "nir/open_model_fetch.py",
   "nir/open_model_package.py", "nir/open_model_snapshot.py",
   "nir/open_model_source.py",
@@ -273,9 +278,18 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
   if (!root) throw new Error("repository root is required");
   let running = false;
   let lastIrisEvidence = null;
+  let lastIrisReceiptIntent = null;
+  let lastIrisReceipt = null;
+  let irisReceiptCompleting = false;
   let pendingCandidate = null;
   let pendingWalletChallenge = null;
   let linkedWalletAddress = null;
+  const syntheticTransfers = createSyntheticTransferSession();
+  const syntheticState = () => {
+    const snapshot = syntheticTransfers.snapshot();
+    return { ...snapshot, verifiedRecipient: !snapshot.started ||
+      snapshot.trainingRecipient === linkedWalletAddress ? linkedWalletAddress : null };
+  };
   const sessionToken = randomBytes(32);
   function authorized(request) {
     const supplied = request.headers["x-nir-session"];
@@ -389,7 +403,8 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
           chunks.push(chunk);
         }
         if (length !== declared) throw new Error("truncated proof");
-        const proof = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        const proof = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
         linkedWalletAddress = verifyOperatorWalletProof(proof, {
           challenge: challenge.value, now: Date.now(),
         });
@@ -424,6 +439,62 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       } catch (error) {
         send(409, "application/json; charset=utf-8", JSON.stringify({ error: error.message }));
       }
+      return;
+    }
+    if (request.url === "/synthetic-transfer/state" && request.method === "GET") {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else {
+        send(200, "application/json; charset=utf-8", JSON.stringify(syntheticState()));
+      }
+      return;
+    }
+    if (request.url === "/synthetic-transfer/start" && request.method === "POST") {
+      if (!authorized(request) || request.headers.origin !== origin || request.headers["content-length"] !== "0" ||
+          request.headers["transfer-encoding"]) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (!linkedWalletAddress) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "A wallet address must be verified for this local session" }));
+        return;
+      }
+      try {
+        syntheticTransfers.startTraining(linkedWalletAddress);
+        send(200, "application/json; charset=utf-8", JSON.stringify(syntheticState()));
+      } catch { send(409, "application/json; charset=utf-8", JSON.stringify({ error: "Training already started" })); }
+      return;
+    }
+    if (request.url === "/synthetic-transfer" && request.method === "POST") {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" || request.headers["transfer-encoding"] ||
+          !Number.isSafeInteger(declared) || declared < 2 || declared > 512) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("body too large");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated body");
+        const input = JSON.parse(Buffer.concat(chunks, length).toString("utf8"));
+        if (!input || Array.isArray(input) || typeof input !== "object" ||
+            Object.keys(input).sort().join(",") !== "amount,id,networkId,recipient")
+          throw new Error("invalid fields");
+        if (!linkedWalletAddress || input.recipient !== linkedWalletAddress)
+          throw new Error("recipient is not verified in this local session");
+        const entry = syntheticTransfers.transfer(input);
+        send(200, "application/json; charset=utf-8", JSON.stringify({ entry, state: syntheticState() }));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid synthetic transfer or unverified recipient" }));
+      } finally { clearTimeout(deadline); }
       return;
     }
     if (request.method === "GET" && path === "/catalog" && request.url === "/catalog") {
@@ -474,6 +545,78 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       } else {
         send(200, "application/json; charset=utf-8", lastIrisEvidence);
       }
+      return;
+    }
+    if (request.method === "GET" && path === "/model-run-receipt/intent" &&
+        request.url === path) {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else if (!lastIrisReceiptIntent ||
+          linkedWalletAddress !== lastIrisReceiptIntent.recipient) {
+        send(404, "application/json; charset=utf-8", JSON.stringify({ error: "No address-bound local run" }));
+      } else {
+        send(200, "application/json; charset=utf-8", JSON.stringify(lastIrisReceiptIntent));
+      }
+      return;
+    }
+    if (request.method === "GET" && path === "/model-run-receipt/status" &&
+        request.url === path) {
+      if (!authorized(request) || (request.headers.origin && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+      } else {
+        const intent = lastIrisReceiptIntent;
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          status: intent && linkedWalletAddress === intent.recipient ?
+            (lastIrisReceipt ? "local-receipt-signature-checked" : "local-receipt-pending") : "no-address-bound-run",
+          recipient: intent && linkedWalletAddress === intent.recipient ? intent.recipient : null,
+          nonce: intent && linkedWalletAddress === intent.recipient ? intent.nonce : null,
+          evidenceDigest: intent && linkedWalletAddress === intent.recipient ? intent.evidenceDigest : null,
+          networkSubmitted: false, rewardEligible: false, executionVerified: false,
+        }));
+      }
+      return;
+    }
+    if (request.method === "POST" && path === "/model-run-receipt/complete" &&
+        request.url === path) {
+      const declared = Number(request.headers["content-length"]);
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > 16_384) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const intent = lastIrisReceiptIntent;
+      if (!intent || linkedWalletAddress !== intent.recipient || !lastIrisEvidence ||
+          lastIrisReceipt || irisReceiptCompleting) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "No pending local run" }));
+        return;
+      }
+      irisReceiptCompleting = true;
+      const evidenceAtStart = lastIrisEvidence;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared) throw new Error("invalid size");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated receipt");
+        if (lastIrisReceiptIntent !== intent || lastIrisEvidence !== evidenceAtStart ||
+            linkedWalletAddress !== intent.recipient || lastIrisReceipt)
+          throw new Error("local run changed during receipt submission");
+        const receipt = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
+        verifyLocalIrisRunReceipt(receipt, {
+          intent, evidenceBytes: Buffer.from(evidenceAtStart, "utf8"),
+        });
+        lastIrisReceipt = receipt;
+        send(200, "application/json; charset=utf-8", JSON.stringify(receipt));
+      } catch {
+        send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local receipt" }));
+      } finally { clearTimeout(deadline); irisReceiptCompleting = false; }
       return;
     }
     if (request.method === "POST" && path === "/candidate/iris-linear/recheck" &&
@@ -674,6 +817,65 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       } finally { clearTimeout(deadline); running = false; }
       return;
     }
+    if (request.method === "POST" && path === "/model-run-receipt/recheck" &&
+        request.url === path) {
+      const declared = Number(request.headers["content-length"]);
+      const maxBody = Math.ceil(MAX_IRIS_EVIDENCE_BYTES * 4 / 3) + 16_384;
+      if (!authorized(request) || request.headers.origin !== origin ||
+          request.headers["content-type"] !== "application/json" ||
+          request.headers["transfer-encoding"] || !Number.isSafeInteger(declared) ||
+          declared < 1 || declared > maxBody) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (running) {
+        send(409, "application/json; charset=utf-8", JSON.stringify({ error: "A model is already running" }));
+        return;
+      }
+      running = true;
+      const deadline = setTimeout(() => request.destroy(), 10_000);
+      try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+          length += chunk.length;
+          if (length > declared || length > maxBody) throw new Error("oversized local receipt recheck");
+          chunks.push(chunk);
+        }
+        if (length !== declared) throw new Error("truncated local receipt recheck");
+        clearTimeout(deadline);
+        const input = parseConsensusJson(new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length)));
+        if (!input || Array.isArray(input) || Object.keys(input).sort().join(",") !==
+            "evidenceBase64,receipt" || typeof input.evidenceBase64 !== "string" ||
+            input.evidenceBase64.length > Math.ceil(MAX_IRIS_EVIDENCE_BYTES * 4 / 3) + 4)
+          throw new Error("invalid local receipt recheck envelope");
+        const bytes = Buffer.from(input.evidenceBase64, "base64");
+        if (bytes.length < 1 || bytes.length > MAX_IRIS_EVIDENCE_BYTES ||
+            bytes.toString("base64") !== input.evidenceBase64)
+          throw new Error("noncanonical local evidence encoding");
+        const binding = verifyLocalIrisRunReceipt(input.receipt, { evidenceBytes: bytes });
+        const checked = await verifyIris(root, bytes);
+        if (checked?.status !== "local-iris-evidence-matched" ||
+            checked.bundleHash !== input.receipt.bundleHash ||
+            checked.independentlyVerified !== false || checked.networkSubmitted !== false ||
+            checked.rewardEligible !== false || Object.keys(checked).sort().join(",") !==
+            "bundleHash,independentlyVerified,networkSubmitted,rewardEligible,status")
+          throw new Error("local Iris replay did not match signed evidence");
+        send(200, "application/json; charset=utf-8", JSON.stringify({
+          status: "local-iris-recheck-with-address-binding",
+          recipient: binding.recipient, bundleHash: checked.bundleHash,
+          evidenceDigest: input.receipt.evidenceDigest,
+          signatureValid: true, evidenceBytesBound: true, localReplayMatched: true,
+          executionVerified: false, independentlyVerified: false,
+          networkSubmitted: false, rewardEligible: false,
+        }));
+      } catch {
+        if (!response.destroyed)
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid local Iris receipt or evidence" }));
+      } finally { clearTimeout(deadline); running = false; }
+      return;
+    }
     if (request.method === "GET" && path === "/open-model/runtime" &&
         request.url === "/open-model/runtime") {
       try {
@@ -719,12 +921,20 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       }
       running = true;
       lastIrisEvidence = null;
+      lastIrisReceiptIntent = null;
+      lastIrisReceipt = null;
+      const runRecipient = linkedWalletAddress;
+      const runNonce = randomBytes(32).toString("hex");
       try {
         const raw = await runModel(root, { includeEvidence: true });
         const result = publicModelResult(raw);
         if (raw.evidence !== undefined) {
           if (!validIrisEvidence(raw.evidence, result)) throw new Error("invalid local Iris evidence");
           lastIrisEvidence = JSON.stringify(raw.evidence);
+          if (runRecipient) lastIrisReceiptIntent = createLocalIrisRunIntent({
+            recipient: runRecipient, nonce: runNonce, bundleHash: result.bundleHash,
+            evidenceBytes: Buffer.from(lastIrisEvidence, "utf8"),
+          });
         }
         send(200, "application/json; charset=utf-8", JSON.stringify({
           ...result, evidenceAvailable: lastIrisEvidence !== null,

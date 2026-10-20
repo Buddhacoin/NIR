@@ -50,7 +50,7 @@ async function main() {
       shouldStop: () => stopping,
       sign: (operation) => signWalletProofAnswer({ operation, password, path: values.wallet }) });
     if (outcome.result === "inactive") {
-      log("proof mining is not active on this network (protocol version 35 is required)");
+      log("proof mining is not active on this network (protocol version 37 is required)");
       break;
     }
     if (outcome.result !== "revealed") await new Promise((resolve) => setTimeout(resolve, 5_000));

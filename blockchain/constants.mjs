@@ -29,7 +29,7 @@ export const SIGNATURE_ALGORITHM = "ml-dsa-65";
 export const MULTISIG_ALGORITHM = "ml-dsa-65-multisig";
 export const MAX_MULTISIG_MEMBERS = 16;
 export const PROTOCOL_VERSION = 24;
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37]);
 export const RECOVERY_STATE_COMMITMENT_PROTOCOL_VERSION = 25;
 export const EVALUATION_ASSIGNMENT_ROOT_PROTOCOL_VERSION = 26;
 export const EXTENDED_EVALUATION_ASSIGNMENT_PROTOCOL_VERSION = 27;
@@ -40,8 +40,10 @@ export const VALIDATOR_ADMISSION_QUEUE_PROTOCOL_VERSION = 31;
 export const VALIDATOR_ADMISSION_EXPIRY_PROTOCOL_VERSION = 32;
 export const VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION = 33;
 export const RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION = 34;
+export const PROGRESS_GENESIS_BINDING_PROTOCOL_VERSION = 35;
+export const TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION = 36;
 // Network clique tasks replace evaluator-committee issuance (docs/proof-mining.md).
-export const PROOF_MINING_PROTOCOL_VERSION = 35;
+export const PROOF_MINING_PROTOCOL_VERSION = 37;
 // Provisional TESTNET parameter. Mainnet economics must ratify this separately.
 export const VALIDATOR_WITHDRAWAL_DELAY_BLOCKS = 64;
 export const EVALUATION_ASSIGNMENT_LIFETIME_BLOCKS = 256;

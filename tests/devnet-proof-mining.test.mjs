@@ -9,7 +9,7 @@ import { PROGRESS_REWARD_ESCROW_DELAY_BLOCKS, PROOF_MINING_PROTOCOL_VERSION } fr
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { createWalletFile, signWalletProofAnswer } from "../blockchain/wallet-files.mjs";
 
-test("a proof-mining devnet upgrades to v35, issues tasks from its own beacon, and pays a miner", async () => {
+test("a proof-mining devnet upgrades to v37, issues tasks from its own beacon, and pays a miner", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-devnet-proof-"));
   try {
     const directory = join(temporary, "node");
