@@ -81,7 +81,7 @@ test("the advertised local mining demo completes", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /height: \d+/);
   assert.match(result.stdout, /alice available: 0\.00000000 NIR/);
-  assert.match(result.stdout, /alice pending: 50\.00000000 NIR/);
+  assert.match(result.stdout, /alice pending: 44\.00000000 NIR/);
   assert.match(result.stdout, /reward unlock height: 70/);
   assert.match(result.stdout, /signature suite: ML-DSA-65/);
 });

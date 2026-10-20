@@ -13,6 +13,8 @@ import { createNodeHttpServer } from "../blockchain/node-service.mjs";
 import { exactWalletReadOrigin, pinWalletReadPeerUrls }
   from "../blockchain/validator-wallet-read.mjs";
 
+const FIREFOX_ORIGIN = "moz-extension://12345678-1234-4abc-8def-123456789abc";
+
 const servers = [];
 after(async () => { await Promise.all(servers.map((server) => new Promise((resolve) =>
   server.close(resolve)))); });
@@ -40,6 +42,11 @@ test("wallet read pins the exact ceremony genesis, peers and local browser origi
   assert.throws(() => pinWalletReadPeerUrls(insecure, insecure), /endpoint or TLS pin/);
   assert.equal(exactWalletReadOrigin("http://127.0.0.1:8765"),
     "http://127.0.0.1:8765");
+  assert.equal(exactWalletReadOrigin(FIREFOX_ORIGIN), FIREFOX_ORIGIN);
+  for (const origin of ["moz-extension://*", `${FIREFOX_ORIGIN}/wallet.html`,
+    `${FIREFOX_ORIGIN}/`, "moz-extension://12345678-1234-4abc-8def-123456789abc.evil"]) {
+    assert.throws(() => exactWalletReadOrigin(origin), /exact local browser origin/);
+  }
   assert.throws(() => exactWalletReadOrigin("http://localhost:8765"), /exact local/);
   assert.throws(() => exactWalletReadOrigin("http://127.0.0.1:8765/path"), /exact local/);
 });
@@ -98,6 +105,40 @@ test("wallet read HTTP surface serves existing GET shapes and never calls a POST
   assert.equal(staleAccount.status, 503);
   assert.equal(accountReads, 0);
   assert.equal((await fetch(`${base}/v1/fees?amount=1`, { headers })).status, 503);
+});
+
+test("Firefox wallet read pins one installation origin and remains GET-only", async () => {
+  let reads = 0;
+  let writes = 0;
+  const node = {
+    height: 2, networkId: "nir-valueless-test", tipHash: "a".repeat(64),
+    verifyReadPeers: async () => {},
+    accountProof: async () => { reads += 1; return { format: "test-proof" }; },
+    submitTransaction: () => { writes += 1; },
+  };
+  const server = createNodeHttpServer(node, {
+    rpcProfile: "public", walletReadOrigin: FIREFOX_ORIGIN,
+  });
+  servers.push(server);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const proofPath = `/v1/accounts/nir1${"1".repeat(64)}/proof`;
+  const proof = await fetch(`${base}${proofPath}`, { headers: { origin: FIREFOX_ORIGIN } });
+  assert.equal(proof.status, 200);
+  assert.equal(proof.headers.get("access-control-allow-origin"), FIREFOX_ORIGIN);
+  assert.deepEqual(await proof.json(), { format: "test-proof" });
+  for (const origin of ["moz-extension://87654321-1234-4abc-8def-123456789abc",
+    "https://attacker.example", "null"]) {
+    const denied = await fetch(`${base}${proofPath}`, { headers: { origin } });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get("access-control-allow-origin"), null);
+  }
+  const post = await fetch(`${base}/v1/transactions`, { method: "POST", headers: {
+    origin: FIREFOX_ORIGIN, "content-type": "application/json",
+  }, body: "{}" });
+  assert.equal(post.status, 404);
+  assert.equal(reads, 1);
+  assert.equal(writes, 0);
 });
 
 test("wallet read genesis identity survives an installed snapshot and pruned block zero", () => {

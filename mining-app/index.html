@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NIR · Проверка модели</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/mining.js"></script>
+</head>
+<body>
+  <main class="app">
+    <header><img class="logo" src="/nir-icon.png" alt="" width="43" height="43"><span>NIR <small>MODEL LAB</small></span><div class="header-actions"><button id="settings-open" class="language" type="button" aria-pressed="false" data-i18n="settingsButton">Настройки</button><button id="language" class="language" type="button" aria-label="Switch language to English">EN</button><b data-i18n="test">ТЕСТ</b></div></header>
+    <p id="connection" class="connection" role="status" aria-live="polite">Проверяем подключение к локальному сервису…</p>
+    <section id="settings-page" class="catalog" aria-labelledby="settings-heading" hidden>
+      <h2 id="settings-heading" data-i18n="settingsTitle">Версия и обновления</h2>
+      <p data-i18n="settingsIntro">Здесь показаны локальные сведения о запущенном Model Lab. Номер версии сам по себе не доказывает подлинность приложения.</p>
+      <p><strong data-i18n="installedVersionLabel">Версия:</strong> <span id="installed-version">—</span></p>
+      <p><strong data-i18n="installedBuildLabel">Заявленный локальный ID (не проверен):</strong> <code id="installed-build-id">—</code></p>
+      <button id="check-updates" class="secondary" type="button" data-i18n="checkUpdates">Обновить сведения о версии</button>
+      <p id="update-result" role="status" aria-live="polite">Доверенный канал обновлений пока не настроен.</p>
+      <button id="settings-back" class="secondary" type="button" data-i18n="settingsBack">Назад к проверке моделей</button>
+    </section>
+    <div id="lab-content">
+    <section id="mining" class="operator-console mining" aria-labelledby="mining-heading">
+      <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="mining-heading" data-mining="title">Майнинг NIR</h2><b data-mining="badge">ТЕСТОВАЯ СЕТЬ</b></div>
+      <canvas id="mining-sky" class="mining-sky" width="436" height="200" role="img" aria-label="Граф задачи и найденная клика"></canvas>
+      <p id="mining-phase" class="mining-phase" role="status" aria-live="polite">Нажмите «Начать майнинг»</p>
+      <div class="console-grid mining-grid">
+        <div><span data-mining="levelLabel">УРОВЕНЬ</span><strong id="mining-level">—</strong></div>
+        <div><span data-mining="taskLabel">ЗАДАЧА</span><strong id="mining-task">—</strong></div>
+        <div><span data-mining="checkedLabel">ПРОВЕРЕНО</span><strong id="mining-checked">0</strong></div>
+        <div><span data-mining="foundLabel">НАЙДЕНО КЛИК</span><strong id="mining-found">0</strong></div>
+        <div><span data-mining="walletLabel">В КОШЕЛЬКЕ</span><strong id="mining-wallet">—</strong></div>
+        <div><span data-mining="heightLabel">БЛОК</span><strong id="mining-height">—</strong></div>
+      </div>
+      <button id="mining-toggle" class="mining-toggle" type="button" data-mining="start">Начать майнинг</button>
+      <p id="mining-recipient" class="mining-note"></p>
+      <button id="mining-withdraw" class="secondary" type="button" hidden data-mining="withdraw">Отправить намайненное в NIR Wallet</button>
+      <ol id="mining-events" class="event-log mining-events" aria-live="polite"></ol>
+    </section>
+    <section class="catalog" aria-labelledby="wallet-link-heading">
+      <h2 id="wallet-link-heading" data-i18n="walletLinkTitle">Адрес оператора</h2>
+      <p data-i18n="walletLinkIntro">Подтвердите владение адресом через установленный NIR Wallet. Пароль и ключ остаются в кошельке. Это локальная привязка без сетевой заявки и начисления.</p>
+      <button id="wallet-link-start" class="secondary" type="button" data-i18n="walletLinkStart">Создать одноразовый запрос</button>
+      <textarea id="wallet-link-challenge" readonly hidden aria-label="Одноразовый запрос для кошелька"></textarea>
+      <button id="wallet-link-copy" class="secondary" type="button" hidden data-i18n="walletLinkCopy">Скопировать запрос</button>
+      <label for="wallet-link-proof" data-i18n="walletLinkProofLabel">Подписанное доказательство из настроек кошелька</label>
+      <textarea id="wallet-link-proof" spellcheck="false" maxlength="16384" aria-label="Подписанное доказательство из кошелька"></textarea>
+      <button id="wallet-link-complete" class="secondary" type="button" data-i18n="walletLinkComplete">Проверить адрес</button>
+      <p id="wallet-link-state" role="status"></p>
+    </section>
+    <section id="operator-console" class="operator-console" aria-labelledby="operator-heading">
+      <div class="console-title"><span aria-hidden="true">&gt;_</span><h2 id="operator-heading" data-i18n="consoleTitle">Локальная панель оператора</h2><b data-i18n="localBadge">НЕ СЕТЬ</b></div>
+      <div class="console-grid">
+        <div><span data-i18n="roleLabel">РОЛЬ</span><strong id="operator-role" data-i18n="roleValue">Локальный оператор</strong></div>
+        <div><span data-i18n="networkLabel">ПУБЛИЧНАЯ СЕТЬ</span><strong data-i18n="networkValue">Не подключена</strong></div>
+        <div><span data-i18n="rewardLabel">НАГРАДА</span><strong data-i18n="rewardValue">Недоступна</strong></div>
+      </div>
+      <div class="trace-heading"><h3 data-i18n="traceTitle">События интерфейса этой сессии</h3><span data-i18n="traceScale">ПОРЯДОК →</span></div>
+      <div id="event-chart" class="event-chart" role="img" data-i18n-aria="traceAria" aria-label="Последовательность событий локального интерфейса без процента выполнения">
+        <div class="trace-axis" aria-hidden="true"><div id="event-pulses"></div></div>
+      </div>
+      <ol id="event-log" class="event-log" aria-live="polite"></ol>
+      <h3 class="models-heading" data-i18n="modelsTitle">Доступность локальных моделей</h3>
+      <div class="model-grid">
+        <article><span class="model-index">01</span><div><strong>IRIS</strong><small data-i18n="irisScope">Встроенная проверка</small></div><b id="iris-availability" data-i18n="bundled">ВСТРОЕНА</b></article>
+        <article><span class="model-index">02</span><div><strong>QWEN3-0.6B</strong><small data-i18n="qwenScope">Закреплённый локальный запуск</small></div><b id="qwen-availability" data-state="checking" data-i18n="checkingShort">ПРОВЕРКА</b></article>
+      </div>
+      <p class="local-only" data-i18n="localOnly">Адрес кошелька не подключён. Эта панель показывает только действия на этом Mac: она не отправляет заявку и не обещает NIR.</p>
+    </section>
+    <section class="hero">
+      <span class="eyebrow" data-i18n="eyebrow">Локальная тренировка</span>
+      <h1 data-i18n="headline">Проверка модели Iris</h1>
+      <p data-i18n="description">Локально обучим два классификатора на 120 примерах и проверим их на 30 новых. Результаты и свидетельства будут проверены на этом Mac.</p>
+      <button id="start" type="button"><span data-i18n="start">Проверить модель Iris</span><span aria-hidden="true">→</span></button>
+      <p class="safety" data-i18n="safety">Не нужен кошелёк, пароль, секретная фраза или оплата.</p>
+    </section>
+    <section class="catalog" aria-labelledby="candidate-heading">
+      <h2 id="candidate-heading" data-i18n="candidateTitle">Проверить свой файл модели Iris</h2>
+      <p data-i18n="candidateIntro">Принимаются только целочисленные веса и смещения линейного классификатора, без программы или ссылок на файлы. Все 30 проверочных примеров Iris публичны: этот результат нельзя использовать для награды.</p>
+      <a href="/iris-linear-sample.json" download="iris_integer_linear.json" data-i18n="candidateSample">Скачать пример файла модели</a>
+      <label for="candidate-file" data-i18n="candidateLabel">Файл модели (.json, не более 4 КБ)</label>
+      <input id="candidate-file" type="file" accept="application/json,.json">
+      <button id="candidate-check" class="secondary" type="button" disabled data-i18n="candidateButton">Проверить файл локально</button>
+      <p id="candidate-state" role="status" aria-live="polite"></p>
+      <button id="candidate-stress" class="secondary" type="button" disabled data-i18n="candidateStressButton">Проверить после фиксации файла</button>
+      <p id="candidate-stress-state" class="candidate-proof" role="status" aria-live="polite"></p>
+      <button id="candidate-record-export" class="secondary" type="button" hidden data-i18n="candidateRecordExport">Скачать запись испытания для повторной проверки</button>
+    </section>
+    <section class="catalog" aria-labelledby="recheck-heading">
+      <h2 id="recheck-heading" data-i18n="recheckTitle">Роль: локальный повторный проверяющий</h2>
+      <p data-i18n="recheckIntro">Получите у участника файл модели и запись испытания. Этот Mac пересчитает 90 публичных синтетических случаев и сравнит точные поля записи. Личность оператора, скрытые задания, консенсус и награда этим не подтверждаются.</p>
+      <label for="recheck-model-file" data-i18n="recheckModelLabel">Файл модели участника (.json, до 4 КБ)</label>
+      <input id="recheck-model-file" type="file" accept="application/json,.json">
+      <label for="recheck-record-file" data-i18n="recheckRecordLabel">Запись испытания (.json, до 8 КБ)</label>
+      <input id="recheck-record-file" type="file" accept="application/json,.json">
+      <button id="recheck-run" class="secondary" type="button" disabled data-i18n="recheckButton">Пересчитать и сравнить</button>
+      <p id="recheck-state" class="candidate-proof" role="status" aria-live="polite"></p>
+    </section>
+    <section class="catalog" aria-labelledby="catalog-heading">
+      <h2 id="catalog-heading" data-i18n="catalogTitle">Каталог открытых моделей</h2>
+      <p data-i18n="catalogIntro">Можно посмотреть замеченные ревизии открытых моделей. Произвольную ревизию запускать здесь нельзя; отдельный закреплённый запуск Qwen доступен ниже.</p>
+      <label for="catalog-model" data-i18n="catalogModel">Модель</label>
+      <select id="catalog-model" disabled><option value="" data-i18n="catalogPlaceholder">Выберите модель</option></select>
+      <label for="catalog-version" data-i18n="catalogVersion">Замеченная ревизия (точный commit SHA)</label>
+      <select id="catalog-version" disabled><option value="" data-i18n="catalogVersionPlaceholder">Сначала выберите модель</option></select>
+      <p id="catalog-state" role="status" aria-live="polite"></p>
+      <button id="catalog-refresh" class="secondary" type="button" data-i18n="catalogRefresh">Обновить сведения</button>
+      <p class="catalog-note" data-i18n="catalogNote">Сведения берутся из публичных метаданных Hugging Face. SHA обозначает версию репозитория, но не проверяет файлы модели. Выбор ревизии в каталоге ничего не скачивает и не запускает; награда недоступна.</p>
+    </section>
+    <section class="catalog" aria-labelledby="provider-heading">
+      <h2 id="provider-heading" data-i18n="providerTitle">Добавить модель: описание возможностей</h2>
+      <p data-i18n="providerIntro">Выберите тип модели и укажите её идентификатор. Скачивается только описание намерения оператора. API-ключи сюда не вводятся: фильтр отсечёт некоторые секреты, но не может распознать все. Ни одна модель этим шагом не запускается и не получает NIR.</p>
+      <label for="provider-kind" data-i18n="providerLabel">Провайдер</label>
+      <select id="provider-kind" disabled><option value="" data-i18n="providerChoose">Выберите провайдера</option></select>
+      <label for="provider-model-id" data-i18n="providerModelLabel">Идентификатор модели (без URL и ключей)</label>
+      <input id="provider-model-id" type="text" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Qwen/Qwen3-0.6B">
+      <button id="provider-export" class="secondary" type="button" disabled data-i18n="providerExport">Скачать описание (.json)</button>
+      <p id="provider-state" role="status" aria-live="polite"></p>
+    </section>
+    <section class="catalog" aria-labelledby="qwen-heading">
+      <h2 id="qwen-heading" data-i18n="qwenTitle">Локальный запуск Qwen3-0.6B</h2>
+      <p data-i18n="qwenIntro">Открытая языковая модель Qwen. Однократный запуск закреплённой версии: загрузка около 1,5 ГБ, максимум 4 ГиБ проверяемых файлов, несколько ГБ свободного места. Нужны Apple Silicon, Python 3.13 и дополнительные библиотеки. Без независимой проверки, заявки и награды.</p>
+      <button id="qwen-start" class="secondary" type="button" disabled data-i18n="qwenStart">Скачать и запустить Qwen локально</button>
+      <p id="qwen-state" role="status" aria-live="polite"></p>
+      <p id="qwen-answer" class="model-answer" hidden></p>
+      <p id="qwen-identity" class="catalog-note" hidden></p>
+      <button id="qwen-export" class="secondary" type="button" hidden data-i18n="qwenExport">Скачать запись для локального повторного запуска (не доказательство награды)</button>
+      <label for="qwen-replay-file" data-i18n="qwenReplayLabel">Запись другого запуска (.json, не более 16 КБ)</label>
+      <input id="qwen-replay-file" type="file" accept="application/json,.json">
+      <button id="qwen-replay" class="secondary" type="button" disabled data-i18n="qwenReplay">Повторить запуск на этом Mac</button>
+      <p id="qwen-replay-state" role="status" aria-live="polite"></p>
+    </section>
+    <section id="progress" class="result" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2 data-i18n="runningTitle">Модель выполняется на этом Mac…</h2>
+      <p data-i18n="runningBody">Проверяем исходную и улучшенную модель, затем целостность набора свидетельств.</p>
+    </section>
+    <section id="result" class="result" hidden aria-live="polite">
+      <span class="result-icon" aria-hidden="true">✓</span>
+      <h2 data-i18n="doneTitle">Локальная проверка завершена</h2>
+      <p id="score"></p>
+      <p data-i18n="doneBody">Набор свидетельств проверен локально. Независимых операторов, скрытых заданий, подтверждённого измерения энергии и сетевой награды нет.</p>
+      <details><summary data-i18n="technicalTitle">Технический результат</summary><p id="technical"></p></details>
+      <button id="iris-evidence-export" class="secondary" type="button" hidden data-i18n="irisEvidenceExport">Скачать локальное свидетельство (не заявка и не награда)</button>
+      <p id="iris-evidence-state" class="evidence-note" role="status" aria-live="polite"></p>
+    </section>
+    <section class="catalog" aria-labelledby="iris-import-heading">
+      <h2 id="iris-import-heading" data-i18n="irisImportTitle">Повторить проверку Iris на этом Mac</h2>
+      <p data-i18n="irisImportIntro">Выберите свидетельство с другого компьютера. Приложение заново запустит только встроенную Iris; файл не может указать программу или путь. Совпадение не доказывает независимость оператора и не даёт награды.</p>
+      <label for="iris-evidence-file" data-i18n="irisImportLabel">Локальное свидетельство Iris (.json, не более 1 МБ)</label>
+      <input id="iris-evidence-file" type="file" accept="application/json,.json">
+      <button id="iris-evidence-verify" class="secondary" type="button" disabled data-i18n="irisImportButton">Повторить проверку локально</button>
+      <p id="iris-verify-state" role="status" aria-live="polite"></p>
+    </section>
+    <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
+    </div>
+    <footer data-i18n="footer">Публичный майнинг и реальные NIR недоступны. Iris встроена; Qwen запускается только после отдельного согласия и загрузки закреплённых файлов. Программа не является песочницей и не принимает произвольный код.</footer>
+  </main>
+</body>
+</html>

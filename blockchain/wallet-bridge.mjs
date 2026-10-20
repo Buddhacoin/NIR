@@ -5,6 +5,7 @@ import { nativeAssetId } from "./chain.mjs";
 
 import {
   signWalletPaymentRequest,
+  signWalletOperatorLink,
   signWalletResourceOperation,
   signWalletTransfer,
   walletPublicInfo,
@@ -94,7 +95,7 @@ function publicBridgeError(error) {
 function send(response, status, value, origin) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
-    "access-control-allow-origin": origin,
+    ...(origin ? { "access-control-allow-origin": origin } : {}),
     "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
     "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
@@ -108,10 +109,17 @@ function send(response, status, value, origin) {
   response.end(body);
 }
 
-function readBody(request, maximumBytes = 72 * 1024) {
+function readBody(request, maximumBytes = 72 * 1024, timeoutMs = 0) {
+  let timer;
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        reject(new Error("bridge pairing request timed out"));
+        request.destroy();
+      }, timeoutMs);
+    }
     request.on("data", (chunk) => {
       size += chunk.length;
       if (size > maximumBytes) reject(new Error("bridge request is too large"));
@@ -122,7 +130,8 @@ function readBody(request, maximumBytes = 72 * 1024) {
       catch { reject(new Error("bridge request is not valid JSON")); }
     });
     request.on("error", reject);
-  });
+    request.on("aborted", () => reject(new Error("bridge request was aborted")));
+  }).finally(() => clearTimeout(timer));
 }
 
 function validIntent(value) {
@@ -331,6 +340,7 @@ export function createWalletBridgeServer({
   accounts,
   authorize,
   createAccount,
+  firefoxPairing = false,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -350,6 +360,7 @@ export function createWalletBridgeServer({
         accounts.length > 100 || accounts.some((account) =>
           typeof account?.path !== "string" || !ADDRESS.test(account?.address ?? "")))) ||
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
+      typeof firefoxPairing !== "boolean" || (firefoxPairing && pairingCode === undefined) ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
       (trustAnchor !== undefined &&
         (typeof trustAnchor?.expectedNetworkId !== "string" ||
@@ -454,6 +465,9 @@ export function createWalletBridgeServer({
   let pairingAvailable = pairingCode !== undefined;
   let pairingPending = false;
   let sessionActive = pairingCode === undefined;
+  let pairedFirefoxOrigin = null;
+  let firefoxPromptCount = 0;
+  let lastFirefoxPromptAt = 0;
   let sessionGeneration = 0;
   let accountActionPending = false;
   const activateAccount = (id) => {
@@ -471,6 +485,7 @@ export function createWalletBridgeServer({
     signResults.clear();
   };
   const pairingDeadline = Date.now() + pairingLifetimeMs;
+  const configuredOrigin = origin;
   const server = createServer(async (request, response) => {
     const requestGeneration = sessionGeneration;
     const readAuthenticatedBody = async (limit) => {
@@ -481,13 +496,30 @@ export function createWalletBridgeServer({
       return body;
     };
     const requestOrigin = request.headers.origin;
+    const firefoxCandidate = firefoxPairing && pairedFirefoxOrigin === null &&
+      !sessionActive && pairingAvailable && Date.now() <= pairingDeadline &&
+      pairingAttempts < 5 &&
+      /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestOrigin ?? "") &&
+      ["/v1/pair", "/v1/pairing-prompt"].includes(request.url) &&
+      ["POST", "OPTIONS"].includes(request.method);
+    // A candidate can only attempt one-time pairing; the successful exact origin
+    // is then frozen for every privileged request for the remainder of the session.
+    const origin = firefoxPairing
+      ? (pairedFirefoxOrigin ?? (firefoxCandidate ? requestOrigin : null))
+      : configuredOrigin;
     const host = request.headers.host ?? "";
     const remoteAddress = request.socket.remoteAddress ?? "";
-    if (requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
+    if (!origin || requestOrigin !== origin || !/^(?:localhost|127\.0\.0\.1):[0-9]{1,5}$/.test(host) ||
         !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress)) {
       return send(response, 403, { error: "bridge origin or host is not allowed" }, origin);
     }
     if (request.method === "OPTIONS") {
+      if (firefoxCandidate &&
+          (request.headers["access-control-request-method"] !== "POST" ||
+           ![undefined, "content-type"].includes(
+             request.headers["access-control-request-headers"]?.toLowerCase()))) {
+        return send(response, 403, { error: "bridge pairing preflight is invalid" }, origin);
+      }
       response.writeHead(204, {
         "access-control-allow-headers": "content-type, x-nir-bridge-token",
         "access-control-allow-methods": "DELETE, GET, POST, OPTIONS",
@@ -506,8 +538,16 @@ export function createWalletBridgeServer({
           Date.now() > pairingDeadline || pairingAttempts >= 5) {
         return send(response, 409, { error: "pairing is unavailable; restart the bridge" }, origin);
       }
+      if (firefoxPairing && (firefoxPromptCount >= 3 ||
+          (lastFirefoxPromptAt !== 0 && Date.now() - lastFirefoxPromptAt < 10_000))) {
+        return send(response, 429, { error: "pairing prompt is temporarily limited" }, origin);
+      }
       try {
         presentPairingCode();
+        if (firefoxPairing) {
+          firefoxPromptCount += 1;
+          lastFirefoxPromptAt = Date.now();
+        }
         return send(response, 202, { shownOnDevice: true }, origin);
       } catch {
         return send(response, 503, { error: "pairing window could not be opened" }, origin);
@@ -525,15 +565,17 @@ export function createWalletBridgeServer({
         }
         pairingPending = true;
         pairingAttempts += 1;
-        const body = await readBody(request, 128);
+        const body = await readBody(request, 128, firefoxPairing ? 4_000 : 0);
         if (!body || Object.keys(body).length !== 1 || typeof body.code !== "string" ||
             !sameSecret(body.code, pairingCode)) {
           throw new Error("pairing code is invalid");
         }
         pairingAvailable = false;
+        if (firefoxPairing) pairedFirefoxOrigin = requestOrigin;
         sessionActive = true;
         return send(response, 200, { sessionToken }, origin);
       } catch (error) {
+        if (response.destroyed) return;
         return send(response, 400, { error: publicBridgeError(error) }, origin);
       } finally {
         pairingPending = false;
@@ -631,6 +673,60 @@ export function createWalletBridgeServer({
       }
       if (request.method === "GET" && url.pathname === "/v1/wallet") {
         return send(response, 200, walletPublicInfo(activeVaultPath), origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/sign-operator-link") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("wallet-link request requires application/json");
+        }
+        const body = await readAuthenticatedBody(256);
+        if (!body || Array.isArray(body) || Object.keys(body).sort().join(",") !==
+            "challenge,requestId" || !/^[0-9a-f]{64}$/.test(body.challenge ?? "") ||
+            !REQUEST_ID.test(body.requestId ?? "")) {
+          throw new Error("wallet-link request is invalid");
+        }
+        if (pending || seen.has(body.requestId)) {
+          return send(response, 409, { error: "wallet-link request is pending or already used" }, origin);
+        }
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const signingGeneration = sessionGeneration;
+        const resultEntry = { completedAt: null, status: null, value: null };
+        signResults.set(body.requestId, resultEntry);
+        pending = true;
+        try {
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize({ type: "local-operator-wallet-link", address: expectedAddress,
+              challenge: body.challenge, requestId: body.requestId },
+            { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("wallet-link confirmation expired"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
+          if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration ||
+              walletAddress !== expectedAddress || activeVaultPath !== expectedPath) {
+            throw new Error("wallet account changed during the request");
+          }
+          const proof = signWalletOperatorLink({ path: expectedPath, password,
+            challenge: body.challenge, expectedAddress });
+          const value = { requestId: body.requestId, proof };
+          resultEntry.status = 200;
+          resultEntry.value = value;
+          resultEntry.completedAt = Date.now();
+          return send(response, 200, value, origin);
+        } catch (error) {
+          resultEntry.status = 400;
+          resultEntry.value = { error: publicBridgeError(error) };
+          resultEntry.completedAt = Date.now();
+          throw error;
+        } finally { pending = false; }
       }
       if (request.method === "POST" && url.pathname === "/v1/derive-asset-id") {
         if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {

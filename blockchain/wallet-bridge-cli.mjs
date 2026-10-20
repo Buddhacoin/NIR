@@ -103,13 +103,18 @@ if (productionMode) {
     } catch (error) { productionArgumentError = error; }
   }
 }
-const [vaultPath, portText = "8788", origin = "http://127.0.0.1:8765", genesisPath, handoffPath] =
+const [vaultPath, portText = "8788", originArgument = "http://127.0.0.1:8765", genesisPath, handoffPath] =
   walletArguments;
 try {
   if (productionArgumentError !== null) throw productionArgumentError;
+  const firefoxPairing = originArgument === "--firefox-pairing";
+  if (firefoxPairing && productionMode) {
+    throw new Error("Firefox pairing is not available in production mode before release review");
+  }
+  const origin = firefoxPairing ? "http://127.0.0.1:8765" : originArgument;
   const port = Number(portText);
   if (!vaultPath || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    throw new Error("usage: wallet:bridge <vault> [port] [exact-browser-origin] [genesis.json] [validator-handoffs.json]");
+    throw new Error("usage: wallet:bridge <vault> [port] [exact-browser-origin|--firefox-pairing] [genesis.json] [validator-handoffs.json]");
   }
   const wallet = walletPublicInfo(vaultPath);
   // Only the local rehearsal bridge discovers sibling vaults. Production keeps
@@ -139,6 +144,7 @@ try {
   const server = createWalletBridgeServer({
     ...(localAccounts?.length ? { accounts: localAccounts } : {}),
     origin,
+    firefoxPairing,
     pairingCode,
     sessionToken,
     ...(genesis ? { trustAnchor: {
@@ -183,7 +189,8 @@ try {
   server.listen(port, "127.0.0.1", () => {
     console.log(`NIR wallet bridge for ${wallet.address}`);
     console.log(`Listening only on http://127.0.0.1:${port}`);
-    console.log(`Allowed origin: ${origin}`);
+    console.log(firefoxPairing ? "Allowed origin: exact Firefox installation after one-time pairing"
+      : `Allowed origin: ${origin}`);
     console.log(genesis
       ? `Account proofs pinned to ${genesis.networkId}; verified validator handoffs: ${handoffs.length}`
       : "Account proof verification disabled: start with an explicit genesis.json path");

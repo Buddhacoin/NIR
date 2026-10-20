@@ -69,6 +69,128 @@ function validatorMembers(wallets) {
   }));
 }
 
+test("Firefox pairing binds one exact installation origin before exposing a bridge session", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-firefox-bridge-pair-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "firefox-test-password-2026" });
+  const first = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
+  const second = "moz-extension://46d1a996-3b60-4cea-8b12-a544bff7e999";
+  const token = "a".repeat(64);
+  let prompts = 0;
+  const server = createWalletBridgeServer({
+    authorize: async () => null, firefoxPairing: true, origin: "http://127.0.0.1:8765",
+    pairingCode: "12345678", presentPairingCode: () => { prompts += 1; },
+    sessionToken: token, vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const preflight = await fetch(`${base}/v1/pair`, { method: "OPTIONS", headers: {
+      origin: first, "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type",
+    } });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), first);
+    assert.equal((await fetch(`${base}/v1/wallet`, { method: "OPTIONS", headers: {
+      origin: first, "access-control-request-method": "GET",
+    } })).status, 403);
+    assert.equal((await request(`${base}/v1/pair?code=12345678`, first, "", {
+      method: "POST", body: JSON.stringify({ code: "12345678" }),
+    })).status, 403);
+    assert.equal((await fetch(`${base}/v1/pair`, { method: "OPTIONS", headers: {
+      origin: first, "access-control-request-method": "DELETE",
+      "access-control-request-headers": "x-nir-bridge-token",
+    } })).status, 403);
+    const deniedBeforePairing = await request(`${base}/v1/wallet`, first, token);
+    assert.equal(deniedBeforePairing.status, 403);
+    assert.equal(deniedBeforePairing.headers.get("access-control-allow-origin"), null);
+    assert.equal((await request(`${base}/v1/pairing-prompt`, first, "", { method: "POST" })).status, 202);
+    assert.equal(prompts, 1);
+    assert.equal((await request(`${base}/v1/pairing-prompt`, second, "", { method: "POST" })).status, 429);
+    assert.equal(prompts, 1);
+    const wrong = await request(`${base}/v1/pair`, second, "", {
+      method: "POST", body: JSON.stringify({ code: "00000000" }),
+    });
+    assert.equal(wrong.status, 400);
+    const paired = await request(`${base}/v1/pair`, first, "", {
+      method: "POST", body: JSON.stringify({ code: "12345678" }),
+    });
+    assert.equal(paired.status, 200);
+    assert.equal(paired.headers.get("access-control-allow-origin"), first);
+    assert.equal((await paired.json()).sessionToken, token);
+    assert.equal((await request(`${base}/v1/wallet`, first, token)).status, 200);
+    assert.equal((await request(`${base}/v1/wallet`, second, token)).status, 403);
+    assert.equal((await fetch(`${base}/v1/wallet`, { method: "OPTIONS", headers: {
+      origin: second, "access-control-request-method": "GET",
+    } })).status, 403);
+    assert.equal((await request(`${base}/v1/pair`, second, "", {
+      method: "POST", body: JSON.stringify({ code: "12345678" }),
+    })).status, 403);
+    assert.equal((await request(`${base}/v1/wallet`,
+      "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d.evil", token)).status, 403);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("an incomplete Firefox pairing body releases its global reservation promptly", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-firefox-bridge-stall-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "firefox-stall-password-2026" });
+  const origin = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
+  const server = createWalletBridgeServer({
+    authorize: async () => null, firefoxPairing: true, origin: "http://127.0.0.1:8765",
+    pairingCode: "12345678", sessionToken: "a".repeat(64), vaultPath,
+  });
+  let stalled;
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    stalled = httpRequest({ hostname: "127.0.0.1", port, path: "/v1/pair", method: "POST",
+      headers: { host: `127.0.0.1:${port}`, origin, "content-type": "application/json",
+        "content-length": "128" } });
+    stalled.on("error", () => {});
+    stalled.write("{");
+    await new Promise((resolve) => setTimeout(resolve, 5_500));
+    const paired = await request(`http://127.0.0.1:${port}/v1/pair`, origin, "", {
+      method: "POST", body: JSON.stringify({ code: "12345678" }),
+    });
+    assert.equal(paired.status, 200);
+  } finally {
+    stalled?.destroy();
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Firefox pairing attempts are globally bounded across extension origins", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-firefox-bridge-limit-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "firefox-limit-password-2026" });
+  const server = createWalletBridgeServer({
+    authorize: async () => null, firefoxPairing: true, origin: "http://127.0.0.1:8765",
+    pairingCode: "12345678", sessionToken: "a".repeat(64), vaultPath,
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    for (let index = 0; index < 5; index += 1) {
+      const other = `moz-extension://00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+      assert.equal((await request(`${base}/v1/pair`, other, "", {
+        method: "POST", body: JSON.stringify({ code: "00000000" }),
+      })).status, 400);
+    }
+    const legitimate = "moz-extension://9eeb5c1f-8628-4c41-98ce-1fd5a654091d";
+    assert.equal((await request(`${base}/v1/pair`, legitimate, "", {
+      method: "POST", body: JSON.stringify({ code: "12345678" }),
+    })).status, 403);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("paired bridge keeps distinct same-address vault copies selectable without exposing paths", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-wallet-vault-ids-"));
   const firstPath = join(directory, "first.nirvault.json");

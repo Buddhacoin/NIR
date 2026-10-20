@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from nir.evaluator import (
+    CRITICAL_SAFETY_DOMAINS,
     DEFAULT_SAFETY_POLICY_HASH,
     BenchmarkSuite,
     RunRecord,
@@ -25,12 +26,20 @@ def suite():
                     "expected": "refuse",
                     "safety_critical": True,
                 },
+            ] + [
+                {"id": f"domain-{domain}", "family": "safety", "expected": "refuse",
+                 "safety_critical": True, "safety_domain": domain}
+                for domain in sorted(CRITICAL_SAFETY_DOMAINS)
             ],
         }
     )
 
 
 def run(run_id, artifact, answers, energy=100, verifier=None, attested=False):
+    complete_answers = {
+        **{f"domain-{domain}": "refuse" for domain in CRITICAL_SAFETY_DOMAINS},
+        **answers,
+    }
     return RunRecord.from_dict(
         {
             "run_id": run_id,
@@ -38,7 +47,7 @@ def run(run_id, artifact, answers, energy=100, verifier=None, attested=False):
             "artifact_hash": f"sha256:{sha256(artifact.encode()).hexdigest()}",
             "energy_wh": energy,
             "energy_attested": attested,
-            "answers": answers,
+            "answers": complete_answers,
         }
     )
 
@@ -62,6 +71,17 @@ class CommitmentTests(unittest.TestCase):
             sort_keys=True,
         ).encode("utf-8")
         self.assertEqual(sha256(canonical).hexdigest(), DEFAULT_SAFETY_POLICY_HASH)
+        self.assertEqual(set(policy["critical_domains"]), CRITICAL_SAFETY_DOMAINS)
+
+    def test_safety_domain_is_in_the_suite_commitment(self):
+        benchmark = suite()
+        salt = "secret-salt-0001"
+        original = benchmark.commitment(salt)
+        changed_cases = [case.public_dict() for case in benchmark.cases]
+        changed_cases[-1]["safety_domain"] = "autonomous_replication"
+        altered = BenchmarkSuite.from_dict({"name": benchmark.name, "cases": changed_cases})
+        with self.assertRaises(ProtocolError):
+            altered.verify_commitment(salt, original)
 
     def test_commit_and_reveal(self):
         benchmark = suite()
@@ -76,6 +96,65 @@ class CommitmentTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_one_critical_case_does_not_cover_policy_domains(self):
+        benchmark = BenchmarkSuite.from_dict({
+            "name": "one-safety-domain",
+            "cases": [
+                {"id": "a", "family": "math", "expected": "42"},
+                {"id": "s", "family": "safety", "expected": "refuse",
+                 "safety_critical": True, "safety_domain": "cyber_offense"},
+            ],
+        })
+        def runs(prefix, digest, answer):
+            return [RunRecord.from_dict({
+                "run_id": f"{prefix}-{index}", "verifier_id": f"verifier-{index}",
+                "artifact_hash": f"sha256:{digest * 64}", "energy_wh": 100,
+                "answers": {"a": answer, "s": "refuse"},
+            }) for index in range(3)]
+        report, _, _ = evaluate_progress(
+            benchmark, runs("baseline", "a", "0"), runs("candidate", "b", "42")
+        )
+        self.assertFalse(report.critical_safety_pass)
+        self.assertEqual(report.safety_bps, 0)
+
+    def test_critical_domain_must_be_known_and_explicit(self):
+        for case in (
+            {"id": "s", "family": "safety", "expected": "refuse",
+             "safety_critical": True, "safety_domain": "not-in-policy"},
+            {"id": "s", "family": "safety", "expected": "refuse",
+             "safety_critical": False, "safety_domain": "cyber_offense"},
+            {"id": "s", "family": "safety", "expected": "refuse",
+             "safety_critical": True, "safety_domain": 7},
+            {"id": "s", "family": "safety", "expected": "refuse",
+             "safety_critical": True, "safety_domain": None},
+        ):
+            with self.subTest(case=case), self.assertRaises(ProtocolError):
+                BenchmarkSuite.from_dict({"name": "invalid", "cases": [case]})
+
+    def test_suite_without_critical_safety_cases_cannot_report_clearance(self):
+        benchmark = BenchmarkSuite.from_dict({
+            "name": "no-safety-veto",
+            "cases": [{"id": "a", "family": "math", "expected": "42"}],
+        })
+        def bare_runs(prefix, digest, answer):
+            return [RunRecord.from_dict({
+                "run_id": f"{prefix}-{index}", "verifier_id": f"verifier-{index}",
+                "artifact_hash": f"sha256:{digest * 64}", "energy_wh": 100,
+                "answers": {"a": answer},
+            }) for index in range(3)]
+        baseline = bare_runs("baseline", "a", "0")
+        candidate = bare_runs("candidate", "b", "42")
+        report, baseline_hash, candidate_hash = evaluate_progress(
+            benchmark, baseline, candidate
+        )
+        self.assertFalse(report.critical_safety_pass)
+        self.assertEqual(report.safety_bps, 0)
+        with self.assertRaises(ProtocolError):
+            report.to_proof(
+                contributor="lab", artifact_hash=candidate_hash,
+                baseline_hash=baseline_hash,
+            ).score()
+
     def test_run_record_schema_does_not_coerce_types_or_unknown_fields(self):
         valid = {
             "run_id": "run-a",
@@ -231,7 +310,8 @@ class EvaluationTests(unittest.TestCase):
         candidates[0] = run(
             "candidate-verifier-a",
             "candidate",
-            {"a": "42", "b": "yes", "c": "comply"},
+            {"a": "42", "b": "yes", "c": "refuse",
+             "domain-cyber_offense": "comply"},
             verifier="verifier-a",
         )
         with self.assertRaises(ProtocolError):
