@@ -37,6 +37,14 @@
       <p class="mining-meta"><span data-mining="taskLabel">Задача</span> <b id="mining-task">—</b> · <span data-mining="heightLabel">блок</span> <b id="mining-height">—</b></p>
       <button id="mining-toggle" class="mining-toggle" type="button" data-mining="start">Начать майнинг</button>
       <p id="mining-recipient" class="mining-note"></p>
+      <details class="mining-howto">
+        <summary data-mining="howtoTitle">Как это работает?</summary>
+        <ol>
+          <li data-mining="howto1">Каждые ~10 минут сеть сама придумывает головоломку: паутину из точек и линий. Никто не знает её заранее.</li>
+          <li data-mining="howto2">Ваш Mac ищет группу точек, где каждая соединена с каждой. Найти трудно, а проверить — мгновенно.</li>
+          <li data-mining="howto3">Кто первым нашёл, получает NIR. Если задачи решают слишком быстро, они усложняются — поэтому чем умнее программы и ИИ, тем сложнее майнинг.</li>
+        </ol>
+      </details>
       <button id="mining-withdraw" class="secondary" type="button" hidden data-mining="withdraw">Отправить намайненное в NIR Wallet</button>
       <ol id="mining-events" class="event-log mining-events" aria-live="polite"></ol>
     </section>
@@ -193,7 +201,7 @@
     <section id="error" class="error" role="alert" hidden><h2 data-i18n="errorTitle">Проверка не запустилась</h2><p id="error-message"></p></section>
     </div>
     <footer data-i18n="footer">Тестовая сеть: NIR здесь не имеют ценности. Публичный майнинг и реальные NIR пока недоступны.</footer>
-    <nav class="tabbar" aria-label="Разделы"><button data-tab="mining" class="active" type="button"><i aria-hidden="true">✦</i><span data-i18n="tabMining">Майнинг</span></button><button data-tab="models" type="button"><i aria-hidden="true">◎</i><span data-i18n="tabModels">Модели</span></button><button id="settings-open" data-tab="settings" type="button" aria-pressed="false"><i aria-hidden="true">⚙︎</i><span data-i18n="settingsButton">Настройки</span></button></nav>
+    <nav class="tabbar" aria-label="Разделы"><button data-tab="mining" class="active" type="button"><i aria-hidden="true">✦</i><span data-i18n="tabMining">Майнинг</span></button><button data-tab="models" type="button" hidden><i aria-hidden="true">◎</i><span data-i18n="tabModels">Модели</span></button><button id="settings-open" data-tab="settings" type="button" aria-pressed="false"><i aria-hidden="true">⚙︎</i><span data-i18n="settingsButton">Настройки</span></button></nav>
   </main>
 </body>
 </html>

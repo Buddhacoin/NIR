@@ -1657,6 +1657,9 @@ export class NirChain {
   #validatorReadinessObservationFloor;
   #proofMining;
   #proofMiningInitialLevel;
+  // Not consensus state: the proof rewards each address received, for
+  // wallets. A node rebuilds it by replaying blocks.
+  #proofRewardLog = new Map();
   #recentValidatorTransition;
   #pendingValidatorExits;
   #retiredValidators;
@@ -3123,6 +3126,11 @@ export class NirChain {
   // Open tasks, current level and pending answers for miners; null before v35.
   proofMiningStatus() {
     return structuredClone(this.#proofMining);
+  }
+
+  // Proof rewards credited to `address`, newest first (at most 200).
+  proofRewardHistory(address) {
+    return [...(this.#proofRewardLog.get(address) ?? [])].reverse().map((entry) => ({ ...entry }));
   }
 
   beaconAuthorityStatus() {
@@ -5714,6 +5722,7 @@ export class NirChain {
       .map(([address, admission]) => [address, structuredClone(admission)]));
     fork.#validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
     fork.#proofMining = structuredClone(this.#proofMining);
+    fork.#proofRewardLog = new Map([...this.#proofRewardLog].map(([address, entries]) => [address, [...entries]]));
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#retiredValidators = new Map([...this.#retiredValidators]
@@ -6488,9 +6497,11 @@ export class NirChain {
     // Proof-task winners share the same epoch budget, halving and ten-minute
     // spacing as every other issuance; the schedule is unchanged.
     let proofRewardsIssued = false;
+    const proofRewardCredits = [];
     if (proofMining !== null) {
       for (const { address, amount } of matureProofRewards(proofMining, block.height)) {
         balances.set(address, (balances.get(address) ?? 0n) + amount);
+        proofRewardCredits.push({ address, amount });
       }
       if (proofMining.pendingRewards.length > 0 &&
           block.timestamp >= this.#lastRewardTimestamp + MIN_REWARD_INTERVAL_MS) {
@@ -7411,6 +7422,12 @@ export class NirChain {
     this.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     this.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
     this.#proofMining = proofMining;
+    for (const { address, amount } of proofRewardCredits) {
+      const entries = this.#proofRewardLog.get(address) ?? [];
+      entries.push({ amount: amount.toString(), height: block.height, timestamp: block.timestamp });
+      if (entries.length > 200) entries.shift();
+      this.#proofRewardLog.set(address, entries);
+    }
     this.#pendingValidatorExits = pendingValidatorExits;
     this.#retiredValidators = retiredValidators;
     this.#recentValidatorTransition = recentValidatorTransitionAfter;

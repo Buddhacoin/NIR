@@ -952,6 +952,11 @@ settingsOpen?.addEventListener("click", () => {
 });
 // Bottom tabs: Mining and Models live in the main view; Settings is its own page.
 let currentTab = "mining";
+// Model checks are developer tools: shown only with ?dev=1.
+if (typeof URLSearchParams === "function" && new URLSearchParams(globalThis.location?.search ?? "").get("dev") === "1") {
+  const modelsTab = document.querySelector('[data-tab="models"]');
+  if (modelsTab) modelsTab.hidden = false;
+}
 function showTab(name) {
   currentTab = name;
   for (const button of document.querySelectorAll("[data-tab]")) {

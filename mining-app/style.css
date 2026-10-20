@@ -157,3 +157,8 @@ footer { margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-
 .tabbar button.active i { color:var(--lime); }
 #operator-console { margin-top:0; }
 @media (max-width:620px) { body { background:var(--bg); } .app { padding:16px 16px 96px; } header { flex-wrap:nowrap; } .mining-grid > div { display:block; } }
+.mining-howto { margin:4px 0 12px;color:var(--muted); }
+.mining-howto > summary { cursor:pointer;color:var(--text);font-size:13px;font-weight:600; }
+.mining-howto ol { margin:10px 0 0;padding-left:20px;font-size:13px;line-height:1.55; }
+.mining-howto li { margin-bottom:6px; }
+.tabbar:has(button[data-tab="models"][hidden]) { grid-template-columns:repeat(2,1fr); }

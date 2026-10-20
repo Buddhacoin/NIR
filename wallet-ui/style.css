@@ -260,3 +260,9 @@ nav { grid-template-columns: repeat(4, 1fr); }
 .mining-card-state { color: var(--good); }
 #native-connection-error { min-height: 0; }
 dialog h2[tabindex="-1"]:focus { outline: none; }
+.mining-rewards-title { margin: 18px 0 8px; font-size: 15px; }
+.mining-rewards { margin: 0; padding: 0; list-style: none; }
+.mining-rewards li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.mining-rewards li:first-child { border-top: 0; }
+.mining-rewards li span { color: var(--muted); }
+.mining-rewards li b { color: var(--good); }

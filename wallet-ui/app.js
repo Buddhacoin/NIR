@@ -2107,6 +2107,7 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 // Mining (NIR Майнер on this Mac): what the local test network says about
 // this wallet's rewards, and a button that opens the miner app.
 let miningSnapshot = null;
+let miningRewards = [];
 function renderMining() {
   const state = document.querySelector("#mining-card-state");
   const note = document.querySelector("#mining-card-note");
@@ -2133,6 +2134,23 @@ function renderMining() {
     ? `${formatAtomic(incoming).replace(/\.?0+$/, "")} NIR` : "—";
   document.querySelector("#mining-incoming-note").textContent = mine.length
     ? "Награда ждёт 64 блока после решения задачи, затем зачисляется на баланс." : "";
+  const short = (atomic) => formatAtomic(atomic).replace(/\.?0+$/, "");
+  const startOfDay = new Date().setHours(0, 0, 0, 0);
+  const today = miningRewards.filter((entry) => entry.timestamp >= startOfDay)
+    .reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
+  if (today > 0n) note.textContent = `Сегодня намайнено: +${short(today)} NIR. ${note.textContent}`;
+  const list = document.querySelector("#mining-rewards");
+  list.replaceChildren(...miningRewards.slice(0, 20).map((entry) => {
+    const item = document.createElement("li");
+    const when = document.createElement("span");
+    when.textContent = new Date(entry.timestamp).toLocaleString(document.documentElement.lang === "en" ? "en-GB" : "ru-RU",
+      { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const amount = document.createElement("b");
+    amount.textContent = `+${short(entry.amount)} NIR`;
+    item.append(when, amount);
+    return item;
+  }));
+  document.querySelector("#mining-rewards-empty").hidden = miningRewards.length > 0;
 }
 async function loadMining() {
   try {
@@ -2142,6 +2160,18 @@ async function loadMining() {
     miningSnapshot = response.ok && typeof view?.active === "boolean" ? view : null;
   } catch {
     miningSnapshot = null;
+  }
+  miningRewards = [];
+  if (miningSnapshot && walletInfo) {
+    try {
+      const response = await fetch(`${activeNodeUrl ?? "http://127.0.0.1:8787"}/v1/accounts/${walletInfo.address}/proof-rewards`,
+        { cache: "no-store", signal: AbortSignal.timeout(3_000) });
+      const body = await response.json();
+      if (response.ok && body?.address === walletInfo.address && Array.isArray(body.rewards)) {
+        miningRewards = body.rewards.filter((entry) => /^[0-9]{1,30}$/.test(entry?.amount ?? "") &&
+          Number.isSafeInteger(entry.timestamp)).slice(0, 200);
+      }
+    } catch {}
   }
   renderMining();
 }

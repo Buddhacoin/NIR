@@ -378,10 +378,13 @@ const copy = new Map(Object.entries({
   "Выключен": "Off",
   "Награда ждёт 64 блока после решения задачи, затем зачисляется на баланс.": "A reward waits 64 blocks after the task is solved, then joins the balance.",
   "Не удалось открыть NIR Майнер. Откройте его из папки «Программы».": "Could not open NIR Miner. Open it from the Applications folder.",
+  "Награды за майнинг": "Mining rewards",
+  "Наград пока нет. Они появятся здесь после первой решённой задачи.": "No rewards yet. They appear here after the first solved task.",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
 const patterns = [
+  [/^Сегодня намайнено: \+(.+) NIR\. (.+)$/, (_, amount, rest) => `Mined today: +${amount} NIR. ${translateWalletText(rest, "en")}`],
   [/^● Тестовая сеть · блок (\d+)$/, "● Test network · block $1"],
   [/^● Сеть майнинга работает · уровень (\d+)$/, "● Mining network running · level $1"],
   [/^В пути к вам: (.+) NIR\. Придут в течение нескольких минут\.$/, "On the way to you: $1 NIR. Arrives within a few minutes."],

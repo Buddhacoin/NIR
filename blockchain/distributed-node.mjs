@@ -966,6 +966,11 @@ export class ValidatorReplica {
     }
   }
 
+  proofRewards(address) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
+    return this.#chain.proofRewardHistory(address);
+  }
+
   proofMining() {
     // Miners sign answers bound to this genesis.
     return { ...proofMiningView(this.#chain.proofMiningStatus(),
@@ -2062,6 +2067,11 @@ export class DistributedCoordinator {
       .map(({ value }) => value.handoffs)];
     const selected = selectValidatorHandoffHistories(candidates, trustAnchor);
     return { handoffs: selected.handoffs, matchingSources: selected.matchingSources };
+  }
+
+  proofRewards(address) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
+    return this.#chain.proofRewardHistory(address);
   }
 
   proofMining() {

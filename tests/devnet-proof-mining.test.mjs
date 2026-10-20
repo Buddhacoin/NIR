@@ -44,6 +44,11 @@ test("a proof-mining devnet upgrades to v37, issues tasks from its own beacon, a
     assert.equal(outcome.result, "revealed");
     for (let i = 0; i <= PROGRESS_REWARD_ESCROW_DELAY_BLOCKS + 1; i++) node.tick();
     assert.ok(BigInt(node.account(recipient).atomicBalance) > 0n);
+    // The node remembers which rewards the recipient received, for wallets.
+    const [reward] = node.proofRewards(recipient);
+    assert.equal(reward.amount, node.account(recipient).atomicBalance);
+    assert.ok(reward.height > 0);
+    assert.deepEqual(node.proofRewards(address), []);
     // A restarted node replays the stored chain to the same state.
     assert.deepEqual(new PersistentDevNode(directory).proofMining(), node.proofMining());
   } finally {

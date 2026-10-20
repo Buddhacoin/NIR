@@ -210,6 +210,11 @@ export class PersistentDevNode {
       tipHash: this.#chain.tipHash, validators, validatorWallets });
   }
 
+  proofRewards(address) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
+    return this.#chain.proofRewardHistory(address);
+  }
+
   proofMining() {
     // Miners sign answers bound to this genesis.
     return { ...proofMiningView(this.#chain.proofMiningStatus(),

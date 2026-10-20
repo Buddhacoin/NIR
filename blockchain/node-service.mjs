@@ -12,7 +12,7 @@ const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const DEVELOPER_POST_PATHS = new Set([
   "/v1/transactions", "/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create",
 ]);
-const WALLET_READ_PATH = /^\/v1\/(?:accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history))?|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof)$/;
+const WALLET_READ_PATH = /^\/v1\/(?:accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history|proof-rewards))?|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof)$/;
 const WALLET_READ_EXACT = new Set(["/health", "/v1/validator-handoffs",
   "/v1/finality-proofs", "/v1/fees", "/v1/proof-mining"]);
 
@@ -121,6 +121,13 @@ export function createNodeHttpServer(node, options = {}) {
         }
         const id = decodeURIComponent(url.pathname.slice("/v1/transactions/".length, -6));
         return send(response, 200, await node.transactionProof(id), origin);
+      }
+      const rewardsPath = /^\/v1\/accounts\/(nir1[0-9a-f]{64})\/proof-rewards$/.exec(url.pathname);
+      if (request.method === "GET" && rewardsPath) {
+        if (typeof node.proofRewards !== "function") {
+          return send(response, 501, { error: "proof reward history is unavailable" }, origin);
+        }
+        return send(response, 200, { address: rewardsPath[1], rewards: node.proofRewards(rewardsPath[1]) }, origin);
       }
       if (request.method === "GET" && url.pathname.startsWith("/v1/accounts/")) {
         const accountPath = url.pathname.slice("/v1/accounts/".length);
