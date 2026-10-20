@@ -57,7 +57,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | Try the wallet safely | [`docs/wallet.md`](docs/wallet.md) |
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
-| Mine network clique tasks (protocol v35, testnet code; no public network) | [`docs/proof-mining.md`](docs/proof-mining.md) and `npm run mine:clique` |
+| Mine network clique tasks on a local devnet (protocol v35; no public network) | `npm run node:init-dev -- <dir> --proof-mining`, `npm run node:serve -- <dir>`, `npm run mine:clique -- --wallet <file>`; see [`docs/proof-mining.md`](docs/proof-mining.md) |
 | Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
 | Follow every user feature step by step | [`docs/user-journeys.md`](docs/user-journeys.md) |
 | Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Mines network clique tasks through a NIR node (docs/proof-mining.md §7.2.3).
-// Usage: npm run mine:clique -- --node http://127.0.0.1:8545 --wallet my.wallet
+// Usage: npm run mine:clique -- --node http://127.0.0.1:8787 --wallet my.wallet
 //          [--recipient nir1...] [--once]
 import { parseArgs } from "node:util";
 
@@ -32,7 +32,7 @@ function readSecret(prompt) {
 
 async function main() {
   const { values } = parseArgs({ options: {
-    node: { type: "string", default: "http://127.0.0.1:8545" },
+    node: { type: "string", default: "http://127.0.0.1:8787" },
     wallet: { type: "string" },
     recipient: { type: "string" },
     once: { type: "boolean", default: false },

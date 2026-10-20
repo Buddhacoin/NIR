@@ -529,8 +529,26 @@ v35 блок с наградами `progressRewards` отвергается: н�
    commit файлом кошелька, ждёт задержку и подписывает reveal. Срок задачи
    считается по времени блоков, а не по часам майнера. Сквозной тест —
    `tests/clique-miner.test.mjs`: настоящий HTTP-сервер узла, настоящая цепь
-   v35, файл кошелька. Осталось: экран в Model Lab и кошельке; локальный
-   dev-узел пока не умеет включать v35 и крутить маяк сам.
+   v35, файл кошелька. Осталось: экран в Model Lab и кошельке.
+
+### Как помайнить у себя (локальная dev-сеть, без ценности)
+
+```sh
+npm run node:init-dev -- ~/nir-devnet --proof-mining   # генезис v27 → v35, ~20 с
+npm run node:serve -- ~/nir-devnet                     # блок каждые 2 с, маяк сам
+npm run wallet:create -- ~/miner.wallet
+curl -X POST http://127.0.0.1:8787/v1/faucet -H 'content-type: application/json' \
+  -d '{"recipient":"<адрес из wallet:create>"}'
+npm run mine:clique -- --wallet ~/miner.wallet
+```
+
+Dev-сеть с `--proof-mining` держит у себя ключи релизов и маяка, сама
+поднимается до v35 и, пока нет открытой задачи, проводит раунд маяка
+(`PersistentDevNode.tick`, `blockchain/devnet-upgrades.mjs`). Начальный
+уровень — 32, дальше его ведёт подстройка. Проверено вживую 20.10.2026:
+задача уровня 32 решена за 47 мс, через 64 блока получатель получил 50 NIR
+(в dev-генезисе старый план с наградой 50; в генезисе по плану v5 — 44).
+Тест — `tests/devnet-proof-mining.test.mjs`.
 
 ## 11. Сеть, которая переживёт создателя
 
