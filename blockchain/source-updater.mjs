@@ -56,14 +56,24 @@ export function readUpdateRecord(path) {
   return record;
 }
 
-// The app's launcher is the parent of the process runner that started this
-// service. Returns its pid only if it runs from inside `appPath`.
-export function macLauncherPid(appPath, { ps = "/bin/ps", runnerPid = process.ppid } = {}) {
-  const launcher = Number(execFileSync(ps, ["-o", "ppid=", "-p", String(runnerPid)], { encoding: "utf8" }).trim());
-  const command = execFileSync(ps, ["-o", "comm=", "-p", String(launcher)], { encoding: "utf8" }).trim();
-  if (!Number.isSafeInteger(launcher) || launcher <= 1 || !command.startsWith(`${appPath}/Contents/MacOS/`)) {
-    throw new Error("the app launcher could not be identified");
+// The app's launcher is the outermost ancestor of this service that runs from
+// inside `appPath`. Model Lab's runner forks Node, so the launcher is two
+// levels up; the wallet's runner execs Node, so it is the direct parent.
+export function macLauncherPid(appPath, { ps = "/bin/ps", parentPid = process.ppid } = {}) {
+  const inside = `${appPath}/Contents/MacOS/`;
+  const describe = (pid) => ({
+    command: execFileSync(ps, ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).trim(),
+    parent: Number(execFileSync(ps, ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).trim()),
+  });
+  let launcher = null;
+  let pid = parentPid;
+  for (let depth = 0; depth < 4 && Number.isSafeInteger(pid) && pid > 1; depth++) {
+    const { command, parent } = describe(pid);
+    if (!command.startsWith(inside)) break;
+    launcher = pid;
+    pid = parent;
   }
+  if (launcher === null) throw new Error("the app launcher could not be identified");
   return launcher;
 }
 

@@ -1895,7 +1895,7 @@ function renderWalletUpdate(failed = false) {
           : u.state === "downloading" ? "Скачиваем новую версию…"
             : u.state === "building" ? "Собираем новую версию. Это займёт несколько минут; кошелёк перезапустится сам."
               : u.state === "restarting" ? "Перезапускаем кошелёк…"
-                : u.state === "failed" ? "Обновить не удалось. Установленный кошелёк не изменён."
+                : u.state === "failed" ? `Обновить не удалось. Установленный кошелёк не изменён. Причина: ${u.error ?? "неизвестна"}`
                   : u.available ? `Доступна новая версия ${u.release.version} от ${u.release.date}.`
                     : "У вас последняя версия.");
   apply.hidden = !u?.available || UPDATE_WORKING.includes(u?.state);
