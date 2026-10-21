@@ -2071,7 +2071,10 @@ themeButton.onclick = () => setTheme(document.documentElement.dataset.theme === 
 const networkButton = document.querySelector(".network");
 async function loadNodePolicy() {
   if (nodePolicy) return nodePolicy;
-  const response = await fetch("./nodes.json", { cache: "no-store" });
+  // The Mac app talks to the network in NIR Майнер: one loopback node that
+  // both serves reads and accepts transactions (demo/wallet-nodes.local-demo.json).
+  const localDemo = new URLSearchParams(location.search).get("local-demo") === "1";
+  const response = await fetch(localDemo ? "./nodes.local-demo.json" : "./nodes.json", { cache: "no-store" });
   if (!response.ok) throw new Error("node policy unavailable");
   nodePolicy = normalizeNodePolicy(await response.json());
   return nodePolicy;
@@ -2406,15 +2409,15 @@ async function nameNodeJson(path) {
   if (!response.ok) throw new Error("Сеть NIR не ответила. Откройте NIR Майнер.");
   return body;
 }
-function nameSubmissionUrl() {
-  try { return transactionSubmissionUrl(nodePolicy); }
-  catch { return `${activeNodeUrl ?? "http://127.0.0.1:8787"}/v1/transactions`; }
+// Like every transaction, names go only to the configured submission address.
+async function nameSubmissionUrl() {
+  return transactionSubmissionUrl(await loadNodePolicy());
 }
 async function submitNameTransaction(transaction) {
   let response;
   let body;
   try {
-    response = await fetch(nameSubmissionUrl(), { method: "POST",
+    response = await fetch(await nameSubmissionUrl(), { method: "POST",
       headers: { "content-type": "application/json" }, body: JSON.stringify(transaction) });
     body = await response.json();
   } catch {
@@ -2498,6 +2501,8 @@ document.querySelector("#chain-name-input").addEventListener("input", (event) =>
     try {
       const entry = await nameNodeJson(`/v1/names/${encodeURIComponent(name)}`);
       if (epoch !== chainNameCheckEpoch) return;
+      // The network answers again: refresh a stale "did not answer" above.
+      if (chainNameCurrent === null && walletInfo) void refreshChainName();
       if (entry.owner === walletInfo?.address) {
         check.textContent = "Это уже ваше имя.";
       } else if (entry.available) {
