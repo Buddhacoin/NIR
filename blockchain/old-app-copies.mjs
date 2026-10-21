@@ -50,9 +50,9 @@ export function findOldCopies(installedApp, { search = () => execFileSync("/usr/
 }
 
 // macOS keeps ~/.Trash closed to apps, so a plain rename fails there; the
-// system "move to Trash" call (the one Finder uses) is allowed.
-const TRASH_SCRIPT = `ObjC.import("Foundation");
-function run(argv) {
+// system "move to Trash" call (the one Finder uses) is allowed. Foundation
+// is loaded in JavaScript for Automation by default.
+const TRASH_SCRIPT = `function run(argv) {
   if (!$.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError($.NSURL.fileURLWithPath(argv[0]), null, null)) {
     throw new Error("not moved");
   }
