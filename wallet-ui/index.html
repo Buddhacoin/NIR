@@ -42,9 +42,9 @@
   <dialog id="accounts-panel" aria-labelledby="accounts-title">
     <button class="close" data-close="accounts-panel" aria-label="Закрыть">×</button>
     <h2 id="accounts-title">Ваши кошельки</h2>
-    <p>Дайте счетам понятные имена. Имя видно только вам на этом Mac; номер счёта (адрес) остаётся прежним и показан рядом.</p>
+    <p>Дайте счетам понятные имена. Имя видно только вам на этом Mac; номер счёта (адрес) остаётся прежним и показан рядом. Новые счета создаются из тех же 24 секретных слов, поэтому одна записанная фраза восстанавливает их все.</p>
     <div id="account-list" class="account-list" data-i18n-ignore></div>
-    <button class="secondary" id="add-account" type="button">Добавить адрес</button>
+    <button class="secondary" id="add-account" type="button">Добавить счёт</button>
     <p class="form-status" id="accounts-status" role="status" aria-live="polite"></p>
   </dialog>
   <dialog id="bridge-panel" aria-labelledby="bridge-title">
@@ -200,6 +200,8 @@
       <p id="iris-receipt-status" role="status"></p>
     </section>
     </details>
+    <button class="secondary" id="settings-phrase" type="button">Показать секретную фразу (24 слова)</button>
+    <p class="form-status" id="settings-phrase-status" role="status" aria-live="polite"></p>
     <button class="secondary" id="settings-secrets" type="button" hidden>Создать новый код восстановления</button>
     <button class="secondary" id="settings-password-change" type="button" hidden>Сменить пароль</button>
     <p>Пароль вводится только в окне macOS. Старые резервные копии и коды продолжают открывать тот же адрес.</p>

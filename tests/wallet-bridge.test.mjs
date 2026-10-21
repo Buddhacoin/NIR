@@ -1679,3 +1679,31 @@ test("accounts get the user's own names, unique among their accounts, with addre
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("the secret phrase is shown only by the Mac app and only its outcome reaches the page", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-phrase-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "phrase-route-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let calls = 0;
+  const server = createWalletBridgeServer({ authorize: async () => null, origin, sessionToken: token, vaultPath,
+    nativeRevealPhrase: async ({ signal }) => { calls++; assert.ok(signal); return "wrong-password"; } });
+  const plain = createWalletBridgeServer({ authorize: async () => null, origin, sessionToken: token, vaultPath });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise((resolve) => plain.listen(0, "127.0.0.1", resolve));
+    const reveal = (port, sessionToken = token) => request(`http://127.0.0.1:${port}/v1/reveal-phrase`, origin,
+      sessionToken, { method: "POST" });
+    const shown = await reveal(server.address().port);
+    assert.equal(shown.status, 200);
+    assert.deepEqual(await shown.json(), { outcome: "wrong-password" });
+    assert.equal((await reveal(server.address().port, "b".repeat(64))).status, 401);
+    assert.equal(calls, 1);
+    assert.equal((await reveal(plain.address().port)).status, 404);
+  } finally {
+    await close(server);
+    await close(plain);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

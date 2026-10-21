@@ -394,6 +394,15 @@ const copy = new Map(Object.entries({
   "Имя не подходит: от 1 до 32 символов, без служебных знаков.": "That name does not fit: 1 to 32 characters, no special control characters.",
   "Адрес NIR неверен.": "The NIR address is invalid.",
   "В адресе опечатка: контрольная сумма не сходится. Скопируйте адрес заново.": "The address has a typo: its checksum does not match. Copy the address again.",
+  "Показать секретную фразу (24 слова)": "Show secret phrase (24 words)",
+  "Введите пароль в окне Mac.": "Enter the password in the Mac window.",
+  "Фраза показана в окне Mac.": "The phrase was shown in the Mac window.",
+  "Неверный пароль. Фраза не показана.": "Wrong password. The phrase was not shown.",
+  "У этого кошелька нет секретной фразы: он создан до появления фраз. Для него действует код восстановления.": "This wallet has no secret phrase: it was made before phrases existed. Its recovery code still works.",
+  "Отменено.": "Cancelled.",
+  "Не удалось показать фразу.": "The phrase could not be shown.",
+  "Дайте счетам понятные имена. Имя видно только вам на этом Mac; номер счёта (адрес) остаётся прежним и показан рядом. Новые счета создаются из тех же 24 секретных слов, поэтому одна записанная фраза восстанавливает их все.": "Give accounts names that are easy to remember. Only you see the name, on this Mac; the account number (address) stays the same and is shown next to it. New accounts come from the same 24 secret words, so one written-down phrase restores them all.",
+  "Добавить счёт": "Add account",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));

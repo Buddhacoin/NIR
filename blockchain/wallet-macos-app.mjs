@@ -18,6 +18,7 @@ import { macLauncherPid, readUpdateRecord, removePreviousVersions, runBuilder, S
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 import { findOldCopies, trashOldCopies } from "./old-app-copies.mjs";
+import { hasLocalSeed, revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
@@ -110,6 +111,39 @@ function showNativeRecoveryCode(secret, backupPath, signal) {
     child.stdin.on("error", reject);
     child.stdin.end(JSON.stringify({ kind: "recovery", secret, backupPath }));
   });
+}
+
+// Settings → "Show secret phrase": the 24 words, after the wallet password,
+// in the Mac window only. Wallets made before phrases have none.
+async function nativeRevealPhrase({ signal }) {
+  const english = await nativeLanguage() === "en";
+  const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
+  if (!hasLocalSeed(storageRoot)) return "no-phrase";
+  const cancelLabel = english ? "Cancel" : "Отмена";
+  const continueLabel = english ? "Show" : "Показать";
+  try {
+    const password = await nativeDialog(`on run argv\n set answer to display dialog (item 1 of argv) default answer "" with hidden answer buttons {(item 2 of argv), (item 3 of argv)} default button (item 3 of argv)\n return text returned of answer\nend run`,
+      [english ? "Enter the wallet password to show the 24 secret words. Make sure nobody sees the screen."
+        : "Введите пароль кошелька, чтобы показать 24 секретных слова. Убедитесь, что экран никто не видит.",
+      cancelLabel, continueLabel], signal);
+    if (signal?.aborted) return "cancelled";
+    let phrase = revealLocalSeedPhrase({ storageRoot, password });
+    const executable = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
+    await new Promise((resolve, reject) => {
+      const child = spawn(executable, ["--show-secret"], { stdio: ["pipe", "ignore", "ignore"], signal });
+      child.once("error", reject);
+      child.once("close", resolve);
+      child.stdin.on("error", reject);
+      child.stdin.end(JSON.stringify({ kind: "phrase", secret: phrase }));
+    });
+    phrase = "";
+    return "shown";
+  } catch (error) {
+    if (signal?.aborted || String(error?.message ?? "").includes("User canceled") ||
+        String(error?.message ?? "").includes("-128")) return "cancelled";
+    if (error?.message === "wallet password is incorrect") return "wrong-password";
+    throw new Error("the secret phrase could not be shown");
+  }
 }
 
 async function nativeSecurity({ vaultPath, signal }) {
@@ -289,6 +323,7 @@ async function main() {
       nativeSecurity,
       appUpdater: createWalletUpdater(),
       appConnect: true,
+      nativeRevealPhrase,
       // The user's own names for their accounts, kept next to the wallets.
       accountNames: {
         read() {

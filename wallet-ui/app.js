@@ -2290,3 +2290,19 @@ function startRename(row, account) {
     }
   };
 }
+
+// Settings → the 24 secret words, shown only in the Mac window after the password.
+document.querySelector("#settings-phrase").addEventListener("click", async (event) => {
+  const status = document.querySelector("#settings-phrase-status");
+  event.currentTarget.disabled = true;
+  status.textContent = "Введите пароль в окне Mac.";
+  try {
+    const { outcome } = await bridgeRequest("/v1/reveal-phrase", { method: "POST" }, 600_000);
+    status.textContent = outcome === "shown" ? "Фраза показана в окне Mac."
+      : outcome === "wrong-password" ? "Неверный пароль. Фраза не показана."
+        : outcome === "no-phrase" ? "У этого кошелька нет секретной фразы: он создан до появления фраз. Для него действует код восстановления."
+          : "Отменено.";
+  } catch {
+    status.textContent = "Не удалось показать фразу.";
+  } finally { event.currentTarget.disabled = false; }
+});

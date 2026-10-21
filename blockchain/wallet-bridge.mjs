@@ -369,6 +369,7 @@ export function createWalletBridgeServer({
   openMiner = null,
   oldCopies = null,
   accountNames = null,
+  nativeRevealPhrase = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -701,6 +702,22 @@ export function createWalletBridgeServer({
           return send(response, 200, posting ? { moved: oldCopies.trash() } : { copies: oldCopies.find() }, origin);
         } catch {
           return send(response, 503, { error: "search unavailable" }, origin);
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/reveal-phrase") {
+        if (!nativeRevealPhrase) return send(response, 404, { error: "the secret phrase is shown only in the Mac app" }, origin);
+        if (securityPending || pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        securityPending = true;
+        securityController = new AbortController();
+        try {
+          // The words appear only in the Mac window; only the outcome comes back.
+          const outcome = await nativeRevealPhrase({ signal: securityController.signal });
+          return send(response, 200, { outcome }, origin);
+        } finally {
+          securityPending = false;
+          securityController = null;
         }
       }
       if (request.method === "POST" && url.pathname === "/v1/open-miner") {
