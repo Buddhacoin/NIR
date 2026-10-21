@@ -16,7 +16,7 @@ import { CliqueMiningSession } from "./clique-mining-session.mjs";
 import { readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, macLauncherPid, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
-import { findOldCopies, trashOldCopies } from "./old-app-copies.mjs";
+import { findOldCopies, revealOldCopies, trashOldCopies } from "./old-app-copies.mjs";
 
 // Where one-button mining keeps its local devnet and miner key.
 function defaultMiningDirectory() {
@@ -477,8 +477,8 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       return;
     }
     // Settings → Old copies: earlier NIR builds elsewhere on this Mac.
-    if (["/old-copies", "/old-copies/trash"].includes(path) && request.url === path) {
-      const posting = path === "/old-copies/trash";
+    if (["/old-copies", "/old-copies/trash", "/old-copies/reveal"].includes(path) && request.url === path) {
+      const posting = path !== "/old-copies";
       if (!authorized(request) || request.method !== (posting ? "POST" : "GET") ||
           (posting && (request.headers.origin !== origin || request.headers["content-length"] !== "0"))) {
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
@@ -486,8 +486,9 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       }
       const appPath = join(root, "..", "..", "..");
       try {
-        const value = !embedded ? { copies: [], moved: [] } : posting
-          ? { moved: trashOldCopies(appPath) } : { copies: findOldCopies(appPath) };
+        const value = !embedded ? { copies: [], moved: [], failed: [] }
+          : path === "/old-copies/trash" ? trashOldCopies(appPath)
+            : path === "/old-copies/reveal" ? { copies: revealOldCopies(appPath) } : { copies: findOldCopies(appPath) };
         send(200, "application/json; charset=utf-8", JSON.stringify(value));
       } catch {
         send(503, "application/json; charset=utf-8", JSON.stringify({ error: "search unavailable" }));

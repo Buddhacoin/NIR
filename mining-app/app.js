@@ -157,7 +157,9 @@ const copy = {
     oldCopiesTitle: "Старые копии NIR", oldCopiesFind: "Найти старые копии", oldCopiesTrash: "Убрать в Корзину",
     oldCopiesIntro: "Прежние сборки NIR, которые остались на этом Mac и видны в Launchpad. Кошелёк и ключи не затрагиваются.",
     oldCopiesNone: "Старых копий не найдено.", oldCopiesFound: (n) => `Найдено старых копий: ${n}.`,
-    oldCopiesMoved: (n) => `Убрано в Корзину: ${n}.`, oldCopiesFailed: "Не удалось выполнить поиск.", tabMining: "Майнинг", tabModels: "Модели",
+    oldCopiesMoved: (n) => `Убрано в Корзину: ${n}.`, oldCopiesFailed: "Не удалось выполнить поиск.",
+    oldCopiesLeft: (n) => `Не удалось убрать: ${n}. Нажмите «Показать в Finder» и перетащите их в Корзину. Причина:`,
+    oldCopiesReveal: "Показать в Finder", tabMining: "Майнинг", tabModels: "Модели",
     modelsIntro: "Проверка моделей ИИ на этом Mac и инструменты для разработчиков. Для майнинга они не нужны.",
     settingsIntro: "Версия этого приложения и обновления.",
     installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
@@ -319,7 +321,9 @@ const copy = {
     oldCopiesTitle: "Old NIR copies", oldCopiesFind: "Find old copies", oldCopiesTrash: "Move to Trash",
     oldCopiesIntro: "Earlier NIR builds left on this Mac that show up in Launchpad. The wallet and keys are not affected.",
     oldCopiesNone: "No old copies found.", oldCopiesFound: (n) => `Old copies found: ${n}.`,
-    oldCopiesMoved: (n) => `Moved to Trash: ${n}.`, oldCopiesFailed: "The search did not work.", tabMining: "Mining", tabModels: "Models",
+    oldCopiesMoved: (n) => `Moved to Trash: ${n}.`, oldCopiesFailed: "The search did not work.",
+    oldCopiesLeft: (n) => `Could not move: ${n}. Press “Show in Finder” and drag them to the Trash. Reason:`,
+    oldCopiesReveal: "Show in Finder", tabMining: "Mining", tabModels: "Models",
     modelsIntro: "AI model checks on this Mac and developer tools. Mining does not need them.",
     settingsIntro: "This app's version and updates.",
     installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
@@ -1735,6 +1739,13 @@ setInterval(() => { if (progress.hidden) void checkConnection(); }, 5000);
 const oldCopiesFind = document.querySelector("#old-copies-find");
 const oldCopiesTrash = document.querySelector("#old-copies-trash");
 const oldCopiesState = document.querySelector("#old-copies-state");
+const oldCopiesReveal = document.querySelector("#old-copies-reveal");
+oldCopiesReveal?.addEventListener("click", async () => {
+  oldCopiesReveal.disabled = true;
+  try {
+    await fetchQwenJson("/old-copies/reveal", { method: "POST", body: "" }, 60_000);
+  } catch {} finally { oldCopiesReveal.disabled = false; }
+});
 oldCopiesFind?.addEventListener("click", async () => {
   const t = copy[locale];
   oldCopiesFind.disabled = true;
@@ -1755,8 +1766,12 @@ oldCopiesTrash?.addEventListener("click", async () => {
   try {
     const { response, data } = await fetchQwenJson("/old-copies/trash", { method: "POST", body: "" }, 120_000);
     if (!response.ok || !Array.isArray(data?.moved)) throw new Error("trash failed");
-    oldCopiesState.textContent = t.oldCopiesMoved(data.moved.length);
+    const failed = Array.isArray(data.failed) ? data.failed : [];
+    oldCopiesState.textContent = failed.length
+      ? `${t.oldCopiesMoved(data.moved.length)} ${t.oldCopiesLeft(failed.length)} ${failed[0].reason}`
+      : t.oldCopiesMoved(data.moved.length);
     oldCopiesTrash.hidden = true;
+    oldCopiesReveal.hidden = failed.length === 0;
   } catch {
     oldCopiesState.textContent = t.oldCopiesFailed;
   } finally { oldCopiesTrash.disabled = false; }

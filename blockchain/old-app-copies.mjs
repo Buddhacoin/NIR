@@ -3,7 +3,7 @@
 // Launchpad lists every one. This finds them by bundle identifier and moves
 // them to the Trash. Wallet files and keys live in Application Support, never
 // inside an app bundle, so they are not affected.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -49,17 +49,30 @@ export function findOldCopies(installedApp, { search = () => execFileSync("/usr/
   return [...found].sort();
 }
 
-// macOS keeps ~/.Trash closed to apps, so a plain rename fails there; the
-// system "move to Trash" call (the one Finder uses) is allowed. Foundation
-// is loaded in JavaScript for Automation by default.
-const TRASH_SCRIPT = `function run(argv) {
+// macOS keeps ~/.Trash closed to apps, so a plain rename fails there. First
+// the system "move to Trash" call; if macOS refuses it for this app, Finder
+// moves the copy itself (macOS may ask once to let the app control Finder).
+// Foundation is loaded in JavaScript for Automation by default.
+const SYSTEM_TRASH = `function run(argv) {
   if (!$.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError($.NSURL.fileURLWithPath(argv[0]), null, null)) {
-    throw new Error("not moved");
+    throw new Error("macOS did not move the copy");
   }
 }`;
+const FINDER_TRASH = `on run argv
+  set target to (POSIX file (item 1 of argv)) as alias
+  tell application "Finder" to delete target
+end run`;
+
+function osascript(args) {
+  const result = spawnSync("/usr/bin/osascript", args, { encoding: "utf8", timeout: 60_000 });
+  if (result.status !== 0) throw new Error((result.stderr || result.error?.message || "osascript failed").trim().slice(0, 300));
+}
 
 function systemTrash(path) {
-  execFileSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", TRASH_SCRIPT, path], { timeout: 20_000, stdio: "ignore" });
+  try {
+    osascript(["-l", "JavaScript", "-e", SYSTEM_TRASH, path]);
+  } catch {}
+  if (existsSync(path)) osascript(["-e", FINDER_TRASH, path]);
 }
 
 function renameToTrash(path, home) {
@@ -70,17 +83,32 @@ function renameToTrash(path, home) {
   renameSync(path, destination);
 }
 
-// Moves exactly the copies findOldCopies reports now to the Trash.
+// Moves exactly the copies findOldCopies reports now to the Trash and says
+// which ones stayed and why.
 export function trashOldCopies(installedApp, options = {}) {
   const home = options.home ?? homedir();
   const moveToTrash = options.moveToTrash ??
     (process.platform === "darwin" && options.home === undefined ? systemTrash : (path) => renameToTrash(path, home));
   const moved = [];
+  const failed = [];
   for (const path of findOldCopies(installedApp, options)) {
+    let reason = "the copy is still in place";
     try {
       moveToTrash(path);
-      if (!existsSync(path)) moved.push(path);
-    } catch {}
+    } catch (error) {
+      reason = String(error?.message ?? error).slice(0, 300);
+    }
+    if (existsSync(path)) failed.push({ path, reason });
+    else moved.push(path);
   }
-  return moved;
+  return { moved, failed };
+}
+
+// "Show in Finder": the copies that could not be moved, selected in Finder
+// so they can be dragged to the Trash by hand.
+export function revealOldCopies(installedApp, options = {}) {
+  const copies = findOldCopies(installedApp, options).slice(0, 20);
+  const open = options.open ?? ((path) => spawnSync("/usr/bin/open", ["-R", path], { timeout: 10_000 }));
+  for (const path of copies) open(path);
+  return copies;
 }

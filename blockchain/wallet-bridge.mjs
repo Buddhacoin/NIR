@@ -693,13 +693,15 @@ export function createWalletBridgeServer({
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
-      if (url.pathname === "/v1/old-copies" || url.pathname === "/v1/old-copies/trash") {
-        const posting = url.pathname.endsWith("/trash");
+      if (["/v1/old-copies", "/v1/old-copies/trash", "/v1/old-copies/reveal"].includes(url.pathname)) {
+        const posting = url.pathname !== "/v1/old-copies";
         if (!oldCopies || request.method !== (posting ? "POST" : "GET")) {
           return send(response, 404, { error: "old copies are not managed here" }, origin);
         }
         try {
-          return send(response, 200, posting ? { moved: oldCopies.trash() } : { copies: oldCopies.find() }, origin);
+          const value = url.pathname.endsWith("/trash") ? oldCopies.trash()
+            : url.pathname.endsWith("/reveal") ? { copies: oldCopies.reveal() } : { copies: oldCopies.find() };
+          return send(response, 200, value, origin);
         } catch {
           return send(response, 503, { error: "search unavailable" }, origin);
         }
