@@ -154,10 +154,10 @@ const copy = {
   ru: {
     settingsButton: "Настройки", settingsTitle: "Версия и обновления",
     appName: "МАЙНЕР", networkChip: "Тестовая сеть",
-    oldCopiesTitle: "Старые копии NIR", oldCopiesFind: "Найти старые копии", oldCopiesTrash: "Убрать в Корзину",
+    oldCopiesTitle: "Старые копии NIR", oldCopiesFind: "Найти старые копии", oldCopiesTrash: "Удалить старые копии",
     oldCopiesIntro: "Прежние сборки NIR, которые остались на этом Mac и видны в Launchpad. Кошелёк и ключи не затрагиваются.",
     oldCopiesNone: "Старых копий не найдено.", oldCopiesFound: (n) => `Найдено старых копий: ${n}.`,
-    oldCopiesMoved: (n) => `Убрано в Корзину: ${n}.`, oldCopiesFailed: "Не удалось выполнить поиск.",
+    oldCopiesMoved: (n) => `Удалено старых копий: ${n}.`, oldCopiesFailed: "Не удалось выполнить поиск.",
     oldCopiesLeft: (n) => `Не удалось убрать: ${n}. Нажмите «Показать в Finder» и перетащите их в Корзину. Причина:`,
     oldCopiesReveal: "Показать в Finder", tabMining: "Майнинг", tabModels: "Модели",
     modelsIntro: "Проверка моделей ИИ на этом Mac и инструменты для разработчиков. Для майнинга они не нужны.",
@@ -318,10 +318,10 @@ const copy = {
   en: {
     settingsButton: "Settings", settingsTitle: "Version and updates",
     appName: "MINER", networkChip: "Test network",
-    oldCopiesTitle: "Old NIR copies", oldCopiesFind: "Find old copies", oldCopiesTrash: "Move to Trash",
+    oldCopiesTitle: "Old NIR copies", oldCopiesFind: "Find old copies", oldCopiesTrash: "Remove old copies",
     oldCopiesIntro: "Earlier NIR builds left on this Mac that show up in Launchpad. The wallet and keys are not affected.",
     oldCopiesNone: "No old copies found.", oldCopiesFound: (n) => `Old copies found: ${n}.`,
-    oldCopiesMoved: (n) => `Moved to Trash: ${n}.`, oldCopiesFailed: "The search did not work.",
+    oldCopiesMoved: (n) => `Old copies removed: ${n}.`, oldCopiesFailed: "The search did not work.",
     oldCopiesLeft: (n) => `Could not move: ${n}. Press “Show in Finder” and drag them to the Trash. Reason:`,
     oldCopiesReveal: "Show in Finder", tabMining: "Mining", tabModels: "Models",
     modelsIntro: "AI model checks on this Mac and developer tools. Mining does not need them.",
@@ -1767,9 +1767,10 @@ oldCopiesTrash?.addEventListener("click", async () => {
     const { response, data } = await fetchQwenJson("/old-copies/trash", { method: "POST", body: "" }, 120_000);
     if (!response.ok || !Array.isArray(data?.moved)) throw new Error("trash failed");
     const failed = Array.isArray(data.failed) ? data.failed : [];
+    const removed = data.moved.length + (Array.isArray(data.deleted) ? data.deleted.length : 0);
     oldCopiesState.textContent = failed.length
-      ? `${t.oldCopiesMoved(data.moved.length)} ${t.oldCopiesLeft(failed.length)} ${failed[0].reason}`
-      : t.oldCopiesMoved(data.moved.length);
+      ? `${t.oldCopiesMoved(removed)} ${t.oldCopiesLeft(failed.length)} ${failed[0].reason}`
+      : t.oldCopiesMoved(removed);
     oldCopiesTrash.hidden = true;
     oldCopiesReveal.hidden = failed.length === 0;
   } catch {

@@ -2261,16 +2261,16 @@ document.querySelector("#old-copies-trash").addEventListener("click", async (eve
   eventTarget.disabled = true;
   try {
     document.querySelector("#old-copies-reason").textContent = "";
-    const { moved, failed = [] } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" }, 300_000);
-    state.textContent = `Убрано в Корзину: ${moved.length}.`;
+    const { moved, deleted = [], failed = [] } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" }, 300_000);
+    state.textContent = `Удалено старых копий: ${moved.length + deleted.length}.`;
     if (failed.length) {
-      state.textContent += ` Не удалось убрать: ${failed.length}. Нажмите «Показать в Finder» и перетащите их в Корзину.`;
+      state.textContent = `Удалено старых копий: ${moved.length + deleted.length}. Не удалось убрать: ${failed.length}. Нажмите «Показать в Finder» и перетащите их в Корзину.`;
       document.querySelector("#old-copies-reason").textContent = failed[0].reason;
     }
     document.querySelector("#old-copies-reveal").hidden = failed.length === 0;
     eventTarget.hidden = true;
   } catch {
-    state.textContent = "Не удалось убрать копии в Корзину.";
+    state.textContent = "Не удалось удалить старые копии.";
   } finally { eventTarget.disabled = false; }
 });
 
