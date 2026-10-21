@@ -149,8 +149,10 @@ export class PersistentDevNode {
         !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_FINALITY_PROOFS) {
       throw new Error("finality proof range is invalid");
     }
-    return this.#chain.blocks().filter(({ height }) => height > fromHeight)
-      .slice(0, limit).map(createFinalityProof);
+    // Only the requested blocks are copied, not the whole chain.
+    const to = Math.min(this.#chain.height, fromHeight + limit);
+    if (fromHeight >= to) return [];
+    return this.#chain.blockRange(fromHeight, to, limit).map(createFinalityProof);
   }
 
   transactionProof(id) {

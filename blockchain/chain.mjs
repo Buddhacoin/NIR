@@ -369,6 +369,18 @@ function normalizeRecentValidatorTransition(value, expectedHeight = null) {
   };
 }
 
+// A private deep-frozen copy: stored blocks never change after they are added.
+function frozenBlock(block) {
+  const freeze = (value) => {
+    if (value && typeof value === "object" && !Object.isFrozen(value)) {
+      for (const entry of Object.values(value)) freeze(entry);
+      Object.freeze(value);
+    }
+    return value;
+  };
+  return freeze(structuredClone(block));
+}
+
 function normalizedStateValue(value) {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Map) {
@@ -2022,7 +2034,7 @@ export class NirChain {
       })),
     };
     this.#blocks = [
-      {
+      frozenBlock({
         accountStateRoot,
         capabilityMemoryRoot: this.#capabilityMemory.stateRoot,
         certificate: [],
@@ -2043,7 +2055,7 @@ export class NirChain {
         transactionCount: 0,
         transactions: [],
         transactionsRoot,
-      },
+      }),
     ];
     this.#chainIdentityGenesisHash = this.#blocks[0].hash;
   }
@@ -3035,7 +3047,7 @@ export class NirChain {
     chain.#validators = validatorMembers;
     chain.#validatorOrder = [...validatorMembers.keys()].sort();
     chain.#quorum = Math.floor((chain.#validatorOrder.length * 2) / 3) + 1;
-    chain.#blocks = [structuredClone(snapshot.checkpoint)];
+    chain.#blocks = [frozenBlock(snapshot.checkpoint)];
     if (chain.#stateRoot() !== snapshot.stateRoot) {
       throw new Error("restored snapshot state root is invalid");
     }
@@ -3092,6 +3104,11 @@ export class NirChain {
 
   blocks() {
     return structuredClone(this.#blocks);
+  }
+
+  // Height and hash of every retained block, without copying the blocks.
+  blockSummaries() {
+    return this.#blocks.map(({ hash, height }) => ({ hash, height }));
   }
 
   blockRange(fromExclusive, toInclusive, maximum = 64) {
@@ -5782,7 +5799,9 @@ export class NirChain {
     fork.#beaconFaults = new Map(this.#beaconFaults);
     fork.#beaconGeneration = this.#beaconGeneration;
     fork.#beaconQuorum = this.#beaconQuorum;
-    fork.#blocks = structuredClone(this.#blocks);
+    // Stored blocks are frozen copies, so a fork can share them: copying every
+    // block on each fork made each new block slower as the chain grew.
+    fork.#blocks = [...this.#blocks];
     fork.#burned = this.#burned;
     fork.#candidateBonds = new Map([...this.#candidateBonds].map(([id, candidate]) => [id, {
       ...structuredClone(candidate),
@@ -7568,7 +7587,7 @@ export class NirChain {
     this.#validatorOrder = validatorOrderAfter;
     this.#quorum = Math.floor((this.#validatorOrder.length * 2) / 3) + 1;
     this.#pendingValidatorRotation = pendingValidatorRotationAfter;
-    this.#blocks.push(structuredClone(block));
+    this.#blocks.push(frozenBlock(block));
     return block.hash;
   }
 }

@@ -545,11 +545,13 @@ async function readAccount() {
       });
     }
     const trust = await bridgeRequest("/v1/trust-info");
-    if (trust.enabled && trust.tipHash && minimumHeight > trust.minimumHeight) {
-      let verifiedHeight = trust.minimumHeight;
-      while (verifiedHeight < minimumHeight) {
+    let verifiedHeight = trust.enabled && trust.tipHash ? trust.minimumHeight : null;
+    // Verifies finality exactly up to `target`. The network keeps adding
+    // blocks meanwhile, so each batch stops at the height still needed.
+    const verifyFinalityTo = async (target) => {
+      while (verifiedHeight !== null && verifiedHeight < target) {
         const finalityResponse = await fetch(nodeUrl(
-          `/v1/finality-proofs?fromHeight=${verifiedHeight}&limit=512`,
+          `/v1/finality-proofs?fromHeight=${verifiedHeight}&limit=${Math.min(512, target - verifiedHeight)}`,
         ));
         if (!finalityResponse.ok) throw new Error("finality proofs unavailable");
         const { proofs } = await finalityResponse.json();
@@ -558,18 +560,22 @@ async function readAccount() {
         }
         const verifiedChain = await bridgeRequest("/v1/verify-finality-chain", {
           method: "POST", body: JSON.stringify({ proofs }),
-        });
+        }, 120_000);
         if (!verifiedChain.verified || verifiedChain.tip.height <= verifiedHeight) {
           throw new Error("finality proof chain did not advance");
         }
         verifiedHeight = verifiedChain.tip.height;
       }
-    }
+    };
+    await verifyFinalityTo(minimumHeight);
     const proofResponse = await fetch(
       nodeUrl(`/v1/accounts/${encodeURIComponent(address)}/proof`),
     );
     if (!proofResponse.ok) throw new Error("proof unavailable");
     const proof = await proofResponse.json();
+    // A block may have been added while finality was being verified: verify
+    // up to the proof's own height so both describe the same block.
+    if (Number.isSafeInteger(proof?.height)) await verifyFinalityTo(proof.height);
     const verified = await bridgeRequest("/v1/verify-account-proof", {
       method: "POST",
       body: JSON.stringify({
@@ -2392,7 +2398,7 @@ async function nameNodeJson(path) {
   let body;
   try {
     response = await fetch(`${activeNodeUrl ?? "http://127.0.0.1:8787"}${path}`,
-      { cache: "no-store", signal: AbortSignal.timeout(5_000) });
+      { cache: "no-store", signal: AbortSignal.timeout(15_000) });
     body = await response.json();
   } catch {
     throw new Error("Сеть NIR не ответила. Откройте NIR Майнер.");
