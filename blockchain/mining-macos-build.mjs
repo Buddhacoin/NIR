@@ -40,7 +40,7 @@ blockchain/offline-release-governance.mjs blockchain/operators.mjs blockchain/pe
 blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
 blockchain/protocol-upgrade-authorization.mjs blockchain/protocol-upgrade.mjs
 blockchain/release-manifest.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
-blockchain/source-release.mjs blockchain/source-updater.mjs blockchain/update-catalog.mjs
+blockchain/old-app-copies.mjs blockchain/source-release.mjs blockchain/source-updater.mjs blockchain/update-catalog.mjs
 blockchain/update-trust-anchor.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-tree.mjs
 blockchain/transfer-state-transition.mjs blockchain/validator-admission-omission.mjs

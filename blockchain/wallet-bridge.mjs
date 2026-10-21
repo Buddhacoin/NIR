@@ -354,6 +354,7 @@ export function createWalletBridgeServer({
   appUpdater = null,
   appConnect = false,
   openMiner = null,
+  oldCopies = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -672,6 +673,17 @@ export function createWalletBridgeServer({
         simulations.clear();
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
+      }
+      if (url.pathname === "/v1/old-copies" || url.pathname === "/v1/old-copies/trash") {
+        const posting = url.pathname.endsWith("/trash");
+        if (!oldCopies || request.method !== (posting ? "POST" : "GET")) {
+          return send(response, 404, { error: "old copies are not managed here" }, origin);
+        }
+        try {
+          return send(response, 200, posting ? { moved: oldCopies.trash() } : { copies: oldCopies.find() }, origin);
+        } catch {
+          return send(response, 503, { error: "search unavailable" }, origin);
+        }
       }
       if (request.method === "POST" && url.pathname === "/v1/open-miner") {
         if (!openMiner) return send(response, 404, { error: "the miner cannot be opened from here" }, origin);

@@ -24,7 +24,7 @@ blockchain/operator-wallet-link.mjs blockchain/operator-model-receipt.mjs
 blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
 blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
-blockchain/source-release.mjs blockchain/source-updater.mjs
+blockchain/old-app-copies.mjs blockchain/source-release.mjs blockchain/source-updater.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs
 blockchain/transaction-tree.mjs blockchain/transfer-state-transition.mjs
 blockchain/update-catalog.mjs blockchain/update-trust-anchor.mjs

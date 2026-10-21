@@ -381,10 +381,16 @@ const copy = new Map(Object.entries({
   "Награды за майнинг": "Mining rewards",
   "Наград пока нет. Они появятся здесь после первой решённой задачи.": "No rewards yet. They appear here after the first solved task.",
   "неизвестна": "unknown",
+  "Найти старые копии NIR": "Find old NIR copies",
+  "Убрать в Корзину": "Move to Trash",
+  "Старых копий не найдено.": "No old copies found.",
+  "Не удалось выполнить поиск.": "The search did not work.",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
 const patterns = [
+  [/^Найдено старых копий: (\d+)\.$/, "Old copies found: $1."],
+  [/^Убрано в Корзину: (\d+)\.$/, "Moved to Trash: $1."],
   [/^Обновить не удалось\. Установленный кошелёк не изменён\. Причина: (.+)$/s, "The update failed. The installed wallet is unchanged. Reason: $1"],
   [/^Сегодня намайнено: \+(.+) NIR\. (.+)$/, (_, amount, rest) => `Mined today: +${amount} NIR. ${translateWalletText(rest, "en")}`],
   [/^● Тестовая сеть · блок (\d+)$/, "● Test network · block $1"],

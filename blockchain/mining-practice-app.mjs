@@ -16,6 +16,7 @@ import { CliqueMiningSession } from "./clique-mining-session.mjs";
 import { readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, macLauncherPid, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
+import { findOldCopies, trashOldCopies } from "./old-app-copies.mjs";
 
 // Where one-button mining keeps its local devnet and miner key.
 function defaultMiningDirectory() {
@@ -473,6 +474,24 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       } catch {
         send(400, "application/json; charset=utf-8", JSON.stringify({ error: "Invalid wallet-link proof" }));
       } finally { clearTimeout(deadline); }
+      return;
+    }
+    // Settings → Old copies: earlier NIR builds elsewhere on this Mac.
+    if (["/old-copies", "/old-copies/trash"].includes(path) && request.url === path) {
+      const posting = path === "/old-copies/trash";
+      if (!authorized(request) || request.method !== (posting ? "POST" : "GET") ||
+          (posting && (request.headers.origin !== origin || request.headers["content-length"] !== "0"))) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      const appPath = join(root, "..", "..", "..");
+      try {
+        const value = !embedded ? { copies: [], moved: [] } : posting
+          ? { moved: trashOldCopies(appPath) } : { copies: findOldCopies(appPath) };
+        send(200, "application/json; charset=utf-8", JSON.stringify(value));
+      } catch {
+        send(503, "application/json; charset=utf-8", JSON.stringify({ error: "search unavailable" }));
+      }
       return;
     }
     if (request.method === "GET" && path === "/app-update" && request.url === path) {
@@ -1115,5 +1134,6 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
   });
   Object.defineProperty(server, "localSessionToken", { value: sessionToken.toString("hex") });
   server.on("close", () => { mining.close(); });
+  server.openMiningNetwork = () => mining.open();
   return server;
 }

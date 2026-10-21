@@ -17,6 +17,7 @@ import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
 import { macLauncherPid, readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
+import { findOldCopies, trashOldCopies } from "./old-app-copies.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
@@ -288,6 +289,10 @@ async function main() {
       nativeSecurity,
       appUpdater: createWalletUpdater(),
       appConnect: true,
+      oldCopies: (() => {
+        const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
+        return { find: () => findOldCopies(appPath), trash: () => trashOldCopies(appPath) };
+      })(),
       // The Mining page's "Open NIR Майнер" button, by bundle identifier.
       openMiner: () => execFileAsync("/usr/bin/open", ["-b", "org.nir.model-lab-local-test"], { timeout: 10_000 }),
       origin,

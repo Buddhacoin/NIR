@@ -162,3 +162,5 @@ footer { margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-
 .mining-howto ol { margin:10px 0 0;padding-left:20px;font-size:13px;line-height:1.55; }
 .mining-howto li { margin-bottom:6px; }
 .tabbar:has(button[data-tab="models"][hidden]) { grid-template-columns:repeat(2,1fr); }
+#settings-page h3 { margin:20px 0 6px;font-size:15px; }
+#old-copies-state { margin-top:10px;overflow-wrap:anywhere;font-size:13px; }

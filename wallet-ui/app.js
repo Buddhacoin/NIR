@@ -2194,3 +2194,28 @@ document.querySelector("#open-miner").addEventListener("click", async (event) =>
 });
 void loadMining();
 setInterval(() => { void loadMining(); }, 15_000);
+
+// Settings → More: earlier NIR builds Launchpad still lists.
+document.querySelector("#old-copies-find").addEventListener("click", async (event) => {
+  const state = document.querySelector("#old-copies-state");
+  const trash = document.querySelector("#old-copies-trash");
+  event.currentTarget.disabled = true;
+  try {
+    const { copies } = await bridgeRequest("/v1/old-copies");
+    state.textContent = copies.length ? `Найдено старых копий: ${copies.length}.` : "Старых копий не найдено.";
+    trash.hidden = copies.length === 0;
+  } catch {
+    state.textContent = "Не удалось выполнить поиск.";
+  } finally { event.currentTarget.disabled = false; }
+});
+document.querySelector("#old-copies-trash").addEventListener("click", async (event) => {
+  const state = document.querySelector("#old-copies-state");
+  event.currentTarget.disabled = true;
+  try {
+    const { moved } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" });
+    state.textContent = `Убрано в Корзину: ${moved.length}.`;
+    event.currentTarget.hidden = true;
+  } catch {
+    state.textContent = "Не удалось выполнить поиск.";
+  } finally { event.currentTarget.disabled = false; }
+});
