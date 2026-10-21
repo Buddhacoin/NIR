@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -289,6 +289,23 @@ async function main() {
       nativeSecurity,
       appUpdater: createWalletUpdater(),
       appConnect: true,
+      // The user's own names for their accounts, kept next to the wallets.
+      accountNames: {
+        read() {
+          try {
+            const value = JSON.parse(readFileSync(join(storageRoot, "account-names.json"), "utf8"));
+            return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+          } catch {
+            return {};
+          }
+        },
+        write(address, name) {
+          const names = { ...this.read(), [address]: name };
+          const path = join(storageRoot, "account-names.json");
+          writeFileSync(`${path}.tmp`, `${JSON.stringify(names, null, 2)}\n`, { mode: 0o600 });
+          renameSync(`${path}.tmp`, path);
+        },
+      },
       oldCopies: (() => {
         const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
         return { find: () => findOldCopies(appPath), trash: () => trashOldCopies(appPath) };

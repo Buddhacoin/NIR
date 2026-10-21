@@ -1265,7 +1265,7 @@ async function connectNativeWallet() {
 
 async function renderAccounts() {
   const epoch = accountEpoch;
-  const { accounts, activeId, canCreate } = await bridgeRequest("/v1/accounts");
+  const { accounts, activeId, canCreate, canRename } = await bridgeRequest("/v1/accounts");
   if (epoch !== accountEpoch || !walletInfo || !bridgeSession) return false;
   if (!Array.isArray(accounts) || !accounts.some((account) => account.id === activeId)) {
     throw new Error("Не удалось проверить список кошельков.");
@@ -1279,18 +1279,40 @@ async function renderAccounts() {
     if (!/^[0-9a-f]{32}$/.test(account.id ?? "") || !NIR_ADDRESS.test(account.address ?? "")) {
       throw new Error("Список кошельков содержит некорректную запись.");
     }
+    const row = document.createElement("div");
+    row.className = "account-row";
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("aria-current", account.id === activeId ? "true" : "false");
+    const dot = document.createElement("i");
+    dot.className = "account-dot";
+    dot.style.background = accountColor(account.address);
     const title = document.createElement("strong");
     title.textContent = `${account.label}${account.id === activeId ? " · выбран" : ""}`;
     const detail = document.createElement("small");
-    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный файл кошелька`;
-    button.append(title, detail);
+    detail.textContent = shortAddress(account.address);
+    button.append(dot, title, detail);
     button.onclick = () => changeAccount(account.id);
-    list.append(button);
+    row.append(button);
+    if (canRename === true) {
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "account-rename";
+      rename.textContent = "Переименовать";
+      rename.onclick = () => startRename(row, account);
+      row.append(rename);
+    }
+    list.append(row);
   }
-  accountOpen.textContent = `${accounts.find((account) => account.id === activeId).label} ▾`;
+  const active = accounts.find((account) => account.id === activeId);
+  const activeName = document.querySelector("#active-account");
+  activeName.hidden = false;
+  activeName.replaceChildren();
+  const activeDot = document.createElement("i");
+  activeDot.className = "account-dot";
+  activeDot.style.background = accountColor(active.address);
+  activeName.append(activeDot, `${active.label} · ${shortAddress(active.address)}`);
+  accountOpen.textContent = `${active.label} ▾`;
   accountOpen.dataset.activeId = activeId;
   document.querySelector("#add-account").hidden = canCreate !== true;
   return true;
@@ -2219,3 +2241,48 @@ document.querySelector("#old-copies-trash").addEventListener("click", async (eve
     state.textContent = "Не удалось выполнить поиск.";
   } finally { event.currentTarget.disabled = false; }
 });
+
+// Account names (docs: account names are this Mac's own labels; the address
+// stays the account's identity and is always shown next to the name).
+function shortAddress(address) {
+  return `${address.slice(0, 10)}…${address.slice(-6)}`;
+}
+function accountColor(address) {
+  return `hsl(${parseInt(address.slice(4, 10), 16) % 360} 70% 55%)`;
+}
+function startRename(row, account) {
+  const form = document.createElement("form");
+  form.className = "account-rename-form";
+  const input = document.createElement("input");
+  input.maxLength = 64;
+  input.value = account.label;
+  input.setAttribute("aria-label", "Новое имя счёта");
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "primary";
+  save.textContent = "Сохранить";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "secondary";
+  cancel.textContent = "Отмена";
+  form.append(input, save, cancel);
+  row.replaceChildren(form);
+  input.focus();
+  input.select();
+  cancel.onclick = () => { void renderAccounts(); };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    try {
+      await bridgeRequest("/v1/rename-account", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: account.id, name: input.value }) });
+      accountsStatus.textContent = "";
+      await renderAccounts();
+    } catch (error) {
+      accountsStatus.textContent = /already has this name/.test(error.message)
+        ? "Такое имя уже есть у другого вашего счёта."
+        : "Имя не подходит: от 1 до 32 символов, без служебных знаков.";
+      save.disabled = false;
+    }
+  };
+}

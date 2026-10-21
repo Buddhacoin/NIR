@@ -269,3 +269,13 @@ dialog h2[tabindex="-1"]:focus { outline: none; }
 #wallet-update-status { color: var(--good); overflow-wrap: anywhere; }
 #wallet-apply-update { width: 100%; min-height: 44px; margin-top: 10px; border: 0; border-radius: 14px; background: var(--accent); color: var(--accent-ink); font-weight: 750; }
 .form-status { color: var(--good); }
+.active-account { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 18px; color: var(--text) !important; font-size: 13px; font-weight: 650; }
+.account-dot { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 50%; }
+.account-row { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+.account-row > button:first-child { flex: 1; display: grid; grid-template-columns: 14px 1fr; column-gap: 8px; text-align: left; }
+.account-row > button:first-child small { grid-column: 2; }
+.account-row .account-dot { align-self: center; grid-row: span 2; }
+.account-rename { flex: none; padding: 0 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); color: var(--text); font-size: 12px; }
+.account-rename-form { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.account-rename-form input { flex: 1 1 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-soft); color: var(--text); font: inherit; }
+.account-rename-form button { flex: 1; min-height: 38px; border-radius: 12px; }

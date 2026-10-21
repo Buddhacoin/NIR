@@ -385,6 +385,13 @@ const copy = new Map(Object.entries({
   "Убрать в Корзину": "Move to Trash",
   "Старых копий не найдено.": "No old copies found.",
   "Не удалось выполнить поиск.": "The search did not work.",
+  "Дайте счетам понятные имена. Имя видно только вам на этом Mac; номер счёта (адрес) остаётся прежним и показан рядом.": "Give your accounts clear names. A name is visible only to you on this Mac; the account number (address) stays the same and is shown next to it.",
+  "Переименовать": "Rename",
+  "Новое имя счёта": "New account name",
+  "Сохранить": "Save",
+  "Отмена": "Cancel",
+  "Такое имя уже есть у другого вашего счёта.": "Another of your accounts already has this name.",
+  "Имя не подходит: от 1 до 32 символов, без служебных знаков.": "That name does not fit: 1 to 32 characters, no special control characters.",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
