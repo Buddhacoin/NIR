@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 // This stages an unsigned development package. It is not a production release or AMO upload.
 const SOURCE = fileURLToPath(new URL("../wallet-ui/", import.meta.url));
 const FILES = Object.freeze([
-  "address-book.js", "app.js", "extension-background.js", "index.html",
+  "address-book.js", "address-checksum.js", "app.js", "extension-background.js", "index.html",
   "manifest.webmanifest", "nir-coin-icon.png", "nir-coin-icon.svg",
   "node-selection.js", "nodes.json", "offline-signing.js", "qr.js", "style.css",
   "submission-status.js", "sw.js", "transaction-decoder.js",

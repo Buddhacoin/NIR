@@ -74,6 +74,9 @@ static NSString *NIRTranslate(NSString *source) {
             @"Продолжить": @"Continue", @"Подключите кошелёк": @"Connect wallet",
             @"Введите эти 8 цифр в окне браузера. Это не код восстановления. Код действует 10 минут.": @"Enter these eight digits in the browser window. This is not a recovery code. The code expires in 10 minutes.",
             @"Готово": @"Done", @"Копировать код": @"Copy code", @"Приватный ключ": @"Private key",
+            @"Секретная фраза": @"Secret recovery phrase", @"Показать фразу": @"Show phrase",
+            @"Эти 24 слова — ключ ко всем вашим счетам. Запишите их на бумаге по порядку и храните отдельно от Mac. Кто узнает слова, получит доступ ко всем счетам. Не отправляйте их никому и никуда не вводите, кроме NIR Wallet. Посмотреть их снова можно в настройках кошелька по паролю.":
+                @"These 24 words are the key to all your accounts. Write them on paper in order and keep them away from this Mac. Anyone who learns them can use every account. Never send them to anyone or type them anywhere except NIR Wallet. You can view them again in the wallet settings with your password.",
             @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому.": @"This address needs BOTH the code AND an encrypted backup. The code alone cannot restore the wallet if this Mac is lost. Save the backup, preferably on separate media, and keep the code elsewhere. Every new address needs its own backup. Never send them to anyone.",
             @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.": @"This is the full private key. Anyone who sees it can use this address. Show or copy it only in a safe place.",
             @"Сохранить копию": @"Save backup", @"Копировать": @"Copy",
@@ -664,18 +667,35 @@ int main(int argc, const char *argv[]) {
             NSString *secret = [payload isKindOfClass:NSDictionary.class] ? payload[@"secret"] : nil;
             NSString *backupPath = [payload isKindOfClass:NSDictionary.class] ? payload[@"backupPath"] : nil;
             if (![secret isKindOfClass:NSString.class] || secret.length == 0 ||
-                ![@[@"recovery", @"private-key"] containsObject:kind]) return 1;
+                ![@[@"recovery", @"private-key", @"phrase"] containsObject:kind]) return 1;
             if (backupPath && (![backupPath isKindOfClass:NSString.class] ||
                 ![backupPath hasPrefix:@"/"])) return 1;
             NSApplication *app = [NSApplication sharedApplication];
             [app setActivationPolicy:NSApplicationActivationPolicyRegular];
             NSAlert *alert = [NSAlert new];
             BOOL recovery = [kind isEqualToString:@"recovery"];
-            alert.messageText = NIRTranslate(recovery ? @"Код восстановления" : @"Приватный ключ");
+            BOOL phrase = [kind isEqualToString:@"phrase"];
+            alert.messageText = NIRTranslate(recovery ? @"Код восстановления" : phrase ? @"Секретная фраза" : @"Приватный ключ");
             alert.informativeText = NIRTranslate(recovery ?
-                @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." :
+                @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." : phrase ?
+                @"Эти 24 слова — ключ ко всем вашим счетам. Запишите их на бумаге по порядку и храните отдельно от Mac. Кто узнает слова, получит доступ ко всем счетам. Не отправляйте их никому и никуда не вводите, кроме NIR Wallet. Посмотреть их снова можно в настройках кошелька по паролю." :
                 @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.");
             NSString *shown = secret;
+            if (phrase) {
+                NSArray *words = [secret componentsSeparatedByString:@" "];
+                if (words.count != 24) return 1;
+                NSMutableArray *lines = [NSMutableArray array];
+                for (NSUInteger row = 0; row < 8; row++) {
+                    NSMutableArray *cells = [NSMutableArray array];
+                    for (NSUInteger column = 0; column < 3; column++) {
+                        NSUInteger index = row + column * 8;
+                        [cells addObject:[[NSString stringWithFormat:@"%2lu. %@", (unsigned long)(index + 1), words[index]]
+                            stringByPaddingToLength:16 withString:@" " startingAtIndex:0]];
+                    }
+                    [lines addObject:[cells componentsJoinedByString:@""]];
+                }
+                shown = [lines componentsJoinedByString:@"\n"];
+            }
             if (recovery) {
                 NSArray *groups = [secret componentsSeparatedByString:@"-"];
                 if (groups.count != 8) return 1;
@@ -683,7 +703,7 @@ int main(int argc, const char *argv[]) {
                     [[groups subarrayWithRange:NSMakeRange(0, 4)] componentsJoinedByString:@"-"],
                     [[groups subarrayWithRange:NSMakeRange(4, 4)] componentsJoinedByString:@"-"]];
             }
-            NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 470, recovery ? 88 : 155)];
+            NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 470, recovery ? 88 : phrase ? 190 : 155)];
             scroll.hasVerticalScroller = YES;
             scroll.borderType = NSBezelBorder;
             NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
@@ -696,7 +716,7 @@ int main(int argc, const char *argv[]) {
             view.textContainer.widthTracksTextView = YES;
             scroll.documentView = view;
             alert.accessoryView = scroll;
-            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Показать код" : @"Показать ключ")];
+            [alert addButtonWithTitle:NIRTranslate(recovery ? @"Показать код" : phrase ? @"Показать фразу" : @"Показать ключ")];
             [alert addButtonWithTitle:NIRTranslate(recovery ? @"Отложить настройку" : @"Закрыть")];
             if (recovery && !backupPath) return 1;
             // This helper starts only after the first wizard exits. Activate

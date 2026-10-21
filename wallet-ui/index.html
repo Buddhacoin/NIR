@@ -11,7 +11,7 @@
   <main class="shell">
     <header><div class="brand"><img class="brand-logo" src="nir-coin-icon.png?v=24" alt=""><b>NIR</b></div><div class="header-actions"><button class="network" data-action="network" aria-live="polite">○ Проверяем сеть…</button><button class="gear" id="header-settings" type="button" aria-label="Настройки"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10m4 0h2M4 17h2m4 0h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button></div></header>
     <div id="home-page" data-view="home">
-    <section class="balance"><p>Общий баланс</p><h1><span id="balance-value" data-i18n-ignore>—</span> <small>NIR</small></h1><span id="wallet-state" role="status" aria-live="polite">Баланс не подтверждён</span></section>
+    <section class="balance"><p class="active-account" id="active-account" hidden data-i18n-ignore></p><p>Общий баланс</p><h1><span id="balance-value" data-i18n-ignore>—</span> <small>NIR</small></h1><span id="wallet-state" role="status" aria-live="polite">Баланс не подтверждён</span></section>
     <section class="actions">
       <button data-action="receive"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14m0 0 5-5m-5 5-5-5"/></svg></i>Получить</button><button data-action="send"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m0 0 5 5m-5-5-5 5"/></svg></i>Отправить</button><button data-action="mine"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="M18.5 16l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg></i>Майнинг</button>
     </section>
@@ -42,9 +42,9 @@
   <dialog id="accounts-panel" aria-labelledby="accounts-title">
     <button class="close" data-close="accounts-panel" aria-label="Закрыть">×</button>
     <h2 id="accounts-title">Ваши кошельки</h2>
-    <p>Каждый новый адрес имеет свой ключ, код восстановления и резервную копию. Восстановленная копия может иметь тот же адрес, но другой пароль.</p>
+    <p>Дайте счетам понятные имена. Имя видно только вам на этом Mac; номер счёта (адрес) остаётся прежним и показан рядом. Новые счета создаются из тех же 24 секретных слов, поэтому одна записанная фраза восстанавливает их все.</p>
     <div id="account-list" class="account-list" data-i18n-ignore></div>
-    <button class="secondary" id="add-account" type="button">Добавить адрес</button>
+    <button class="secondary" id="add-account" type="button">Добавить счёт</button>
     <p class="form-status" id="accounts-status" role="status" aria-live="polite"></p>
   </dialog>
   <dialog id="bridge-panel" aria-labelledby="bridge-title">
@@ -200,6 +200,8 @@
       <p id="iris-receipt-status" role="status"></p>
     </section>
     </details>
+    <button class="secondary" id="settings-phrase" type="button">Показать секретную фразу (24 слова)</button>
+    <p class="form-status" id="settings-phrase-status" role="status" aria-live="polite"></p>
     <button class="secondary" id="settings-secrets" type="button" hidden>Создать новый код восстановления</button>
     <button class="secondary" id="settings-password-change" type="button" hidden>Сменить пароль</button>
     <p>Пароль вводится только в окне macOS. Старые резервные копии и коды продолжают открывать тот же адрес.</p>
@@ -215,6 +217,9 @@
     <section class="settings-group" aria-labelledby="settings-advanced-title">
       <h3 id="settings-advanced-title">Дополнительно</h3>
       <button class="secondary" id="settings-resources" type="button">Блокировка NIR и разрешения</button>
+      <button class="secondary" id="old-copies-find" type="button">Найти старые копии NIR</button>
+      <p class="form-status" id="old-copies-state" role="status" aria-live="polite"></p>
+      <button class="secondary" id="old-copies-trash" type="button" hidden>Убрать в Корзину</button>
     </section>
     <button class="danger" id="disconnect-wallet" type="button" hidden>Отключить кошелёк</button>
   </dialog>

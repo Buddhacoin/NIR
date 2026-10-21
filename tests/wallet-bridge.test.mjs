@@ -1639,3 +1639,71 @@ test("the bridge exposes owner-signed app updates only to the paired session", a
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("accounts get the user's own names, unique among their accounts, with addresses unchanged", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-names-"));
+  const firstPath = join(directory, "first.nirvault.json");
+  const secondPath = join(directory, "second.nirvault.json");
+  const first = createWalletFile({ path: firstPath, password: "first-names-password-2026" });
+  const second = createWalletFile({ path: secondPath, password: "second-names-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  // A hand-edited file entry that breaks the rules is ignored.
+  const names = { [second.address]: "bad‮name" };
+  const server = createWalletBridgeServer({ authorize: async () => null, origin, sessionToken: token,
+    vaultPath: firstPath,
+    accounts: [{ address: first.address, path: firstPath }, { address: second.address, path: secondPath }],
+    accountNames: { read: () => ({ ...names }), write: (address, name) => { names[address] = name; } } });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const rename = (id, name) => request(`${base}/v1/rename-account`, origin, token,
+      { method: "POST", body: JSON.stringify({ id, name }) });
+    let list = await (await request(`${base}/v1/accounts`, origin, token)).json();
+    assert.equal(list.canRename, true);
+    assert.deepEqual(list.accounts.map(({ label }) => label), ["Кошелёк 1", "Кошелёк 2"]);
+    const [one, two] = list.accounts;
+    assert.equal((await rename(one.id, "  Копилка   🐷 ")).status, 200);
+    assert.equal(names[first.address], "Копилка 🐷");
+    // Another of the user's accounts cannot take the same name, in any case.
+    assert.equal((await rename(two.id, "копилка 🐷")).status, 400);
+    for (const bad of ["", " ", "a".repeat(33), "x​y", "line\nbreak"]) {
+      assert.equal((await rename(two.id, bad)).status, 400, JSON.stringify(bad));
+    }
+    assert.equal((await rename(two.id, "Майнинг")).status, 200);
+    list = await (await request(`${base}/v1/accounts`, origin, token)).json();
+    assert.deepEqual(list.accounts.map(({ label, address }) => [label, address]),
+      [["Копилка 🐷", first.address], ["Майнинг", second.address]]);
+  } finally {
+    await close(server);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the secret phrase is shown only by the Mac app and only its outcome reaches the page", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-phrase-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  createWalletFile({ path: vaultPath, password: "phrase-route-password-2026" });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  let calls = 0;
+  const server = createWalletBridgeServer({ authorize: async () => null, origin, sessionToken: token, vaultPath,
+    nativeRevealPhrase: async ({ signal }) => { calls++; assert.ok(signal); return "wrong-password"; } });
+  const plain = createWalletBridgeServer({ authorize: async () => null, origin, sessionToken: token, vaultPath });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise((resolve) => plain.listen(0, "127.0.0.1", resolve));
+    const reveal = (port, sessionToken = token) => request(`http://127.0.0.1:${port}/v1/reveal-phrase`, origin,
+      sessionToken, { method: "POST" });
+    const shown = await reveal(server.address().port);
+    assert.equal(shown.status, 200);
+    assert.deepEqual(await shown.json(), { outcome: "wrong-password" });
+    assert.equal((await reveal(server.address().port, "b".repeat(64))).status, 401);
+    assert.equal(calls, 1);
+    assert.equal((await reveal(plain.address().port)).status, 404);
+  } finally {
+    await close(server);
+    await close(plain);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

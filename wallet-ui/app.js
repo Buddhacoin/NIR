@@ -1,5 +1,6 @@
 import { normalizeNodePolicy, selectNodeHealth, transactionSubmissionUrl } from "./node-selection.js";
 import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
+import { checksumAddress, parseAddress } from "./address-checksum.js";
 import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
@@ -755,12 +756,12 @@ function renderContacts() {
     const row = document.createElement("div"); row.className = "contact-row";
     const copy = document.createElement("div");
     const label = document.createElement("b"); label.textContent = contact.label;
-    const address = document.createElement("span"); address.textContent = contact.address;
+    const address = document.createElement("span"); address.textContent = checksumAddress(contact.address);
     address.setAttribute("aria-label", `Полный адрес ${contact.address}, сеть ${contact.networkId}`);
     copy.append(label, address);
     const use = document.createElement("button"); use.type = "button"; use.className = "secondary compact"; use.textContent = "Выбрать";
     use.onclick = () => {
-      document.querySelector("#send-recipient").value = contact.address;
+      document.querySelector("#send-recipient").value = checksumAddress(contact.address);
       document.querySelector("#verified-request-note").textContent = `Контакт «${contact.label}» · сеть ${contact.networkId}`;
       contactsPanel.close();
       sendStatus.textContent = "Контакт выбран. Проверьте полный адрес и сумму перед подписью.";
@@ -1181,7 +1182,8 @@ document.querySelector("#delegation-form").addEventListener("submit", async (eve
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
   try {
-    const delegate = document.querySelector("#delegate-address").value.trim();
+    let delegate = document.querySelector("#delegate-address").value.trim();
+    try { delegate = parseAddress(delegate).address; } catch {}
     const limit = Number(document.querySelector("#delegate-limit").value);
     if (!NIR_ADDRESS.test(delegate) || delegate === walletInfo.address ||
         !Number.isSafeInteger(limit) || limit < 0 || limit > 1_000_000) {
@@ -1265,7 +1267,7 @@ async function connectNativeWallet() {
 
 async function renderAccounts() {
   const epoch = accountEpoch;
-  const { accounts, activeId, canCreate } = await bridgeRequest("/v1/accounts");
+  const { accounts, activeId, canCreate, canRename } = await bridgeRequest("/v1/accounts");
   if (epoch !== accountEpoch || !walletInfo || !bridgeSession) return false;
   if (!Array.isArray(accounts) || !accounts.some((account) => account.id === activeId)) {
     throw new Error("Не удалось проверить список кошельков.");
@@ -1279,18 +1281,40 @@ async function renderAccounts() {
     if (!/^[0-9a-f]{32}$/.test(account.id ?? "") || !NIR_ADDRESS.test(account.address ?? "")) {
       throw new Error("Список кошельков содержит некорректную запись.");
     }
+    const row = document.createElement("div");
+    row.className = "account-row";
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("aria-current", account.id === activeId ? "true" : "false");
+    const dot = document.createElement("i");
+    dot.className = "account-dot";
+    dot.style.background = accountColor(account.address);
     const title = document.createElement("strong");
     title.textContent = `${account.label}${account.id === activeId ? " · выбран" : ""}`;
     const detail = document.createElement("small");
-    detail.textContent = `${account.address.slice(0, 13)}…${account.address.slice(-8)} · отдельный файл кошелька`;
-    button.append(title, detail);
+    detail.textContent = shortAddress(account.address);
+    button.append(dot, title, detail);
     button.onclick = () => changeAccount(account.id);
-    list.append(button);
+    row.append(button);
+    if (canRename === true) {
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "account-rename";
+      rename.textContent = "Переименовать";
+      rename.onclick = () => startRename(row, account);
+      row.append(rename);
+    }
+    list.append(row);
   }
-  accountOpen.textContent = `${accounts.find((account) => account.id === activeId).label} ▾`;
+  const active = accounts.find((account) => account.id === activeId);
+  const activeName = document.querySelector("#active-account");
+  activeName.hidden = false;
+  activeName.replaceChildren();
+  const activeDot = document.createElement("i");
+  activeDot.className = "account-dot";
+  activeDot.style.background = accountColor(active.address);
+  activeName.append(activeDot, `${active.label} · ${shortAddress(active.address)}`);
+  accountOpen.textContent = `${active.label} ▾`;
   accountOpen.dataset.activeId = activeId;
   document.querySelector("#add-account").hidden = canCreate !== true;
   return true;
@@ -1415,9 +1439,11 @@ function receive() {
     receiveStatus.textContent = "Сначала дождитесь проверки сети, затем откройте получение снова.";
     return;
   }
-  document.querySelector("#receive-address").textContent = walletInfo.address;
+  // People and exchanges get the checksummed form, which catches typos.
+  const shownAddress = checksumAddress(walletInfo.address);
+  document.querySelector("#receive-address").textContent = shownAddress;
   document.querySelector("#receive-network").textContent = `Сеть: ${networkInfo.networkId}`;
-  drawQr(document.querySelector("#receive-qr"), `nir:${walletInfo.address}`, `QR публичного адреса ${walletInfo.address}; сеть ${networkInfo.networkId}`);
+  drawQr(document.querySelector("#receive-qr"), `nir:${shownAddress}`, `QR публичного адреса ${shownAddress}; сеть ${networkInfo.networkId}`);
   document.querySelector("#payment-request-result").hidden = true;
   document.querySelector("#payment-request-simulation").hidden = true;
   document.querySelector("#payment-request-form").hidden = false;
@@ -1577,8 +1603,7 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
   event.preventDefault();
   sendStatus.textContent = "Симуляция перевода с доказательством состояния…";
   try {
-    const recipient = document.querySelector("#send-recipient").value.trim();
-    if (!NIR_ADDRESS.test(recipient)) throw new Error("Адрес получателя NIR неверен.");
+    const recipient = parseAddress(document.querySelector("#send-recipient").value).address;
     if (recipient === walletInfo.address) throw new Error("Нельзя отправить перевод на тот же адрес.");
     const amount = parseNir(document.querySelector("#send-amount").value);
     const [account, quoteResponse] = await Promise.all([
@@ -2194,3 +2219,90 @@ document.querySelector("#open-miner").addEventListener("click", async (event) =>
 });
 void loadMining();
 setInterval(() => { void loadMining(); }, 15_000);
+
+// Settings → More: earlier NIR builds Launchpad still lists.
+document.querySelector("#old-copies-find").addEventListener("click", async (event) => {
+  const state = document.querySelector("#old-copies-state");
+  const trash = document.querySelector("#old-copies-trash");
+  event.currentTarget.disabled = true;
+  try {
+    const { copies } = await bridgeRequest("/v1/old-copies");
+    state.textContent = copies.length ? `Найдено старых копий: ${copies.length}.` : "Старых копий не найдено.";
+    trash.hidden = copies.length === 0;
+  } catch {
+    state.textContent = "Не удалось выполнить поиск.";
+  } finally { event.currentTarget.disabled = false; }
+});
+document.querySelector("#old-copies-trash").addEventListener("click", async (event) => {
+  const state = document.querySelector("#old-copies-state");
+  event.currentTarget.disabled = true;
+  try {
+    const { moved } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" });
+    state.textContent = `Убрано в Корзину: ${moved.length}.`;
+    event.currentTarget.hidden = true;
+  } catch {
+    state.textContent = "Не удалось выполнить поиск.";
+  } finally { event.currentTarget.disabled = false; }
+});
+
+// Account names (docs: account names are this Mac's own labels; the address
+// stays the account's identity and is always shown next to the name).
+function shortAddress(address) {
+  const shown = checksumAddress(address);
+  return `${shown.slice(0, 10)}…${shown.slice(-6)}`;
+}
+function accountColor(address) {
+  return `hsl(${parseInt(address.slice(4, 10), 16) % 360} 70% 55%)`;
+}
+function startRename(row, account) {
+  const form = document.createElement("form");
+  form.className = "account-rename-form";
+  const input = document.createElement("input");
+  input.maxLength = 64;
+  input.value = account.label;
+  input.setAttribute("aria-label", "Новое имя счёта");
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "primary";
+  save.textContent = "Сохранить";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "secondary";
+  cancel.textContent = "Отмена";
+  form.append(input, save, cancel);
+  row.replaceChildren(form);
+  input.focus();
+  input.select();
+  cancel.onclick = () => { void renderAccounts(); };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    try {
+      await bridgeRequest("/v1/rename-account", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: account.id, name: input.value }) });
+      accountsStatus.textContent = "";
+      await renderAccounts();
+    } catch (error) {
+      accountsStatus.textContent = /already has this name/.test(error.message)
+        ? "Такое имя уже есть у другого вашего счёта."
+        : "Имя не подходит: от 1 до 32 символов, без служебных знаков.";
+      save.disabled = false;
+    }
+  };
+}
+
+// Settings → the 24 secret words, shown only in the Mac window after the password.
+document.querySelector("#settings-phrase").addEventListener("click", async (event) => {
+  const status = document.querySelector("#settings-phrase-status");
+  event.currentTarget.disabled = true;
+  status.textContent = "Введите пароль в окне Mac.";
+  try {
+    const { outcome } = await bridgeRequest("/v1/reveal-phrase", { method: "POST" }, 600_000);
+    status.textContent = outcome === "shown" ? "Фраза показана в окне Mac."
+      : outcome === "wrong-password" ? "Неверный пароль. Фраза не показана."
+        : outcome === "no-phrase" ? "У этого кошелька нет секретной фразы: он создан до появления фраз. Для него действует код восстановления."
+          : "Отменено.";
+  } catch {
+    status.textContent = "Не удалось показать фразу.";
+  } finally { event.currentTarget.disabled = false; }
+});

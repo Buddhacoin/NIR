@@ -354,3 +354,31 @@ Settings button reports the running local service build identity and offers
 an update when `main` has a newer version; it then rebuilds from exactly that
 commit and swaps the app ([`docs/app-updates.md`](app-updates.md)). Each later reviewed local build
 must deliberately increase `walletBuildSequence` in `package.json`.
+
+### Checksummed addresses
+
+Wallets show and accept NIR addresses with a case checksum, in the style of
+EIP-55 (`wallet-ui/address-checksum.js`): the address stays
+`nir1` followed by 64 hex digits, and each letter is upper- or lower-case by
+one bit of SHA-256(`"NIR/ADDRESS-CASE/v1\0"` + the lower-case address). A
+mixed-case address whose case pattern does not match is refused as a typo; an
+all-lower-case address is accepted without a checksum. The chain, signatures
+and APIs keep using the lower-case address, so exchanges and other wallets can
+validate the checksum without any protocol change.
+
+## One secret phrase, many accounts
+
+A new NIR Wallet on a Mac makes one 24-word secret phrase
+(`blockchain/wallet-seed-accounts.mjs`). Every account comes from it:
+account *n* is `walletFromMnemonic(phrase, n)` and is kept as its own
+password-encrypted vault, so "Add account" needs only the wallet password and
+no new backup. The phrase itself is stored on the Mac only encrypted under the
+wallet password (scrypt N=32768, r=8, p=1 and AES-256-GCM, bound to the first
+account's address) in `Seed/seed.nirseed.json`.
+
+Settings → "Show secret phrase" asks for the password in a Mac dialog and
+shows the words in the Mac window only; the page receives just the outcome
+(`POST /v1/reveal-phrase`). On a fresh Mac the setup offers "Restore from 24
+words": the first account comes back at once and "Add account" brings back the
+next ones in the same order. Wallets made before phrases keep their recovery
+code and encrypted backup.

@@ -153,7 +153,11 @@ async function fetchQwenJson(path, options = {}) {
 const copy = {
   ru: {
     settingsButton: "Настройки", settingsTitle: "Версия и обновления",
-    appName: "МАЙНЕР", networkChip: "Тестовая сеть", tabMining: "Майнинг", tabModels: "Модели",
+    appName: "МАЙНЕР", networkChip: "Тестовая сеть",
+    oldCopiesTitle: "Старые копии NIR", oldCopiesFind: "Найти старые копии", oldCopiesTrash: "Убрать в Корзину",
+    oldCopiesIntro: "Прежние сборки NIR, которые остались на этом Mac и видны в Launchpad. Кошелёк и ключи не затрагиваются.",
+    oldCopiesNone: "Старых копий не найдено.", oldCopiesFound: (n) => `Найдено старых копий: ${n}.`,
+    oldCopiesMoved: (n) => `Убрано в Корзину: ${n}.`, oldCopiesFailed: "Не удалось выполнить поиск.", tabMining: "Майнинг", tabModels: "Модели",
     modelsIntro: "Проверка моделей ИИ на этом Mac и инструменты для разработчиков. Для майнинга они не нужны.",
     settingsIntro: "Версия этого приложения и обновления.",
     installedVersionLabel: "Версия:", installedBuildLabel: "Заявленный локальный ID (не проверен):",
@@ -311,7 +315,11 @@ const copy = {
   },
   en: {
     settingsButton: "Settings", settingsTitle: "Version and updates",
-    appName: "MINER", networkChip: "Test network", tabMining: "Mining", tabModels: "Models",
+    appName: "MINER", networkChip: "Test network",
+    oldCopiesTitle: "Old NIR copies", oldCopiesFind: "Find old copies", oldCopiesTrash: "Move to Trash",
+    oldCopiesIntro: "Earlier NIR builds left on this Mac that show up in Launchpad. The wallet and keys are not affected.",
+    oldCopiesNone: "No old copies found.", oldCopiesFound: (n) => `Old copies found: ${n}.`,
+    oldCopiesMoved: (n) => `Moved to Trash: ${n}.`, oldCopiesFailed: "The search did not work.", tabMining: "Mining", tabModels: "Models",
     modelsIntro: "AI model checks on this Mac and developer tools. Mining does not need them.",
     settingsIntro: "This app's version and updates.",
     installedVersionLabel: "Version:", installedBuildLabel: "Declared local ID (not verified):",
@@ -1722,3 +1730,34 @@ void checkConnection();
 void loadQwenRuntime();
 void loadProviderRegistry();
 setInterval(() => { if (progress.hidden) void checkConnection(); }, 5000);
+
+// Settings → Old copies: earlier NIR builds Launchpad still lists.
+const oldCopiesFind = document.querySelector("#old-copies-find");
+const oldCopiesTrash = document.querySelector("#old-copies-trash");
+const oldCopiesState = document.querySelector("#old-copies-state");
+oldCopiesFind?.addEventListener("click", async () => {
+  const t = copy[locale];
+  oldCopiesFind.disabled = true;
+  try {
+    const { response, data } = await fetchQwenJson("/old-copies", { cache: "no-store" });
+    if (!response.ok || !Array.isArray(data?.copies)) throw new Error("search failed");
+    oldCopiesState.textContent = data.copies.length
+      ? `${t.oldCopiesFound(data.copies.length)} ${data.copies.map((path) => path.split("/").slice(-2).join("/")).join(", ")}`
+      : t.oldCopiesNone;
+    oldCopiesTrash.hidden = data.copies.length === 0;
+  } catch {
+    oldCopiesState.textContent = t.oldCopiesFailed;
+  } finally { oldCopiesFind.disabled = false; }
+});
+oldCopiesTrash?.addEventListener("click", async () => {
+  const t = copy[locale];
+  oldCopiesTrash.disabled = true;
+  try {
+    const { response, data } = await fetchQwenJson("/old-copies/trash", { method: "POST", body: "" });
+    if (!response.ok || !Array.isArray(data?.moved)) throw new Error("trash failed");
+    oldCopiesState.textContent = t.oldCopiesMoved(data.moved.length);
+    oldCopiesTrash.hidden = true;
+  } catch {
+    oldCopiesState.textContent = t.oldCopiesFailed;
+  } finally { oldCopiesTrash.disabled = false; }
+});

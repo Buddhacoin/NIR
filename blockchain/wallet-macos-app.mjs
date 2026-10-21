@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -14,9 +14,11 @@ import { changeLocalTestWalletPassword, listLocalTestWallets,
   renewLocalTestRecoveryCode } from "./wallet-onboarding.mjs";
 import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
-import { macLauncherPid, readUpdateRecord, runBuilder, SourceUpdater, startSwap, UPDATE_RECORD,
+import { macLauncherPid, readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
+import { findOldCopies, trashOldCopies } from "./old-app-copies.mjs";
+import { hasLocalSeed, revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
@@ -109,6 +111,39 @@ function showNativeRecoveryCode(secret, backupPath, signal) {
     child.stdin.on("error", reject);
     child.stdin.end(JSON.stringify({ kind: "recovery", secret, backupPath }));
   });
+}
+
+// Settings → "Show secret phrase": the 24 words, after the wallet password,
+// in the Mac window only. Wallets made before phrases have none.
+async function nativeRevealPhrase({ signal }) {
+  const english = await nativeLanguage() === "en";
+  const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
+  if (!hasLocalSeed(storageRoot)) return "no-phrase";
+  const cancelLabel = english ? "Cancel" : "Отмена";
+  const continueLabel = english ? "Show" : "Показать";
+  try {
+    const password = await nativeDialog(`on run argv\n set answer to display dialog (item 1 of argv) default answer "" with hidden answer buttons {(item 2 of argv), (item 3 of argv)} default button (item 3 of argv)\n return text returned of answer\nend run`,
+      [english ? "Enter the wallet password to show the 24 secret words. Make sure nobody sees the screen."
+        : "Введите пароль кошелька, чтобы показать 24 секретных слова. Убедитесь, что экран никто не видит.",
+      cancelLabel, continueLabel], signal);
+    if (signal?.aborted) return "cancelled";
+    let phrase = revealLocalSeedPhrase({ storageRoot, password });
+    const executable = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
+    await new Promise((resolve, reject) => {
+      const child = spawn(executable, ["--show-secret"], { stdio: ["pipe", "ignore", "ignore"], signal });
+      child.once("error", reject);
+      child.once("close", resolve);
+      child.stdin.on("error", reject);
+      child.stdin.end(JSON.stringify({ kind: "phrase", secret: phrase }));
+    });
+    phrase = "";
+    return "shown";
+  } catch (error) {
+    if (signal?.aborted || String(error?.message ?? "").includes("User canceled") ||
+        String(error?.message ?? "").includes("-128")) return "cancelled";
+    if (error?.message === "wallet password is incorrect") return "wrong-password";
+    throw new Error("the secret phrase could not be shown");
+  }
 }
 
 async function nativeSecurity({ vaultPath, signal }) {
@@ -217,6 +252,7 @@ function createWalletUpdater() {
   const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
   let record = null;
   try { record = readUpdateRecord(fileURLToPath(new URL(`../../${UPDATE_RECORD}`, import.meta.url))); } catch {}
+  removePreviousVersions(appPath);
   return new SourceUpdater({
     appPath, record, trustedAddress: pinnedUpdateSignerAddress,
     sourceDirectory: join(homedir(), "Library", "Application Support", "NIR Updates", "wallet.git"),
@@ -287,6 +323,28 @@ async function main() {
       nativeSecurity,
       appUpdater: createWalletUpdater(),
       appConnect: true,
+      nativeRevealPhrase,
+      // The user's own names for their accounts, kept next to the wallets.
+      accountNames: {
+        read() {
+          try {
+            const value = JSON.parse(readFileSync(join(storageRoot, "account-names.json"), "utf8"));
+            return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+          } catch {
+            return {};
+          }
+        },
+        write(address, name) {
+          const names = { ...this.read(), [address]: name };
+          const path = join(storageRoot, "account-names.json");
+          writeFileSync(`${path}.tmp`, `${JSON.stringify(names, null, 2)}\n`, { mode: 0o600 });
+          renameSync(`${path}.tmp`, path);
+        },
+      },
+      oldCopies: (() => {
+        const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
+        return { find: () => findOldCopies(appPath), trash: () => trashOldCopies(appPath) };
+      })(),
       // The Mining page's "Open NIR Майнер" button, by bundle identifier.
       openMiner: () => execFileAsync("/usr/bin/open", ["-b", "org.nir.model-lab-local-test"], { timeout: 10_000 }),
       origin,

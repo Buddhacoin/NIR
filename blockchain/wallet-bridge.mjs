@@ -63,7 +63,20 @@ const MAX_SIMULATIONS = 128;
 const SIMULATION_LIFETIME_MS = 120_000;
 const SIGN_CONFIRMATION_TIMEOUT_MS = 120_000;
 const SIGN_RESULT_LIFETIME_MS = 180_000;
+// A user's own name for one of their accounts: any language, at most 32
+// characters, no control, formatting or direction characters.
+export function cleanAccountName(value) {
+  if (typeof value !== "string") throw new Error("account name is invalid");
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)) throw new Error("account name is invalid");
+  const name = value.normalize("NFC").replace(/ +/gu, " ").trim();
+  if (!name || [...name].length > 32) {
+    throw new Error("account name is invalid");
+  }
+  return name;
+}
+
 const SAFE_CLIENT_ERRORS = new Set([
+  "account name is invalid", "another account already has this name",
   "bridge request is too large", "pairing code is invalid",
   "pairing is unavailable; restart the bridge",
   "another pairing request is already in progress",
@@ -354,6 +367,9 @@ export function createWalletBridgeServer({
   appUpdater = null,
   appConnect = false,
   openMiner = null,
+  oldCopies = null,
+  accountNames = null,
+  nativeRevealPhrase = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -487,6 +503,10 @@ export function createWalletBridgeServer({
   let pairingPending = false;
   let securityPending = false;
   let appConnectPending = false;
+  // Names come from a local file; anything that does not pass the rules is ignored.
+  const storedAccountName = (address) => {
+    try { return cleanAccountName(accountNames?.read()[address]); } catch { return null; }
+  };
   let lastAppConnectAt = 0;
   let securityController = null;
   let sessionActive = pairingCode === undefined;
@@ -673,6 +693,33 @@ export function createWalletBridgeServer({
         signResults.clear();
         return send(response, 200, { disconnected: true }, origin);
       }
+      if (url.pathname === "/v1/old-copies" || url.pathname === "/v1/old-copies/trash") {
+        const posting = url.pathname.endsWith("/trash");
+        if (!oldCopies || request.method !== (posting ? "POST" : "GET")) {
+          return send(response, 404, { error: "old copies are not managed here" }, origin);
+        }
+        try {
+          return send(response, 200, posting ? { moved: oldCopies.trash() } : { copies: oldCopies.find() }, origin);
+        } catch {
+          return send(response, 503, { error: "search unavailable" }, origin);
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/reveal-phrase") {
+        if (!nativeRevealPhrase) return send(response, 404, { error: "the secret phrase is shown only in the Mac app" }, origin);
+        if (securityPending || pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        securityPending = true;
+        securityController = new AbortController();
+        try {
+          // The words appear only in the Mac window; only the outcome comes back.
+          const outcome = await nativeRevealPhrase({ signal: securityController.signal });
+          return send(response, 200, { outcome }, origin);
+        } finally {
+          securityPending = false;
+          securityController = null;
+        }
+      }
       if (request.method === "POST" && url.pathname === "/v1/open-miner") {
         if (!openMiner) return send(response, 404, { error: "the miner cannot be opened from here" }, origin);
         try {
@@ -729,9 +776,29 @@ export function createWalletBridgeServer({
           activeId: activeAccountId,
           canCreate: Boolean(createAccount),
           accounts: [...accountEntries].map(([id, entry], index) => ({
-            id, address: entry.address, label: `Кошелёк ${index + 1}`,
+            id, address: entry.address,
+            label: storedAccountName(entry.address) ?? `Кошелёк ${index + 1}`,
           })),
+          canRename: Boolean(accountNames),
         }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/rename-account") {
+        if (!accountNames) return send(response, 404, { error: "account names are unavailable" }, origin);
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("account rename requires application/json");
+        }
+        const body = await readAuthenticatedBody(512);
+        if (!body || Object.keys(body).sort().join(",") !== "id,name" ||
+            !/^[0-9a-f]{32}$/.test(body.id ?? "") || !accountEntries.has(body.id)) {
+          throw new Error("account name is invalid");
+        }
+        const name = cleanAccountName(body.name);
+        const { address } = accountEntries.get(body.id);
+        const taken = [...accountEntries.values()].some((entry) => entry.address !== address &&
+          storedAccountName(entry.address)?.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+        if (taken) throw new Error("another account already has this name");
+        accountNames.write(address, name);
+        return send(response, 200, { id: body.id, address, label: name }, origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/select-account") {
         if (pending || securityPending) return send(response, 409, { error: "finish the pending wallet action before switching" }, origin);

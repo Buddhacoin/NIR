@@ -24,7 +24,7 @@ blockchain/operator-wallet-link.mjs blockchain/operator-model-receipt.mjs
 blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
 blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
-blockchain/source-release.mjs blockchain/source-updater.mjs
+blockchain/old-app-copies.mjs blockchain/source-release.mjs blockchain/source-updater.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs
 blockchain/transaction-tree.mjs blockchain/transfer-state-transition.mjs
 blockchain/update-catalog.mjs blockchain/update-trust-anchor.mjs
@@ -38,11 +38,11 @@ blockchain/wallet-backup-export-check.mjs blockchain/wallet-bridge.mjs blockchai
 blockchain/wallet-macos-app.mjs blockchain/wallet-macos-setup.mjs
 blockchain/wallet-macos-notices.mjs
 blockchain/wallet-onboarding.mjs blockchain/wallet-preview-cli.mjs
-blockchain/wallet-seed.mjs
+blockchain/wallet-seed.mjs blockchain/wallet-seed-accounts.mjs
 blockchain/wallet-trust-store.mjs wallet-ui/node-selection.js
 `.trim().split(/\s+/));
 const UI_FILES = Object.freeze(`
-address-book.js app.js i18n.js extension-background.js index.html manifest.json manifest.webmanifest
+address-book.js address-checksum.js app.js i18n.js extension-background.js index.html manifest.json manifest.webmanifest
 nir-coin-icon.png nir-coin-icon.svg node-selection.js nodes.json offline-signing.js qr.js
 style.css submission-status.js sw.js transaction-decoder.js
 `.trim().split(/\s+/).map((name) => `wallet-ui/${name}`));

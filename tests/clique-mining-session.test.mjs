@@ -23,6 +23,10 @@ test("one-button mining pays the linked wallet and sends the miner key's coins t
     tickMs: 20 });
   try {
     assert.throws(() => session.withdraw(), /no linked wallet/);
+    // Opening the network alone starts blocks without mining.
+    const opened = session.open();
+    assert.equal(opened.running, false);
+    assert.ok(opened.network.height > 0);
     linked = wallet;
     session.start();
     await until(() => session.status().found >= 1, 150_000);

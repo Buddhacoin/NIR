@@ -137,6 +137,13 @@ export class CliqueMiningSession {
     });
   }
 
+  // Opens the local network without mining, so NIR Wallet can read balances
+  // whenever the miner app is open.
+  open() {
+    this.#prepare();
+    return this.status();
+  }
+
   start() {
     if (this.#running) return this.status();
     this.#running = true;
