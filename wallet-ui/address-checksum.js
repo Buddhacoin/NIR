@@ -1,5 +1,5 @@
 // Checksummed NIR addresses for people and exchanges, in the style of
-// Ethereum's EIP-55: the address stays `nir1` + 64 hex digits, and each hex
+// EIP-55: the address stays `nir1` + 64 hex digits, and each hex
 // letter is printed upper- or lower-case by one bit of
 // SHA-256("NIR/ADDRESS-CASE/v1\0" + lower-case address). A mistyped letter
 // or digit then almost never matches the case pattern. The chain and every

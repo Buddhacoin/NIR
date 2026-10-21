@@ -358,7 +358,7 @@ must deliberately increase `walletBuildSequence` in `package.json`.
 ### Checksummed addresses
 
 Wallets show and accept NIR addresses with a case checksum, in the style of
-Ethereum's EIP-55 (`wallet-ui/address-checksum.js`): the address stays
+EIP-55 (`wallet-ui/address-checksum.js`): the address stays
 `nir1` followed by 64 hex digits, and each letter is upper- or lower-case by
 one bit of SHA-256(`"NIR/ADDRESS-CASE/v1\0"` + the lower-case address). A
 mixed-case address whose case pattern does not match is refused as a typo; an
