@@ -49,18 +49,37 @@ export function findOldCopies(installedApp, { search = () => execFileSync("/usr/
   return [...found].sort();
 }
 
+// macOS keeps ~/.Trash closed to apps, so a plain rename fails there; the
+// system "move to Trash" call (the one Finder uses) is allowed.
+const TRASH_SCRIPT = `ObjC.import("Foundation");
+function run(argv) {
+  if (!$.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError($.NSURL.fileURLWithPath(argv[0]), null, null)) {
+    throw new Error("not moved");
+  }
+}`;
+
+function systemTrash(path) {
+  execFileSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", TRASH_SCRIPT, path], { timeout: 20_000, stdio: "ignore" });
+}
+
+function renameToTrash(path, home) {
+  const trash = join(home, ".Trash");
+  mkdirSync(trash, { recursive: true });
+  let destination = join(trash, basename(path));
+  for (let n = 2; existsSync(destination); n++) destination = join(trash, `${basename(path, ".app")} ${n}.app`);
+  renameSync(path, destination);
+}
+
 // Moves exactly the copies findOldCopies reports now to the Trash.
 export function trashOldCopies(installedApp, options = {}) {
   const home = options.home ?? homedir();
-  const trash = join(home, ".Trash");
-  mkdirSync(trash, { recursive: true });
+  const moveToTrash = options.moveToTrash ??
+    (process.platform === "darwin" && options.home === undefined ? systemTrash : (path) => renameToTrash(path, home));
   const moved = [];
   for (const path of findOldCopies(installedApp, options)) {
-    let destination = join(trash, basename(path));
-    for (let n = 2; existsSync(destination); n++) destination = join(trash, `${basename(path, ".app")} ${n}.app`);
     try {
-      renameSync(path, destination);
-      moved.push(path);
+      moveToTrash(path);
+      if (!existsSync(path)) moved.push(path);
     } catch {}
   }
   return moved;

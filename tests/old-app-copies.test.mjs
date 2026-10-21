@@ -35,3 +35,20 @@ test("old NIR copies go to the Trash; installed apps and other apps stay", () =>
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a copy counts as moved only once it has left its folder", () => {
+  const home = mkdtempSync(join(tmpdir(), "nir-old-copies-system-"));
+  try {
+    const installed = app(join(home, "Applications", "NIR", "NIR Wallet.app"), "org.nir.wallet-setup-test");
+    const stuck = app(join(home, "Desktop", "NIR Wallet old.app"), "org.nir.wallet-setup-test");
+    const gone = app(join(home, "Desktop", "NIR Miner old.app"), "org.nir.model-lab-local-test");
+    const seen = [];
+    const moved = trashOldCopies(installed, { home, search: () => [installed, stuck, gone],
+      moveToTrash: (path) => { seen.push(path); if (path === stuck) throw new Error("not moved"); rmSync(path, { recursive: true }); } });
+    assert.deepEqual(seen.sort(), [gone, stuck].sort());
+    assert.deepEqual(moved, [gone]);
+    assert.ok(existsSync(stuck));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

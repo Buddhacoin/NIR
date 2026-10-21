@@ -403,6 +403,10 @@ const copy = new Map(Object.entries({
   "Не удалось показать фразу.": "The phrase could not be shown.",
   "Дайте счетам понятные имена. Имя видно только вам на этом Mac; номер счёта (адрес) остаётся прежним и показан рядом. Новые счета создаются из тех же 24 секретных слов, поэтому одна записанная фраза восстанавливает их все.": "Give accounts names that are easy to remember. Only you see the name, on this Mac; the account number (address) stays the same and is shown next to it. New accounts come from the same 24 secret words, so one written-down phrase restores them all.",
   "Добавить счёт": "Add account",
+  "Не удалось убрать копии в Корзину.": "Old copies could not be moved to the Trash.",
+  "Этот счёт создан до появления 24 слов, и из слов его получить нельзя. Нажмите «Создать 24 слова»: появится новый счёт из 24 слов. Потом переведите на него NIR со старого счёта.": "This account was made before 24-word phrases, and it cannot be derived from words. Press “Create 24 words”: a new account made from 24 words appears. Then send your NIR from the old account to it.",
+  "Создать 24 слова": "Create 24 words",
+  "Продолжите в окне Mac…": "Continue in the Mac window…",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
