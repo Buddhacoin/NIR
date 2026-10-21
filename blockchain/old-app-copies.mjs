@@ -4,7 +4,7 @@
 // them to the Trash. Wallet files and keys live in Application Support, never
 // inside an app bundle, so they are not affected.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -49,39 +49,20 @@ export function findOldCopies(installedApp, { search = () => execFileSync("/usr/
   return [...found].sort();
 }
 
-// macOS keeps ~/.Trash closed to apps, so a plain rename fails there. First
-// the system "move to Trash" call; if macOS refuses it for this app, Finder
-// moves the copy itself (macOS may ask once to let the app control Finder).
-// Foundation is loaded in JavaScript for Automation by default.
+// macOS keeps ~/.Trash closed to apps, so a plain rename fails there; the
+// system "move to Trash" call is used instead (Foundation is loaded in
+// JavaScript for Automation by default). Finder is never asked: it shows its
+// own error windows, for example for copies kept in iCloud Drive.
 const SYSTEM_TRASH = `function run(argv) {
   if (!$.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError($.NSURL.fileURLWithPath(argv[0]), null, null)) {
-    throw new Error("macOS did not move the copy");
+    throw new Error("macOS did not move the copy to the Trash");
   }
 }`;
-// "target" is a Finder property name, so the variable is called oldCopy.
-const FINDER_TRASH = `on run argv
-  set oldCopy to (POSIX file (item 1 of argv)) as alias
-  tell application "Finder" to delete oldCopy
-end run`;
-
-function osascript(args) {
-  const result = spawnSync("/usr/bin/osascript", args, { encoding: "utf8", timeout: 60_000 });
-  if (result.status !== 0) throw new Error((result.stderr || result.error?.message || "osascript failed").trim().slice(0, 300));
-}
 
 function systemTrash(path) {
-  let systemError = null;
-  try {
-    osascript(["-l", "JavaScript", "-e", SYSTEM_TRASH, path]);
-  } catch (error) {
-    systemError = error;
-  }
-  if (!existsSync(path)) return;
-  try {
-    osascript(["-e", FINDER_TRASH, path]);
-  } catch (error) {
-    throw new Error(`${error.message}${systemError ? ` · ${systemError.message}` : ""}`.slice(0, 300));
-  }
+  const result = spawnSync("/usr/bin/osascript", ["-l", "JavaScript", "-e", SYSTEM_TRASH, path],
+    { encoding: "utf8", timeout: 60_000 });
+  if (result.status !== 0) throw new Error((result.stderr || result.error?.message || "osascript failed").trim().slice(0, 300));
 }
 
 function renameToTrash(path, home) {
@@ -92,25 +73,35 @@ function renameToTrash(path, home) {
   renameSync(path, destination);
 }
 
-// Moves exactly the copies findOldCopies reports now to the Trash and says
-// which ones stayed and why.
+// Removes exactly the copies findOldCopies reports now: to the Trash when
+// macOS allows it, otherwise deleted at once. They are only old NIR app
+// bundles; wallet files and keys never live inside them.
 export function trashOldCopies(installedApp, options = {}) {
   const home = options.home ?? homedir();
   const moveToTrash = options.moveToTrash ??
     (process.platform === "darwin" && options.home === undefined ? systemTrash : (path) => renameToTrash(path, home));
+  const remove = options.remove ?? ((path) => rmSync(path, { recursive: true, force: true }));
   const moved = [];
+  const deleted = [];
   const failed = [];
   for (const path of findOldCopies(installedApp, options)) {
-    let reason = "the copy is still in place";
     try {
       moveToTrash(path);
+    } catch {}
+    if (!existsSync(path)) {
+      moved.push(path);
+      continue;
+    }
+    let reason = "the copy is still in place";
+    try {
+      remove(path);
     } catch (error) {
       reason = String(error?.message ?? error).slice(0, 300);
     }
     if (existsSync(path)) failed.push({ path, reason });
-    else moved.push(path);
+    else deleted.push(path);
   }
-  return { moved, failed };
+  return { moved, deleted, failed };
 }
 
 // "Show in Finder": the copies that could not be moved, selected in Finder

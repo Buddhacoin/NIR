@@ -408,14 +408,17 @@ const copy = new Map(Object.entries({
   "Создать 24 слова": "Create 24 words",
   "Продолжите в окне Mac…": "Continue in the Mac window…",
   "Показать в Finder": "Show in Finder",
+  "Удалить старые копии": "Remove old copies",
+  "Не удалось удалить старые копии.": "Old copies could not be removed.",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
 const patterns = [
   [/^Найдено старых копий: (\d+)\.$/, "Old copies found: $1."],
   [/^Убрано в Корзину: (\d+)\.$/, "Moved to Trash: $1."],
-  [/^Убрано в Корзину: (\d+)\. Не удалось убрать: (\d+)\. Нажмите «Показать в Finder» и перетащите их в Корзину\.$/,
-    "Moved to Trash: $1. Could not move: $2. Press “Show in Finder” and drag them to the Trash."],
+  [/^Удалено старых копий: (\d+)\.$/, "Old copies removed: $1."],
+  [/^Удалено старых копий: (\d+)\. Не удалось убрать: (\d+)\. Нажмите «Показать в Finder» и перетащите их в Корзину\.$/,
+    "Old copies removed: $1. Could not remove: $2. Press “Show in Finder” and drag them to the Trash."],
   [/^Обновить не удалось\. Установленный кошелёк не изменён\. Причина: (.+)$/s, "The update failed. The installed wallet is unchanged. Reason: $1"],
   [/^Сегодня намайнено: \+(.+) NIR\. (.+)$/, (_, amount, rest) => `Mined today: +${amount} NIR. ${translateWalletText(rest, "en")}`],
   [/^● Тестовая сеть · блок (\d+)$/, "● Test network · block $1"],

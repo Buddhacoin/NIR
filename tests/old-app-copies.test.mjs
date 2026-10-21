@@ -27,6 +27,7 @@ test("old NIR copies go to the Trash; installed apps and other apps stay", () =>
     const result = trashOldCopies(miner, { home, search });
     assert.deepEqual(result.moved.sort(), [oldLab, oldWallet].sort());
     assert.deepEqual(result.failed, []);
+    assert.deepEqual(result.deleted, []);
     for (const kept of [wallet, miner, stranger]) assert.ok(existsSync(kept), kept);
     assert.equal(existsSync(oldWallet), false);
     assert.deepEqual(readdirSync(join(home, ".Trash")).sort(), ["NIR Model Lab-before.app", "NIR Wallet-2026-10-01.app"]);
@@ -47,14 +48,30 @@ test("a copy counts as moved only once it has left its folder", () => {
     const seen = [];
     const search = () => [installed, stuck, gone];
     const result = trashOldCopies(installed, { home, search,
-      moveToTrash: (path) => { seen.push(path); if (path === stuck) throw new Error("Finder refused"); rmSync(path, { recursive: true }); } });
+      moveToTrash: (path) => { seen.push(path); if (path === stuck) throw new Error("not moved"); rmSync(path, { recursive: true }); },
+      remove: () => { throw new Error("not removed"); } });
     assert.deepEqual(seen.sort(), [gone, stuck].sort());
-    assert.deepEqual(result, { moved: [gone], failed: [{ path: stuck, reason: "Finder refused" }] });
+    assert.deepEqual(result, { moved: [gone], deleted: [], failed: [{ path: stuck, reason: "not removed" }] });
     assert.ok(existsSync(stuck));
     // What stayed can be shown in Finder to drag to the Trash by hand.
     const opened = [];
     assert.deepEqual(revealOldCopies(installed, { home, search: () => [installed, stuck], open: (path) => opened.push(path) }), [stuck]);
     assert.deepEqual(opened, [stuck]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a copy the Trash refuses is deleted at once", () => {
+  const home = mkdtempSync(join(tmpdir(), "nir-old-copies-delete-"));
+  try {
+    const installed = app(join(home, "Applications", "NIR", "NIR Wallet.app"), "org.nir.wallet-setup-test");
+    const cloudCopy = app(join(home, "Desktop", "NIR Wallet cloud.app"), "org.nir.wallet-setup-test");
+    const result = trashOldCopies(installed, { home, search: () => [installed, cloudCopy],
+      moveToTrash: () => { throw new Error("not moved"); } });
+    assert.deepEqual(result, { moved: [], deleted: [cloudCopy], failed: [] });
+    assert.equal(existsSync(cloudCopy), false);
+    assert.ok(existsSync(installed));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
