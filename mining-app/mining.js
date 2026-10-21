@@ -15,7 +15,7 @@ const field = (id) => document.querySelector(`#mining-${id}`);
 const copy = {
   ru: {
     title: "Майнинг NIR", badge: "ТЕСТОВАЯ СЕТЬ", levelLabel: "УРОВЕНЬ", taskLabel: "Задача",
-    checkedLabel: "ПРОВЕРЕНО", foundLabel: "НАЙДЕНО КЛИК", walletLabel: "БАЛАНС", heightLabel: "блок",
+    checkedLabel: "ПРОВЕРЕНО", foundLabel: "НАЙДЕНО КЛИК", walletLabel: "БАЛАНС", walletLabelLinked: "В NIR WALLET", heightLabel: "блок",
     connect: "Подключить NIR Wallet", connectOther: "Подключить другой кошелёк",
     howtoTitle: "Как это работает?",
     howto1: "Каждые ~10 минут сеть сама придумывает головоломку: паутину из точек и линий. Никто не знает её заранее.",
@@ -44,7 +44,7 @@ const copy = {
   },
   en: {
     title: "NIR mining", badge: "TEST NETWORK", levelLabel: "LEVEL", taskLabel: "Task",
-    checkedLabel: "CHECKED", foundLabel: "CLIQUES FOUND", walletLabel: "BALANCE", heightLabel: "block",
+    checkedLabel: "CHECKED", foundLabel: "CLIQUES FOUND", walletLabel: "BALANCE", walletLabelLinked: "IN NIR WALLET", heightLabel: "block",
     connect: "Connect NIR Wallet", connectOther: "Connect another wallet",
     howtoTitle: "How does it work?",
     howto1: "About every 10 minutes the network makes up a puzzle by itself: a web of dots and lines. Nobody knows it in advance.",
@@ -152,7 +152,8 @@ function render() {
   field("wallet").textContent = nir(status.wallet?.balance ?? status.miner?.balance);
   field("height").textContent = status.network ? String(status.network.height) : "—";
   recipientNote.textContent = status.wallet ? t.linked(status.wallet.address) : t.unlinked;
-  withdraw.hidden = !status.wallet || !status.miner;
+  withdraw.hidden = !status.wallet || status.miner?.canSend !== true;
+  field("walletLabel").textContent = status.wallet ? t.walletLabelLinked : t.walletLabel;
   events.replaceChildren(...(status.events ?? []).slice(-6).reverse().map((event) => {
     const item = document.createElement("li");
     const stamp = document.createElement("time");

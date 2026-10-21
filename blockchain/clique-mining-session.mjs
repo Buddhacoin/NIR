@@ -226,7 +226,10 @@ export class CliqueMiningSession {
       events: [...this.#events],
       found: this.#found,
       lastClique: this.#lastClique,
-      miner: this.#miner ? { address: this.#miner.address, balance: formatNir(balanceOf(this.#miner.address)) } : null,
+      miner: this.#miner ? { address: this.#miner.address, balance: formatNir(balanceOf(this.#miner.address)),
+        // Rewards go straight to the wallet; only what the miner key holds
+        // beyond its working reserve can be sent.
+        canSend: balanceOf(this.#miner.address) > MINER_RESERVE + MIN_TRANSFER_FEE } : null,
       network: view ? { height: view.height, level: view.level, openTasks: view.openTasks.length,
         pendingRewards: view.pendingRewards, walletPort: this.#server ? this.#httpPort : null } : null,
       running: this.#running,
