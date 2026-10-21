@@ -8,7 +8,7 @@ import test from "node:test";
 import { createKey, pinnedSignerInSource, signRelease } from "../blockchain/app-release-cli.mjs";
 import { generateWallet } from "../blockchain/crypto.mjs";
 import { createSourceRelease, verifySourceRelease } from "../blockchain/source-release.mjs";
-import { buildUpdateRecord, readUpdateRecord, SourceUpdater, startSwap } from "../blockchain/source-updater.mjs";
+import { buildUpdateRecord, macLauncherPid, readUpdateRecord, SourceUpdater, startSwap } from "../blockchain/source-updater.mjs";
 
 function readUpdateRecordFrom(directory, record) {
   const path = join(directory, "NIR-UPDATE.json");
@@ -193,6 +193,28 @@ test("the swap waits for the app to quit, keeps the previous app, and reopens", 
     assert.equal(readFileSync(opened, "utf8").trim(), target);
     assert.equal(readFileSync(join(target, "version"), "utf8"), "new");
     assert.equal(readFileSync(join(backup, "version"), "utf8"), "old");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the launcher is found whether the runner forks Node (miner) or execs it (wallet)", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-launcher-"));
+  try {
+    const app = "/Applications/NIR Wallet.app";
+    // pid: [command, parent]
+    const table = { 50: [`${app}/Contents/MacOS/launcher`, 1], 60: [`${app}/Contents/MacOS/mining-runner`, 50],
+      1: ["/sbin/launchd", 0], 70: ["/bin/zsh", 1] };
+    const ps = join(directory, "ps");
+    writeFileSync(ps, `#!/bin/sh
+case "$2" in comm=) field=0 ;; *) field=1 ;; esac
+case "$4" in
+${Object.entries(table).map(([pid, row]) => `  ${pid}) [ $field = 0 ] && echo "${row[0]}" || echo ${row[1]} ;;`).join("\n")}
+esac
+`, { mode: 0o755 });
+    assert.equal(macLauncherPid(app, { ps, parentPid: 50 }), 50);
+    assert.equal(macLauncherPid(app, { ps, parentPid: 60 }), 50);
+    assert.throws(() => macLauncherPid(app, { ps, parentPid: 70 }), /could not be identified/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -266,3 +266,6 @@ dialog h2[tabindex="-1"]:focus { outline: none; }
 .mining-rewards li:first-child { border-top: 0; }
 .mining-rewards li span { color: var(--muted); }
 .mining-rewards li b { color: var(--good); }
+#wallet-update-status { color: var(--good); overflow-wrap: anywhere; }
+#wallet-apply-update { width: 100%; min-height: 44px; margin-top: 10px; border: 0; border-radius: 14px; background: var(--accent); color: var(--accent-ink); font-weight: 750; }
+.form-status { color: var(--good); }
