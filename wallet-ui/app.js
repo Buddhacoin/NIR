@@ -1379,7 +1379,7 @@ document.querySelector("#add-account").onclick = async (event) => {
   const session = bridgeSession;
   const button = event.currentTarget;
   button.disabled = true;
-  accountsStatus.textContent = "Создайте ключ и сохраните его резервную копию в приложении…";
+  accountsStatus.textContent = "Продолжите в окне Mac…";
   try {
     await bridgeRequest("/v1/create-account", { method: "POST", body: "{}" }, 600_000);
     if (bridgeSession !== session) return;
@@ -2226,7 +2226,7 @@ document.querySelector("#old-copies-find").addEventListener("click", async (even
   const trash = document.querySelector("#old-copies-trash");
   event.currentTarget.disabled = true;
   try {
-    const { copies } = await bridgeRequest("/v1/old-copies");
+    const { copies } = await bridgeRequest("/v1/old-copies", {}, 60_000);
     state.textContent = copies.length ? `Найдено старых копий: ${copies.length}.` : "Старых копий не найдено.";
     trash.hidden = copies.length === 0;
   } catch {
@@ -2237,11 +2237,11 @@ document.querySelector("#old-copies-trash").addEventListener("click", async (eve
   const state = document.querySelector("#old-copies-state");
   event.currentTarget.disabled = true;
   try {
-    const { moved } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" });
+    const { moved } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" }, 120_000);
     state.textContent = `Убрано в Корзину: ${moved.length}.`;
     event.currentTarget.hidden = true;
   } catch {
-    state.textContent = "Не удалось выполнить поиск.";
+    state.textContent = "Не удалось убрать копии в Корзину.";
   } finally { event.currentTarget.disabled = false; }
 });
 
@@ -2300,9 +2300,19 @@ document.querySelector("#settings-phrase").addEventListener("click", async (even
     const { outcome } = await bridgeRequest("/v1/reveal-phrase", { method: "POST" }, 600_000);
     status.textContent = outcome === "shown" ? "Фраза показана в окне Mac."
       : outcome === "wrong-password" ? "Неверный пароль. Фраза не показана."
-        : outcome === "no-phrase" ? "У этого кошелька нет секретной фразы: он создан до появления фраз. Для него действует код восстановления."
+        : outcome === "no-phrase" ? "Этот счёт создан до появления 24 слов, и из слов его получить нельзя. Нажмите «Создать 24 слова»: появится новый счёт из 24 слов. Потом переведите на него NIR со старого счёта."
           : "Отменено.";
+    document.querySelector("#settings-phrase-create").hidden = outcome !== "no-phrase";
   } catch {
     status.textContent = "Не удалось показать фразу.";
   } finally { event.currentTarget.disabled = false; }
+});
+
+// A wallet made before phrases: "Add account" creates the 24 words and the
+// first account from them.
+document.querySelector("#settings-phrase-create").addEventListener("click", (event) => {
+  event.currentTarget.hidden = true;
+  document.querySelector("#settings-phrase-status").textContent = "";
+  if (!accountsPanel.open) accountsPanel.showModal();
+  document.querySelector("#add-account").click();
 });

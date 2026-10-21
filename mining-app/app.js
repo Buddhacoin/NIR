@@ -121,9 +121,9 @@ async function irisCommitHash(bytes) {
   return `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-async function fetchQwenJson(path, options = {}) {
+async function fetchQwenJson(path, options = {}, timeoutMs = 10_000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(path, { ...options,
       headers: { ...options.headers, ...sessionHeaders() }, signal: controller.signal });
@@ -1739,7 +1739,7 @@ oldCopiesFind?.addEventListener("click", async () => {
   const t = copy[locale];
   oldCopiesFind.disabled = true;
   try {
-    const { response, data } = await fetchQwenJson("/old-copies", { cache: "no-store" });
+    const { response, data } = await fetchQwenJson("/old-copies", { cache: "no-store" }, 60_000);
     if (!response.ok || !Array.isArray(data?.copies)) throw new Error("search failed");
     oldCopiesState.textContent = data.copies.length
       ? `${t.oldCopiesFound(data.copies.length)} ${data.copies.map((path) => path.split("/").slice(-2).join("/")).join(", ")}`
@@ -1753,7 +1753,7 @@ oldCopiesTrash?.addEventListener("click", async () => {
   const t = copy[locale];
   oldCopiesTrash.disabled = true;
   try {
-    const { response, data } = await fetchQwenJson("/old-copies/trash", { method: "POST", body: "" });
+    const { response, data } = await fetchQwenJson("/old-copies/trash", { method: "POST", body: "" }, 120_000);
     if (!response.ok || !Array.isArray(data?.moved)) throw new Error("trash failed");
     oldCopiesState.textContent = t.oldCopiesMoved(data.moved.length);
     oldCopiesTrash.hidden = true;
