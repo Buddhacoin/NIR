@@ -447,4 +447,10 @@ test("wallet app build bundles every module the app imports", () => {
   }
   assert.ok(seen.has("blockchain/source-updater.mjs"));
   for (const relative of seen) assert.ok(files.has(relative), relative);
+  // The build refuses any bundled module that loads code at run time.
+  for (const relative of files) {
+    if (!relative.endsWith(".mjs")) continue;
+    const text = readFileSync(new URL(relative, root), "utf8").replace(/require\("node:http"\)/g, "");
+    assert.doesNotMatch(text, /\bimport\s*\(|\brequire\s*\(/, relative);
+  }
 });

@@ -407,12 +407,15 @@ const copy = new Map(Object.entries({
   "Этот счёт создан до появления 24 слов, и из слов его получить нельзя. Нажмите «Создать 24 слова»: появится новый счёт из 24 слов. Потом переведите на него NIR со старого счёта.": "This account was made before 24-word phrases, and it cannot be derived from words. Press “Create 24 words”: a new account made from 24 words appears. Then send your NIR from the old account to it.",
   "Создать 24 слова": "Create 24 words",
   "Продолжите в окне Mac…": "Continue in the Mac window…",
+  "Показать в Finder": "Show in Finder",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));
 const patterns = [
   [/^Найдено старых копий: (\d+)\.$/, "Old copies found: $1."],
   [/^Убрано в Корзину: (\d+)\.$/, "Moved to Trash: $1."],
+  [/^Убрано в Корзину: (\d+)\. Не удалось убрать: (\d+)\. Нажмите «Показать в Finder» и перетащите их в Корзину\.$/,
+    "Moved to Trash: $1. Could not move: $2. Press “Show in Finder” and drag them to the Trash."],
   [/^Обновить не удалось\. Установленный кошелёк не изменён\. Причина: (.+)$/s, "The update failed. The installed wallet is unchanged. Reason: $1"],
   [/^Сегодня намайнено: \+(.+) NIR\. (.+)$/, (_, amount, rest) => `Mined today: +${amount} NIR. ${translateWalletText(rest, "en")}`],
   [/^● Тестовая сеть · блок (\d+)$/, "● Test network · block $1"],

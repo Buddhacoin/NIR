@@ -2237,8 +2237,13 @@ document.querySelector("#old-copies-trash").addEventListener("click", async (eve
   const state = document.querySelector("#old-copies-state");
   event.currentTarget.disabled = true;
   try {
-    const { moved } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" }, 120_000);
+    const { moved, failed = [] } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" }, 300_000);
     state.textContent = `Убрано в Корзину: ${moved.length}.`;
+    if (failed.length) {
+      state.textContent += ` Не удалось убрать: ${failed.length}. Нажмите «Показать в Finder» и перетащите их в Корзину.`;
+      document.querySelector("#old-copies-reason").textContent = failed[0].reason;
+    }
+    document.querySelector("#old-copies-reveal").hidden = failed.length === 0;
     event.currentTarget.hidden = true;
   } catch {
     state.textContent = "Не удалось убрать копии в Корзину.";
@@ -2315,4 +2320,9 @@ document.querySelector("#settings-phrase-create").addEventListener("click", (eve
   document.querySelector("#settings-phrase-status").textContent = "";
   if (!accountsPanel.open) accountsPanel.showModal();
   document.querySelector("#add-account").click();
+});
+document.querySelector("#old-copies-reveal").addEventListener("click", async (event) => {
+  event.currentTarget.disabled = true;
+  try { await bridgeRequest("/v1/old-copies/reveal", { method: "POST" }, 60_000); }
+  catch {} finally { event.currentTarget.disabled = false; }
 });
