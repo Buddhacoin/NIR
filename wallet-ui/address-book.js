@@ -1,3 +1,5 @@
+import { parseAddress } from "./address-checksum.js";
+
 export const ADDRESS_PATTERN = /^nir1[0-9a-f]{64}$/;
 const NETWORK_PATTERN = /^[a-zA-Z0-9._:-]{3,128}$/;
 const CONTACT_LABEL_MAX = 64;
@@ -17,7 +19,11 @@ function cleanLabel(value) {
 
 export function normalizeContact(value, now = Date.now()) {
   if (!value || typeof value !== "object") fail("Контакт имеет неверный формат.");
-  const address = typeof value.address === "string" ? value.address.trim().toLowerCase() : "";
+  // A checksummed address must be typed right; an all-lower-case one has no checksum.
+  let address = "";
+  try { address = parseAddress(value.address).address; } catch (error) {
+    if (/опечатка/.test(error.message)) fail(error.message);
+  }
   const networkId = typeof value.networkId === "string" ? value.networkId.trim() : "";
   if (!ADDRESS_PATTERN.test(address)) fail("Адрес контакта NIR неверен.");
   if (!NETWORK_PATTERN.test(networkId)) fail("Сеть контакта неверна.");

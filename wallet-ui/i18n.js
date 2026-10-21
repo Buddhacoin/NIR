@@ -392,6 +392,8 @@ const copy = new Map(Object.entries({
   "Отмена": "Cancel",
   "Такое имя уже есть у другого вашего счёта.": "Another of your accounts already has this name.",
   "Имя не подходит: от 1 до 32 символов, без служебных знаков.": "That name does not fit: 1 to 32 characters, no special control characters.",
+  "Адрес NIR неверен.": "The NIR address is invalid.",
+  "В адресе опечатка: контрольная сумма не сходится. Скопируйте адрес заново.": "The address has a typo: its checksum does not match. Copy the address again.",
 }));
 
 const reverse = new Map([...copy].map(([ru, en]) => [en, ru]));

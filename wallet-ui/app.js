@@ -1,5 +1,6 @@
 import { normalizeNodePolicy, selectNodeHealth, transactionSubmissionUrl } from "./node-selection.js";
 import { ADDRESS_PATTERN, readAddressBook, removeAddressBookContact, saveAddressBookContact } from "./address-book.js";
+import { checksumAddress, parseAddress } from "./address-checksum.js";
 import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
@@ -755,12 +756,12 @@ function renderContacts() {
     const row = document.createElement("div"); row.className = "contact-row";
     const copy = document.createElement("div");
     const label = document.createElement("b"); label.textContent = contact.label;
-    const address = document.createElement("span"); address.textContent = contact.address;
+    const address = document.createElement("span"); address.textContent = checksumAddress(contact.address);
     address.setAttribute("aria-label", `Полный адрес ${contact.address}, сеть ${contact.networkId}`);
     copy.append(label, address);
     const use = document.createElement("button"); use.type = "button"; use.className = "secondary compact"; use.textContent = "Выбрать";
     use.onclick = () => {
-      document.querySelector("#send-recipient").value = contact.address;
+      document.querySelector("#send-recipient").value = checksumAddress(contact.address);
       document.querySelector("#verified-request-note").textContent = `Контакт «${contact.label}» · сеть ${contact.networkId}`;
       contactsPanel.close();
       sendStatus.textContent = "Контакт выбран. Проверьте полный адрес и сумму перед подписью.";
@@ -1181,7 +1182,8 @@ document.querySelector("#delegation-form").addEventListener("submit", async (eve
   const button = event.currentTarget.querySelector("button");
   button.disabled = true;
   try {
-    const delegate = document.querySelector("#delegate-address").value.trim();
+    let delegate = document.querySelector("#delegate-address").value.trim();
+    try { delegate = parseAddress(delegate).address; } catch {}
     const limit = Number(document.querySelector("#delegate-limit").value);
     if (!NIR_ADDRESS.test(delegate) || delegate === walletInfo.address ||
         !Number.isSafeInteger(limit) || limit < 0 || limit > 1_000_000) {
@@ -1437,9 +1439,11 @@ function receive() {
     receiveStatus.textContent = "Сначала дождитесь проверки сети, затем откройте получение снова.";
     return;
   }
-  document.querySelector("#receive-address").textContent = walletInfo.address;
+  // People and exchanges get the checksummed form, which catches typos.
+  const shownAddress = checksumAddress(walletInfo.address);
+  document.querySelector("#receive-address").textContent = shownAddress;
   document.querySelector("#receive-network").textContent = `Сеть: ${networkInfo.networkId}`;
-  drawQr(document.querySelector("#receive-qr"), `nir:${walletInfo.address}`, `QR публичного адреса ${walletInfo.address}; сеть ${networkInfo.networkId}`);
+  drawQr(document.querySelector("#receive-qr"), `nir:${shownAddress}`, `QR публичного адреса ${shownAddress}; сеть ${networkInfo.networkId}`);
   document.querySelector("#payment-request-result").hidden = true;
   document.querySelector("#payment-request-simulation").hidden = true;
   document.querySelector("#payment-request-form").hidden = false;
@@ -1599,8 +1603,7 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
   event.preventDefault();
   sendStatus.textContent = "Симуляция перевода с доказательством состояния…";
   try {
-    const recipient = document.querySelector("#send-recipient").value.trim();
-    if (!NIR_ADDRESS.test(recipient)) throw new Error("Адрес получателя NIR неверен.");
+    const recipient = parseAddress(document.querySelector("#send-recipient").value).address;
     if (recipient === walletInfo.address) throw new Error("Нельзя отправить перевод на тот же адрес.");
     const amount = parseNir(document.querySelector("#send-amount").value);
     const [account, quoteResponse] = await Promise.all([
@@ -2245,7 +2248,8 @@ document.querySelector("#old-copies-trash").addEventListener("click", async (eve
 // Account names (docs: account names are this Mac's own labels; the address
 // stays the account's identity and is always shown next to the name).
 function shortAddress(address) {
-  return `${address.slice(0, 10)}…${address.slice(-6)}`;
+  const shown = checksumAddress(address);
+  return `${shown.slice(0, 10)}…${shown.slice(-6)}`;
 }
 function accountColor(address) {
   return `hsl(${parseInt(address.slice(4, 10), 16) % 360} 70% 55%)`;

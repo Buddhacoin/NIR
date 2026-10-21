@@ -354,3 +354,14 @@ Settings button reports the running local service build identity and offers
 an update when `main` has a newer version; it then rebuilds from exactly that
 commit and swaps the app ([`docs/app-updates.md`](app-updates.md)). Each later reviewed local build
 must deliberately increase `walletBuildSequence` in `package.json`.
+
+### Checksummed addresses
+
+Wallets show and accept NIR addresses with a case checksum, in the style of
+Ethereum's EIP-55 (`wallet-ui/address-checksum.js`): the address stays
+`nir1` followed by 64 hex digits, and each letter is upper- or lower-case by
+one bit of SHA-256(`"NIR/ADDRESS-CASE/v1\0"` + the lower-case address). A
+mixed-case address whose case pattern does not match is refused as a typo; an
+all-lower-case address is accepted without a checksum. The chain, signatures
+and APIs keep using the lower-case address, so exchanges and other wallets can
+validate the checksum without any protocol change.
