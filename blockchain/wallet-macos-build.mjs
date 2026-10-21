@@ -38,7 +38,7 @@ blockchain/wallet-backup-export-check.mjs blockchain/wallet-bridge.mjs blockchai
 blockchain/wallet-macos-app.mjs blockchain/wallet-macos-setup.mjs
 blockchain/wallet-macos-notices.mjs
 blockchain/wallet-onboarding.mjs blockchain/wallet-preview-cli.mjs
-blockchain/wallet-seed.mjs blockchain/wallet-seed-accounts.mjs
+blockchain/wallet-seed.mjs blockchain/wallet-seed-accounts.mjs blockchain/miner-network-trust.mjs
 blockchain/wallet-trust-store.mjs wallet-ui/node-selection.js
 `.trim().split(/\s+/));
 const UI_FILES = Object.freeze(`
