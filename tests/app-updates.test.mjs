@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -168,16 +168,18 @@ test("with a release authority pinned, only its signed releases on main are inst
   }
 });
 
-test("the swap waits for the app to quit, keeps the previous app, and reopens", async () => {
+test("the swap keeps the app folder, so shortcuts and the Dock open the new version", async () => {
   const directory = mkdtempSync(join(tmpdir(), "nir-app-swap-"));
   try {
     const target = join(directory, "NIR Wallet.app");
-    const staged = join(directory, ".nir-update-x", "NIR Wallet.app");
-    const backup = join(directory, ".nir-update-x", "previous NIR Wallet.app");
-    mkdirSync(target);
-    writeFileSync(join(target, "version"), "old");
-    mkdirSync(staged, { recursive: true });
-    writeFileSync(join(staged, "version"), "new");
+    const staged = join(directory, ".nir-update-xY12zW", "NIR Wallet.app");
+    const backup = join(directory, ".nir-update-xY12zW", "previous NIR Wallet.app");
+    mkdirSync(join(target, "Contents"), { recursive: true });
+    writeFileSync(join(target, "Contents", "version"), "old");
+    mkdirSync(join(staged, "Contents"), { recursive: true });
+    writeFileSync(join(staged, "Contents", "version"), "new");
+    // Finder aliases and the Dock follow the folder's identity.
+    const identity = statSync(target).ino;
     const opened = join(directory, "opened");
     const opener = join(directory, "open.sh");
     writeFileSync(opener, `#!/bin/sh\necho "$1" > "${opened}"\n`, { mode: 0o755 });
@@ -187,12 +189,16 @@ test("the swap waits for the app to quit, keeps the previous app, and reopens", 
       signal: (pid) => { signalled = pid; setTimeout(() => app.kill(), 200); } });
     assert.equal(signalled, app.pid);
     // Nothing moves while the app is still running.
-    assert.equal(readFileSync(join(target, "version"), "utf8"), "old");
+    assert.equal(readFileSync(join(target, "Contents", "version"), "utf8"), "old");
     const deadline = Date.now() + 10_000;
     while (!existsSync(opened) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(readFileSync(opened, "utf8").trim(), target);
-    assert.equal(readFileSync(join(target, "version"), "utf8"), "new");
-    assert.equal(readFileSync(join(backup, "version"), "utf8"), "old");
+    assert.equal(readFileSync(join(target, "Contents", "version"), "utf8"), "new");
+    assert.equal(statSync(target).ino, identity);
+    assert.equal(readFileSync(join(backup, "Contents", "version"), "utf8"), "old");
+    assert.equal(existsSync(staged), false);
+    // The next start of the updated app removes the rollback copy.
+    assert.equal(removePreviousVersions(target), 1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

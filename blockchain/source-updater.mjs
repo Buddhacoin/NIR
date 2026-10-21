@@ -78,17 +78,26 @@ export function macLauncherPid(appPath, { ps = "/bin/ps", parentPid = process.pp
   return launcher;
 }
 
-// Waits for the launcher to exit, swaps the apps, and opens the result. The
-// previous app is kept at `backup`; a failed swap reopens it.
+// Waits for the launcher to exit, swaps the bundle's contents, and opens the
+// result. The previous contents are kept at `backup`; a failed swap restores
+// and reopens them.
 export const SWAP_SCRIPT = `launcher="$1"; target="$2"; staged="$3"; backup="$4"; opener="$5"
 i=0
 while kill -0 "$launcher" 2>/dev/null; do
   i=$((i + 1)); [ "$i" -gt 600 ] && exit 1
   sleep 0.1
 done
-if mv "$target" "$backup"; then
-  if mv "$staged" "$target"; then "$opener" "$target"; exit 0; fi
-  mv "$backup" "$target"
+# Swap what is inside the bundle, not the bundle folder itself: Finder
+# aliases, the Dock and Launchpad follow the folder, so they keep pointing at
+# the installed app and open the new version.
+if mkdir "$backup" && mv "$target/Contents" "$backup/Contents"; then
+  if mv "$staged/Contents" "$target/Contents"; then
+    touch "$target"
+    rmdir "$staged" 2>/dev/null
+    "$opener" "$target"
+    exit 0
+  fi
+  mv "$backup/Contents" "$target/Contents"
 fi
 "$opener" "$target"
 `;
