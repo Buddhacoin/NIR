@@ -2,7 +2,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { parseConsensusJson } from "./consensus-json.mjs";
-import { nativeAssetId } from "./chain.mjs";
+import { formatNir, nativeAssetId } from "./chain.mjs";
+import { nameCommitment, namePrice, nameProblem } from "./name-registry.mjs";
 import { TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION } from "./constants.mjs";
 import { validateProtocolUpgradeReleaseAnchor } from "./protocol-upgrade-authorization.mjs";
 
@@ -13,6 +14,7 @@ import {
   signWalletResourceOperation,
   signWalletTransfer,
   walletPublicInfo,
+  signWalletNameOperations,
 } from "./wallet-files.mjs";
 import { verifyPaymentRequest } from "./payment-request.mjs";
 import { simulateWalletOperation } from "./transaction-simulation.mjs";
@@ -104,6 +106,7 @@ const SAFE_CLIENT_ERRORS = new Set([
   "v36 transfer requires a trusted genesis checkpoint",
   "v36 transfer requires a trusted release anchor",
   "wallet account changed during the request",
+  "name request is invalid", "name request is pending or already used",
 ]);
 
 function publicBridgeError(error) {
@@ -929,6 +932,70 @@ export function createWalletBridgeServer({
           resultEntry.value = { error: publicBridgeError(error) };
           resultEntry.completedAt = Date.now();
           throw error;
+        } finally { pending = false; }
+      }
+      // Account names (docs/names.md). The bridge makes the secret salt, shows
+      // the name and its burned price in the Mac window, and signs every
+      // transaction of the operation after one password.
+      if (request.method === "POST" && url.pathname === "/v1/sign-name") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("name request is invalid");
+        }
+        const body = await readAuthenticatedBody(1_024);
+        const action = body?.action;
+        const keys = Object.keys(body ?? {}).sort().join(",");
+        const common = "action,chainIdentityGenesisHash,networkId,nonce,requestId";
+        if (!body || Array.isArray(body) || !["register", "release", "transfer"].includes(action) ||
+            keys !== (action === "register" ? `${common},name`.split(",").sort().join(",")
+              : action === "transfer" ? `${common},recipient`.split(",").sort().join(",") : common) ||
+            (action === "register" && nameProblem(body.name) !== null) ||
+            (action === "transfer" && (!ADDRESS.test(body.recipient ?? "") || body.recipient === walletAddress)) ||
+            !/^[0-9a-f]{64}$/.test(body.chainIdentityGenesisHash ?? "") ||
+            typeof body.networkId !== "string" || body.networkId.length === 0 || body.networkId.length > 128 ||
+            !Number.isSafeInteger(body.nonce) || body.nonce < 0 || !REQUEST_ID.test(body.requestId ?? "")) {
+          throw new Error("name request is invalid");
+        }
+        if (pending || seen.has(body.requestId)) {
+          return send(response, 409, { error: "name request is pending or already used" }, origin);
+        }
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const expectedPath = activeVaultPath;
+        const signingGeneration = sessionGeneration;
+        pending = true;
+        try {
+          const authorizationAbort = new AbortController();
+          let timeout;
+          const password = await Promise.race([
+            authorize({ type: `name-${action}`, address: expectedAddress, networkId: body.networkId,
+              requestId: body.requestId,
+              ...(action === "register" ? { name: body.name, price: formatNir(namePrice(body.name)).replace(/\.?0+ NIR$/u, " NIR") } : {}),
+              ...(action === "transfer" ? { recipient: body.recipient } : {}) },
+            { signal: authorizationAbort.signal }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => {
+                authorizationAbort.abort();
+                reject(new Error("signing was rejected by the user"));
+              }, SIGN_CONFIRMATION_TIMEOUT_MS);
+            }),
+          ]).finally(() => clearTimeout(timeout));
+          if (typeof password !== "string") throw new Error("signing was rejected by the user");
+          if (!sessionActive || signingGeneration !== sessionGeneration ||
+              walletAddress !== expectedAddress || activeVaultPath !== expectedPath) {
+            throw new Error("wallet account changed during the request");
+          }
+          const base = { networkId: body.networkId, chainIdentityGenesisHash: body.chainIdentityGenesisHash };
+          const salt = randomBytes(32).toString("hex");
+          const operations = action === "register" ? [
+            { ...base, nonce: body.nonce, type: "name-commit", commitment: nameCommitment({
+              name: body.name, networkId: body.networkId, owner: expectedAddress, salt }) },
+            { ...base, nonce: body.nonce + 1, type: "name-register", name: body.name, salt },
+          ] : [{ ...base, nonce: body.nonce, type: `name-${action}`,
+            ...(action === "transfer" ? { recipient: body.recipient } : {}) }];
+          const transactions = signWalletNameOperations({ path: expectedPath, password, operations,
+            expectedAddress });
+          return send(response, 200, { requestId: body.requestId, transactions }, origin);
         } finally { pending = false; }
       }
       if (request.method === "POST" && url.pathname === "/v1/sign-local-iris-receipt") {

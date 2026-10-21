@@ -37,7 +37,7 @@ blockchain/genesis-ceremony.mjs blockchain/http-client.mjs blockchain/http-ingre
 blockchain/light-client.mjs blockchain/memory.mjs blockchain/node-service.mjs
 blockchain/node-store.mjs blockchain/offline-release-bundle.mjs
 blockchain/offline-release-governance.mjs blockchain/operators.mjs blockchain/peer-registry.mjs
-blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
+blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs blockchain/name-registry.mjs
 blockchain/protocol-upgrade-authorization.mjs blockchain/protocol-upgrade.mjs
 blockchain/release-manifest.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
 blockchain/old-app-copies.mjs blockchain/source-release.mjs blockchain/source-updater.mjs blockchain/update-catalog.mjs

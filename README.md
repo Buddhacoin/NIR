@@ -63,6 +63,7 @@ The next milestone is independent operators running validator, beacon, and archi
 | Review the planned AI-agent authority model | [`docs/agent-mandates.md`](docs/agent-mandates.md) |
 | Try mining safely on a Mac | [`docs/miner-quickstart-macos.md`](docs/miner-quickstart-macos.md) and `npm run mine:wizard` |
 | Mine network clique tasks on a local devnet (protocol v37; no public network) | `npm run node:init-dev -- <dir> --proof-mining`, `npm run node:serve -- <dir>`, `npm run mine:clique -- --wallet <file>`; see [`docs/proof-mining.md`](docs/proof-mining.md) |
+| Give an address a name such as `sasha.nir` (protocol v38; local devnet) | NIR Wallet → Settings → Name on the network; see [`docs/names.md`](docs/names.md) |
 | Understand intelligence verification | [`docs/intelligence-verification-flow.md`](docs/intelligence-verification-flow.md) |
 | Follow every user feature step by step | [`docs/user-journeys.md`](docs/user-journeys.md) |
 | Understand mining roles and economics | [`docs/mining.md`](docs/mining.md) |

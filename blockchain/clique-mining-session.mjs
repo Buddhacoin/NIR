@@ -9,7 +9,7 @@ import { MIN_TRANSFER_FEE } from "./constants.mjs";
 import { generateWallet } from "./crypto.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
 import { createDeveloperNodeHttpServer } from "./node-service.mjs";
-import { initializeDevnet, PersistentDevNode } from "./node-store.mjs";
+import { initializeDevnet, LATEST_DEVNET_PROTOCOL_VERSION, PersistentDevNode } from "./node-store.mjs";
 import { PROOF_MINING_V1 } from "./proof-mining-state.mjs";
 
 // One-button mining for an app (docs/proof-mining.md): a valueless local
@@ -73,6 +73,11 @@ export class CliqueMiningSession {
     }
     this.#releaseLock = acquireDataDirectoryLock(directory);
     this.#node = new PersistentDevNode(directory);
+    // A network made by an earlier version moves to the current protocol.
+    if (this.#node.proofMiningEnabled && this.#node.protocolVersion < LATEST_DEVNET_PROTOCOL_VERSION) {
+      this.#event("network-upgrade");
+      this.#node.upgradeTo(LATEST_DEVNET_PROTOCOL_VERSION);
+    }
     this.#timer = setInterval(() => {
       try { this.#node.tick(); } catch (error) { this.#event("network-error", { message: error.message }); }
     }, this.#tickMs);

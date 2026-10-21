@@ -20,6 +20,7 @@ import {
   MIN_PROTOCOL_UPGRADE_DELAY_BLOCKS,
   MIN_TRANSFER_FEE,
   PROOF_MINING_PROTOCOL_VERSION,
+  NAME_REGISTRY_PROTOCOL_VERSION,
   SAFETY_POLICY_V1_COMMITMENT,
   TRANSFER_GENESIS_BINDING_PROTOCOL_VERSION,
 } from "./constants.mjs";
@@ -36,6 +37,7 @@ import { createAssetProof } from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { proofMiningView } from "./proof-mining-state.mjs";
+import { NAMES_V1, lookupName, nameOfAddress, namePrice, nameProblem } from "./name-registry.mjs";
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
@@ -58,6 +60,9 @@ function referenceCapability() {
     capabilitiesBps: { "reasoning-v1": 1 },
   };
 }
+
+// The version a proof-mining devnet runs; older devnets upgrade on open.
+export const LATEST_DEVNET_PROTOCOL_VERSION = NAME_REGISTRY_PROTOCOL_VERSION;
 
 // `proofMining: true` starts from v27 with local release and beacon keys,
 // upgrades to v35 at once, and lets `tick()` run the beacon, so network clique
@@ -97,9 +102,9 @@ export function initializeDevnet(directory, {
   writeExclusive(join(root, DEV_KEYS_FILE), { treasury, validators,
     ...(proofMining ? { beacons, releaseSet, releases } : {}) }, 0o600);
   initializeBlockStore(root, new NirChain(genesis));
-  if (proofMining) new PersistentDevNode(root).upgradeTo(PROOF_MINING_PROTOCOL_VERSION);
+  if (proofMining) new PersistentDevNode(root).upgradeTo(LATEST_DEVNET_PROTOCOL_VERSION);
   return { directory: root, networkId, treasuryAddress: treasury.address,
-    ...(proofMining ? { protocolVersion: PROOF_MINING_PROTOCOL_VERSION } : {}) };
+    ...(proofMining ? { protocolVersion: LATEST_DEVNET_PROTOCOL_VERSION } : {}) };
 }
 
 function loadJson(path) {
@@ -135,6 +140,7 @@ export class PersistentDevNode {
   get networkId() { return this.#chain.networkId; }
   get height() { return this.#chain.height; }
   get tipHash() { return this.#chain.tipHash; }
+  get protocolVersion() { return this.#chain.protocolVersion; }
 
   validatorHandoffHistory() { return []; }
 
@@ -220,6 +226,29 @@ export class PersistentDevNode {
     return { ...proofMiningView(this.#chain.proofMiningStatus(),
       { height: this.#chain.height, timestampMs: this.#chain.tipTimestamp }),
     chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash };
+  }
+
+  // Account names (docs/names.md): what a wallet needs to check and register one.
+  nameRegistry() {
+    const state = this.#chain.nameRegistryStatus();
+    return { active: state !== null, chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash,
+      height: this.#chain.height, networkId: this.#chain.networkId,
+      revealDelayBlocks: NAMES_V1.revealDelayBlocks, commitLifetimeBlocks: NAMES_V1.commitLifetimeBlocks,
+      names: state?.names.size ?? 0 };
+  }
+
+  nameLookup(input) {
+    const name = String(input ?? "").trim().toLowerCase().replace(/\.nir$/u, "");
+    const problem = nameProblem(name);
+    const state = this.#chain.nameRegistryStatus();
+    const entry = problem === null ? lookupName(state, name) : null;
+    return { name, problem, available: state !== null && problem === null && entry === null,
+      owner: entry?.owner ?? null, price: problem === null ? namePrice(name).toString() : null };
+  }
+
+  accountName(address) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
+    return { address, name: nameOfAddress(this.#chain.nameRegistryStatus(), address) };
   }
 
   feeQuote(amount, fee = MIN_TRANSFER_FEE.toString()) {

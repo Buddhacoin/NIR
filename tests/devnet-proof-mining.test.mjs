@@ -6,15 +6,17 @@ import test from "node:test";
 
 import { mineOneCliqueTask } from "../blockchain/clique-miner.mjs";
 import { PROGRESS_REWARD_ESCROW_DELAY_BLOCKS, PROOF_MINING_PROTOCOL_VERSION } from "../blockchain/constants.mjs";
+import { LATEST_DEVNET_PROTOCOL_VERSION } from "../blockchain/node-store.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
 import { createWalletFile, signWalletProofAnswer } from "../blockchain/wallet-files.mjs";
 
-test("a proof-mining devnet upgrades to v37, issues tasks from its own beacon, and pays a miner", async () => {
+test("a proof-mining devnet upgrades to the latest version, issues tasks from its own beacon, and pays a miner", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "nir-devnet-proof-"));
   try {
     const directory = join(temporary, "node");
     const created = initializeDevnet(directory, { proofMining: true, proofMiningInitialLevel: 8 });
-    assert.equal(created.protocolVersion, PROOF_MINING_PROTOCOL_VERSION);
+    assert.equal(created.protocolVersion, LATEST_DEVNET_PROTOCOL_VERSION);
+    assert.ok(LATEST_DEVNET_PROTOCOL_VERSION >= PROOF_MINING_PROTOCOL_VERSION);
     const node = new PersistentDevNode(directory);
     assert.equal(node.proofMiningEnabled, true);
     assert.equal(node.proofMining().openTasks.length, 0);
