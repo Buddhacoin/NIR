@@ -2160,6 +2160,19 @@ async function refreshNodeStatus() {
 refreshNodeStatus();
 renderWalletConnection();
 void connectNativeWallet();
+// The network in NIR Майнер may open after the wallet: keep trying while
+// offline, and keep the balance current on the home screen.
+let networkRefreshing = false;
+let lastNetworkRefresh = Date.now();
+setInterval(async () => {
+  if (networkRefreshing || document.hidden || activePage !== null) return;
+  if (networkInfo && Date.now() - lastNetworkRefresh < 30_000) return;
+  networkRefreshing = true;
+  try { await refreshNodeStatus(); } catch {} finally {
+    networkRefreshing = false;
+    lastNetworkRefresh = Date.now();
+  }
+}, 10_000);
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   if (localApp) {
