@@ -23,6 +23,7 @@ import {
   createCreditStake,
   createCreditUnstakeClaim,
   createCreditUnstakeRequest,
+  createNameTransaction,
   createProofAnswerCommit,
   createProofAnswerReveal,
   createTransfer,
@@ -799,6 +800,18 @@ export function signWalletProofAnswer({ path, password, operation }) {
         salt: operation.salt, vertices: operation.vertices });
     }
     throw new Error("proof answer operation is not supported");
+  } finally {
+    wallet.privateKey = "";
+  }
+}
+
+// Account names (docs/names.md): one password signs the whole operation, for
+// example the hidden commit and the registration that follows it.
+export function signWalletNameOperations({ path, password, operations, expectedAddress }) {
+  const wallet = decryptWallet(readVault(path), password);
+  try {
+    if (wallet.address !== expectedAddress) throw new Error("wallet account changed during the request");
+    return operations.map((operation) => createNameTransaction({ wallet, ...operation }));
   } finally {
     wallet.privateKey = "";
   }

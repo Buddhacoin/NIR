@@ -22,7 +22,7 @@ blockchain/offline-release-bundle.mjs blockchain/offline-release-governance.mjs
 blockchain/offline-signer.mjs blockchain/operators.mjs blockchain/payment-request.mjs
 blockchain/operator-wallet-link.mjs blockchain/operator-model-receipt.mjs
 blockchain/peer-registry.mjs blockchain/protocol-upgrade-authorization.mjs
-blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs
+blockchain/proof-difficulty.mjs blockchain/proof-mining-state.mjs blockchain/name-registry.mjs
 blockchain/protocol-upgrade.mjs blockchain/safety-bounty.mjs blockchain/snapshot-store.mjs
 blockchain/old-app-copies.mjs blockchain/source-release.mjs blockchain/source-updater.mjs
 blockchain/state-snapshot.mjs blockchain/transaction-simulation.mjs

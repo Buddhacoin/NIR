@@ -55,6 +55,7 @@ import {
   VALIDATOR_READINESS_SET_RESET_PROTOCOL_VERSION,
   RECOVERY_RESERVE_ADMISSION_PROTOCOL_VERSION,
   PROOF_MINING_PROTOCOL_VERSION,
+  NAME_REGISTRY_PROTOCOL_VERSION,
   VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
   scheduledEpochBudget,
   vestedTreasuryAtTimestamp,
@@ -159,6 +160,15 @@ import {
   parseProofMiningSnapshot,
   takeProofRewards,
 } from "./proof-mining-state.mjs";
+import {
+  applyNameCommit,
+  applyNameRegister,
+  applyNameRelease,
+  applyNameTransfer,
+  createNameRegistryState,
+  endNameRegistryBlock,
+  parseNameRegistrySnapshot,
+} from "./name-registry.mjs";
 import {
   MAX_EVALUATION_ASSIGNMENTS,
   assertActiveEvaluationAssignmentRegistry,
@@ -584,6 +594,21 @@ const TRANSACTION_SCHEMAS = Object.freeze({
   "validator-withdrawal-claim": [[
     "algorithm", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
   ]],
+  "name-commit": [[
+    "algorithm", "chainIdentityGenesisHash", "commitment", "fee", "networkId", "nonce", "publicKey", "sender",
+    "signature", "type",
+  ]],
+  "name-register": [[
+    "algorithm", "chainIdentityGenesisHash", "fee", "name", "networkId", "nonce", "publicKey", "salt", "sender",
+    "signature", "type",
+  ]],
+  "name-release": [[
+    "algorithm", "chainIdentityGenesisHash", "fee", "networkId", "nonce", "publicKey", "sender", "signature", "type",
+  ]],
+  "name-transfer": [[
+    "algorithm", "chainIdentityGenesisHash", "fee", "networkId", "nonce", "publicKey", "recipient", "sender",
+    "signature", "type",
+  ]],
   transfer: [
     SINGLE_TRANSFER_FIELDS,
     [...SINGLE_TRANSFER_FIELDS, "resource"],
@@ -906,6 +931,30 @@ export function createProofAnswerReveal({
     type: "proof-answer-reveal", vertices,
   };
   return { ...transaction, signature: signObject(transaction, wallet, "PROOF_ANSWER_REVEAL_V1") };
+}
+
+// Account names (docs/names.md): commit to a hidden name, register it at
+// least two blocks later, and release it or give it away when wanted.
+const NAME_SIGNATURE_DOMAINS = Object.freeze({
+  "name-commit": "NAME_COMMIT_V1",
+  "name-register": "NAME_REGISTER_V1",
+  "name-release": "NAME_RELEASE_V1",
+  "name-transfer": "NAME_TRANSFER_V1",
+});
+
+export function createNameTransaction({
+  wallet, networkId, chainIdentityGenesisHash, nonce, type, commitment, name, salt, recipient,
+  fee = MIN_TRANSFER_FEE.toString(),
+}) {
+  if (!Object.hasOwn(NAME_SIGNATURE_DOMAINS, type)) throw new Error("name transaction type is invalid");
+  const transaction = {
+    algorithm: SIGNATURE_ALGORITHM, chainIdentityGenesisHash, fee: String(fee), networkId, nonce,
+    publicKey: wallet.publicKey, sender: wallet.address, type,
+    ...(type === "name-commit" ? { commitment } : {}),
+    ...(type === "name-register" ? { name, salt } : {}),
+    ...(type === "name-transfer" ? { recipient } : {}),
+  };
+  return { ...transaction, signature: signObject(transaction, wallet, NAME_SIGNATURE_DOMAINS[type]) };
 }
 
 export function createValidatorExitRequest({
@@ -1657,6 +1706,7 @@ export class NirChain {
   #validatorReadinessObservationFloor;
   #proofMining;
   #proofMiningInitialLevel;
+  #nameRegistry;
   // Not consensus state: the proof rewards each address received, for
   // wallets. A node rebuilds it by replaying blocks.
   #proofRewardLog = new Map();
@@ -1889,6 +1939,7 @@ export class NirChain {
     this.#pendingValidatorAdmissions = new Map();
     this.#validatorReadinessObservationFloor = 0;
     this.#proofMining = null;
+    this.#nameRegistry = null;
     this.#recentValidatorTransition = null;
     this.#pendingValidatorExits = new Map();
     this.#retiredValidators = new Map();
@@ -2531,6 +2582,11 @@ export class NirChain {
     }
     const proofMining = Object.hasOwn(state, "proofMining")
       ? parseProofMiningSnapshot(state.proofMining) : null;
+    if ((state.protocolVersion >= NAME_REGISTRY_PROTOCOL_VERSION) !== Object.hasOwn(state, "nameRegistry")) {
+      throw new Error("name registry snapshot schema is invalid");
+    }
+    const nameRegistry = Object.hasOwn(state, "nameRegistry")
+      ? parseNameRegistrySnapshot(state.nameRegistry) : null;
     if (pendingValidatorAdmissions.size > MAX_PENDING_VALIDATOR_ADMISSIONS) {
       throw new Error("validator admission queue capacity is exceeded");
     }
@@ -2956,6 +3012,7 @@ export class NirChain {
     chain.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     chain.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
     chain.#proofMining = proofMining;
+    chain.#nameRegistry = nameRegistry;
     chain.#recentValidatorTransition = recentValidatorTransition;
     chain.#pendingValidatorExits = pendingValidatorExits;
     chain.#retiredValidators = retiredValidators;
@@ -3128,6 +3185,11 @@ export class NirChain {
     return structuredClone(this.#proofMining);
   }
 
+  // Account names; null before v38.
+  nameRegistryStatus() {
+    return structuredClone(this.#nameRegistry);
+  }
+
   // Proof rewards credited to `address`, newest first (at most 200).
   proofRewardHistory(address) {
     return [...(this.#proofRewardLog.get(address) ?? [])].reverse().map((entry) => ({ ...entry }));
@@ -3252,6 +3314,9 @@ export class NirChain {
       } : {}),
       ...(protocolVersion >= PROOF_MINING_PROTOCOL_VERSION ? {
         proofMining: overrides.proofMining ?? this.#proofMining,
+      } : {}),
+      ...(protocolVersion >= NAME_REGISTRY_PROTOCOL_VERSION ? {
+        nameRegistry: overrides.nameRegistry ?? this.#nameRegistry,
       } : {}),
       ...(protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
         pendingValidatorExits:
@@ -3379,6 +3444,9 @@ export class NirChain {
         } : {}),
         ...(this.#protocolVersion >= PROOF_MINING_PROTOCOL_VERSION ? {
           proofMining: this.#proofMining,
+        } : {}),
+        ...(this.#protocolVersion >= NAME_REGISTRY_PROTOCOL_VERSION ? {
+          nameRegistry: this.#nameRegistry,
         } : {}),
         ...(this.#protocolVersion >= VALIDATOR_EXIT_LIFECYCLE_PROTOCOL_VERSION ? {
           pendingValidatorExits: this.#pendingValidatorExits,
@@ -4969,6 +5037,46 @@ export class NirChain {
     nonces.set(transaction.sender, expectedNonce + 1);
   }
 
+  // Returns the burned name price.
+  #applyNameTransaction(transaction, balances, nonces, nameRegistry, proposer, height) {
+    if (nameRegistry === null) {
+      throw new Error(`account names require protocol version ${NAME_REGISTRY_PROTOCOL_VERSION}`);
+    }
+    if (transaction.algorithm !== SIGNATURE_ALGORITHM ||
+        transaction.networkId !== this.#networkId ||
+        transaction.chainIdentityGenesisHash !== this.#chainIdentityGenesisHash ||
+        addressFromPublicKey(transaction.publicKey) !== transaction.sender ||
+        !Object.hasOwn(NAME_SIGNATURE_DOMAINS, transaction.type) ||
+        !verifyObject(unsignedTransaction(transaction), transaction.signature, transaction.publicKey,
+          NAME_SIGNATURE_DOMAINS[transaction.type])) {
+      throw new Error("name transaction is invalid");
+    }
+    const expectedNonce = nonces.get(transaction.sender) ?? 0;
+    if (!Number.isSafeInteger(transaction.nonce) || transaction.nonce !== expectedNonce) {
+      throw new Error("unexpected nonce");
+    }
+    const fee = parseAtomic(transaction.fee, "fee");
+    const balance = balances.get(transaction.sender) ?? 0n;
+    if (fee < MIN_TRANSFER_FEE || balance < fee) throw new Error("name transaction fee is invalid or unfunded");
+    let price = 0n;
+    if (transaction.type === "name-commit") {
+      applyNameCommit(nameRegistry, { commitment: transaction.commitment, height, sender: transaction.sender });
+    } else if (transaction.type === "name-register") {
+      price = applyNameRegister(nameRegistry, { height, name: transaction.name, networkId: this.#networkId,
+        salt: transaction.salt, sender: transaction.sender });
+    } else if (transaction.type === "name-release") {
+      applyNameRelease(nameRegistry, { sender: transaction.sender });
+    } else {
+      assertAddress(transaction.recipient, "name recipient");
+      applyNameTransfer(nameRegistry, { height, recipient: transaction.recipient, sender: transaction.sender });
+    }
+    if (balance < fee + price) throw new Error("name price is unfunded");
+    balances.set(transaction.sender, balance - fee - price);
+    balances.set(proposer, (balances.get(proposer) ?? 0n) + fee);
+    nonces.set(transaction.sender, expectedNonce + 1);
+    return price;
+  }
+
   #applyValidatorExitRequest(
     transaction, balances, nonces, validatorBonds, registeredValidators,
     disabledValidators, pendingValidatorExits, retiredValidators, candidateBonds,
@@ -5722,6 +5830,7 @@ export class NirChain {
       .map(([address, admission]) => [address, structuredClone(admission)]));
     fork.#validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
     fork.#proofMining = structuredClone(this.#proofMining);
+    fork.#nameRegistry = structuredClone(this.#nameRegistry);
     fork.#proofRewardLog = new Map([...this.#proofRewardLog].map(([address, entries]) => [address, [...entries]]));
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
@@ -6130,6 +6239,7 @@ export class NirChain {
       .map(([address, admission]) => [address, structuredClone(admission)]));
     let validatorReadinessObservationFloor = this.#validatorReadinessObservationFloor;
     let proofMining = structuredClone(this.#proofMining);
+    let nameRegistry = structuredClone(this.#nameRegistry);
     const pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     const retiredValidators = new Map([...this.#retiredValidators]
@@ -6174,6 +6284,10 @@ export class NirChain {
       proofMining = createProofMiningState({
         ...PROOF_DIFFICULTY_V1, initialLevel: this.#proofMiningInitialLevel,
       });
+    }
+    if (protocolState.protocolVersion >= NAME_REGISTRY_PROTOCOL_VERSION &&
+        this.#protocolVersion < NAME_REGISTRY_PROTOCOL_VERSION) {
+      nameRegistry = createNameRegistryState();
     }
     // Each beacon round finalized from v35 on issues one network task.
     if (proofMining !== null && epochRandomness.round > this.#epochRandomness.round) {
@@ -6799,6 +6913,9 @@ export class NirChain {
           transaction.type === "proof-answer-reveal") {
         this.#applyProofAnswer(transaction, balances, nonces, proofMining, block.feeRecipient,
           block.height, block.transactions.indexOf(transaction), block.timestamp);
+      } else if (transaction.type.startsWith("name-")) {
+        newlyBurned += this.#applyNameTransaction(transaction, balances, nonces, nameRegistry,
+          block.feeRecipient, block.height);
       } else if (transaction.type.startsWith("asset-")) {
         if (protocolState.protocolVersion < 25) {
           throw new Error("native assets require protocol version 25");
@@ -7253,6 +7370,7 @@ export class NirChain {
         unlockHeight: block.height + VALIDATOR_WITHDRAWAL_DELAY_BLOCKS,
       });
     }
+    if (nameRegistry !== null) endNameRegistryBlock(nameRegistry, { height: block.height });
     if (proofMining !== null) {
       const { refunds, burned } = endProofMiningBlock(proofMining, {
         height: block.height, networkId: this.#networkId, timestampMs: block.timestamp,
@@ -7312,6 +7430,7 @@ export class NirChain {
       pendingValidatorAdmissions,
       validatorReadinessObservationFloor,
       proofMining,
+      nameRegistry,
       pendingValidatorExits,
       peerRegistry: nextPeerRegistry,
       progressCommitments,
@@ -7422,6 +7541,7 @@ export class NirChain {
     this.#pendingValidatorAdmissions = pendingValidatorAdmissions;
     this.#validatorReadinessObservationFloor = validatorReadinessObservationFloor;
     this.#proofMining = proofMining;
+    this.#nameRegistry = nameRegistry;
     for (const { address, amount } of proofRewardCredits) {
       const entries = this.#proofRewardLog.get(address) ?? [];
       entries.push({ amount: amount.toString(), height: block.height, timestamp: block.timestamp });

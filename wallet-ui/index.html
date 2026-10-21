@@ -82,7 +82,8 @@
     <h2 id="send-title">Отправить NIR</h2>
     <details class="request-import"><summary>Импортировать подписанный платёжный запрос</summary><p>Вставьте JSON или все QR-фрагменты через пробел/с новой строки. Импорт лишь проверяет и заполняет форму — он не подписывает и не отправляет перевод.</p><label>JSON или QR-фрагменты<textarea id="payment-request-input" spellcheck="false" autocomplete="off"></textarea></label><button class="secondary" id="verify-payment-request" type="button">Проверить и заполнить</button><p id="verified-request-note" data-i18n-ignore></p></details>
     <form id="send-form">
-      <div class="recipient-field"><label>Адрес получателя<input id="send-recipient" placeholder="nir1…" minlength="68" maxlength="68" autocomplete="off" spellcheck="false" required></label><button class="secondary compact" id="open-contacts" type="button">Контакты</button></div>
+      <div class="recipient-field"><label>Адрес или имя получателя<input id="send-recipient" placeholder="nir1… или sasha.nir" minlength="3" maxlength="68" autocomplete="off" spellcheck="false" autocapitalize="off" required></label><button class="secondary compact" id="open-contacts" type="button">Контакты</button></div>
+      <p class="form-status" id="send-recipient-resolved" data-i18n-ignore></p>
       <label>Сумма NIR<input id="send-amount" inputmode="decimal" placeholder="0.00000001" autocomplete="off" required></label>
       <button class="primary" type="submit">Проверить перевод</button>
     </form>
@@ -176,6 +177,19 @@
       <div class="settings-row"><span>Язык</span><label class="language-control"><span class="visually-hidden">Язык / Language</span><select id="language" aria-label="Язык / Language"><option value="ru">Русский</option><option value="en">English</option></select></label></div>
       <div class="settings-row"><span>Тема</span><button id="theme" aria-label="Сменить тему">☀</button></div>
       <div class="settings-row"><span>Кошелёк</span><button id="account-open" type="button" hidden>Кошелёк 1 ▾</button></div>
+    </section>
+    <section class="settings-group" id="chain-name" aria-labelledby="chain-name-title">
+      <h3 id="chain-name-title">Имя в сети</h3>
+      <p>Короткое имя вместо длинного адреса: вам смогут отправлять NIR на sasha.nir. Покупается один раз и остаётся вашим, пока вы сами его не смените. Плата сгорает: её не получает никто, даже создатель.</p>
+      <p class="form-status" id="chain-name-current" role="status" aria-live="polite"></p>
+      <form id="chain-name-form" class="chain-name-form">
+        <label>Новое имя<span class="chain-name-field"><input id="chain-name-input" maxlength="36" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="sasha"><b>.nir</b></span></label>
+        <p class="form-status" id="chain-name-check" role="status" aria-live="polite"></p>
+        <button class="primary" id="chain-name-buy" type="submit" disabled>Купить имя</button>
+      </form>
+      <p class="hint">3–32 знака: латинские буквы, цифры и дефис. Цена: 1 NIR; из 4 знаков — 10 NIR, из 3 знаков — 50 NIR.</p>
+      <button class="secondary" id="chain-name-release" type="button" hidden>Освободить имя</button>
+      <p class="form-status" id="chain-name-status" role="status" aria-live="polite"></p>
     </section>
     <button class="primary" id="settings-connect" type="button">Подключить кошелёк</button>
     <button class="secondary" id="settings-setup" type="button">Создание и восстановление</button>

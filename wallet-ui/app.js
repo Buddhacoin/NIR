@@ -222,6 +222,8 @@ let nodeRefreshSequence = 0;
 let accountTransitionPending = false;
 let networkInfo = null;
 let activeNodeUrl = null;
+let chainNameCurrent = null;
+let chainNameCheckEpoch = 0;
 let nodePolicy = null;
 let pendingIntent = null;
 let pendingSimulation = null;
@@ -1325,6 +1327,8 @@ async function renderAccounts() {
   accountOpen.textContent = `${active.label} ▾`;
   accountOpen.dataset.activeId = activeId;
   document.querySelector("#add-account").hidden = canCreate !== true;
+  chainNameCurrent = null;
+  void refreshChainName();
   return true;
 }
 
@@ -1408,6 +1412,7 @@ function openSetupPanel() {
 function openSettingsPanel() {
   renderWalletConnection();
   openPage(settingsPanel, "settings");
+  void refreshChainName();
 }
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
@@ -1616,7 +1621,17 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
   event.preventDefault();
   sendStatus.textContent = "Симуляция перевода с доказательством состояния…";
   try {
-    const recipient = parseAddress(document.querySelector("#send-recipient").value).address;
+    const typed = document.querySelector("#send-recipient").value.trim();
+    let recipient;
+    if (/^nir1/i.test(typed)) {
+      recipient = parseAddress(typed).address;
+    } else {
+      // A name is only a shortcut: the full address it stands for is shown.
+      const resolved = await resolveName(typed);
+      recipient = resolved.address;
+      document.querySelector("#send-recipient-resolved").textContent =
+        `${resolved.name}.nir → ${checksumAddress(recipient)}`;
+    }
     if (recipient === walletInfo.address) throw new Error("Нельзя отправить перевод на тот же адрес.");
     const amount = parseNir(document.querySelector("#send-amount").value);
     const [account, quoteResponse] = await Promise.all([
@@ -2351,4 +2366,201 @@ document.querySelector("#old-copies-reveal").addEventListener("click", async (ev
   eventTarget.disabled = true;
   try { await bridgeRequest("/v1/old-copies/reveal", { method: "POST" }, 60_000); }
   catch {} finally { eventTarget.disabled = false; }
+});
+
+// Account names (docs/names.md): `sasha.nir` stands for one address. A name is
+// shown only when it points to the address and the address points back to it;
+// sending always shows the full address the name stands for.
+const NAME_RESERVED = new Set(["admin", "administrator", "airdrop", "bank", "exchange", "faucet", "founder",
+  "foundation", "giveaway", "help", "helpdesk", "mainnet", "miner", "mining", "moderator", "null", "official",
+  "owner", "pay", "payment", "payments", "refund", "root", "security", "staff", "support", "system", "team",
+  "testnet", "treasury", "undefined", "validator", "validators", "wallet"]);
+function nameProblemText(name) {
+  if (name.length < 3) return "Имя слишком короткое: нужно хотя бы 3 знака.";
+  if (name.length > 32) return "Имя слишком длинное: не больше 32 знаков.";
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(name) || name.includes("--")) {
+    return "Только латинские буквы, цифры и дефис внутри имени.";
+  }
+  if (name.startsWith("nir") || NAME_RESERVED.has(name)) return "Это имя зарезервировано: его нельзя купить.";
+  return null;
+}
+function bareName(input) {
+  return String(input ?? "").trim().toLowerCase().replace(/\.nir$/, "");
+}
+async function nameNodeJson(path) {
+  let response;
+  let body;
+  try {
+    response = await fetch(`${activeNodeUrl ?? "http://127.0.0.1:8787"}${path}`,
+      { cache: "no-store", signal: AbortSignal.timeout(5_000) });
+    body = await response.json();
+  } catch {
+    throw new Error("Сеть NIR не ответила. Откройте NIR Майнер.");
+  }
+  if (!response.ok) throw new Error("Сеть NIR не ответила. Откройте NIR Майнер.");
+  return body;
+}
+function nameSubmissionUrl() {
+  try { return transactionSubmissionUrl(nodePolicy); }
+  catch { return `${activeNodeUrl ?? "http://127.0.0.1:8787"}/v1/transactions`; }
+}
+async function submitNameTransaction(transaction) {
+  let response;
+  let body;
+  try {
+    response = await fetch(nameSubmissionUrl(), { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(transaction) });
+    body = await response.json();
+  } catch {
+    throw new Error("Сеть NIR не ответила. Откройте NIR Майнер.");
+  }
+  if (!response.ok) throw new Error(body.error || "Сеть отклонила операцию.");
+  return body;
+}
+// The name an address has, only when both directions agree.
+async function verifiedNameOf(address) {
+  const { name } = await nameNodeJson(`/v1/accounts/${address}/name`);
+  if (typeof name !== "string") return null;
+  const entry = await nameNodeJson(`/v1/names/${encodeURIComponent(name)}`);
+  return entry.owner === address ? name : null;
+}
+// The address a name stands for, only when both directions agree.
+async function resolveName(input) {
+  const name = bareName(input);
+  const problem = nameProblemText(name);
+  if (problem) throw new Error(problem);
+  const entry = await nameNodeJson(`/v1/names/${encodeURIComponent(name)}`);
+  if (!entry.owner) throw new Error(`Имя ${name}.nir никому не принадлежит.`);
+  const reverse = await nameNodeJson(`/v1/accounts/${entry.owner}/name`);
+  if (reverse.name !== name) throw new Error(`Имя ${name}.nir не подтверждено владельцем.`);
+  return { name, address: entry.owner };
+}
+
+function renderChainNameTag() {
+  const chip = document.querySelector("#active-account");
+  chip.querySelector(".chain-name-tag")?.remove();
+  if (!chainNameCurrent || chip.hidden) return;
+  const tag = document.createElement("span");
+  tag.className = "chain-name-tag";
+  tag.textContent = `${chainNameCurrent}.nir`;
+  chip.append(" · ", tag);
+}
+async function refreshChainName() {
+  const current = document.querySelector("#chain-name-current");
+  const release = document.querySelector("#chain-name-release");
+  if (!walletInfo) {
+    current.textContent = "Подключите кошелёк, чтобы выбрать имя.";
+    release.hidden = true;
+    return;
+  }
+  const address = walletInfo.address;
+  try {
+    const info = await nameNodeJson("/v1/names");
+    if (!info.active) {
+      current.textContent = "Имена появятся, когда сеть обновится. Обновите NIR Майнер.";
+      release.hidden = true;
+      return;
+    }
+    const name = await verifiedNameOf(address);
+    if (walletInfo?.address !== address) return;
+    chainNameCurrent = name;
+    current.textContent = name ? `Ваше имя: ${name}.nir` : "У этого счёта пока нет имени.";
+    release.hidden = !name;
+    document.querySelector("#chain-name-buy").textContent = name ? "Сменить имя" : "Купить имя";
+  } catch {
+    chainNameCurrent = null;
+    current.textContent = "Сеть NIR не ответила. Откройте NIR Майнер.";
+    release.hidden = true;
+  }
+  renderChainNameTag();
+}
+document.querySelector("#chain-name-input").addEventListener("input", (event) => {
+  const epoch = ++chainNameCheckEpoch;
+  const check = document.querySelector("#chain-name-check");
+  const buy = document.querySelector("#chain-name-buy");
+  buy.disabled = true;
+  check.classList.remove("taken");
+  const input = event.currentTarget;
+  if (input.value !== input.value.toLowerCase()) input.value = input.value.toLowerCase();
+  const name = bareName(input.value);
+  if (!name) { check.textContent = ""; return; }
+  const problem = nameProblemText(name);
+  if (problem) { check.textContent = problem; check.classList.add("taken"); return; }
+  check.textContent = "Проверяем…";
+  setTimeout(async () => {
+    if (epoch !== chainNameCheckEpoch) return;
+    try {
+      const entry = await nameNodeJson(`/v1/names/${encodeURIComponent(name)}`);
+      if (epoch !== chainNameCheckEpoch) return;
+      if (entry.owner === walletInfo?.address) {
+        check.textContent = "Это уже ваше имя.";
+      } else if (entry.available) {
+        check.textContent = `${name}.nir свободно · цена ${formatAtomic(entry.price).replace(/\.?0+$/, "")} NIR`;
+        buy.disabled = !walletInfo;
+      } else {
+        check.textContent = `${name}.nir уже занято.`;
+        check.classList.add("taken");
+      }
+    } catch (error) {
+      if (epoch === chainNameCheckEpoch) check.textContent = error.message;
+    }
+  }, 300);
+});
+async function signNameOperation(action, extra = {}) {
+  const info = await nameNodeJson("/v1/names");
+  if (!info.active) throw new Error("Имена появятся, когда сеть обновится. Обновите NIR Майнер.");
+  const account = await nameNodeJson(`/v1/accounts/${walletInfo.address}`);
+  const requestId = [...crypto.getRandomValues(new Uint8Array(32))]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const { transactions } = await bridgeRequest("/v1/sign-name", { method: "POST", body: JSON.stringify({
+    action, chainIdentityGenesisHash: info.chainIdentityGenesisHash, networkId: info.networkId,
+    nonce: account.nextNonce, requestId, ...extra }) }, 600_000);
+  return { info, transactions };
+}
+document.querySelector("#chain-name-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const status = document.querySelector("#chain-name-status");
+  const buy = document.querySelector("#chain-name-buy");
+  const name = bareName(document.querySelector("#chain-name-input").value);
+  if (nameProblemText(name) || !walletInfo) return;
+  buy.disabled = true;
+  status.textContent = "Подтвердите покупку и введите пароль в окне Mac.";
+  try {
+    const { info, transactions: [commit, register] } = await signNameOperation("register", { name });
+    status.textContent = "Шаг 1 из 2: скрытая заявка на имя…";
+    const committed = await submitNameTransaction(commit);
+    // The name itself goes in a few blocks later, so nobody can take it in between.
+    const readyAt = (committed.height ?? info.height) + info.revealDelayBlocks;
+    status.textContent = "Шаг 2 из 2: записываем имя. Это займёт около минуты…";
+    for (let attempt = 0; ; attempt++) {
+      const { height } = await nameNodeJson("/v1/names");
+      if (height >= readyAt) {
+        try { await submitNameTransaction(register); break; }
+        catch (error) { if (attempt > 60 || !/window/.test(error.message)) throw error; }
+      }
+      if (attempt > 120) throw new Error("Сеть не успела записать имя. Проверьте, что NIR Майнер открыт.");
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    status.textContent = `Готово: ваше имя ${name}.nir.`;
+    document.querySelector("#chain-name-input").value = "";
+    document.querySelector("#chain-name-check").textContent = "";
+    await refreshChainName();
+  } catch (error) {
+    status.textContent = /already taken/.test(error.message) ? `${name}.nir уже заняли. Выберите другое имя.`
+      : /rejected by the user/.test(error.message) ? "Покупка отменена." : `Имя не записано: ${error.message}`;
+  } finally { buy.disabled = false; }
+});
+document.querySelector("#chain-name-release").addEventListener("click", async () => {
+  const status = document.querySelector("#chain-name-status");
+  const release = document.querySelector("#chain-name-release");
+  release.disabled = true;
+  status.textContent = "Подтвердите в окне Mac.";
+  try {
+    const { transactions: [transaction] } = await signNameOperation("release");
+    await submitNameTransaction(transaction);
+    status.textContent = "Имя освобождено.";
+    await refreshChainName();
+  } catch (error) {
+    status.textContent = /rejected by the user/.test(error.message) ? "Отменено." : `Не получилось: ${error.message}`;
+  } finally { release.disabled = false; }
 });

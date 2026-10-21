@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { createServer, request as httpRequest } from "node:http";
 import test from "node:test";
 
 import { generateWallet, publicWallet } from "../blockchain/crypto.mjs";
+import { nameCommitment } from "../blockchain/name-registry.mjs";
 import { createWalletBridgeServer } from "../blockchain/wallet-bridge.mjs";
 import { createWalletFile } from "../blockchain/wallet-files.mjs";
 import { decryptWallet, encryptWallet } from "../blockchain/vault.mjs";
@@ -1704,6 +1706,45 @@ test("the secret phrase is shown only by the Mac app and only its outcome reache
   } finally {
     await close(server);
     await close(plain);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a name purchase is signed after one confirmation that shows the name and its burned price", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-wallet-name-"));
+  const vaultPath = join(directory, "wallet.nirvault.json");
+  const password = "name-route-password-2026";
+  const { address } = createWalletFile({ path: vaultPath, password });
+  const origin = "http://127.0.0.1:8765";
+  const token = "a".repeat(64);
+  const prompts = [];
+  const server = createWalletBridgeServer({ origin, sessionToken: token, vaultPath,
+    authorize: async (intent) => { prompts.push(intent); return password; } });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const sign = (body) => request(`${base}/v1/sign-name`, origin, token, { method: "POST", body: JSON.stringify({
+      chainIdentityGenesisHash: "e".repeat(64), networkId: "nir-local-devnet", nonce: 4,
+      requestId: randomBytes(32).toString("hex"), ...body }) });
+    const response = await sign({ action: "register", name: "sasha" });
+    assert.equal(response.status, 200);
+    const { transactions: [commit, register] } = await response.json();
+    assert.deepEqual([commit.type, commit.nonce, register.type, register.nonce, register.name],
+      ["name-commit", 4, "name-register", 5, "sasha"]);
+    assert.equal(commit.sender, address);
+    assert.equal(nameCommitment({ name: "sasha", networkId: "nir-local-devnet", owner: address,
+      salt: register.salt }), commit.commitment);
+    assert.deepEqual([prompts[0].type, prompts[0].name, prompts[0].price], ["name-register", "sasha", "1 NIR"]);
+    // Names the network would refuse are refused before any prompt.
+    for (const name of ["ab", "Sasha", "support", "nirbank"]) {
+      assert.equal((await sign({ action: "register", name })).status, 400, name);
+    }
+    assert.equal((await sign({ action: "transfer", recipient: address })).status, 400);
+    assert.equal(prompts.length, 1);
+    const released = await (await sign({ action: "release" })).json();
+    assert.equal(released.transactions[0].type, "name-release");
+  } finally {
+    await close(server);
     rmSync(directory, { recursive: true, force: true });
   }
 });
