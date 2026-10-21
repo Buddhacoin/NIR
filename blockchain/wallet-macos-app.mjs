@@ -14,7 +14,7 @@ import { changeLocalTestWalletPassword, listLocalTestWallets,
   renewLocalTestRecoveryCode } from "./wallet-onboarding.mjs";
 import { recoveryBackupFingerprint, verifyRecoveryExportReceipt } from "./wallet-backup-export-check.mjs";
 import { createWalletPreviewServer } from "./wallet-preview-cli.mjs";
-import { macLauncherPid, readUpdateRecord, runBuilder, SourceUpdater, startSwap, UPDATE_RECORD,
+import { macLauncherPid, readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 
@@ -217,6 +217,7 @@ function createWalletUpdater() {
   const appPath = fileURLToPath(new URL("../../../../", import.meta.url)).replace(/\/$/, "");
   let record = null;
   try { record = readUpdateRecord(fileURLToPath(new URL(`../../${UPDATE_RECORD}`, import.meta.url))); } catch {}
+  removePreviousVersions(appPath);
   return new SourceUpdater({
     appPath, record, trustedAddress: pinnedUpdateSignerAddress,
     sourceDirectory: join(homedir(), "Library", "Application Support", "NIR Updates", "wallet.git"),

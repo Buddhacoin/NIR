@@ -13,7 +13,7 @@ import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
 import { verifyOperatorWalletProof } from "./operator-wallet-link.mjs";
 import { CliqueMiningSession } from "./clique-mining-session.mjs";
-import { readUpdateRecord, runBuilder, SourceUpdater, startSwap, macLauncherPid, UPDATE_RECORD,
+import { readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, macLauncherPid, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 
@@ -279,6 +279,7 @@ export function createModelLabUpdater({ root, embedded }) {
   let record = null;
   if (embedded) {
     try { record = readUpdateRecord(join(root, "..", UPDATE_RECORD)); } catch {}
+    removePreviousVersions(join(root, "..", "..", ".."));
   }
   const runtime = () => JSON.parse(readFileSync(join(root, "..", "NIR-RUNTIME.json"), "utf8"));
   return new SourceUpdater({

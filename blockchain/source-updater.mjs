@@ -6,7 +6,8 @@
 // apply(): export exactly that commit with `git archive`, build a new app
 // from it next to the installed one, then quit, swap and reopen.
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync,
+  rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 import { SOURCE_RELEASE_PATH, verifySourceRelease } from "./source-release.mjs";
@@ -91,6 +92,30 @@ if mv "$target" "$backup"; then
 fi
 "$opener" "$target"
 `;
+
+// Once an updated app runs, the copy kept for rollback is no longer needed.
+// Removes only this app's own `.nir-update-*/previous <app>` folders, never
+// another app's update in progress in the same folder.
+export function removePreviousVersions(appPath) {
+  const parent = dirname(appPath);
+  const previous = `previous ${basename(appPath)}`;
+  let removed = 0;
+  let names;
+  try { names = readdirSync(parent); } catch { return removed; }
+  for (const name of names) {
+    if (!/^\.nir-update-[A-Za-z0-9]{6}$/.test(name)) continue;
+    const directory = join(parent, name);
+    try {
+      const stat = lstatSync(directory);
+      const entries = readdirSync(directory);
+      if (!stat.isDirectory() || stat.uid !== process.getuid?.() ||
+          entries.length !== 1 || entries[0] !== previous) continue;
+      rmSync(directory, { recursive: true, force: true });
+      removed++;
+    } catch {}
+  }
+  return removed;
+}
 
 export function startSwap({ launcherPid, appPath, stagedAppPath, backupPath, opener = "/usr/bin/open",
   signal = (pid) => process.kill(pid, "SIGTERM") }) {
