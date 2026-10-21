@@ -330,6 +330,7 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
   // Rewards go to the wallet address proven through NIR Wallet, if any.
   const mining = new CliqueMiningSession({ dataDirectory: miningDirectory,
     httpPort: miningHttpPort, recipient: () => linkedWalletAddress, tickMs: miningTickMs });
+  let networkOpen = "no";
   const server = createServer(async (request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const headers = {
@@ -521,7 +522,17 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
         send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
         return;
       }
-      send(200, "application/json; charset=utf-8", JSON.stringify(mining.status()));
+      const opening = networkOpen === "scheduled";
+      send(200, "application/json; charset=utf-8", JSON.stringify({ ...mining.status(),
+        ...(opening ? { state: "preparing" } : {}) }));
+      if (opening) {
+        networkOpen = "opening";
+        // After this response is sent, so the window can show the message first.
+        setTimeout(() => {
+          try { mining.open(); } catch {}
+          networkOpen = "open";
+        }, 100);
+      }
       return;
     }
     if (request.method === "POST" && ["/mining/start", "/mining/stop", "/mining/withdraw"].includes(path) &&
@@ -1136,5 +1147,14 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
   Object.defineProperty(server, "localSessionToken", { value: sessionToken.toString("hex") });
   server.on("close", () => { mining.close(); });
   server.openMiningNetwork = () => mining.open();
+  server.openMiningNetworkAfterFirstScreen = () => {
+    if (networkOpen === "no") networkOpen = "scheduled";
+    // A window that never asks for the status still gets its network.
+    setTimeout(() => {
+      if (networkOpen !== "scheduled") return;
+      networkOpen = "open";
+      try { mining.open(); } catch {}
+    }, 15_000).unref?.();
+  };
   return server;
 }

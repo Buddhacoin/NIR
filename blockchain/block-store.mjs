@@ -114,13 +114,23 @@ function blockName(height) {
   return `${String(height).padStart(12, "0")}.json`;
 }
 
+// Block files never change, so each one is hashed once per process.
+const blockFileHashes = new Map();
+
+function blockFileSha256(chain, { hash, height }) {
+  let digest = blockFileHashes.get(hash);
+  if (digest === undefined) {
+    digest = fileSha256(serialized(chain.blockAtHeight(height)));
+    blockFileHashes.set(hash, digest);
+  }
+  return digest;
+}
+
 function checkpointPayload(chain) {
-  const retained = chain.blocks();
+  const retained = chain.blockSummaries();
   const base = retained[0];
-  const blocks = retained.slice(1).map((block) => {
-    const contents = serialized(block);
-    return { blockHash: block.hash, fileSha256: fileSha256(contents), height: block.height };
-  });
+  const blocks = retained.slice(1).map((block) =>
+    ({ blockHash: block.hash, fileSha256: blockFileSha256(chain, block), height: block.height }));
   return {
     blocks,
     baseHash: base.hash,

@@ -29,8 +29,10 @@ if (!report.ready) {
       if (embedded) {
         console.log(`NIR_MODEL_LAB_URL=${url}`);
         console.log(`NIR_MODEL_LAB_SESSION=${server.localSessionToken}`);
-        // The local test network runs while the app is open, not only while mining.
-        setTimeout(() => { try { server.openMiningNetwork(); } catch {} }, 500);
+        // The local test network runs while the app is open, not only while
+        // mining. It opens once the window shows its first screen: opening a
+        // long chain takes a while and the window would otherwise stay empty.
+        server.openMiningNetworkAfterFirstScreen();
         return;
       }
       console.log(`Откройте этот локальный адрес вручную в браузере: ${url}#session=${server.localSessionToken}`);
