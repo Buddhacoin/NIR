@@ -1034,7 +1034,8 @@ async function recheckAssetSimulation() {
 
 document.querySelector("#open-assets").onclick = openAssets;
 document.querySelector("#refresh-assets").onclick = async (event) => {
-  event.currentTarget.disabled = true; try { await refreshAssets(); } finally { event.currentTarget.disabled = false; }
+  const eventTarget = event.currentTarget;
+  eventTarget.disabled = true; try { await refreshAssets(); } finally { eventTarget.disabled = false; }
 };
 document.querySelectorAll("[data-asset-form]").forEach((form) => form.addEventListener("submit", async (event) => {
   event.preventDefault(); const button = form.querySelector("button[type=submit]"); button.disabled = true;
@@ -1047,14 +1048,15 @@ document.querySelector("#edit-asset-simulation").onclick = () => {
   assetsStatus.textContent = "Симуляция отменена. Ничего не подписано и не отправлено.";
 };
 document.querySelector("#export-asset-offline").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   if (!pendingAssetIntent || !pendingAssetSimulation) return;
-  event.currentTarget.disabled = true; assetsStatus.textContent = "Повторная проверка proofs перед экспортом…";
+  eventTarget.disabled = true; assetsStatus.textContent = "Повторная проверка proofs перед экспортом…";
   try {
     const refreshed = await recheckAssetSimulation();
     await exportOfflineSigningPackage(pendingAssetIntent, refreshed);
     assetsStatus.textContent = "Проверенный пакет экспортирован. Подпись возможна только на офлайн-устройстве.";
   } catch (error) { assetsStatus.textContent = error.message; }
-  finally { event.currentTarget.disabled = false; }
+  finally { eventTarget.disabled = false; }
 };
 
 async function resourceFee() {
@@ -1089,8 +1091,9 @@ async function prepareResourceSimulation(fields) {
 }
 
 document.querySelector("#confirm-resource-simulation").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   if (!pendingResourceIntent || !pendingSimulation) return;
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   resourcesStatus.textContent = "Повторная симуляция перед подписью…";
   try {
     const refreshed = await recheckSimulation(pendingResourceIntent, pendingSimulation);
@@ -1108,7 +1111,7 @@ document.querySelector("#confirm-resource-simulation").onclick = async (event) =
     pendingResourceIntent = null; pendingSimulation = null;
     resourcesStatus.textContent = "Подписано локально. Отправка остаётся отдельным действием.";
   } catch (error) { resourcesStatus.textContent = error.message; }
-  finally { event.currentTarget.disabled = false; }
+  finally { eventTarget.disabled = false; }
 };
 document.querySelector("#edit-resource-simulation").onclick = () => {
   pendingResourceIntent = null; pendingSimulation = null; clearSimulation("#resource-simulation");
@@ -1116,6 +1119,7 @@ document.querySelector("#edit-resource-simulation").onclick = () => {
 };
 
 document.querySelector("#submit-resource").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   if (!signedResourceTransaction) return;
   const transaction = signedResourceTransaction;
   const navigationEpoch = pageNavigationEpoch;
@@ -1126,7 +1130,7 @@ document.querySelector("#submit-resource").onclick = async (event) => {
       throw new Error("Страница или операция изменилась; повторите отправку.");
     }
   };
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   resourcesStatus.textContent = "Повторная проверка тестовой сети…";
   try {
     if (!(await refreshNodeStatus())) {
@@ -1154,7 +1158,7 @@ document.querySelector("#submit-resource").onclick = async (event) => {
     await refreshNodeStatus();
   } catch (error) {
     if (signedResourceTransaction === transaction && activePage === resourcesPanel) resourcesStatus.textContent = error.message;
-  } finally { if (signedResourceTransaction === transaction) event.currentTarget.disabled = false; }
+  } finally { if (signedResourceTransaction === transaction) eventTarget.disabled = false; }
 };
 
 document.querySelector("#discard-resource").onclick = () => {
@@ -1165,21 +1169,23 @@ document.querySelector("#discard-resource").onclick = () => {
 };
 
 document.querySelector("#stake-form").addEventListener("submit", async (event) => {
+  const eventTarget = event.currentTarget;
   event.preventDefault();
-  const button = event.currentTarget.querySelector("button");
+  const button = eventTarget.querySelector("button");
   button.disabled = true;
   try {
     await prepareResourceSimulation({
       amount: parseNir(document.querySelector("#stake-amount").value), type: "credit-stake",
     });
-    event.currentTarget.reset();
+    eventTarget.reset();
   } catch (error) { resourcesStatus.textContent = error.message; }
   finally { button.disabled = false; }
 });
 
 document.querySelector("#delegation-form").addEventListener("submit", async (event) => {
+  const eventTarget = event.currentTarget;
   event.preventDefault();
-  const button = event.currentTarget.querySelector("button");
+  const button = eventTarget.querySelector("button");
   button.disabled = true;
   try {
     let delegate = document.querySelector("#delegate-address").value.trim();
@@ -1190,30 +1196,32 @@ document.querySelector("#delegation-form").addEventListener("submit", async (eve
       throw new Error("Проверьте адрес и целый лимит от 0 до 1 000 000.");
     }
     await prepareResourceSimulation({ delegate, limit, type: "credit-delegation" });
-    event.currentTarget.reset();
+    eventTarget.reset();
   } catch (error) { resourcesStatus.textContent = error.message; }
   finally { button.disabled = false; }
 });
 
 document.querySelector("#unstake-form").addEventListener("submit", async (event) => {
+  const eventTarget = event.currentTarget;
   event.preventDefault();
-  const button = event.currentTarget.querySelector("button");
+  const button = eventTarget.querySelector("button");
   button.disabled = true;
   try {
     await prepareResourceSimulation({
       amount: parseNir(document.querySelector("#unstake-amount").value),
       type: "credit-unstake-request",
     });
-    event.currentTarget.reset();
+    eventTarget.reset();
   } catch (error) { resourcesStatus.textContent = error.message; }
   finally { button.disabled = false; }
 });
 
 document.querySelector("#claim-unstake").onclick = async (event) => {
-  event.currentTarget.disabled = true;
+  const eventTarget = event.currentTarget;
+  eventTarget.disabled = true;
   try { await prepareResourceSimulation({ type: "credit-unstake-claim" }); }
   catch (error) { resourcesStatus.textContent = error.message; }
-  finally { event.currentTarget.disabled = false; }
+  finally { eventTarget.disabled = false; }
 };
 
 function openBridgePanel() {
@@ -1374,10 +1382,11 @@ accountOpen.onclick = async () => {
 };
 
 document.querySelector("#add-account").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   if (accountTransitionPending) return;
   accountTransitionPending = true;
   const session = bridgeSession;
-  const button = event.currentTarget;
+  const button = eventTarget;
   button.disabled = true;
   accountsStatus.textContent = "Продолжите в окне Mac…";
   try {
@@ -1455,8 +1464,9 @@ function receive() {
 }
 
 document.querySelector("#payment-request-form").addEventListener("submit", async (event) => {
+  const eventTarget = event.currentTarget;
   event.preventDefault();
-  const button = event.currentTarget.querySelector("button");
+  const button = eventTarget.querySelector("button");
   button.disabled = true;
   receiveStatus.textContent = "Симуляция платёжного запроса…";
   try {
@@ -1473,15 +1483,16 @@ document.querySelector("#payment-request-form").addEventListener("submit", async
     const simulation = await simulateIntent(intent, await readAccount());
     pendingPaymentRequest = { intent, simulation };
     renderSimulation("#payment-request-simulation", simulation);
-    event.currentTarget.hidden = true;
+    eventTarget.hidden = true;
     receiveStatus.textContent = "Проверьте последствия. Подпись ещё не создана.";
   } catch (error) { receiveStatus.textContent = error.message; }
   finally { button.disabled = false; }
 });
 
 document.querySelector("#confirm-payment-request-simulation").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   if (!pendingPaymentRequest) return;
-  event.currentTarget.disabled = true; receiveStatus.textContent = "Повторная симуляция перед подписью…";
+  eventTarget.disabled = true; receiveStatus.textContent = "Повторная симуляция перед подписью…";
   try {
     const account = await readAccount();
     if (!account.proofVerified) throw new Error("Состояние сети больше не подтверждено. Подпись отменена.");
@@ -1504,7 +1515,7 @@ document.querySelector("#confirm-payment-request-simulation").onclick = async (e
     clearSimulation("#payment-request-simulation"); pendingPaymentRequest = null; paymentRequestQrFrames = [];
     receiveStatus.textContent = "Подписано. Отправка запроса не создаёт перевод.";
   } catch (error) { receiveStatus.textContent = error.message; }
-  finally { event.currentTarget.disabled = false; }
+  finally { eventTarget.disabled = false; }
 };
 document.querySelector("#edit-payment-request-simulation").onclick = () => {
   pendingPaymentRequest = null; clearSimulation("#payment-request-simulation");
@@ -1550,7 +1561,8 @@ function openSend() {
 }
 
 document.querySelector("#verify-payment-request").onclick = async (event) => {
-  event.currentTarget.disabled = true;
+  const eventTarget = event.currentTarget;
+  eventTarget.disabled = true;
   sendStatus.textContent = "Проверка постквантовой подписи…";
   try {
     if (!networkInfo) throw new Error("Локальный узел не подключён.");
@@ -1574,7 +1586,7 @@ document.querySelector("#verify-payment-request").onclick = async (event) => {
   } catch (error) {
     document.querySelector("#verified-request-note").textContent = "";
     sendStatus.textContent = error.message;
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 };
 
 document.querySelector("#open-contacts").onclick = openContacts;
@@ -1600,6 +1612,7 @@ document.querySelector("#confirm-address-change").onclick = () => {
 };
 
 document.querySelector("#send-form").addEventListener("submit", async (event) => {
+  const eventTarget = event.currentTarget;
   event.preventDefault();
   sendStatus.textContent = "Симуляция перевода с доказательством состояния…";
   try {
@@ -1624,7 +1637,7 @@ document.querySelector("#send-form").addEventListener("submit", async (event) =>
     const simulation = await simulateIntent(pendingIntent, account);
     pendingSimulation = simulation;
     renderSimulation("#transfer-simulation", simulation);
-    event.currentTarget.hidden = true;
+    eventTarget.hidden = true;
     document.querySelector("#send-review").hidden = false;
     sendStatus.textContent = "Проверьте точные изменения и риски. Подпись ещё не запрошена.";
   } catch (error) {
@@ -1642,10 +1655,11 @@ document.querySelector("#edit-transfer").onclick = () => {
 };
 
 document.querySelector("#export-offline-package").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   if (!pendingIntent || !pendingSimulation) return;
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   try { await exportOfflineSigningPackage(pendingIntent, pendingSimulation); }
-  finally { event.currentTarget.disabled = false; }
+  finally { eventTarget.disabled = false; }
 };
 
 document.querySelector("#copy-offline-package").onclick = async () => {
@@ -1672,7 +1686,8 @@ document.querySelector("#copy-offline-package-qr").onclick = async () => {
   } catch { document.querySelector("#offline-signing-status").textContent = "Браузер запретил доступ к буферу обмена."; }
 };
 document.querySelector("#verify-offline-signed").onclick = async (event) => {
-  event.currentTarget.disabled = true;
+  const eventTarget = event.currentTarget;
+  eventTarget.disabled = true;
   const status = document.querySelector("#offline-signing-status");
   status.textContent = "Локальная проверка структуры и срока действия…";
   try {
@@ -1700,7 +1715,7 @@ document.querySelector("#verify-offline-signed").onclick = async (event) => {
   } catch (error) {
     document.querySelector("#offline-signed-result").hidden = true;
     status.textContent = error.name === "AbortError" ? "Публичная проверка не ответила вовремя." : error.message;
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 };
 
 function canonicalTransaction(transaction) {
@@ -1813,6 +1828,7 @@ document.querySelector("#settings-connect").onclick = () => {
 };
 document.querySelector("#settings-setup").onclick = openSetupPanel;
 document.querySelector("#sign-operator-link").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   const status = document.querySelector("#operator-link-status");
   const proofField = document.querySelector("#operator-link-proof");
   const copy = document.querySelector("#copy-operator-link-proof");
@@ -1829,7 +1845,7 @@ document.querySelector("#sign-operator-link").onclick = async (event) => {
     return;
   }
   const expectedAddress = walletInfo.address;
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   try {
     const requestId = Array.from(crypto.getRandomValues(new Uint8Array(32)),
       (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -1844,7 +1860,7 @@ document.querySelector("#sign-operator-link").onclick = async (event) => {
     status.textContent = "Скопируйте доказательство в Model Lab. Это не заявка и не награда.";
   } catch {
     status.textContent = "Подтверждение не завершилось. Запрос не создал перевод или награду.";
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 };
 document.querySelector("#copy-operator-link-proof").onclick = async () => {
   try {
@@ -1855,6 +1871,7 @@ document.querySelector("#copy-operator-link-proof").onclick = async () => {
   }
 };
 document.querySelector("#sign-iris-receipt").onclick = async (event) => {
+  const eventTarget = event.currentTarget;
   const status = document.querySelector("#iris-receipt-status");
   const signedField = document.querySelector("#iris-receipt-signed");
   const copy = document.querySelector("#copy-iris-receipt");
@@ -1875,7 +1892,7 @@ document.querySelector("#sign-iris-receipt").onclick = async (event) => {
     return;
   }
   const expectedAddress = walletInfo.address;
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   try {
     const requestId = Array.from(crypto.getRandomValues(new Uint8Array(32)),
       (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -1892,7 +1909,7 @@ document.querySelector("#sign-iris-receipt").onclick = async (event) => {
     status.textContent = "Скопируйте подпись в Model Lab. Выполнение модели подписью не доказано; средства и сеть не изменились.";
   } catch {
     status.textContent = "Подпись не завершилась. Сетевая заявка и награда не созданы.";
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 };
 document.querySelector("#copy-iris-receipt").onclick = async () => {
   try {
@@ -1962,7 +1979,8 @@ document.querySelector("#wallet-apply-update").onclick = (event) => {
   void followWalletUpdate("/v1/app-update/apply");
 };
 document.querySelector("#settings-secrets").onclick = async (event) => {
-  const button = event.currentTarget;
+  const eventTarget = event.currentTarget;
+  const button = eventTarget;
   const status = document.querySelector("#settings-secrets-status");
   button.disabled = true;
   status.textContent = "Подтвердите действие в отдельном окне Mac; секрет здесь не появится.";
@@ -1976,7 +1994,8 @@ document.querySelector("#settings-secrets").onclick = async (event) => {
   } finally { button.disabled = false; }
 };
 document.querySelector("#settings-password-change").onclick = async (event) => {
-  const button = event.currentTarget;
+  const eventTarget = event.currentTarget;
+  const button = eventTarget;
   const status = document.querySelector("#settings-password-status");
   button.disabled = true;
   status.textContent = "Введите старый и новый пароль только в отдельном окне Mac.";
@@ -1994,7 +2013,8 @@ document.querySelector("#setup-connect").onclick = () => {
   openBridgePanel();
 };
 document.querySelector("#disconnect-wallet").onclick = async (event) => {
-  event.currentTarget.disabled = true;
+  const eventTarget = event.currentTarget;
+  eventTarget.disabled = true;
   try {
     if (bridgeSession) await bridgeRequest("/v1/session", { method: "DELETE" });
   } catch {
@@ -2002,7 +2022,7 @@ document.querySelector("#disconnect-wallet").onclick = async (event) => {
   } finally {
     if (localApp) nativeConnectionError = "Сеанс закрыт. Чтобы подключиться снова, перезапустите NIR Wallet.";
     clearWalletSession();
-    event.currentTarget.disabled = false;
+    eventTarget.disabled = false;
     settingsPanel.close();
   }
 };
@@ -2208,35 +2228,39 @@ document.querySelector("#mining-card").addEventListener("click", openMiningPanel
 document.querySelector("#header-settings").addEventListener("click", openSettingsPanel);
 document.querySelector("#settings-resources").addEventListener("click", () => { void openResources(); });
 document.querySelector("#open-miner").addEventListener("click", async (event) => {
+  const eventTarget = event.currentTarget;
   const status = document.querySelector("#open-miner-status");
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   try {
     await bridgeRequest("/v1/open-miner", { method: "POST" });
     status.textContent = "";
   } catch {
     status.textContent = "Не удалось открыть NIR Майнер. Откройте его из папки «Программы».";
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 });
 void loadMining();
 setInterval(() => { void loadMining(); }, 15_000);
 
 // Settings → More: earlier NIR builds Launchpad still lists.
 document.querySelector("#old-copies-find").addEventListener("click", async (event) => {
+  const eventTarget = event.currentTarget;
   const state = document.querySelector("#old-copies-state");
   const trash = document.querySelector("#old-copies-trash");
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   try {
     const { copies } = await bridgeRequest("/v1/old-copies", {}, 60_000);
     state.textContent = copies.length ? `Найдено старых копий: ${copies.length}.` : "Старых копий не найдено.";
     trash.hidden = copies.length === 0;
   } catch {
     state.textContent = "Не удалось выполнить поиск.";
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 });
 document.querySelector("#old-copies-trash").addEventListener("click", async (event) => {
+  const eventTarget = event.currentTarget;
   const state = document.querySelector("#old-copies-state");
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   try {
+    document.querySelector("#old-copies-reason").textContent = "";
     const { moved, failed = [] } = await bridgeRequest("/v1/old-copies/trash", { method: "POST" }, 300_000);
     state.textContent = `Убрано в Корзину: ${moved.length}.`;
     if (failed.length) {
@@ -2244,10 +2268,10 @@ document.querySelector("#old-copies-trash").addEventListener("click", async (eve
       document.querySelector("#old-copies-reason").textContent = failed[0].reason;
     }
     document.querySelector("#old-copies-reveal").hidden = failed.length === 0;
-    event.currentTarget.hidden = true;
+    eventTarget.hidden = true;
   } catch {
     state.textContent = "Не удалось убрать копии в Корзину.";
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 });
 
 // Account names (docs: account names are this Mac's own labels; the address
@@ -2298,8 +2322,9 @@ function startRename(row, account) {
 
 // Settings → the 24 secret words, shown only in the Mac window after the password.
 document.querySelector("#settings-phrase").addEventListener("click", async (event) => {
+  const eventTarget = event.currentTarget;
   const status = document.querySelector("#settings-phrase-status");
-  event.currentTarget.disabled = true;
+  eventTarget.disabled = true;
   status.textContent = "Введите пароль в окне Mac.";
   try {
     const { outcome } = await bridgeRequest("/v1/reveal-phrase", { method: "POST" }, 600_000);
@@ -2310,7 +2335,7 @@ document.querySelector("#settings-phrase").addEventListener("click", async (even
     document.querySelector("#settings-phrase-create").hidden = outcome !== "no-phrase";
   } catch {
     status.textContent = "Не удалось показать фразу.";
-  } finally { event.currentTarget.disabled = false; }
+  } finally { eventTarget.disabled = false; }
 });
 
 // A wallet made before phrases: "Add account" creates the 24 words and the
@@ -2322,7 +2347,8 @@ document.querySelector("#settings-phrase-create").addEventListener("click", (eve
   document.querySelector("#add-account").click();
 });
 document.querySelector("#old-copies-reveal").addEventListener("click", async (event) => {
-  event.currentTarget.disabled = true;
+  const eventTarget = event.currentTarget;
+  eventTarget.disabled = true;
   try { await bridgeRequest("/v1/old-copies/reveal", { method: "POST" }, 60_000); }
-  catch {} finally { event.currentTarget.disabled = false; }
+  catch {} finally { eventTarget.disabled = false; }
 });
