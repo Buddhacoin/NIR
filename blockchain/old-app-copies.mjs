@@ -58,9 +58,10 @@ const SYSTEM_TRASH = `function run(argv) {
     throw new Error("macOS did not move the copy");
   }
 }`;
+// "target" is a Finder property name, so the variable is called oldCopy.
 const FINDER_TRASH = `on run argv
-  set target to (POSIX file (item 1 of argv)) as alias
-  tell application "Finder" to delete target
+  set oldCopy to (POSIX file (item 1 of argv)) as alias
+  tell application "Finder" to delete oldCopy
 end run`;
 
 function osascript(args) {
@@ -69,10 +70,18 @@ function osascript(args) {
 }
 
 function systemTrash(path) {
+  let systemError = null;
   try {
     osascript(["-l", "JavaScript", "-e", SYSTEM_TRASH, path]);
-  } catch {}
-  if (existsSync(path)) osascript(["-e", FINDER_TRASH, path]);
+  } catch (error) {
+    systemError = error;
+  }
+  if (!existsSync(path)) return;
+  try {
+    osascript(["-e", FINDER_TRASH, path]);
+  } catch (error) {
+    throw new Error(`${error.message}${systemError ? ` · ${systemError.message}` : ""}`.slice(0, 300));
+  }
 }
 
 function renameToTrash(path, home) {
