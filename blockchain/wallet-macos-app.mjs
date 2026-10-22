@@ -19,7 +19,7 @@ import { macLauncherPid, readUpdateRecord, removePreviousVersions, runBuilder, S
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 import { findOldCopies, revealOldCopies, trashOldCopies } from "./old-app-copies.mjs";
 import { hasLocalSeed, revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
-import { activeMinerNetworkTrust } from "./miner-network-trust.mjs";
+import { activeMinerNetworkTrust, minerNetworkSignature } from "./miner-network-trust.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
@@ -329,6 +329,9 @@ async function main() {
   // cache-first service worker left behind by a prior preview installation.
   await listen(ui, 0);
   const origin = `http://127.0.0.1:${ui.address().port}`;
+  let networkSignature = minerNetworkSignature();
+  const networkTrust = activeMinerNetworkTrust({ storageRoot });
+  let networkTip = networkTrust?.trustAnchor.genesisCheckpoint.tipHash ?? null;
   let bridge;
   try {
     bridge = createWalletBridgeServer({
@@ -370,9 +373,25 @@ async function main() {
       sessionToken: randomBytes(32).toString("hex"),
       vaultPath: selected.walletPath,
       // Balances are checked against the network NIR Майнер runs on this Mac.
-      ...(activeMinerNetworkTrust({ storageRoot }) ?? {}),
+      ...(networkTrust ?? {}),
     });
     await listen(bridge, BRIDGE_PORT);
+    // NIR Майнер may join the shared network after the wallet opened, or go
+    // back to practice: the wallet follows it without a restart.
+    setInterval(() => {
+      const signature = minerNetworkSignature();
+      if (signature === networkSignature) return;
+      networkSignature = signature;
+      const trust = activeMinerNetworkTrust({ storageRoot });
+      const tip = trust?.trustAnchor.genesisCheckpoint.tipHash ?? null;
+      if (!trust || tip === networkTip) return;
+      try {
+        bridge.setNetworkTrust(trust);
+        networkTip = tip;
+      } catch {
+        networkSignature = null; // Tried again on the next check.
+      }
+    }, 5_000).unref();
   } catch (error) {
     if (ui.listening) ui.close();
     if (bridge?.listening) bridge.close();

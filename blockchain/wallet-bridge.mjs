@@ -360,6 +360,48 @@ function simulationForSigning({ body, intent, pathname, simulations, verifiedAcc
   return body.simulationId;
 }
 
+function invalidTrustAnchor(trustAnchor) {
+  return trustAnchor !== undefined &&
+    (typeof trustAnchor?.expectedNetworkId !== "string" ||
+     !Array.isArray(trustAnchor?.trustedValidators) ||
+     trustAnchor.trustedValidators.length < 4 ||
+     (trustAnchor.genesisCheckpoint !== undefined &&
+      (!Number.isSafeInteger(trustAnchor.genesisCheckpoint?.height) ||
+       trustAnchor.genesisCheckpoint.height !== 0 ||
+       !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.accountStateRoot ?? "") ||
+       !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.tipHash ?? "") ||
+       !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.stateRoot ?? "") ||
+       !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))));
+}
+
+// The trust a network anchor gives: its validators, genesis, release keys and
+// the saved checkpoint for that network.
+function deriveNetworkTrust(trustAnchor, trustCheckpointPath) {
+  const accountTrust = trustAnchor ? {
+    expectedNetworkId: trustAnchor.expectedNetworkId,
+    handoffs: structuredClone(trustAnchor.handoffs ?? []),
+    trustedValidators: structuredClone(trustAnchor.trustedValidators),
+  } : null;
+  const genesisCheckpoint = trustAnchor?.genesisCheckpoint
+    ? structuredClone(trustAnchor.genesisCheckpoint) : null;
+  const protocolUpgradeReleaseAnchor = trustAnchor?.protocolUpgradeReleaseAnchor
+    ? validateProtocolUpgradeReleaseAnchor(trustAnchor.protocolUpgradeReleaseAnchor,
+      accountTrust.expectedNetworkId) : null;
+  if (protocolUpgradeReleaseAnchor && !genesisCheckpoint) {
+    throw new Error("protocol release anchor requires a genesis checkpoint");
+  }
+  if (accountTrust) {
+    advanceValidatorTrust(accountTrust);
+  }
+  if (trustCheckpointPath && !accountTrust) {
+    throw new Error("wallet trust checkpoint requires an account trust anchor");
+  }
+  const trustCheckpoint = trustCheckpointPath
+    ? loadWalletTrustCheckpoint(trustCheckpointPath, accountTrust.expectedNetworkId) : null;
+  if (trustCheckpoint) requireCheckpointHandoff(trustCheckpoint, accountTrust.handoffs);
+  return { accountTrust, genesisCheckpoint, protocolUpgradeReleaseAnchor, trustCheckpoint };
+}
+
 export function createWalletBridgeServer({
   accounts,
   authorize,
@@ -396,17 +438,7 @@ export function createWalletBridgeServer({
       !/^(?:https?:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?|chrome-extension:\/\/[a-p]{32})$/.test(origin ?? "") ||
       typeof firefoxPairing !== "boolean" || (firefoxPairing && pairingCode === undefined) ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
-      (trustAnchor !== undefined &&
-        (typeof trustAnchor?.expectedNetworkId !== "string" ||
-         !Array.isArray(trustAnchor?.trustedValidators) ||
-         trustAnchor.trustedValidators.length < 4 ||
-         (trustAnchor.genesisCheckpoint !== undefined &&
-          (!Number.isSafeInteger(trustAnchor.genesisCheckpoint?.height) ||
-           trustAnchor.genesisCheckpoint.height !== 0 ||
-           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.accountStateRoot ?? "") ||
-           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.tipHash ?? "") ||
-           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.stateRoot ?? "") ||
-           !/^[0-9a-f]{64}$/.test(trustAnchor.genesisCheckpoint?.validatorSetId ?? ""))))) ||
+      invalidTrustAnchor(trustAnchor) ||
       (pairingCode !== undefined && !/^(?:[0-9]{8}|[0-9a-f]{64})$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
       (headerHistoryPath !== undefined && typeof headerHistoryPath !== "string") ||
@@ -414,30 +446,10 @@ export function createWalletBridgeServer({
       !Number.isSafeInteger(pairingLifetimeMs) || pairingLifetimeMs < 1 || pairingLifetimeMs > 300_000) {
     throw new Error("wallet bridge configuration is invalid");
   }
-  const accountTrust = trustAnchor ? {
-    expectedNetworkId: trustAnchor.expectedNetworkId,
-    handoffs: structuredClone(trustAnchor.handoffs ?? []),
-    trustedValidators: structuredClone(trustAnchor.trustedValidators),
-  } : null;
-  const genesisCheckpoint = trustAnchor?.genesisCheckpoint
-    ? structuredClone(trustAnchor.genesisCheckpoint) : null;
-  const protocolUpgradeReleaseAnchor = trustAnchor?.protocolUpgradeReleaseAnchor
-    ? validateProtocolUpgradeReleaseAnchor(trustAnchor.protocolUpgradeReleaseAnchor,
-      accountTrust.expectedNetworkId) : null;
-  if (protocolUpgradeReleaseAnchor && !genesisCheckpoint) {
-    throw new Error("protocol release anchor requires a genesis checkpoint");
-  }
-  if (accountTrust) {
-    advanceValidatorTrust(accountTrust);
-  }
-  if (trustCheckpointPath && !accountTrust) {
-    throw new Error("wallet trust checkpoint requires an account trust anchor");
-  }
-  let trustCheckpoint = trustCheckpointPath
-    ? loadWalletTrustCheckpoint(trustCheckpointPath, accountTrust.expectedNetworkId) : null;
+  let { accountTrust, genesisCheckpoint, protocolUpgradeReleaseAnchor, trustCheckpoint } =
+    deriveNetworkTrust(trustAnchor, trustCheckpointPath);
   let verifiedFinalityTip = null;
   let verifiedAccountState = null;
-  if (trustCheckpoint) requireCheckpointHandoff(trustCheckpoint, accountTrust.handoffs);
   if (headerHistoryPath && (!accountTrust || !genesisCheckpoint)) {
     throw new Error("wallet header history requires a genesis trust anchor");
   }
@@ -1500,5 +1512,23 @@ export function createWalletBridgeServer({
   server.headersTimeout = 5_000;
   server.requestTimeout = 30_000;
   server.keepAliveTimeout = 2_000;
+  // NIR Майнер can move between its practice network and the shared one while
+  // the wallet stays open: the wallet then verifies against the new network,
+  // and nothing proven on the old one is reused.
+  server.setNetworkTrust = ({ trustAnchor: nextAnchor, trustCheckpointPath: nextPath } = {}) => {
+    if (headerHistoryPath || trustHistoryPath || invalidTrustAnchor(nextAnchor) ||
+        (nextPath !== undefined && typeof nextPath !== "string")) {
+      throw new Error("wallet bridge network trust is invalid");
+    }
+    ({ accountTrust, genesisCheckpoint, protocolUpgradeReleaseAnchor, trustCheckpoint } =
+      deriveNetworkTrust(nextAnchor, nextPath));
+    trustCheckpointPath = nextPath;
+    sessionGeneration += 1;
+    verifiedFinalityTip = null;
+    verifiedAccountState = null;
+    verifiedAccountStates.clear();
+    verifiedAssetStates.clear();
+    simulations.clear();
+  };
   return server;
 }

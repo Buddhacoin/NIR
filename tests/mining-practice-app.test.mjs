@@ -785,6 +785,31 @@ test("a reused loopback port with a different service is not presented as NIR", 
   assert.equal(labels.includes("Локальный сервис недоступен"), true);
 });
 
+test("while nothing answers yet, NIR Майнер says it is starting instead of showing an error", async () => {
+  const element = () => ({ hidden: true, disabled: false, dataset: {}, textContent: "", children: [],
+    style: { setProperty() {} }, setAttribute() {}, addEventListener() {},
+    replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); } });
+  const nodes = new Map();
+  for (const id of ["start", "progress", "result", "error", "error-message", "connection", "language", "score", "technical"]) {
+    nodes.set(`#${id}`, element());
+  }
+  nodes.set("#event-pulses", element());
+  nodes.set("#event-log", element());
+  runInNewContext(readFileSync(join(root, "mining-app/app.js"), "utf8"), {
+    document: { documentElement: { lang: "ru" }, querySelector: (id) => nodes.get(id),
+      querySelectorAll: () => [], createElement: element },
+    navigator: { language: "ru-RU" }, AbortController,
+    fetch: async () => { throw new TypeError("fetch failed"); },
+    setInterval: () => 0, setTimeout, clearTimeout, TypeError,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nodes.get("#connection").dataset.state, "starting");
+  assert.match(nodes.get("#connection").textContent, /^Запускаю NIR Майнер… \d+ с\. Первый запуск после обновления/);
+  assert.equal(nodes.get("#error").hidden, true);
+  assert.equal(nodes.get("#start").disabled, true);
+});
+
 test("a matching unauthenticated health string is reported as a response, not identity proof", async () => {
   const element = () => ({ hidden: true, disabled: false, dataset: {}, textContent: "", children: [],
     style: { setProperty() {} }, setAttribute() {}, addEventListener() {},

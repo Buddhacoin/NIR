@@ -5,7 +5,7 @@
 // miner's data folder of this same user: the genesis validators and the
 // release keys that sign protocol upgrades. A different or recreated network
 // has a different genesis and gets its own checkpoint file.
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -35,6 +35,16 @@ export function activeMinerNetworkTrust({ miningDirectory = defaultMiningDirecto
     return null;
   }
   return minerNetworkTrust({ networkDirectory: join(miningDirectory, "shared"), storageRoot });
+}
+
+// Changes whenever NIR Майнер changes network or makes a new one: a cheap
+// check before the wallet recomputes its trust.
+export function minerNetworkSignature({ miningDirectory = defaultMiningDirectory() } = {}) {
+  const read = (path) => { try { return readFileSync(path, "utf8"); } catch { return ""; } };
+  const modified = (path) => { try { return String(statSync(path).mtimeMs); } catch { return ""; } };
+  return [read(join(miningDirectory, "active-network.json")),
+    modified(join(miningDirectory, "devnet", "genesis.json")),
+    modified(join(miningDirectory, "shared", "genesis.json"))].join("|");
 }
 
 // Returns the bridge's trust options, or null while the miner has made no

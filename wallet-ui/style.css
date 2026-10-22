@@ -276,6 +276,8 @@ dialog h2[tabindex="-1"]:focus { outline: none; }
 .account-row > button:first-child small { grid-column: 2; }
 .account-row .account-dot { align-self: center; grid-row: span 2; }
 .account-rename { flex: none; padding: 0 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft); color: var(--text); font-size: 12px; }
+.account-list .account-rename { width: auto; text-align: center; }
+.account-row > button:first-child { min-width: 0; }
 .account-rename-form { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
 .account-rename-form input { flex: 1 1 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-soft); color: var(--text); font: inherit; }
 .account-rename-form button { flex: 1; min-height: 38px; border-radius: 12px; }
