@@ -25,7 +25,7 @@ fi
 echo "== System packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q git curl ca-certificates xz-utils ufw debian-keyring debian-archive-keyring apt-transport-https gnupg
+apt-get install -y -q git curl ca-certificates xz-utils libatomic1 ufw debian-keyring debian-archive-keyring apt-transport-https gnupg
 
 echo "== Node.js $NODE_VERSION"
 case "$(uname -m)" in
