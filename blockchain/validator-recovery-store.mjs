@@ -81,7 +81,38 @@ function processIsAlive(pid) {
   }
 }
 
-function acquireSignerLock(path, assertRoot) {
+// A dead owner never releases and a live owner only unlinks its own link, so
+// once the reaper guard is held the stale link cannot change between the
+// re-read and the unlink. Without the guard, another process could clear the
+// same stale link and take the lock in between, and this unlink would remove
+// that live lock. Liveness is checked again in case the pid was reused.
+function clearStaleSignerLock(path, stale, assertRoot) {
+  const reaper = `${path}.reaper`;
+  const owner = String(process.pid);
+  assertRoot("before stale signer lock reaper acquire");
+  try { symlinkSync(owner, reaper); }
+  catch (error) {
+    if (error?.code === "EEXIST") throw new Error("validator recovery signer is already locked");
+    throw error;
+  }
+  try {
+    assertRoot("after stale signer lock reaper acquire");
+    let current;
+    try { current = readlinkSync(path); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    if (current === stale && !processIsAlive(Number(stale))) {
+      unlinkSync(path);
+      assertRoot("after stale signer lock removal");
+    }
+  } finally {
+    assertRoot("before stale signer lock reaper release");
+    if (readlinkSync(reaper) !== owner) throw new Error("validator recovery signer reaper owner changed");
+    unlinkSync(reaper);
+    assertRoot("after stale signer lock reaper release");
+  }
+}
+
+export function acquireSignerLock(path, assertRoot) {
   const owner = String(process.pid);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     assertRoot("before signer lock acquire");
@@ -98,8 +129,7 @@ function acquireSignerLock(path, assertRoot) {
         throw new Error("validator recovery signer is already locked");
       }
       assertRoot("before stale signer lock removal");
-      unlinkSync(path);
-      assertRoot("after stale signer lock removal");
+      clearStaleSignerLock(path, existing, assertRoot);
     }
   }
   throw new Error("validator recovery signer lock could not be acquired");

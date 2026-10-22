@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync,
-  writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync,
+  unlinkSync, writeFileSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -36,7 +36,7 @@ import {
   verifyValidatorRecoveryCheckpoint,
   verifyValidatorRecoveryPlan,
 } from "../blockchain/validator-recovery.mjs";
-import { ValidatorRecoveryLockStore } from "../blockchain/validator-recovery-store.mjs";
+import { ValidatorRecoveryLockStore, acquireSignerLock } from "../blockchain/validator-recovery-store.mjs";
 import {
   advanceValidatorRecoveryTrustStore, createValidatorRecoveryTrustStore,
   loadValidatorRecoveryTrustStore,
@@ -603,6 +603,44 @@ test("child reserve signer fails closed when its opened parent is swapped", asyn
     assert.equal(existsSync(join(displaced, "locks.json")), false);
     assert.equal(existsSync(join(live, "locks.json")), false);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("stale signer lock removal never unlinks a lock taken after the liveness check", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nir-recovery-stale-reap-"));
+  const path = join(directory, "locks.json.signer-lock");
+  const dead = String(spawnSync(process.execPath, ["-e", ""]).pid);
+  const live = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const livePid = String(live.pid);
+  try {
+    symlinkSync(dead, path);
+    let injected = false;
+    assert.throws(() => acquireSignerLock(path, (stage) => {
+      // The dead owner's lock is released and a live process acquires it after
+      // this process decided the lock was stale but before it removes it.
+      if (stage !== "before stale signer lock removal" || injected) return;
+      injected = true;
+      unlinkSync(path);
+      symlinkSync(livePid, path);
+    }), /already locked/);
+    assert.equal(injected, true);
+    assert.equal(readlinkSync(path), livePid);
+    assert.equal(existsSync(`${path}.reaper`), false);
+
+    unlinkSync(path);
+    symlinkSync(dead, path);
+    symlinkSync(livePid, `${path}.reaper`);
+    assert.throws(() => acquireSignerLock(path, () => {}), /already locked/);
+    assert.equal(readlinkSync(path), dead);
+    assert.equal(readlinkSync(`${path}.reaper`), livePid);
+
+    unlinkSync(`${path}.reaper`);
+    assert.equal(acquireSignerLock(path, () => {}), String(process.pid));
+    assert.equal(readlinkSync(path), String(process.pid));
+    assert.equal(existsSync(`${path}.reaper`), false);
+  } finally {
+    live.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("twenty concurrent reserve processes persist only one generation value", async () => {
