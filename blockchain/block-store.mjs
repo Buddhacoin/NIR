@@ -320,6 +320,35 @@ export function loadBlockStore(directory, genesis, {
   return { chain, checkpoint: createCheckpoint(chain), recoveredCopies };
 }
 
+// A faster start for a node that keeps its own state snapshots: blocks up to
+// `snapshotHeight` are read back from the journal and checked against the
+// store checkpoint (file hash and block hash), the state comes from
+// `restore(blocks)`, and only later blocks are replayed. Any mismatch throws,
+// so the caller can fall back to the full replay of loadBlockStore.
+export function loadBlockStoreFromSnapshot(directory, genesis, { snapshotHeight, restore }) {
+  const root = resolve(directory);
+  const checkpoint = readBlockStoreCheckpoint(root, genesis);
+  const primaryDirectory = join(root, BLOCKS_DIRECTORY);
+  const backupDirectory = join(root, BACKUP_DIRECTORY);
+  if (checkpoint.baseHeight !== 0 || !Number.isSafeInteger(snapshotHeight) || snapshotHeight < 1 ||
+      snapshotHeight > checkpoint.height ||
+      [...heightsIn(primaryDirectory), ...heightsIn(backupDirectory)].some((height) => height > checkpoint.height)) {
+    throw new Error("block store does not match the snapshot");
+  }
+  const blocks = [new NirChain(genesis).blockAtHeight(0)];
+  for (let height = 1; height <= checkpoint.height; height += 1) {
+    const expected = checkpoint.blocks[height - 1];
+    const candidate = readCandidate(join(primaryDirectory, blockName(height)), expected) ??
+      readCandidate(join(backupDirectory, blockName(height)), expected);
+    if (!candidate) throw new Error(`block ${height} does not match the store checkpoint`);
+    blocks.push(candidate.block);
+  }
+  const chain = restore(blocks.slice(0, snapshotHeight + 1));
+  for (const block of blocks.slice(snapshotHeight + 1)) chain.appendBlock(block);
+  if (chain.tipHash !== checkpoint.tipHash) throw new Error("block store tip does not match the snapshot replay");
+  return { chain };
+}
+
 export function persistBlock(directory, block, verifiedChain) {
   if (verifiedChain.height !== block.height || verifiedChain.tipHash !== block.hash) {
     throw new Error("block must be verified before durable persistence");

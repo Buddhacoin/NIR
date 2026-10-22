@@ -224,6 +224,8 @@ let networkInfo = null;
 let activeNodeUrl = null;
 let chainNameCurrent = null;
 let chainNameCheckEpoch = 0;
+// The name check may have failed while the network was still being verified.
+globalThis.nirAfterNetworkVerified = () => { if (!chainNameCurrent && walletInfo) void refreshChainName(); };
 let nodePolicy = null;
 let pendingIntent = null;
 let pendingSimulation = null;
@@ -550,6 +552,11 @@ async function readAccount() {
     // blocks meanwhile, so each batch stops at the height still needed.
     const verifyFinalityTo = async (target) => {
       while (verifiedHeight !== null && verifiedHeight < target) {
+        // The first check after a long pause walks many blocks: show how far it is.
+        if (target - verifiedHeight > 64) {
+          document.querySelector("#wallet-state").textContent =
+            `Проверяю сеть: ${verifiedHeight} из ${target} блоков…`;
+        }
         const finalityResponse = await fetch(nodeUrl(
           `/v1/finality-proofs?fromHeight=${verifiedHeight}&limit=${Math.min(512, target - verifiedHeight)}`,
         ));
@@ -2143,6 +2150,7 @@ async function refreshNodeStatus() {
     networkButton.classList.remove("offline");
     messages.network = ["Узлы NIR подключены", `${networkInfo.networkId}, высота ${networkInfo.height}. Совпадающих узлов: ${networkInfo.agreeingNodes} из ${networkInfo.availableNodes}.`];
     await refreshAccount();
+    globalThis.nirAfterNetworkVerified?.();
     return epoch === accountEpoch && refreshSequence === nodeRefreshSequence;
   } catch {
     if (epoch !== accountEpoch || refreshSequence !== nodeRefreshSequence) return false;

@@ -1,7 +1,9 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -31,7 +33,8 @@ import { createReleaseAuthoritySet, createReleaseTransparencyAnchor }
 import { createEpochRandomnessCommit, createEpochRandomnessReveal } from "./operators.mjs";
 import { generateWallet, publicWallet } from "./crypto.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
-import { initializeBlockStore, loadBlockStore, persistBlock } from "./block-store.mjs";
+import { initializeBlockStore, loadBlockStore, loadBlockStoreFromSnapshot, persistBlock } from "./block-store.mjs";
+import { createStateSnapshot, verifyStateSnapshot } from "./state-snapshot.mjs";
 import { createAccountProof } from "./account-proof.mjs";
 import { createAssetProof } from "./asset-proof.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
@@ -41,6 +44,12 @@ import { NAMES_V1, lookupName, nameOfAddress, namePrice, nameProblem } from "./n
 
 const CONFIG_FILE = "genesis.json";
 const DEV_KEYS_FILE = "DEVNET-KEYS.json";
+
+// A devnet signs a state snapshot of itself every RESUME_INTERVAL blocks, so
+// opening it replays only the blocks after the snapshot instead of the whole
+// chain. The blocks stay in the journal for finality proofs.
+const RESUME_FILE = "DEVNET-RESUME.json";
+const RESUME_INTERVAL = 256;
 
 function writeExclusive(path, value, mode = 0o600) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {
@@ -133,7 +142,7 @@ export class PersistentDevNode {
           !this.#config.validators.some((member) => member.address === wallet.address && member.publicKey === wallet.publicKey))) {
       throw new Error("devnet validator keys do not match genesis");
     }
-    ({ chain: this.#chain } = loadBlockStore(this.#root, this.#config));
+    this.#chain = this.#loadChain();
     this.#historyIndex = new AccountHistoryIndex(this.#root, this.#chain);
   }
 
@@ -273,6 +282,15 @@ export class PersistentDevNode {
     }
   }
 
+  // Whether the devnet still needs new blocks without a miner: answers to
+  // reveal, rewards to mature, or names waiting for their registration.
+  get hasPendingWork() {
+    const mining = this.#chain.proofMiningStatus();
+    const names = this.#chain.nameRegistryStatus();
+    return Boolean((mining && (mining.commits.size > 0 || mining.pendingRewards.length > 0 ||
+      mining.escrows.size > 0)) || (names && names.commits.size > 0));
+  }
+
   // One devnet heartbeat: run a beacon round when no task is open, so the
   // network issues the next one; otherwise produce a block so reveal delays
   // pass. A public network gets both from independent operators.
@@ -292,6 +310,41 @@ export class PersistentDevNode {
       createEpochRandomnessReveal({ networkId, round, secret: secrets[i], wallet })) });
   }
 
+  #loadChain() {
+    const path = join(this.#root, RESUME_FILE);
+    if (existsSync(path)) {
+      try {
+        const resume = parseConsensusJson(readFileSync(path, "utf8"));
+        if (resume?.format !== "nir-devnet-resume-v1") throw new Error("devnet resume file is invalid");
+        const trustAnchor = { expectedNetworkId: this.#config.networkId, handoffs: [],
+          trustedValidators: this.#config.validators };
+        return loadBlockStoreFromSnapshot(this.#root, this.#config, {
+          snapshotHeight: resume.snapshot?.height,
+          restore: (blocks) => {
+            verifyStateSnapshot(resume.snapshot, trustAnchor);
+            const chain = NirChain.fromVerifiedSnapshotWithHistory(this.#config, resume.snapshot, blocks);
+            chain.restoreProofRewardLog(resume.proofRewardLog);
+            return chain;
+          },
+        }).chain;
+      } catch {
+        // A stale or damaged resume file only costs the full replay below.
+      }
+    }
+    const { chain } = loadBlockStore(this.#root, this.#config);
+    this.#saveResume(chain);
+    return chain;
+  }
+
+  #saveResume(chain) {
+    if (chain.height < 1) return;
+    const path = join(this.#root, RESUME_FILE);
+    writeFileSync(`${path}.tmp`, `${JSON.stringify({ format: "nir-devnet-resume-v1",
+      proofRewardLog: chain.proofRewardLogEntries(),
+      snapshot: createStateSnapshot(chain, this.#keys.validators) })}\n`, { mode: 0o600 });
+    renameSync(`${path}.tmp`, path);
+  }
+
   #nextProtocolVersion() {
     return protocolVersionAtNextHeight({ currentHeight: this.#chain.height,
       currentVersion: this.#chain.protocolVersion, pendingUpgrade: this.#chain.pendingProtocolUpgrade });
@@ -303,6 +356,7 @@ export class PersistentDevNode {
     const verified = this.#chain.fork();
     verified.appendBlock(finalized);
     persistBlock(this.#root, finalized, verified);
+    if (finalized.height % RESUME_INTERVAL === 0) this.#saveResume(verified);
     this.#historyIndex.appendBlock(finalized, verified);
     this.#chain = verified;
     return { blockHash: finalized.hash, height: finalized.height };
