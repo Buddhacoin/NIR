@@ -150,6 +150,8 @@ export class PersistentDevNode {
   get height() { return this.#chain.height; }
   get tipHash() { return this.#chain.tipHash; }
   get protocolVersion() { return this.#chain.protocolVersion; }
+  // Public genesis: validators, release anchor and parameters, no keys.
+  get genesisConfig() { return structuredClone(this.#config); }
 
   validatorHandoffHistory() { return []; }
 

@@ -132,6 +132,8 @@
     "formal:consensus": "node formal/check-consensus.mjs",
     "test:chain": "node --test --test-concurrency=1 tests/*.test.mjs",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py' -v",
-    "verify": "npm run test:python && npm run test:chain"
+    "verify": "npm run test:python && npm run test:chain",
+    "testnet:init": "node blockchain/shared-testnet-cli.mjs init",
+    "testnet:serve": "node blockchain/shared-testnet-cli.mjs serve"
   }
 }

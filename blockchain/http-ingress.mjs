@@ -309,7 +309,7 @@ export function hardenHttpServer(server, options = {}) {
 export function ingressErrorResponse(error) {
   if (error instanceof HttpIngressError) return { status: error.status, message: error.message };
   const message = typeof error?.message === "string" ? error.message : "request rejected";
-  const approvedClientFailure = /(?:authentication|signature|certificate|height|quorum|equivocat|rate limit|invalid|malformed|mismatch|duplicate|replay|unknown transaction|not found|not allowed|unavailable|conflict|stale|required|exceeds|too many|extend|deterministic|refus|proposer|binding|nonce)/i;
+  const approvedClientFailure = /(?:authentication|signature|certificate|height|quorum|equivocat|rate limit|invalid|malformed|mismatch|duplicate|replay|unknown transaction|not found|not allowed|unavailable|conflict|stale|required|exceeds|too many|extend|deterministic|refus|proposer|binding|nonce|already taken|outside its window|has no commit)/i;
   if (message.length <= 200 && !/[\r\n]/.test(message) && approvedClientFailure.test(message) &&
       !/(?:\bENOENT\b|\bEACCES\b|node:internal|\/Users\/|\\Users\\|secret|password|token|vault|credential|private|database|\bdsn\b|stack trace)/i.test(message)) {
     return { status: 400, message };

@@ -12,9 +12,12 @@ const ADDRESS = /^nir1[0-9a-f]{64}$/;
 const DEVELOPER_POST_PATHS = new Set([
   "/v1/transactions", "/v1/faucet", "/v1/blocks/produce", "/v1/snapshots/create",
 ]);
+// The shared test network (docs/shared-testnet.md) accepts transactions and
+// the rate-limited faucet from anyone, but never block production requests.
+const SHARED_TESTNET_POST_PATHS = new Set(["/v1/transactions", "/v1/faucet"]);
 const WALLET_READ_PATH = /^\/v1\/(?:accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history|proof-rewards|name))?|names\/[a-z0-9.-]{1,40}|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof)$/;
 const WALLET_READ_EXACT = new Set(["/health", "/v1/validator-handoffs",
-  "/v1/finality-proofs", "/v1/fees", "/v1/proof-mining", "/v1/names"]);
+  "/v1/finality-proofs", "/v1/fees", "/v1/proof-mining", "/v1/names", "/v1/genesis"]);
 
 function send(response, status, value, origin = null) {
   const body = JSON.stringify(value);
@@ -37,8 +40,12 @@ function allowedOrigin(request) {
 
 export function createNodeHttpServer(node, options = {}) {
   const rpcProfile = options.rpcProfile ?? "public";
-  if (rpcProfile !== "public" && rpcProfile !== "developer") {
-    throw new Error("node RPC profile must be public or developer");
+  if (!["public", "developer", "shared-testnet"].includes(rpcProfile)) {
+    throw new Error("node RPC profile must be public, developer or shared-testnet");
+  }
+  const faucetLimit = options.faucetLimit ?? null;
+  if (rpcProfile === "shared-testnet" && typeof faucetLimit !== "function") {
+    throw new Error("the shared test network requires a faucet limit");
   }
   const walletReadOrigin = options.walletReadOrigin ?? null;
   if (walletReadOrigin !== null) {
@@ -74,7 +81,8 @@ export function createNodeHttpServer(node, options = {}) {
         }
       }
       if ((request.method === "POST" || request.method === "OPTIONS") &&
-          DEVELOPER_POST_PATHS.has(url.pathname) && rpcProfile !== "developer") {
+          DEVELOPER_POST_PATHS.has(url.pathname) && rpcProfile !== "developer" &&
+          !(rpcProfile === "shared-testnet" && SHARED_TESTNET_POST_PATHS.has(url.pathname))) {
         return send(response, 404, { error: "not found" }, origin);
       }
       if (request.method === "OPTIONS") {
@@ -177,6 +185,11 @@ export function createNodeHttpServer(node, options = {}) {
         return send(response, 200, node.feeQuote(url.searchParams.get("amount"),
           url.searchParams.get("fee") ?? undefined), origin);
       }
+      // The genesis a wallet pins by its hash before trusting this network.
+      if (request.method === "GET" && url.pathname === "/v1/genesis") {
+        if (!node.genesisConfig) return send(response, 501, { error: "genesis is unavailable" }, origin);
+        return send(response, 200, node.genesisConfig, origin);
+      }
       if (request.method === "GET" && url.pathname === "/v1/proof-mining") {
         if (typeof node.proofMining !== "function") {
           return send(response, 501, { error: "proof mining status is unavailable" }, origin);
@@ -193,6 +206,11 @@ export function createNodeHttpServer(node, options = {}) {
       if (request.method === "POST" && url.pathname === "/v1/faucet") {
         const { recipient, amount } = await readBoundedConsensusJson(request, httpIngressOptions);
         if (!ADDRESS.test(recipient ?? "")) throw new Error("recipient is invalid");
+        // Anyone can ask the shared faucet: a fixed amount, within its limits.
+        if (faucetLimit) {
+          faucetLimit(request);
+          return send(response, 202, await node.faucet(recipient), origin);
+        }
         return send(response, 202, await node.faucet(recipient, amount), origin);
       }
       if (request.method === "POST" && url.pathname === "/v1/blocks/produce" && node.produceBlock) {
