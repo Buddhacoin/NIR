@@ -1,16 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 
 import { createProofAnswerCommit, createProofAnswerReveal, createTransfer, formatNir } from "./chain.mjs";
-import { mineOneCliqueTask } from "./clique-miner.mjs";
+import { createMinerNodeClient, mineOneCliqueTask } from "./clique-miner.mjs";
 import { cliqueSearchParameters } from "./clique-search.mjs";
 import { MIN_TRANSFER_FEE } from "./constants.mjs";
 import { generateWallet } from "./crypto.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
 import { createDeveloperNodeHttpServer } from "./node-service.mjs";
 import { initializeDevnet, LATEST_DEVNET_PROTOCOL_VERSION, PersistentDevNode } from "./node-store.mjs";
+import { createNetworkRelay } from "./network-relay.mjs";
 import { PROOF_MINING_V1 } from "./proof-mining-state.mjs";
+import { verifySharedGenesis } from "./shared-network.mjs";
 
 // One-button mining for an app (docs/proof-mining.md): a valueless local
 // devnet with proof mining runs inside the app, a small miner key pays fees
@@ -30,6 +32,7 @@ export class CliqueMiningSession {
   #recipient;
   #httpPort;
   #tickMs;
+  #retryMs;
   #node = null;
   #server = null;
   #timer = null;
@@ -45,14 +48,26 @@ export class CliqueMiningSession {
   #lastClique = null;
   #events = [];
   #loop = null;
+  // The shared test network (docs/shared-testnet.md), or null for the
+  // practice network on this Mac.
+  #network;
+  #remote = null;
+  #remoteView = null;
+  #remoteBalances = new Map();
+  #preparing = null;
 
   // `recipient` returns the linked wallet address, or null.
-  constructor({ dataDirectory, recipient = () => null, httpPort = 8787, tickMs = 2_000 }) {
+  constructor({ dataDirectory, recipient = () => null, httpPort = 8787, tickMs = 2_000, network = null,
+    retryMs = 5_000 }) {
     this.#dataDirectory = dataDirectory;
     this.#recipient = recipient;
     this.#httpPort = httpPort;
     this.#tickMs = tickMs;
+    this.#retryMs = retryMs;
+    this.#network = network;
   }
+
+  get networkMode() { return this.#network ? "shared" : "local"; }
 
   // Events carry a kind and data, not prose, so the app can show them in its
   // own language.
@@ -61,11 +76,91 @@ export class CliqueMiningSession {
     if (this.#events.length > MAX_EVENTS) this.#events.shift();
   }
 
+  // NIR Wallet reads which network the miner uses (miner-network-trust.mjs).
+  #writeActiveNetwork(value) {
+    const path = join(this.#dataDirectory, "active-network.json");
+    writeFileSync(`${path}.tmp`, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    renameSync(`${path}.tmp`, path);
+  }
+
+  #loadMinerKey() {
+    const keyPath = join(this.#dataDirectory, "miner-key.json");
+    if (!existsSync(keyPath)) {
+      writeFileSync(keyPath, `${JSON.stringify(generateWallet())}\n`, { flag: "wx", mode: 0o600 });
+    }
+    this.#miner = JSON.parse(readFileSync(keyPath, "utf8"));
+  }
+
+  async #prepare() {
+    if (this.#network) {
+      this.#preparing ??= this.#prepareShared().catch((error) => {
+        this.#preparing = null;
+        const last = this.#events.at(-1);
+        if (last?.kind !== "network-error" || last.message !== error.message) {
+          this.#event("network-error", { message: error.message });
+        }
+        throw error;
+      });
+      return this.#preparing;
+    }
+    return this.#prepareLocal();
+  }
+
+  // Joins the shared network: checks its genesis against the pinned hash,
+  // funds the miner key once from its faucet, and relays NIR Wallet's
+  // requests from 127.0.0.1 to it.
+  async #prepareShared() {
+    if (this.#remote) return;
+    mkdirSync(join(this.#dataDirectory, "shared"), { recursive: true, mode: 0o700 });
+    const base = this.#network.url;
+    const response = await fetch(new URL("/v1/genesis", base), { signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error("the shared network did not answer");
+    const genesis = await response.json();
+    verifySharedGenesis(genesis, this.#network);
+    const genesisPath = join(this.#dataDirectory, "shared", "genesis.json");
+    writeFileSync(`${genesisPath}.tmp`, `${JSON.stringify(genesis)}\n`, { mode: 0o600 });
+    renameSync(`${genesisPath}.tmp`, genesisPath);
+    this.#writeActiveNetwork({ mode: "shared", networkId: this.#network.networkId });
+    const client = createMinerNodeClient(base, { timeoutMs: 20_000 });
+    this.#loadMinerKey();
+    const account = await client.account(this.#miner.address);
+    if (account.history.count === 0) {
+      const faucet = await fetch(new URL("/v1/faucet", base), { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ recipient: this.#miner.address }),
+        signal: AbortSignal.timeout(20_000) });
+      if (faucet.ok) this.#event("faucet");
+    }
+    this.#remote = client;
+    if (this.#httpPort !== null) {
+      this.#server = createNetworkRelay(base);
+      this.#server.on("error", () => { this.#server = null; });
+      this.#server.listen(this.#httpPort, "127.0.0.1");
+    }
+    await this.#refreshShared();
+    this.#timer = setInterval(() => { void this.#refreshShared(); }, 3_000);
+    this.#timer.unref?.();
+    this.#event("network-ready", { height: this.#remoteView?.height ?? 0, shared: true });
+  }
+
+  // status() answers at once, so shared-network figures are refreshed here.
+  async #refreshShared() {
+    try {
+      const view = await this.#remote.proofMining();
+      const balances = new Map();
+      for (const address of [this.#miner.address, this.#recipient()].filter(Boolean)) {
+        balances.set(address, BigInt((await this.#remote.account(address)).atomicBalance));
+      }
+      this.#remoteView = view;
+      this.#remoteBalances = balances;
+    } catch {}
+  }
+
   // Creates the devnet on first use (about 20 s), opens it, and funds the
   // miner key from the devnet faucet.
-  #prepare() {
+  #prepareLocal() {
     if (this.#node) return;
     mkdirSync(this.#dataDirectory, { recursive: true, mode: 0o700 });
+    this.#writeActiveNetwork({ mode: "local" });
     const directory = join(this.#dataDirectory, "devnet");
     if (!existsSync(directory)) {
       this.#event("network-create");
@@ -92,11 +187,7 @@ export class CliqueMiningSession {
       this.#server.on("error", () => { this.#server = null; });
       this.#server.listen(this.#httpPort, "127.0.0.1");
     }
-    const keyPath = join(this.#dataDirectory, "miner-key.json");
-    if (!existsSync(keyPath)) {
-      writeFileSync(keyPath, `${JSON.stringify(generateWallet())}\n`, { flag: "wx", mode: 0o600 });
-    }
-    this.#miner = JSON.parse(readFileSync(keyPath, "utf8"));
+    this.#loadMinerKey();
     if (this.#node.account(this.#miner.address).history.count === 0) {
       this.#node.faucet(this.#miner.address);
       this.#event("faucet");
@@ -105,6 +196,7 @@ export class CliqueMiningSession {
   }
 
   #client() {
+    if (this.#remote) return this.#remote;
     const node = this.#node;
     return {
       account: async (address) => node.account(address),
@@ -148,8 +240,8 @@ export class CliqueMiningSession {
 
   // Opens the local network without mining, so NIR Wallet can read balances
   // whenever the miner app is open.
-  open() {
-    this.#prepare();
+  async open() {
+    await this.#prepare();
     return this.status();
   }
 
@@ -159,38 +251,50 @@ export class CliqueMiningSession {
     this.#state = "preparing";
     this.#loop = (async () => {
       try {
-        this.#prepare();
         while (this.#running) {
-          this.#state = "waiting";
-          const recipient = this.#recipient() ?? this.#miner.address;
-          const outcome = await mineOneCliqueTask({
-            address: this.#miner.address, client: this.#client(), pollMs: 250, recipient,
-            onTask: (task) => {
-              this.#event("task", { level: task.level, round: task.round });
-              this.#task = { ...task, ...cliqueSearchParameters(task.level) };
-              this.#search = { deepest: 0, startedAt: Date.now(), visited: 0 };
-              this.#state = "searching";
-            },
-            shouldStop: () => !this.#running,
-            sign: (operation) => {
-              this.#state = operation.type === "proof-answer-commit" ? "committing" : "revealing";
-              if (operation.type === "proof-answer-commit") {
-                this.#event("found", { k: this.#task.k, ms: Date.now() - this.#search.startedAt,
-                  round: this.#task.round });
-              }
-              return this.#sign(operation);
-            },
-            solve: (input) => this.#solveInWorker(input),
-          });
-          if (outcome.result === "revealed") {
-            this.#found += 1;
-            this.#lastClique = { n: this.#task.n, round: outcome.task.round, vertices: outcome.answer.vertices };
-            this.#event("revealed", { round: outcome.task.round });
+          // A lost connection or a refused answer does not stop mining: the
+          // miner says what happened and tries again.
+          try {
+            await this.#prepare();
+            this.#state = "waiting";
+            const recipient = this.#recipient() ?? this.#miner.address;
+            const outcome = await mineOneCliqueTask({
+              address: this.#miner.address, client: this.#client(), pollMs: 250, recipient,
+              onTask: (task) => {
+                this.#event("task", { level: task.level, round: task.round });
+                this.#task = { ...task, ...cliqueSearchParameters(task.level) };
+                this.#search = { deepest: 0, startedAt: Date.now(), visited: 0 };
+                this.#state = "searching";
+              },
+              shouldStop: () => !this.#running,
+              sign: (operation) => {
+                this.#state = operation.type === "proof-answer-commit" ? "committing" : "revealing";
+                if (operation.type === "proof-answer-commit") {
+                  this.#event("found", { k: this.#task.k, ms: Date.now() - this.#search.startedAt,
+                    round: this.#task.round });
+                }
+                return this.#sign(operation);
+              },
+              solve: (input) => this.#solveInWorker(input),
+            });
+            if (outcome.result === "revealed") {
+              this.#found += 1;
+              this.#lastClique = { n: this.#task.n, round: outcome.task.round, vertices: outcome.answer.vertices };
+              this.#event("revealed", { round: outcome.task.round });
+            }
+            if (outcome.result !== "revealed") await new Promise((resolve) => setTimeout(resolve, 500));
+          } catch (error) {
+            if (!this.#running) break;
+            this.#state = "preparing";
+            const last = this.#events.at(-1);
+            if (!["error", "network-error"].includes(last?.kind) || last.message !== error.message) {
+              this.#event("error", { message: error.message });
+            }
+            for (let waited = 0; waited < this.#retryMs && this.#running; waited += 250) {
+              await new Promise((resolve) => setTimeout(resolve, 250));
+            }
           }
-          if (outcome.result !== "revealed") await new Promise((resolve) => setTimeout(resolve, 500));
         }
-      } catch (error) {
-        this.#event("error", { message: error.message });
       } finally {
         this.#running = false;
         this.#state = "idle";
@@ -207,15 +311,18 @@ export class CliqueMiningSession {
   }
 
   // Sends the miner key's coins, above a small reserve, to the linked wallet.
-  withdraw() {
+  async withdraw() {
     const recipient = this.#recipient();
-    if (!this.#node || !recipient) throw new Error("no linked wallet");
-    const balance = BigInt(this.#node.account(this.#miner.address).atomicBalance);
-    const amount = balance - MINER_RESERVE - MIN_TRANSFER_FEE;
+    const client = this.#client();
+    if ((!this.#node && !this.#remote) || !recipient) throw new Error("no linked wallet");
+    const account = await client.account(this.#miner.address);
+    const amount = BigInt(account.atomicBalance) - MINER_RESERVE - MIN_TRANSFER_FEE;
     if (amount <= 0n) throw new Error("nothing to send above the miner reserve");
-    const result = this.#node.submitTransaction(createTransfer({ amount: amount.toString(),
-      chainIdentityGenesisHash: this.#node.proofMining().chainIdentityGenesisHash,
-      networkId: this.#node.networkId, nonce: this.#node.account(this.#miner.address).nextNonce,
+    const view = await client.proofMining();
+    const health = await client.health();
+    const result = await client.submit(createTransfer({ amount: amount.toString(),
+      chainIdentityGenesisHash: view.chainIdentityGenesisHash,
+      networkId: health.networkId, nonce: account.nextNonce,
       recipient, wallet: this.#miner }));
     this.#event("withdraw", { amount: formatNir(amount) });
     return { amount: amount.toString(), ...result };
@@ -223,10 +330,12 @@ export class CliqueMiningSession {
 
   status() {
     const node = this.#node;
-    const view = node?.proofMining() ?? null;
+    const view = this.#remote ? this.#remoteView : node?.proofMining() ?? null;
     const recipient = this.#recipient();
-    const balanceOf = (address) => (node && address ? BigInt(node.account(address).atomicBalance) : 0n);
+    const balanceOf = (address) => (!address ? 0n : this.#remote ? this.#remoteBalances.get(address) ?? 0n
+      : node ? BigInt(node.account(address).atomicBalance) : 0n);
     return {
+      networkMode: this.networkMode,
       events: [...this.#events],
       found: this.#found,
       lastClique: this.#lastClique,

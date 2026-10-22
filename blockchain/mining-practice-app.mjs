@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { parseConsensusJson } from "./consensus-json.mjs";
-import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -13,6 +13,7 @@ import { evaluateIrisLinearCandidate, evaluateIrisPostCommitStress,
   recheckIrisPostCommitRecord } from "./iris-linear-candidate.mjs";
 import { verifyOperatorWalletProof } from "./operator-wallet-link.mjs";
 import { CliqueMiningSession } from "./clique-mining-session.mjs";
+import { SHARED_NETWORK, sharedNetworkAvailable } from "./shared-network.mjs";
 import { readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, startSwap, macLauncherPid, UPDATE_RECORD,
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
@@ -302,7 +303,7 @@ export function createModelLabUpdater({ root, embedded }) {
 export function createMiningPracticeApp({ root, embedded = false, runModel = runPinnedModel,
   runOpenModel = runPinnedQwen, checkOpenModel = checkPinnedQwenRuntime,
   runReplay = replayPinnedQwen, verifyIris = verifyPinnedIrisEvidence,
-  catalog = createOpenModelCatalog(), miningDirectory = defaultMiningDirectory(),
+  catalog = createOpenModelCatalog(), miningDirectory = defaultMiningDirectory(), sharedNetwork = SHARED_NETWORK,
   miningHttpPort = 8787, miningTickMs = 2_000, updater = createModelLabUpdater({ root, embedded }),
   walletBridgeUrl = "http://127.0.0.1:8788" } = {}) {
   if (!root) throw new Error("repository root is required");
@@ -328,8 +329,19 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
   }
   const openModelJobs = new Map();
   // Rewards go to the wallet address proven through NIR Wallet, if any.
-  const mining = new CliqueMiningSession({ dataDirectory: miningDirectory,
-    httpPort: miningHttpPort, recipient: () => linkedWalletAddress, tickMs: miningTickMs });
+  // Which network to mine on: the shared one once it is configured, or the
+  // practice network on this Mac. The choice is kept in the mining folder.
+  const networkSettingPath = join(miningDirectory, "network-choice.json");
+  const chosenNetwork = () => {
+    if (!sharedNetworkAvailable(sharedNetwork)) return "local";
+    try {
+      return JSON.parse(readFileSync(networkSettingPath, "utf8")).mode === "local" ? "local" : "shared";
+    } catch { return "shared"; }
+  };
+  const createMining = () => new CliqueMiningSession({ dataDirectory: miningDirectory,
+    httpPort: miningHttpPort, recipient: () => linkedWalletAddress, tickMs: miningTickMs,
+    network: chosenNetwork() === "shared" ? sharedNetwork : null });
+  let mining = createMining();
   let networkOpen = "no";
   const server = createServer(async (request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
@@ -529,10 +541,39 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
         networkOpen = "opening";
         // After this response is sent, so the window can show the message first.
         setTimeout(() => {
-          try { mining.open(); } catch {}
-          networkOpen = "open";
+          mining.open().catch(() => {}).finally(() => { networkOpen = "open"; });
         }, 100);
       }
+      return;
+    }
+    // Settings → Network: the shared test network or practice on this Mac.
+    if (path === "/mining/network" && request.url === path && ["GET", "POST"].includes(request.method)) {
+      if (!authorized(request) || (request.method === "POST" && request.headers.origin !== origin)) {
+        send(403, "application/json; charset=utf-8", JSON.stringify({ error: "Request refused" }));
+        return;
+      }
+      if (request.method === "POST") {
+        const chunks = [];
+        for await (const chunk of request) {
+          chunks.push(chunk);
+          if (Buffer.concat(chunks).length > 256) break;
+        }
+        let mode;
+        try { ({ mode } = JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch {}
+        if (!["shared", "local"].includes(mode) || (mode === "shared" && !sharedNetworkAvailable(sharedNetwork))) {
+          send(400, "application/json; charset=utf-8", JSON.stringify({ error: "network choice is invalid" }));
+          return;
+        }
+        mkdirSync(miningDirectory, { recursive: true, mode: 0o700 });
+        writeFileSync(networkSettingPath, `${JSON.stringify({ mode })}\n`, { mode: 0o600 });
+        if (mining.networkMode !== mode) {
+          await mining.close();
+          mining = createMining();
+          mining.open().catch(() => {});
+        }
+      }
+      send(200, "application/json; charset=utf-8", JSON.stringify({ available: sharedNetworkAvailable(sharedNetwork),
+        mode: mining.networkMode, url: sharedNetwork.url }));
       return;
     }
     if (request.method === "POST" && ["/mining/start", "/mining/stop", "/mining/withdraw"].includes(path) &&
@@ -544,7 +585,7 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
       }
       try {
         const result = path === "/mining/start" ? mining.start()
-          : path === "/mining/stop" ? await mining.stop() : mining.withdraw();
+          : path === "/mining/stop" ? await mining.stop() : await mining.withdraw();
         send(200, "application/json; charset=utf-8", JSON.stringify(result));
       } catch (error) {
         send(409, "application/json; charset=utf-8", JSON.stringify({ error: error.message }));
@@ -1153,7 +1194,7 @@ export function createMiningPracticeApp({ root, embedded = false, runModel = run
     setTimeout(() => {
       if (networkOpen !== "scheduled") return;
       networkOpen = "open";
-      try { mining.open(); } catch {}
+      mining.open().catch(() => {});
     }, 15_000).unref?.();
   };
   return server;

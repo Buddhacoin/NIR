@@ -32,6 +32,8 @@
     <div id="tab-mining" data-tab-panel="mining">
     <section id="mining" class="operator-console mining" aria-labelledby="mining-heading">
       <h2 id="mining-heading" class="visually-hidden" data-mining="title">Майнинг NIR</h2>
+      <div id="mining-network" class="mining-network" role="radiogroup" aria-label="Сеть" hidden><button type="button" role="radio" data-network="shared" data-mining="networkShared">Общая сеть</button><button type="button" role="radio" data-network="local" data-mining="networkLocal">Тренировка на этом Mac</button></div>
+      <p id="mining-network-note" class="mining-note" hidden></p>
       <canvas id="mining-sky" class="mining-sky" width="436" height="200" role="img" aria-label="Граф задачи и найденная клика"></canvas>
       <p id="mining-phase" class="mining-phase" role="status" aria-live="polite">Нажмите «Начать майнинг»</p>
       <div class="mining-grid">

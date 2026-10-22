@@ -11,9 +11,30 @@ import { join } from "node:path";
 
 import { NirChain } from "./chain.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
+import { SHARED_NETWORK, verifySharedGenesis } from "./shared-network.mjs";
+
+export function defaultMiningDirectory() {
+  return join(homedir(), "Library", "Application Support", "NIR Model Lab", "mining");
+}
 
 export function defaultMinerNetworkDirectory() {
-  return join(homedir(), "Library", "Application Support", "NIR Model Lab", "mining", "devnet");
+  return join(defaultMiningDirectory(), "devnet");
+}
+
+// The network NIR Майнер uses: the shared test network, whose genesis must
+// match the hash pinned in this app, or its practice network on this Mac.
+export function activeMinerNetworkTrust({ miningDirectory = defaultMiningDirectory(), storageRoot,
+  sharedNetwork = SHARED_NETWORK }) {
+  let mode = "local";
+  try { mode = JSON.parse(readFileSync(join(miningDirectory, "active-network.json"), "utf8")).mode; } catch {}
+  if (mode !== "shared") return minerNetworkTrust({ networkDirectory: join(miningDirectory, "devnet"), storageRoot });
+  try {
+    verifySharedGenesis(parseConsensusJson(readFileSync(join(miningDirectory, "shared", "genesis.json"), "utf8")),
+      sharedNetwork);
+  } catch {
+    return null;
+  }
+  return minerNetworkTrust({ networkDirectory: join(miningDirectory, "shared"), storageRoot });
 }
 
 // Returns the bridge's trust options, or null while the miner has made no
