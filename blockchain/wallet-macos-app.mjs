@@ -19,7 +19,7 @@ import { macLauncherPid, readUpdateRecord, removePreviousVersions, runBuilder, S
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 import { findOldCopies, revealOldCopies, trashOldCopies } from "./old-app-copies.mjs";
 import { hasLocalSeed, revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
-import { minerNetworkTrust } from "./miner-network-trust.mjs";
+import { activeMinerNetworkTrust } from "./miner-network-trust.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
@@ -370,7 +370,7 @@ async function main() {
       sessionToken: randomBytes(32).toString("hex"),
       vaultPath: selected.walletPath,
       // Balances are checked against the network NIR Майнер runs on this Mac.
-      ...(minerNetworkTrust({ storageRoot }) ?? {}),
+      ...(activeMinerNetworkTrust({ storageRoot }) ?? {}),
     });
     await listen(bridge, BRIDGE_PORT);
   } catch (error) {

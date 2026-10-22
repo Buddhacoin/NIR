@@ -137,10 +137,10 @@ export async function mineOneCliqueTask({ client, sign, address, recipient = add
 }
 
 // The node calls a miner needs, over the node's HTTP interface.
-export function createMinerNodeClient(baseUrl) {
+export function createMinerNodeClient(baseUrl, { timeoutMs = 3_000 } = {}) {
   const call = async (path, body) => {
     const { body: value, ok, status } = await requestJson(new URL(path, baseUrl).toString(),
-      body === undefined ? {} : { body });
+      body === undefined ? { timeoutMs } : { body, timeoutMs });
     if (!ok) throw new Error(`node answered ${status}: ${value?.error ?? "unknown error"}`);
     return value;
   };

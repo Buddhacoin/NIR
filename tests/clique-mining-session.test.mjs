@@ -22,9 +22,9 @@ test("one-button mining pays the linked wallet and sends the miner key's coins t
   const session = new CliqueMiningSession({ dataDirectory: temporary, httpPort: null, recipient: () => linked,
     tickMs: 20 });
   try {
-    assert.throws(() => session.withdraw(), /no linked wallet/);
+    await assert.rejects(session.withdraw(), /no linked wallet/);
     // Opening the network alone starts blocks without mining.
-    const opened = session.open();
+    const opened = await session.open();
     assert.equal(opened.running, false);
     assert.ok(opened.network.height > 0);
     linked = wallet;
@@ -41,9 +41,9 @@ test("one-button mining pays the linked wallet and sends the miner key's coins t
     await session.stop();
     assert.equal(session.status().running, false);
     // The miner key only holds faucet coins; everything above the reserve moves.
-    const { amount } = session.withdraw();
+    const { amount } = await session.withdraw();
     assert.ok(BigInt(amount) > 0n);
-    assert.throws(() => session.withdraw(), /nothing to send/);
+    await assert.rejects(session.withdraw(), /nothing to send/);
   } finally {
     await session.close();
     rmSync(temporary, { recursive: true, force: true });

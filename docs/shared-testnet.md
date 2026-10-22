@@ -51,3 +51,27 @@ Locally:
 npm run testnet:init -- ~/nir-shared
 npm run testnet:serve -- ~/nir-shared 8787
 ```
+
+## In the apps
+
+NIR Майнер joins the shared network by default once its genesis hash is
+pinned in `blockchain/shared-network.mjs`; until then it keeps the practice
+network on the Mac. The mining panel switches between **Общая сеть** and
+**Тренировка на этом Mac**, and the choice is kept in
+`network-choice.json` in the mining folder.
+
+On the shared network the miner:
+
+1. fetches `GET /v1/genesis` and refuses the network unless it hashes to the
+   pinned value;
+2. asks the faucet once for its miner key, which pays the answer bonds;
+3. relays NIR Wallet's requests from `127.0.0.1:8787` to the network
+   (`blockchain/network-relay.mjs`). The relay forwards reads,
+   transactions and faucet requests only, and is not trusted: the wallet
+   checks finality signatures and account proofs against the genesis the
+   miner saved in `shared/genesis.json`, which must also match the pinned
+   hash;
+4. keeps mining through short outages, retrying every few seconds.
+
+NIR Wallet picks its network from `active-network.json` in the mining
+folder when it starts, so after switching networks it must be reopened.
