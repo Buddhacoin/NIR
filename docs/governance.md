@@ -95,6 +95,10 @@ over ten years. The protocol treasury can spend 0.1 percent of total supply
 treasury address: consensus enforces the release schedule, not who receives a
 payment or why. No tester payment program is active merely because the tranche
 is unlocked. The founder receives no automatic share of transaction fees.
+The founder also receives no share of mining rewards: a per-reward
+founder fee (for example 1% for the first years) was considered and rejected
+by the founder on 2026-10-22. The founder's income is the 7 percent genesis
+allocation, mining on equal terms, and openly recorded treasury grants for work.
 
 Legacy v1/v2 signed genesis plans retain their original combined 12 percent
 treasury and cannot be silently rewritten. V3 and v4 plans retain their signed
