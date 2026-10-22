@@ -54,9 +54,11 @@ npm run testnet:serve -- ~/nir-shared 8787
 
 ## In the apps
 
-NIR Майнер joins the shared network by default once its genesis hash is
-pinned in `blockchain/shared-network.mjs`; until then it keeps the practice
-network on the Mac. The mining panel switches between **Общая сеть** and
+NIR Майнер joins the shared network by default. The network at
+`https://testnet.nircoin.com` (`nir-shared-testnet-1`) is pinned in
+`blockchain/shared-network.mjs` by its genesis hash
+`ce1662e5fce66365520d33cf2c770aec20d998fbccf1778f20c9bee7cad0ea16`; a reset
+network gets a new hash, which must be pinned again. The mining panel switches between **Общая сеть** and
 **Тренировка на этом Mac**, and the choice is kept in
 `network-choice.json` in the mining folder.
 
