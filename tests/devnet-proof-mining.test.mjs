@@ -44,7 +44,10 @@ test("a proof-mining devnet upgrades to the latest version, issues tasks from it
     const outcome = await mineOneCliqueTask({ address, client, pollMs: 0, recipient,
       sign: (operation) => signWalletProofAnswer({ operation, password, path: walletPath }) });
     assert.equal(outcome.result, "revealed");
+    // A won reward still needs blocks to mature; once paid, an idle devnet needs none.
+    assert.equal(node.hasPendingWork, true);
     for (let i = 0; i <= PROGRESS_REWARD_ESCROW_DELAY_BLOCKS + 1; i++) node.tick();
+    assert.equal(node.hasPendingWork, false);
     assert.ok(BigInt(node.account(recipient).atomicBalance) > 0n);
     // The node remembers which rewards the recipient received, for wallets.
     const [reward] = node.proofRewards(recipient);

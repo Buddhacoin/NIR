@@ -445,6 +445,7 @@ const patterns = [
   [/^Убрано в Корзину: (\d+)\.$/, "Moved to Trash: $1."],
   [/^Удалено старых копий: (\d+)\.$/, "Old copies removed: $1."],
   [/^Ваше имя: (.+)$/, "Your name: $1"],
+  [/^Проверяю сеть: (\d+) из (\d+) блоков…$/, "Checking the network: block $1 of $2…"],
   [/^(.+) свободно · цена (.+) NIR$/, "$1 is free · price $2 NIR"],
   [/^(.+) уже занято\.$/, "$1 is already taken."],
   [/^Готово: ваше имя (.+)\.$/, "Done: your name is $1."],

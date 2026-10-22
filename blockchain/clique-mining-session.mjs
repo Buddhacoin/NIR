@@ -78,7 +78,11 @@ export class CliqueMiningSession {
       this.#event("network-upgrade");
       this.#node.upgradeTo(LATEST_DEVNET_PROTOCOL_VERSION);
     }
+    // Blocks are made only while something needs them: an idle network that
+    // added a block every tick grew by tens of thousands of blocks a day, and
+    // every start of the miner and the wallet had to check them all.
     this.#timer = setInterval(() => {
+      if (!this.#running && !this.#node.hasPendingWork) return;
       try { this.#node.tick(); } catch (error) { this.#event("network-error", { message: error.message }); }
     }, this.#tickMs);
     this.#timer.unref?.();

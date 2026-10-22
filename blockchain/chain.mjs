@@ -2060,6 +2060,25 @@ export class NirChain {
     this.#chainIdentityGenesisHash = this.#blocks[0].hash;
   }
 
+  // A verified snapshot plus the blocks before it, read back from this node's
+  // own journal: the state comes from the snapshot instead of replaying every
+  // block, and the earlier blocks stay available for finality proofs. The
+  // blocks must run from this genesis to the snapshot's tip, each naming the
+  // previous one.
+  static fromVerifiedSnapshotWithHistory(genesisConfig, snapshot, blocks, options = {}) {
+    const chain = NirChain.fromVerifiedSnapshot(genesisConfig, snapshot, options);
+    const genesisHash = chain.#chainIdentityGenesisHash;
+    if (!Array.isArray(blocks) || blocks.length !== chain.height + 1 ||
+        blocks[0]?.height !== 0 || blocks[0].hash !== genesisHash ||
+        blocks.at(-1).hash !== chain.tipHash ||
+        blocks.some((block, index) => block?.height !== index ||
+          (index > 0 && (block.previousHash !== blocks[index - 1].hash || blockHash(block) !== block.hash)))) {
+      throw new Error("snapshot history does not lead from genesis to the snapshot");
+    }
+    chain.#blocks = blocks.map(frozenBlock);
+    return chain;
+  }
+
   static fromVerifiedSnapshot(genesisConfig, snapshot, options = {}) {
     const chain = new NirChain(genesisConfig, options);
     const snapshotHasRecoveryCommitment =
@@ -3210,6 +3229,24 @@ export class NirChain {
   // Proof rewards credited to `address`, newest first (at most 200).
   proofRewardHistory(address) {
     return [...(this.#proofRewardLog.get(address) ?? [])].reverse().map((entry) => ({ ...entry }));
+  }
+
+  // The whole reward log, oldest first per address, so a node can keep it
+  // across a restart from a snapshot (it is not part of consensus).
+  proofRewardLogEntries() {
+    return [...this.#proofRewardLog].map(([address, entries]) => [address, entries.map((entry) => ({ ...entry }))]);
+  }
+
+  restoreProofRewardLog(entries) {
+    if (!Array.isArray(entries) || entries.length > 100_000) throw new Error("proof reward log is invalid");
+    this.#proofRewardLog = new Map(entries.map(([address, list]) => {
+      if (!/^nir1[0-9a-f]{64}$/.test(address ?? "") || !Array.isArray(list) || list.length > 200 ||
+          list.some((entry) => !/^[0-9]{1,30}$/.test(entry?.amount ?? "") ||
+            !Number.isSafeInteger(entry.height) || !Number.isSafeInteger(entry.timestamp))) {
+        throw new Error("proof reward log is invalid");
+      }
+      return [address, list.map(({ amount, height, timestamp }) => ({ amount, height, timestamp }))];
+    }));
   }
 
   beaconAuthorityStatus() {
