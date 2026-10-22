@@ -107,6 +107,7 @@ const SAFE_CLIENT_ERRORS = new Set([
   "v36 transfer requires a trusted release anchor",
   "wallet account changed during the request",
   "name request is invalid", "name request is pending or already used",
+  "founder request is invalid", "there is no founder address on this Mac",
 ]);
 
 function publicBridgeError(error) {
@@ -415,6 +416,7 @@ export function createWalletBridgeServer({
   oldCopies = null,
   accountNames = null,
   nativeRevealPhrase = null,
+  founderShare = null,
   origin,
   pairingCode,
   pairingLifetimeMs = 120_000,
@@ -439,6 +441,8 @@ export function createWalletBridgeServer({
       typeof firefoxPairing !== "boolean" || (firefoxPairing && pairingCode === undefined) ||
       !/^[0-9a-f]{64}$/.test(sessionToken ?? "") ||
       invalidTrustAnchor(trustAnchor) ||
+      (founderShare !== null && (["create", "read", "sign"].some((name) =>
+        typeof founderShare?.[name] !== "function"))) ||
       (pairingCode !== undefined && !/^(?:[0-9]{8}|[0-9a-f]{64})$/.test(pairingCode)) ||
       (trustCheckpointPath !== undefined && typeof trustCheckpointPath !== "string") ||
       (headerHistoryPath !== undefined && typeof headerHistoryPath !== "string") ||
@@ -734,6 +738,73 @@ export function createWalletBridgeServer({
           return send(response, 200, { outcome }, origin);
         } finally {
           securityPending = false;
+          securityController = null;
+        }
+      }
+      // Settings → "Founder share" (docs/founder-share.md). Its phrases are
+      // shown and typed only in Mac windows: the page gets the public address
+      // and, for a transfer to this wallet, the signed transaction.
+      if (url.pathname.startsWith("/v1/founder") && !founderShare) {
+        return send(response, 404, { error: "the founder share is managed only in the Mac app" }, origin);
+      }
+      if (request.method === "GET" && url.pathname === "/v1/founder") {
+        return send(response, 200, { descriptor: founderShare.read() }, origin);
+      }
+      if (request.method === "POST" && url.pathname === "/v1/founder/create") {
+        if (securityPending || pending || accountActionPending) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        securityPending = true;
+        securityController = new AbortController();
+        try {
+          const outcome = await founderShare.create({ signal: securityController.signal });
+          return send(response, 200, { descriptor: founderShare.read(), outcome }, origin);
+        } finally {
+          securityPending = false;
+          securityController = null;
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/founder/transfer") {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          throw new Error("founder request is invalid");
+        }
+        const body = await readAuthenticatedBody(1_024);
+        if (!body || Array.isArray(body) ||
+            Object.keys(body).sort().join(",") !== "amount,chainIdentityGenesisHash,networkId,nonce,requestId" ||
+            !/^[1-9][0-9]{0,30}$/.test(body.amount ?? "") ||
+            !/^[0-9a-f]{64}$/.test(body.chainIdentityGenesisHash ?? "") ||
+            typeof body.networkId !== "string" || body.networkId.length === 0 || body.networkId.length > 128 ||
+            (accountTrust && body.networkId !== accountTrust.expectedNetworkId) ||
+            !Number.isSafeInteger(body.nonce) || body.nonce < 0 || !REQUEST_ID.test(body.requestId ?? "")) {
+          throw new Error("founder request is invalid");
+        }
+        if (pending || securityPending || accountActionPending || seen.has(body.requestId)) {
+          return send(response, 409, { error: "finish the pending wallet action first" }, origin);
+        }
+        const descriptor = founderShare.read();
+        if (!descriptor) throw new Error("there is no founder address on this Mac");
+        seen.add(body.requestId);
+        if (seen.size > 1_000) seen.delete(seen.values().next().value);
+        const expectedAddress = walletAddress;
+        const signingGeneration = sessionGeneration;
+        pending = true;
+        securityController = new AbortController();
+        try {
+          const transaction = await founderShare.sign({ amount: body.amount,
+            chainIdentityGenesisHash: body.chainIdentityGenesisHash, descriptor, networkId: body.networkId,
+            nonce: body.nonce, recipient: expectedAddress, signal: securityController.signal });
+          if (!transaction) return send(response, 200, { outcome: "cancelled", requestId: body.requestId }, origin);
+          if (!sessionActive || signingGeneration !== sessionGeneration || walletAddress !== expectedAddress) {
+            throw new Error("wallet account changed during the request");
+          }
+          if (transaction.sender !== descriptor.address || transaction.recipient !== expectedAddress ||
+              transaction.amount !== body.amount || transaction.nonce !== body.nonce ||
+              transaction.networkId !== body.networkId) {
+            throw new Error("founder request is invalid");
+          }
+          return send(response, 200, { outcome: "signed", requestId: body.requestId, transaction }, origin);
+        } finally {
+          pending = false;
           securityController = null;
         }
       }

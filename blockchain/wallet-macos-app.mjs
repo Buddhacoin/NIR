@@ -20,15 +20,18 @@ import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 import { findOldCopies, revealOldCopies, trashOldCopies } from "./old-app-copies.mjs";
 import { hasLocalSeed, revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
 import { activeMinerNetworkTrust, minerNetworkSignature } from "./miner-network-trust.mjs";
+import { formatNir } from "./chain.mjs";
+import { createFounderShare, createFounderTransfer, readFounderDescriptor, saveFounderDescriptor }
+  from "./founder-share.mjs";
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_PORT = 8788;
 
 function noTrailingNewline(value) { return value.replace(/\r?\n$/, ""); }
 
-async function nativeDialog(script, args = [], signal) {
+async function nativeDialog(script, args = [], signal, timeout = 120_000) {
   const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", script, ...args], {
-    encoding: "utf8", maxBuffer: 8 * 1024, timeout: 120_000, signal,
+    encoding: "utf8", maxBuffer: 8 * 1024, timeout, signal,
   });
   return noTrailingNewline(stdout);
 }
@@ -159,6 +162,116 @@ async function nativeRevealPhrase({ signal }) {
         String(error?.message ?? "").includes("-128")) return "cancelled";
     if (error?.message === "wallet password is incorrect") return "wrong-password";
     throw new Error("the secret phrase could not be shown");
+  }
+}
+
+// The native window that shows one secret; the words never reach the page.
+function showSecretWindow(payload, signal) {
+  const executable = fileURLToPath(new URL("../../../MacOS/onboarding", import.meta.url));
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, ["--show-secret"], { stdio: ["pipe", "ignore", "ignore"], signal });
+    child.once("error", reject);
+    child.once("close", resolve);
+    child.stdin.on("error", reject);
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+const userCancelled = (error, signal) => signal?.aborted ||
+  String(error?.message ?? "").includes("User canceled") || String(error?.message ?? "").includes("-128");
+
+// Settings → "Founder share" (docs/founder-share.md): three phrases, each
+// shown once and checked by two of its words. Only the public address of
+// the three is kept.
+async function nativeFounderCreate({ signal }) {
+  const english = await nativeLanguage() === "en";
+  const storageRoot = join(homedir(), "Library", "Application Support", "NIR Wallet");
+  if (readFounderDescriptor(storageRoot)) return "exists";
+  const cancel = english ? "Cancel" : "Отмена";
+  const begin = english ? "Begin" : "Начать";
+  const check = english ? "Check" : "Проверить";
+  try {
+    const decision = await nativeDialog(`on run argv\n set answer to display alert (item 1 of argv) message (item 2 of argv) buttons {(item 3 of argv), (item 4 of argv)} default button (item 4 of argv) as warning\n return button returned of answer\nend run`,
+      [english ? "Create the founder address?" : "Создать адрес создателя?",
+        english ? "NIR Wallet will show three phrases of 24 words, one at a time. Have three sheets of paper ready and write each phrase on its own sheet. Any two phrases move the founder share; NIR Wallet does not keep them and will not show them again. It is safer to turn Wi‑Fi off until you finish."
+          : "NIR Wallet покажет три фразы по 24 слова, по одной. Приготовьте три листа бумаги и запишите каждую фразу на свой лист. Для перевода из доли создателя нужны любые две фразы; NIR Wallet их не сохраняет и больше не покажет. Надёжнее выключить Wi‑Fi, пока не закончите.",
+        cancel, begin], signal);
+    if (decision !== begin || signal?.aborted) return "cancelled";
+    const { descriptor, phrases } = createFounderShare();
+    for (let index = 0; index < phrases.length; index++) {
+      const words = phrases[index].split(" ");
+      for (let attempt = 0; ; attempt++) {
+        await showSecretWindow({ index: index + 1, kind: "founder-phrase", secret: phrases[index] }, signal);
+        if (signal?.aborted) return "cancelled";
+        // Two words of the phrase, asked back, show it was written down.
+        const first = Math.floor(Math.random() * 24);
+        const second = (first + 1 + Math.floor(Math.random() * 23)) % 24;
+        let written = true;
+        for (const position of [first, second].sort((a, b) => a - b)) {
+          const answer = await nativeDialog(`on run argv\n set answer to display dialog (item 1 of argv) default answer "" buttons {(item 2 of argv), (item 3 of argv)} default button (item 3 of argv)\n return text returned of answer\nend run`,
+            [english ? `Founder phrase ${index + 1} of 3: type word No. ${position + 1}.`
+              : `Фраза создателя ${index + 1} из 3: введите слово №${position + 1}.`, cancel, check], signal);
+          if (answer.trim().toLowerCase() !== words[position]) { written = false; break; }
+        }
+        if (written) break;
+        if (attempt === 2) {
+          await notify(english ? "The founder address was not created" : "Адрес создателя не создан",
+            english ? "The words did not match three times. Nothing was saved; start again when you are ready."
+              : "Слова трижды не совпали. Ничего не сохранено; начните заново, когда будете готовы.");
+          return "not-confirmed";
+        }
+        await notify(english ? "The word does not match" : "Слово не совпало",
+          english ? "The phrase will be shown again. Check what you wrote on the paper."
+            : "Фраза будет показана ещё раз. Проверьте запись на бумаге.");
+      }
+    }
+    saveFounderDescriptor(storageRoot, descriptor);
+    return "created";
+  } catch (error) {
+    if (userCancelled(error, signal)) return "cancelled";
+    throw new Error("the founder address could not be created");
+  }
+}
+
+// "Send to myself": two of the three founder phrases, typed in Mac windows,
+// sign a transfer from the founder address to the wallet's own account.
+async function nativeFounderSign({ descriptor, recipient, amount, nonce, networkId, chainIdentityGenesisHash, signal }) {
+  const english = await nativeLanguage() === "en";
+  const cancel = english ? "Cancel" : "Отмена";
+  const next = english ? "Continue" : "Продолжить";
+  const shortAddress = `${recipient.slice(0, 12)}…${recipient.slice(-6)}`;
+  try {
+    const decision = await nativeDialog(`on run argv\n set answer to display alert (item 1 of argv) message (item 2 of argv) buttons {(item 3 of argv), (item 4 of argv)} default button (item 4 of argv)\n return button returned of answer\nend run`,
+      [english ? `Move ${formatNir(amount)} from the founder share?` : `Перевести ${formatNir(amount)} из доли создателя?`,
+        english ? `To your account ${shortAddress}. Two of the three founder phrases are needed.`
+          : `На ваш счёт ${shortAddress}. Понадобятся две из трёх фраз создателя.`, cancel, next], signal);
+    if (decision !== next || signal?.aborted) return null;
+    const ask = (message) => nativeDialog(`on run argv\n set answer to display dialog (item 1 of argv) default answer "" buttons {(item 2 of argv), (item 3 of argv)} default button (item 3 of argv)\n return text returned of answer\nend run`,
+      // Typing 24 words takes time.
+      [message, cancel, next], signal, 600_000);
+    const first = await ask(english ? "Type one founder phrase: all 24 words, separated by spaces."
+      : "Введите одну фразу создателя: все 24 слова через пробел.");
+    if (signal?.aborted) return null;
+    const second = await ask(english ? "Type a different founder phrase: all 24 words, separated by spaces."
+      : "Введите другую фразу создателя: все 24 слова через пробел.");
+    if (signal?.aborted) return null;
+    try {
+      return createFounderTransfer({ amount, chainIdentityGenesisHash, descriptor, networkId, nonce,
+        phrases: [first, second], recipient });
+    } catch (error) {
+      const message = String(error?.message ?? "");
+      await notify(english ? "The phrases did not fit" : "Фразы не подошли",
+        message.includes("twice") ? (english ? "The same phrase was typed twice. Two different phrases are needed."
+          : "Одна и та же фраза введена дважды. Нужны две разные.")
+          : message.includes("does not belong") ? (english ? "One phrase does not belong to this founder address."
+            : "Одна из фраз не относится к этому адресу создателя.")
+            : (english ? "A phrase is not 24 valid words. Check the spelling and order."
+              : "Фраза не похожа на 24 слова NIR. Проверьте написание и порядок."));
+      return null;
+    }
+  } catch (error) {
+    if (userCancelled(error, signal)) return null;
+    throw new Error("the founder transfer could not be signed");
   }
 }
 
@@ -343,6 +456,9 @@ async function main() {
       appUpdater: createWalletUpdater(),
       appConnect: true,
       nativeRevealPhrase,
+      // Settings → "Founder share": made and spent only in Mac windows.
+      founderShare: { create: nativeFounderCreate, read: () => readFounderDescriptor(storageRoot),
+        sign: nativeFounderSign },
       // The user's own names for their accounts, kept next to the wallets.
       accountNames: {
         read() {

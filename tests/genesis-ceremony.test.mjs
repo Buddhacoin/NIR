@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createFounderShare } from "../blockchain/founder-share.mjs";
 import { fileURLToPath } from "node:url";
 
 import { createTransfer, finalizeBlock, NirChain, multisigAddress } from "../blockchain/chain.mjs";
@@ -253,6 +254,17 @@ test("v5 ceremony commits tester reserve without rewriting v4", () => {
   assert.throws(() => createGenesisPlan(wrong, values.releaseOptions), /treasury/);
   const old = v4Fixture("unchanged-v4");
   assert.equal(approved(old).plan.treasury.vestingPolicy.model, "linear-from-genesis");
+});
+
+test("the founder address made in NIR Wallet is a valid v5 genesis founder entry", () => {
+  const values = v5Fixture("wallet-founder-share");
+  const { descriptor } = createFounderShare();
+  values.input.founder = descriptor;
+  const { plan, envelope } = approved(values);
+  assert.deepEqual(plan.founder, descriptor);
+  const compiled = compileGenesis(plan, envelope, values.releaseOptions);
+  assert.equal(compiled.genesis.founderAddress, descriptor.address);
+  assert.equal(new NirChain(compiled.genesis).balance(descriptor.address), FOUNDER_ALLOCATION);
 });
 
 test("v5 ceremony rejects shared founder and treasury guardian keys", () => {

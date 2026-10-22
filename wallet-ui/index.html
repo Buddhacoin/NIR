@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://[::1]:*; form-action 'none'; frame-ancestors 'none'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self'">
   <meta name="theme-color" content="#f6f6f6"><link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="nir-coin-icon.png?v=24">
-  <link rel="stylesheet" href="style.css?v=36"><title>NIR Wallet</title>
+  <link rel="stylesheet" href="style.css?v=37"><title>NIR Wallet</title>
 </head>
 <body>
   <main class="shell">
@@ -222,6 +222,19 @@
     <p>Пароль вводится только в окне macOS. Старые резервные копии и коды продолжают открывать тот же адрес.</p>
     <p class="form-status" id="settings-secrets-status" role="status" aria-live="polite"></p>
     <p class="form-status" id="settings-password-status" role="status" aria-live="polite"></p>
+    <section class="settings-group" id="founder-share" aria-labelledby="founder-share-title" hidden>
+      <h3 id="founder-share-title">Доля создателя</h3>
+      <p>Адрес «2 из 3» для доли создателя в основной сети. Он получается из трёх фраз по 24 слова; для перевода нужны любые две. Фразы показываются один раз и вводятся только в окнах macOS.</p>
+      <button class="secondary" id="founder-create" type="button" hidden>Создать адрес создателя</button>
+      <p id="founder-address-line" hidden>Адрес создателя:</p>
+      <p class="founder-address" id="founder-address" data-i18n-ignore hidden></p>
+      <button class="secondary" id="founder-copy" type="button" hidden>Скопировать данные для запуска сети</button>
+      <p class="form-status" id="founder-state" role="status" aria-live="polite"></p>
+      <form id="founder-send-form" class="chain-name-form" hidden>
+        <label>Сколько перевести себе<span class="chain-name-field"><input id="founder-amount" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="1000"><b>NIR</b></span></label>
+        <button class="primary" id="founder-send" type="submit">Перевести себе</button>
+      </form>
+    </section>
     <section aria-labelledby="wallet-update-title">
       <h3 id="wallet-update-title">Версия и обновления</h3>
       <p>Новая версия скачивается из открытого кода NIR и собирается на этом Mac. Файлы и ключи кошелька при обновлении не меняются.</p>
@@ -271,5 +284,5 @@
     <p class="warning">Не храните пароль рядом с файлом кошелька. Сделайте минимум две проверенные офлайн-копии в разных местах.</p>
     <button class="primary" id="setup-connect" type="button">Перейти к подключению</button>
   </dialog>
-  <script type="module" src="app.js?v=46"></script>
+  <script type="module" src="app.js?v=47"></script>
 </body></html>

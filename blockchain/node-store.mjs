@@ -153,6 +153,13 @@ export class PersistentDevNode {
   // Public genesis: validators, release anchor and parameters, no keys.
   get genesisConfig() { return structuredClone(this.#config); }
 
+  // What a founder transfer needs besides the allocations: the network and
+  // its genesis, which v36+ transfers name.
+  genesisAllocations() {
+    return { ...this.#chain.genesisAllocations(), chainIdentityGenesisHash: this.#chain.blockAtHeight(0).hash,
+      networkId: this.#chain.networkId };
+  }
+
   validatorHandoffHistory() { return []; }
 
   finalityProofsAfter(fromHeight, limit = MAX_FINALITY_PROOFS) {

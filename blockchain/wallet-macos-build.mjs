@@ -16,7 +16,7 @@ blockchain/account-history.mjs blockchain/account-proof.mjs blockchain/account-t
 blockchain/admission-inclusion.mjs blockchain/archive-sync.mjs blockchain/asset-proof.mjs
 blockchain/backup-recovery.mjs blockchain/beacon-rotation.mjs blockchain/block-store.mjs
 blockchain/chain.mjs blockchain/clique-search.mjs blockchain/consensus-codec.mjs blockchain/consensus-json.mjs
-blockchain/constants.mjs blockchain/crypto.mjs blockchain/evaluation-assignment-tree.mjs
+blockchain/constants.mjs blockchain/crypto.mjs blockchain/evaluation-assignment-tree.mjs blockchain/founder-share.mjs
 blockchain/http-ingress.mjs blockchain/light-client.mjs blockchain/memory.mjs
 blockchain/offline-release-bundle.mjs blockchain/offline-release-governance.mjs
 blockchain/offline-signer.mjs blockchain/operators.mjs blockchain/payment-request.mjs

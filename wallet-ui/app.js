@@ -1426,6 +1426,7 @@ function openSettingsPanel() {
   renderWalletConnection();
   openPage(settingsPanel, "settings");
   void refreshChainName();
+  void refreshFounderShare();
 }
 
 document.querySelector("#bridge-form").addEventListener("submit", async (event) => {
@@ -2390,6 +2391,94 @@ document.querySelector("#settings-phrase-create").addEventListener("click", (eve
   document.querySelector("#settings-phrase-status").textContent = "";
   if (!accountsPanel.open) accountsPanel.showModal();
   document.querySelector("#add-account").click();
+});
+// Settings → "Founder share" (docs/founder-share.md): the 2-of-3 address made
+// from three phrases in Mac windows, and moving its open part to this account.
+let founderDescriptor = null;
+async function refreshFounderShare() {
+  const section = document.querySelector("#founder-share");
+  try {
+    ({ descriptor: founderDescriptor } = await bridgeRequest("/v1/founder"));
+  } catch {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const made = founderDescriptor !== null;
+  document.querySelector("#founder-create").hidden = made;
+  for (const id of ["#founder-address-line", "#founder-address", "#founder-copy"]) {
+    document.querySelector(id).hidden = !made;
+  }
+  document.querySelector("#founder-send-form").hidden = true;
+  const state = document.querySelector("#founder-state");
+  if (!made) return;
+  document.querySelector("#founder-address").textContent = checksumAddress(founderDescriptor.address);
+  try {
+    const allocations = await nameNodeJson("/v1/allocations");
+    if (allocations.founder?.address !== founderDescriptor.address) {
+      state.textContent = "В этой сети доли создателя нет. Этот адрес войдёт в первый блок основной сети.";
+      return;
+    }
+    state.textContent = `В этой сети ещё закрыто: ${formatAtomic(allocations.founder.locked)} NIR. Открытую часть можно перевести себе.`;
+    document.querySelector("#founder-send-form").hidden = !walletInfo;
+  } catch {
+    state.textContent = "Сеть NIR не ответила. Откройте NIR Майнер.";
+  }
+}
+document.querySelector("#founder-create").addEventListener("click", async (event) => {
+  const eventTarget = event.currentTarget;
+  const state = document.querySelector("#founder-state");
+  eventTarget.disabled = true;
+  state.textContent = "Следуйте окнам Mac: три фразы, каждую запишите на бумагу.";
+  try {
+    const { outcome } = await bridgeRequest("/v1/founder/create", { method: "POST" }, 3_600_000);
+    state.textContent = outcome === "created" ? "Адрес создателя создан. Храните три листа с фразами в разных местах."
+      : outcome === "exists" ? "Адрес создателя уже создан."
+        : outcome === "not-confirmed" ? "Слова не совпали. Ничего не сохранено."
+          : "Отменено. Ничего не сохранено.";
+    await refreshFounderShare();
+  } catch {
+    state.textContent = "Не удалось создать адрес создателя.";
+  } finally { eventTarget.disabled = false; }
+});
+// The public entry the main network's genesis plan takes; no secret is in it.
+document.querySelector("#founder-copy").addEventListener("click", async () => {
+  if (!founderDescriptor) return;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(founderDescriptor, null, 2));
+    document.querySelector("#founder-state").textContent = "Скопировано. В этих данных нет секретов.";
+  } catch {
+    document.querySelector("#founder-state").textContent = "Не удалось скопировать.";
+  }
+});
+document.querySelector("#founder-send-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = document.querySelector("#founder-send");
+  const state = document.querySelector("#founder-state");
+  if (!founderDescriptor || !walletInfo) return;
+  button.disabled = true;
+  try {
+    const amount = parseNir(document.querySelector("#founder-amount").value);
+    const allocations = await nameNodeJson("/v1/allocations");
+    const founder = await nameNodeJson(`/v1/accounts/${founderDescriptor.address}`);
+    const requestId = [...crypto.getRandomValues(new Uint8Array(32))]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    state.textContent = "Подтвердите перевод и введите две фразы в окнах Mac.";
+    const signed = await bridgeRequest("/v1/founder/transfer", { method: "POST", body: JSON.stringify({
+      amount, chainIdentityGenesisHash: allocations.chainIdentityGenesisHash, networkId: allocations.networkId,
+      nonce: founder.nextNonce, requestId }) }, 600_000);
+    if (signed.outcome !== "signed") {
+      state.textContent = "Отменено. Ничего не отправлено.";
+      return;
+    }
+    await submitNameTransaction(signed.transaction);
+    state.textContent = `Отправлено: ${formatAtomic(amount)} NIR придут на этот счёт через несколько блоков.`;
+    document.querySelector("#founder-amount").value = "";
+  } catch (error) {
+    state.textContent = /still vesting/.test(error.message)
+      ? "Эта часть доли ещё закрыта. Уменьшите сумму."
+      : `Не получилось: ${error.message}`;
+  } finally { button.disabled = false; }
 });
 document.querySelector("#old-copies-reveal").addEventListener("click", async (event) => {
   const eventTarget = event.currentTarget;
