@@ -3117,6 +3117,16 @@ export class NirChain {
     return this.#blocks.at(-1).hash;
   }
 
+  // The genesis founder and treasury allocations and how much of each is
+  // still locked at the tip's time. Read-only: spending is checked by the
+  // same floor in every transaction.
+  genesisAllocations() {
+    const timestamp = this.tipTimestamp;
+    const entry = (address) => address === null ? null : {
+      address, locked: this.#allocationLockedFloor(address, timestamp).toString() };
+    return { founder: entry(this.#founderAddress), timestamp, treasury: entry(this.#treasuryAddress) };
+  }
+
   get tipTimestamp() {
     return this.#blocks.at(-1).timestamp;
   }

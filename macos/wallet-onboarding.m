@@ -83,6 +83,9 @@ static NSString *NIRTranslate(NSString *source) {
             @"Показать код": @"Reveal code", @"Показать ключ": @"Reveal key",
             @"Нажмите «Показать», когда рядом нет посторонних и экран не транслируется.": @"Select Reveal only when nobody else can see your screen and screen sharing is off.",
             @"Закрыть": @"Close",
+            @"Фраза создателя # из 3": @"Founder phrase # of 3",
+            @"Запишите эти 24 слова на бумаге по порядку. NIR Wallet не сохраняет эту фразу и больше её не покажет. Храните три фразы в трёх разных местах: для перевода из доли создателя нужны любые две из них.":
+                @"Write these 24 words on paper in order. NIR Wallet does not keep this phrase and will not show it again. Keep the three phrases in three different places: any two of them are needed to move the founder share.",
             @"Отложить настройку": @"Set up later", @"Копия остаётся на том же диске": @"Backup remains on the same disk",
             @"При потере или поломке этого Mac код без копии не восстановит адрес. Лучше выбрать отдельный носитель. Приложение не может проверить, где физически находится выбранное хранилище.": @"If this Mac is lost or fails, the code without a backup cannot restore the address. Separate media is safer. The app cannot verify the physical location of storage you choose.",
             @"Выбрать другое место": @"Choose another location", @"Сохранить всё равно": @"Save anyway",
@@ -667,16 +670,24 @@ int main(int argc, const char *argv[]) {
             NSString *secret = [payload isKindOfClass:NSDictionary.class] ? payload[@"secret"] : nil;
             NSString *backupPath = [payload isKindOfClass:NSDictionary.class] ? payload[@"backupPath"] : nil;
             if (![secret isKindOfClass:NSString.class] || secret.length == 0 ||
-                ![@[@"recovery", @"private-key", @"phrase"] containsObject:kind]) return 1;
+                ![@[@"recovery", @"private-key", @"phrase", @"founder-phrase"] containsObject:kind]) return 1;
+            // A founder phrase is one of three; it is shown once and never copied.
+            BOOL founder = [kind isEqualToString:@"founder-phrase"];
+            NSNumber *founderIndex = [payload isKindOfClass:NSDictionary.class] ? payload[@"index"] : nil;
+            if (founder && (![founderIndex isKindOfClass:NSNumber.class] ||
+                founderIndex.integerValue < 1 || founderIndex.integerValue > 3)) return 1;
             if (backupPath && (![backupPath isKindOfClass:NSString.class] ||
                 ![backupPath hasPrefix:@"/"])) return 1;
             NSApplication *app = [NSApplication sharedApplication];
             [app setActivationPolicy:NSApplicationActivationPolicyRegular];
             NSAlert *alert = [NSAlert new];
             BOOL recovery = [kind isEqualToString:@"recovery"];
-            BOOL phrase = [kind isEqualToString:@"phrase"];
-            alert.messageText = NIRTranslate(recovery ? @"Код восстановления" : phrase ? @"Секретная фраза" : @"Приватный ключ");
-            alert.informativeText = NIRTranslate(recovery ?
+            BOOL phrase = [kind isEqualToString:@"phrase"] || founder;
+            alert.messageText = founder
+                ? [NIRTranslate(@"Фраза создателя # из 3") stringByReplacingOccurrencesOfString:@"#"
+                    withString:founderIndex.stringValue]
+                : NIRTranslate(recovery ? @"Код восстановления" : phrase ? @"Секретная фраза" : @"Приватный ключ");
+            alert.informativeText = founder ? NIRTranslate(@"Запишите эти 24 слова на бумаге по порядку. NIR Wallet не сохраняет эту фразу и больше её не покажет. Храните три фразы в трёх разных местах: для перевода из доли создателя нужны любые две из них.") : NIRTranslate(recovery ?
                 @"Для этого адреса нужны И код, И зашифрованная копия. Один код не спасёт при потере Mac. Сохраните копию в выбранное место, предпочтительно на отдельный носитель, а код храните отдельно. Каждый новый адрес требует своей копии. Не отправляйте их никому." : phrase ?
                 @"Эти 24 слова — ключ ко всем вашим счетам. Запишите их на бумаге по порядку и храните отдельно от Mac. Кто узнает слова, получит доступ ко всем счетам. Не отправляйте их никому и никуда не вводите, кроме NIR Wallet. Посмотреть их снова можно в настройках кошелька по паролю." :
                 @"Это полный приватный ключ. Любой, кто его увидит, сможет использовать этот адрес. Показывайте и копируйте его только в безопасном месте.");
@@ -746,7 +757,7 @@ int main(int argc, const char *argv[]) {
                     view.string = shown;
                     revealedAlert.accessoryView = scroll;
                     [revealedAlert addButtonWithTitle:NIRTranslate(recovery ? @"Сохранить копию" : @"Готово")];
-                    [revealedAlert addButtonWithTitle:NIRTranslate(@"Копировать")];
+                    if (!founder) [revealedAlert addButtonWithTitle:NIRTranslate(@"Копировать")];
                     if (recovery) [revealedAlert addButtonWithTitle:NIRTranslate(@"Отложить настройку")];
                     alert = revealedAlert;
                     revealed = YES;

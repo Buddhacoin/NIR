@@ -17,7 +17,7 @@ const DEVELOPER_POST_PATHS = new Set([
 const SHARED_TESTNET_POST_PATHS = new Set(["/v1/transactions", "/v1/faucet"]);
 const WALLET_READ_PATH = /^\/v1\/(?:accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history|proof-rewards|name))?|names\/[a-z0-9.-]{1,40}|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof)$/;
 const WALLET_READ_EXACT = new Set(["/health", "/v1/validator-handoffs",
-  "/v1/finality-proofs", "/v1/fees", "/v1/proof-mining", "/v1/names", "/v1/genesis"]);
+  "/v1/finality-proofs", "/v1/fees", "/v1/proof-mining", "/v1/names", "/v1/genesis", "/v1/allocations"]);
 
 function send(response, status, value, origin = null) {
   const body = JSON.stringify(value);
@@ -189,6 +189,13 @@ export function createNodeHttpServer(node, options = {}) {
       if (request.method === "GET" && url.pathname === "/v1/genesis") {
         if (!node.genesisConfig) return send(response, 501, { error: "genesis is unavailable" }, origin);
         return send(response, 200, node.genesisConfig, origin);
+      }
+      // The founder and treasury allocations' locked parts (docs/founder-share.md).
+      if (request.method === "GET" && url.pathname === "/v1/allocations") {
+        if (typeof node.genesisAllocations !== "function") {
+          return send(response, 501, { error: "allocations are unavailable" }, origin);
+        }
+        return send(response, 200, node.genesisAllocations(), origin);
       }
       if (request.method === "GET" && url.pathname === "/v1/proof-mining") {
         if (typeof node.proofMining !== "function") {

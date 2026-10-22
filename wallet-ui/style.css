@@ -287,3 +287,4 @@ dialog h2[tabindex="-1"]:focus { outline: none; }
 .chain-name-form .form-status.taken { color: #e5484d; }
 .hint { color: var(--muted); font-size: 13px; }
 .active-account .chain-name-tag { color: var(--good); }
+.founder-address { margin: 4px 0 8px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
