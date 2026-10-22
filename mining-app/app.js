@@ -264,6 +264,7 @@ const copy = {
     technicalTitle: "Технический результат", errorTitle: "Локальная проверка не завершилась",
     footer: "Тестовая сеть: NIR здесь не имеют ценности. Публичный майнинг и реальные NIR пока недоступны.",
     checking: "Проверяем подключение к локальному сервису…", online: "● Локальный сервис подключён",
+    starting: (seconds) => `Запускаю NIR Майнер… ${seconds} с. Первый запуск после обновления может занять до 2 минут — это нормально.`,
     offline: "● Локальный сервис отключён",
     offlineMessage: "Локальный сервис NIR недоступен. Повторно запустите `npm run mine:app` из доверенной копии NIR и используйте новую вкладку, которую откроет приложение. Старый адрес может больше не работать.",
     offlineMessageNative: "Локальный сервис остановился. Закройте окно и снова откройте NIR Model Lab.app. Если ошибка повторится, проверьте локальную сборку и Node/Python; награды не было.",
@@ -427,6 +428,7 @@ const copy = {
     technicalTitle: "Technical result", errorTitle: "Local check failed",
     footer: "Test network: NIR here has no value. Public mining and real NIR are unavailable yet.",
     checking: "Checking the local service…", online: "● Local service connected",
+    starting: (seconds) => `Starting NIR Miner… ${seconds} s. The first start after an update can take up to 2 minutes; that is normal.`,
     offline: "● Local service disconnected",
     offlineMessage: "The local NIR service is unavailable. Run `npm run mine:app` again from a trusted NIR checkout and use the new browser tab it opens. The old address may no longer work.",
     offlineMessageNative: "The local service stopped. Close this window and reopen NIR Model Lab.app. If it persists, check the local build and Node/Python; no reward was issued.",
@@ -488,6 +490,11 @@ let versionCheckFailed = false;
 let updateInfo = null;
 let updatePoll = null;
 let checking = false;
+// Until anything answers on the service's address, the app is still
+// starting, not broken.
+const openedAt = Date.now();
+let serviceAnswered = false;
+const stillStarting = () => !serviceAnswered && Date.now() - openedAt < 180_000;
 let statusRequestRunning = false;
 let errorKind = null;
 let lastResult = null;
@@ -742,7 +749,8 @@ function render() {
   languageButton.textContent = locale === "ru" ? "EN" : "RU";
   languageButton.setAttribute("aria-label", locale === "ru" ? "Switch language to English" : "Переключить язык на русский");
   if (providerKind?.options?.length) providerKind.options[0].textContent = t.providerChoose;
-  connection.textContent = checking ? t.checking : connected ? t.online : t.offline;
+  connection.textContent = stillStarting() ? t.starting(Math.round((Date.now() - openedAt) / 1000))
+    : checking ? t.checking : connected ? t.online : t.offline;
   renderVersion();
   if (providerExport) {
     providerExport.disabled = !connected || !providerRegistry || !providerKind.value || !providerModelId.value.trim();
@@ -889,11 +897,11 @@ function showOffline() {
   checking = false;
   syntheticSnapshot = null;
   syntheticMessage = "";
-  connection.dataset.state = "offline";
+  connection.dataset.state = stillStarting() ? "starting" : "offline";
   progress.hidden = true;
   result.hidden = true;
   errorKind = "offlineMessage";
-  error.hidden = false;
+  error.hidden = stillStarting();
   start.disabled = true;
   if (qwenStart) qwenStart.disabled = true;
   if (lastServiceState !== "service-offline") {
@@ -929,6 +937,7 @@ async function checkConnection() {
   const timeout = setTimeout(() => controller.abort(), 4000);
   try {
     const response = await fetch("/status", { cache: "no-store", signal: controller.signal });
+    serviceAnswered = true;
     const data = await response.json();
     if (!response.ok || data.status !== "local-model-service-ready") throw new Error("wrong local service");
     connected = true;
@@ -1734,6 +1743,8 @@ void checkConnection();
 void loadQwenRuntime();
 void loadProviderRegistry();
 setInterval(() => { if (progress.hidden) void checkConnection(); }, 5000);
+// The waiting time counts up while the app starts.
+const startingTimer = setInterval(() => { if (stillStarting()) render(); else clearInterval(startingTimer); }, 1000);
 
 // Settings → Old copies: earlier NIR builds Launchpad still lists.
 const oldCopiesFind = document.querySelector("#old-copies-find");

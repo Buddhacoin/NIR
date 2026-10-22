@@ -75,5 +75,12 @@ On the shared network the miner:
    hash;
 4. keeps mining through short outages, retrying every few seconds.
 
-NIR Wallet picks its network from `active-network.json` in the mining
-folder when it starts, so after switching networks it must be reopened.
+NIR Wallet follows NIR Майнер: every few seconds it checks
+`active-network.json` and the saved genesis in the mining folder, and when
+the miner has moved to another network it verifies balances against that
+network from then on. Nothing proven on the old network is reused.
+
+The network pays out at most 44 NIR per reward period of at least ten
+minutes, shared among the answers waiting for a reward, and the reward
+matures 64 blocks later. A first reward therefore takes about 10 to 15
+minutes, however many cliques the miner finds.

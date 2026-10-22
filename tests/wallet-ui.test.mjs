@@ -438,13 +438,13 @@ test("wallet uses a neutral monochrome interface", () => {
 });
 
 test("wallet shell cache uses the current asset version", () => {
-  assert.match(html, /style\.css\?v=35/);
-  assert.match(serviceWorker, /style\.css\?v=35/);
+  assert.match(html, /style\.css\?v=36/);
+  assert.match(serviceWorker, /style\.css\?v=36/);
   assert.match(html, /nir-coin-icon\.png\?v=24/);
   assert.match(serviceWorker, /nir-coin-icon\.png\?v=24/);
   assert.match(html, /app\.js\?v=46/);
   assert.match(serviceWorker, /app\.js\?v=46/);
-  assert.match(serviceWorker, /nir-wallet-shell-v50/);
+  assert.match(serviceWorker, /nir-wallet-shell-v51/);
   assert.match(serviceWorker, /i18n\.js/);
   assert.match(serviceWorker, /submission-status\.js/);
   assert.match(serviceWorker, /skipWaiting/);
