@@ -2403,7 +2403,9 @@ async function refreshFounderShare() {
     section.hidden = true;
     return;
   }
-  section.hidden = false;
+  // Only the Mac where the founder address was made shows the card; other
+  // users have no founder share and should not be offered one.
+  section.hidden = founderDescriptor === null;
   const made = founderDescriptor !== null;
   document.querySelector("#founder-create").hidden = made;
   for (const id of ["#founder-address-line", "#founder-address", "#founder-copy"]) {
