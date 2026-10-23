@@ -53,10 +53,31 @@ function setLanguage(next) {
   button.setAttribute("aria-label", next === "en" ? "Переключить на русский" : "Switch to English");
   try { localStorage.setItem("nir-site-language", next); } catch {}
 }
-document.querySelector("#lang").addEventListener("click", () => setLanguage(language === "en" ? "ru" : "en"));
+document.querySelector("#lang").addEventListener("click", () => {
+  setLanguage(language === "en" ? "ru" : "en");
+  renderTheme();
+});
 let saved = null;
 try { saved = localStorage.getItem("nir-site-language"); } catch {}
 if (saved === "en" || (!saved && !/^ru|^be|^uk|^kk/i.test(navigator.language || ""))) setLanguage("en");
+
+// Day and night: the system's choice until the visitor picks one.
+const themeButton = document.querySelector("#theme");
+const isLight = () => document.documentElement.dataset.theme === "light" ||
+  (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
+function renderTheme() {
+  themeButton.textContent = isLight() ? "☾" : "☀︎";
+  themeButton.setAttribute("aria-label", isLight() ? (language === "en" ? "Night theme" : "Ночная тема")
+    : (language === "en" ? "Day theme" : "Дневная тема"));
+}
+themeButton.addEventListener("click", () => {
+  const next = isLight() ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("nir-site-theme", next); } catch {}
+  renderTheme();
+});
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", renderTheme);
+renderTheme();
 
 document.querySelector("#copy").addEventListener("click", async (event) => {
   const button = event.currentTarget;
@@ -135,16 +156,19 @@ function frame(time) {
       if (point.y < 0 || point.y > height) point.vy *= -1;
     }
   }
+  const style = getComputedStyle(document.documentElement);
+  const color = (name) => style.getPropertyValue(name).trim();
   context.lineWidth = 1;
-  context.strokeStyle = "#26312a";
+  context.strokeStyle = color("--sky-line");
   for (const [a, b] of edges) {
     context.beginPath(); context.moveTo(points[a].x, points[a].y); context.lineTo(points[b].x, points[b].y); context.stroke();
   }
   if (time - litAt > 3600) pickClique();
   const glow = Math.max(0, 1 - Math.abs((time - litAt) - 1200) / 1600);
   if (glow > 0) {
-    context.strokeStyle = `rgba(185, 255, 90, ${0.85 * glow})`;
-    context.shadowColor = "#b9ff5a";
+    context.globalAlpha = 0.9 * glow;
+    context.strokeStyle = color("--sky-lit");
+    context.shadowColor = color("--sky-lit");
     context.shadowBlur = 12 * glow;
     context.lineWidth = 1.4;
     for (let i = 0; i < clique.length; i++) {
@@ -155,10 +179,11 @@ function frame(time) {
       }
     }
     context.shadowBlur = 0;
+    context.globalAlpha = 1;
   }
   for (const [index, point] of points.entries()) {
     const lit = glow > 0 && clique.includes(index);
-    context.fillStyle = lit ? "#b9ff5a" : "#55625a";
+    context.fillStyle = lit ? color("--sky-lit") : color("--sky-dot");
     context.fillRect(point.x - (lit ? 2.5 : 1.5), point.y - (lit ? 2.5 : 1.5), lit ? 5 : 3, lit ? 5 : 3);
   }
   if (!reduced) requestAnimationFrame(frame);
