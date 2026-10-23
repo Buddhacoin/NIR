@@ -3,14 +3,17 @@
 # (docs/shared-testnet.md). Run as root:
 #
 #   curl -fsSL https://raw.githubusercontent.com/Buddhacoin/NIR/main/deploy/install-shared-testnet.sh \
-#     | bash -s -- testnet.nircoin.com
+#     | bash -s -- testnet.nircoin.com nircoin.com
 #
+# The optional second domain serves the website from site/ (and www. of it),
+# with the network's read API under /api.
 # Point the domain's DNS A record at this server first: the HTTPS certificate
 # is issued for it automatically. Running the script again updates the code
 # and restarts the node; the network and its keys are kept.
 set -euo pipefail
 
 DOMAIN="${1:-}"
+SITE_DOMAIN="${2:-}"
 NODE_VERSION="26.12.0"
 REPO="https://github.com/Buddhacoin/NIR.git"
 APP_DIR="/opt/nir"
@@ -19,7 +22,10 @@ NETWORK_DIR="$DATA_DIR/testnet"
 
 if [[ $EUID -ne 0 ]]; then echo "Run as root." >&2; exit 1; fi
 if [[ ! "$DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
-  echo "Usage: install-shared-testnet.sh <domain>, for example testnet.nircoin.com" >&2; exit 1
+  echo "Usage: install-shared-testnet.sh <domain> [site-domain], for example testnet.nircoin.com nircoin.com" >&2; exit 1
+fi
+if [[ -n "$SITE_DOMAIN" && ! "$SITE_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+  echo "The site domain is invalid: $SITE_DOMAIN" >&2; exit 1
 fi
 
 echo "== System packages"
@@ -95,6 +101,22 @@ $DOMAIN {
   reverse_proxy 127.0.0.1:8787
 }
 EOF
+if [[ -n "$SITE_DOMAIN" ]]; then
+  cat >> /etc/caddy/Caddyfile <<EOF
+
+$SITE_DOMAIN, www.$SITE_DOMAIN {
+  encode gzip
+  handle_path /api/* {
+    reverse_proxy 127.0.0.1:8787
+  }
+  handle {
+    root * $APP_DIR/site
+    header /install.sh Content-Type "text/plain; charset=utf-8"
+    file_server
+  }
+}
+EOF
+fi
 
 echo "== Firewall"
 ufw allow OpenSSH >/dev/null
@@ -111,3 +133,4 @@ echo
 echo "== Done"
 cat "$DATA_DIR/NETWORK.json"
 echo "Check: https://$DOMAIN/health (the certificate may take a minute after DNS points here)"
+if [[ -n "$SITE_DOMAIN" ]]; then echo "Website: https://$SITE_DOMAIN"; fi
