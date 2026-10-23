@@ -1,45 +1,79 @@
-// nircoin.com: the clique sky, live test-network numbers and RU/EN.
+// nircoin.com: the clique sky, live network numbers, RU/EN and day/night.
 // Live numbers come from the shared test network through /api on the same
 // host, so the page needs no cross-origin access.
 
 const en = {
-  navIdea: "Idea", navStart: "Start", navEconomy: "Economy", navRoadmap: "Roadmap",
-  pill: "Test network is live",
-  heroTitle: "The coin you mine with your&nbsp;mind",
-  heroLead: "NIR is an open blockchain where new coins appear for solved problems, not for burned electricity. The smarter programs and AI become, the harder the problems get — and the more every solution is worth.",
-  ctaInstall: "Install on Mac", ctaHow: "How it works", ctaCode: "Open source on GitHub",
-  liveBlock: "Block", liveLevel: "Task difficulty", liveNetwork: "Network", liveSupply: "Total supply",
-  ideaEyebrow: "Idea", ideaTitle: "Work that means something",
-  ideaLead: "Bitcoin proved money can live without banks. But its mining is guessing numbers: it burns energy and produces nothing else. NIR is mined by solving real problems: hard to find, instant to check.",
-  c1Title: "Mining by solving", c1Text: "The network makes up a puzzle by itself — a web of dots and lines. Your Mac looks for a group of dots where every one is linked to every other. Whoever finds it first earns NIR.",
-  c2Title: "Harder as AI grows", c2Text: "When puzzles get solved too fast, the network makes them harder. Mining grows with the intelligence of programs and turns AI progress into the coin's scarcity.",
-  c3Title: "Safe from quantum computers", c3Text: "NIR signs with ML-DSA, the post-quantum cryptography standard. Keys stay secure even when quantum computers arrive.",
-  c4Title: "Names instead of addresses", c4Text: "Instead of a long nir1… address — a short name like sasha.nir. The name fee is burned: nobody receives it, and fewer coins remain.",
-  c5Title: "Your keys stay yours", c5Text: "24 words on paper restore all your accounts. The wallet checks your balance itself from the network's signatures instead of trusting a server.",
-  c6Title: "A network without an owner", c6Text: "The code is open. Issuance rules live in the protocol: not even the founder can create an extra coin or take someone else's.",
-  startEyebrow: "Start", startTitle: "Three steps to your first coin",
-  s1Title: "Install on your Mac", s1Text: "Open Terminal (⌘ + Space, type “Terminal”), paste the command and press Enter. The apps are built right on your Mac from the open source code.",
-  copy: "Copy", copied: "Copied",
-  s1Hint: "Needs macOS 13 or newer. Installation takes 5–20 minutes. You can read exactly what the command does in install.sh on GitHub.",
-  s2Title: "Create a wallet", s2Text: "NIR Wallet shows 24 words. Write them on paper and show them to nobody — they are the key to all your coins.",
-  s3Title: "Start mining", s3Text: "In NIR Miner press “Connect NIR Wallet” and “Start mining”. Rewards go straight to your wallet.",
-  economyEyebrow: "Economy", economyTitle: "21 million. Not one coin more",
-  eMining: "to miners — only for solved problems. 44 NIR about every 10 minutes, halving roughly every 4 years.",
-  eFounder: "to the founder — 1% at launch, the rest opens evenly over 10 years. No cut of mining rewards or fees.",
-  eFund: "to the community fund — for developers, testers and grants. Also opens over 10 years.",
-  roadmapEyebrow: "Roadmap", roadmapTitle: "Step by step to real money",
-  roadmapLead: "Each stage opens when its checks pass, not when a date arrives. That is how networks people can trust with money are built.",
-  rDone: "Done", rNow: "Now", rNext: "Next", rLater: "Later", rGoal: "Goal",
-  r1Title: "Protocol and apps", r1Text: "Consensus with fast block finality, mining by solving, post-quantum signatures, .nir names, NIR Wallet and NIR Miner for Mac.",
-  r2Title: "Shared test network", r2Text: "One network for every miner: testnet.nircoin.com. One-command install. Gathering the first testers and their feedback.",
-  r3Title: "Public test network", r3Text: "Four validators run by independent people in different countries, a block explorer, an internal security review.",
-  r4Title: "Incentivized test network", r4Text: "Testing mining economics with real people, rewards for found vulnerabilities, stable app releases.",
-  r5Title: "Main network", r5Text: "Independent audits, legal review, an open ceremony for the first block. NIR starts to be worth money.",
-  honestTitle: "Honestly",
-  honestText: "Right now this is a test network. Its coins are worth nothing and the network may be reset. NIR sells no coins and promises investors nothing: the only way to get NIR is to mine it. Never send anyone your 24 words, and do not trust anyone offering to “sell you NIR”.",
-  finalTitle: "Be among the first", finalText: "The network's first miners are the people who find bugs, suggest ideas and build it with us.",
-  footerDocs: "Documentation",
+  navIdea: "Idea", navPioneers: "Pioneers", navApps: "Apps", navEconomy: "Economy", navRoadmap: "Roadmap",
+  ctaShort: "Start mining", tag: "Early access · the network is open",
+  h1a: "Bitcoin was mined with graphics cards.", h1b: "NIR is mined with", h1c: "intelligence.",
+  lead: "The first blockchain where every coin is born from a solved problem. No farms, no noise, no power bills — your computer, one button, and problems that get harder as artificial intelligence grows.",
+  ctaMine: "⚡ Start mining for free", ctaHow: "▶ How it works",
+  platforms: "<b>macOS</b> — available now · Windows and Linux — soon",
+  fFound: "Solution found", fLevel: "Task difficulty", fProtect: "Protection", fQuantum: "Post-quantum 🔒",
+  tLive: "Network is live", tBlock: "Block", tLevel: "Difficulty", tSupply: "Total ever", tHardware: "Hardware",
+  tSales: "Presales", tOnly: "mining only",
+  whyEyebrow: "Why it is different", whyTitle: "Mining that doesn't burn the planet",
+  whyLead: "Bitcoin spends the electricity of whole countries guessing random numbers. NIR spends it on solving problems: hard to find, instant to check. The smarter programs and AI become, the harder the problems get — turning the progress of intelligence into the coin's scarcity.",
+  oldTitle: "Old mining", old1: "Graphics card farms worth thousands", old2: "Noise, heat and huge power bills",
+  old3: "Pointless number guessing", old4: "The early days are long gone",
+  new1: "An ordinary computer and one button", new2: "Runs quietly in the background",
+  new3: "Solving real problems", new4: "The network just opened — you are at the very start",
+  pEyebrow: "Pioneer program", pTitle: "Mine now — receive real NIR at launch",
+  pLead: "In 2009 bitcoin was mined on home computers. NIR is at that same point today. 210,000 NIR — 1% of all coins — are set aside for those who mine on the test network. When the main network launches, they are shared among pioneers by what each has earned.",
+  p1: "<b>1 NIR mined now = 1 pioneer point.</b> Faucet coins and transfers don't count — only solved problems.",
+  p2: "<b>Points don't expire,</b> even if the test network is restarted.",
+  p3: "<b>The reward arrives at the same address.</b> Keep your 24 words.",
+  pCta: "⚡ Become a pioneer", poolText: "pioneer pool · 1% of all coins",
+  privEyebrow: "Privacy", privTitle: "Your money is your business",
+  privLead: "No sign-up, no passport, no email. Your address is not tied to your name. And coming next — fully invisible transfers: nobody sees the sender, the receiver or the amount. If you want, you show them to your accountant with a viewing key.",
+  ch1: "✓ No sign-up", ch2: "✓ No passport", ch3: "✓ Only you hold the keys",
+  ch4: "◐ Shielded transfers — soon", ch5: "◐ Viewing key for reporting — soon",
+  mFrom: "from", mTo: "to", mSum: "amount", mStatus: "status", mOk: "✓ confirmed by the network",
+  appsEyebrow: "Apps", appsTitle: "Everything you need. Nothing you don't.",
+  wSub: "A safe for the money of the future",
+  w1: "<b>◈</b>Protected from quantum computers", w2: "<b>@</b>A name instead of an address: athena.nir",
+  w3: "<b>✓</b>Checks every balance itself", w4: "<b>★</b>Soon: BTC, ETH and swaps inside",
+  uiBalance: "Total balance", uiVerified: "✓ Confirmed by network signatures", uiReceive: "Receive", uiSend: "Send",
+  uiMine: "Mining", uiMining: "● Mining is running", uiToday: "Today: +132.00 NIR", uiReward: "Reward for a solution",
+  mTitle: "NIR Miner", mSub: "One button and you are mining",
+  m1: "<b>✦</b>No graphics cards, no settings", m2: "<b>↯</b>Rewards straight to your wallet",
+  m3: "<b>◎</b>Watch the solution being found", m4: "<b>★</b>Soon: miner leaderboard",
+  uiMiner: "NIR MINER", uiFound: "&gt;_ Clique found! +44 NIR", uiInWallet: "IN WALLET", uiSolved: "SOLVED",
+  uiLevel: "LEVEL", uiChecked: "CHECKED", uiStop: "STOP",
+  startEyebrow: "Start", startTitle: "From zero to your first coin in 15 minutes",
+  s1Title: "One command",
+  s1Text: "Open Terminal (⌘ + Space → “Terminal”), paste the command and press Enter. NIR is built right on your Mac from the open source code.",
+  copy: "Copy", copied: "Copied", s1Hint: "macOS 13 or newer · Windows and Linux — soon",
+  s2Title: "24 words — your safe", s2Text: "NIR Wallet shows 24 words. Write them on paper: they are the key to all your coins and to your pioneer reward.",
+  s3Title: "One button and you are mining", s3Text: "In NIR Miner press “Connect NIR Wallet” and “Start mining”. Claim your name.nir while it is free.",
+  eCap: "and not a coin more", economyEyebrow: "Economy", economyTitle: "A hard cap. A fair split.",
+  eMining: "to miners — only for work. 44 NIR about every 10 minutes, halving roughly every 4 years.",
+  eFounder: "to the founder — unlocks over 10 years: the founder gains from the network's success, not a quick sale.",
+  eFund: "to the community fund — for developers, testers and grants.",
+  ePioneer: "to test network pioneers — by what each has earned.",
+  eNote: "No presales, no hidden wallets, no printing press: every rule is written in open code.",
+  roadmapEyebrow: "Roadmap", roadmapTitle: "The story of NIR in seven chapters",
+  ch1n: "Chapter I", ch1t: "Spark", ch1p: "Protocol, post-quantum signatures, .nir names, wallet and miner",
+  ch2n: "Chapter II", ch2t: "Awakening", ch2p: "The network opens, first miners, the pioneer program", now: "NOW",
+  ch3n: "Chapter III", ch3t: "Borderless", ch3p: "Nodes around the world, Windows and Linux, block explorer, miner leaderboard",
+  ch4n: "Chapter IV", ch4t: "Trial", ch4p: "Bug bounties with rewards, independent audits",
+  ch5n: "Chapter V", ch5t: "Genesis", ch5p: "The main network. NIR become real coins, pioneers receive their reward",
+  ch6n: "Chapter VI", ch6t: "Invisible", ch6p: "Shielded transfers and a multi-wallet: BTC, ETH, stablecoins",
+  ch7n: "Chapter VII", ch7t: "The intelligence economy", ch7p: "AI agents and programs pay each other in NIR for computing and verification",
+  finalA: "History is being written now.", finalB: "Write your name into it.",
+  finalText: "Claim your name.nir before others and become one of the first miners of a new network.",
+  ctaShort2: "⚡ Start mining", ctaCode: "Open source on GitHub",
+  footerPioneers: "Pioneer rules", footerDocs: "Documentation",
+  legal: "A test network runs today: apps and rules are tested on it before the main network launches. Test network coins are not sold or exchanged. NIR runs no token sales and promises no price. Never tell anyone your 24 words.",
 };
+
+// The ticker scrolls forever: a second copy follows the first.
+const track = document.querySelector(".ticker-track");
+for (const item of [...track.children]) {
+  const copy = item.cloneNode(true);
+  copy.setAttribute("aria-hidden", "true");
+  track.append(copy);
+}
 
 const nodes = [...document.querySelectorAll("[data-i18n]")];
 const ru = Object.fromEntries(nodes.map((node) => [node.dataset.i18n, node.innerHTML]));
@@ -90,17 +124,30 @@ document.querySelector("#copy").addEventListener("click", async (event) => {
   }
 });
 
+// Sections rise into view as the visitor scrolls.
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (!reduced && "IntersectionObserver" in window) {
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) { entry.target.classList.add("shown"); observer.unobserve(entry.target); }
+    }
+  }, { threshold: 0.12 });
+  for (const element of document.querySelectorAll("section.s .wrap > *")) {
+    element.classList.add("reveal");
+    observer.observe(element);
+  }
+}
+
 // Live numbers from the shared test network.
+const live = (name, value) => { for (const node of document.querySelectorAll(`[data-live="${name}"]`)) node.textContent = value; };
 async function refreshLive() {
   try {
     const [health, mining] = await Promise.all([
       fetch("/api/health", { cache: "no-store" }).then((response) => response.json()),
       fetch("/api/v1/proof-mining", { cache: "no-store" }).then((response) => response.json()),
     ]);
-    document.querySelector("#live-height").textContent = Number(health.height).toLocaleString("ru-RU");
-    document.querySelector("#live-network").textContent = health.networkId === "nir-shared-testnet-1"
-      ? (language === "en" ? "testnet" : "тестовая") : "—";
-    document.querySelector("#live-level").textContent = String(mining.level ?? "—");
+    if (Number.isSafeInteger(health.height)) live("height", health.height.toLocaleString("ru-RU"));
+    if (mining.level !== undefined) live("level", String(mining.level));
   } catch { /* The page works without live numbers. */ }
 }
 void refreshLive();
@@ -109,7 +156,6 @@ setInterval(refreshLive, 15_000);
 // The sky: a web of dots; now and then a clique lights up, as in NIR Miner.
 const canvas = document.querySelector("#sky");
 const context = canvas.getContext("2d");
-const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let points = [];
 let edges = [];
 let clique = [];
@@ -122,9 +168,9 @@ function layout() {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   const count = width < 700 ? 40 : 90;
-  points = Array.from({ length: count }, (_, i) => ({
+  points = Array.from({ length: count }, () => ({
     x: width * (0.35 + 0.65 * Math.random()), y: height * Math.random(),
-    vx: (Math.random() - 0.5) * 0.12, vy: (Math.random() - 0.5) * 0.12, phase: i,
+    vx: (Math.random() - 0.5) * 0.12, vy: (Math.random() - 0.5) * 0.12,
   }));
   // Each dot links to its nearest neighbours, so the web looks like a graph.
   const linked = new Set();
@@ -140,17 +186,16 @@ function layout() {
 }
 function pickClique() {
   const start = Math.floor(Math.random() * points.length);
-  const near = points.map((point, index) => ({ index, distance: Math.hypot(point.x - points[start].x, point.y - points[start].y) }))
+  clique = points.map((point, index) => ({ index, distance: Math.hypot(point.x - points[start].x, point.y - points[start].y) }))
     .sort((a, b) => a.distance - b.distance).slice(0, 6).map(({ index }) => index);
-  clique = near;
   litAt = performance.now();
 }
 function frame(time) {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   context.clearRect(0, 0, width, height);
-  for (const point of points) {
-    if (!reduced) {
+  if (!reduced) {
+    for (const point of points) {
       point.x += point.vx; point.y += point.vy;
       if (point.x < width * 0.3 || point.x > width) point.vx *= -1;
       if (point.y < 0 || point.y > height) point.vy *= -1;

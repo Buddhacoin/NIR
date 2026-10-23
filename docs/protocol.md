@@ -27,7 +27,8 @@ from minting currency.
 | --- | ---: |
 | Maximum supply | 21,000,000 NIR |
 | Atomic units per NIR | 100,000,000 |
-| Intelligence-mining pool | 18,480,000 NIR (88%) |
+| Intelligence-mining pool | 18,480,000 NIR (88%); main-network plan: 18,270,000 NIR (87%) |
+| Pioneer pool (main-network plan, [`pioneer-program.md`](pioneer-program.md)) | 210,000 NIR (1%) |
 | Founder allocation (v3/v4/v5 genesis) | 1,470,000 NIR (7%) |
 | Protocol treasury (v3/v4/v5 genesis) | 1,050,000 NIR (5%) |
 | Initial epoch budget | 44 NIR |

@@ -400,7 +400,9 @@ vulnerabilities cannot become a minting strategy.
 
 - Hard cap: **21,000,000 NIR**.
 - Precision: **8 decimal places**.
-- Intelligence-mining pool: **88%**.
+- Intelligence-mining pool: **88%** on today's networks; the main network's
+  genesis plan sets aside 1% of it (210,000 NIR) for test-network pioneers,
+  leaving **87%** ([`docs/pioneer-program.md`](docs/pioneer-program.md)).
 - Founder: **7%** (1% of total supply available at genesis, 6% vesting over ten
   years); separate protocol treasury: **5%** (0.1% of total supply available at
   genesis, 4.9% vesting). These v5 rules require a new signed genesis.
