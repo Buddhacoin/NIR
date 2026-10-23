@@ -19,9 +19,12 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 
 test("the website links only files it ships and shows the same install command", () => {
   const html = read("site/index.html");
-  for (const [, file] of html.matchAll(/(?:src|href)="([^"#:]+)"/g)) {
+  for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
     assert.ok(existsSync(new URL(`../site/${file}`, import.meta.url)), `missing ${file}`);
   }
+  // A versioned URL makes browsers drop a cached stylesheet or script from an older page.
+  assert.match(html, /href="style\.css\?v=\d+"/);
+  assert.match(html, /src="app\.js\?v=\d+"/);
   assert.match(html, /curl -fsSL https:\/\/nircoin\.com\/install\.sh \| bash/);
   assert.match(read("docs/install-mac.md"), /curl -fsSL https:\/\/nircoin\.com\/install\.sh \| bash/);
   const app = read("site/app.js");

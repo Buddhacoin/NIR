@@ -1,9 +1,10 @@
 :root {
-  --bg: #06070a; --bg2: #0a0c0e; --card: #0f1215; --card-glass: #0f1215cc; --line: #ffffff14; --text: #f2f4f0;
+  --bg: #06070a; --bg2: #0a0c0e; --card: #15191d; --card-glass: #15191dcc; --line: #ffffff26; --text: #f2f4f0;
   --muted: #9aa39c; --soft: #c9d0ca; --dim: #ffffff66; --lime: #b9ff5a; --accent: #b9ff5a; --gold: #f5c45e;
   --gold2: #ff9d2e; --gold-text: #f5c45e; --violet: #c9b6ff; --red: #ff6b6b; --top: #06070acc; --code: #050605;
-  --on-accent: #071107; --card-old: linear-gradient(160deg, #12161a, #0b0d0f);
-  --card-nir: linear-gradient(160deg, #142112, #0b0f0b); --final: linear-gradient(160deg, #111a10, #090b0d);
+  --on-accent: #071107; --card-old: linear-gradient(160deg, #1b2025, #121519);
+  --card-nir: linear-gradient(160deg, #1b2c17, #10150f); --final: linear-gradient(160deg, #16210f, #0d1011);
+  --lift: inset 0 1px 0 #ffffff14, 0 24px 60px #0009;
   --sky-line: #1d2621; --sky-dot: #46524a; --sky-lit: #b9ff5a; --shadow: #000c;
   --c-mining: #b9ff5a; --c-founder: #f5c45e; --c-fund: #6fb6ff; --c-pioneer: #c9b6ff;
   color-scheme: dark;
@@ -16,7 +17,7 @@
   --muted: #5d6a61; --soft: #3c4740; --dim: #11151180; --accent: #3f8f00; --gold-text: #b06a00; --red: #d03a3a;
   --top: #f7f6f1d9; --code: #ffffff; --card-old: linear-gradient(160deg, #ffffff, #f1efe8);
   --card-nir: linear-gradient(160deg, #f1fbe6, #ffffff); --final: linear-gradient(160deg, #f4faea, #fffaf0);
-  --sky-line: #dedcd2; --sky-dot: #b3b7ad; --sky-lit: #4c9a00; --shadow: #1a1d1a33;
+  --sky-line: #dedcd2; --sky-dot: #b3b7ad; --sky-lit: #4c9a00; --shadow: #1a1d1a33; --lift: 0 12px 40px #1a1d1a14;
   --c-mining: #6cc417; --c-founder: #e3a52c; --c-fund: #3d8fe0; --c-pioneer: #9b7fe8;
   color-scheme: light;
 }
@@ -26,7 +27,7 @@
     --muted: #5d6a61; --soft: #3c4740; --dim: #11151180; --accent: #3f8f00; --gold-text: #b06a00; --red: #d03a3a;
     --top: #f7f6f1d9; --code: #ffffff; --card-old: linear-gradient(160deg, #ffffff, #f1efe8);
     --card-nir: linear-gradient(160deg, #f1fbe6, #ffffff); --final: linear-gradient(160deg, #f4faea, #fffaf0);
-    --sky-line: #dedcd2; --sky-dot: #b3b7ad; --sky-lit: #4c9a00; --shadow: #1a1d1a33;
+    --sky-line: #dedcd2; --sky-dot: #b3b7ad; --sky-lit: #4c9a00; --shadow: #1a1d1a33; --lift: 0 12px 40px #1a1d1a14;
     --c-mining: #6cc417; --c-founder: #e3a52c; --c-fund: #3d8fe0; --c-pioneer: #9b7fe8;
     color-scheme: light;
   }
@@ -84,19 +85,23 @@ h1 .dim { color: var(--dim); }
 .o1 { width: 440px; height: 440px; animation: spin 22s linear infinite; border-style: dashed; }
 .o2 { width: 340px; height: 340px; border-color: #b9ff5a33; animation: spin 14s linear infinite reverse; }
 @keyframes spin { to { transform: translate(-50%, -50%) rotateX(70deg) rotateZ(360deg); } }
-.coin { position: absolute; left: 50%; top: 50%; width: 260px; height: 260px; margin: -130px 0 0 -130px; animation: bob 6s ease-in-out infinite; transform-style: preserve-3d; }
-.coin .face { width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center; position: relative;
-  background: radial-gradient(circle at 35% 30%, #fff6d0, #f5c45e 30%, #c8861c 65%, #7a4a0c);
-  box-shadow: 0 0 120px #f5c45e66, inset 0 -18px 40px #0006, inset 0 10px 30px #fff8; animation: turn 9s ease-in-out infinite; }
-.coin .face::after { content: ""; position: absolute; inset: 16px; border-radius: 50%; border: 3px solid #fff3; box-shadow: inset 0 0 0 10px #c8861c55; }
-.coin img { width: 120px; height: 120px; filter: drop-shadow(0 6px 10px #0006); }
+/* The coin: two engraved faces and a stacked gold edge in real 3D. */
+.coin { position: absolute; left: 50%; top: 50%; width: 280px; height: 280px; margin: -140px 0 0 -140px; perspective: 1000px; animation: bob 6s ease-in-out infinite; }
+.coin-spin { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; animation: turn 10s ease-in-out infinite; }
+.coin .side { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; backface-visibility: hidden; }
+.coin .front { transform: translateZ(14px); filter: drop-shadow(0 0 40px #f5c45e55); }
+.coin .back { transform: rotateY(180deg) translateZ(14px); }
+.coin .edge { position: absolute; inset: 0; border-radius: 50%; transform: translateZ(var(--z));
+  background: linear-gradient(100deg, #6b3f08, #c98a22 30%, #ffe38a 48%, #b9781a 62%, #5c3506); }
+.coin-shadow { position: absolute; left: 10%; right: 10%; bottom: -70px; height: 34px; border-radius: 50%; background: radial-gradient(#f5c45e55, transparent 70%); filter: blur(8px); animation: shadow 6s ease-in-out infinite; }
 @keyframes bob { 50% { transform: translateY(-14px); } }
-@keyframes turn { 0%, 100% { transform: rotateY(-22deg) rotateX(8deg); } 50% { transform: rotateY(22deg) rotateX(4deg); } }
+@keyframes shadow { 50% { transform: scale(0.85); opacity: 0.6; } }
+@keyframes turn { 0%, 100% { transform: rotateY(-32deg) rotateX(10deg); } 50% { transform: rotateY(28deg) rotateX(4deg); } }
 .float { position: absolute; padding: 12px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--card-glass); backdrop-filter: blur(14px);
   color: var(--muted); font-size: 13px; box-shadow: 0 20px 40px var(--shadow); animation: bob 7s ease-in-out infinite; }
 .float b { display: block; margin-top: 2px; color: var(--text); font-size: 20px; }
 .float .up { color: var(--accent); }
-.f1 { left: 0; top: 60px; } .f2 { right: 0; top: 150px; animation-delay: -2s; } .f3 { left: 30px; bottom: 50px; animation-delay: -4s; }
+.f1 { left: 0; top: 60px; } .f2 { right: -16px; top: 70px; animation-delay: -2s; } .f3 { left: 30px; bottom: 50px; animation-delay: -4s; }
 
 /* Ticker */
 .ticker { overflow: hidden; padding: 16px 0; border-block: 1px solid var(--line); background: var(--bg2); color: var(--muted); font-size: 14px; white-space: nowrap; }
@@ -132,10 +137,30 @@ h2 { max-width: 820px; margin-top: 12px; font-size: clamp(32px, 4.6vw, 52px); fo
 .pfacts b { color: var(--text); }
 .pool { text-align: center; }
 .pool p { margin: 18px 0 0; color: var(--muted); font-size: 14px; }
-.pool-ring { position: relative; display: grid; place-content: center; width: 240px; height: 240px; margin: 0 auto; border-radius: 50%;
-  background: radial-gradient(circle, var(--bg) 58%, transparent 59%), conic-gradient(var(--gold), var(--gold2), var(--gold)); box-shadow: 0 0 80px #f5c45e44; }
-.pool-ring strong { font-size: 44px; letter-spacing: -0.03em; }
-.pool-ring span { color: var(--gold-text); font-weight: 800; letter-spacing: 0.2em; }
+.pool-amount { margin-top: 26px; }
+.pool-amount strong { font-size: 44px; letter-spacing: -0.03em; }
+.pool-amount span { color: var(--gold-text); font-weight: 800; letter-spacing: 0.2em; }
+
+/* A glowing data cube with the NIR coin inside. */
+.cube-scene { position: relative; width: 260px; height: 260px; margin: 0 auto; perspective: 900px; }
+.cube { position: absolute; left: 50%; top: 50%; width: 170px; height: 170px; margin: -85px 0 0 -85px; transform-style: preserve-3d; animation: cube 14s ease-in-out infinite; }
+.cf { position: absolute; inset: 0; border: 2px solid #ffb13b; border-radius: 14px;
+  background: radial-gradient(circle, #ffb13b55 1px, transparent 1.6px) 0 0 / 9px 9px, linear-gradient(160deg, #1c1208ee, #07050399);
+  box-shadow: 0 0 22px #ff9d2e, inset 0 0 28px #ff9d2e88; }
+.cf.front { transform: translateZ(85px); display: grid; place-items: center; }
+.cf.back { transform: rotateY(180deg) translateZ(85px); }
+.cf.right { transform: rotateY(90deg) translateZ(85px); }
+.cf.left { transform: rotateY(-90deg) translateZ(85px); }
+.cf.top { transform: rotateX(90deg) translateZ(85px); background: radial-gradient(circle, #ffe2a0 0, #ff9d2e 35%, #ff9d2e00 70%); }
+.cf.bottom { transform: rotateX(-90deg) translateZ(85px); }
+.cf.front .glyph { width: 92px; fill: #fff1c9; filter: drop-shadow(0 0 6px #ffd27a) drop-shadow(0 0 22px #ff9d2e); animation: core 3s ease-in-out infinite; }
+.sparks { position: absolute; inset: -40px; border-radius: 50%;
+  background: radial-gradient(circle, #ffb13bcc 1.2px, transparent 2px) 0 0 / 31px 23px, radial-gradient(circle, #ffd27a99 1px, transparent 1.6px) 11px 7px / 47px 37px,
+  repeating-linear-gradient(0deg, transparent 0 18px, #ff9d2e22 18px 19px);
+  -webkit-mask: radial-gradient(circle, #000 30%, transparent 70%); mask: radial-gradient(circle, #000 30%, transparent 70%); animation: drift 12s linear infinite; }
+@keyframes cube { 0%, 100% { transform: rotateX(-18deg) rotateY(-28deg); } 50% { transform: rotateX(-12deg) rotateY(28deg); } }
+@keyframes core { 50% { filter: drop-shadow(0 0 16px #ffd27a) drop-shadow(0 0 40px #ff9d2e); } }
+@keyframes drift { to { background-position: 0 -230px, 11px -363px, 0 -190px; } }
 
 /* Privacy */
 .priv { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
@@ -274,3 +299,8 @@ footer { margin-top: 110px; padding: 30px 0 40px; border-top: 1px solid var(--li
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .reveal { opacity: 1; transform: none; }
 }
+
+/* Cards stand off the page: a lighter surface, a visible edge and depth. */
+.vs .card, .steps li, .app, .legend div, .pioneers, .mask { box-shadow: var(--lift); }
+.vs .card, .steps li, .app, .legend div { transition: border-color 0.2s, transform 0.2s; }
+.vs .card:hover, .steps li:hover, .app:hover, .legend div:hover { border-color: #b9ff5a66; transform: translateY(-2px); }

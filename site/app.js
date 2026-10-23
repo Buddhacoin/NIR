@@ -67,6 +67,15 @@ const en = {
   legal: "A test network runs today: apps and rules are tested on it before the main network launches. Test network coins are not sold or exchanged. NIR runs no token sales and promises no price. Never tell anyone your 24 words.",
 };
 
+// The coin's edge: thin gold layers stacked between the two faces.
+const spin = document.querySelector("#coin-spin");
+for (let z = -13; z <= 13; z += 1.5) {
+  const layer = document.createElement("span");
+  layer.className = "edge";
+  layer.style.setProperty("--z", `${z}px`);
+  spin.prepend(layer);
+}
+
 // The ticker scrolls forever: a second copy follows the first.
 const track = document.querySelector(".ticker-track");
 for (const item of [...track.children]) {
@@ -235,5 +244,5 @@ function frame(time) {
 }
 layout();
 pickClique();
-addEventListener("resize", layout);
+addEventListener("resize", () => { layout(); pickClique(); });
 requestAnimationFrame(frame);
