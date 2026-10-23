@@ -597,7 +597,7 @@ test("child reserve signer fails closed when its opened parent is swapped", asyn
     renameSync(live, displaced);
     mkdirSync(live, { mode: 0o700 });
     writeFileSync(proceed, "go");
-    const status = await new Promise((resolve) => child.once("exit", resolve));
+    const status = await new Promise((resolve) => child.once("close", resolve));
     assert.notEqual(status, 0);
     assert.match(stderr, /root changed/);
     assert.equal(existsSync(join(displaced, "locks.json")), false);
@@ -670,7 +670,7 @@ test("twenty concurrent reserve processes persist only one generation value", as
         });
         let stdout = "";
         child.stdout.on("data", (chunk) => { stdout += chunk; });
-        child.once("exit", (status) => resolve({ marker, status, stdout }));
+        child.once("close", (status) => resolve({ marker, status, stdout }));
       })));
     const successful = results.filter(({ status }) => status === 0);
     assert.ok(successful.length >= 1);
