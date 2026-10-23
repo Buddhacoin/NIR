@@ -3,184 +3,234 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NIR — монета, которую майнят умом</title>
-  <meta name="description" content="NIR — открытый блокчейн, где новые монеты появляются за решённые задачи. Майнинг на обычном Mac, квантово-устойчивые подписи, имена вместо адресов.">
-  <meta property="og:title" content="NIR — монета, которую майнят умом">
-  <meta property="og:description" content="Открытый блокчейн: новые монеты появляются за решённые задачи, а не за сожжённое электричество.">
+  <title>NIR — монета, которую майнят интеллектом</title>
+  <meta name="description" content="NIR — первый блокчейн, где каждая монета рождается из решённой задачи. Без ферм и видеокарт: обычный компьютер и одна кнопка. Майните сейчас — первопроходцы получат настоящие NIR при запуске.">
+  <meta property="og:title" content="Биткоин майнили видеокартами. NIR майнят интеллектом.">
+  <meta property="og:description" content="Первый блокчейн, где монеты рождаются из решённых задач. Сеть открыта — станьте первопроходцем.">
   <link rel="icon" href="nir-coin-icon.svg" type="image/svg+xml">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="#top" aria-label="NIR"><img src="nir-coin-icon.svg" alt="" width="32" height="32"><span>NIR</span></a>
+    <a class="brand" href="#top" aria-label="NIR"><img src="nir-coin-icon.svg" alt="" width="30" height="30"><span>NIR</span></a>
     <nav aria-label="Разделы">
-      <a href="#idea" data-i18n="navIdea">Идея</a>
-      <a href="#start" data-i18n="navStart">Начать</a>
+      <a href="#why" data-i18n="navIdea">Идея</a>
+      <a href="#pioneers" data-i18n="navPioneers">Первопроходцы</a>
+      <a href="#apps" data-i18n="navApps">Приложения</a>
       <a href="#economy" data-i18n="navEconomy">Экономика</a>
       <a href="#roadmap" data-i18n="navRoadmap">Дорожная карта</a>
     </nav>
-    <button class="theme" id="theme" type="button" aria-label="Дневная тема">☀︎</button>
-    <button class="lang" id="lang" type="button" aria-label="Switch to English">EN</button>
+    <button class="chip-button" id="theme" type="button" aria-label="Дневная тема">☀︎</button>
+    <button class="chip-button" id="lang" type="button" aria-label="Switch to English">EN</button>
+    <a class="btn primary small" href="#start" data-i18n="ctaShort">Начать майнинг</a>
   </header>
 
   <main id="top">
     <section class="hero">
       <canvas id="sky" aria-hidden="true"></canvas>
-      <div class="hero-text">
-        <p class="pill"><i></i><span data-i18n="pill">Тестовая сеть работает</span></p>
-        <h1 data-i18n="heroTitle">Монета, которую майнят&nbsp;умом</h1>
-        <p class="lead" data-i18n="heroLead">NIR — открытый блокчейн, где новые монеты появляются за решённые задачи, а&nbsp;не за сожжённое электричество. Чем умнее становятся программы и&nbsp;ИИ, тем сложнее задачи — и&nbsp;тем ценнее каждая найденная.</p>
-        <div class="actions">
-          <a class="button primary" href="#start" data-i18n="ctaInstall">Установить на Mac</a>
-          <a class="button" href="#idea" data-i18n="ctaHow">Как это работает</a>
+      <div class="wrap hero-grid">
+        <div class="hero-text">
+          <span class="tag"><i></i><span data-i18n="tag">Ранний доступ · сеть открыта</span></span>
+          <h1><span class="dim" data-i18n="h1a">Биткоин майнили видеокартами.</span><br><span data-i18n="h1b">NIR майнят</span> <span class="gold" data-i18n="h1c">интеллектом.</span></h1>
+          <p class="lead" data-i18n="lead">Первый блокчейн, где каждая монета рождается из решённой задачи. Без ферм, шума и счетов за электричество — ваш компьютер, одна кнопка и задачи, которые становятся сложнее вместе с искусственным интеллектом.</p>
+          <div class="actions">
+            <a class="btn primary" href="#start" data-i18n="ctaMine">⚡ Начать майнинг бесплатно</a>
+            <a class="btn" href="#why" data-i18n="ctaHow">▶ Как это работает</a>
+          </div>
+          <p class="platforms" data-i18n="platforms"><b>macOS</b> — уже сейчас · Windows и Linux — скоро</p>
+        </div>
+        <div class="stage" aria-hidden="true">
+          <div class="orbit o1"></div><div class="orbit o2"></div>
+          <div class="coin"><div class="face"><img src="nir-coin-icon.svg" alt=""></div></div>
+          <div class="float f1"><span data-i18n="fFound">Найдено решение</span><b class="up">+44 NIR</b></div>
+          <div class="float f2"><span data-i18n="fLevel">Сложность задач</span><b data-live="level">38</b></div>
+          <div class="float f3"><span data-i18n="fProtect">Защита</span><b data-i18n="fQuantum">Постквантовая 🔒</b></div>
         </div>
       </div>
     </section>
 
-    <section class="live" aria-label="Тестовая сеть сейчас">
-      <div><span data-i18n="liveBlock">Блок</span><strong id="live-height">—</strong></div>
-      <div><span data-i18n="liveLevel">Сложность задач</span><strong id="live-level">—</strong></div>
-      <div><span data-i18n="liveNetwork">Сеть</span><strong id="live-network">—</strong></div>
-      <div><span data-i18n="liveSupply">Всего будет</span><strong>21 000 000</strong></div>
-    </section>
+    <div class="ticker" aria-label="Сеть сейчас">
+      <div class="ticker-track">
+        <span>● <b class="g" data-i18n="tLive">Сеть живая</b></span>
+        <span><span data-i18n="tBlock">Блок</span> <b data-live="height">—</b></span>
+        <span><span data-i18n="tLevel">Сложность</span> <b data-live="level">—</b></span>
+        <span><span data-i18n="tSupply">Всего будет</span> <b class="y">21 000 000 NIR</b></span>
+        <span><span data-i18n="tHardware">Оборудование</span> <b>0 ₽</b></span>
+        <span><span data-i18n="tSales">Предпродаж</span> <b>0</b> — <span data-i18n="tOnly">только майнинг</span></span>
+      </div>
+    </div>
 
-    <section id="idea" class="section">
-      <p class="eyebrow" data-i18n="ideaEyebrow">Идея</p>
-      <h2 data-i18n="ideaTitle">Работа, которая что-то значит</h2>
-      <p class="section-lead" data-i18n="ideaLead">Биткоин доказал, что деньги могут жить без банков. Но его майнинг — это перебор чисел, который сжигает энергию и больше ничего не даёт. NIR майнят решением настоящих задач: найти трудно, проверить — мгновенно.</p>
-      <div class="cards">
-        <article class="card">
-          <b class="icon">✦</b>
-          <h3 data-i18n="c1Title">Майнинг задачами</h3>
-          <p data-i18n="c1Text">Сеть сама придумывает головоломку — паутину из точек и линий. Ваш Mac ищет группу точек, где каждая связана с каждой. Первый, кто нашёл, получает NIR.</p>
-        </article>
-        <article class="card">
-          <b class="icon">↗</b>
-          <h3 data-i18n="c2Title">Сложнее вместе с ИИ</h3>
-          <p data-i18n="c2Text">Если задачи решают слишком быстро, сеть их усложняет. Майнинг растёт вместе с умом программ — и превращает прогресс ИИ в редкость монеты.</p>
-        </article>
-        <article class="card">
-          <b class="icon">◈</b>
-          <h3 data-i18n="c3Title">Защита от квантовых компьютеров</h3>
-          <p data-i18n="c3Text">Подписи NIR — ML-DSA, стандарт постквантовой криптографии. Ключи останутся надёжными, даже когда появятся квантовые компьютеры.</p>
-        </article>
-        <article class="card">
-          <b class="icon">@</b>
-          <h3 data-i18n="c4Title">Имена вместо адресов</h3>
-          <p data-i18n="c4Text">Вместо длинного nir1… — короткое имя вроде sasha.nir. Плата за имя сжигается: никто её не получает, а монет становится меньше.</p>
-        </article>
-        <article class="card">
-          <b class="icon">◎</b>
-          <h3 data-i18n="c5Title">Ваши ключи — у вас</h3>
-          <p data-i18n="c5Text">24 слова на бумаге восстанавливают все ваши счета. Кошелёк проверяет баланс сам по подписям сети, а не верит серверу на слово.</p>
-        </article>
-        <article class="card">
-          <b class="icon">∞</b>
-          <h3 data-i18n="c6Title">Сеть без хозяина</h3>
-          <p data-i18n="c6Text">Код открыт. Правила выпуска записаны в протокол: даже создатель не может выпустить лишнюю монету или забрать чужую.</p>
-        </article>
+    <section id="why" class="s">
+      <div class="wrap">
+        <div class="eyebrow" data-i18n="whyEyebrow">Почему это другое</div>
+        <h2 data-i18n="whyTitle">Майнинг, который не сжигает планету</h2>
+        <p class="sub" data-i18n="whyLead">Биткоин тратит электричество целых стран на перебор случайных чисел. NIR тратит его на решение задач: найти решение трудно, проверить — мгновенно. Чем умнее становятся программы и ИИ, тем сложнее задачи — так прогресс интеллекта превращается в редкость монеты.</p>
+        <div class="vs">
+          <div class="card old">
+            <h3 data-i18n="oldTitle">Старый майнинг</h3>
+            <ul><li data-i18n="old1">Фермы видеокарт за тысячи долларов</li><li data-i18n="old2">Шум, жара и огромные счета за свет</li><li data-i18n="old3">Бесполезный перебор чисел</li><li data-i18n="old4">Ранние майнеры — давно в прошлом</li></ul>
+          </div>
+          <div class="card nir">
+            <h3>NIR</h3>
+            <ul><li data-i18n="new1">Обычный компьютер и одна кнопка</li><li data-i18n="new2">Тихо работает в фоне</li><li data-i18n="new3">Решение настоящих задач</li><li data-i18n="new4">Сеть только открылась — вы в самом начале</li></ul>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section id="start" class="section">
-      <p class="eyebrow" data-i18n="startEyebrow">Начать</p>
-      <h2 data-i18n="startTitle">Три шага до первой монеты</h2>
-      <ol class="steps">
-        <li>
-          <span class="step-number">1</span>
+    <section id="pioneers" class="s">
+      <div class="wrap">
+        <div class="pioneers">
           <div>
-            <h3 data-i18n="s1Title">Установите на Mac</h3>
-            <p data-i18n="s1Text">Откройте «Терминал» (⌘ + пробел, наберите «Терминал»), вставьте команду и нажмите Enter. Приложения соберутся прямо на вашем Mac из открытого кода.</p>
-            <div class="command">
-              <code id="install-command">curl -fsSL https://nircoin.com/install.sh | bash</code>
-              <button type="button" id="copy" data-i18n="copy">Скопировать</button>
+            <div class="eyebrow gold-text" data-i18n="pEyebrow">Программа первопроходцев</div>
+            <h2 data-i18n="pTitle">Майните сейчас — получите настоящие NIR при запуске</h2>
+            <p class="sub" data-i18n="pLead">В 2009 году биткоин майнили на домашних компьютерах. NIR сейчас в той же точке. 210 000 NIR — 1% всех монет — уже отложены для тех, кто майнит в тестовой сети. При запуске основной сети они разделятся между первопроходцами по их заслугам.</p>
+            <ul class="pfacts">
+              <li data-i18n="p1"><b>1 NIR, намайненный сейчас = 1 очко первопроходца.</b> Монеты из крана и переводы не считаются — только решённые задачи.</li>
+              <li data-i18n="p2"><b>Очки не сгорают,</b> даже если тестовую сеть перезапустят.</li>
+              <li data-i18n="p3"><b>Награда придёт на тот же адрес.</b> Сохраните свои 24 слова.</li>
+            </ul>
+            <a class="btn primary" href="#start" data-i18n="pCta">⚡ Стать первопроходцем</a>
+          </div>
+          <div class="pool">
+            <div class="pool-ring"><strong>210 000</strong><span>NIR</span></div>
+            <p data-i18n="poolText">пул первопроходцев · 1% всех монет</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy" class="s">
+      <div class="wrap priv">
+        <div>
+          <div class="eyebrow" data-i18n="privEyebrow">Приватность</div>
+          <h2 data-i18n="privTitle">Ваши деньги — ваше дело</h2>
+          <p class="sub" data-i18n="privLead">Никакой регистрации, паспорта и почты. Адрес не связан с вашим именем. А впереди — полностью невидимые переводы: никто не увидит ни отправителя, ни получателя, ни сумму. Захотите — покажете бухгалтеру ключом просмотра.</p>
+          <div class="chips">
+            <span class="chip" data-i18n="ch1">✓ Без регистрации</span><span class="chip" data-i18n="ch2">✓ Без паспорта</span><span class="chip" data-i18n="ch3">✓ Ключи только у вас</span>
+            <span class="chip soon" data-i18n="ch4">◐ Скрытые переводы — скоро</span><span class="chip soon" data-i18n="ch5">◐ Ключ просмотра для отчётности — скоро</span>
+          </div>
+        </div>
+        <div class="mask" aria-hidden="true">
+          <div class="mask-rows"><span data-i18n="mFrom">от</span><b>nir1a9f…c21e</b><span data-i18n="mTo">кому</span><b>athena.nir</b><span data-i18n="mSum">сумма</span><b>1 250.00 NIR</b><span data-i18n="mStatus">статус</span><em data-i18n="mOk">✓ подтверждено сетью</em></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="apps" class="s">
+      <div class="wrap">
+        <div class="eyebrow" data-i18n="appsEyebrow">Приложения</div>
+        <h2 data-i18n="appsTitle">Всё, что нужно. Ничего лишнего.</h2>
+        <div class="apps">
+          <article class="app">
+            <h3>NIR Wallet</h3><p data-i18n="wSub">Сейф для денег будущего</p>
+            <div class="feat">
+              <div data-i18n="w1"><b>◈</b>Защита от квантовых компьютеров</div>
+              <div data-i18n="w2"><b>@</b>Имя вместо адреса: athena.nir</div>
+              <div data-i18n="w3"><b>✓</b>Сам проверяет каждый баланс</div>
+              <div class="soon" data-i18n="w4"><b>★</b>Скоро: BTC, ETH и обмен внутри</div>
             </div>
-            <p class="hint" data-i18n="s1Hint">Нужна macOS 13 или новее. Установка займёт 5–20 минут. Что именно делает команда, можно прочитать в файле install.sh на GitHub.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-number">2</span>
-          <div>
-            <h3 data-i18n="s2Title">Создайте кошелёк</h3>
-            <p data-i18n="s2Text">NIR Wallet покажет 24 слова. Запишите их на бумагу и никому не показывайте — это ключ ко всем вашим монетам.</p>
-          </div>
-        </li>
-        <li>
-          <span class="step-number">3</span>
-          <div>
-            <h3 data-i18n="s3Title">Начните майнинг</h3>
-            <p data-i18n="s3Text">В NIR Майнере нажмите «Подключить NIR Wallet» и «Начать майнинг». Награды придут прямо в кошелёк.</p>
-          </div>
-        </li>
-      </ol>
-    </section>
-
-    <section id="economy" class="section">
-      <p class="eyebrow" data-i18n="economyEyebrow">Экономика</p>
-      <h2 data-i18n="economyTitle">21 миллион. Ни одной монетой больше</h2>
-      <div class="split" role="img" aria-label="88% майнерам, 7% создателю, 5% фонду">
-        <span class="mining" style="--share: 88"></span><span class="founder" style="--share: 7"></span><span class="fund" style="--share: 5"></span>
-      </div>
-      <div class="legend">
-        <div><i class="mining"></i><strong>88%</strong><span data-i18n="eMining">майнерам — только за решённые задачи. 44 NIR примерно раз в 10 минут, каждые ~4 года награда делится пополам.</span></div>
-        <div><i class="founder"></i><strong>7%</strong><span data-i18n="eFounder">создателю — 1% сразу, остальное открывается равномерно 10 лет. Без доли с наград майнеров и комиссий.</span></div>
-        <div><i class="fund"></i><strong>5%</strong><span data-i18n="eFund">фонду сообщества — на разработчиков, тестировщиков и гранты. Тоже открывается 10 лет.</span></div>
+            <div class="device" aria-hidden="true"><div class="ui">
+              <div class="bar"><img src="nir-coin-icon.svg" alt="" width="20" height="20">NIR<span class="net">● 2 431</span></div>
+              <div class="acct">● nir1q7x…a3f0 · <b>zeus.nir</b></div>
+              <div class="bal"><span data-i18n="uiBalance">Общий баланс</span><strong>1 284.50 NIR</strong></div>
+              <div class="ok" data-i18n="uiVerified">✓ Подтверждено подписями сети</div>
+              <div class="btns"><div><i>↓</i><span data-i18n="uiReceive">Получить</span></div><div><i>↑</i><span data-i18n="uiSend">Отправить</span></div><div class="hi"><i>✦</i><span data-i18n="uiMine">Майнинг</span></div></div>
+              <div class="mine"><b data-i18n="uiMining">● Майнинг работает</b><p data-i18n="uiToday">Сегодня: +132.00 NIR</p></div>
+              <div class="row"><span>athena.nir</span><span>+250.00</span></div>
+              <div class="row"><span data-i18n="uiReward">Награда за решение</span><span>+44.00</span></div>
+            </div></div>
+          </article>
+          <article class="app">
+            <h3 data-i18n="mTitle">NIR Майнер</h3><p data-i18n="mSub">Одна кнопка — и вы майните</p>
+            <div class="feat">
+              <div data-i18n="m1"><b>✦</b>Без видеокарт и настроек</div>
+              <div data-i18n="m2"><b>↯</b>Награды прямо в кошелёк</div>
+              <div data-i18n="m3"><b>◎</b>Видно, как ищется решение</div>
+              <div class="soon" data-i18n="m4"><b>★</b>Скоро: рейтинг майнеров</div>
+            </div>
+            <div class="device" aria-hidden="true"><div class="ui">
+              <div class="bar"><img src="nir-coin-icon.svg" alt="" width="20" height="20"><span data-i18n="uiMiner">NIR МАЙНЕР</span><span class="net">● Live</span></div>
+              <svg class="mini-sky" viewBox="0 0 260 130"><g class="edge"><line x1="20" y1="30" x2="90" y2="20"/><line x1="90" y1="20" x2="170" y2="40"/><line x1="170" y1="40" x2="240" y2="25"/><line x1="20" y1="30" x2="50" y2="100"/><line x1="240" y1="25" x2="220" y2="105"/><line x1="50" y1="100" x2="140" y2="115"/><line x1="140" y1="115" x2="220" y2="105"/></g><g class="lit"><line x1="100" y1="60" x2="150" y2="75"/><line x1="100" y1="60" x2="125" y2="100"/><line x1="150" y1="75" x2="125" y2="100"/><line x1="100" y1="60" x2="160" y2="105"/><line x1="150" y1="75" x2="160" y2="105"/><line x1="125" y1="100" x2="160" y2="105"/></g><g class="litdot"><circle cx="100" cy="60" r="3"/><circle cx="150" cy="75" r="3"/><circle cx="125" cy="100" r="3"/><circle cx="160" cy="105" r="3"/></g></svg>
+              <div class="phase" data-i18n="uiFound">&gt;_ Клика найдена! +44 NIR</div>
+              <div class="stats"><div><span data-i18n="uiInWallet">В КОШЕЛЬКЕ</span><strong>1 284.50</strong></div><div><span data-i18n="uiSolved">РЕШЕНО</span><strong>47</strong></div><div><span data-i18n="uiLevel">УРОВЕНЬ</span><strong>38</strong></div><div><span data-i18n="uiChecked">ПРОВЕРЕНО</span><strong>1.2B</strong></div></div>
+              <div class="go" data-i18n="uiStop">ОСТАНОВИТЬ</div>
+            </div></div>
+          </article>
+        </div>
       </div>
     </section>
 
-    <section id="roadmap" class="section">
-      <p class="eyebrow" data-i18n="roadmapEyebrow">Дорожная карта</p>
-      <h2 data-i18n="roadmapTitle">Шаг за шагом к настоящим деньгам</h2>
-      <p class="section-lead" data-i18n="roadmapLead">Каждый этап открывается, когда пройдены его проверки, а не когда наступила дата. Так строят сети, которым можно доверить деньги.</p>
-      <ol class="roadmap">
-        <li class="done">
-          <span class="state" data-i18n="rDone">Готово</span>
-          <h3 data-i18n="r1Title">Протокол и приложения</h3>
-          <p data-i18n="r1Text">Консенсус с быстрой окончательностью блоков, майнинг задачами, постквантовые подписи, имена .nir, NIR Wallet и NIR Майнер для Mac.</p>
-        </li>
-        <li class="now">
-          <span class="state" data-i18n="rNow">Сейчас</span>
-          <h3 data-i18n="r2Title">Общая тестовая сеть</h3>
-          <p data-i18n="r2Text">Одна сеть для всех майнеров: testnet.nircoin.com. Установка одной командой. Собираем первых тестеров и их отзывы.</p>
-        </li>
-        <li>
-          <span class="state" data-i18n="rNext">Дальше</span>
-          <h3 data-i18n="r3Title">Публичная тестовая сеть</h3>
-          <p data-i18n="r3Text">Четыре валидатора у независимых людей в разных странах, обозреватель блоков, внутренний аудит безопасности.</p>
-        </li>
-        <li>
-          <span class="state" data-i18n="rLater">Потом</span>
-          <h3 data-i18n="r4Title">Тестовая сеть с наградами</h3>
-          <p data-i18n="r4Text">Проверка экономики майнинга на живых людях, награды за найденные уязвимости, стабильные версии приложений.</p>
-        </li>
-        <li>
-          <span class="state" data-i18n="rGoal">Цель</span>
-          <h3 data-i18n="r5Title">Основная сеть</h3>
-          <p data-i18n="r5Text">Независимые аудиты, проверка юристами, открытая церемония первого блока. NIR начинают стоить денег.</p>
-        </li>
-      </ol>
+    <section id="start" class="s">
+      <div class="wrap">
+        <div class="eyebrow" data-i18n="startEyebrow">Начать</div>
+        <h2 data-i18n="startTitle">От нуля до первой монеты за 15 минут</h2>
+        <ol class="steps">
+          <li><span class="num">1</span><div>
+            <h3 data-i18n="s1Title">Одна команда</h3>
+            <p data-i18n="s1Text">Откройте «Терминал» (⌘ + пробел → «Терминал»), вставьте команду и нажмите Enter. NIR соберётся прямо на вашем Mac из открытого кода.</p>
+            <div class="command"><code id="install-command">curl -fsSL https://nircoin.com/install.sh | bash</code><button type="button" id="copy" data-i18n="copy">Скопировать</button></div>
+            <p class="hint" data-i18n="s1Hint">macOS 13 или новее · Windows и Linux — скоро</p>
+          </div></li>
+          <li><span class="num">2</span><div><h3 data-i18n="s2Title">24 слова — ваш сейф</h3><p data-i18n="s2Text">NIR Wallet покажет 24 слова. Запишите их на бумагу: это ключ ко всем вашим монетам и к награде первопроходца.</p></div></li>
+          <li><span class="num">3</span><div><h3 data-i18n="s3Title">Одна кнопка — и вы майните</h3><p data-i18n="s3Text">В NIR Майнере нажмите «Подключить NIR Wallet» и «Начать майнинг». Займите своё имя.nir, пока оно свободно.</p></div></li>
+        </ol>
+      </div>
     </section>
 
-    <section class="section honest">
-      <h2 data-i18n="honestTitle">Честно</h2>
-      <p data-i18n="honestText">Сейчас работает тестовая сеть. Монеты в ней ничего не стоят, а сеть могут перезапустить. NIR не продаёт монеты и ничего не обещает инвесторам: единственный способ их получить — майнить. Не отправляйте никому свои 24 слова и не верьте тем, кто предлагает «купить NIR».</p>
+    <section id="economy" class="s">
+      <div class="wrap econ">
+        <div class="donut" aria-hidden="true"><div><strong>21M</strong><span data-i18n="eCap">и ни монетой больше</span></div></div>
+        <div>
+          <div class="eyebrow" data-i18n="economyEyebrow">Экономика</div>
+          <h2 data-i18n="economyTitle">Жёсткий потолок. Честное распределение.</h2>
+          <div class="legend">
+            <div><i class="c-mining"></i><strong>87%</strong><span data-i18n="eMining">майнерам — только за работу. 44 NIR примерно каждые 10 минут, раз в ~4 года награда делится пополам.</span></div>
+            <div><i class="c-founder"></i><strong>7%</strong><span data-i18n="eFounder">создателю — открываются за 10 лет: создатель заинтересован в успехе сети, а не в быстрой продаже.</span></div>
+            <div><i class="c-fund"></i><strong>5%</strong><span data-i18n="eFund">фонду сообщества — разработчикам, тестировщикам и грантам.</span></div>
+            <div><i class="c-pioneer"></i><strong>1%</strong><span data-i18n="ePioneer">первопроходцам тестовой сети — по их заслугам.</span></div>
+          </div>
+          <p class="sub small-sub" data-i18n="eNote">Ни предпродаж, ни скрытых кошельков, ни печатного станка: каждое правило записано в открытом коде.</p>
+        </div>
+      </div>
     </section>
 
-    <section class="section final">
-      <h2 data-i18n="finalTitle">Будьте среди первых</h2>
-      <p data-i18n="finalText">Первые майнеры сети — те, кто находит ошибки, предлагает идеи и строит её вместе с нами.</p>
-      <div class="actions">
-        <a class="button primary" href="#start" data-i18n="ctaInstall">Установить на Mac</a>
-        <a class="button" href="https://github.com/Buddhacoin/NIR" data-i18n="ctaCode">Открытый код на GitHub</a>
+    <section id="roadmap" class="s">
+      <div class="wrap">
+        <div class="eyebrow" data-i18n="roadmapEyebrow">Дорожная карта</div>
+        <h2 data-i18n="roadmapTitle">История NIR — в семи главах</h2>
+        <ol class="road">
+          <li class="done"><span class="dot">✓</span><div class="n" data-i18n="ch1n">Глава I</div><h4 data-i18n="ch1t">Искра</h4><p data-i18n="ch1p">Протокол, постквантовые подписи, имена .nir, кошелёк и майнер</p></li>
+          <li class="now"><span class="dot"></span><div class="n" data-i18n="ch2n">Глава II</div><h4 data-i18n="ch2t">Пробуждение</h4><p data-i18n="ch2p">Сеть открыта, первые майнеры, программа первопроходцев</p><span class="badge" data-i18n="now">СЕЙЧАС</span></li>
+          <li><span class="dot"></span><div class="n" data-i18n="ch3n">Глава III</div><h4 data-i18n="ch3t">Без границ</h4><p data-i18n="ch3p">Узлы по всему миру, Windows и Linux, обозреватель блоков, рейтинг майнеров</p></li>
+          <li><span class="dot"></span><div class="n" data-i18n="ch4n">Глава IV</div><h4 data-i18n="ch4t">Испытание</h4><p data-i18n="ch4p">Охота за уязвимостями с наградами, независимые аудиты</p></li>
+          <li><span class="dot"></span><div class="n" data-i18n="ch5n">Глава V</div><h4 data-i18n="ch5t">Генезис</h4><p data-i18n="ch5p">Основная сеть. NIR становятся настоящими монетами, первопроходцы получают награду</p></li>
+          <li><span class="dot"></span><div class="n" data-i18n="ch6n">Глава VI</div><h4 data-i18n="ch6t">Невидимка</h4><p data-i18n="ch6p">Скрытые переводы и мультикошелёк: BTC, ETH, стейблкоины</p></li>
+          <li><span class="dot"></span><div class="n" data-i18n="ch7n">Глава VII</div><h4 data-i18n="ch7t">Экономика интеллекта</h4><p data-i18n="ch7p">ИИ-агенты и программы платят друг другу в NIR за вычисления и проверку</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="s">
+      <div class="wrap">
+        <div class="final">
+          <h2><span data-i18n="finalA">История пишется сейчас.</span><br><span class="gold" data-i18n="finalB">Впишите своё имя.</span></h2>
+          <p class="sub" data-i18n="finalText">Займите имя.nir раньше других и станьте одним из первых майнеров новой сети.</p>
+          <div class="actions center"><a class="btn primary" href="#start" data-i18n="ctaShort2">⚡ Начать майнинг</a><a class="btn" href="https://github.com/Buddhacoin/NIR" data-i18n="ctaCode">Открытый код на GitHub</a></div>
+        </div>
       </div>
     </section>
   </main>
 
   <footer>
-    <span>NIR · nircoin.com</span>
-    <a href="https://github.com/Buddhacoin/NIR">GitHub</a>
-    <a href="https://github.com/Buddhacoin/NIR/tree/main/docs" data-i18n="footerDocs">Документация</a>
+    <div class="wrap foot">
+      <span>NIR · nircoin.com</span>
+      <a href="https://github.com/Buddhacoin/NIR">GitHub</a>
+      <a href="https://github.com/Buddhacoin/NIR/blob/main/docs/pioneer-program.md" data-i18n="footerPioneers">Правила для первопроходцев</a>
+      <a href="https://github.com/Buddhacoin/NIR/tree/main/docs" data-i18n="footerDocs">Документация</a>
+    </div>
+    <p class="legal" data-i18n="legal">Сейчас работает тестовая сеть: в ней проверяют приложения и правила перед запуском основной сети. Монеты тестовой сети не продаются и не обмениваются. NIR не проводит продаж токенов и не обещает цену. Никогда не сообщайте никому свои 24 слова.</p>
   </footer>
   <script src="app.js"></script>
 </body>
