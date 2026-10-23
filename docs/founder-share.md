@@ -15,8 +15,9 @@ The share goes to a 2-of-3 address, not to an everyday wallet account:
 - moving NIR from it needs **any two** of the three phrases;
 - losing one phrase loses nothing, and one stolen phrase moves nothing.
 
-NIR Wallet makes it under **Settings → Founder share → Create the founder
-address**. Each phrase appears once in a macOS window (no copy button) and is
+NIR Wallet made it under **Settings → Founder share → Create the founder
+address**. The card is shown only on a Mac that holds a founder descriptor,
+so other users of NIR Wallet do not see it. Each phrase appears once in a macOS window (no copy button) and is
 checked by asking two of its words back. The phrases are not stored anywhere;
 NIR Wallet keeps only the public descriptor in `founder-share.json` in its
 storage folder:
