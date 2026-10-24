@@ -30,6 +30,17 @@ before the main network launches receive real NIR at its launch.
   the founder runs today's single test host and must not be able to pay himself
   from this pool.
 
+## Seeing your points
+
+NIR Майнер shows them on the shared network: the points of the address that
+receives its rewards, today's share of the pool and what that share would be
+worth in NIR if the pool were shared now. The node serves the same figures at
+`GET /v1/pioneers/<address>` (`points` and `totalPoints` in atomic units,
+`pioneers` = addresses with points). It counts every proof reward ever paid,
+not only the 200 most recent ones a wallet's history keeps, and leaves out the
+node operator's own keys. It is an index next to the chain, rebuilt from the
+blocks after a restart, not consensus state.
+
 ## At launch
 
 - Each address receives `210,000 × its points ÷ all points` NIR, at the same

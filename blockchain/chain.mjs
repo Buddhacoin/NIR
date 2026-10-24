@@ -1722,6 +1722,10 @@ export class NirChain {
   // Not consensus state: the proof rewards each address received, for
   // wallets. A node rebuilds it by replaying blocks.
   #proofRewardLog = new Map();
+  // Also not consensus: every proof reward an address ever received, which
+  // is its pioneer points (docs/pioneer-program.md), and the sum over all.
+  #proofRewardTotals = new Map();
+  #proofRewardSum = 0n;
   #recentValidatorTransition;
   #pendingValidatorExits;
   #retiredValidators;
@@ -3257,6 +3261,34 @@ export class NirChain {
       }
       return [address, list.map(({ amount, height, timestamp }) => ({ amount, height, timestamp }))];
     }));
+  }
+
+  // Pioneer points: all proof rewards of `address`, and of everyone except
+  // `excluded` addresses (atomic units).
+  pioneerPoints(address, excluded = new Set()) {
+    let total = this.#proofRewardSum;
+    for (const key of excluded) total -= this.#proofRewardTotals.get(key) ?? 0n;
+    const points = excluded.has(address) ? 0n : this.#proofRewardTotals.get(address) ?? 0n;
+    return { points, totalPoints: total, pioneers: [...this.#proofRewardTotals.keys()]
+      .filter((key) => !excluded.has(key)).length };
+  }
+
+  proofRewardTotalEntries() {
+    return [...this.#proofRewardTotals].map(([address, amount]) => [address, amount.toString()]);
+  }
+
+  restoreProofRewardTotals(entries) {
+    if (!Array.isArray(entries) || entries.length > 1_000_000) throw new Error("proof reward totals are invalid");
+    const totals = new Map();
+    let sum = 0n;
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || !/^nir1[0-9a-f]{64}$/.test(entry[0] ?? "") || !/^[0-9]{1,30}$/.test(entry[1] ?? "") ||
+          totals.has(entry[0])) throw new Error("proof reward totals are invalid");
+      totals.set(entry[0], BigInt(entry[1]));
+      sum += BigInt(entry[1]);
+    }
+    this.#proofRewardTotals = totals;
+    this.#proofRewardSum = sum;
   }
 
   beaconAuthorityStatus() {
@@ -5898,6 +5930,8 @@ export class NirChain {
     fork.#proofMining = structuredClone(this.#proofMining);
     fork.#nameRegistry = structuredClone(this.#nameRegistry);
     fork.#proofRewardLog = new Map([...this.#proofRewardLog].map(([address, entries]) => [address, [...entries]]));
+    fork.#proofRewardTotals = new Map(this.#proofRewardTotals);
+    fork.#proofRewardSum = this.#proofRewardSum;
     fork.#pendingValidatorExits = new Map([...this.#pendingValidatorExits]
       .map(([address, pending]) => [address, { ...pending }]));
     fork.#retiredValidators = new Map([...this.#retiredValidators]
@@ -7613,6 +7647,8 @@ export class NirChain {
       entries.push({ amount: amount.toString(), height: block.height, timestamp: block.timestamp });
       if (entries.length > 200) entries.shift();
       this.#proofRewardLog.set(address, entries);
+      this.#proofRewardTotals.set(address, (this.#proofRewardTotals.get(address) ?? 0n) + amount);
+      this.#proofRewardSum += amount;
     }
     this.#pendingValidatorExits = pendingValidatorExits;
     this.#retiredValidators = retiredValidators;

@@ -241,6 +241,18 @@ export class PersistentDevNode {
     return this.#chain.proofRewardHistory(address);
   }
 
+  // Pioneer points (docs/pioneer-program.md): the proof rewards an address
+  // received on this network, against all others. The operator's own keys
+  // never count.
+  pioneerPoints(address) {
+    if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
+    const excluded = new Set(Object.values(this.#keys).flat()
+      .map((key) => key?.address).filter((key) => typeof key === "string"));
+    const { points, pioneers, totalPoints } = this.#chain.pioneerPoints(address, excluded);
+    return { address, height: this.#chain.height, networkId: this.#chain.networkId, pioneers,
+      points: points.toString(), poolNir: "210000", totalPoints: totalPoints.toString() };
+  }
+
   proofMining() {
     // Miners sign answers bound to this genesis.
     return { ...proofMiningView(this.#chain.proofMiningStatus(),
@@ -333,6 +345,8 @@ export class PersistentDevNode {
             verifyStateSnapshot(resume.snapshot, trustAnchor);
             const chain = NirChain.fromVerifiedSnapshotWithHistory(this.#config, resume.snapshot, blocks);
             chain.restoreProofRewardLog(resume.proofRewardLog);
+            // Older resume files have no totals: the full replay below rebuilds them.
+            chain.restoreProofRewardTotals(resume.proofRewardTotals);
             return chain;
           },
         }).chain;
@@ -350,6 +364,7 @@ export class PersistentDevNode {
     const path = join(this.#root, RESUME_FILE);
     writeFileSync(`${path}.tmp`, `${JSON.stringify({ format: "nir-devnet-resume-v1",
       proofRewardLog: chain.proofRewardLogEntries(),
+      proofRewardTotals: chain.proofRewardTotalEntries(),
       snapshot: createStateSnapshot(chain, this.#keys.validators) })}\n`, { mode: 0o600 });
     renameSync(`${path}.tmp`, path);
   }

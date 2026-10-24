@@ -35,6 +35,10 @@ const copy = {
     searching: (t) => `Ищу ${t.k} вершин, соединённых каждая с каждой, среди ${t.n}`,
     committing: "Клика найдена! Отправляю запечатанный ответ…",
     revealing: "Раскрываю ответ сети…",
+    pioneerTitle: "Очки первопроходца",
+    pioneerZero: (p) => `Очки начнутся с первой награды за решённую задачу (она приходит через ~15 минут). Первопроходцев уже: ${p}.`,
+    pioneerShare: (p, share, estimate) => `${share} пула · сейчас это ≈ ${estimate} при запуске · первопроходцев: ${p}`,
+    pioneerNote: "1 намайненный NIR = 1 очко. При запуске основной сети 210 000 NIR разделят по очкам; доля меняется, пока майнят все.",
     linked: (a) => `Награды идут прямо в NIR Wallet: ${a.slice(0, 12)}…${a.slice(-6)}`,
     unlinked: "Кошелёк не подключён — награды пока копятся в майнере. Подключите NIR Wallet ниже.",
     events: {
@@ -71,6 +75,10 @@ const copy = {
     searching: (t) => `Looking for ${t.k} pairwise connected vertices among ${t.n}`,
     committing: "Clique found! Sending the sealed answer…",
     revealing: "Revealing the answer to the network…",
+    pioneerTitle: "Pioneer points",
+    pioneerZero: (p) => `Points start with the first reward for a solved task (it arrives in ~15 minutes). Pioneers so far: ${p}.`,
+    pioneerShare: (p, share, estimate) => `${share} of the pool · today ≈ ${estimate} at launch · pioneers: ${p}`,
+    pioneerNote: "1 NIR mined = 1 point. At the main network's launch 210,000 NIR are shared by points; the share moves while everyone mines.",
     linked: (a) => `Rewards go straight to NIR Wallet: ${a.slice(0, 12)}…${a.slice(-6)}`,
     unlinked: "No wallet connected — rewards collect in the miner for now. Connect NIR Wallet below.",
     events: {
@@ -182,6 +190,19 @@ function render() {
   field("found").textContent = String(status.found ?? 0);
   field("wallet").textContent = nir(status.wallet?.balance ?? status.miner?.balance);
   field("height").textContent = status.network ? String(status.network.height) : "—";
+  // Pioneer points (docs/pioneer-program.md), on the shared network only.
+  const pioneer = status.pioneer;
+  field("pioneer").hidden = !pioneer;
+  if (pioneer) {
+    const locale = lang() === "ru" ? "ru-RU" : "en-US";
+    const whole = (text) => new Intl.NumberFormat(locale, { maximumFractionDigits: 0 })
+      .format(Number(/^([0-9]+)\./.exec(text ?? "")?.[1] ?? 0));
+    field("pioneerPoints").textContent = whole(pioneer.points);
+    const share = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 2 })
+      .format((pioneer.shareBasisPoints ?? 0) / 10_000);
+    field("pioneerShare").textContent = /^0\./.test(pioneer.points ?? "") ? t.pioneerZero(pioneer.pioneers)
+      : t.pioneerShare(pioneer.pioneers, share, `${whole(pioneer.estimate)} NIR`);
+  }
   recipientNote.textContent = status.wallet ? t.linked(status.wallet.address) : t.unlinked;
   withdraw.hidden = !status.wallet || status.miner?.canSend !== true;
   field("walletLabel").textContent = status.wallet ? t.walletLabelLinked : t.walletLabel;
