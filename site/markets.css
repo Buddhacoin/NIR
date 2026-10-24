@@ -173,6 +173,33 @@ tr.chart td { padding: 0 10px 16px; }
 .trust { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
 .trust.green { background: var(--up); } .trust.yellow { background: var(--gold); } .trust.red { background: var(--down); }
 
+/* Accounts: the header button, avatars, profiles (/u/<username>). */
+.pill.account { display: inline-flex; align-items: center; background: var(--btn); color: var(--btn-text); font-weight: 800; }
+.pill.account.signed { padding: 3px; background: transparent; }
+.avatar { display: inline-grid; place-items: center; flex: none; border-radius: 50%; color: #fff; font-weight: 850; }
+.toast { position: fixed; left: 50%; bottom: 96px; z-index: 40; padding: 12px 18px; border-radius: 14px; background: var(--down); color: #fff;
+  font-weight: 700; transform: translateX(-50%); }
+.profile-page { display: grid; gap: 16px; max-width: 860px; margin: 0 auto; }
+.profile-head { display: flex; align-items: center; gap: 18px; }
+.profile-head .who { flex: 1; min-width: 0; }
+.profile-head h1 { margin: 0 0 4px; font-size: 26px; }
+.profile-head p { margin: 10px 0 0; line-height: 1.55; white-space: pre-line; }
+.own-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-form { display: grid; gap: 12px; }
+.profile-form h2 { margin: 0; }
+.profile-form label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 650; }
+.profile-form input, .profile-form textarea { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  font-size: 15px; resize: vertical; }
+.profile-form .row { display: flex; gap: 8px; }
+.form-error { margin: 0; color: var(--down); font-size: 14px; }
+.profile-page .tabs { margin: 0; }
+.feed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.feed-row:last-child { border-bottom: 0; }
+.feed-row small { margin-left: auto; }
+.feed-row > span:last-child:not(:first-child) { margin-left: auto; }
+.coin-link { display: inline-flex; align-items: center; gap: 8px; }
+.coin-link:hover b { color: var(--accent); }
+
 /* Phone-only pieces: hidden on wider screens. */
 .find, .m-brief, .m-spark, .coin-cell small, .tabbar { display: none; }
 .find svg, .tabbar svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -257,6 +284,9 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .tabbar a.on { color: var(--accent); }
   .tabbar svg, .tabbar img { width: 24px; height: 24px; }
 
+  .pill.account { display: none; } /* the bottom bar has Sign in / Profile */
+  .profile-head { flex-wrap: wrap; }
+  .profile-page .tabs { margin: 0 -12px; }
   .big-chart { height: 300px; }
   .big-chart .status { margin-top: 120px; }
   .big-price { font-size: 32px; }

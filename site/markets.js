@@ -15,7 +15,7 @@ const en = {
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
   nirNoPrice: "No price yet — pioneers are mining now", nirMinedShort: "NIR mined", mine: "Mine",
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
-  noTrackers: "No sign-up, no trackers", aboutNir: "About the NIR blockchain →",
+  noTrackers: "No trackers", aboutNir: "About the NIR blockchain →",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining",
 };
 const words = {

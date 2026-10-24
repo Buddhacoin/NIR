@@ -23,6 +23,56 @@ visit. A source that fails keeps its last good data. A free CoinGecko demo key
 can be set as `COINGECKO_API_KEY` in `/etc/nir-market.env`. The page credits
 CoinGecko for prices and TradingView for charts.
 
+## Accounts: Google sign-in, profiles and the watchlist
+
+Visitors can sign in with Google (`blockchain/market-accounts.mjs`, inside the
+market service). The first sign-in creates an account at once with a username
+like `user482913` and a letter avatar; nothing else is asked. The email stays
+on the server and is never shown. A profile lives at `/u/<username>` and shows
+the name, bio, join date and activity; anyone sees that the user joined (and,
+next, their comments), while the owner also sees their own watchlist changes,
+the watchlist itself and an Edit form (name up to 20 characters, username
+3–20 letters, digits or `_` and changeable once a week, bio up to 250).
+`/u/me` opens your own profile.
+
+Signed in, the watchlist is kept on the server and follows you to any device;
+stars set before signing in are added to it on the first visit. Signed out,
+it stays in the browser as before.
+
+How it works: OpenID Connect code flow with PKCE, state and nonce; the ID
+token from Google's token endpoint is checked for issuer, audience, expiry,
+nonce and a verified email. The session is a random token in an HttpOnly,
+Secure, SameSite=Lax `__Host-` cookie for 30 days; the database keeps only its
+SHA-256. Changes must come from the site itself (Origin header) and are
+limited to 60 a minute per account. Data: `/var/lib/nir-market/accounts.db`
+(SQLite, `StateDirectory=nir-market`). `www.` redirects to the main address
+so the cookie and Google's callback always match.
+
+### Turning on Google sign-in
+
+Until the keys are set, the site works as before and shows no sign-in button.
+
+1. Open console.cloud.google.com, create a project (for example "NIR
+   Markets"), then **APIs & Services → OAuth consent screen**: External, app
+   name "NIR Markets", support email, the domain `nircoin.com`; scopes
+   `openid`, `email`, `profile`; publish the app.
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+   type "Web application"; authorised JavaScript origin
+   `https://nircoin.com`; authorised redirect URI
+   `https://nircoin.com/market/auth/google/callback`.
+3. Copy the Client ID and Client secret. On the server (DigitalOcean Web
+   Console) run, with your values:
+
+   ```
+   cat >> /etc/nir-market.env <<'EOF'
+   GOOGLE_CLIENT_ID=paste-the-client-id
+   GOOGLE_CLIENT_SECRET=paste-the-client-secret
+   EOF
+   chmod 600 /etc/nir-market.env && systemctl restart nir-market.service
+   ```
+
+Never put the secret in the repository or in a chat.
+
 ## A coin's page
 
 Every coin has its own page at `/coin/<id>` (the CoinGecko id, e.g.

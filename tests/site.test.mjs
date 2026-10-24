@@ -19,7 +19,7 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
-  for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html"]) {
+  for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
@@ -74,6 +74,20 @@ test("a coin's page has English for every text and loads its data from the marke
   assert.doesNotMatch(script, /innerHTML\s*=\s*[^'"]*(?:coin|ticker|description)/);
   assert.match(html, /CoinGecko/);
   assert.match(html, /TradingView/);
+});
+
+test("profiles have English for every text and the server keeps accounts outside the repository", () => {
+  const html = read("site/u/index.html");
+  const script = read("site/profile.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
+    assert.match(script, new RegExp(`\\b${key}:`), `no English text for ${key}`);
+  }
+  const deploy = read("deploy/install-shared-testnet.sh");
+  assert.match(deploy, /handle \/u\/\* \{\n\s+root \* \$APP_DIR\/site\n\s+rewrite \* \/u\/index\.html/);
+  assert.match(deploy, /StateDirectory=nir-market/);
+  assert.match(deploy, /Environment=NIR_MARKET_DB=\/var\/lib\/nir-market\/accounts\.db/);
+  assert.doesNotMatch(deploy, /GOOGLE_CLIENT_SECRET=/, "the Google secret never goes into the repository");
+  assert.match(deploy, /www\.\$SITE_DOMAIN \{\n\s+redir https:\/\/\$SITE_DOMAIN\{uri\} permanent/);
 });
 
 test("the server serves the website with the network's read API under /api", () => {

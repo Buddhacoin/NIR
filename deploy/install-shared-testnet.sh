@@ -107,6 +107,12 @@ Wants=network-online.target
 [Service]
 User=nir
 Group=nir
+# Accounts live in /var/lib/nir-market. Google sign-in reads GOOGLE_CLIENT_ID and
+# GOOGLE_CLIENT_SECRET from /etc/nir-market.env (root-only, never in the repository).
+StateDirectory=nir-market
+StateDirectoryMode=0700
+Environment=NIR_MARKET_DB=/var/lib/nir-market/accounts.db
+Environment=NIR_MARKET_PUBLIC_URL=https://$SITE_DOMAIN
 EnvironmentFile=-/etc/nir-market.env
 ExecStart=/usr/local/bin/node $APP_DIR/blockchain/market-service-cli.mjs 8790
 Restart=always
@@ -130,7 +136,12 @@ EOF
 if [[ -n "$SITE_DOMAIN" ]]; then
   cat >> /etc/caddy/Caddyfile <<EOF
 
-$SITE_DOMAIN, www.$SITE_DOMAIN {
+# One address for the site, so the sign-in cookie and callback match.
+www.$SITE_DOMAIN {
+  redir https://$SITE_DOMAIN{uri} permanent
+}
+
+$SITE_DOMAIN {
   encode gzip
   handle_path /api/* {
     reverse_proxy 127.0.0.1:8787
@@ -141,6 +152,11 @@ $SITE_DOMAIN, www.$SITE_DOMAIN {
   handle /coin/* {
     root * $APP_DIR/site
     rewrite * /coin/index.html
+    file_server
+  }
+  handle /u/* {
+    root * $APP_DIR/site
+    rewrite * /u/index.html
     file_server
   }
   handle {
