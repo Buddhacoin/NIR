@@ -13,6 +13,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { createCommunity } from "./market-community.mjs";
+
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 const GOOGLE_ISSUERS = new Set(["accounts.google.com", "https://accounts.google.com"]);
@@ -52,7 +54,7 @@ export function checkClaims(claims, { clientId, nonce, now }) {
 }
 
 export function createAccounts({
-  file, clientId = "", clientSecret = "", publicUrl = "http://localhost:8790", now = Date.now,
+  file, clientId = "", clientSecret = "", publicUrl = "http://localhost:8790", now = Date.now, admins = [],
   post = async (url, form) => {
     const response = await fetch(url, { method: "POST", body: new URLSearchParams(form),
       headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
@@ -220,8 +222,12 @@ export function createAccounts({
     return true;
   }
 
-  // Answers a request under /market/auth, /market/me or /market/u, or returns false.
+  // Comments and the daily vote (market-community.mjs) share the database and sessions.
+  const community = createCommunity({ db, now, userFor, json, body, origin, log, limited, admins });
+
+  // Answers a request under /market/auth, /market/me, /market/u or the community's paths, or returns false.
   async function handle(request, response, url) {
+    if (await community.handle(request, response, url)) return true;
     const path = url.pathname;
     if (!/^\/market\/(auth|me|u)(\/|$)/.test(path)) return false;
     const method = request.method;
@@ -233,7 +239,7 @@ export function createAccounts({
       const viewer = userFor(request);
       if (!user) json(response, 404, { error: "no such user" });
       else json(response, 200, { user: profile(user), own: viewer?.id === user.id,
-        activity: activity(user.id, viewer?.id !== user.id) });
+        activity: activity(user.id, viewer?.id !== user.id), comments: community.byUser(user.id, viewer) });
       return true;
     }
     const user = userFor(request);

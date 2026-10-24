@@ -26,10 +26,11 @@ function fixtureFile(url) {
   return Object.entries(files).find(([key]) => url.includes(key))[1];
 }
 // Accounts need a database file (NIR_MARKET_DB); Google sign-in also needs
-// GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, from /etc/nir-market.env on the server.
+// GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, from /etc/nir-market.env on the server;
+// NIR_MARKET_ADMINS lists the Google emails of comment moderators.
 const env = process.env;
 const accounts = env.NIR_MARKET_DB ? createAccounts({ file: env.NIR_MARKET_DB, clientId: env.GOOGLE_CLIENT_ID,
-  clientSecret: env.GOOGLE_CLIENT_SECRET, publicUrl: env.NIR_MARKET_PUBLIC_URL ?? `http://localhost:${port}` }) : null;
+  clientSecret: env.GOOGLE_CLIENT_SECRET, admins: (env.NIR_MARKET_ADMINS ?? "").split(","), publicUrl: env.NIR_MARKET_PUBLIC_URL ?? `http://localhost:${port}` }) : null;
 const service = createMarketService(fixture ? {
   accounts,
   fetch: async (url) => {

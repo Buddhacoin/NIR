@@ -197,8 +197,40 @@ tr.chart td { padding: 0 10px 16px; }
 .feed-row:last-child { border-bottom: 0; }
 .feed-row small { margin-left: auto; }
 .feed-row > span:last-child:not(:first-child) { margin-left: auto; }
+.comment-row p { flex-basis: 100%; margin: 0; line-height: 1.55; white-space: pre-line; overflow-wrap: anywhere; }
 .coin-link { display: inline-flex; align-items: center; gap: 8px; }
 .coin-link:hover b { color: var(--accent); }
+
+/* Discussion on a coin's page: the daily vote and comments. */
+.community h2 { margin-bottom: 14px; }
+.vote { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; }
+.vote > b { flex-basis: 100%; }
+.vote button { padding: 9px 16px; border: 1px solid var(--line); border-radius: 999px; background: transparent; font-weight: 750; cursor: pointer; }
+.vote .vote-rise:hover { border-color: var(--up); color: var(--up); } .vote .vote-fall:hover { border-color: var(--down); color: var(--down); }
+.vote-result { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 240px; font-size: 13px; font-weight: 750; white-space: nowrap; }
+.vote-bar { flex: 1; height: 8px; overflow: hidden; border-radius: 9px; background: var(--down); }
+.vote-bar i { display: block; height: 100%; background: var(--up); }
+.composer { display: grid; gap: 8px; margin-bottom: 8px; }
+.composer textarea { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); font: inherit; resize: vertical; }
+.composer-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.composer-row button[class^=tag-] { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: transparent; font-size: 13px; cursor: pointer; }
+.composer-row .tag-rise.on { border-color: var(--up); color: var(--up); } .composer-row .tag-fall.on { border-color: var(--down); color: var(--down); }
+.composer-row .act { margin-left: auto; }
+.sort { display: flex; gap: 6px; margin: 14px 0 4px; }
+.sort button { padding: 6px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-weight: 700; cursor: pointer; }
+.sort button.on { background: var(--soft); color: var(--accent); }
+.comment { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.comment.reply { margin-left: 22px; padding: 10px 0 0 14px; border-bottom: 0; border-left: 2px solid var(--line); }
+.comment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.comment-head .who { display: inline-flex; align-items: center; gap: 8px; }
+.comment-head .who:hover b { color: var(--accent); }
+.comment p { margin: 8px 0; font-size: 15px; line-height: 1.55; white-space: pre-line; overflow-wrap: anywhere; }
+.side-rise { background: color-mix(in srgb, var(--up) 15%, transparent); color: var(--up); }
+.side-fall { background: color-mix(in srgb, var(--down) 15%, transparent); color: var(--down); }
+.comment-actions { display: flex; gap: 14px; }
+.comment-actions button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 650; cursor: pointer; }
+.comment-actions button:hover, .comment-actions .like.on { color: var(--accent); }
+#more-comments { margin-top: 12px; }
 
 /* Phone-only pieces: hidden on wider screens. */
 .find, .m-brief, .m-spark, .coin-cell small, .tabbar { display: none; }
@@ -215,7 +247,7 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .side, .coin-main { display: contents; }
   .coin-page .card, .coin-page .tabs { min-width: 0; max-width: 100%; }
   .coin-main .tabs { order: 1; } #chart { order: 2; } .stats { order: 3; } #about { order: 4; }
-  #markets { order: 5; } .links-card { order: 6; } .converter { order: 7; }
+  #community { order: 5; } #markets { order: 6; } .links-card { order: 7; } .converter { order: 8; }
   .top nav { display: none; }
   .nirbar .wide { display: none; }
 }

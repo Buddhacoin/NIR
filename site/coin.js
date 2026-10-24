@@ -10,7 +10,8 @@ const en = {
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
-  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
+  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", tabCommunity: "Discussion", community: "Discussion",
+  sortLatest: "Latest", sortTop: "Top", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
   d1: "1D", d7: "7D", d30: "1M", d90: "3M", d365: "1Y",
   more: "Show all ▾", descriptionBy: "Description: CoinGecko", whereTraded: "Where it trades", exchange: "Exchange",
   pair: "Pair", colPrice: "Price", colVolume: "Volume 24h", trust: "Trust",
@@ -294,6 +295,7 @@ function render() {
   renderAbout();
   renderTickers();
   renderChart();
+  if (typeof renderCommunity === "function") renderCommunity(); // community.js
 }
 
 async function loadCoin() {
