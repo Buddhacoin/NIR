@@ -227,6 +227,17 @@ test("a reopened wallet window pairs again with a fresh code and the old session
   }
 });
 
+test("Windows and Linux name NIR's windows and this computer instead of a Mac", async () => {
+  const { desktopWalletWording } = await import("../wallet-ui/i18n.js");
+  assert.equal(desktopWalletWording("Ожидание подтверждения в окне macOS…"), "Ожидание подтверждения в окне NIR…");
+  assert.equal(desktopWalletWording("Следуйте окнам Mac: три фразы"), "Следуйте окнам NIR: три фразы");
+  assert.equal(desktopWalletWording("Ключ хранится в зашифрованном файле на этом Mac."),
+    "Ключ хранится в зашифрованном файле на этом компьютере.");
+  assert.equal(desktopWalletWording("Waiting for confirmation in the macOS window…"), "Waiting for confirmation in the NIR window…");
+  assert.equal(desktopWalletWording("Нет защищённой связи с приложением. Закройте и откройте NIR Wallet снова."),
+    "Нет защищённой связи с приложением. Запустите NIR ещё раз.");
+});
+
 test("signing texts exist in both languages and the system language picks one", () => {
   const intent = { type: "name-register", name: "athena", address: "nir1x", price: "10 NIR" };
   assert.match(signingSummary(intent), /Купить имя athena\.nir/);
@@ -247,9 +258,8 @@ test("the Linux installer verifies Node.js, installs the NIR launcher and a menu
 
 test("the app pages accept their one-time codes from the fragment and speak of this computer", () => {
   const wallet = read("wallet-ui/app.js");
-  assert.match(wallet, /#pair=\(\[0-9a-f\]\{64\}\)/);
-  assert.match(wallet, /window\.__nirNativeBootstrap \?\? desktopPairing/);
-  assert.match(wallet, /на этом компьютере/);
+  assert.match(wallet, /\^#pair=\[0-9a-f\]\{64\}\$/);
+  assert.match(wallet, /window\.__nirNativeBootstrap \?\?= location\.hash\.slice\(6\)/);
   const miner = read("mining-app/app.js");
   assert.match(miner, /window\.__NIR_MODEL_SESSION\) \|\| fragmentSession/);
 });

@@ -14,7 +14,7 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 // Every module the app imports (tests/mining-macos-build.test.mjs checks the
 // closure), the UI, and the pinned model code.
 const FILES = Object.freeze(`
-package.json blockchain/mining-practice-app-cli.mjs blockchain/mining-practice-app.mjs
+package.json blockchain/mining-practice-app-cli.mjs blockchain/mining-practice-app.mjs blockchain/app-paths.mjs
 blockchain/iris-linear-candidate.mjs examples/iris_integer_linear.json
 blockchain/operator-wallet-link.mjs blockchain/operator-model-receipt.mjs blockchain/crypto.mjs blockchain/consensus-codec.mjs blockchain/consensus-json.mjs blockchain/constants.mjs
 blockchain/model-provider-capabilities.mjs

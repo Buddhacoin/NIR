@@ -5,7 +5,7 @@ import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
-import { translateWalletText } from "./i18n.js";
+import { desktopWalletWording, translateWalletText } from "./i18n.js";
 
 if (globalThis.top !== globalThis.self) {
   document.documentElement.replaceChildren();
@@ -22,22 +22,10 @@ const language = localStorage.getItem("nir-language") === "en" ? "en" : "ru";
 languageControl.value = language;
 document.documentElement.lang = language;
 
-// Windows and Linux: the app window gets its one-time pairing code in the
-// fragment (never sent over HTTP, removed at once), and the confirmation
-// windows are NIR's own rather than macOS ones.
-const desktopPairing = /^#pair=([0-9a-f]{64})$/.exec(location.hash)?.[1] ?? null;
-if (desktopPairing) history.replaceState(null, "", `${location.pathname}${location.search}`);
-const desktopHost = new URLSearchParams(location.search).get("local-app") === "1" &&
-  !/Macintosh/.test(navigator.userAgent);
-const hostWording = (text) => !desktopHost ? text : text
-  .replace(/(окн[а-яё]*) (?:macOS|Mac)\b/g, "$1 NIR").replace(/(Окн[а-яё]*) (?:macOS|Mac)\b/g, "$1 NIR")
-  .replace(/на этом Mac\b/g, "на этом компьютере").replace(/этого Mac\b/g, "этого компьютера")
-  .replace(/\b(?:macOS|Mac) (windows?)\b/g, "NIR $1").replace(/\bthis Mac\b/g, "this computer")
-  // The shortcut is called NIR there; starting it again reopens this window.
-  .replace(/[Зз]акройте и откройте NIR Wallet снова/g, "Запустите NIR ещё раз")
-  .replace(/откройте кошелёк через NIR Wallet/g, "запустите NIR ещё раз")
-  .replace(/[Cc]lose and reopen NIR Wallet/g, "Start NIR again")
-  .replace(/open the wallet through NIR Wallet/g, "start NIR again");
+// Windows and Linux name NIR's own confirmation windows instead of macOS ones.
+const desktopHost = typeof location !== "undefined" && typeof navigator !== "undefined" &&
+  new URLSearchParams(location.search).get("local-app") === "1" && !/Macintosh/.test(navigator.userAgent);
+const hostWording = (text) => desktopHost ? desktopWalletWording(text) : text;
 
 function localizeNode(node) {
   if (node.parentElement?.closest("script,style,code,pre,textarea,[data-i18n-ignore]")) return;
@@ -88,6 +76,12 @@ languageObserver.observe(document.body, { subtree: true, childList: true, charac
 localizeDocument();
 
 const localApp = new URLSearchParams(location.search).get("local-app") === "1";
+// Windows and Linux hand the app window its one-time pairing code in the
+// fragment: never sent over HTTP, removed at once, consumed like the Mac's.
+if (localApp && /^#pair=[0-9a-f]{64}$/.test(location.hash)) {
+  window.__nirNativeBootstrap ??= location.hash.slice(6);
+  history.replaceState(null, "", `${location.pathname}${location.search}`);
+}
 if (localApp) {
   document.querySelector("#onboarding ol").replaceChildren();
   document.querySelector("#onboarding > p").textContent =
@@ -1275,7 +1269,7 @@ function openBridgePanel() {
 
 async function connectNativeWallet() {
   if (!localApp) return;
-  const code = window.__nirNativeBootstrap ?? desktopPairing;
+  const code = window.__nirNativeBootstrap;
   delete window.__nirNativeBootstrap;
   nativeConnectionError = null;
   if (!/^[0-9a-f]{64}$/.test(code ?? "")) {

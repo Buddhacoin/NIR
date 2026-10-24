@@ -534,3 +534,17 @@ export function canonicalWalletText(value) {
   const [, before, text, after] = match;
   return before + (reverse.get(text) ?? text) + after;
 }
+
+// Windows and Linux: the same texts, with NIR's confirmation windows and
+// "this computer" where a Mac has macOS windows and "this Mac".
+export function desktopWalletWording(text) {
+  return text
+    .replace(/([Оо]кн[а-яё]*) (?:macOS|Mac)\b/g, "$1 NIR")
+    .replace(/на этом Mac\b/g, "на этом компьютере").replace(/этого Mac\b/g, "этого компьютера")
+    .replace(/\b(?:macOS|Mac) (windows?)\b/g, "NIR $1").replace(/\bthis Mac\b/g, "this computer")
+    // The shortcut is called NIR there; starting it again reopens the window.
+    .replace(/[Зз]акройте и откройте NIR Wallet снова/g, "Запустите NIR ещё раз")
+    .replace(/откройте кошелёк через NIR Wallet/g, "запустите NIR ещё раз")
+    .replace(/[Cc]lose and reopen NIR Wallet/g, "Start NIR again")
+    .replace(/open the wallet through NIR Wallet/g, "start NIR again");
+}
