@@ -140,6 +140,10 @@ export function createNodeHttpServer(node, options = {}) {
         return send(response, 200, namePath ? node.nameLookup(namePath[1])
           : accountNamePath ? node.accountName(accountNamePath[1]) : node.nameRegistry(), origin);
       }
+      if (request.method === "GET" && url.pathname === "/v1/stats") {
+        if (typeof node.stats !== "function") return send(response, 501, { error: "stats are unavailable" }, origin);
+        return send(response, 200, node.stats(), origin);
+      }
       const pioneerPath = /^\/v1\/pioneers\/(nir1[0-9a-f]{64})$/.exec(url.pathname);
       if (request.method === "GET" && pioneerPath) {
         if (typeof node.pioneerPoints !== "function") {

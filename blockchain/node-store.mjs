@@ -253,6 +253,17 @@ export class PersistentDevNode {
       points: points.toString(), poolNir: "210000", totalPoints: totalPoints.toString() };
   }
 
+  // Public figures for the website and the founder (docs/pioneer-program.md):
+  // how many miners joined (each new miner key gets one faucet transfer from
+  // the treasury key), how many of them have pioneer points, the NIR mined
+  // with proofs and the names taken.
+  stats() {
+    const { pioneers, totalPoints } = this.pioneerPoints(this.#keys.treasury.address);
+    return { height: this.#chain.height, minedNir: formatNir(BigInt(totalPoints)),
+      miners: this.#chain.nextNonce(this.#keys.treasury.address), names: this.nameRegistry().names,
+      networkId: this.#chain.networkId, pioneers };
+  }
+
   proofMining() {
     // Miners sign answers bound to this genesis.
     return { ...proofMiningView(this.#chain.proofMiningStatus(),

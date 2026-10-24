@@ -41,6 +41,11 @@ not only the 200 most recent ones a wallet's history keeps, and leaves out the
 node operator's own keys. It is an index next to the chain, rebuilt from the
 blocks after a restart, not consensus state.
 
+The whole network's figures are at `GET /v1/stats`: `miners` (miner keys
+that joined through the faucet, one per installed NIR Майнер), `pioneers`,
+`minedNir` (all NIR paid for proofs) and `names`. nircoin.com shows them in
+its ticker.
+
 ## At launch
 
 - Each address receives `210,000 × its points ÷ all points` NIR, at the same

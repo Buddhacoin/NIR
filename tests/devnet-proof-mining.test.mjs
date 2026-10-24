@@ -65,6 +65,12 @@ test("a proof-mining devnet upgrades to the latest version, issues tasks from it
     assert.equal(pioneer.poolNir, "210000");
     assert.equal(node.pioneerPoints(address).points, "0");
     assert.throws(() => node.pioneerPoints("nir1x"), /address is invalid/);
+    // Public network figures: one miner joined through the faucet and has points.
+    const stats = node.stats();
+    assert.equal(stats.miners, 1);
+    assert.equal(stats.pioneers, 1);
+    assert.equal(stats.minedNir, `${node.account(recipient).balance}`);
+    assert.equal(stats.names, 0);
     // A restarted node replays the stored chain to the same state.
     assert.deepEqual(new PersistentDevNode(directory).proofMining(), node.proofMining());
     assert.deepEqual(new PersistentDevNode(directory).pioneerPoints(recipient), pioneer);
@@ -87,6 +93,8 @@ test("a proof-mining devnet upgrades to the latest version, issues tasks from it
       try {
         const relayed = await fetch(`http://127.0.0.1:${relay.address().port}/v1/pioneers/${recipient}`);
         assert.deepEqual(await relayed.json(), pioneer);
+        const relayedStats = await fetch(`http://127.0.0.1:${relay.address().port}/v1/stats`);
+        assert.deepEqual(await relayedStats.json(), node.stats());
       } finally { await new Promise((resolve) => relay.close(resolve)); }
     } finally { await new Promise((resolve) => server.close(resolve)); }
   } finally {
