@@ -7,7 +7,7 @@
   <meta name="description" content="Курсы 100 крупнейших криптовалют, тренды, лидеры роста и индекс страха и жадности. Без регистрации и трекеров. От создателей блокчейна NIR.">
   <link rel="icon" href="/nir-coin-icon.svg" type="image/svg+xml">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=1">
+  <link rel="stylesheet" href="/markets.css?v=2">
 </head>
 <body>
   <div class="nirbar">
@@ -54,6 +54,14 @@
       </article>
     </section>
 
+    <a class="nir-strip" href="/nir/#start">
+      <img src="/nir-coin-icon.svg" alt="" width="24" height="24"><b>NIR</b>
+      <span data-i18n="nirRow">тестовая сеть · майнится интеллектом</span>
+      <span class="gold" data-i18n="nirNoPrice">Цены пока нет — сейчас идёт майнинг первопроходцев</span>
+      <span><b data-nir="mined">—</b> <span data-i18n="nirMinedShort">NIR намайнено</span></span>
+      <span class="act" data-i18n="mine">Майнить</span>
+    </a>
+
     <div class="tabs" role="tablist" id="coins">
       <button type="button" class="on" data-tab="top" data-i18n="tabTop">Топ</button>
       <button type="button" data-tab="watch" data-i18n="tabWatch">Избранное</button>
@@ -71,13 +79,6 @@
           <th class="hide-s" data-i18n="col7days">7 дней</th><th></th>
         </tr></thead>
         <tbody id="rows">
-          <tr class="nir">
-            <td class="star">★</td><td class="rank">⛏</td>
-            <td class="left"><div class="coin-cell"><img src="/nir-coin-icon.svg" alt="" width="28" height="28"><b>NIR</b><span data-i18n="nirRow">тестовая сеть · майнится интеллектом</span></div></td>
-            <td colspan="4" class="gold" data-i18n="nirNoPrice">Цены пока нет — сейчас идёт майнинг первопроходцев</td>
-            <td class="hide-s" colspan="2"><b data-nir="mined">—</b> <span data-i18n="nirMinedShort">NIR намайнено</span></td>
-            <td class="hide-s"></td><td><a class="act" href="/nir/#start" data-i18n="mine">Майнить</a></td>
-          </tr>
         </tbody>
       </table>
       <p class="status" id="status" data-i18n="loading">Загружаю курсы…</p>
@@ -92,6 +93,6 @@
     <span data-i18n="noTrackers">Без регистрации и трекеров</span>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
   </footer>
-  <script src="/markets.js?v=1"></script>
+  <script src="/markets.js?v=2"></script>
 </body>
 </html>

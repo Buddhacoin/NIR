@@ -63,7 +63,11 @@ button, input { font: inherit; color: inherit; }
 .logo { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; background: #f7931a33; color: var(--text); font-size: 11px; font-weight: 900; object-fit: cover; }
 .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); } .gold { color: var(--gold); }
 
-.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 26px 0 0; }
+.nir-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 16px; padding: 9px 14px;
+  border: 1px solid #f7931a40; border-radius: 14px; background: linear-gradient(90deg, #f7931a1c, transparent 75%); font-size: 13px; }
+.nir-strip > span:first-of-type { color: var(--muted); }
+.nir-strip .act { margin-left: auto; padding: 5px 12px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; }
 .tabs button { padding: 9px 16px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-weight: 650; cursor: pointer; }
 .tabs button.on { border-color: transparent; background: var(--btn); color: var(--btn-text); }
 
@@ -79,7 +83,6 @@ tbody tr.coin:hover { background: var(--soft); }
 .star { width: 28px; color: var(--muted); text-align: center; cursor: pointer; }
 .star.on { color: var(--gold); }
 .rank { width: 34px; color: var(--muted); text-align: center; }
-tr.nir { background: linear-gradient(90deg, #f7931a1c, transparent 70%); }
 .spark { display: block; width: 120px; height: 38px; margin-left: auto; }
 .act { display: inline-block; padding: 7px 13px; border: 0; border-radius: 10px; background: var(--btn); color: var(--btn-text); font-size: 12px; font-weight: 800; cursor: pointer; }
 .act.ghost { border: 1px solid var(--line); background: transparent; color: var(--accent); }
