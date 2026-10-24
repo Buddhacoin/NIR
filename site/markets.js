@@ -262,6 +262,7 @@ $("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("op
 // A coin page's bottom bar links to /#watch.
 if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]").click();
 
+setupSearch({ overview: () => data });
 setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } },
   onTheme: () => { if (openChart) renderTable(); } }); // the chart follows the theme
 void load();

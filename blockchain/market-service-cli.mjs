@@ -16,7 +16,8 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
   console.error("usage: market:serve -- [port] [--fixture <directory>]");
   process.exit(2);
 }
-const files = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", "fng": "fng.json" };
+const files = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", "fng": "fng.json",
+  "/search?": "search.json" };
 // A coin's page and chart come from coin-<id>.json and chart-<id>.json; other coins are unknown.
 function fixtureFile(url) {
   const coin = /\/coins\/([^/?]+)(\/market_chart)?/.exec(url);

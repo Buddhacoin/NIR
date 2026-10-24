@@ -1,0 +1,6 @@
+{"coins":[
+ {"id":"bitcoin","name":"Bitcoin","api_symbol":"bitcoin","symbol":"BTC","market_cap_rank":1,"thumb":"https://coin-images.coingecko.com/coins/images/1/thumb/bitcoin.png","large":"https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png"},
+ {"id":"zeus-token","name":"Zeus Token","api_symbol":"zeus-token","symbol":"ZEUS","market_cap_rank":812,"thumb":"https://coin-images.coingecko.com/coins/images/9/thumb/zeus.png","large":"https://coin-images.coingecko.com/coins/images/9/large/zeus.png"},
+ {"id":"athena-coin","name":"Athena","api_symbol":"athena-coin","symbol":"ATH","market_cap_rank":null,"thumb":"https://evil.example/a.png","large":"https://evil.example/a.png"},
+ {"id":"../global","name":"Bad","symbol":"BAD","market_cap_rank":null}
+],"exchanges":[],"icos":[],"categories":[],"nfts":[]}

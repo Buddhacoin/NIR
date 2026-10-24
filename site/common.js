@@ -125,3 +125,99 @@ function setupPage({ en, render, onTheme = () => {} }) {
   applyLanguage();
   setInterval(loadNir, 60_000);
 }
+
+// --- Search over every coin: recent searches and trending coins before typing,
+// then the top 100 instantly and the rest from /market/search. Arrow keys move,
+// Enter opens, Escape closes. `overview()` returns the page's market data, if any.
+function setupSearch({ overview = () => null }) {
+  const input = $("#search");
+  const box = document.createElement("div");
+  box.className = "suggest";
+  box.hidden = true;
+  box.setAttribute("role", "listbox");
+  const wrap = document.createElement("div");
+  wrap.className = "search-wrap";
+  input.before(wrap);
+  wrap.append(input, box);
+  input.setAttribute("aria-autocomplete", "list");
+  let market = null;
+  let items = [];
+  let active = -1;
+  let timer = null;
+  let asked = "";
+  const recent = () => { try { return JSON.parse(store.get("nir-recent-searches") ?? "[]").slice(0, 5); } catch { return []; } };
+  const remember = (coin) => store.set("nir-recent-searches", JSON.stringify([{ id: coin.id, symbol: coin.symbol,
+    name: coin.name, image: coin.image ?? null, rank: coin.rank ?? null }, ...recent().filter((item) => item.id !== coin.id)].slice(0, 5)));
+  const data = async () => {
+    market = overview() ?? market;
+    if (!market) market = await fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    return market;
+  };
+  const open = (coin) => { remember(coin); location.href = coinUrl(coin); };
+  function draw(groups) {
+    items = groups.flatMap(([, coins]) => coins);
+    active = -1;
+    box.replaceChildren(...groups.filter(([, coins]) => coins.length).flatMap(([title, coins]) => [
+      Object.assign(document.createElement("small"), { textContent: title }),
+      ...coins.map((coin) => {
+        const row = document.createElement("a");
+        row.href = coinUrl(coin);
+        row.setAttribute("role", "option");
+        const name = Object.assign(document.createElement("b"), { textContent: coin.name });
+        const symbol = Object.assign(document.createElement("span"), { textContent: coin.symbol });
+        const rank = Object.assign(document.createElement("em"), { textContent: coin.rank ? `#${coin.rank}` : "" });
+        row.append(logo(coin), name, symbol, rank);
+        row.addEventListener("click", (event) => { event.preventDefault(); open(coin); });
+        return row;
+      }),
+    ]));
+    box.hidden = !items.length;
+  }
+  const t = () => (language === "en"
+    ? { recent: "Recent searches", trending: "Trending", coins: "Coins", none: "Nothing found" }
+    : { recent: "Недавние", trending: "В тренде", coins: "Монеты", none: "Ничего не найдено" });
+  async function update() {
+    const query = input.value.trim().toLowerCase();
+    const market = await data();
+    if (!query) {
+      draw([[t().recent, recent()], [t().trending, (market?.trending ?? []).slice(0, 7)]]);
+      return;
+    }
+    const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
+      coin.symbol.toLowerCase().startsWith(query)).slice(0, 8);
+    draw([[t().coins, local]]);
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      asked = query;
+      const found = await fetch(`/market/search?q=${encodeURIComponent(query)}`)
+        .then((response) => (response.ok ? response.json() : { coins: [] })).catch(() => ({ coins: [] }));
+      if (asked !== input.value.trim().toLowerCase()) return; // a newer query is on its way
+      const seen = new Set(local.map((coin) => coin.id));
+      const merged = [...local, ...found.coins.filter((coin) => !seen.has(coin.id))].slice(0, 10);
+      draw([[t().coins, merged]]);
+      if (!merged.length) {
+        box.replaceChildren(Object.assign(document.createElement("p"), { textContent: t().none }));
+        box.hidden = false;
+      }
+    }, 250);
+  }
+  function move(step) {
+    const rows = [...box.querySelectorAll("a")];
+    if (!rows.length) return;
+    active = (active + step + rows.length) % rows.length;
+    rows.forEach((row, index) => row.classList.toggle("on", index === active));
+    rows[active].scrollIntoView({ block: "nearest" });
+  }
+  input.addEventListener("focus", () => { void update(); });
+  input.addEventListener("input", () => { void update(); });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") { event.preventDefault(); move(1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); move(-1); }
+    else if (event.key === "Escape") { box.hidden = true; input.blur(); }
+    else if (event.key === "Enter" && items.length && (active >= 0 || input.value.trim())) {
+      event.preventDefault();
+      open(items[Math.max(active, 0)]);
+    }
+  });
+  document.addEventListener("click", (event) => { if (event.target !== input && !box.contains(event.target)) box.hidden = true; });
+}

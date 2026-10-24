@@ -155,6 +155,15 @@ export function normalizeChart(value) {
   return { prices: thin(value.prices), volumes: thin(value.total_volumes) };
 }
 
+// Search over every coin CoinGecko lists: name, symbol, rank and a thumbnail.
+export function normalizeSearch(value) {
+  if (!Array.isArray(value?.coins)) throw new Error("search data is invalid");
+  return value.coins.slice(0, 20).map((coin) => ({
+    id: text(coin?.id), symbol: text(coin?.symbol, 20).toUpperCase(), name: text(coin?.name, 60),
+    rank: finite(coin?.market_cap_rank), image: image(coin?.large ?? coin?.thumb),
+  })).filter((coin) => COIN_ID.test(coin.id) && coin.symbol);
+}
+
 // Coin pages and charts: fetched on demand, kept for ttl, shared by everyone
 // asking at once, and limited to `perMinute` fetches. When the limit is spent
 // a stale copy is served; with no copy at all the visitor is asked to retry.
@@ -227,6 +236,15 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     };
   }
 
+  // GET /market/search?q=… — queries are lower-cased and cached, so popular ones cost one fetch.
+  async function search(query) {
+    const needle = query.trim().toLowerCase().replace(/\s+/g, " ");
+    if (!needle || needle.length > 40) return [];
+    const entry = await onDemand(`search:${needle}`, `${COINGECKO}/search?query=${encodeURIComponent(needle)}`,
+      normalizeSearch, 600_000);
+    return entry.missing ? [] : entry.value;
+  }
+
   // GET /market/coin/<id> and /market/chart/<id>?days=1|7|30|90|365
   async function coinData(kind, id, days) {
     if (!COIN_ID.test(id) || (kind === "chart" && !CHART_DAYS.has(days))) return null;
@@ -247,7 +265,13 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
-    if (request.method === "GET" && url.pathname === "/market/overview") {
+    if (request.method === "GET" && url.pathname === "/market/search") {
+      try {
+        send(response, 200, { coins: await search(url.searchParams.get("q") ?? "") }, 300);
+      } catch {
+        send(response, 503, { error: "search is unavailable, try again in a minute" });
+      }
+    } else if (request.method === "GET" && url.pathname === "/market/overview") {
       const ready = state.updatedAt !== null;
       send(response, ready ? 200 : 503, ready ? overview() : { error: "market data is loading" });
     } else if (request.method === "GET" && kind) {

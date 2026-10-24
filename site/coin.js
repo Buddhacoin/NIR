@@ -345,6 +345,7 @@ for (const link of document.querySelectorAll(".coin-main .tabs a")) {
   });
 }
 
+setupSearch({});
 setupPage({ en, render, onTheme: () => { if (candles) renderChart(); } }); // the candles follow the theme
 if (COIN_ID_PATTERN.test(id)) {
   void loadCoin();
