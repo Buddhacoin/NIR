@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NIR</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/dialog.css">
+</head>
+<body>
+  <main id="dialog" hidden>
+    <header><img src="/icon.svg" alt="" width="28" height="28"><span>NIR</span></header>
+    <h1 id="title"></h1>
+    <p id="message"></p>
+    <ol id="words" hidden></ol>
+    <form id="form" autocomplete="off">
+      <div id="fields"></div>
+      <p id="error" role="alert"></p>
+      <div id="buttons"></div>
+    </form>
+  </main>
+  <p id="closed" hidden>Это окно больше не нужно. Его можно закрыть.</p>
+  <script src="/dialog.js"></script>
+</body>
+</html>

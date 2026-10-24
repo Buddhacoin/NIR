@@ -6,15 +6,15 @@
 // release keys that sign protocol upgrades. A different or recreated network
 // has a different genesis and gets its own checkpoint file.
 import { lstatSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { miningDataDirectory } from "./app-paths.mjs";
 import { NirChain } from "./chain.mjs";
 import { parseConsensusJson } from "./consensus-json.mjs";
 import { SHARED_NETWORK, verifySharedGenesis } from "./shared-network.mjs";
 
 export function defaultMiningDirectory() {
-  return join(homedir(), "Library", "Application Support", "NIR Model Lab", "mining");
+  return miningDataDirectory();
 }
 
 export function defaultMinerNetworkDirectory() {

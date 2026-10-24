@@ -5,7 +5,7 @@ import { decodePaymentQrFrames, drawQr, encodePaymentQrFrames } from "./qr.js";
 import { decodeVerifiedSimulation } from "./transaction-decoder.js";
 import { submissionStatus } from "./submission-status.js";
 import { canonicalJson, decodeOfflineQrFrames, encodeOfflineQrFrames, validateOfflineSignedEnvelope, validateOfflineSigningPackage } from "./offline-signing.js";
-import { translateWalletText } from "./i18n.js";
+import { desktopWalletWording, translateWalletText } from "./i18n.js";
 
 if (globalThis.top !== globalThis.self) {
   document.documentElement.replaceChildren();
@@ -22,11 +22,16 @@ const language = localStorage.getItem("nir-language") === "en" ? "en" : "ru";
 languageControl.value = language;
 document.documentElement.lang = language;
 
+// Windows and Linux name NIR's own confirmation windows instead of macOS ones.
+const desktopHost = typeof location !== "undefined" && typeof navigator !== "undefined" &&
+  new URLSearchParams(location.search).get("local-app") === "1" && !/Macintosh/.test(navigator.userAgent);
+const hostWording = (text) => desktopHost ? desktopWalletWording(text) : text;
+
 function localizeNode(node) {
   if (node.parentElement?.closest("script,style,code,pre,textarea,[data-i18n-ignore]")) return;
   const previous = localizedTextNodes.get(node);
   const source = previous && node.data === previous.rendered ? previous.source : node.data;
-  const rendered = translateWalletText(source, document.documentElement.lang);
+  const rendered = hostWording(translateWalletText(source, document.documentElement.lang));
   localizedTextNodes.set(node, { source, rendered });
   if (node.data !== rendered) node.data = rendered;
 }
@@ -38,7 +43,7 @@ function localizeAttributes(element) {
     if (!element.hasAttribute(name)) continue;
     const current = element.getAttribute(name);
     const source = previous[name] && current === previous[name].rendered ? previous[name].source : current;
-    const rendered = translateWalletText(source, document.documentElement.lang);
+    const rendered = hostWording(translateWalletText(source, document.documentElement.lang));
     next[name] = { source, rendered };
     if (current !== rendered) element.setAttribute(name, rendered);
   }
@@ -71,6 +76,12 @@ languageObserver.observe(document.body, { subtree: true, childList: true, charac
 localizeDocument();
 
 const localApp = new URLSearchParams(location.search).get("local-app") === "1";
+// Windows and Linux hand the app window its one-time pairing code in the
+// fragment: never sent over HTTP, removed at once, consumed like the Mac's.
+if (localApp && /^#pair=[0-9a-f]{64}$/.test(location.hash)) {
+  window.__nirNativeBootstrap ??= location.hash.slice(6);
+  history.replaceState(null, "", `${location.pathname}${location.search}`);
+}
 if (localApp) {
   document.querySelector("#onboarding ol").replaceChildren();
   document.querySelector("#onboarding > p").textContent =
