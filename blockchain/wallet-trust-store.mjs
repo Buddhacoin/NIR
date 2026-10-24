@@ -40,6 +40,8 @@ function validate(checkpoint, expectedNetworkId) {
 }
 
 function syncDirectory(path) {
+  // Windows cannot open a folder for fsync; its renames are journaled by NTFS.
+  if (process.platform === "win32") return;
   const descriptor = openSync(path, "r");
   try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
 }

@@ -5,7 +5,7 @@
 // a browser the default one opens the page instead.
 import { spawn } from "node:child_process";
 import { accessSync, constants, mkdirSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { join, posix } from "node:path";
 import process from "node:process";
 
 const LINUX_BROWSERS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
@@ -26,10 +26,10 @@ export function findAppBrowser({ platform = process.platform, env = process.env,
     ]);
     return candidates.find((path) => exists(path)) ?? null;
   }
-  const directories = (env.PATH ?? "").split(delimiter).filter((directory) => directory.startsWith("/"));
+  const directories = (env.PATH ?? "").split(":").filter((directory) => directory.startsWith("/"));
   for (const name of LINUX_BROWSERS) {
     for (const directory of directories) {
-      const path = join(directory, name);
+      const path = posix.join(directory, name);
       if (exists(path)) return path;
     }
   }

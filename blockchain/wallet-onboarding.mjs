@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   changeWalletFilePassword,
@@ -16,12 +16,13 @@ import {
   walletRecoveryBackupPublicInfo,
 } from "./wallet-files.mjs";
 import { validPersonalWalletPassword } from "./vault.mjs";
+import { privateMode } from "./wallet-files-windows.mjs";
 import { mnemonicFromEntropy, walletFromMnemonic } from "./wallet-seed.mjs";
 
 const NETWORK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function target(path, label) {
-  if (typeof path !== "string" || !path.startsWith("/") || path.includes("\0")) {
+  if (typeof path !== "string" || !isAbsolute(path) || path.includes("\0")) {
     throw new Error(`${label} must be an absolute path`);
   }
   const resolved = resolve(path);
@@ -90,19 +91,19 @@ export function createWalletWithRecoveryDrill({ walletPath, backupPath, networkI
 function privateDirectory(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   const stat = lstatSync(path);
-  if (!stat.isDirectory() || (stat.mode & 0o077) !== 0) {
+  if (!stat.isDirectory() || !privateMode(stat.mode)) {
     throw new Error("wallet storage directory is not private");
   }
 }
 
 export function inspectLocalTestWallets(storageRoot) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const directory = join(resolve(storageRoot), "Wallets");
   if (!existsSync(directory)) return { wallets: [], unrecognizedWalletFiles: 0 };
   const stat = lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
+  if (!stat.isDirectory() || stat.isSymbolicLink() || !privateMode(stat.mode)) {
     throw new Error("wallet storage directory is not private");
   }
   let unrecognizedWalletFiles = 0;
@@ -144,13 +145,13 @@ export function openLocalTestWallet({ wallets, path, password }) {
 }
 
 export function listLocalTestBackups(storageRoot) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const directory = join(resolve(storageRoot), "Backups");
   if (!existsSync(directory)) return [];
   const stat = lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
+  if (!stat.isDirectory() || stat.isSymbolicLink() || !privateMode(stat.mode)) {
     throw new Error("wallet backup directory is not private");
   }
   return readdirSync(directory).filter((name) => name.endsWith(".nirvault.json"))
@@ -168,7 +169,7 @@ export function createLocalTestWallet({ storageRoot, password }) {
   if (!validPersonalWalletPassword(password)) {
     throw new Error("wallet password does not meet creation requirements");
   }
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const root = resolve(storageRoot);
@@ -190,7 +191,7 @@ export function createLocalPhraseWallet({ storageRoot, password }) {
   if (!validPersonalWalletPassword(password)) {
     throw new Error("wallet password does not meet creation requirements");
   }
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const root = resolve(storageRoot);
@@ -216,7 +217,7 @@ export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
   if (!validPersonalWalletPassword(newPassword)) {
     throw new Error("wallet password does not meet creation requirements");
   }
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   // Reject an invalid phrase before creating any local storage directory.
@@ -243,7 +244,7 @@ export function restoreLocalPhraseWallet({ storageRoot, phrase, newPassword,
 
 export function restoreLocalTestWalletWithRecoveryCode({ storageRoot, backupPath,
   expectedAddress, recoveryCode, newPassword }) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const root = resolve(storageRoot);
@@ -262,7 +263,7 @@ export function restoreLocalTestWalletWithRecoveryCode({ storageRoot, backupPath
 }
 
 export function renewLocalTestRecoveryCode({ storageRoot, walletPath, password }) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const root = resolve(storageRoot);
@@ -282,7 +283,7 @@ export function renewLocalTestRecoveryCode({ storageRoot, walletPath, password }
 
 export function changeLocalTestWalletPassword({ storageRoot, walletPath,
   oldPassword, newPassword }) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/") ||
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot) ||
       typeof walletPath !== "string" ||
       !listLocalTestWallets(storageRoot).some((wallet) => wallet.path === walletPath)) {
     throw new Error("selected wallet is not in the local account list");
@@ -304,7 +305,7 @@ export function changeLocalTestWalletPassword({ storageRoot, walletPath,
 }
 
 export function restoreLocalTestWallet({ storageRoot, backupPath, expectedAddress, password }) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   const walletDirectory = join(resolve(storageRoot), "Wallets");

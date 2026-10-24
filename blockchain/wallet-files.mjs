@@ -37,6 +37,8 @@ import { createSignedBackupReceipt } from "./backup-recovery.mjs";
 import { createValidatorAdmission } from "./validator-admission.mjs";
 import { decryptWallet, encryptWallet } from "./vault.mjs";
 import { walletFromMnemonic } from "./wallet-seed.mjs";
+import { PLAIN_PRIVATE_FILES, readPlainPrivateJson, replacePlainPrivateJson,
+  writePlainPrivateJsonExclusive } from "./wallet-files-windows.mjs";
 
 const MAX_PRIVATE_JSON_BYTES = 64 * 1024;
 const NETWORK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -71,6 +73,10 @@ function secureOpenFlags(directory = false) {
 }
 
 function readPrivateJson(path, description) {
+  if (PLAIN_PRIVATE_FILES) {
+    try { return readPlainPrivateJson(path, MAX_PRIVATE_JSON_BYTES); }
+    catch { throw new Error(`${description} is invalid or unsafe`); }
+  }
   const target = resolve(path);
   const activation = lstatSync(target, { bigint: true });
   if (activation.isSymbolicLink() && activation.nlink !== 1n) {
@@ -145,6 +151,12 @@ function removePrivateActivation(created) {
 }
 
 function writePrivateJsonExclusive(path, value, { _beforeActivate } = {}) {
+  if (PLAIN_PRIVATE_FILES) {
+    if (_beforeActivate !== undefined && typeof _beforeActivate !== "function") {
+      throw new Error("wallet activation hook is invalid");
+    }
+    return writePlainPrivateJsonExclusive(path, value, { beforeActivate: _beforeActivate });
+  }
   const requestedTarget = resolve(path);
   const parentPath = realpathSync(dirname(requestedTarget));
   const target = join(parentPath, basename(requestedTarget));
@@ -314,6 +326,9 @@ export function verifyWalletFile({ path, password }) {
 // remain usable with their original recovery factors; this is not key rotation.
 export function changeWalletFilePassword({ path, oldPassword, newPassword,
   personalWallet = false, _beforeActivate, _afterLegacyBackup, _afterActivate }) {
+  if (PLAIN_PRIVATE_FILES) {
+    return changePlainWalletFilePassword({ path, oldPassword, newPassword, personalWallet, _beforeActivate });
+  }
   const target = resolve(path);
   const directory = dirname(target);
   const lock = join(directory, `.${basename(target)}.nir-password-rotation.lock`);
@@ -367,6 +382,62 @@ export function changeWalletFilePassword({ path, oldPassword, newPassword,
       uncertain.code = "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
       throw uncertain;
     }
+  }
+}
+
+// Windows: the same steps without activation links. A lock file keeps two
+// changes apart; the new vault is written, decrypted again with the new
+// password, and only then renamed over the old one in a single step.
+function changePlainWalletFilePassword({ path, oldPassword, newPassword, personalWallet, _beforeActivate }) {
+  if (oldPassword === newPassword) throw new Error("new wallet password must differ");
+  const target = resolve(path);
+  const lock = join(dirname(target), `.${basename(target)}.nir-password-rotation.lock`);
+  let lockDescriptor;
+  try { lockDescriptor = openSync(lock, "wx", 0o600); }
+  catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const locked = new Error("wallet password rotation lock exists (EEXIST); close other wallet processes and inspect before recovery", { cause: error });
+    locked.code = "NIR_WALLET_PASSWORD_CHANGE_LOCKED";
+    throw locked;
+  }
+  let activated = false;
+  try {
+    const oldVault = readVault(target);
+    const oldWallet = decryptWallet(oldVault, oldPassword);
+    let replacement;
+    try {
+      replacement = encryptWallet(oldWallet, newPassword, { label: oldVault.label, personalWallet });
+    } finally { oldWallet.privateKey = ""; }
+    if (replacement.address !== oldVault.address || replacement.publicKey !== oldVault.publicKey) {
+      throw new Error("wallet identity changed during password rotation");
+    }
+    if (_beforeActivate !== undefined && typeof _beforeActivate !== "function") {
+      throw new Error("wallet activation hook is invalid");
+    }
+    replacePlainPrivateJson(target, replacement, {
+      maxBytes: MAX_PRIVATE_JSON_BYTES,
+      beforeActivate: _beforeActivate,
+      check(staged) {
+        const verified = decryptWallet(staged, newPassword);
+        try {
+          if (verified.address !== oldVault.address || verified.publicKey !== oldVault.publicKey) {
+            throw new Error("replacement wallet identity changed");
+          }
+        } finally { verified.privateKey = ""; }
+      },
+    });
+    activated = true;
+    const current = verifyWalletFile({ path: target, password: newPassword });
+    if (current.address !== oldVault.address) throw new Error("activated wallet identity changed");
+    return { address: current.address, path: target };
+  } catch (error) {
+    if (!activated) throw error;
+    const uncertain = new Error("wallet password change may have activated; reopen and verify the address", { cause: error });
+    uncertain.code = "NIR_WALLET_PASSWORD_CHANGE_UNCERTAIN";
+    throw uncertain;
+  } finally {
+    closeSync(lockDescriptor);
+    rmSync(lock, { force: true });
   }
 }
 

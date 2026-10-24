@@ -54,7 +54,7 @@ export function minerNetworkTrust({ networkDirectory = defaultMinerNetworkDirect
   let genesis;
   try {
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.size > 4 * 1024 * 1024 || stat.uid !== process.getuid?.()) return null;
+    if (!stat.isFile() || stat.size > 4 * 1024 * 1024 || (process.platform !== "win32" && stat.uid !== process.getuid?.())) return null;
     genesis = parseConsensusJson(readFileSync(path, "utf8"));
   } catch {
     return null;

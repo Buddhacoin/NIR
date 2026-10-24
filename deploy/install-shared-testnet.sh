@@ -112,6 +112,7 @@ $SITE_DOMAIN, www.$SITE_DOMAIN {
   handle {
     root * $APP_DIR/site
     header /install.sh Content-Type "text/plain; charset=utf-8"
+    header /install.ps1 Content-Type "text/plain; charset=utf-8"
     file_server
   }
 }

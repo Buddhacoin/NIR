@@ -8,7 +8,7 @@ const en = {
   h1a: "Bitcoin was mined with graphics cards.", h1b: "NIR is mined with", h1c: "intelligence.",
   lead: "The first blockchain where every coin is born from a solved problem. No farms, no noise, no power bills — your computer, one button, and problems that get harder as artificial intelligence grows.",
   ctaMine: "⚡ Start mining for free", ctaHow: "▶ How it works",
-  platforms: "<b>macOS and Linux</b> — available now · Windows — soon",
+  platforms: "<b>macOS, Windows and Linux</b> — available now",
   fFound: "Solution found", fLevel: "Task difficulty", fProtect: "Protection", fQuantum: "Post-quantum 🔒",
   tLive: "Network is live", tBlock: "Block", tLevel: "Difficulty", tSupply: "Total ever", tHardware: "Hardware",
   tSales: "Presales", tOnly: "mining only",
@@ -43,7 +43,9 @@ const en = {
   startEyebrow: "Start", startTitle: "From zero to your first coin in 15 minutes",
   s1Title: "One command",
   s1Text: "Open Terminal (on a Mac: ⌘ + Space → “Terminal”), paste the command and press Enter. NIR is built right on your computer from the open source code.",
-  copy: "Copy", copied: "Copied", s1Hint: "macOS 13+ or Linux · Windows — soon",
+  copy: "Copy", copied: "Copied", s1Hint: "macOS 13+, Windows 10+ or Linux · a computer with internet",
+  osUnix: "macOS and Linux", osWindows: "Windows",
+  s1TextWin: "Press Start, type PowerShell and open it. Paste the command and press Enter. NIR installs for your user, without administrator rights, and appears in the Start menu.",
   s2Title: "24 words — your safe", s2Text: "NIR Wallet shows 24 words. Write them on paper: they are the key to all your coins and to your pioneer reward.",
   s3Title: "One button and you are mining", s3Text: "In NIR Miner press “Connect NIR Wallet” and “Start mining”. Claim your name.nir while it is free.",
   eCap: "and not a coin more", economyEyebrow: "Economy", economyTitle: "A hard cap. A fair split.",
@@ -55,7 +57,7 @@ const en = {
   roadmapEyebrow: "Roadmap", roadmapTitle: "The story of NIR in seven chapters",
   ch1n: "Chapter I", ch1t: "Spark", ch1p: "Protocol, post-quantum signatures, .nir names, wallet and miner",
   ch2n: "Chapter II", ch2t: "Awakening", ch2p: "The network opens, first miners, the pioneer program", now: "NOW",
-  ch3n: "Chapter III", ch3t: "Borderless", ch3p: "Nodes around the world, Windows, block explorer, miner leaderboard",
+  ch3n: "Chapter III", ch3t: "Borderless", ch3p: "Nodes around the world, block explorer, miner leaderboard",
   ch4n: "Chapter IV", ch4t: "Trial", ch4p: "Bug bounties with rewards, independent audits",
   ch5n: "Chapter V", ch5t: "Genesis", ch5p: "The main network. NIR become real coins, pioneers receive their reward",
   ch6n: "Chapter VI", ch6t: "Invisible", ch6p: "Shielded transfers and a multi-wallet: BTC, ETH, stablecoins",
@@ -121,6 +123,16 @@ themeButton.addEventListener("click", () => {
 });
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", renderTheme);
 renderTheme();
+
+// The install command for the visitor's system; the tabs switch it.
+const installCommand = document.querySelector("#install-command");
+function showSystem(system) {
+  installCommand.textContent = installCommand.dataset[system];
+  for (const tab of document.querySelectorAll(".os-tabs button")) tab.classList.toggle("on", tab.dataset.os === system);
+  for (const text of document.querySelectorAll("[data-os-text]")) text.hidden = text.dataset.osText !== system;
+}
+for (const tab of document.querySelectorAll(".os-tabs button")) tab.addEventListener("click", () => showSystem(tab.dataset.os));
+if (/Windows/.test(navigator.userAgent)) showSystem("windows");
 
 document.querySelector("#copy").addEventListener("click", async (event) => {
   const button = event.currentTarget;

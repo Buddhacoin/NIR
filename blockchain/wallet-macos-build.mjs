@@ -11,7 +11,7 @@ import { buildUpdateRecord, UPDATE_RECORD } from "./source-updater.mjs";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 // Every module the app imports; tests/wallet-macos-build.test.mjs checks the closure.
 const MODULES = Object.freeze(`
-blockchain/account-history-database.mjs blockchain/account-history-index.mjs blockchain/app-paths.mjs blockchain/wallet-signing-summary.mjs
+blockchain/account-history-database.mjs blockchain/account-history-index.mjs blockchain/app-paths.mjs blockchain/wallet-signing-summary.mjs blockchain/wallet-files-windows.mjs
 blockchain/account-history.mjs blockchain/account-proof.mjs blockchain/account-tree.mjs
 blockchain/admission-inclusion.mjs blockchain/archive-sync.mjs blockchain/asset-proof.mjs
 blockchain/backup-recovery.mjs blockchain/beacon-rotation.mjs blockchain/block-store.mjs
