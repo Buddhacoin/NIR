@@ -19,7 +19,7 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
-  for (const page of ["site/index.html", "site/nir/index.html"]) {
+  for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
@@ -50,10 +50,30 @@ test("the markets home page has English for every text and links to NIR", () => 
   assert.match(html, /CoinGecko/);
   assert.match(html, /TradingView/);
   assert.match(script, /fetch\("\/market\/overview"/);
-  assert.match(script, /fetch\("\/api\/v1\/stats"/);
+  assert.match(read("site/common.js"), /fetch\("\/api\/v1\/stats"/);
+  assert.match(script, /location\.href = coinUrl\(coin\)/, "a coin's row opens its page");
   const deploy = read("deploy/install-shared-testnet.sh");
   assert.match(deploy, /handle \/market\/\* \{\n\s+reverse_proxy 127\.0\.0\.1:8790/);
+  assert.match(deploy, /handle \/coin\/\* \{\n\s+root \* \$APP_DIR\/site\n\s+rewrite \* \/coin\/index\.html/);
   assert.match(deploy, /market-service-cli\.mjs 8790/);
+});
+
+test("a coin's page has English for every text and loads its data from the market service", () => {
+  const html = read("site/coin/index.html");
+  const script = read("site/coin.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
+    assert.match(script, new RegExp(`\\b${key}:`), `no English text for ${key}`);
+  }
+  for (const page of [html, read("site/index.html")]) {
+    assert.match(page, /src="\/common\.js\?v=\d+"/);
+    assert.match(page, /href="\/markets\.css\?v=\d+"/);
+  }
+  assert.match(script, /fetch\(`\/market\/coin\/\$\{encodeURIComponent\(id\)\}`/);
+  assert.match(script, /fetch\(`\/market\/chart\/\$\{encodeURIComponent\(id\)\}\?days=/);
+  // Text from CoinGecko is only ever set as text, never as HTML.
+  assert.doesNotMatch(script, /innerHTML\s*=\s*[^'"]*(?:coin|ticker|description)/);
+  assert.match(html, /CoinGecko/);
+  assert.match(html, /TradingView/);
 });
 
 test("the server serves the website with the network's read API under /api", () => {

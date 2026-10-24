@@ -18,6 +18,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 button, input { font: inherit; color: inherit; }
@@ -51,7 +52,9 @@ button, input { font: inherit; color: inherit; }
 .gauge span { display: block; color: var(--gold); font-size: 13px; font-weight: 700; }
 #fg-dot { fill: var(--text); }
 .list ol { margin: 0; padding: 0; list-style: none; }
-.list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.list li { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.list li a { display: flex; align-items: center; gap: 10px; }
+.list li a:hover b { color: var(--accent); }
 .list li:last-child { border-bottom: 0; }
 .list .n { width: 14px; color: var(--muted); }
 .list b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -68,8 +71,8 @@ button, input { font: inherit; color: inherit; }
 .nir-strip > span:first-of-type { color: var(--muted); }
 .nir-strip .act { margin-left: auto; padding: 5px 12px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; }
-.tabs button { padding: 9px 16px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-weight: 650; cursor: pointer; }
-.tabs button.on { border-color: transparent; background: var(--btn); color: var(--btn-text); }
+.tabs button, .tabs a { padding: 9px 16px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-weight: 650; cursor: pointer; }
+.tabs button.on, .tabs a.on { border-color: transparent; background: var(--btn); color: var(--btn-text); }
 
 .table-wrap { overflow-x: auto; }
 table { width: 100%; margin-top: 12px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -80,6 +83,7 @@ tbody tr.coin { cursor: pointer; }
 tbody tr.coin:hover { background: var(--soft); }
 .coin-cell { display: flex; align-items: center; gap: 10px; }
 .coin-cell span { color: var(--muted); font-size: 13px; }
+a.coin-cell:hover b { color: var(--accent); }
 .star { width: 28px; color: var(--muted); text-align: center; cursor: pointer; }
 .star.on { color: var(--gold); }
 .rank { width: 34px; color: var(--muted); text-align: center; }
@@ -92,12 +96,87 @@ tr.chart td { padding: 0 10px 16px; }
 .chart-box { height: 420px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; }
 .status { color: var(--muted); text-align: center; }
 
+/* A coin's own page (/coin/<id>). */
+.search-form { display: contents; }
+.crumbs { margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+.crumbs a:hover { color: var(--text); }
+.coin-page { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 22px; align-items: start; }
+.side, .coin-main { display: grid; gap: 16px; min-width: 0; }
+.coin-main .tabs { margin: 0; }
+.coin-head { display: flex; align-items: center; gap: 10px; }
+.coin-head .logo { width: 40px; height: 40px; font-size: 18px; }
+.coin-head h1 { margin: 0; overflow: hidden; font-size: 26px; text-overflow: ellipsis; white-space: nowrap; }
+.coin-head .sym { color: var(--muted); font-weight: 700; }
+.badge { padding: 3px 8px; border-radius: 8px; background: var(--soft); color: var(--accent); font-size: 12px; font-weight: 800; }
+.watch { display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-left: auto; border: 1px solid var(--line); border-radius: 12px;
+  background: transparent; color: var(--muted); font-size: 21px; cursor: pointer; }
+.watch.on { color: var(--gold); }
+.big-price { margin: 14px 0 6px; font-size: 38px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.changes { display: flex; flex-wrap: wrap; gap: 14px; font-size: 14px; }
+.changes small { color: var(--muted); }
+.day-range { margin-top: 14px; color: var(--muted); font-size: 12px; }
+.bar { height: 6px; margin: 6px 0; overflow: hidden; border-radius: 9px; background: var(--line); }
+.bar i { display: block; height: 100%; border-radius: 9px; background: var(--btn); }
+.ends { display: flex; justify-content: space-between; }
+.stats div { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.stats div:first-child { padding-top: 0; }
+.stats div:last-child { padding-bottom: 0; border: 0; }
+.stats small { color: var(--muted); font-size: 14px; }
+.stats b { font-variant-numeric: tabular-nums; text-align: right; }
+.stats em { font-size: 12px; font-style: normal; }
+.links-card h3 { margin: 16px 0 8px; color: var(--muted); font-size: 13px; font-weight: 650; }
+.links-card h3:first-child { margin-top: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips a, .chips span { padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 650; }
+.chips a:hover { border-color: var(--accent); }
+.chips span { color: var(--muted); font-weight: 600; }
+.converter { display: grid; gap: 8px; }
+.converter h2 { margin-bottom: 4px; }
+.converter label { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.converter input { width: 65%; border: 0; outline: 0; background: none; font-weight: 750; text-align: right; }
+.chart-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.chart-top h2 { margin: 0; }
+.ranges { display: flex; flex-wrap: wrap; gap: 4px; }
+.ranges button { padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
+.ranges button.on, .ranges button:hover { background: var(--soft); color: var(--accent); }
+.big-chart { position: relative; height: 400px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; touch-action: pan-y; }
+.big-chart svg { display: block; width: 100%; height: 100%; }
+.big-chart .vol { fill: var(--accent); opacity: 0.2; }
+.big-chart .chart-box { height: 100%; border: 0; border-radius: 0; }
+.big-chart .status { margin-top: 170px; }
+.axis { position: absolute; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.axis.high { top: 8px; left: 10px; } .axis.low { left: 10px; }
+.axis.start, .axis.end { bottom: 4px; padding: 1px 5px; border-radius: 6px; background: var(--panel); }
+.axis.start { left: 6px; } .axis.end { right: 6px; }
+.cursor, .dot, .tip { position: absolute; display: none; pointer-events: none; }
+.hover .cursor, .hover .dot, .hover .tip { display: block; }
+.cursor { top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: 0.5; }
+.dot { width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 2px solid var(--bg); border-radius: 50%; background: var(--accent); }
+.tip { top: 8px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.chart-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.about p { margin: 0 0 10px; font-size: 14px; line-height: 1.65; }
+.about .chips { margin-bottom: 12px; }
+.muted, .about .muted { color: var(--muted); }
+.more { margin-bottom: 8px; padding: 0; border: 0; background: none; color: var(--accent); font-weight: 700; cursor: pointer; }
+.markets-table td:nth-child(2) { font-weight: 700; }
+.markets-table td a:hover { color: var(--accent); }
+.trust { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+.trust.green { background: var(--up); } .trust.yellow { background: var(--gold); } .trust.red { background: var(--down); }
+.soon { display: flex; align-items: center; gap: 14px; border-style: dashed; }
+.soon p { flex: 1; margin: 0; color: var(--muted); font-size: 14px; }
+
 footer { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 16px max(16px, calc((100% - 1440px) / 2)) 30px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 footer a { text-decoration: underline; text-underline-offset: 3px; }
 footer .right { margin-left: auto; text-decoration: none; color: var(--accent); }
 
 @media (max-width: 1100px) {
   .cards { grid-template-columns: 1fr 1fr; }
+  /* One column: the price, then the chart, figures, description, markets and links. */
+  .coin-page { display: flex; flex-direction: column; gap: 16px; }
+  .side, .coin-main { display: contents; }
+  .coin-page .card, .coin-page .tabs { min-width: 0; max-width: 100%; }
+  .coin-main .tabs { order: 1; } #chart { order: 2; } .stats { order: 3; } #about { order: 4; }
+  #markets { order: 5; } .links-card { order: 6; } .converter { order: 7; } #comments { order: 8; }
   .top nav { display: none; }
   .nirbar .wide { display: none; }
 }
@@ -107,4 +186,7 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .top { flex-wrap: wrap; }
   .hide-s { display: none; }
   .nirbar .cta { margin-left: 0; }
+  .big-chart { height: 300px; }
+  .big-chart .status { margin-top: 120px; }
+  .big-price { font-size: 32px; }
 }

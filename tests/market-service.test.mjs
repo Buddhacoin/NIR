@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { createMarketService, normalizeCoins } from "../blockchain/market-service.mjs";
+import { createMarketService, normalizeCoin, normalizeCoins } from "../blockchain/market-service.mjs";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/market/${name}`, import.meta.url), "utf8"));
 const responses = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", fng: "fng.json" };
-const fromFixtures = async (url) => fixture(Object.entries(responses).find(([key]) => url.includes(key))[1]);
+const fromFixtures = async (url) => {
+  if (url.includes("/coins/bitcoin/market_chart")) return fixture("chart-bitcoin.json");
+  if (url.includes("/coins/bitcoin?")) return fixture("coin-bitcoin.json");
+  if (/\/coins\/(?!markets)/.test(url)) throw Object.assign(new Error("api.coingecko.com answered 404"), { status: 404 });
+  return fixture(Object.entries(responses).find(([key]) => url.includes(key))[1]);
+};
 
 test("NIR Markets serves one cached overview of prices, market, trends and Fear & Greed", async () => {
   let calls = 0;
@@ -69,4 +74,54 @@ test("coin data is bounded and only CoinGecko images are passed on", () => {
   assert.equal(coins[0].symbol, "ABC");
   assert.throws(() => normalizeCoins({}), /coin list is invalid/);
   assert.deepEqual(normalizeCoins([{ id: "x", symbol: "x", name: "x", current_price: null }]), []);
+});
+
+test("a coin's page and chart are fetched on demand, cached and limited", async () => {
+  let clock = 1_700_000_000_000;
+  const fetched = [];
+  const service = createMarketService({ fetch: async (url) => { fetched.push(url); return fromFixtures(url); },
+    now: () => clock, coinFetchesPerMinute: 3 });
+  await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  try {
+    const [first, second] = await Promise.all([fetch(`${base}/market/coin/bitcoin`), fetch(`${base}/market/coin/bitcoin`)]);
+    assert.equal(first.status, 200);
+    assert.match(first.headers.get("cache-control"), /max-age=60/);
+    const coin = await first.json();
+    assert.deepEqual(await second.json(), coin);
+    assert.equal(fetched.length, 1, "two visitors at once share one fetch");
+    assert.equal(coin.symbol, "BTC");
+    assert.equal(coin.price, 80183.42);
+    assert.equal(coin.maxSupply, 21_000_000);
+    assert.equal(coin.links.x, "https://x.com/bitcoin");
+    assert.deepEqual(coin.links.explorers, ["https://mempool.space/", "https://blockchair.com/bitcoin/", "https://btc.com/"]);
+    assert.deepEqual(coin.tickers.map((ticker) => ticker.market), ["Binance", "Coinbase Exchange", "OKX", "Kraken"]);
+    assert.equal(coin.tickers[2].url, null);
+    assert.doesNotMatch(coin.description.en, /<a|&amp;/);
+    assert.doesNotMatch(coin.description.ru, /<script/);
+
+    const chart = await (await fetch(`${base}/market/chart/bitcoin?days=30`)).json();
+    assert.ok(chart.prices.length > 150 && chart.prices.length <= 241);
+    assert.equal(chart.prices.at(-1)[1], 80183.42);
+    assert.equal((await fetch(`${base}/market/chart/bitcoin?days=2`)).status, 404);
+    assert.equal((await fetch(`${base}/market/coin/no-such-coin`)).status, 404);
+    assert.equal((await fetch(`${base}/market/coin/..%2Fglobal`)).status, 404);
+    assert.equal(fetched.length, 3);
+
+    // The minute's 3 fetches are spent: a new coin waits, a cached one is still served.
+    assert.equal((await fetch(`${base}/market/coin/other-coin`)).status, 503);
+    clock += 10 * 60_000;
+    assert.equal((await fetch(`${base}/market/coin/bitcoin`)).status, 200);
+    assert.equal(fetched.length, 4, "an expired copy is fetched again once the limit allows");
+  } finally {
+    await new Promise((resolve) => service.server.close(resolve));
+  }
+});
+
+test("coin details reject what is not a coin", () => {
+  assert.throws(() => normalizeCoin(null), /coin data is invalid/);
+  const coin = normalizeCoin({ id: "x", symbol: "x", name: "X", links: { homepage: ["javascript:alert(1)"], twitter_screen_name: "a b" } });
+  assert.deepEqual(coin.links.websites, []);
+  assert.equal(coin.links.x, null);
+  assert.equal(coin.price, null);
 });

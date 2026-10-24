@@ -1,0 +1,254 @@
+{
+ "id": "bitcoin",
+ "symbol": "btc",
+ "name": "Bitcoin",
+ "web_slug": "bitcoin",
+ "platforms": {
+  "": ""
+ },
+ "categories": [
+  "Cryptocurrency",
+  "Layer 1 (L1)",
+  "Proof of Work (PoW)"
+ ],
+ "localization": {
+  "en": "Bitcoin",
+  "ru": "Биткоин"
+ },
+ "description": {
+  "en": "Bitcoin is the first successful internet money based on peer-to-peer technology; whereby no central bank or authority is involved in the transaction and production of the Bitcoin currency. It was created by an anonymous individual/group under the name, Satoshi Nakamoto. The source code is available publicly as an open source project, anybody can look at it and be part of the developmental process.\r\n\r\nBitcoin is changing the way we see money as we speak. The idea was to produce a means of exchange, independent of any central authority, that could be transferred electronically in a secure, verifiable and immutable way. See <a href=\"https://www.coingecko.com/en/coins/ethereum\">Ethereum</a> &amp; others.",
+  "ru": "Биткоин — первая успешная интернет-валюта на основе одноранговой технологии: в выпуске и переводах не участвует ни центральный банк, ни другой посредник.\r\n\r\nИсходный код открыт, и любой может его изучить. <script>alert(1)</script>"
+ },
+ "links": {
+  "homepage": [
+   "http://www.bitcoin.org",
+   "",
+   ""
+  ],
+  "whitepaper": "https://bitcoin.org/bitcoin.pdf",
+  "blockchain_site": [
+   "https://mempool.space/",
+   "https://blockchair.com/bitcoin/",
+   "https://btc.com/",
+   "javascript:alert(1)",
+   ""
+  ],
+  "official_forum_url": [
+   "https://bitcointalk.org/",
+   ""
+  ],
+  "chat_url": [
+   "",
+   ""
+  ],
+  "twitter_screen_name": "bitcoin",
+  "telegram_channel_identifier": "",
+  "subreddit_url": "https://www.reddit.com/r/Bitcoin/",
+  "repos_url": {
+   "github": [
+    "https://github.com/bitcoin/bitcoin",
+    "https://github.com/bitcoin/bips"
+   ],
+   "bitbucket": []
+  }
+ },
+ "image": {
+  "thumb": "https://coin-images.coingecko.com/coins/images/1/thumb/bitcoin.png",
+  "small": "https://coin-images.coingecko.com/coins/images/1/small/bitcoin.png",
+  "large": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png"
+ },
+ "market_cap_rank": 1,
+ "market_data": {
+  "current_price": {
+   "usd": 80183.42,
+   "eur": 73768.75
+  },
+  "ath": {
+   "usd": 108135.0,
+   "eur": 99484.2
+  },
+  "ath_change_percentage": {
+   "usd": -25.85,
+   "eur": -23.78
+  },
+  "ath_date": {
+   "usd": "2025-01-20T09:11:54.494Z",
+   "eur": "2025-01-20T09:11:54.494Z"
+  },
+  "atl": {
+   "usd": 67.81,
+   "eur": 62.39
+  },
+  "atl_change_percentage": {
+   "usd": 118144.9,
+   "eur": 108693.31
+  },
+  "atl_date": {
+   "usd": "2013-07-06T00:00:00.000Z",
+   "eur": "2013-07-06T00:00:00.000Z"
+  },
+  "market_cap": {
+   "usd": 1590000000000.0,
+   "eur": 1462800000000.0
+  },
+  "market_cap_rank": 1,
+  "fully_diluted_valuation": {
+   "usd": 1683850000000.0,
+   "eur": 1549142000000.0
+  },
+  "total_volume": {
+   "usd": 56900000000.0,
+   "eur": 52348000000.0
+  },
+  "high_24h": {
+   "usd": 81990.0,
+   "eur": 75430.8
+  },
+  "low_24h": {
+   "usd": 79120.5,
+   "eur": 72790.86
+  },
+  "price_change_percentage_24h": -1.75,
+  "price_change_percentage_1h_in_currency": {
+   "usd": -0.21,
+   "eur": -0.19
+  },
+  "price_change_percentage_24h_in_currency": {
+   "usd": -1.75,
+   "eur": -1.61
+  },
+  "price_change_percentage_7d_in_currency": {
+   "usd": -3.1,
+   "eur": -2.85
+  },
+  "price_change_percentage_30d_in_currency": {
+   "usd": 4.4,
+   "eur": 4.05
+  },
+  "price_change_percentage_1y_in_currency": {
+   "usd": 38.2,
+   "eur": 35.14
+  },
+  "total_supply": 19850000.0,
+  "max_supply": 21000000.0,
+  "circulating_supply": 19850000.0,
+  "last_updated": "2026-10-24T09:00:00.000Z"
+ },
+ "tickers": [
+  {
+   "base": "BTC",
+   "target": "USDT",
+   "market": {
+    "name": "Binance",
+    "identifier": "binance"
+   },
+   "last": 80180.1,
+   "converted_last": {
+    "usd": 80180.1
+   },
+   "converted_volume": {
+    "usd": 2410000000
+   },
+   "trust_score": "green",
+   "is_anomaly": false,
+   "is_stale": false,
+   "trade_url": "https://www.binance.com/en/trade/BTC_USDT"
+  },
+  {
+   "base": "BTC",
+   "target": "USD",
+   "market": {
+    "name": "Coinbase Exchange",
+    "identifier": "gdax"
+   },
+   "last": 80190.0,
+   "converted_last": {
+    "usd": 80190.0
+   },
+   "converted_volume": {
+    "usd": 1120000000
+   },
+   "trust_score": "green",
+   "is_anomaly": false,
+   "is_stale": false,
+   "trade_url": "https://www.coinbase.com/advanced-trade/spot/BTC-USD"
+  },
+  {
+   "base": "BTC",
+   "target": "EUR",
+   "market": {
+    "name": "Kraken",
+    "identifier": "kraken"
+   },
+   "last": 73700.0,
+   "converted_last": {
+    "usd": 80170.6
+   },
+   "converted_volume": {
+    "usd": 412000000
+   },
+   "trust_score": "green",
+   "is_anomaly": false,
+   "is_stale": false,
+   "trade_url": "https://pro.kraken.com/app/trade/btc-eur"
+  },
+  {
+   "base": "BTC",
+   "target": "USDT",
+   "market": {
+    "name": "OKX",
+    "identifier": "okex"
+   },
+   "last": 80181.5,
+   "converted_last": {
+    "usd": 80181.5
+   },
+   "converted_volume": {
+    "usd": 980000000
+   },
+   "trust_score": "yellow",
+   "is_anomaly": false,
+   "is_stale": false,
+   "trade_url": "javascript:alert(1)"
+  },
+  {
+   "base": "BTC",
+   "target": "USDT",
+   "market": {
+    "name": "Stale Exchange",
+    "identifier": "stale"
+   },
+   "last": 1,
+   "converted_last": {
+    "usd": 1
+   },
+   "converted_volume": {
+    "usd": 9000000000000.0
+   },
+   "trust_score": "red",
+   "is_anomaly": false,
+   "is_stale": true,
+   "trade_url": null
+  },
+  {
+   "base": "0X2260FAC5E5542A773AA44FBCFEDF7C193BC2C599",
+   "target": "0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48",
+   "market": {
+    "name": "Uniswap V3",
+    "identifier": "uniswap_v3"
+   },
+   "last": 80100,
+   "converted_last": {
+    "usd": 80100
+   },
+   "converted_volume": {
+    "usd": 90000000
+   },
+   "trust_score": "green",
+   "is_anomaly": false,
+   "is_stale": false,
+   "trade_url": null
+  }
+ ],
+ "last_updated": "2026-10-24T09:00:00.000Z"
+}
