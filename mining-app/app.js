@@ -84,7 +84,8 @@ const nativeApp = typeof location !== "undefined" &&
 const fragmentSession = typeof location !== "undefined" &&
   /^#session=[0-9a-f]{64}$/.test(location.hash) ? location.hash.slice(9) : "";
 if (fragmentSession) history.replaceState(null, "", `${location.pathname}${location.search}`);
-const localSession = nativeApp && typeof window !== "undefined" ? window.__NIR_MODEL_SESSION : fragmentSession;
+// Windows and Linux open the app window with the fragment as well.
+const localSession = (nativeApp && typeof window !== "undefined" && window.__NIR_MODEL_SESSION) || fragmentSession;
 const sessionHeaders = () => ({ "X-NIR-Session": localSession ?? "" });
 // The mining panel (mining.js) reuses this page's local session.
 globalThis.nirModelLab = Object.freeze({ sessionHeaders });
@@ -481,6 +482,22 @@ const copy = {
     qwenReady: "Local runtime checked. Model download starts only after confirmation.",
   },
 };
+
+// Windows and Linux: the same texts, about this computer rather than a Mac.
+if (typeof navigator !== "undefined" && nativeApp && !/Macintosh/.test(navigator.userAgent)) {
+  const computer = (text) => text.replace(/на этом Mac\b/g, "на этом компьютере").replace(/Этот Mac\b/g, "Этот компьютер")
+    .replace(/этого Mac\b/g, "этого компьютера").replace(/\bthis Mac\b/g, "this computer").replace(/\bThis Mac\b/g, "This computer");
+  const rewrite = (table) => {
+    for (const [key, value] of Object.entries(table)) {
+      if (typeof value === "string") table[key] = computer(value);
+      else if (typeof value === "function") {
+        table[key] = (...args) => { const result = value(...args); return typeof result === "string" ? computer(result) : result; };
+      }
+      else if (value && typeof value === "object") rewrite(value);
+    }
+  };
+  rewrite(copy);
+}
 
 let locale = typeof navigator !== "undefined" && !/^ru\b/i.test(navigator.language || "") ? "en" : "ru";
 try { const saved = localStorage.getItem("nir-mining-locale"); if (saved === "en" || saved === "ru") locale = saved; } catch {}

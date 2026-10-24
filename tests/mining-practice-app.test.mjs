@@ -605,7 +605,9 @@ test("app preflight requires model files but not unrelated demo or wallet files"
     }
     const options = { root: temporary, platform: "darwin", nodeVersion: "26.0.0" };
     assert.equal(miningModelAppPreflight(options).ready, true);
-    assert.equal(miningModelAppPreflight({ ...options, platform: "linux" }).ready, false);
+    assert.equal(miningModelAppPreflight({ ...options, platform: "linux" }).ready, true);
+    assert.equal(miningModelAppPreflight({ ...options, platform: "win32" }).ready, true);
+    assert.equal(miningModelAppPreflight({ ...options, platform: "freebsd" }).ready, false);
     assert.equal(miningModelAppPreflight({ ...options, nodeVersion: "25.9.0" }).ready, false);
     rmSync(join(temporary, "examples/iris.data"));
     assert.equal(miningModelAppPreflight(options).ready, false);

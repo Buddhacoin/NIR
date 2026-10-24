@@ -18,12 +18,10 @@ import { readUpdateRecord, removePreviousVersions, runBuilder, SourceUpdater, st
   updateBuildEnvironment } from "./source-updater.mjs";
 import { pinnedUpdateSignerAddress } from "./update-trust-anchor.mjs";
 import { findOldCopies, revealOldCopies, trashOldCopies } from "./old-app-copies.mjs";
+import { miningDataDirectory } from "./app-paths.mjs";
 
 // Where one-button mining keeps its local devnet and miner key.
-function defaultMiningDirectory() {
-  return process.env.NIR_MODEL_LAB_DATA ??
-    join(homedir(), "Library", "Application Support", "NIR Model Lab", "mining");
-}
+const defaultMiningDirectory = () => miningDataDirectory();
 import { createLocalIrisRunIntent, verifyLocalIrisRunReceipt } from "./operator-model-receipt.mjs";
 import { createSyntheticTransferSession } from "./synthetic-transfer.mjs";
 
@@ -53,6 +51,8 @@ const APP_FILES = Object.freeze([
   "nir/open_model_source.py",
 ]);
 
+const DESKTOP_PLATFORMS = new Set(["darwin", "linux", "win32"]);
+
 export function miningModelAppPreflight({ root, platform = process.platform, nodeVersion = process.versions.node } = {}) {
   if (!root) throw new Error("repository root is required");
   let packageValid = false;
@@ -65,10 +65,10 @@ export function miningModelAppPreflight({ root, platform = process.platform, nod
     try { return !lstatSync(join(root, name)).isFile(); } catch { return true; }
   });
   return {
-    ready: platform === "darwin" && Number.isInteger(major) && major >= 26 &&
+    ready: DESKTOP_PLATFORMS.has(platform) && Number.isInteger(major) && major >= 26 &&
       packageValid && missing.length === 0,
     checks: [
-      [platform === "darwin", "Для этого локального приложения нужен macOS."],
+      [DESKTOP_PLATFORMS.has(platform), "Для этого локального приложения нужен macOS, Windows или Linux."],
       [Number.isInteger(major) && major >= 26, "Для приложения нужен Node.js 26+."],
       [packageValid, "Запустите команду из корня доверенной копии исходного кода NIR."],
       [missing.length === 0, `Отсутствуют файлы локальной модели или интерфейса: ${missing.join(", ")}.`],

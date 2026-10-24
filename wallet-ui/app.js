@@ -22,11 +22,28 @@ const language = localStorage.getItem("nir-language") === "en" ? "en" : "ru";
 languageControl.value = language;
 document.documentElement.lang = language;
 
+// Windows and Linux: the app window gets its one-time pairing code in the
+// fragment (never sent over HTTP, removed at once), and the confirmation
+// windows are NIR's own rather than macOS ones.
+const desktopPairing = /^#pair=([0-9a-f]{64})$/.exec(location.hash)?.[1] ?? null;
+if (desktopPairing) history.replaceState(null, "", `${location.pathname}${location.search}`);
+const desktopHost = new URLSearchParams(location.search).get("local-app") === "1" &&
+  !/Macintosh/.test(navigator.userAgent);
+const hostWording = (text) => !desktopHost ? text : text
+  .replace(/(окн[а-яё]*) (?:macOS|Mac)\b/g, "$1 NIR").replace(/(Окн[а-яё]*) (?:macOS|Mac)\b/g, "$1 NIR")
+  .replace(/на этом Mac\b/g, "на этом компьютере").replace(/этого Mac\b/g, "этого компьютера")
+  .replace(/\b(?:macOS|Mac) (windows?)\b/g, "NIR $1").replace(/\bthis Mac\b/g, "this computer")
+  // The shortcut is called NIR there; starting it again reopens this window.
+  .replace(/[Зз]акройте и откройте NIR Wallet снова/g, "Запустите NIR ещё раз")
+  .replace(/откройте кошелёк через NIR Wallet/g, "запустите NIR ещё раз")
+  .replace(/[Cc]lose and reopen NIR Wallet/g, "Start NIR again")
+  .replace(/open the wallet through NIR Wallet/g, "start NIR again");
+
 function localizeNode(node) {
   if (node.parentElement?.closest("script,style,code,pre,textarea,[data-i18n-ignore]")) return;
   const previous = localizedTextNodes.get(node);
   const source = previous && node.data === previous.rendered ? previous.source : node.data;
-  const rendered = translateWalletText(source, document.documentElement.lang);
+  const rendered = hostWording(translateWalletText(source, document.documentElement.lang));
   localizedTextNodes.set(node, { source, rendered });
   if (node.data !== rendered) node.data = rendered;
 }
@@ -38,7 +55,7 @@ function localizeAttributes(element) {
     if (!element.hasAttribute(name)) continue;
     const current = element.getAttribute(name);
     const source = previous[name] && current === previous[name].rendered ? previous[name].source : current;
-    const rendered = translateWalletText(source, document.documentElement.lang);
+    const rendered = hostWording(translateWalletText(source, document.documentElement.lang));
     next[name] = { source, rendered };
     if (current !== rendered) element.setAttribute(name, rendered);
   }
@@ -1258,7 +1275,7 @@ function openBridgePanel() {
 
 async function connectNativeWallet() {
   if (!localApp) return;
-  const code = window.__nirNativeBootstrap;
+  const code = window.__nirNativeBootstrap ?? desktopPairing;
   delete window.__nirNativeBootstrap;
   nativeConnectionError = null;
   if (!/^[0-9a-f]{64}$/.test(code ?? "")) {

@@ -548,7 +548,7 @@ export function createWalletBridgeServer({
     simulations.clear();
     signResults.clear();
   };
-  const pairingDeadline = Date.now() + pairingLifetimeMs;
+  let pairingDeadline = Date.now() + pairingLifetimeMs;
   const configuredOrigin = origin;
   const server = createServer(async (request, response) => {
     const requestGeneration = sessionGeneration;
@@ -1600,6 +1600,26 @@ export function createWalletBridgeServer({
     verifiedAccountStates.clear();
     verifiedAssetStates.clear();
     simulations.clear();
+  };
+  // Windows and Linux: a reopened wallet window pairs again with a fresh
+  // one-time code from the host. The previous page's session ends first.
+  server.restartPairing = (nextCode) => {
+    if (!/^[0-9a-f]{64}$/.test(nextCode ?? "") || pairingCode === undefined || firefoxPairing) {
+      throw new Error("wallet bridge pairing restart is invalid");
+    }
+    securityController?.abort();
+    sessionActive = false;
+    sessionGeneration += 1;
+    verifiedAccountState = null;
+    verifiedAccountStates.clear();
+    verifiedAssetStates.clear();
+    simulations.clear();
+    signResults.clear();
+    pairingCode = nextCode;
+    sessionToken = randomBytes(32).toString("hex");
+    pairingAttempts = 0;
+    pairingAvailable = true;
+    pairingDeadline = Date.now() + pairingLifetimeMs;
   };
   return server;
 }

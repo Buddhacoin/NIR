@@ -1,0 +1,24 @@
+:root { color-scheme: dark; --bg: #0b0d0f; --card: #15191d; --line: #ffffff26; --text: #f2f4f0; --muted: #9aa39c;
+  --lime: #b9ff5a; --red: #ff7b7b; font-family: -apple-system, "Segoe UI", Inter, Ubuntu, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); line-height: 1.5; }
+main { padding: 22px 26px 26px; }
+header { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: 0.14em; }
+h1 { margin: 18px 0 6px; font-size: 21px; letter-spacing: -0.01em; }
+#message { margin: 0 0 14px; color: #c9d0ca; white-space: pre-line; }
+#words { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin: 0 0 14px; padding: 14px 14px 14px 36px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--card); font: 15px ui-monospace, Menlo, Consolas, monospace; }
+#words li { padding: 2px 0; }
+label { display: grid; gap: 6px; margin-bottom: 12px; color: var(--muted); font-size: 14px; }
+input, textarea { width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: #0f1215;
+  color: var(--text); font: 15px inherit; font-family: inherit; }
+textarea { resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; }
+input:focus, textarea:focus { outline: 2px solid var(--lime); outline-offset: 1px; }
+#error { min-height: 1em; margin: 0 0 10px; color: var(--red); font-size: 14px; }
+#buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+button { min-height: 42px; padding: 0 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+  color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
+button.primary { border: 0; background: var(--lime); color: #071107; }
+#closed { padding: 40px; color: var(--muted); text-align: center; }
+[hidden] { display: none !important; }
+#message { overflow-wrap: anywhere; }

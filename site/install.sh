@@ -1,6 +1,7 @@
 #!/bin/bash
-# NIR for Mac: builds NIR Wallet and NIR Майнер on this Mac from NIR's open
-# source code (docs/install-mac.md). Paste into Terminal:
+# NIR for Mac and Linux: builds NIR Wallet and NIR Майнер from NIR's open
+# source code (docs/install-mac.md, docs/install-desktop.md). Paste into a
+# terminal:
 #
 #   curl -fsSL https://nircoin.com/install.sh | bash
 #
@@ -25,7 +26,92 @@ say() { printf '\n\033[1;32m==\033[0m %s\n' "$1"; }
 note() { printf '   %s\n' "$1"; }
 fail() { printf '\n\033[1;31mНе получилось:\033[0m %s\n' "$1" >&2; exit 1; }
 
-[[ "$(uname -s)" == "Darwin" ]] || fail "NIR пока работает только на Mac."
+# Linux: NIR Wallet and NIR Майнер in one app, NIR (docs/install-desktop.md).
+install_linux() {
+  local data="${XDG_DATA_HOME:-$HOME/.local/share}/nir" arch tarball node_dir
+  case "$(uname -m)" in
+    x86_64) arch="x64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) fail "этот процессор не поддерживается: $(uname -m)." ;;
+  esac
+  printf '\n\033[1mNIR — блокчейн, который майнят решением задач.\033[0m\n'
+  note "Установщик поставит NIR (кошелёк и майнер) для этого пользователя Linux."
+  mkdir -p "$data" && chmod 700 "$data"
+
+  say "1/3 git"
+  if command -v git >/dev/null 2>&1; then
+    note "Уже есть."
+  else
+    note "Нужен git. Введите пароль этого компьютера, если система спросит:"
+    if command -v apt-get >/dev/null 2>&1; then sudo apt-get install -y git
+    elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y git
+    elif command -v pacman >/dev/null 2>&1; then sudo pacman -S --noconfirm git
+    elif command -v zypper >/dev/null 2>&1; then sudo zypper install -y git
+    else fail "установите git и запустите команду ещё раз."
+    fi
+  fi
+
+  say "2/3 Node.js $NODE_VERSION"
+  node_dir="$data/node-v$NODE_VERSION-linux-$arch"
+  if [[ "$("$node_dir/bin/node" --version 2>/dev/null || true)" == "v$NODE_VERSION" ]]; then
+    note "Уже есть."
+  else
+    local tmp
+    tmp="$(mktemp -d)"
+    tarball="node-v$NODE_VERSION-linux-$arch.tar.gz"
+    curl -fsSLo "$tmp/$tarball" "https://nodejs.org/dist/v$NODE_VERSION/$tarball"
+    curl -fsSLo "$tmp/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
+    (cd "$tmp" && grep " $tarball\$" SHASUMS256.txt | sha256sum -c - >/dev/null) \
+      || fail "Node.js не прошёл проверку контрольной суммы."
+    rm -rf "$node_dir"
+    tar -xzf "$tmp/$tarball" -C "$data"
+    rm -rf "$tmp"
+    note "Скачан и проверен."
+  fi
+
+  say "3/3 NIR"
+  if [[ -d "$data/source/.git" ]]; then
+    git -C "$data/source" fetch -q --depth 1 origin main
+    git -C "$data/source" reset -q --hard origin/main
+  else
+    rm -rf "$data/source"
+    git clone -q --depth 1 "$REPO" "$data/source"
+  fi
+  note "Код: $(git -C "$data/source" rev-parse --short HEAD)"
+  mkdir -p "$HOME/.local/bin" "${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  cat > "$HOME/.local/bin/nir" <<LAUNCHER
+#!/bin/sh
+exec "$node_dir/bin/node" "$data/source/blockchain/nir-desktop.mjs" "\$@"
+LAUNCHER
+  chmod 755 "$HOME/.local/bin/nir"
+  cat > "${XDG_DATA_HOME:-$HOME/.local/share}/applications/nir.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=NIR
+Comment=NIR Wallet и NIR Майнер
+Exec=$HOME/.local/bin/nir
+Icon=$data/source/site/nir-coin-icon.svg
+Terminal=false
+Categories=Finance;
+DESKTOP
+  if ! command -v google-chrome >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1 &&
+     ! command -v chromium-browser >/dev/null 2>&1 && ! command -v microsoft-edge >/dev/null 2>&1 &&
+     ! command -v brave-browser >/dev/null 2>&1; then
+    note "Совет: с Chrome или Chromium NIR открывается в отдельных окнах. Без них — во вкладках обычного браузера."
+  fi
+  printf '\n\033[1;32mГотово!\033[0m NIR есть в меню приложений, а в терминале — команда nir.\n'
+  note "Сначала NIR предложит создать кошелёк: запишите 24 слова на бумагу."
+  note "Потом в окне NIR Майнер нажмите «Подключить NIR Wallet» и «Начать майнинг»."
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    nohup "$HOME/.local/bin/nir" >/dev/null 2>&1 &
+  fi
+}
+
+case "$(uname -s)" in
+  Darwin) ;;
+  Linux) install_linux; exit 0 ;;
+  *) fail "NIR работает на macOS и Linux; для Windows — команда с сайта nircoin.com." ;;
+esac
 MACOS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 (( MACOS_MAJOR >= 13 )) || fail "нужна macOS 13 (Ventura) или новее."
 case "$(uname -m)" in
