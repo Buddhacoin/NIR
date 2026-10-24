@@ -169,3 +169,11 @@ footer { margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-
 #mining .mining-network button[aria-checked="true"] { background:var(--card2);color:var(--text);box-shadow:inset 0 0 0 1px var(--lime); }
 #mining .mining-network button:disabled { cursor:wait; }
 .connection[data-state="starting"] { display:block;border-color:var(--line);background:var(--card);color:var(--muted); }
+
+/* Pioneer points: the share of the 210,000 NIR pool this miner is earning. */
+.mining-pioneer { margin:10px 0;padding:14px 16px;border:1px solid #f5c45e66;border-radius:16px;background:linear-gradient(160deg,#2a2210,#171410);box-shadow:0 0 30px #f5c45e14; }
+.mining-pioneer > div { display:flex;align-items:baseline;justify-content:space-between;gap:12px; }
+.mining-pioneer span { color:#f5c45e;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase; }
+.mining-pioneer strong { color:#ffe08a;font-size:26px; }
+.mining-pioneer p { margin:6px 0 0;color:#e9dcc0;font-size:13px;line-height:1.45; }
+.mining-pioneer .mining-pioneer-note { color:var(--muted);font-size:12px; }

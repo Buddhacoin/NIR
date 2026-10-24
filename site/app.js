@@ -10,7 +10,7 @@ const en = {
   ctaMine: "⚡ Start mining for free", ctaHow: "▶ How it works",
   platforms: "<b>macOS, Windows and Linux</b> — available now",
   fFound: "Solution found", fLevel: "Task difficulty", fProtect: "Protection", fQuantum: "Post-quantum 🔒",
-  tLive: "Network is live", tBlock: "Block", tLevel: "Difficulty", tSupply: "Total ever", tHardware: "Hardware",
+  tLive: "Network is live", tBlock: "Block", tLevel: "Difficulty", tMiners: "Miners on the network", tPioneers: "Pioneers", tMined: "Mined", tSupply: "Total ever", tHardware: "Hardware",
   tSales: "Presales", tOnly: "mining only",
   whyEyebrow: "Why it is different", whyTitle: "Mining that doesn't burn the planet",
   whyLead: "Bitcoin spends the electricity of whole countries guessing random numbers. NIR spends it on solving problems: hard to find, instant to check. The smarter programs and AI become, the harder the problems get — turning the progress of intelligence into the coin's scarcity.",
@@ -170,6 +170,15 @@ async function refreshLive() {
     if (Number.isSafeInteger(health.height)) live("height", health.height.toLocaleString("ru-RU"));
     if (mining.level !== undefined) live("level", String(mining.level));
   } catch { /* The page works without live numbers. */ }
+  // Who is mining: miners that joined, those with pioneer points, NIR mined.
+  try {
+    const stats = await fetch("/api/v1/stats", { cache: "no-store" }).then((response) => response.json());
+    const count = (value) => Number.isSafeInteger(value) ? value.toLocaleString("ru-RU") : "—";
+    live("miners", count(stats.miners));
+    live("pioneers", count(stats.pioneers));
+    const mined = /^([0-9]+)\./.exec(stats.minedNir ?? "")?.[1];
+    if (mined) live("mined", Number(mined).toLocaleString("ru-RU"));
+  } catch { /* Older servers have no stats yet. */ }
 }
 void refreshLive();
 setInterval(refreshLive, 15_000);

@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { mineOneCliqueTask } from "../blockchain/clique-miner.mjs";
+import { pioneerView } from "../blockchain/clique-mining-session.mjs";
+import { createNetworkRelay } from "../blockchain/network-relay.mjs";
+import { createDeveloperNodeHttpServer } from "../blockchain/node-service.mjs";
 import { PROGRESS_REWARD_ESCROW_DELAY_BLOCKS, PROOF_MINING_PROTOCOL_VERSION } from "../blockchain/constants.mjs";
 import { LATEST_DEVNET_PROTOCOL_VERSION } from "../blockchain/node-store.mjs";
 import { initializeDevnet, PersistentDevNode } from "../blockchain/node-store.mjs";
@@ -54,8 +57,46 @@ test("a proof-mining devnet upgrades to the latest version, issues tasks from it
     assert.equal(reward.amount, node.account(recipient).atomicBalance);
     assert.ok(reward.height > 0);
     assert.deepEqual(node.proofRewards(address), []);
+    // Pioneer points: every proof reward ever paid, against all others.
+    const pioneer = node.pioneerPoints(recipient);
+    assert.equal(pioneer.points, node.account(recipient).atomicBalance);
+    assert.equal(pioneer.totalPoints, pioneer.points);
+    assert.equal(pioneer.pioneers, 1);
+    assert.equal(pioneer.poolNir, "210000");
+    assert.equal(node.pioneerPoints(address).points, "0");
+    assert.throws(() => node.pioneerPoints("nir1x"), /address is invalid/);
+    // Public network figures: one miner joined through the faucet and has points.
+    const stats = node.stats();
+    assert.equal(stats.miners, 1);
+    assert.equal(stats.pioneers, 1);
+    assert.equal(stats.minedNir, `${node.account(recipient).balance}`);
+    assert.equal(stats.names, 0);
     // A restarted node replays the stored chain to the same state.
     assert.deepEqual(new PersistentDevNode(directory).proofMining(), node.proofMining());
+    assert.deepEqual(new PersistentDevNode(directory).pioneerPoints(recipient), pioneer);
+    // A resume file from before pioneer points rebuilds them by replaying blocks.
+    const resumePath = join(directory, "DEVNET-RESUME.json");
+    assert.equal(existsSync(resumePath), true);
+    const resume = JSON.parse(readFileSync(resumePath, "utf8"));
+    assert.ok(Array.isArray(resume.proofRewardTotals));
+    delete resume.proofRewardTotals;
+    writeFileSync(resumePath, JSON.stringify(resume));
+    assert.deepEqual(new PersistentDevNode(directory).pioneerPoints(recipient), pioneer);
+    // The node's HTTP API and the miner's relay both serve them.
+    const server = createDeveloperNodeHttpServer(node);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/pioneers/${recipient}`);
+      assert.deepEqual(await response.json(), pioneer);
+      const relay = createNetworkRelay(`http://127.0.0.1:${server.address().port}`);
+      await new Promise((resolve) => relay.listen(0, "127.0.0.1", resolve));
+      try {
+        const relayed = await fetch(`http://127.0.0.1:${relay.address().port}/v1/pioneers/${recipient}`);
+        assert.deepEqual(await relayed.json(), pioneer);
+        const relayedStats = await fetch(`http://127.0.0.1:${relay.address().port}/v1/stats`);
+        assert.deepEqual(await relayedStats.json(), node.stats());
+      } finally { await new Promise((resolve) => relay.close(resolve)); }
+    } finally { await new Promise((resolve) => server.close(resolve)); }
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -73,4 +114,14 @@ test("an ordinary devnet has no proof mining", () => {
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test("the miner shows pioneer points, today's share of 210,000 NIR and its estimate", () => {
+  const view = pioneerView({ address: "nir1a", points: 1_320n * 100_000_000n, pioneers: 7,
+    totalPoints: 4_400n * 100_000_000n });
+  assert.equal(view.points, "1320.00000000 NIR");
+  assert.equal(view.shareBasisPoints, 3000);
+  assert.equal(view.estimate, "63000.00000000 NIR");
+  assert.equal(view.pioneers, 7);
+  assert.equal(pioneerView({ address: "nir1a", points: 0n, pioneers: 0, totalPoints: 0n }).shareBasisPoints, 0);
 });

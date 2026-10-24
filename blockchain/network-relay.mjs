@@ -4,7 +4,7 @@
 // account proofs against the pinned genesis itself.
 import { createServer } from "node:http";
 
-const READ_PATH = /^\/(?:health|v1\/(?:genesis|allocations|fees|finality-proofs|proof-mining|names|validator-handoffs|names\/[a-z0-9.-]{1,40}|accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history|proof-rewards|name))?|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof))$/;
+const READ_PATH = /^\/(?:health|v1\/(?:genesis|allocations|fees|finality-proofs|proof-mining|names|validator-handoffs|pioneers\/nir1[0-9a-f]{64}|stats|names\/[a-z0-9.-]{1,40}|accounts\/nir1[0-9a-f]{64}(?:\/(?:proof|history|proof-rewards|name))?|transactions\/[0-9a-f]{64}\/proof|assets\/[0-9a-f]{64}\/proof))$/;
 const POST_PATHS = new Set(["/v1/transactions", "/v1/faucet"]);
 const MAX_BODY_BYTES = 64 * 1024;
 

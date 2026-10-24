@@ -5,7 +5,7 @@ import { Worker } from "node:worker_threads";
 import { createProofAnswerCommit, createProofAnswerReveal, createTransfer, formatNir } from "./chain.mjs";
 import { createMinerNodeClient, mineOneCliqueTask } from "./clique-miner.mjs";
 import { cliqueSearchParameters } from "./clique-search.mjs";
-import { MIN_TRANSFER_FEE } from "./constants.mjs";
+import { ATOMIC_UNITS, MIN_TRANSFER_FEE } from "./constants.mjs";
 import { generateWallet } from "./crypto.mjs";
 import { acquireDataDirectoryLock } from "./data-directory-lock.mjs";
 import { createDeveloperNodeHttpServer } from "./node-service.mjs";
@@ -26,6 +26,16 @@ const MAX_EVENTS = 40;
 // Kept on the miner key when its coins are sent to the wallet: room for a
 // few more commits.
 const MINER_RESERVE = 10n * (PROOF_MINING_V1.commitBond + 2n * MIN_TRANSFER_FEE);
+
+// 210,000 NIR are shared by points at the main network's launch; this is
+// today's share, which moves as everyone keeps mining.
+const PIONEER_POOL = 210_000n * ATOMIC_UNITS;
+export function pioneerView({ address, points, pioneers, totalPoints }) {
+  const shareOf = (scale) => totalPoints > 0n ? points * scale / totalPoints : 0n;
+  return { address, estimate: formatNir(shareOf(PIONEER_POOL)), pioneers, points: formatNir(points),
+    // Hundredths of a percent.
+    shareBasisPoints: Number(shareOf(10_000n)) };
+}
 
 export class CliqueMiningSession {
   #dataDirectory;
@@ -55,6 +65,10 @@ export class CliqueMiningSession {
   #remoteView = null;
   #remoteBalances = new Map();
   #preparing = null;
+  // Pioneer points of the rewarded address on the shared network
+  // (docs/pioneer-program.md), refreshed every half minute.
+  #pioneer = null;
+  #pioneerAt = 0;
 
   // `recipient` returns the linked wallet address, or null.
   constructor({ dataDirectory, recipient = () => null, httpPort = 8787, tickMs = 2_000, network = null,
@@ -152,6 +166,18 @@ export class CliqueMiningSession {
       }
       this.#remoteView = view;
       this.#remoteBalances = balances;
+    } catch {}
+    const rewarded = this.#recipient() ?? this.#miner?.address;
+    if (!rewarded || (this.#pioneer?.address === rewarded && Date.now() - this.#pioneerAt < 30_000)) return;
+    try {
+      const response = await fetch(new URL(`/v1/pioneers/${rewarded}`, this.#network.url),
+        { signal: AbortSignal.timeout(10_000) });
+      const value = await response.json();
+      if (!response.ok || value.address !== rewarded || !/^[0-9]{1,30}$/.test(value.points ?? "") ||
+          !/^[0-9]{1,30}$/.test(value.totalPoints ?? "") || !Number.isSafeInteger(value.pioneers)) return;
+      this.#pioneer = { address: rewarded, points: BigInt(value.points), pioneers: value.pioneers,
+        totalPoints: BigInt(value.totalPoints) };
+      this.#pioneerAt = Date.now();
     } catch {}
   }
 
@@ -351,6 +377,7 @@ export class CliqueMiningSession {
       state: this.#state,
       task: this.#task ? { k: this.#task.k, level: this.#task.level, n: this.#task.n, round: this.#task.round } : null,
       wallet: recipient ? { address: recipient, balance: formatNir(balanceOf(recipient)) } : null,
+      pioneer: this.#remote && this.#pioneer ? pioneerView(this.#pioneer) : null,
     };
   }
 
