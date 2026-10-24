@@ -7,6 +7,7 @@ import { createMarketService, normalizeCoin, normalizeCoins } from "../blockchai
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/market/${name}`, import.meta.url), "utf8"));
 const responses = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", fng: "fng.json" };
 const fromFixtures = async (url) => {
+  if (url.includes("/search?query=")) return fixture("search.json");
   if (url.includes("/coins/bitcoin/market_chart")) return fixture("chart-bitcoin.json");
   if (url.includes("/coins/bitcoin?")) return fixture("coin-bitcoin.json");
   if (/\/coins\/(?!markets)/.test(url)) throw Object.assign(new Error("api.coingecko.com answered 404"), { status: 404 });
@@ -124,4 +125,27 @@ test("coin details reject what is not a coin", () => {
   assert.deepEqual(coin.links.websites, []);
   assert.equal(coin.links.x, null);
   assert.equal(coin.price, null);
+});
+
+test("search covers every coin, cleans the results and caches each query", async () => {
+  const fetched = [];
+  const service = createMarketService({ fetch: async (url) => { fetched.push(url); return fromFixtures(url); } });
+  await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  try {
+    const response = await fetch(`${base}/market/search?q=%20Zeus%20`);
+    assert.equal(response.status, 200);
+    const { coins } = await response.json();
+    assert.deepEqual(coins.map((coin) => coin.id), ["bitcoin", "zeus-token", "athena-coin"]);
+    assert.equal(coins[1].rank, 812);
+    assert.equal(coins[2].image, null);
+    await fetch(`${base}/market/search?q=zeus`);
+    assert.equal(fetched.length, 1, "the same query is served from the cache");
+    assert.match(fetched[0], /query=zeus$/);
+    assert.deepEqual(await (await fetch(`${base}/market/search?q=`)).json(), { coins: [] });
+    assert.deepEqual(await (await fetch(`${base}/market/search?q=${"x".repeat(41)}`)).json(), { coins: [] });
+    assert.equal(fetched.length, 1);
+  } finally {
+    await new Promise((resolve) => service.server.close(resolve));
+  }
 });

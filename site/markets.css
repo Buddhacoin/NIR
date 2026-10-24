@@ -34,6 +34,16 @@ button, input { font: inherit; color: inherit; }
 .top nav { display: flex; gap: 22px; color: var(--muted); font-weight: 650; }
 .top nav a:hover { color: var(--text); }
 .search { width: 280px; margin-left: auto; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.search-wrap { position: relative; margin-left: auto; }
+.suggest { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 360px; max-height: 70vh; padding: 6px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 18px 50px #0006; }
+.suggest small { display: block; padding: 8px 10px 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.suggest a { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; font-size: 14px; }
+.suggest a:hover, .suggest a.on { background: var(--soft); }
+.suggest a b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest a span { color: var(--muted); font-size: 12px; }
+.suggest a em { margin-left: auto; color: var(--muted); font-size: 12px; font-style: normal; }
+.suggest p { margin: 0; padding: 14px 10px; color: var(--muted); font-size: 14px; }
 .search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pill { padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
 
@@ -192,9 +202,11 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .brand img { width: 30px; height: 30px; }
   .top .pill { margin-left: 0; padding: 7px 10px; }
   .find { display: grid; place-items: center; margin-left: auto; }
-  .search { display: none; }
+  .search-wrap { display: none; }
   .searching .top { flex-wrap: wrap; }
-  .searching .search { display: block; order: 5; width: 100%; margin: 4px 0 0; }
+  .searching .search-wrap { display: block; order: 5; width: 100%; margin: 4px 0 0; }
+  .searching .search { width: 100%; }
+  .suggest { width: 100%; max-height: 60vh; }
   .wrap { padding: 12px 12px 24px; }
 
   .cards { display: block; }
