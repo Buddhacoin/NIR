@@ -8,18 +8,18 @@ const en = {
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
   navCoins: "Cryptocurrencies", navNir: "About NIR", navMine: "NIR mining", search: "Search coins",
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
-  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist",
+  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabComments: "Comments",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
   aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { loading: "Загружаю профиль…", missing: "Такого профиля нет.", unavailable: "Профиль временно недоступен.",
     since: (date) => `на NIR Markets с ${date}`, joined: "Присоединился к NIR Markets", profile: "Обновил профиль",
-    watch: "Добавил в избранное", noActivity: "Пока здесь пусто.", noWatch: "В избранном пока ничего нет. Нажмите ☆ у монеты.",
+    watch: "Добавил в избранное", comment: "Написал о", noComments: "Комментариев пока нет.", noActivity: "Пока здесь пусто.", noWatch: "В избранном пока ничего нет. Нажмите ☆ у монеты.",
     title: (user) => `${user.displayName} (@${user.username}) — NIR Markets` },
   en: { loading: "Loading the profile…", missing: "There is no such profile.", unavailable: "The profile is unavailable right now.",
     since: (date) => `on NIR Markets since ${date}`, joined: "Joined NIR Markets", profile: "Updated the profile",
-    watch: "Added to the watchlist", noActivity: "Nothing here yet.", noWatch: "The watchlist is empty. Tap ☆ next to a coin.",
+    watch: "Added to the watchlist", comment: "Commented on", noComments: "No comments yet.", noActivity: "Nothing here yet.", noWatch: "The watchlist is empty. Tap ☆ next to a coin.",
     title: (user) => `${user.displayName} (@${user.username}) — NIR Markets` },
 };
 
@@ -52,6 +52,18 @@ function renderView() {
       const change = document.createElement("span");
       if (coin) { change.className = changeClass(coin.change24h); change.textContent = `${price(coin.price)} · ${percentText(coin.change24h)}`; }
       row.append(coinLink(id), change);
+      return row;
+    }));
+    return;
+  }
+  if (view === "comments") {
+    if (!page.comments.length) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().noComments })); return; }
+    box.replaceChildren(...page.comments.map((comment) => {
+      const row = document.createElement("div");
+      row.className = "feed-row comment-row";
+      const when = Object.assign(document.createElement("small"), { className: "muted",
+        textContent: new Date(comment.createdAt).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) });
+      row.append(coinLink(comment.coinId), when, Object.assign(document.createElement("p"), { textContent: comment.body }));
       return row;
     }));
     return;

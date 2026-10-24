@@ -48,6 +48,24 @@ limited to 60 a minute per account. Data: `/var/lib/nir-market/accounts.db`
 (SQLite, `StateDirectory=nir-market`). `www.` redirects to the main address
 so the cookie and Google's callback always match.
 
+### Discussion on a coin's page
+
+Each coin's page has a Discussion block (`blockchain/market-community.mjs`):
+
+- **The daily vote** "How do you feel about X today?": Rise or Fall, one vote
+  per account per coin per UTC day; the split shows after voting.
+- **Comments**: up to 1,000 characters with an optional Rise/Fall tag, sorted
+  by Latest or Top, one level of replies, likes. One comment per 20 seconds
+  and 50 a day per account. A comment and its replies can be deleted by the
+  author or a moderator; three reports from different accounts hide it.
+  Moderators are the Google emails listed in `NIR_MARKET_ADMINS`
+  (comma-separated) in `/etc/nir-market.env`.
+- A profile shows its comments (public) and "commented on X" in its activity.
+
+Signed-out visitors read; posting, liking, reporting and voting need an
+account. The block is shown when sign-in is on or there is already something
+to read.
+
 ### Turning on Google sign-in
 
 Until the keys are set, the site works as before and shows no sign-in button.
