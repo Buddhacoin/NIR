@@ -48,5 +48,12 @@ Charts in the table are TradingView's free embedded widget (the coin's main Bina
 under a coin's row; stablecoins have none. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
 
+On phones the pages follow the layout of the market apps: four compact market
+figures, a one-line market summary that opens on tap, underlined tabs (Top,
+Watchlist, Trending, gainers, losers, stablecoins), a list of coin, price and
+24h change with a sparkline, and a bottom bar (Markets, Watchlist, Mining,
+About NIR). Saved to a phone's home screen, the site shows the NIR coin icon
+(`apple-touch-icon.png`, `manifest.webmanifest`) and the name NIR Markets.
+
 The watchlist (shared by the table and coin pages), theme and language stay in the visitor's browser; the page
 needs no account and loads no trackers.

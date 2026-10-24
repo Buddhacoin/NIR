@@ -2,7 +2,8 @@
   --bg: #06070a; --bg2: #0a0c0e; --card: #15191d; --card-glass: #15191dcc; --line: #ffffff26; --text: #f2f4f0;
   --muted: #9aa39c; --soft: #c9d0ca; --dim: #ffffff66; --lime: #b9ff5a; --accent: #b9ff5a; --gold: #f5c45e;
   --gold2: #ff9d2e; --gold-text: #f5c45e; --violet: #c9b6ff; --red: #ff6b6b; --top: #06070acc; --code: #050605;
-  --on-accent: #071107; --card-old: linear-gradient(160deg, #1b2025, #121519);
+  --on-accent: #071107; --cta: linear-gradient(135deg, #b9ff5a, #7dff8f); --on-cta: #071107; --cta-glow: #b9ff5a55;
+  --card-old: linear-gradient(160deg, #1b2025, #121519);
   --card-nir: linear-gradient(160deg, #1b2c17, #10150f); --final: linear-gradient(160deg, #16210f, #0d1011);
   --lift: inset 0 1px 0 #ffffff14, 0 24px 60px #0009;
   --sky-line: #1d2621; --sky-dot: #46524a; --sky-lit: #b9ff5a; --shadow: #000c;
@@ -19,6 +20,7 @@
   --card-nir: linear-gradient(160deg, #f1fbe6, #ffffff); --final: linear-gradient(160deg, #f4faea, #fffaf0);
   --sky-line: #dedcd2; --sky-dot: #b3b7ad; --sky-lit: #4c9a00; --shadow: #1a1d1a33; --lift: 0 12px 40px #1a1d1a14;
   --c-mining: #6cc417; --c-founder: #e3a52c; --c-fund: #3d8fe0; --c-pioneer: #9b7fe8;
+  --cta: #111111; --on-cta: #ffffff; --cta-glow: transparent;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -29,6 +31,7 @@
     --card-nir: linear-gradient(160deg, #f1fbe6, #ffffff); --final: linear-gradient(160deg, #f4faea, #fffaf0);
     --sky-line: #dedcd2; --sky-dot: #b3b7ad; --sky-lit: #4c9a00; --shadow: #1a1d1a33; --lift: 0 12px 40px #1a1d1a14;
     --c-mining: #6cc417; --c-founder: #e3a52c; --c-fund: #3d8fe0; --c-pioneer: #9b7fe8;
+    --cta: #111111; --on-cta: #ffffff; --cta-glow: transparent;
     color-scheme: light;
   }
 }
@@ -54,8 +57,8 @@ h1, h2, h3, h4 { margin: 0; letter-spacing: -0.025em; line-height: 1.05; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; padding: 0 26px; border: 1px solid var(--line); border-radius: 14px;
   background: color-mix(in srgb, var(--text) 4%, transparent); color: var(--text); font-weight: 700; transition: transform 0.15s, box-shadow 0.2s; }
 .btn:hover { transform: translateY(-2px); }
-.btn.primary { border: 0; background: linear-gradient(135deg, #b9ff5a, #7dff8f); color: var(--on-accent); box-shadow: 0 0 40px #b9ff5a55; }
-.btn.primary:hover { box-shadow: 0 0 60px #b9ff5a88; }
+.btn.primary { border: 0; background: var(--cta); color: var(--on-cta); box-shadow: 0 0 40px var(--cta-glow); }
+.btn.primary:hover { box-shadow: 0 0 60px var(--cta-glow); }
 .btn.small { min-height: 40px; padding: 0 18px; font-size: 14px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .actions.center { justify-content: center; }
@@ -219,12 +222,12 @@ h2 { max-width: 820px; margin-top: 12px; font-size: clamp(32px, 4.6vw, 52px); fo
 .steps { display: grid; gap: 16px; margin: 44px 0 0; padding: 0; list-style: none; }
 .steps li { display: flex; gap: 20px; padding: 28px; border: 1px solid var(--line); border-radius: 24px; background: var(--card-old); }
 .steps li > div { flex: 1; min-width: 0; }
-.num { flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(135deg, #b9ff5a, #7dff8f); color: var(--on-accent); font-weight: 800; }
+.num { flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: var(--cta); color: var(--on-cta); font-weight: 800; }
 .steps h3 { font-size: 21px; }
 .steps p { margin: 8px 0 0; color: var(--muted); }
 .command { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding: 10px 10px 10px 18px; border: 1px solid #b9ff5a55; border-radius: 14px; background: var(--code); }
 .command code { flex: 1; min-width: 0; overflow-x: auto; color: var(--accent); white-space: nowrap; font: 15px ui-monospace, "SF Mono", Menlo, monospace; }
-.command button { flex: none; min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #b9ff5a; color: var(--on-accent); font: inherit; font-weight: 700; cursor: pointer; }
+.command button { flex: none; min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--cta); color: var(--on-cta); font: inherit; font-weight: 700; cursor: pointer; }
 .hint { font-size: 14px; }
 .os-tabs { display: inline-flex; gap: 4px; margin-top: 14px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; }
 .os-tabs button { padding: 7px 14px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }

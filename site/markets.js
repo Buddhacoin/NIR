@@ -10,21 +10,22 @@ const en = {
   search: "Search coins", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
   briefTag: "✦ MARKET SUMMARY", briefNote: "Built automatically from the last 24 hours of prices. Not financial advice.",
-  tabTop: "Top", tabWatch: "Watchlist", tabGainers: "Top gainers", tabLosers: "Top losers", tabStable: "Stablecoins",
+  tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Top gainers", tabLosers: "Top losers", tabStable: "Stablecoins",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
   nirNoPrice: "No price yet — pioneers are mining now", nirMinedShort: "NIR mined", mine: "Mine",
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No sign-up, no trackers", aboutNir: "About the NIR blockchain →",
+  briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining",
 };
 const words = {
-  ru: { chart: "График", close: "Скрыть", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты, чтобы добавить её в избранное.",
+  ru: { chart: "График", close: "Скрыть", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { chart: "Chart", close: "Hide", empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin to add it to your watchlist.",
+  en: { chart: "Chart", close: "Hide", empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -37,9 +38,9 @@ let tab = "top";
 let query = "";
 let openChart = null;
 
-function sparkline(points, rising) {
+function sparkline(points, rising, className = "spark") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "spark");
+  svg.setAttribute("class", className);
   svg.setAttribute("viewBox", "0 0 120 38");
   svg.setAttribute("preserveAspectRatio", "none");
   if (points.length > 1) {
@@ -71,6 +72,11 @@ function visibleCoins() {
   let coins = data?.coins ?? [];
   if (tab === "watch") coins = coins.filter((coin) => watch.has(coin.id));
   if (tab === "stable") coins = coins.filter((coin) => STABLE.has(coin.symbol));
+  // Trending coins outside the top 100 come with a price and a 24h change only.
+  if (tab === "trending") {
+    coins = (data?.trending ?? []).map((item) => data.coins.find((coin) => coin.id === item.id) ??
+      { ...item, rank: null, change1h: null, change7d: null, marketCap: null, volume: null, sparkline: [] });
+  }
   if (tab === "gainers" || tab === "losers") {
     coins = coins.filter((coin) => coin.change24h !== null && !STABLE.has(coin.symbol))
       .sort((a, b) => (tab === "gainers" ? b.change24h - a.change24h : a.change24h - b.change24h)).slice(0, 30);
@@ -91,7 +97,7 @@ function renderTable() {
     const row = document.createElement("tr");
     row.className = "coin";
     const star = document.createElement("td");
-    star.className = `star${watch.has(coin.id) ? " on" : ""}`;
+    star.className = `star hide-s${watch.has(coin.id) ? " on" : ""}`;
     star.textContent = watch.has(coin.id) ? "★" : "☆";
     star.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -110,7 +116,10 @@ function renderTable() {
     title.textContent = coin.name;
     const symbol = document.createElement("span");
     symbol.textContent = coin.symbol;
-    cell.append(logo(coin), title, symbol);
+    // On a phone the row shows the symbol over the market cap, as in the market apps.
+    const capLine = document.createElement("small");
+    capLine.textContent = big(coin.marketCap);
+    cell.append(logo(coin), title, symbol, capLine);
     name.append(cell);
     const value = document.createElement("td");
     value.textContent = price(coin.price);
@@ -123,7 +132,14 @@ function renderTable() {
     const spark = document.createElement("td");
     spark.className = "hide-s";
     spark.append(sparkline(coin.sparkline, (coin.change7d ?? 0) >= 0));
+    const day = percentCell(coin.change24h);
+    day.prepend(sparkline(coin.sparkline, (coin.change7d ?? 0) >= 0, "m-spark"));
+    const hour = percentCell(coin.change1h);
+    const week = percentCell(coin.change7d);
+    hour.classList.add("hide-s");
+    week.classList.add("hide-s");
     const action = document.createElement("td");
+    action.className = "hide-s";
     const charted = !STABLE.has(coin.symbol);
     if (charted) {
       const button = document.createElement("button");
@@ -139,8 +155,7 @@ function renderTable() {
     }
     // The whole row opens the coin's page; the star and the chart button do their own thing.
     row.addEventListener("click", (event) => { if (!event.target.closest("a")) location.href = coinUrl(coin); });
-    row.append(star, rank, name, value, percentCell(coin.change1h), percentCell(coin.change24h),
-      percentCell(coin.change7d), cap, volume, spark, action);
+    row.append(star, rank, name, value, hour, day, week, cap, volume, spark, action);
     body.append(row);
     if (openChart === coin.id && charted) body.append(chartRow(coin));
   }
@@ -151,11 +166,11 @@ function renderTable() {
 function renderCards() {
   const t = words[language];
   const g = data.global;
-  $("#g-cap").textContent = big(g?.marketCap);
+  $("#g-cap").textContent = big(g?.marketCap, "$", 1);
   const capChange = $("#g-cap-change");
   capChange.className = changeClass(g?.marketCapChange24h);
   capChange.textContent = percentText(g?.marketCapChange24h);
-  $("#g-volume").textContent = big(g?.volume);
+  $("#g-volume").textContent = big(g?.volume, "$", 1);
   $("#g-btc").textContent = g?.btcDominance === null || g?.btcDominance === undefined ? "—"
     : `${g.btcDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
   $("#g-eth").textContent = g?.ethDominance ? `ETH ${g.ethDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` : "";
@@ -197,7 +212,7 @@ function renderCards() {
   const btc = data.coins.find((coin) => coin.symbol === "BTC");
   const top = data.gainers?.[0];
   const low = data.losers?.[0];
-  $("#brief").textContent = g && btc && top && low ? t.brief({
+  $("#brief").textContent = $("#m-brief-text").textContent = g && btc && top && low ? t.brief({
     cap: g.marketCapChange24h ?? 0, capPct: `${Math.abs(g.marketCapChange24h ?? 0).toLocaleString(locale(), { maximumFractionDigits: 2 })}%`,
     capValue: big(g.marketCap), btc: price(btc.price), btcPct: percentText(btc.change24h).replace("▲ ", "+").replace("▼ ", "−"),
     dom: `${(g.btcDominance ?? 0).toLocaleString(locale(), { maximumFractionDigits: 1 })}%`,
@@ -225,6 +240,10 @@ for (const button of document.querySelectorAll("[data-tab]")) {
   button.addEventListener("click", () => {
     tab = button.dataset.tab;
     for (const other of document.querySelectorAll(".tabs [data-tab]")) other.classList.toggle("on", other.dataset.tab === tab);
+    // The bottom bar on phones: Watchlist, or Markets for every other list.
+    for (const item of document.querySelectorAll(".tabbar [data-tab]")) {
+      item.classList.toggle("on", (item.dataset.tab === "watch") === (tab === "watch"));
+    }
     renderTable();
   });
 }
@@ -233,6 +252,15 @@ const search = $("#search");
 search.value = new URLSearchParams(location.search).get("q")?.slice(0, 60) ?? "";
 query = search.value.trim();
 search.addEventListener("input", () => { query = search.value.trim(); renderTable(); });
+// Phones show a search button that opens the field under the header.
+$("#find").addEventListener("click", () => {
+  document.body.classList.toggle("searching");
+  if (document.body.classList.contains("searching")) search.focus();
+});
+if (query) document.body.classList.add("searching");
+$("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("open"));
+// A coin page's bottom bar links to /#watch.
+if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]").click();
 
 setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } },
   onTheme: () => { if (openChart) renderTable(); } }); // the chart follows the theme
