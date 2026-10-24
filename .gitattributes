@@ -1,0 +1,6 @@
+# Every system checks files out byte for byte as committed: hashed files such
+# as the recovery word list must not gain Windows line endings.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.svg text eol=lf

@@ -5,10 +5,11 @@
 // words on another Mac brings the same accounts back in the same order.
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { canonicalJson } from "./crypto.mjs";
 import { validPersonalWalletPassword } from "./vault.mjs";
+import { privateMode } from "./wallet-files-windows.mjs";
 import { createPhraseWalletFile, verifyWalletFile } from "./wallet-files.mjs";
 import { listLocalTestWallets } from "./wallet-onboarding.mjs";
 import { entropyFromMnemonic, mnemonicFromEntropy, walletFromMnemonic } from "./wallet-seed.mjs";
@@ -19,11 +20,11 @@ const MAX_ACCOUNTS = 100;
 function privateDirectory(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   const stat = lstatSync(path);
-  if (!stat.isDirectory() || (stat.mode & 0o077) !== 0) throw new Error("wallet storage directory is not private");
+  if (!stat.isDirectory() || !privateMode(stat.mode)) throw new Error("wallet storage directory is not private");
 }
 
 function root(storageRoot) {
-  if (typeof storageRoot !== "string" || !storageRoot.startsWith("/")) {
+  if (typeof storageRoot !== "string" || !isAbsolute(storageRoot)) {
     throw new Error("wallet storage root must be absolute");
   }
   return resolve(storageRoot);
@@ -126,6 +127,13 @@ export function addLocalSeedAccount({ storageRoot, password }) {
     if (!existing.has(addressAt(phrase, index))) return storeAccount(storageRoot, phrase, password, index);
   }
   throw new Error("this recovery phrase already has the maximum number of accounts");
+}
+
+// A new wallet password protects the 24 words too, so a new account asks
+// for the same password as every signature.
+export function changeLocalSeedPassword({ storageRoot, oldPassword, newPassword }) {
+  if (!validPersonalWalletPassword(newPassword)) throw new Error("wallet password does not meet creation requirements");
+  writeSeed(storageRoot, decryptPhrase(readSeed(storageRoot), oldPassword), newPassword);
 }
 
 export function revealLocalSeedPhrase({ storageRoot, password }) {

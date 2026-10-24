@@ -9,7 +9,7 @@
   <meta property="og:description" content="Первый блокчейн, где монеты рождаются из решённых задач. Сеть открыта — станьте первопроходцем.">
   <link rel="icon" href="nir-coin-icon.svg" type="image/svg+xml">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <header class="top">
@@ -38,7 +38,7 @@
             <a class="btn primary" href="#start" data-i18n="ctaMine">⚡ Начать майнинг бесплатно</a>
             <a class="btn" href="#why" data-i18n="ctaHow">▶ Как это работает</a>
           </div>
-          <p class="platforms" data-i18n="platforms"><b>macOS и Linux</b> — уже сейчас · Windows — скоро</p>
+          <p class="platforms" data-i18n="platforms"><b>macOS, Windows и Linux</b> — уже сейчас</p>
         </div>
         <div class="stage" aria-hidden="true">
           <div class="orbit o1"></div><div class="orbit o2"></div>
@@ -176,9 +176,11 @@
         <ol class="steps">
           <li><span class="num">1</span><div>
             <h3 data-i18n="s1Title">Одна команда</h3>
-            <p data-i18n="s1Text">Откройте «Терминал» (на Mac: ⌘ + пробел → «Терминал»), вставьте команду и нажмите Enter. NIR соберётся прямо на вашем компьютере из открытого кода.</p>
-            <div class="command"><code id="install-command">curl -fsSL https://nircoin.com/install.sh | bash</code><button type="button" id="copy" data-i18n="copy">Скопировать</button></div>
-            <p class="hint" data-i18n="s1Hint">macOS 13+ или Linux · Windows — скоро</p>
+            <div class="os-tabs" role="group" aria-label="Система"><button type="button" data-os="unix" class="on" data-i18n="osUnix">macOS и Linux</button><button type="button" data-os="windows" data-i18n="osWindows">Windows</button></div>
+            <p data-os-text="unix" data-i18n="s1Text">Откройте «Терминал» (на Mac: ⌘ + пробел → «Терминал»), вставьте команду и нажмите Enter. NIR соберётся прямо на вашем компьютере из открытого кода.</p>
+            <p data-os-text="windows" data-i18n="s1TextWin" hidden>Нажмите «Пуск», введите PowerShell и откройте его. Вставьте команду и нажмите Enter. NIR установится для вашего пользователя, без прав администратора, и появится в меню «Пуск».</p>
+            <div class="command"><code id="install-command" data-unix="curl -fsSL https://nircoin.com/install.sh | bash" data-windows="irm https://nircoin.com/install.ps1 | iex">curl -fsSL https://nircoin.com/install.sh | bash</code><button type="button" id="copy" data-i18n="copy">Скопировать</button></div>
+            <p class="hint" data-i18n="s1Hint">macOS 13+, Windows 10+ или Linux · компьютер с интернетом</p>
           </div></li>
           <li><span class="num">2</span><div><h3 data-i18n="s2Title">24 слова — ваш сейф</h3><p data-i18n="s2Text">NIR Wallet покажет 24 слова. Запишите их на бумагу: это ключ ко всем вашим монетам и к награде первопроходца.</p></div></li>
           <li><span class="num">3</span><div><h3 data-i18n="s3Title">Одна кнопка — и вы майните</h3><p data-i18n="s3Text">В NIR Майнере нажмите «Подключить NIR Wallet» и «Начать майнинг». Займите своё имя.nir, пока оно свободно.</p></div></li>
@@ -210,7 +212,7 @@
         <ol class="road">
           <li class="done"><span class="dot">✓</span><div class="n" data-i18n="ch1n">Глава I</div><h4 data-i18n="ch1t">Искра</h4><p data-i18n="ch1p">Протокол, постквантовые подписи, имена .nir, кошелёк и майнер</p></li>
           <li class="now"><span class="dot"></span><div class="n" data-i18n="ch2n">Глава II</div><h4 data-i18n="ch2t">Пробуждение</h4><p data-i18n="ch2p">Сеть открыта, первые майнеры, программа первопроходцев</p><span class="badge" data-i18n="now">СЕЙЧАС</span></li>
-          <li><span class="dot"></span><div class="n" data-i18n="ch3n">Глава III</div><h4 data-i18n="ch3t">Без границ</h4><p data-i18n="ch3p">Узлы по всему миру, Windows, обозреватель блоков, рейтинг майнеров</p></li>
+          <li><span class="dot"></span><div class="n" data-i18n="ch3n">Глава III</div><h4 data-i18n="ch3t">Без границ</h4><p data-i18n="ch3p">Узлы по всему миру, обозреватель блоков, рейтинг майнеров</p></li>
           <li><span class="dot"></span><div class="n" data-i18n="ch4n">Глава IV</div><h4 data-i18n="ch4t">Испытание</h4><p data-i18n="ch4p">Охота за уязвимостями с наградами, независимые аудиты</p></li>
           <li><span class="dot"></span><div class="n" data-i18n="ch5n">Глава V</div><h4 data-i18n="ch5t">Генезис</h4><p data-i18n="ch5p">Основная сеть. NIR становятся настоящими монетами, первопроходцы получают награду</p></li>
           <li><span class="dot"></span><div class="n" data-i18n="ch6n">Глава VI</div><h4 data-i18n="ch6t">Невидимка</h4><p data-i18n="ch6p">Скрытые переводы и мультикошелёк: BTC, ETH, стейблкоины</p></li>
@@ -239,6 +241,6 @@
     </div>
     <p class="legal" data-i18n="legal">Сейчас работает тестовая сеть: в ней проверяют приложения и правила перед запуском основной сети. Монеты тестовой сети не продаются и не обмениваются. NIR не проводит продаж токенов и не обещает цену. Никогда не сообщайте никому свои 24 слова.</p>
   </footer>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

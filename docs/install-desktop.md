@@ -1,12 +1,19 @@
 # NIR on Linux and Windows
 
+Linux (a terminal):
+
 ```bash
 curl -fsSL https://nircoin.com/install.sh | bash
 ```
 
-On Linux the same command as on a Mac installs **NIR**: NIR Wallet and NIR
-Майнер in one app (`blockchain/nir-desktop.mjs`). Windows uses the same app;
-its installer is described below once it ships.
+Windows 10 or newer (PowerShell, no administrator rights):
+
+```powershell
+irm https://nircoin.com/install.ps1 | iex
+```
+
+Both install **NIR**: NIR Wallet and NIR Майнер in one app
+(`blockchain/nir-desktop.mjs`).
 
 ## What the Linux installer does
 
@@ -20,7 +27,28 @@ git through the system's package manager:
    `nir` command in `~/.local/bin` and a menu entry
    (`~/.local/share/applications/nir.desktop`).
 
-Running the script again updates the source. Python is not needed: mining on
+## What the Windows installer does
+
+`site/install.ps1`, for the current user only:
+
+1. Node.js (the same pinned version), checked against nodejs.org's SHA-256
+   sums with `Get-FileHash`, unpacked into `%LOCALAPPDATA%\NIR`;
+2. the source as GitHub's archive of `main` (no git needed) into
+   `%LOCALAPPDATA%\NIR\source`;
+3. a NIR shortcut in the Start menu and on the desktop. It starts NIR through
+   PowerShell without a console window; the command is passed encoded, so no
+   folder name can break its quoting.
+
+The server serves the script as UTF-8 text, which `irm` needs to run it. On Windows the wallet's files
+are plain files in the per-user `%LOCALAPPDATA%\NIR\Wallet` folder
+(`wallet-files-windows.mjs`): written under a fresh name and hard-linked into
+place, replaced by one atomic rename, and read only as a single regular file
+that stayed the same while it was read. Windows has no POSIX modes, no
+`O_NOFOLLOW` and needs privileges for the activation links used elsewhere.
+
+## Both
+
+Running either installer again updates the source. Python is not needed: mining on
 the shared network is pure JavaScript, and NIR Майнер's optional model checks
 report that Python is missing.
 

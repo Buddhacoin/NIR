@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { validPersonalWalletPassword } from "./vault.mjs";
 import { walletPublicInfo } from "./wallet-files.mjs";
 import { changeLocalTestWalletPassword, listLocalTestWallets } from "./wallet-onboarding.mjs";
-import { addLocalSeedAccount, createLocalSeedWallet, hasLocalSeed, restoreLocalSeedWallet,
-  revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
+import { addLocalSeedAccount, changeLocalSeedPassword, createLocalSeedWallet, hasLocalSeed,
+  restoreLocalSeedWallet, revealLocalSeedPhrase } from "./wallet-seed-accounts.mjs";
 import { signingSummary } from "./wallet-signing-summary.mjs";
 
 const COPY = {
@@ -255,6 +255,11 @@ export function createDesktopWalletHost({ dialogs, storageRoot, language = syste
           throw new Error("password change did not complete");
         }
         if (walletPublicInfo(vaultPath).address !== before) throw new Error("wallet identity changed during password change");
+        // The words and the other accounts follow when they shared the old password.
+        if (hasLocalSeed(storageRoot)) {
+          try { changeLocalSeedPassword({ storageRoot, oldPassword: current, newPassword: fresh }); }
+          catch { /* The words had another password; it stays as it was. */ }
+        }
         return true;
       }
     },

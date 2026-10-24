@@ -94,3 +94,32 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
+
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      - name: Test the Windows desktop wallet, confirmation windows and file handling
+        run: node --test tests/desktop.test.mjs tests/desktop-windows.test.mjs
+      - name: Parse the Windows installer
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\site\install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
+      - name: Install NIR from this checkout with Windows PowerShell, as a user would
+        shell: powershell
+        run: |
+          git archive --format=zip --prefix=NIR-main/ -o "$env:RUNNER_TEMP\nir.zip" HEAD
+          $env:NIR_SOURCE_ZIP = "$env:RUNNER_TEMP\nir.zip"
+          $env:NIR_INSTALL_NO_START = "1"
+          # irm decodes the script as UTF-8 from the server's charset; read it the same way.
+          Get-Content -Raw -Encoding UTF8 site\install.ps1 | Invoke-Expression
+          $nir = Join-Path $env:LOCALAPPDATA "NIR"
+          if (-not (Test-Path (Join-Path $nir "source\blockchain\nir-desktop.mjs"))) { throw "source missing" }
+          if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath("Programs")) "NIR.lnk"))) { throw "shortcut missing" }
+          $node = Get-ChildItem $nir -Directory -Filter "node-v*" | Select-Object -First 1
+          & (Join-Path $node.FullName "node.exe") --version
