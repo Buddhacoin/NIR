@@ -95,6 +95,32 @@ ReadWritePaths=$DATA_DIR
 WantedBy=multi-user.target
 EOF
 
+# NIR Markets on the website (blockchain/market-service.mjs): prices fetched
+# once a minute and served to every visitor from that copy.
+if [[ -n "$SITE_DOMAIN" ]]; then
+  cat > /etc/systemd/system/nir-market.service <<EOF
+[Unit]
+Description=NIR Markets data for $SITE_DOMAIN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nir
+Group=nir
+EnvironmentFile=-/etc/nir-market.env
+ExecStart=/usr/local/bin/node $APP_DIR/blockchain/market-service-cli.mjs 8790
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
 cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
   encode gzip
@@ -108,6 +134,9 @@ $SITE_DOMAIN, www.$SITE_DOMAIN {
   encode gzip
   handle_path /api/* {
     reverse_proxy 127.0.0.1:8787
+  }
+  handle /market/* {
+    reverse_proxy 127.0.0.1:8790
   }
   handle {
     root * $APP_DIR/site
@@ -128,6 +157,10 @@ ufw --force enable >/dev/null
 systemctl daemon-reload
 systemctl enable --now nir-testnet.service
 systemctl restart nir-testnet.service
+if [[ -n "$SITE_DOMAIN" ]]; then
+  systemctl enable --now nir-market.service
+  systemctl restart nir-market.service
+fi
 systemctl reload caddy || systemctl restart caddy
 
 echo

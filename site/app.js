@@ -3,7 +3,7 @@
 // host, so the page needs no cross-origin access.
 
 const en = {
-  navIdea: "Idea", navPioneers: "Pioneers", navApps: "Apps", navEconomy: "Economy", navRoadmap: "Roadmap",
+  navMarkets: "Markets", navIdea: "Idea", navPioneers: "Pioneers", navApps: "Apps", navEconomy: "Economy", navRoadmap: "Roadmap",
   ctaShort: "Start mining", tag: "Early access · the network is open",
   h1a: "Bitcoin was mined with graphics cards.", h1b: "NIR is mined with", h1c: "intelligence.",
   lead: "The first blockchain where every coin is born from a solved problem. No farms, no noise, no power bills — your computer, one button, and problems that get harder as artificial intelligence grows.",

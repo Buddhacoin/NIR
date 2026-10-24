@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// npm run market:serve -- [port] — NIR Markets data for nircoin.com
+// (blockchain/market-service.mjs). Caddy passes /market/* to it.
+// --fixture <directory> serves recorded responses instead (for checks).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import process from "node:process";
+
+import { createMarketService } from "./market-service.mjs";
+
+const args = process.argv.slice(2);
+const fixtureAt = args.indexOf("--fixture");
+const fixture = fixtureAt >= 0 ? args.splice(fixtureAt, 2)[1] : null;
+const port = Number(args[0] ?? 8790);
+if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+  console.error("usage: market:serve -- [port] [--fixture <directory>]");
+  process.exit(2);
+}
+const files = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", "fng": "fng.json" };
+const service = createMarketService(fixture ? {
+  fetch: async (url) => JSON.parse(readFileSync(join(fixture,
+    Object.entries(files).find(([key]) => url.includes(key))[1]), "utf8")),
+} : {});
+service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
+service.start();
+for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

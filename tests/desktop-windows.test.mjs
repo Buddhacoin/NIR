@@ -117,6 +117,6 @@ test("the Windows installer verifies Node.js, needs no git or administrator and 
   assert.doesNotMatch(installer, /RunAs|Set-ExecutionPolicy|git clone/);
   assert.ok(readFileSync(new URL("../desktop-ui/nir.ico", import.meta.url)).subarray(0, 4).equals(Buffer.from([0, 0, 1, 0])));
   // The website shows the command, and the server serves the script as UTF-8 text for irm.
-  assert.match(read("site/index.html"), /irm https:\/\/nircoin\.com\/install\.ps1 \| iex/);
+  assert.match(read("site/nir/index.html"), /irm https:\/\/nircoin\.com\/install\.ps1 \| iex/);
   assert.match(read("deploy/install-shared-testnet.sh"), /header \/install\.ps1 Content-Type "text\/plain; charset=utf-8"/);
 });

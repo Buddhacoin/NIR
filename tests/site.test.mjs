@@ -18,19 +18,42 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 });
 
 test("the website links only files it ships and shows the same install command", () => {
-  const html = read("site/index.html");
-  for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
-    assert.ok(existsSync(new URL(`../site/${file}`, import.meta.url)), `missing ${file}`);
+  // The markets page is the home page; the NIR page moved to /nir/.
+  for (const page of ["site/index.html", "site/nir/index.html"]) {
+    const html = read(page);
+    for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
+      const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
+        : new URL(`../${page.replace(/[^/]+$/, "")}${file}`, import.meta.url);
+      const path = target.pathname.endsWith("/") ? new URL("index.html", target) : target;
+      assert.ok(existsSync(path), `${page}: missing ${file}`);
+    }
   }
-  // A versioned URL makes browsers drop a cached stylesheet or script from an older page.
-  assert.match(html, /href="style\.css\?v=\d+"/);
-  assert.match(html, /src="app\.js\?v=\d+"/);
+  const html = read("site/nir/index.html");
   assert.match(html, /curl -fsSL https:\/\/nircoin\.com\/install\.sh \| bash/);
   assert.match(read("docs/install-mac.md"), /curl -fsSL https:\/\/nircoin\.com\/install\.sh \| bash/);
+  // A versioned URL makes browsers drop a cached stylesheet or script from an older page.
+  assert.match(html, /href="\/style\.css\?v=\d+"/);
+  assert.match(html, /src="\/app\.js\?v=\d+"/);
   const app = read("site/app.js");
   for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
     assert.match(app, new RegExp(`\\b${key}:`), `no English text for ${key}`);
   }
+});
+
+test("the markets home page has English for every text and links to NIR", () => {
+  const html = read("site/index.html");
+  const script = read("site/markets.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
+    assert.match(script, new RegExp(`\\b${key}:`), `no English text for ${key}`);
+  }
+  assert.match(html, /class="brand" href="\/nir\/"/);
+  assert.match(html, /CoinGecko/);
+  assert.match(html, /TradingView/);
+  assert.match(script, /fetch\("\/market\/overview"/);
+  assert.match(script, /fetch\("\/api\/v1\/stats"/);
+  const deploy = read("deploy/install-shared-testnet.sh");
+  assert.match(deploy, /handle \/market\/\* \{\n\s+reverse_proxy 127\.0\.0\.1:8790/);
+  assert.match(deploy, /market-service-cli\.mjs 8790/);
 });
 
 test("the server serves the website with the network's read API under /api", () => {
