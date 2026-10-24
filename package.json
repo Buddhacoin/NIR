@@ -85,6 +85,7 @@
     "certificate:lifecycle": "node blockchain/certificate-lifecycle-cli.mjs",
     "certificate:bootstrap": "node blockchain/certificate-bootstrap-cli.mjs",
     "testnet:reset": "node blockchain/testnet-reset-cli.mjs",
+    "market:serve": "node blockchain/market-service-cli.mjs",
     "genesis:ceremony": "node blockchain/genesis-ceremony-cli.mjs",
     "validator:ceremony": "node blockchain/ceremony-validator-cli.mjs",
     "validator:deploy": "node blockchain/validator-deployment-cli.mjs",
