@@ -9,9 +9,71 @@ let language = store.get("nir-site-language") === "en" ||
   (!store.get("nir-site-language") && !/^(ru|be|uk|kk)/i.test(navigator.language || "")) ? "en" : "ru";
 const STABLE = new Set(["USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "USDS", "PYUSD", "USDD", "BUSD", "USD1"]);
 const watch = new Set((store.get("nir-markets-watch") ?? "").split(",").filter(Boolean));
+// Signed in, the watchlist lives on the server (and follows the visitor to any
+// device); signed out, it stays in this browser.
+let account = { signIn: false, user: null };
+let accountChanged = () => {};
+const saveWatch = () => store.set("nir-markets-watch", [...watch].join(","));
 function toggleWatch(id) {
-  if (watch.has(id)) watch.delete(id); else watch.add(id);
-  store.set("nir-markets-watch", [...watch].join(","));
+  const adding = !watch.has(id);
+  if (adding) watch.add(id); else watch.delete(id);
+  saveWatch();
+  if (account.user) void send(`/market/me/watchlist/${encodeURIComponent(id)}`, adding ? "PUT" : "DELETE");
+}
+async function send(path, method, body) {
+  const response = await fetch(path, { method, headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body) }).catch(() => null);
+  return response ? { status: response.status, data: await response.json().catch(() => ({})) } : { status: 0, data: {} };
+}
+const signInUrl = () => `/market/auth/google?return=${encodeURIComponent(location.pathname + location.search)}`;
+async function loadAccount() {
+  const response = await fetch("/market/me", { cache: "no-store" }).catch(() => null);
+  if (!response?.ok) return;
+  account = await response.json();
+  if (account.user) {
+    // Stars set before signing in join the account once, then the server's list is the watchlist.
+    const server = new Set(account.watchlist);
+    const missing = [...watch].filter((id) => !server.has(id));
+    const merged = missing.length ? (await send("/market/me/watchlist", "POST", { ids: missing })).data.watchlist : null;
+    watch.clear();
+    for (const id of merged ?? account.watchlist) watch.add(id);
+    saveWatch();
+  }
+  renderAccount();
+  accountChanged();
+}
+// A coloured circle with the first letter: no photos, nothing from the Google account.
+function avatar(user, size = 30) {
+  const circle = document.createElement("span");
+  circle.className = "avatar";
+  const hue = [...user.username].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
+  circle.style.cssText = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.45)}px;background:hsl(${hue} 70% 45%)`;
+  circle.textContent = [...(user.displayName || user.username)][0].toUpperCase();
+  return circle;
+}
+function renderAccount() {
+  const words = language === "en" ? { signIn: "Sign in", profile: "Profile", about: "About NIR" }
+    : { signIn: "Войти", profile: "Профиль", about: "О NIR" };
+  const button = $("#account");
+  const tab = $("#tab-account");
+  if (button) {
+    button.hidden = !account.signIn && !account.user;
+    button.href = account.user ? `/u/${account.user.username}` : signInUrl();
+    button.replaceChildren(...(account.user ? [avatar(account.user, 26)] : [words.signIn]));
+    button.classList.toggle("signed", Boolean(account.user));
+    button.title = account.user ? `@${account.user.username}` : words.signIn;
+  }
+  if (tab && (account.signIn || account.user)) {
+    tab.href = account.user ? `/u/${account.user.username}` : signInUrl();
+    tab.querySelector("span").textContent = account.user ? words.profile : words.signIn;
+    tab.querySelector("svg").innerHTML = '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>';
+  }
+  if (new URLSearchParams(location.search).get("signin") === "failed" && !document.querySelector(".toast")) {
+    const toast = Object.assign(document.createElement("div"), { className: "toast",
+      textContent: language === "en" ? "Sign-in did not work. Please try again." : "Войти не получилось. Попробуйте ещё раз." });
+    document.body.append(toast);
+    setTimeout(() => toast.remove(), 6000);
+  }
 }
 const coinUrl = (coin) => `/coin/${encodeURIComponent(coin.id)}`;
 
@@ -95,7 +157,8 @@ function isLight() {
   return document.documentElement.dataset.theme === "light" ||
     (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
 }
-function setupPage({ en, render, onTheme = () => {} }) {
+function setupPage({ en, render, onTheme = () => {}, onAccount = render }) {
+  accountChanged = onAccount;
   const textNodes = [...document.querySelectorAll("[data-i18n]")];
   const ru = Object.fromEntries(textNodes.map((node) => [node.dataset.i18n, node.textContent]));
   const search = $("#search");
@@ -106,6 +169,7 @@ function setupPage({ en, render, onTheme = () => {} }) {
     search.placeholder = language === "en" ? en.search : ruPlaceholder;
     $("#lang").textContent = language === "en" ? "RU" : "EN";
     render();
+    renderAccount();
     void loadNir();
   }
   $("#lang").addEventListener("click", () => {
@@ -123,6 +187,7 @@ function setupPage({ en, render, onTheme = () => {} }) {
   });
   renderTheme();
   applyLanguage();
+  void loadAccount();
   setInterval(loadNir, 60_000);
 }
 

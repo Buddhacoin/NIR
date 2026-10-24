@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 
+import { createAccounts } from "./market-accounts.mjs";
 import { createMarketService } from "./market-service.mjs";
 
 const args = process.argv.slice(2);
@@ -24,7 +25,13 @@ function fixtureFile(url) {
   if (coin && coin[1] !== "markets") return `${coin[2] ? "chart" : "coin"}-${coin[1]}.json`;
   return Object.entries(files).find(([key]) => url.includes(key))[1];
 }
+// Accounts need a database file (NIR_MARKET_DB); Google sign-in also needs
+// GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, from /etc/nir-market.env on the server.
+const env = process.env;
+const accounts = env.NIR_MARKET_DB ? createAccounts({ file: env.NIR_MARKET_DB, clientId: env.GOOGLE_CLIENT_ID,
+  clientSecret: env.GOOGLE_CLIENT_SECRET, publicUrl: env.NIR_MARKET_PUBLIC_URL ?? `http://localhost:${port}` }) : null;
 const service = createMarketService(fixture ? {
+  accounts,
   fetch: async (url) => {
     try {
       return JSON.parse(readFileSync(join(fixture, fixtureFile(url)), "utf8"));
@@ -32,7 +39,7 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : {});
+} : { accounts });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));
