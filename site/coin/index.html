@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Монета — NIR Markets</title>
+  <meta name="description" content="Цена, график, капитализация, предложение, ссылки, кошельки и биржи монеты на NIR Markets. Без регистрации и трекеров.">
+  <link rel="icon" href="/nir-coin-icon.svg" type="image/svg+xml">
+  <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
+  <link rel="stylesheet" href="/markets.css?v=2">
+</head>
+<body>
+  <div class="nirbar">
+    <span>⛏ <b data-i18n="nirOpen">Сеть NIR открыта</b></span>
+    <span><span data-i18n="nirMiners">Майнеров в сети</span> <b data-nir="miners">—</b></span>
+    <span><span data-i18n="nirPioneers">Первопроходцев</span> <b data-nir="pioneers">—</b></span>
+    <span><span data-i18n="nirMined">Намайнено</span> <b data-nir="mined">—</b> NIR</span>
+    <span class="wide" data-i18n="nirPool">🏆 210 000 NIR для первопроходцев</span>
+    <a class="cta" href="/nir/#start" data-i18n="nirCta">Майнить NIR одной кнопкой →</a>
+  </div>
+
+  <header class="top">
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="36" height="36">NIR <small>MARKETS</small></a>
+    <nav aria-label="Разделы">
+      <a href="/" data-i18n="navCoins">Криптовалюты</a>
+      <a href="/nir/" data-i18n="navNir">О NIR</a>
+      <a href="/nir/#start" data-i18n="navMine">Майнинг NIR</a>
+    </nav>
+    <form id="search-form" class="search-form" action="/" role="search">
+      <input id="search" class="search" name="q" type="search" placeholder="Поиск монеты" autocomplete="off">
+    </form>
+    <button class="pill" id="theme" type="button" aria-label="Тема">☀︎</button>
+    <button class="pill" id="lang" type="button">EN</button>
+  </header>
+
+  <main class="wrap">
+    <div class="crumbs"><a href="/" data-i18n="navCoins">Криптовалюты</a> › <span id="crumb">—</span></div>
+    <p class="status" id="status">Загружаю данные монеты…</p>
+
+    <div class="coin-page" id="page" hidden>
+      <aside class="side">
+        <article class="card">
+          <div class="coin-head">
+            <span id="logo"></span><h1 id="name"></h1><span class="sym" id="symbol"></span><span class="badge" id="rank"></span>
+            <button class="watch" id="watch" type="button" aria-label="Избранное">☆</button>
+          </div>
+          <div class="big-price" id="price">—</div>
+          <div class="changes">
+            <span><small data-i18n="col1h">1 ч</small> <b id="c1h">—</b></span>
+            <span><small data-i18n="col24h">24 ч</small> <b id="c24h">—</b></span>
+            <span><small data-i18n="col7d">7 д</small> <b id="c7d">—</b></span>
+          </div>
+          <div class="day-range"><span data-i18n="range24">Мин. и макс. за 24 ч</span>
+            <div class="bar"><i id="range-bar"></i></div>
+            <div class="ends"><span id="low">—</span><span id="high">—</span></div>
+          </div>
+        </article>
+
+        <article class="card stats">
+          <div><small data-i18n="marketCap">Капитализация</small><b id="s-cap">—</b></div>
+          <div><small data-i18n="volume24">Объём за 24 ч</small><b id="s-volume">—</b></div>
+          <div><small data-i18n="volumeCap">Объём / капитализация</small><b id="s-ratio">—</b></div>
+          <div><small data-i18n="fdv">Полная капитализация</small><b id="s-fdv">—</b></div>
+          <div><small data-i18n="circulating">В обращении</small><b id="s-circ">—</b></div>
+          <div><small data-i18n="supply">Всего / максимум</small><b id="s-supply">—</b></div>
+          <div><small data-i18n="ath">Исторический максимум</small><b id="s-ath">—</b></div>
+          <div><small data-i18n="atl">Исторический минимум</small><b id="s-atl">—</b></div>
+        </article>
+
+        <article class="card links-card" id="links"></article>
+
+        <article class="card converter">
+          <h2 data-i18n="converter">Конвертер</h2>
+          <label><span id="conv-symbol">—</span><input id="conv-coin" inputmode="decimal" value="1" autocomplete="off"></label>
+          <label><span>USD</span><input id="conv-usd" inputmode="decimal" autocomplete="off"></label>
+        </article>
+      </aside>
+
+      <section class="coin-main">
+        <nav class="tabs" aria-label="Разделы монеты">
+          <a class="on" href="#chart" data-i18n="tabOverview">Обзор</a>
+          <a href="#about" data-i18n="tabAbout">О монете</a>
+          <a href="#markets" data-i18n="tabMarkets">Рынки</a>
+          <a href="#comments" data-i18n="tabComments">Комментарии</a>
+        </nav>
+
+        <article class="card" id="chart">
+          <div class="chart-top">
+            <h2 id="chart-title"></h2>
+            <div class="ranges" id="ranges">
+              <button type="button" data-days="1" data-i18n="d1">1 д</button>
+              <button type="button" data-days="7" data-i18n="d7">7 д</button>
+              <button type="button" data-days="30" class="on" data-i18n="d30">1 м</button>
+              <button type="button" data-days="90" data-i18n="d90">3 м</button>
+              <button type="button" data-days="365" data-i18n="d365">1 г</button>
+              <button type="button" id="candles" hidden>Свечи</button>
+            </div>
+          </div>
+          <div class="big-chart" id="plot"></div>
+          <p class="chart-note" id="period-change"></p>
+        </article>
+
+        <article class="card about" id="about">
+          <h2 id="about-title"></h2>
+          <div id="categories" class="chips"></div>
+          <div id="description"></div>
+          <button class="more" id="more" type="button" data-i18n="more" hidden>Показать полностью ▾</button>
+          <small class="muted" data-i18n="descriptionBy">Описание: CoinGecko</small>
+        </article>
+
+        <article class="card" id="markets">
+          <h2 data-i18n="whereTraded">Где торгуется</h2>
+          <div class="table-wrap">
+            <table class="markets-table">
+              <thead><tr>
+                <th class="left">#</th><th class="left" data-i18n="exchange">Биржа</th><th class="left" data-i18n="pair">Пара</th>
+                <th data-i18n="colPrice">Цена</th><th data-i18n="colVolume">Объём 24 ч</th><th data-i18n="trust">Доверие</th>
+              </tr></thead>
+              <tbody id="tickers"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card soon" id="comments">
+          <p data-i18n="soon">💬 Комментарии, избранное в профиле и портфель появятся здесь со входом через Google.</p>
+          <span class="act" data-i18n="soonButton">Скоро</span>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span>NIR Markets</span>
+    <span><span data-i18n="pricesBy">Данные о ценах:</span> <a href="https://www.coingecko.com" rel="noopener">CoinGecko</a></span>
+    <span><span data-i18n="chartsBy">Графики:</span> <a href="https://www.tradingview.com" rel="noopener">TradingView</a></span>
+    <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
+  </footer>
+  <script src="/common.js?v=1"></script>
+  <script src="/coin.js?v=1"></script>
+</body>
+</html>

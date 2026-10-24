@@ -1,9 +1,8 @@
 // NIR Markets: the top 100 coins from the server's cached copy (/market/overview,
-// refreshed every minute), NIR's own network figures (/api/v1/stats), day and
-// night themes, Russian and English, a watchlist kept in this browser and a
-// TradingView chart under any coin.
+// refreshed every minute), a watchlist kept in this browser, a TradingView
+// chart under any coin and a link to each coin's own page. Shared helpers
+// (numbers, logos, themes, languages, NIR's figures) are in common.js.
 
-const STABLE = new Set(["USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "USDS", "PYUSD", "USDD", "BUSD", "USD1"]);
 const en = {
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
@@ -33,60 +32,10 @@ const words = {
       `the biggest loser ${d.low} (${d.lowPct}).${d.fg ? ` Fear & Greed stands at ${d.fg}.` : ""}` },
 };
 
-const $ = (selector) => document.querySelector(selector);
-const store = { get(key) { try { return localStorage.getItem(key); } catch { return null; } },
-  set(key, value) { try { localStorage.setItem(key, value); } catch {} } };
-let language = store.get("nir-site-language") === "en" ||
-  (!store.get("nir-site-language") && !/^(ru|be|uk|kk)/i.test(navigator.language || "")) ? "en" : "ru";
 let data = null;
 let tab = "top";
 let query = "";
 let openChart = null;
-let watch = new Set((store.get("nir-markets-watch") ?? "").split(",").filter(Boolean));
-
-// --- Numbers in the visitor's language: $80 183,42 or $80,183.42; 1,59 трлн or 1.59T.
-const locale = () => (language === "en" ? "en-US" : "ru-RU");
-function price(value) {
-  if (value === null || value === undefined) return "—";
-  const digits = value >= 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-    : { maximumSignificantDigits: 4 };
-  return `$${value.toLocaleString(locale(), digits)}`;
-}
-function big(value) {
-  if (value === null || value === undefined) return "—";
-  const units = language === "en" ? [[1e12, "T"], [1e9, "B"], [1e6, "M"]] : [[1e12, " трлн"], [1e9, " млрд"], [1e6, " млн"]];
-  for (const [size, unit] of units) {
-    if (Math.abs(value) >= size) return `$${(value / size).toLocaleString(locale(), { maximumFractionDigits: 2 })}${unit}`;
-  }
-  return `$${value.toLocaleString(locale())}`;
-}
-const percentText = (value) => (value === null || value === undefined ? "—"
-  : `${value > 0 ? "▲" : value < 0 ? "▼" : ""} ${Math.abs(value).toLocaleString(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`.trim());
-const changeClass = (value) => (value > 0 ? "up" : value < 0 ? "down" : "flat");
-function percentCell(value) {
-  const cell = document.createElement("td");
-  cell.className = changeClass(value);
-  cell.textContent = percentText(value);
-  return cell;
-}
-
-function logo(coin) {
-  if (coin.image) {
-    const image = document.createElement("img");
-    image.className = "logo";
-    image.src = coin.image;
-    image.alt = "";
-    image.loading = "lazy";
-    image.referrerPolicy = "no-referrer";
-    // A logo that fails to load becomes the coin's first letter.
-    image.addEventListener("error", () => image.replaceWith(logo({ ...coin, image: null })), { once: true });
-    return image;
-  }
-  const letter = document.createElement("i");
-  letter.className = "logo";
-  letter.textContent = coin.symbol.slice(0, 1);
-  return letter;
-}
 
 function sparkline(points, rising) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -113,19 +62,7 @@ function chartRow(coin) {
   row.className = "chart";
   const cell = document.createElement("td");
   cell.colSpan = 11;
-  const box = document.createElement("div");
-  box.className = "chart-box tradingview-widget-container";
-  const inner = document.createElement("div");
-  inner.className = "tradingview-widget-container__widget";
-  inner.style.height = "100%";
-  const script = document.createElement("script");
-  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-  script.async = true;
-  script.textContent = JSON.stringify({ autosize: true, symbol: `BINANCE:${coin.symbol}USDT`, interval: "60",
-    timezone: "Etc/UTC", theme: isLight() ? "light" : "dark", style: "1", locale: language,
-    allow_symbol_change: true, hide_side_toolbar: true, support_host: "https://www.tradingview.com" });
-  box.append(inner, script);
-  cell.append(box);
+  cell.append(tradingView(`BINANCE:${coin.symbol}USDT`));
   row.append(cell);
   return row;
 }
@@ -160,8 +97,7 @@ function renderTable() {
     star.textContent = watch.has(coin.id) ? "★" : "☆";
     star.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (watch.has(coin.id)) watch.delete(coin.id); else watch.add(coin.id);
-      store.set("nir-markets-watch", [...watch].join(","));
+      toggleWatch(coin.id);
       renderTable();
     });
     const rank = document.createElement("td");
@@ -169,8 +105,9 @@ function renderTable() {
     rank.textContent = coin.rank ?? "";
     const name = document.createElement("td");
     name.className = "left";
-    const cell = document.createElement("div");
+    const cell = document.createElement("a");
     cell.className = "coin-cell";
+    cell.href = coinUrl(coin);
     const title = document.createElement("b");
     title.textContent = coin.name;
     const symbol = document.createElement("span");
@@ -195,9 +132,15 @@ function renderTable() {
       button.type = "button";
       button.className = `act${openChart === coin.id ? "" : " ghost"}`;
       button.textContent = openChart === coin.id ? t.close : t.chart;
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openChart = openChart === coin.id ? null : coin.id;
+        renderTable();
+      });
       action.append(button);
-      row.addEventListener("click", () => { openChart = openChart === coin.id ? null : coin.id; renderTable(); });
     }
+    // The whole row opens the coin's page; the star and the chart button do their own thing.
+    row.addEventListener("click", (event) => { if (!event.target.closest("a")) location.href = coinUrl(coin); });
     row.append(star, rank, name, value, percentCell(coin.change1h), percentCell(coin.change24h),
       percentCell(coin.change7d), cap, volume, spark, action);
     body.append(row);
@@ -230,21 +173,24 @@ function renderCards() {
   const list = (target, coins, withPrice) => {
     $(target).replaceChildren(...coins.slice(0, 4).map((coin, index) => {
       const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = coinUrl(coin);
       const number = document.createElement("span");
       number.className = "n";
       number.textContent = String(index + 1);
       const name = document.createElement("b");
       name.textContent = coin.symbol;
-      item.append(number, logo(coin), name);
+      link.append(number, logo(coin), name);
       if (withPrice) {
         const value = document.createElement("span");
         value.textContent = price(coin.price);
-        item.append(value);
+        link.append(value);
       }
       const change = document.createElement("span");
       change.className = changeClass(coin.change24h);
       change.textContent = percentText(coin.change24h);
-      item.append(change);
+      link.append(change);
+      item.append(link);
       return item;
     }));
   };
@@ -277,50 +223,6 @@ async function load() {
   }
 }
 
-// NIR's own network: miners, pioneers and NIR mined, from the test network.
-async function loadNir() {
-  try {
-    const stats = await fetch("/api/v1/stats", { cache: "no-store" }).then((response) => response.json());
-    const count = (value) => (Number.isSafeInteger(value) ? value.toLocaleString(locale()) : "—");
-    const mined = Number(/^([0-9]+)\./.exec(stats.minedNir ?? "")?.[1] ?? NaN);
-    for (const node of document.querySelectorAll("[data-nir]")) {
-      const key = node.dataset.nir;
-      node.textContent = key === "mined" ? (Number.isFinite(mined) ? mined.toLocaleString(locale()) : "—") : count(stats[key]);
-    }
-  } catch { /* The page works without NIR's figures. */ }
-}
-
-// --- Language and theme, shared with the NIR page.
-const textNodes = [...document.querySelectorAll("[data-i18n]")];
-const ru = Object.fromEntries(textNodes.map((node) => [node.dataset.i18n, node.textContent]));
-const search = $("#search");
-const ruPlaceholder = search.placeholder;
-function applyLanguage() {
-  document.documentElement.lang = language;
-  for (const node of textNodes) node.textContent = (language === "en" ? en : ru)[node.dataset.i18n] ?? node.textContent;
-  search.placeholder = language === "en" ? en.search : ruPlaceholder;
-  $("#lang").textContent = language === "en" ? "RU" : "EN";
-  if (data) { renderCards(); renderTable(); }
-  void loadNir();
-}
-$("#lang").addEventListener("click", () => {
-  language = language === "en" ? "ru" : "en";
-  store.set("nir-site-language", language);
-  applyLanguage();
-});
-function isLight() {
-  return document.documentElement.dataset.theme === "light" ||
-    (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
-}
-function renderTheme() { $("#theme").textContent = isLight() ? "☾" : "☀︎"; }
-$("#theme").addEventListener("click", () => {
-  const next = isLight() ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
-  store.set("nir-site-theme", next);
-  renderTheme();
-  if (openChart) renderTable(); // the chart follows the theme
-});
-
 for (const button of document.querySelectorAll("[data-tab]")) {
   button.addEventListener("click", () => {
     tab = button.dataset.tab;
@@ -328,10 +230,13 @@ for (const button of document.querySelectorAll("[data-tab]")) {
     renderTable();
   });
 }
+// A search typed on a coin's page arrives as /?q=…
+const search = $("#search");
+search.value = new URLSearchParams(location.search).get("q")?.slice(0, 60) ?? "";
+query = search.value.trim();
 search.addEventListener("input", () => { query = search.value.trim(); renderTable(); });
 
-renderTheme();
-applyLanguage();
+setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } },
+  onTheme: () => { if (openChart) renderTable(); } }); // the chart follows the theme
 void load();
 setInterval(load, 60_000);
-setInterval(loadNir, 60_000);

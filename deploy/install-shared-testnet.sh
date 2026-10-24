@@ -138,6 +138,11 @@ $SITE_DOMAIN, www.$SITE_DOMAIN {
   handle /market/* {
     reverse_proxy 127.0.0.1:8790
   }
+  handle /coin/* {
+    root * $APP_DIR/site
+    rewrite * /coin/index.html
+    file_server
+  }
   handle {
     root * $APP_DIR/site
     header /install.sh Content-Type "text/plain; charset=utf-8"

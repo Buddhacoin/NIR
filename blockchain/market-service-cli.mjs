@@ -17,9 +17,20 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
   process.exit(2);
 }
 const files = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", "fng": "fng.json" };
+// A coin's page and chart come from coin-<id>.json and chart-<id>.json; other coins are unknown.
+function fixtureFile(url) {
+  const coin = /\/coins\/([^/?]+)(\/market_chart)?/.exec(url);
+  if (coin && coin[1] !== "markets") return `${coin[2] ? "chart" : "coin"}-${coin[1]}.json`;
+  return Object.entries(files).find(([key]) => url.includes(key))[1];
+}
 const service = createMarketService(fixture ? {
-  fetch: async (url) => JSON.parse(readFileSync(join(fixture,
-    Object.entries(files).find(([key]) => url.includes(key))[1]), "utf8")),
+  fetch: async (url) => {
+    try {
+      return JSON.parse(readFileSync(join(fixture, fixtureFile(url)), "utf8"));
+    } catch (error) {
+      throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
+    }
+  },
 } : {});
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
