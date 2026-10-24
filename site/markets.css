@@ -162,8 +162,10 @@ tr.chart td { padding: 0 10px 16px; }
 .markets-table td a:hover { color: var(--accent); }
 .trust { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
 .trust.green { background: var(--up); } .trust.yellow { background: var(--gold); } .trust.red { background: var(--down); }
-.soon { display: flex; align-items: center; gap: 14px; border-style: dashed; }
-.soon p { flex: 1; margin: 0; color: var(--muted); font-size: 14px; }
+
+/* Phone-only pieces: hidden on wider screens. */
+.find, .m-brief, .m-spark, .coin-cell small, .tabbar { display: none; }
+.find svg, .tabbar svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 footer { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 16px max(16px, calc((100% - 1440px) / 2)) 30px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 footer a { text-decoration: underline; text-underline-offset: 3px; }
@@ -172,21 +174,79 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
 @media (max-width: 1100px) {
   .cards { grid-template-columns: 1fr 1fr; }
   /* One column: the price, then the chart, figures, description, markets and links. */
-  .coin-page { display: flex; flex-direction: column; gap: 16px; }
+  .coin-page { display: flex; flex-direction: column; align-items: stretch; gap: 16px; }
   .side, .coin-main { display: contents; }
   .coin-page .card, .coin-page .tabs { min-width: 0; max-width: 100%; }
   .coin-main .tabs { order: 1; } #chart { order: 2; } .stats { order: 3; } #about { order: 4; }
-  #markets { order: 5; } .links-card { order: 6; } .converter { order: 7; } #comments { order: 8; }
+  #markets { order: 5; } .links-card { order: 6; } .converter { order: 7; }
   .top nav { display: none; }
   .nirbar .wide { display: none; }
 }
 @media (max-width: 700px) {
-  .cards { grid-template-columns: 1fr; }
-  .search { width: 100%; order: 5; }
-  .top { flex-wrap: wrap; }
+  /* Phones: laid out like the market apps — compact figures, underlined tabs,
+     a three-column list (coin, price, 24h with a sparkline) and a bottom bar. */
+  body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .nirbar { display: none; }
+  .top { gap: 8px; padding: 12px 16px; }
+  .brand { gap: 8px; font-size: 19px; }
+  .brand img { width: 30px; height: 30px; }
+  .top .pill { margin-left: 0; padding: 7px 10px; }
+  .find { display: grid; place-items: center; margin-left: auto; }
+  .search { display: none; }
+  .searching .top { flex-wrap: wrap; }
+  .searching .search { display: block; order: 5; width: 100%; margin: 4px 0 0; }
+  .wrap { padding: 12px 12px 24px; }
+
+  .cards { display: block; }
+  .cards > .card:not(:first-child) { display: none; }
+  .cards > .card:first-child { padding: 0; border: 0; background: none; box-shadow: none; }
+  .cards h2 { display: none; }
+  .mini { grid-template-columns: 1.2fr 1.2fr 0.9fr 0.9fr; gap: 6px; }
+  .mini > div { min-width: 0; padding: 9px 8px; overflow: hidden; border-radius: 14px; }
+  .mini small { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .mini b { overflow: hidden; font-size: 13.5px; text-overflow: ellipsis; }
+  .mini em { font-size: 11px; }
+  .mini .gauge { order: 4; }
+  .gauge svg { width: 64px; height: 36px; }
+  .gauge b { margin-top: -22px; font-size: 17px; }
+  .gauge span { display: none; }
+
+  .m-brief { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 12px; padding: 6px 12px 6px 6px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--panel); text-align: left; cursor: pointer; }
+  .m-brief .tag { flex: none; padding: 5px 10px; border-radius: 999px; background: var(--soft); color: var(--accent); font-size: 12px; font-weight: 800; }
+  .m-brief span:last-child { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .m-brief.open { align-items: flex-start; border-radius: 18px; }
+  .m-brief.open span:last-child { white-space: normal; line-height: 1.5; }
+  .nir-strip { gap: 4px 10px; margin-top: 10px; padding: 8px 12px; font-size: 12px; }
+  .nir-strip > span:first-of-type { display: none; }
+
+  .tabs { flex-wrap: nowrap; gap: 22px; margin: 14px -12px 0; padding: 0 16px; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button, .tabs a { flex: none; padding: 10px 0 9px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; font-size: 16px; white-space: nowrap; }
+  .tabs button.on, .tabs a.on { border-bottom-color: var(--accent); background: none; color: var(--text); }
+  .coin-main .tabs { margin: 0 -12px; }
+
   .hide-s { display: none; }
-  .nirbar .cta { margin-left: 0; }
+  table { margin-top: 4px; }
+  th { padding: 12px 6px; font-size: 13px; }
+  td { padding: 14px 6px; }
+  .rank { width: 26px; padding-left: 0; font-size: 15px; }
+  .coin-cell { display: grid; grid-template-columns: 34px auto; column-gap: 10px; align-items: center; }
+  .coin-cell .logo { grid-row: span 2; width: 34px; height: 34px; }
+  .coin-cell b { display: none; }
+  .coin-cell span { color: var(--text); font-size: 16px; font-weight: 700; }
+  .coin-cell small { display: block; color: var(--muted); font-size: 13px; }
+  tbody td:nth-child(4) { font-size: 16px; }
+  .m-spark { display: block; width: 76px; height: 26px; margin: 0 0 4px auto; }
+
+  .tabbar { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, 1fr);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--bg); }
+  .tabbar a { display: grid; justify-items: center; gap: 3px; padding: 4px 0; color: var(--muted); font-size: 11px; font-weight: 650; }
+  .tabbar a.on { color: var(--accent); }
+  .tabbar svg, .tabbar img { width: 24px; height: 24px; }
+
   .big-chart { height: 300px; }
   .big-chart .status { margin-top: 120px; }
   .big-price { font-size: 32px; }
+  footer { padding-bottom: 20px; }
 }

@@ -10,12 +10,11 @@ const en = {
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
-  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", tabComments: "Comments",
+  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
   d1: "1D", d7: "7D", d30: "1M", d90: "3M", d365: "1Y",
   more: "Show all ▾", descriptionBy: "Description: CoinGecko", whereTraded: "Where it trades", exchange: "Exchange",
   pair: "Pair", colPrice: "Price", colVolume: "Volume 24h", trust: "Trust",
-  soon: "💬 Comments, a watchlist in your profile and a portfolio are coming here, with Google sign-in.",
-  soonButton: "Soon", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
+  pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
   aboutNir: "About the NIR blockchain →",
 };
 const words = {
@@ -333,6 +332,10 @@ for (const button of document.querySelectorAll("#ranges [data-days]")) {
 }
 $("#candles").addEventListener("click", () => { candles = !candles; renderChart(); });
 $("#watch").addEventListener("click", () => { toggleWatch(coin.id); renderHead(); });
+$("#find").addEventListener("click", () => {
+  document.body.classList.toggle("searching");
+  if (document.body.classList.contains("searching")) $("#search").focus();
+});
 $("#more").addEventListener("click", () => { showAll = true; renderAbout(); });
 $("#conv-coin").addEventListener("input", () => convert("coin"));
 $("#conv-usd").addEventListener("input", () => convert("usd"));

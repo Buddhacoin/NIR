@@ -23,11 +23,11 @@ function price(value) {
     : { maximumSignificantDigits: 4 };
   return `$${value.toLocaleString(locale(), digits)}`;
 }
-function big(value, prefix = "$") {
+function big(value, prefix = "$", digits = 2) {
   if (value === null || value === undefined) return "—";
   const units = language === "en" ? [[1e12, "T"], [1e9, "B"], [1e6, "M"]] : [[1e12, " трлн"], [1e9, " млрд"], [1e6, " млн"]];
   for (const [size, unit] of units) {
-    if (Math.abs(value) >= size) return `${prefix}${(value / size).toLocaleString(locale(), { maximumFractionDigits: 2 })}${unit}`;
+    if (Math.abs(value) >= size) return `${prefix}${(value / size).toLocaleString(locale(), { maximumFractionDigits: digits })}${unit}`;
   }
   return `${prefix}${value.toLocaleString(locale())}`;
 }
