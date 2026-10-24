@@ -116,7 +116,8 @@ jobs:
           git archive --format=zip --prefix=NIR-main/ -o "$env:RUNNER_TEMP\nir.zip" HEAD
           $env:NIR_SOURCE_ZIP = "$env:RUNNER_TEMP\nir.zip"
           $env:NIR_INSTALL_NO_START = "1"
-          Get-Content -Raw site\install.ps1 | Invoke-Expression
+          # irm decodes the script as UTF-8 from the server's charset; read it the same way.
+          Get-Content -Raw -Encoding UTF8 site\install.ps1 | Invoke-Expression
           $nir = Join-Path $env:LOCALAPPDATA "NIR"
           if (-not (Test-Path (Join-Path $nir "source\blockchain\nir-desktop.mjs"))) { throw "source missing" }
           if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath("Programs")) "NIR.lnk"))) { throw "shortcut missing" }
