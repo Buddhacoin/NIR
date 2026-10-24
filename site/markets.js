@@ -84,9 +84,7 @@ function visibleCoins() {
 
 function renderTable() {
   const body = $("#rows");
-  const nirRow = body.querySelector("tr.nir");
-  body.replaceChildren(nirRow);
-  nirRow.hidden = Boolean(query) || tab !== "top";
+  body.replaceChildren();
   const t = words[language];
   const coins = visibleCoins();
   for (const coin of coins) {
