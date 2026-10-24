@@ -99,6 +99,11 @@ test("the desktop wallet runs end to end with Windows file handling", () => {
   } finally { rmSync(storageRoot, { recursive: true, force: true }); }
 });
 
+test("checkouts on Windows keep the committed bytes of hashed files such as the word list", () => {
+  assert.match(read(".gitattributes"), /^\* text=auto eol=lf$/m);
+  assert.doesNotMatch(read("blockchain/bip39-english.txt"), /\r/);
+});
+
 test("the Windows installer verifies Node.js, needs no git or administrator and makes a NIR shortcut", () => {
   const installer = read("site/install.ps1");
   assert.match(installer, /\$NodeVersion = "([0-9.]+)"/);
