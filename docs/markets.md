@@ -228,7 +228,9 @@ wallet activity (`blockchain/market-chain.mjs`):
 
 - **All transfers**: a card on the home page and the page `/transfers/` show
   the newest token and coin transfers on the networks served by
-  `eth.blockscout.com` and `explorer.optimism.io`, with the sender, the
+  `eth.blockscout.com` and `explorer.optimism.io`, and the newest transfers of
+  the five largest tokens on Base, Arbitrum, Polygon and the Binance Smart Chain, read from
+  free public nodes (`blockchain/market-rpc.mjs`), with the sender, the
   receiver, the amount and its dollar value; filters by size ($1, $10K,
   $100K, $1M), network and token. The feed is fetched at most every 15
   seconds, whoever asks, and keeps the newest 400.
@@ -244,9 +246,26 @@ wallet activity (`blockchain/market-chain.mjs`):
   up the holdings of all own wallets into one portfolio; "Tracked" lists the
   bookmarks with their balances. The list is private.
 
-Names come only from open sources: name-service records, verified contract
-names and the explorers' community tags. There is no private database of
-entities, so most wallets show their address.
+Everything is free and keyless. The node networks (Base, Arbitrum, Polygon and
+the Binance Smart Chain, through `*.publicnode.com`) are read with Multicall3: one call
+returns the coin and every listed token's balance, the listed tokens being
+the 250 largest coins by market cap with a contract there (CoinGecko's coin
+list, refreshed daily). A wallet's token transfers there come from the
+nodes' logs over the last 49,000 blocks (about a day; hours on Arbitrum),
+for its ten largest tokens; the coin's own transfers and balance history
+need an explorer and are not shown. The free nodes refuse queries for more
+than five contracts and block bursts, so requests to each node go one at a
+time, 120 ms apart.
+
+Names come from three places, in this order: names approved by NIR Markets
+moderators, name-service records, and the explorers' open labels (verified
+contract names, community tags). There is no private database of entities,
+so most wallets show their address. A signed-in visitor can suggest a name
+on any wallet's page, with a link to where it is published; moderators
+(`NIR_MARKET_ADMINS`) approve or reject it in their profile's Moderation
+tab, and an approved name shows on every transfer, wallet page and search
+result with the tag "NIR Markets" (`blockchain/market-labels.mjs`: names of
+2–40 characters, https links, ten suggestions per account a day).
 
 Some explorers sit behind a bot challenge that turns server requests away;
 only explorers that answer servers are used. An address holding thousands of
@@ -264,6 +283,9 @@ explorer requests a minute.
 | GET | `/market/chain/search?q=` | an address, or wallets by name |
 | GET | `/market/me/addresses` | the visitor's saved addresses |
 | PUT, DELETE | `/market/me/addresses/<address>` | saves `{ label?, mine? }`, or removes one |
+| POST | `/market/labels` | suggests `{ address, name, link? }` |
+| GET | `/market/labels/pending` | the queue, for moderators |
+| POST | `/market/labels/<id>/approve`, `/market/labels/<id>/reject` | a moderator's decision |
 
 ## A coin's page
 

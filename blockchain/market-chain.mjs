@@ -3,8 +3,9 @@
 // balance history, and search by address or name. Part of the market service
 // (Caddy passes /market/* to it).
 //
-// Data comes from public, keyless explorers: Blockscout instances for the
-// account-based networks and mempool.space for the UTXO network. Names are
+// Data comes from public, keyless sources: Blockscout explorers where they
+// answer servers, free public nodes for the other account-based networks
+// (market-rpc.mjs), and mempool.space for the UTXO network. Names are
 // the explorers' open labels (name service records, verified contract names,
 // community tags); there is no private entity database.
 //
@@ -13,6 +14,8 @@
 // over 20 seconds to list an address's tokens is not waited for. A budget of fetches per
 // minute keeps a burst of visitors from hammering the explorers; past it, a
 // cached copy is served or the visitor is asked to retry.
+
+import { createNodes, NODES, postRpc } from "./market-rpc.mjs";
 
 const EXPLORERS = {
   eth: { api: "https://eth.blockscout.com/api/v2", native: "ETH" },
@@ -88,7 +91,8 @@ export function normalizeTransaction(chain, item, native) {
     token: { address: null, symbol: native, name: native, icon: null, price }, amount, usd: price === null ? null : amount * price };
 }
 
-export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000 } = {}) {
+export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
+  labelFor = () => null } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -118,6 +122,8 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
     try { return await job; } finally { pending.delete(key); }
   }
 
+  const nodes = createNodes({ rpc, get, cached });
+
   // --- The feed: the latest token and coin transfers on every network, newest first.
   const seen = new Map();
   async function feed() {
@@ -125,7 +131,7 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
       const lists = await Promise.all(Object.entries(EXPLORERS).flatMap(([chain, explorer]) => [
         get(`${explorer.api}/token-transfers?type=ERC-20`).then((data) => (data?.items ?? []).map((item) => normalizeTransfer(chain, item))).catch(() => []),
         get(`${explorer.api}/transactions?filter=validated`).then((data) => (data?.items ?? []).map((item) => normalizeTransaction(chain, item, explorer.native))).catch(() => []),
-      ]));
+      ]).concat(nodes.feed().catch(() => [])));
       for (const item of lists.flat()) if (item && item.time) seen.set(item.id, item);
       // The newest 400 are kept, so the feed grows while people watch.
       const kept = [...seen.values()].sort((left, right) => right.time - left.time).slice(0, 400);
@@ -159,6 +165,8 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
         return { chain, ok: false, info: null, assets: [] };
       }
     }));
+    // The other networks, read from public nodes in one call each.
+    chains.push(...await nodes.holdings(address).catch(() => Object.keys(NODES).map((chain) => ({ chain, ok: false, partial: false, info: null, assets: [] }))));
     const named = chains.map((item) => item.info).find((info) => info?.name) ?? chains.find((item) => item.info)?.info;
     return { address, kind: "evm", name: named?.name ?? null, tags: [...new Set(chains.flatMap((item) => item.info?.tags ?? []))],
       contract: chains.some((item) => item.info?.contract), networks: chains.map(({ chain, ok, partial }) => ({ chain, ok, partial: Boolean(partial) })),
@@ -211,7 +219,8 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
   }
   function transfers(address, chain, direction, cursor) {
     const key = `transfers:${address.toLowerCase()}:${chain}:${direction}:${JSON.stringify(cursor ?? null)}`;
-    return cached(key, 60_000, () => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor) : evmTransfers(address, chain, direction, cursor)));
+    return cached(key, 60_000, async () => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor)
+      : NODES[chain] ? { items: await nodes.addressTransfers(address, chain, direction), next: null } : evmTransfers(address, chain, direction, cursor)));
   }
 
   // --- The network coin's balance by day, from the explorer.
@@ -235,6 +244,12 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
     });
   }
 
+  // Names approved by NIR Markets moderators (market-labels.mjs) go ahead of the explorers' labels.
+  const named = (party) => {
+    const name = party?.address ? labelFor(party.address) : null;
+    return name ? { ...party, name, tags: ["NIR Markets", ...(party.tags ?? []).filter((tag) => tag !== "NIR Markets")] } : party;
+  };
+  const relabel = (items) => items.map((item) => ({ ...item, from: named(item.from), to: named(item.to) }));
   const reply = (response, status, body, maxAge = 15) => {
     response.writeHead(status, { "content-type": "application/json; charset=utf-8",
       "cache-control": status === 200 ? `public, max-age=${maxAge}` : "no-store" });
@@ -249,18 +264,27 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
       if (path === "/market/chain/feed") {
         const min = Math.max(0, Number(url.searchParams.get("min")) || 0);
         const chain = url.searchParams.get("chain");
-        const items = (await feed()).filter((item) => (item.usd ?? 0) >= min && (!chain || item.chain === chain)).slice(0, 200);
-        return reply(response, 200, { networks: [...Object.keys(EXPLORERS)], items }, 10), true;
+        const items = relabel((await feed()).filter((item) => (item.usd ?? 0) >= min && (!chain || item.chain === chain)).slice(0, 200));
+        return reply(response, 200, { networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES)], items }, 10), true;
       }
-      if (path === "/market/chain/search") return reply(response, 200, { results: await search(url.searchParams.get("q") ?? "") }, 300), true;
+      if (path === "/market/chain/search") {
+        const results = (await search(url.searchParams.get("q") ?? "")).map((item) => ({ ...item, name: labelFor(item.address) ?? item.name }));
+        return reply(response, 200, { results }, 300), true;
+      }
       const match = /^\/market\/chain\/address\/([^/]+)(?:\/(transfers|history))?$/.exec(path);
       if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
       const [, address, part] = match;
-      if (!part) return reply(response, 200, await holdings(address), 60), true;
+      if (!part) {
+        const data = await holdings(address);
+        const own = labelFor(address);
+        // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
+        return reply(response, 200, own ? { ...data, name: own, tags: ["NIR Markets", ...data.tags] } : data, 5), true;
+      }
       const chain = addressKind(address) === "utxo" ? UTXO.id : url.searchParams.get("chain") ?? "eth";
-      if (chain !== UTXO.id && !EXPLORERS[chain]) return reply(response, 404, { error: "unknown network" }), true;
+      if (chain !== UTXO.id && !EXPLORERS[chain] && !NODES[chain]) return reply(response, 404, { error: "unknown network" }), true;
       if (part === "history") {
-        if (chain === UTXO.id) return reply(response, 200, { chain, points: [] }, 600), true;
+        // Balance history needs an explorer; the node networks have none.
+        if (!EXPLORERS[chain]) return reply(response, 200, { chain, points: [] }, 600), true;
         return reply(response, 200, { chain, symbol: EXPLORERS[chain].native, points: await history(address, chain) }, 600), true;
       }
       const direction = ["in", "out"].includes(url.searchParams.get("dir")) ? url.searchParams.get("dir") : "all";
@@ -268,11 +292,11 @@ export function createChain({ get = fetchExplorer, now = Date.now, perMinute = 6
       try { cursor = url.searchParams.get("cursor") ? JSON.parse(Buffer.from(url.searchParams.get("cursor"), "base64url").toString("utf8")) : null; } catch {}
       if (cursor !== null && (typeof cursor !== "object" || JSON.stringify(cursor).length > 600)) cursor = null;
       const page = await transfers(address, chain, direction, cursor);
-      return reply(response, 200, { chain, items: page.items, next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null }, 30), true;
+      return reply(response, 200, { chain, items: relabel(page.items), next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null }, 30), true;
     } catch (error) {
       return reply(response, error?.status === 503 ? 503 : 502, { error: "the explorer is unavailable, try again in a minute" }), true;
     }
   }
 
-  return { handle, feed, holdings, transfers, history, search, networks: [...Object.keys(EXPLORERS), UTXO.id] };
+  return { handle, feed, holdings, transfers, history, search, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

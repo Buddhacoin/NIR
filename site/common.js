@@ -138,9 +138,14 @@ function sortBy(list, sort, value) {
   });
 }
 // --- Wallets and transfers (the explorer, /market/chain): networks, short addresses, links.
+// `history`: the explorer keeps the coin's balance by day; `node`: read from a public node (token transfers of about the last day).
 const CHAINS = {
-  eth: { name: "Ethereum", short: "ETH", color: "#627eea", tx: "https://eth.blockscout.com/tx/" },
-  optimism: { name: "Optimism", short: "OP", color: "#ff0420", tx: "https://explorer.optimism.io/tx/" },
+  eth: { name: "Ethereum", short: "ETH", color: "#627eea", tx: "https://eth.blockscout.com/tx/", history: true },
+  optimism: { name: "Optimism", short: "OP", color: "#ff0420", tx: "https://explorer.optimism.io/tx/", history: true },
+  base: { name: "Base", short: "BASE", color: "#0052ff", tx: "https://basescan.org/tx/", node: true },
+  arbitrum: { name: "Arbitrum", short: "ARB", color: "#28a0f0", tx: "https://arbiscan.io/tx/", node: true },
+  polygon: { name: "Polygon", short: "POL", color: "#8247e5", tx: "https://polygonscan.com/tx/", node: true },
+  bsc: { name: "BNB Chain", short: "BNB", color: "#f0b90b", tx: "https://bscscan.com/tx/", node: true },
   btc: { name: "Bitcoin", short: "BTC", color: "#f7931a", tx: "https://mempool.space/tx/" },
 };
 const ADDRESS = /^(?:0x[0-9a-fA-F]{40}|bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/;

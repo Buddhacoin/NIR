@@ -1,0 +1,37 @@
+[
+ {
+  "id": "usd-coin",
+  "symbol": "usdc",
+  "name": "USDC",
+  "platforms": {
+   "base": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+   "arbitrum-one": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+   "polygon-pos": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"
+  }
+ },
+ {
+  "id": "chainlink",
+  "symbol": "link",
+  "name": "Chainlink",
+  "platforms": {
+   "base": "0x88fb150bdc53a65fe94dea0c9ba0a6daf8c6e196",
+   "binance-smart-chain": "0xf8a0bf9cf54bb92f17374d9e9a321e6a111a51bd"
+  }
+ },
+ {
+  "id": "polygon-ecosystem-token",
+  "symbol": "pol",
+  "name": "POL (ex-MATIC)",
+  "platforms": {
+   "polygon-pos": "0x0000000000000000000000000000000000001010"
+  }
+ },
+ {
+  "id": "no-price",
+  "symbol": "nop",
+  "name": "Unpriced",
+  "platforms": {
+   "base": "0x1111111111111111111111111111111111111111"
+  }
+ }
+]

@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=19">
+  <link rel="stylesheet" href="/markets.css?v=20">
 </head>
 <body>
   <div class="nirbar">
@@ -58,6 +58,7 @@
           <button class="act" id="track" type="button"></button>
           <button class="act ghost" id="mine" type="button"></button>
           <button class="act ghost" id="share" type="button" data-i18n="share">Поделиться</button>
+          <button class="act ghost" id="suggest" type="button" data-i18n="suggest">✎ Предложить подпись</button>
         </div>
       </section>
       <p class="note-bar" id="partial" hidden></p>
@@ -95,6 +96,7 @@
             <div class="seg" id="transfer-chain"></div>
             <button class="pill tf-filter on" id="dust" type="button">$ ≥ 1</button>
           </div>
+          <p class="muted ex-note" id="node-note" hidden></p>
           <div class="table-wrap"><table class="ex-table ex-transfers"><thead><tr><th class="left" data-i18n="colTime">Время</th><th class="left" data-i18n="colFrom">От</th><th class="left" data-i18n="colTo">Кому</th><th data-i18n="colAmount">Количество</th><th data-i18n="colUsd">USD</th></tr></thead><tbody id="transfers"></tbody></table></div>
           <button class="act ghost ex-more" id="more" type="button" data-i18n="more" hidden>Показать ещё</button>
         </article>
@@ -117,7 +119,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=9"></script>
-  <script src="/address.js?v=1"></script>
+  <script src="/common.js?v=10"></script>
+  <script src="/address.js?v=2"></script>
 </body>
 </html>

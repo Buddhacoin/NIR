@@ -13,7 +13,7 @@ const en = {
   colAsset: "Asset", colChain: "Network", colPrice: "Price", colAmount: "Amount", colValue: "Value", colAssets: "Assets", colShare: "Share",
   history: "Balance history", counterparties: "Top counterparties", counterNote: "From the loaded transfers: who this address deals with most.",
   colWallet: "Address", colIn: "Received from", colOut: "Sent to", colCount: "Transfers", dirAll: "Transfers", dirIn: "Inflow", dirOut: "Outflow",
-  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", more: "Show more",
+  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", more: "Show more", suggest: "✎ Suggest a name",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
@@ -24,14 +24,22 @@ const words = {
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
     failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noCounter: "Пока нечего показать.",
     signIn: "Войдите через Google, чтобы отслеживать адреса.", historyNote: (symbol) => `Баланс ${symbol} по дням, по данным обозревателя.`,
-    noHistory: "Истории баланса для этой сети нет." },
+    noHistory: "Истории баланса для этой сети нет.",
+    nodeNote: "Эта сеть читается с открытого узла: видны переводы токенов примерно за последние сутки, переводы самой монеты сети не видны.",
+    askName: "Как называется этот кошелёк? (2–40 символов, например «Биржа Olympus — горячий кошелёк»)",
+    askLink: "Ссылка, где это опубликовано (необязательно, https://…)", sent: "Спасибо! Подпись появится после проверки модератором.",
+    signInSuggest: "Войдите через Google, чтобы предлагать подписи." },
   en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Track address", tracked: "★ Tracked",
     mine: "This is mine", isMine: "✓ My address", copied: "Copied", missing: "This is not a wallet address.",
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
     failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noCounter: "Nothing to show yet.",
     signIn: "Sign in with Google to track addresses.", historyNote: (symbol) => `${symbol} balance by day, from the explorer.`,
-    noHistory: "No balance history for this network." },
+    noHistory: "No balance history for this network.",
+    nodeNote: "This network is read from a public node: token transfers of about the last day are visible, the network coin's own transfers are not.",
+    askName: "What is this wallet? (2–40 characters, e.g. “Olympus exchange hot wallet”)",
+    askLink: "A link where this is published (optional, https://…)", sent: "Thank you! The name shows once a moderator approves it.",
+    signInSuggest: "Sign in with Google to suggest names." },
 };
 const t = () => words[language];
 const address = decodeURIComponent(location.pathname.split("/")[2] ?? "");
@@ -61,7 +69,8 @@ function renderHead() {
   $("#avatar").style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   $("#avatar").textContent = (data.name ?? "◎")[0].toUpperCase();
   $("#total").textContent = price(data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0));
-  $("#tags").replaceChildren(...data.networks.filter((item) => item.ok).map((item) => { const chip = node("span", "ex-chip"); chip.append(chainDot(item.chain), chainName(item.chain)); return chip; }),
+  const held = new Set(data.assets.map((asset) => asset.chain));
+  $("#tags").replaceChildren(...data.networks.filter((item) => item.ok && held.has(item.chain)).map((item) => { const chip = node("span", "ex-chip"); chip.append(chainDot(item.chain), chainName(item.chain)); return chip; }),
     ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
   $("#track").textContent = saved ? t().tracked : t().track;
   $("#track").classList.toggle("ghost", Boolean(saved));
@@ -115,7 +124,8 @@ function renderAssets() {
 // --- The network coin's balance by day, drawn as a line.
 async function renderHistory() {
   const box = $("#plot");
-  const evm = Object.keys(CHAINS).filter((chain) => chain !== "btc");
+  const evm = Object.keys(CHAINS).filter((chain) => CHAINS[chain].history);
+  if (!CHAINS[historyChain]?.history) historyChain = "eth";
   $("#history-chain").replaceChildren(...(utxo ? [] : evm.map((chain) => {
     const button = node("button", chain === historyChain ? "on" : "", CHAINS[chain].short);
     button.type = "button";
@@ -163,6 +173,8 @@ function renderTransfers() {
     button.addEventListener("click", () => { transferChain = chain; void loadTransfers(true); });
     return button;
   })));
+  $("#node-note").hidden = !CHAINS[transferChain]?.node;
+  $("#node-note").textContent = t().nodeNote;
   const shown = transfers.filter((item) => !dust || (item.usd ?? 0) >= 1);
   const own = address.toLowerCase();
   $("#transfers").replaceChildren(...(shown.length ? shown.map((item) => {
@@ -274,6 +286,15 @@ $("#share").addEventListener("click", async () => {
   else { await navigator.clipboard?.writeText(url).catch(() => {}); $("#share").textContent = t().copied; }
 });
 $("#track").addEventListener("click", () => void save(saved ? null : { mine: false }));
+// Suggest a name: it shows once a moderator approves it.
+$("#suggest").addEventListener("click", async () => {
+  if (!account.user) { if (account.signIn) location.href = signInUrl(); else alert(t().signInSuggest); return; }
+  const name = prompt(t().askName)?.trim();
+  if (!name) return;
+  const link = prompt(t().askLink)?.trim() ?? "";
+  const { status, data: answer } = await send("/market/labels", "POST", { address, name, link });
+  alert(status === 201 ? t().sent : answer.error ?? "Error");
+});
 $("#mine").addEventListener("click", () => void save({ mine: !saved?.mine }));
 for (const button of document.querySelectorAll("#assets-tabs [data-view]")) button.addEventListener("click", () => { view = button.dataset.view; renderAssets(); });
 for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });

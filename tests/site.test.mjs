@@ -140,7 +140,7 @@ test("the explorer pages have English for every text, and the server routes wall
   assert.match(read("site/markets.js"), /\/market\/chain\/feed/);
   assert.match(read("deploy/install-shared-testnet.sh"), /handle \/address\/\* \{\n\s+root \* \$APP_DIR\/site\n\s+rewrite \* \/address\/index\.html/);
   const profile = read("site/u/index.html");
-  for (const key of ["tabWallets", "tabTracked"]) {
+  for (const key of ["tabWallets", "tabTracked", "tabModeration"]) {
     assert.match(profile, new RegExp(`data-i18n="${key}"`));
     assert.match(read("site/profile.js"), new RegExp(`\\b${key}:`));
   }

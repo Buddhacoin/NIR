@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { addressKind, createChain, party, units } from "../blockchain/market-chain.mjs";
+import { decodeAggregate3, encodeAggregate3 } from "../blockchain/market-rpc.mjs";
 import { createMarketService } from "../blockchain/market-service.mjs";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/chain/${name}`, import.meta.url), "utf8"));
@@ -15,6 +16,8 @@ function explorers({ fail = [] } = {}) {
   const get = async (url) => {
     asked.push(url);
     if (fail.some((part) => url.includes(part))) throw Object.assign(new Error("down"), { status: 502 });
+    if (url.includes("/coins/list?include_platform=true")) return fixture("coin-list.json");
+    if (url.includes("api.coingecko.com/api/v3/coins/markets")) return fixture("coin-markets.json");
     if (url.includes("mempool.space/api/address/") && url.endsWith("/txs")) return fixture("utxo-txs.json");
     if (url.includes("mempool.space/api/address/")) return fixture("utxo-address.json");
     if (url.includes("/search?q=")) return fixture("search.json");
@@ -27,7 +30,46 @@ function explorers({ fail = [] } = {}) {
     if (url.includes("/transactions?filter=validated")) return fixture("transactions.json");
     throw new Error(`unexpected ${url}`);
   };
-  return { asked, get };
+  return { asked, get, rpc: node().rpc };
+}
+
+// A public node: Multicall3 answers (decimals, balances), the newest block, and token transfer logs.
+const word = (value) => BigInt(value).toString(16).padStart(64, "0");
+function results(list) {
+  // ABI-encodes (bool success, bytes data)[] the way Multicall3 answers.
+  const tails = list.map(({ success, data }) => { const body = data.replace(/^0x/, ""); return word(success ? 1 : 0) + word(64) + word(body.length / 2) + body.padEnd(Math.ceil(body.length / 64) * 64, "0"); });
+  let offset = list.length * 32;
+  const heads = tails.map((tail) => { const head = word(offset); offset += tail.length / 2; return head; });
+  return `0x${word(32)}${word(list.length)}${heads.join("")}${tails.join("")}`;
+}
+function node() {
+  const calls = [];
+  const rpc = async (url, method, params) => {
+    calls.push({ url, method, params });
+    if (method === "eth_getBlockByNumber") return { number: "0x100000", timestamp: "0x6700000" };
+    if (method === "eth_getLogs") {
+      const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+      if (!url.includes("base") || !params[0].address.includes(usdc)) return [];
+      return [{ address: usdc, topics: ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", `0x${word(`0x${EXCHANGE.slice(2)}`)}`, `0x${word("0x1234")}`],
+        data: `0x${word(2_500_000_000)}`, blockNumber: "0xfffff0", transactionHash: `0x${"ab".repeat(32)}`, logIndex: "0x3" }];
+    }
+    // eth_call to Multicall3: decimals, or [the coin balance, then each token's balance].
+    const data = params[0].data;
+    const decoded = data.slice(10);
+    const count = Number(BigInt(`0x${decoded.slice(64, 128)}`));
+    const selectors = [];
+    for (let index = 0; index < count; index += 1) {
+      const at = 128 + Number(BigInt(`0x${decoded.slice(128 + index * 64, 192 + index * 64)}`)) * 2;
+      selectors.push(decoded.slice(at + 64 * 4, at + 64 * 4 + 8));
+    }
+    return results(selectors.map((selector, index) => {
+      if (selector === "313ce567") return { success: true, data: `0x${word(6)}` };
+      if (selector === "4d2301cc") return { success: true, data: `0x${word(10n ** 18n / 2n)}` }; // half a coin
+      if (selector === "70a08231") return { success: true, data: `0x${word(index === 1 ? 125_000_000 : 0)}` }; // 125 of the first token
+      return { success: false, data: "0x" };
+    }));
+  };
+  return { calls, rpc };
 }
 
 test("explorer answers become transfers with names, amounts and dollar values", () => {
@@ -47,14 +89,16 @@ test("explorer answers become transfers with names, amounts and dollar values", 
 });
 
 test("the feed merges token and coin transfers from every network, newest first, with a dollar floor", async () => {
-  const { get } = explorers();
-  const chain = createChain({ get, now: () => Date.UTC(2026, 9, 25, 18, 15) });
+  const { get, rpc } = explorers();
+  const chain = createChain({ get, rpc, now: () => Date.UTC(2026, 9, 25, 18, 15) });
   const service = createMarketService({ fetch: async () => { throw new Error("offline"); }, chain });
   await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${service.server.address().port}`;
   try {
     const all = await (await fetch(`${base}/market/chain/feed`)).json();
-    assert.deepEqual(all.networks, ["eth", "optimism"]);
+    assert.deepEqual(all.networks, ["eth", "optimism", "base", "arbitrum", "polygon", "bsc"]);
+    const fromNode = all.items.find((item) => item.chain === "base");
+    assert.deepEqual([fromNode.token.symbol, fromNode.amount, fromNode.usd, fromNode.from.address], ["USDC", 2500, 2500, EXCHANGE.toLowerCase()]);
     assert.ok(all.items.length >= 6);
     assert.ok(all.items.every((item, index) => index === 0 || all.items[index - 1].time >= item.time), "newest first");
     assert.ok(all.items.every((item) => item.token.symbol !== "?"));
@@ -72,11 +116,17 @@ test("the feed merges token and coin transfers from every network, newest first,
 });
 
 test("an address shows its holdings on every network, its transfers a page at a time, and its balance history", async () => {
-  const { asked, get } = explorers();
-  const chain = createChain({ get, now: () => Date.UTC(2026, 9, 25, 18, 15), nativePrice: (symbol) => (symbol === "BTC" ? 80_000 : null) });
+  const { asked, get, rpc } = explorers();
+  const chain = createChain({ get, rpc, now: () => Date.UTC(2026, 9, 25, 18, 15), nativePrice: (symbol) => (symbol === "BTC" ? 80_000 : null) });
   const holdings = await chain.holdings(EXCHANGE);
   assert.equal(holdings.kind, "evm");
-  assert.deepEqual(holdings.networks.map((item) => item.chain), ["eth", "optimism"]);
+  assert.deepEqual(holdings.networks.map((item) => item.chain), ["eth", "optimism", "base", "arbitrum", "polygon", "bsc"]);
+  // The node networks: the coin and the listed tokens with a balance, priced; unpriced tokens never listed.
+  const base = holdings.assets.filter((asset) => asset.chain === "base");
+  assert.deepEqual(base.map((asset) => [asset.token.symbol, asset.amount, asset.usd]).sort(), [["ETH", 0.5, 1175], ["USDC", 125, 125]]);
+  const polygon = holdings.assets.filter((asset) => asset.chain === "polygon").map((asset) => asset.token.symbol);
+  assert.equal(polygon.filter((symbol) => symbol === "POL").length, 1, "the coin's own token contract is not counted twice");
+  assert.ok(holdings.assets.some((asset) => asset.chain === "bsc" && asset.token.symbol === "BNB" && asset.usd === 370));
   const symbols = holdings.assets.map((asset) => asset.token.symbol);
   assert.ok(symbols.includes("ETH") && symbols.includes("USDT"));
   assert.ok(!symbols.includes("Elon Musk DOGE"), "tokens without a price are left out");
@@ -93,6 +143,10 @@ test("an address shows its holdings on every network, its transfers a page at a 
   assert.deepEqual(page.next.tokens, fixture("address-transfers.json").next_page_params);
   await chain.transfers(EXCHANGE, "eth", "in", page.next);
   assert.ok(asked.some((url) => url.includes("&filter=to&index=76&block_number=26271373")), "the next page follows the explorer's cursor");
+
+  const onNode = await chain.transfers(EXCHANGE, "base", "out", null);
+  assert.equal(onNode.items.length, 1);
+  assert.equal(onNode.next, null);
 
   const history = await chain.history(EXCHANGE, "eth");
   assert.ok(history.length > 3 && history.every(([time, value], index) => index === 0 || history[index - 1][0] < time) && history[0][1] > 0);
@@ -113,9 +167,11 @@ test("an address shows its holdings on every network, its transfers a page at a 
 test("a slow network leaves the rest standing, and a busy minute serves copies instead of hammering the explorers", async () => {
   const { get } = explorers({ fail: ["explorer.optimism.io"] });
   let clock = Date.UTC(2026, 9, 25, 18, 15);
-  const chain = createChain({ get, now: () => clock, perMinute: 2 });
+  const down = async () => { throw new Error("node down"); };
+  const chain = createChain({ get, rpc: down, now: () => clock, perMinute: 4 });
   const holdings = await chain.holdings(EXCHANGE);
-  assert.deepEqual(holdings.networks, [{ chain: "eth", ok: true, partial: false }, { chain: "optimism", ok: false, partial: false }]);
+  assert.deepEqual(holdings.networks, [{ chain: "eth", ok: true, partial: false }, { chain: "optimism", ok: false, partial: false },
+    ...["base", "arbitrum", "polygon", "bsc"].map((name) => ({ chain: name, ok: false, partial: false }))]);
   await chain.feed();
   await assert.rejects(chain.transfers(EXCHANGE, "eth", "all", null), /busy/);
   clock += 61_000;
@@ -165,5 +221,70 @@ test("signed-in visitors keep a private list of tracked and own addresses", asyn
     await call("/market/me", { cookie: zeus, method: "DELETE" });
     const back = await signIn("zeus");
     assert.deepEqual((await call("/market/me/addresses", { cookie: back })).data.addresses, []);
+  } finally { await new Promise((resolve) => service.server.close(resolve)); }
+});
+
+test("Multicall3 calls are ABI-encoded and its answers decoded", () => {
+  const encoded = encodeAggregate3([{ target: EXCHANGE, data: "0x313ce567" }, { target: EXCHANGE, data: `0x70a08231${"0".repeat(24)}${EXCHANGE.slice(2).toLowerCase()}` }]);
+  assert.ok(encoded.startsWith("0x82ad56cb"));
+  assert.equal((encoded.length - 10) % 64, 0, "whole 32-byte words");
+  assert.deepEqual(decodeAggregate3(results([{ success: true, data: `0x${word(18)}` }, { success: false, data: "0x" }])),
+    [{ success: true, data: `0x${word(18)}` }, { success: false, data: "0x" }]);
+});
+
+test("visitors suggest wallet names, moderators approve them, and approved names lead everywhere", async () => {
+  const { createAccounts, readCookie } = await import("../blockchain/market-accounts.mjs");
+  const NOW = 1_700_000_000_000;
+  const ORIGIN = "https://markets.example";
+  const state = {};
+  const token = (claims) => `x.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.y`;
+  const accounts = createAccounts({ file: ":memory:", clientId: "c", clientSecret: "s", publicUrl: ORIGIN, now: () => NOW, admins: ["athena@olympus.example"],
+    post: async () => ({ id_token: token({ iss: "https://accounts.google.com", aud: "c", exp: NOW / 1000 + 600, sub: state.sub,
+      email: `${state.sub}@olympus.example`, email_verified: true, nonce: state.nonce }) }) });
+  const { get, rpc } = explorers();
+  const chain = createChain({ get, rpc, now: () => NOW, labelFor: accounts.labelFor });
+  const service = createMarketService({ fetch: async () => { throw new Error("offline"); }, accounts, chain });
+  await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  const signIn = async (sub) => {
+    state.sub = sub;
+    const google = new URL((await fetch(`${base}/market/auth/google`, { redirect: "manual" })).headers.get("location"));
+    state.nonce = google.searchParams.get("nonce");
+    const back = await fetch(`${base}/market/auth/google/callback?code=c&state=${google.searchParams.get("state")}`, { redirect: "manual" });
+    return readCookie(back.headers.get("set-cookie"), "__Host-nir_session");
+  };
+  const call = async (path, { cookie, method = "GET", body } = {}) => {
+    const response = await fetch(`${base}${path}`, { method, headers: { ...(cookie ? { cookie: `__Host-nir_session=${cookie}` } : {}),
+      ...(method === "GET" ? {} : { origin: ORIGIN }), "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: response.status, data: await response.json() };
+  };
+  try {
+    assert.equal((await call("/market/labels", { method: "POST", body: { address: EXCHANGE, name: "Olympus" } })).status, 401);
+    const zeus = await signIn("zeus");
+    for (const bad of [{ address: "0x1", name: "Olympus" }, { address: EXCHANGE, name: "O" }, { address: EXCHANGE, name: "x".repeat(41) },
+      { address: EXCHANGE, name: "Olympus", link: "javascript:alert(1)" }]) {
+      assert.equal((await call("/market/labels", { cookie: zeus, method: "POST", body: bad })).status, 400, JSON.stringify(bad));
+    }
+    assert.equal((await call("/market/labels", { cookie: zeus, method: "POST", body: { address: EXCHANGE, name: "Olympus  exchange", link: "https://olympus.example/reserves" } })).status, 201);
+    assert.equal((await call("/market/me", { cookie: zeus })).data.moderator, false);
+    assert.equal((await call("/market/labels/pending", { cookie: zeus })).status, 403, "only moderators see the queue");
+    // Nothing changes until a moderator decides.
+    assert.notEqual((await call(`/market/chain/address/${EXCHANGE}`)).data.name, "Olympus exchange");
+
+    const athena = await signIn("athena");
+    assert.equal((await call("/market/me", { cookie: athena })).data.moderator, true);
+    const pending = await call("/market/labels/pending", { cookie: athena });
+    assert.equal(pending.status, 200, JSON.stringify(pending.data));
+    const queue = pending.data.suggestions;
+    assert.deepEqual(queue.map(({ address, name, link }) => [address, name, link]), [[EXCHANGE.toLowerCase(), "Olympus exchange", "https://olympus.example/reserves"]]);
+    assert.equal((await call(`/market/labels/${queue[0].id}/approve`, { cookie: zeus, method: "POST" })).status, 403);
+    assert.deepEqual((await call(`/market/labels/${queue[0].id}/approve`, { cookie: athena, method: "POST" })).data.suggestions, []);
+
+    const wallet = (await call(`/market/chain/address/${EXCHANGE.toLowerCase()}`)).data;
+    assert.equal(wallet.name, "Olympus exchange");
+    assert.equal(wallet.tags[0], "NIR Markets");
+    const feed = (await call("/market/chain/feed")).data.items;
+    assert.ok(feed.some((item) => item.from.address.toLowerCase() === EXCHANGE.toLowerCase() && item.from.name === "Olympus exchange"));
+    assert.equal(accounts.labelFor(EXCHANGE.toUpperCase().replace("0X", "0x")), "Olympus exchange");
   } finally { await new Promise((resolve) => service.server.close(resolve)); }
 });

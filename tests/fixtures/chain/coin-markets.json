@@ -1,0 +1,42 @@
+[
+ {
+  "id": "usd-coin",
+  "symbol": "usdc",
+  "name": "USDC",
+  "image": "https://coin-images.coingecko.com/coins/images/6319/large/usdc.png",
+  "current_price": 1.0,
+  "market_cap": 70000000000.0
+ },
+ {
+  "id": "chainlink",
+  "symbol": "link",
+  "name": "Chainlink",
+  "image": "https://coin-images.coingecko.com/coins/images/877/large/link.png",
+  "current_price": 13.5,
+  "market_cap": 8000000000.0
+ },
+ {
+  "id": "polygon-ecosystem-token",
+  "symbol": "pol",
+  "name": "POL (ex-MATIC)",
+  "image": null,
+  "current_price": 0.09,
+  "market_cap": 900000000.0
+ },
+ {
+  "id": "binancecoin",
+  "symbol": "bnb",
+  "name": "BNB",
+  "image": null,
+  "current_price": 740.0,
+  "market_cap": 100000000000.0
+ },
+ {
+  "id": "eth-like",
+  "symbol": "eth",
+  "name": "Network coin",
+  "image": null,
+  "current_price": 2350.0,
+  "market_cap": 280000000000.0
+ }
+]

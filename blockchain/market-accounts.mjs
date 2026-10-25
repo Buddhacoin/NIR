@@ -16,6 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createCommunity } from "./market-community.mjs";
 import { createAddresses } from "./market-addresses.mjs";
 import { createAlerts } from "./market-alerts.mjs";
+import { createLabels } from "./market-labels.mjs";
 import { createPortfolio } from "./market-portfolio.mjs";
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -233,12 +234,16 @@ export function createAccounts({
   const alerts = createAlerts({ db, now, publicUrl, fetch: pushFetch });
   // Tracked and own wallet addresses (market-addresses.mjs) under /market/me/addresses.
   const addresses = createAddresses({ db, now });
+  // Wallet names suggested by visitors and approved by moderators (market-labels.mjs) under /market/labels.
+  const moderators = new Set(admins.map((email) => email.trim().toLowerCase()).filter(Boolean));
+  const isModerator = (user) => Boolean(user && moderators.has(user.email.toLowerCase()));
+  const labels = createLabels({ db, now, isModerator });
 
   // Answers a request under /market/auth, /market/me, /market/u or the community's paths, or returns false.
   async function handle(request, response, url) {
     if (await community.handle(request, response, url)) return true;
     const path = url.pathname;
-    if (!/^\/market\/(auth|me|u)(\/|$)/.test(path)) return false;
+    if (!/^\/market\/(auth|me|u|labels)(\/|$)/.test(path)) return false;
     const method = request.method;
     if (method === "GET" && path === "/market/auth/google") return startSignIn(url, response), true;
     if (method === "GET" && path === "/market/auth/google/callback") return await finishSignIn(url, response), true;
@@ -253,7 +258,7 @@ export function createAccounts({
     }
     const user = userFor(request);
     if (method === "GET" && path === "/market/me") {
-      json(response, 200, user ? { signIn: enabled, user: profile(user), watchlist: watchlist(user.id), alertsUnseen: alerts.unseen(user.id) } : { signIn: enabled, user: null });
+      json(response, 200, user ? { signIn: enabled, user: profile(user), watchlist: watchlist(user.id), alertsUnseen: alerts.unseen(user.id), moderator: isModerator(user) } : { signIn: enabled, user: null });
       return true;
     }
     // Every change below comes from a page on this site, from a signed-in visitor.
@@ -270,6 +275,7 @@ export function createAccounts({
       if (await portfolio.handle({ method, path, user, request, response, json, body })) return true;
       if (await alerts.handle({ method, path, user, request, response, json, body })) return true;
       if (await addresses.handle({ method, path, user, request, response, json, body })) return true;
+      if (await labels.handle({ method, path, user, request, response, json, body })) return true;
       const watchMatch = /^\/market\/me\/watchlist\/([^/]+)$/.exec(path);
       if (method === "DELETE" && path === "/market/me") {
         // Deleting the account removes all of its data at once, and signs it out everywhere.
@@ -277,6 +283,7 @@ export function createAccounts({
         portfolio.forget(user.id);
         alerts.forget(user.id);
         addresses.forget(user.id);
+        labels.forget(user.id);
         for (const table of ["sessions", "watchlist", "activity"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
         sql("DELETE FROM users WHERE id = ?").run(user.id);
         json(response, 200, { deleted: true }, { "set-cookie": cookie("", 0) });
@@ -301,5 +308,5 @@ export function createAccounts({
     return true;
   }
 
-  return { handle, enabled, db, alertCoins: alerts.coins, checkAlerts: alerts.check, close: () => db.close() };
+  return { handle, enabled, db, alertCoins: alerts.coins, checkAlerts: alerts.check, labelFor: labels.labelFor, close: () => db.close() };
 }

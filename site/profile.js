@@ -10,7 +10,7 @@ const en = {
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
   navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins or addresses",
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
-  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabWallets: "My addresses", tabTracked: "Tracked", tabComments: "Comments", deleteAccount: "Delete account",
+  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabWallets: "My addresses", tabTracked: "Tracked", tabModeration: "Moderation", tabComments: "Comments", deleteAccount: "Delete account",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
   aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR",
 };
@@ -22,7 +22,8 @@ const words = {
     addAddress: "Адрес кошелька (0x… или bc1…)", addLabel: "Подпись (необязательно)", add: "Добавить", badAddress: "Это не адрес кошелька.",
     walletsTotal: "Всего на моих адресах", noWallets: "Добавьте адреса своих кошельков — сайт сложит их балансы по всем сетям в один портфель. Адреса видите только вы.",
     noTracked: "Вы пока не отслеживаете адреса. Откройте любой кошелёк (через поиск или ленту «Все переводы») и нажмите «Отследить адрес».",
-    remove: "Убрать", loadingWallet: "загружаю…", asset: "Актив", amount: "Количество", value: "Сумма" },
+    remove: "Убрать", loadingWallet: "загружаю…", asset: "Актив", amount: "Количество", value: "Сумма",
+    noSuggestions: "Новых подписей на проверку нет.", approve: "Одобрить", reject: "Отклонить", source: "источник", by: "от" },
   en: { loading: "Loading the profile…", missing: "There is no such profile.", unavailable: "The profile is unavailable right now.",
     since: (date) => `on NIR Markets since ${date}`, joined: "Joined NIR Markets", profile: "Updated the profile",
     watch: "Added to the watchlist", comment: "Commented on", noComments: "No comments yet.", noActivity: "Nothing here yet.", noWatch: "The watchlist is empty. Tap ☆ next to a coin.",
@@ -30,7 +31,8 @@ const words = {
     addAddress: "Wallet address (0x… or bc1…)", addLabel: "Label (optional)", add: "Add", badAddress: "This is not a wallet address.",
     walletsTotal: "Total on my addresses", noWallets: "Add your wallets' addresses and the site adds up their balances on every network into one portfolio. Only you see them.",
     noTracked: "You do not track any address yet. Open a wallet (from search or All transfers) and press Track address.",
-    remove: "Remove", loadingWallet: "loading…", asset: "Asset", amount: "Amount", value: "Value" },
+    remove: "Remove", loadingWallet: "loading…", asset: "Asset", amount: "Amount", value: "Value",
+    noSuggestions: "No names waiting for review.", approve: "Approve", reject: "Reject", source: "source", by: "by" },
 };
 
 const name = decodeURIComponent(location.pathname.split("/")[2] ?? "").toLowerCase();
@@ -143,8 +145,37 @@ function renderWallets(box) {
   box.replaceChildren(form, head, ...mine.map(addressRow), table);
 }
 
+// --- Moderation: wallet names suggested by visitors, approved or rejected here.
+let suggestions = null;
+async function loadSuggestions() {
+  const answer = await fetch("/market/labels/pending", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  suggestions = answer?.suggestions ?? [];
+  renderView();
+}
+function renderModeration(box) {
+  if (suggestions === null) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().loading })); void loadSuggestions(); return; }
+  if (!suggestions.length) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().noSuggestions })); return; }
+  box.replaceChildren(...suggestions.map((item) => {
+    const row = document.createElement("div");
+    row.className = "feed-row";
+    row.append(walletLink({ address: item.address, name: null }), Object.assign(document.createElement("b"), { textContent: `«${item.name}»` }));
+    if (item.link) row.append(Object.assign(document.createElement("a"), { href: item.link, target: "_blank", rel: "noopener nofollow", textContent: t().source }));
+    if (item.username) row.append(Object.assign(document.createElement("small"), { className: "muted", textContent: `${t().by} @${item.username}` }));
+    for (const [action, label] of [["approve", t().approve], ["reject", t().reject]]) {
+      const button = Object.assign(document.createElement("button"), { type: "button", className: action === "approve" ? "act" : "pill", textContent: label });
+      button.addEventListener("click", async () => {
+        const { status, data } = await send(`/market/labels/${item.id}/${action}`, "POST");
+        if (status === 200) { suggestions = data.suggestions; renderView(); }
+      });
+      row.append(button);
+    }
+    return row;
+  }));
+}
+
 function renderView() {
   const box = $("#view");
+  if (view === "moderation") { renderModeration(box); return; }
   if (view === "wallets" || view === "tracked") {
     if (saved === null) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().loading })); void loadSaved(); return; }
     if (view === "wallets") { renderWallets(box); return; }
@@ -209,6 +240,7 @@ function render() {
   $("#tab-watch").hidden = !own;
   $("#tab-wallets").hidden = !own;
   $("#tab-tracked").hidden = !own;
+  $("#tab-moderation").hidden = !own || !account.moderator;
   for (const item of document.querySelectorAll(".tabbar a")) item.classList.toggle("on", own && item.id === "tab-account");
   for (const button of document.querySelectorAll("[data-view]")) button.classList.toggle("on", button.dataset.view === view);
   renderView();

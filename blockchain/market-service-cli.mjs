@@ -33,7 +33,8 @@ const env = process.env;
 const accounts = env.NIR_MARKET_DB ? createAccounts({ file: env.NIR_MARKET_DB, clientId: env.GOOGLE_CLIENT_ID,
   clientSecret: env.GOOGLE_CLIENT_SECRET, admins: (env.NIR_MARKET_ADMINS ?? "").split(","), publicUrl: env.NIR_MARKET_PUBLIC_URL ?? `http://localhost:${port}` }) : null;
 // The explorer always reads the live public explorers; prices for the UTXO network come from the overview.
-const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null });
+const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
+  labelFor: (address) => accounts?.labelFor(address) ?? null });
 const service = createMarketService(fixture ? {
   accounts, chain,
   fetch: async (url) => {

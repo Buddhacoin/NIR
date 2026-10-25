@@ -9,7 +9,7 @@ const en = {
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins or addresses",
   title: "All transfers", refresh: "Refresh", allNetworks: "All networks", tokenFilter: "Token: USDC, ETH…",
   colTime: "Time", colFrom: "From", colTo: "To", colAmount: "Amount", colToken: "Token", colUsd: "USD",
-  note: "Transfers on Ethereum and Optimism from the open Blockscout explorers, refreshed every 20 seconds. Names are open labels (ENS, verified contracts, community tags).",
+  note: "Transfers on Ethereum, Optimism, Base, Arbitrum, Polygon and BNB Chain from the open Blockscout explorers and public nodes, refreshed every 20 seconds. Names are labels checked by NIR Markets moderators and open labels (ENS, verified contracts, community tags).",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
