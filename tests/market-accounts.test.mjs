@@ -129,3 +129,27 @@ test("without Google keys the site says sign-in is off", async () => {
     assert.equal((await fetch(`${base}/market/auth/google`, { redirect: "manual" })).status, 503);
   } finally { await new Promise((resolve) => service.server.close(resolve)); }
 });
+
+test("deleting an account removes its data and signs it out", async () => {
+  const app = await start();
+  try {
+    const { cookie } = await app.signIn();
+    await app.call("/market/me/watchlist/bitcoin", { cookie, method: "PUT" });
+    const comment = await app.call("/market/coin/bitcoin/comments", { cookie, method: "POST", body: { body: "Bye." } });
+    assert.equal(comment.status, 201);
+    await app.call("/market/coin/bitcoin/sentiment", { cookie, method: "POST", body: { side: "rise" } });
+    const name = (await (await app.call("/market/me", { cookie })).json()).user.username;
+    assert.equal((await app.call("/market/me", { method: "DELETE", origin: "https://evil.example", cookie })).status, 403);
+    const gone = await app.call("/market/me", { cookie, method: "DELETE" });
+    assert.equal(gone.status, 200);
+    assert.match(gone.headers.get("set-cookie"), /Max-Age=0/);
+    assert.equal((await (await app.call("/market/me", { cookie })).json()).user, null);
+    assert.equal((await app.call(`/market/u/${name}`)).status, 404);
+    assert.deepEqual((await (await app.call("/market/coin/bitcoin/comments")).json()).comments, []);
+    const vote = await (await app.call("/market/coin/bitcoin/sentiment")).json();
+    assert.equal(vote.rise, 0);
+    // Signing in again with the same Google account starts a fresh account.
+    const again = await app.signIn();
+    assert.notEqual((await (await app.call("/market/me", { cookie: again.cookie })).json()).user, null);
+  } finally { await app.stop(); }
+});

@@ -191,6 +191,12 @@ tr.chart td { padding: 0 10px 16px; }
 .profile-form input, .profile-form textarea { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
   font-size: 15px; resize: vertical; }
 .profile-form .row { display: flex; gap: 8px; }
+.danger { justify-self: start; padding: 0; border: 0; background: none; color: var(--down); font-size: 13px; font-weight: 700; cursor: pointer; }
+.legal { max-width: 760px; line-height: 1.65; }
+.legal h1 { margin: 10px 0 4px; font-size: 28px; }
+.legal h2 { margin: 26px 0 6px; font-size: 18px; }
+.legal a { color: var(--accent); }
+.legal hr { margin: 40px 0 10px; border: 0; border-top: 1px solid var(--line); }
 .form-error { margin: 0; color: var(--down); font-size: 14px; }
 .profile-page .tabs { margin: 0; }
 .feed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
