@@ -678,3 +678,16 @@ td.mood i { display: block; width: 70px; height: 4px; margin: 6px 0 0 auto; bord
   .explorer > .ex-card .ex-transfers th:nth-child(4), .explorer > .ex-card .ex-transfers td:nth-child(4),
   .explorer > .ex-card .ex-transfers th:nth-child(5), .explorer > .ex-card .ex-transfers td:nth-child(5) { display: none; }
 }
+
+/* A wallet's page, as on the analytics sites: panels of one height side by side;
+   a long table scrolls inside its panel with its header kept in view. */
+.ex-grid > .ex-card { display: flex; flex-direction: column; height: 560px; overflow: hidden; }
+.ex-grid > .ex-card > * { flex: none; }
+.ex-grid > .ex-card > .table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.ex-grid > .ex-card > .pf-plot { flex: 1 1 auto; height: auto; min-height: 0; }
+.ex-grid .ex-table thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+.ex-grid > .ex-card .ex-more { margin-top: 8px; }
+@media (max-width: 1000px) { .ex-grid > .ex-card { height: 480px; } }
+.ex-grid .ex-transfers .wallet { max-width: 132px; }
+.ex-grid .ex-transfers td:nth-child(4) { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.ex-grid .ex-transfers td, .ex-grid .ex-transfers th { padding-left: 6px; padding-right: 6px; }
