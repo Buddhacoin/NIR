@@ -86,6 +86,17 @@ export function createCommunity({ db, now, userFor, json, body, origin, log, lim
   // Answers /market/coin/<id>/comments|sentiment and /market/comments/<n>[/like|/report], or returns false.
   async function handle(request, response, url) {
     const path = url.pathname;
+    // GET /market/sentiment: every coin's rise and fall votes over the last 7 UTC days, for the coin table.
+    if (path === "/market/sentiment" && request.method === "GET") {
+      const since = new Date(now() - 6 * 86_400_000).toISOString().slice(0, 10);
+      const coins = {};
+      for (const row of sql("SELECT coin_id AS id, side, COUNT(*) AS n FROM votes WHERE day >= ? GROUP BY coin_id, side").all(since)) {
+        coins[row.id] ??= { rise: 0, fall: 0 };
+        coins[row.id][row.side] = row.n;
+      }
+      json(response, 200, { days: 7, coins });
+      return true;
+    }
     const coin = /^\/market\/coin\/([^/]+)\/(comments|sentiment)$/.exec(path);
     const one = /^\/market\/comments\/(\d{1,12})(?:\/(like|report))?$/.exec(path);
     if (!coin && !one) return false;

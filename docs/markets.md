@@ -130,35 +130,58 @@ Never put the secret in the repository or in a chat.
 
 ## Portfolio
 
-`/portfolio/` turns buy and sell records into holdings at today's prices, as
-the market sites do: the balance and its 24-hour change, all-time profit, the
-cost basis, the best and worst holding of the day, each coin's share, and per
-coin the price, quantity and value, the average buy price and the profit. A
-row opens its transactions, which can be edited or deleted. A sale cannot take
-more than the portfolio holds.
+`/portfolio/` follows the market sites' portfolio. A visitor makes named
+portfolios ("folders", up to 20), each a set of coins; the side list shows
+every portfolio's value and an Overview of them all. For the chosen one:
+
+- the balance with its 24-hour change, and an eye button that hides amounts;
+- the value over 24 hours, 7, 30 or 90 days or all time (History), or each
+  coin's share as a ring (Allocation);
+- Performance: the all-time profit in percent against the BTC trend over the
+  same time;
+- all-time profit, cost basis, and the best and worst coin by profit;
+- Assets (price, 1h/24h/7d change, holdings, average buy price, profit; every
+  column sorts) and Transactions (type, coin, price, amount, date, fee, note).
+
+A transaction is a buy, a sale, or a transfer in or out: coins kept in a
+wallet elsewhere. "Change holdings" in a coin's menu takes the amount the
+visitor holds now and records the difference as a transfer. A coin can be
+removed from a portfolio with its transactions, a portfolio renamed or
+deleted, and the transactions exported as CSV. A sale or transfer out cannot
+take more than the portfolio holds.
 
 Profit uses the average-cost method: a sale takes coins at the average price
 paid, so the cost basis is what the coins still held cost, and profit is the
 current value minus that cost plus what sales realised, against everything
-spent on buying. Fees add to a purchase's cost and come off a sale's proceeds.
+put in. A transfer in counts at the price of the day it is recorded, so its
+profit starts from then; a transfer out takes coins away at the average cost
+without a profit or loss. Fees add to a purchase's cost and come off a sale.
 
-Signed out, the records stay in the browser (`localStorage`). Signed in, they
+The value over time is worked out in the browser from each coin's price
+history (`/market/chart/<id>`, cached on the server) and the transactions at
+each moment; the fifteen largest holdings are traced, others count at today's
+price. "All" reaches back to the first transaction, up to a year.
+
+Signed out, portfolios stay in the browser (`localStorage`). Signed in, they
 live in the accounts database (`blockchain/market-portfolio.mjs`) and follow
-the visitor to any device; records made before signing in join the account
-on the next visit. They are private: no profile or feed shows them.
+the visitor to any device; portfolios made before signing in join the account
+on the next visit, and records from before portfolios existed join the
+account's first portfolio. They are private: no profile or feed shows them.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/market/me/portfolio` | the visitor's records, newest first |
-| POST | `/market/me/portfolio` | adds one record, or `{ transactions: [...] }` at once |
-| PUT | `/market/me/portfolio/<id>` | replaces a record |
-| DELETE | `/market/me/portfolio/<id>` | deletes a record |
+| GET | `/market/me/portfolio` | portfolios and their records, newest first |
+| POST | `/market/me/portfolios` | makes a portfolio: `{ name, transactions? }` |
+| PUT, DELETE | `/market/me/portfolios/<id>` | renames a portfolio, or deletes it with its records |
+| DELETE | `/market/me/portfolios/<id>/coins/<coin>` | removes a coin and its records from a portfolio |
+| POST | `/market/me/portfolio` | adds `{ portfolioId, ...record }` or `{ portfolioId, transactions: [...] }` |
+| PUT, DELETE | `/market/me/portfolio/<id>` | replaces or deletes a record |
 
-A record is a coin id, `buy` or `sell`, a positive quantity, a price per coin
-and an optional fee in US dollars, a time (2009 to a day ahead) and a note of
-up to 200 characters. An account holds up to 2,000 records; changes need a
-same-site request and share the accounts' rate limit. Deleting the account
-deletes its portfolio.
+A record is a coin id, `buy`, `sell`, `in` or `out`, a positive quantity, a
+price per coin and an optional fee in US dollars, a time (2009 to a day
+ahead) and a note of up to 200 characters. An account holds up to 2,000
+records; changes need a same-site request and share the accounts' rate
+limit. Deleting the account deletes its portfolios.
 
 ## Price alerts
 
@@ -219,7 +242,7 @@ copy is served, or the visitor is asked to retry in a minute. Caddy serves
 
 ## Charts
 
-The table shows a 7-day line per coin; a row opens the coin's page with its
+The Sentiment column shows the share of "rise" votes from coin pages over the last 7 days (`GET /market/sentiment`), with a bar of rise against fall; a coin nobody voted on shows a dash. Every column header sorts the table (largest first, again to reverse, a third time back to rank). The table shows a 7-day line per coin; a row opens the coin's page with its
 full chart. Long names are cut short there, with the full name on hover. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
 

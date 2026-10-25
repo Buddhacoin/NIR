@@ -11,7 +11,6 @@ const en = {
   navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "NIR", navMine: "NIR mining",
   search: "Search coins", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
-  briefTag: "✦ MARKET SUMMARY", briefNote: "Built automatically from the last 24 hours of prices. Not financial advice.",
   tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
@@ -19,17 +18,17 @@ const en = {
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navPortfolio: "Portfolio", mineArrow: "Mine →",
-  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply",
+  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", colSentiment: "Sentiment",
   dataBy: "Data:",
 };
 const words = {
-  ru: { empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
+  ru: { moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
+  en: { moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -43,6 +42,10 @@ let tab = "top";
 const page = Math.min(500, Math.max(1, Number.parseInt(new URLSearchParams(location.search).get("page") ?? "1", 10) || 1));
 let pageCoins = null;
 let query = "";
+const sort = { key: null, dir: 0 };
+// Rise and fall votes per coin over the last 7 days (/market/sentiment), for the sentiment column.
+let votes = {};
+const sentiment = (coin) => { const count = votes[coin.id]; return count && count.rise + count.fall ? count.rise / (count.rise + count.fall) * 100 : null; }; // the column the table is sorted by, as on the market sites
 
 function sparkline(points, rising, className = "spark") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -80,7 +83,7 @@ function visibleCoins() {
     const needle = query.toLowerCase();
     coins = coins.filter((coin) => coin.name.toLowerCase().includes(needle) || coin.symbol.toLowerCase().includes(needle));
   }
-  return coins;
+  return sortBy(coins, sort, (coin, key) => (key === "name" ? coin.name.toLowerCase() : key === "sentiment" ? sentiment(coin) : coin[key]));
 }
 
 function renderTable() {
@@ -88,6 +91,7 @@ function renderTable() {
   body.replaceChildren();
   const t = words[language];
   const coins = visibleCoins();
+  markSort($("thead"), sort);
   for (const coin of coins) {
     const row = document.createElement("tr");
     row.className = "coin";
@@ -146,7 +150,21 @@ function renderTable() {
     week.classList.add("hide-s");
     // The whole row opens the coin's page; the star does its own thing.
     row.addEventListener("click", (event) => { if (!event.target.closest("a")) location.href = coinUrl(coin); });
-    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, spark);
+    // The community's mood: the share of "rise" votes, with a bar of rise against fall.
+    const mood = document.createElement("td");
+    mood.className = "hide-s mood";
+    const share = sentiment(coin);
+    if (share === null) mood.textContent = "—";
+    else {
+      const count = votes[coin.id];
+      mood.className = `hide-s mood ${share >= 50 ? "up" : "down"}`;
+      mood.textContent = `${share >= 50 ? "▲" : "▼"} ${Math.round(share >= 50 ? share : 100 - share)}%`;
+      const bar = document.createElement("i");
+      bar.style.setProperty("--rise", `${share.toFixed(0)}%`);
+      mood.append(bar);
+      mood.title = t.moodTitle(count.rise, count.fall);
+    }
+    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, mood, spark);
     body.append(row);
   }
   $("#status").textContent = !data ? $("#status").textContent
@@ -175,7 +193,7 @@ function renderCards() {
     $("#fg-dot").setAttribute("cy", (56 - 47 * Math.sin(angle)).toFixed(1));
   }
   const list = (target, coins, withPrice) => {
-    $(target).replaceChildren(...coins.slice(0, 4).map((coin, index) => {
+    $(target).replaceChildren(...coins.slice(0, 6).map((coin, index) => {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = coinUrl(coin);
@@ -199,11 +217,13 @@ function renderCards() {
     }));
   };
   list("#trending", data.trending ?? [], true);
-  list("#gainers", (data.gainers ?? []).filter((coin) => !STABLE.has(coin.symbol)), false);
+  // The day's top gainers among the top coins, without stablecoins.
+  list("#gainers", (data.coins ?? []).filter((coin) => coin.change24h > 0 && !STABLE.has(coin.symbol))
+    .sort((left, right) => right.change24h - left.change24h), false);
   const btc = data.coins.find((coin) => coin.symbol === "BTC");
   const top = data.gainers?.[0];
   const low = data.losers?.[0];
-  $("#brief").textContent = $("#m-brief-text").textContent = g && btc && top && low ? t.brief({
+  $("#m-brief-text").textContent = g && btc && top && low ? t.brief({
     cap: g.marketCapChange24h ?? 0, capPct: `${Math.abs(g.marketCapChange24h ?? 0).toLocaleString(locale(), { maximumFractionDigits: 2 })}%`,
     capValue: big(g.marketCap), btc: price(btc.price), btcPct: percentText(btc.change24h).replace("▲ ", "+").replace("▼ ", "−"),
     dom: `${(g.btcDominance ?? 0).toLocaleString(locale(), { maximumFractionDigits: 1 })}%`,
@@ -249,6 +269,7 @@ async function load() {
       const more = await fetch(`/market/coins?page=${page}`).then((answer) => (answer.ok ? answer.json() : null)).catch(() => null);
       if (more) pageCoins = more.coins;
     }
+    votes = (await fetch("/market/sentiment").then((answer) => (answer.ok ? answer.json() : null)).catch(() => null))?.coins ?? votes;
     renderCards();
     renderTable();
   } catch {
@@ -282,6 +303,7 @@ $("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("op
 // A coin page's bottom bar links to /#watch.
 if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]").click();
 
+sortable($("thead"), sort, () => renderTable());
 setupSearch({ overview: () => data });
 setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } } });
 void load();

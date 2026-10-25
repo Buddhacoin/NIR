@@ -115,5 +115,11 @@ test("the rise-or-fall vote counts one vote per account per coin per day", async
     assert.deepEqual((await app.call("/market/coin/bitcoin/sentiment")).data, { rise: 1, fall: 1, mine: null, day: "2026-10-24" });
     app.clock.now += 86_400_000;
     assert.deepEqual((await app.call("/market/coin/bitcoin/sentiment", { cookie: zeus })).data, { rise: 0, fall: 0, mine: null, day: "2026-10-25" });
+    // The coin table's sentiment column adds up the last 7 days for every coin.
+    await app.call("/market/coin/bitcoin/sentiment", { cookie: zeus, method: "POST", body: { side: "rise" } });
+    await app.call("/market/coin/solana/sentiment", { cookie: hera, method: "POST", body: { side: "fall" } });
+    assert.deepEqual((await app.call("/market/sentiment")).data, { days: 7, coins: { bitcoin: { rise: 2, fall: 1 }, solana: { rise: 0, fall: 1 } } });
+    app.clock.now += 7 * 86_400_000;
+    assert.deepEqual((await app.call("/market/sentiment")).data.coins, {});
   } finally { await app.stop(); }
 });

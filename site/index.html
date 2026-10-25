@@ -5,13 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NIR Markets — курсы криптовалют, тренды и рынок</title>
   <meta name="description" content="Курсы 100 крупнейших криптовалют, тренды, лидеры роста и индекс страха и жадности. Без регистрации и трекеров. От создателей блокчейна NIR.">
-  <link rel="icon" href="/nir-coin-icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=13">
+  <link rel="stylesheet" href="/markets.css?v=17">
 </head>
 <body>
   <div class="nirbar">
@@ -25,7 +27,7 @@
   </div>
 
   <header class="top">
-    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="32" height="32">NIR <small>Markets</small></a>
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
     <nav aria-label="Разделы">
       <a href="#coins" data-tab="top" data-i18n="navCoins">Криптовалюты</a>
       <a href="#coins" data-tab="gainers" data-i18n="navMovers">Рост и падение</a>
@@ -55,11 +57,6 @@
       </article>
       <article class="card list"><h2><a href="#coins" data-tab="trending"><span>🔥 <span data-i18n="trending">В тренде</span></span> <i>›</i></a></h2><ol id="trending"></ol></article>
       <article class="card list"><h2><a href="#coins" data-tab="gainers"><span>🚀 <span data-i18n="gainers24">Лидеры роста 24 ч</span></span> <i>›</i></a></h2><ol id="gainers"></ol></article>
-      <article class="card brief">
-        <span class="tag" data-i18n="briefTag">✦ СВОДКА РЫНКА</span>
-        <p id="brief"></p>
-        <small data-i18n="briefNote">Собирается автоматически из цен за последние 24 часа. Не финансовый совет.</small>
-      </article>
     </section>
 
     <button class="m-brief" id="m-brief" type="button"><span class="tag" data-i18n="briefShort">✦ Сводка</span><span id="m-brief-text"></span></button>
@@ -83,10 +80,10 @@
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th class="hide-s"></th><th>#</th><th class="left" data-i18n="colCoin">Монета</th><th data-i18n="colPrice">Цена</th>
-          <th class="hide-s" data-i18n="col1h">1 ч</th><th data-i18n="col24h">24 ч</th><th class="hide-s" data-i18n="col7d">7 д</th>
-          <th class="hide-s" data-i18n="colCap">Капитализация</th><th class="hide-s" data-i18n="colVolume">Объём 24 ч</th>
-          <th class="hide-s" data-i18n="colSupply">В обращении</th><th class="hide-s" data-i18n="col7days">7 дней</th>
+          <th class="hide-s"></th><th data-sort="rank">#</th><th class="left" data-sort="name" data-i18n="colCoin">Монета</th><th data-sort="price" data-i18n="colPrice">Цена</th>
+          <th class="hide-s" data-sort="change1h" data-i18n="col1h">1 ч</th><th data-sort="change24h" data-i18n="col24h">24 ч</th><th class="hide-s" data-sort="change7d" data-i18n="col7d">7 д</th>
+          <th class="hide-s" data-sort="marketCap" data-i18n="colCap">Капитализация</th><th class="hide-s" data-sort="volume" data-i18n="colVolume">Объём 24 ч</th>
+          <th class="hide-s" data-sort="circulating" data-i18n="colSupply">В обращении</th><th class="hide-s" data-sort="sentiment" data-i18n="colSentiment">Настроение</th><th class="hide-s" data-i18n="col7days">7 дней</th>
         </tr></thead>
         <tbody id="rows">
         </tbody>
@@ -114,7 +111,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=7"></script>
-  <script src="/markets.js?v=9"></script>
+  <script src="/common.js?v=8"></script>
+  <script src="/markets.js?v=12"></script>
 </body>
 </html>
