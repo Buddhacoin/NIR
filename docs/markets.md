@@ -242,7 +242,7 @@ copy is served, or the visitor is asked to retry in a minute. Caddy serves
 
 ## Charts
 
-Every column header sorts the table (largest first, again to reverse, a third time back to rank). The table shows a 7-day line per coin; a row opens the coin's page with its
+The Sentiment column shows the share of "rise" votes from coin pages over the last 7 days (`GET /market/sentiment`), with a bar of rise against fall; a coin nobody voted on shows a dash. Every column header sorts the table (largest first, again to reverse, a third time back to rank). The table shows a 7-day line per coin; a row opens the coin's page with its
 full chart. Long names are cut short there, with the full name on hover. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
 

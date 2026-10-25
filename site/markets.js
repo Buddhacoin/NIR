@@ -19,17 +19,17 @@ const en = {
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navPortfolio: "Portfolio", mineArrow: "Mine →",
-  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply",
+  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", colSentiment: "Sentiment",
   dataBy: "Data:",
 };
 const words = {
-  ru: { empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
+  ru: { moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
+  en: { moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -43,7 +43,10 @@ let tab = "top";
 const page = Math.min(500, Math.max(1, Number.parseInt(new URLSearchParams(location.search).get("page") ?? "1", 10) || 1));
 let pageCoins = null;
 let query = "";
-const sort = { key: null, dir: 0 }; // the column the table is sorted by, as on the market sites
+const sort = { key: null, dir: 0 };
+// Rise and fall votes per coin over the last 7 days (/market/sentiment), for the sentiment column.
+let votes = {};
+const sentiment = (coin) => { const count = votes[coin.id]; return count && count.rise + count.fall ? count.rise / (count.rise + count.fall) * 100 : null; }; // the column the table is sorted by, as on the market sites
 
 function sparkline(points, rising, className = "spark") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -81,7 +84,7 @@ function visibleCoins() {
     const needle = query.toLowerCase();
     coins = coins.filter((coin) => coin.name.toLowerCase().includes(needle) || coin.symbol.toLowerCase().includes(needle));
   }
-  return sortBy(coins, sort, (coin, key) => (key === "name" ? coin.name.toLowerCase() : coin[key]));
+  return sortBy(coins, sort, (coin, key) => (key === "name" ? coin.name.toLowerCase() : key === "sentiment" ? sentiment(coin) : coin[key]));
 }
 
 function renderTable() {
@@ -148,7 +151,21 @@ function renderTable() {
     week.classList.add("hide-s");
     // The whole row opens the coin's page; the star does its own thing.
     row.addEventListener("click", (event) => { if (!event.target.closest("a")) location.href = coinUrl(coin); });
-    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, spark);
+    // The community's mood: the share of "rise" votes, with a bar of rise against fall.
+    const mood = document.createElement("td");
+    mood.className = "hide-s mood";
+    const share = sentiment(coin);
+    if (share === null) mood.textContent = "—";
+    else {
+      const count = votes[coin.id];
+      mood.className = `hide-s mood ${share >= 50 ? "up" : "down"}`;
+      mood.textContent = `${share >= 50 ? "▲" : "▼"} ${Math.round(share >= 50 ? share : 100 - share)}%`;
+      const bar = document.createElement("i");
+      bar.style.setProperty("--rise", `${share.toFixed(0)}%`);
+      mood.append(bar);
+      mood.title = t.moodTitle(count.rise, count.fall);
+    }
+    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, mood, spark);
     body.append(row);
   }
   $("#status").textContent = !data ? $("#status").textContent
@@ -251,6 +268,7 @@ async function load() {
       const more = await fetch(`/market/coins?page=${page}`).then((answer) => (answer.ok ? answer.json() : null)).catch(() => null);
       if (more) pageCoins = more.coins;
     }
+    votes = (await fetch("/market/sentiment").then((answer) => (answer.ok ? answer.json() : null)).catch(() => null))?.coins ?? votes;
     renderCards();
     renderTable();
   } catch {
