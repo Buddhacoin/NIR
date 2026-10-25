@@ -4,9 +4,11 @@
 // markets where the coin trades. Shared helpers are in common.js.
 
 const en = {
+  stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
+  stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
-  navCoins: "Cryptocurrencies", navNir: "About NIR", navMine: "NIR mining", search: "Search coins",
+  navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins",
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
@@ -16,7 +18,7 @@ const en = {
   more: "Show all ▾", descriptionBy: "Description: CoinGecko", whereTraded: "Where it trades", exchange: "Exchange",
   pair: "Pair", colPrice: "Price", colVolume: "Volume 24h", trust: "Trust",
   pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
-  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
+  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navNir: "NIR",
 };
 const words = {
   ru: { loading: "Загружаю данные монеты…", missing: "Такой монеты нет. Вернитесь к списку и выберите монету там.",

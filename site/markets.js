@@ -4,19 +4,23 @@
 // (numbers, logos, themes, languages, NIR's figures) are in common.js.
 
 const en = {
+  stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
+  stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
-  navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "About NIR", navMine: "NIR mining",
+  navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "NIR", navMine: "NIR mining",
   search: "Search coins", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
   briefTag: "✦ MARKET SUMMARY", briefNote: "Built automatically from the last 24 hours of prices. Not financial advice.",
-  tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Top gainers", tabLosers: "Top losers", tabStable: "Stablecoins",
+  tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
-  nirNoPrice: "No price yet — pioneers are mining now", nirMinedShort: "NIR mined", mine: "Mine",
+  nirNoPrice: "no price yet — pioneers are mining", nirMinedShort: "NIR mined", mine: "Mine",
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
-  briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining",
+  briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", mineArrow: "Mine →",
+  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply",
+  dataBy: "Data:",
 };
 const words = {
   ru: { chart: "График", close: "Скрыть", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
@@ -35,6 +39,9 @@ const words = {
 
 let data = null;
 let tab = "top";
+// Coins are browsed 100 a page, as /?page=N; the first page comes with the overview.
+const page = Math.min(500, Math.max(1, Number.parseInt(new URLSearchParams(location.search).get("page") ?? "1", 10) || 1));
+let pageCoins = null;
 let query = "";
 let openChart = null;
 
@@ -62,14 +69,14 @@ function chartRow(coin) {
   const row = document.createElement("tr");
   row.className = "chart";
   const cell = document.createElement("td");
-  cell.colSpan = 11;
+  cell.colSpan = 12;
   cell.append(tradingView(`BINANCE:${coin.symbol}USDT`));
   row.append(cell);
   return row;
 }
 
 function visibleCoins() {
-  let coins = data?.coins ?? [];
+  let coins = (tab === "top" && page > 1 ? pageCoins : data?.coins) ?? [];
   if (tab === "watch") coins = coins.filter((coin) => watch.has(coin.id));
   if (tab === "stable") coins = coins.filter((coin) => STABLE.has(coin.symbol));
   // Trending coins outside the top 100 come with a price and a 24h change only.
@@ -129,6 +136,16 @@ function renderTable() {
     const volume = document.createElement("td");
     volume.className = "hide-s";
     volume.textContent = big(coin.volume);
+    // Circulating supply, with a bar towards the maximum when there is one.
+    const supply = document.createElement("td");
+    supply.className = "hide-s supply";
+    supply.textContent = coin.circulating ? `${big(coin.circulating, "")} ${coin.symbol}` : "—";
+    if (coin.circulating && coin.maxSupply) {
+      const bar = document.createElement("i");
+      bar.style.setProperty("--fill", `${Math.min(100, coin.circulating / coin.maxSupply * 100).toFixed(1)}%`);
+      bar.title = `${Math.round(coin.circulating / coin.maxSupply * 100)}%`;
+      supply.append(bar);
+    }
     const spark = document.createElement("td");
     spark.className = "hide-s";
     spark.append(sparkline(coin.sparkline, (coin.change7d ?? 0) >= 0));
@@ -155,12 +172,13 @@ function renderTable() {
     }
     // The whole row opens the coin's page; the star and the chart button do their own thing.
     row.addEventListener("click", (event) => { if (!event.target.closest("a")) location.href = coinUrl(coin); });
-    row.append(star, rank, name, value, hour, day, week, cap, volume, spark, action);
+    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, spark, action);
     body.append(row);
     if (openChart === coin.id && charted) body.append(chartRow(coin));
   }
   $("#status").textContent = !data ? $("#status").textContent
     : coins.length ? "" : tab === "watch" && !query ? t.watchEmpty : t.empty;
+  renderPager();
 }
 
 function renderCards() {
@@ -224,11 +242,40 @@ function renderCards() {
     { hour: "2-digit", minute: "2-digit" }) : "—";
 }
 
+// Page numbers: the first, the last and two around the current one.
+function renderPager() {
+  const total = data?.global?.coins ?? 0;
+  const pages = Math.min(500, Math.ceil(total / 100));
+  $("#pager").hidden = !data || tab !== "top" || Boolean(query) || !pages;
+  if ($("#pager").hidden) return;
+  const from = (page - 1) * 100 + 1;
+  $("#pager-info").textContent = language === "en"
+    ? `Showing ${from}–${Math.min(page * 100, total)} of ${total.toLocaleString(locale())}`
+    : `Показаны ${from}–${Math.min(page * 100, total)} из ${total.toLocaleString(locale())}`;
+  const wanted = new Set([1, pages, page - 2, page - 1, page, page + 1, page + 2].filter((n) => n >= 1 && n <= pages));
+  const nodes = [];
+  const link = (n, text = String(n)) => Object.assign(document.createElement("a"), { href: n === 1 ? "/" : `/?page=${n}`,
+    textContent: text, className: n === page && text === String(n) ? "on" : "" });
+  if (page > 1) nodes.push(link(page - 1, "‹"));
+  let last = 0;
+  for (const n of [...wanted].sort((a, b) => a - b)) {
+    if (n - last > 1) nodes.push(Object.assign(document.createElement("span"), { textContent: "…" }));
+    nodes.push(link(n));
+    last = n;
+  }
+  if (page < pages) nodes.push(link(page + 1, "›"));
+  $("#pages").replaceChildren(...nodes);
+}
+
 async function load() {
   try {
     const response = await fetch("/market/overview", { cache: "no-store" });
     if (!response.ok) throw new Error("market data unavailable");
     data = await response.json();
+    if (page > 1) {
+      const more = await fetch(`/market/coins?page=${page}`).then((answer) => (answer.ok ? answer.json() : null)).catch(() => null);
+      if (more) pageCoins = more.coins;
+    }
     renderCards();
     renderTable();
   } catch {

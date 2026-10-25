@@ -63,6 +63,7 @@ export function normalizeCoins(list) {
     change24h: finite(coin?.price_change_percentage_24h_in_currency ?? coin?.price_change_percentage_24h),
     change7d: finite(coin?.price_change_percentage_7d_in_currency),
     marketCap: finite(coin?.market_cap), volume: finite(coin?.total_volume),
+    circulating: finite(coin?.circulating_supply), maxSupply: finite(coin?.max_supply),
     sparkline: sparkline(coin?.sparkline_in_7d?.price),
   })).filter((coin) => coin.id && coin.symbol && coin.price !== null);
 }
@@ -74,7 +75,7 @@ export function normalizeGlobal(value) {
     marketCap: finite(data.total_market_cap?.usd), volume: finite(data.total_volume?.usd),
     marketCapChange24h: finite(data.market_cap_change_percentage_24h_usd),
     btcDominance: finite(data.market_cap_percentage?.btc), ethDominance: finite(data.market_cap_percentage?.eth),
-    coins: finite(data.active_cryptocurrencies),
+    coins: finite(data.active_cryptocurrencies), exchanges: finite(data.markets),
   };
 }
 
@@ -86,6 +87,15 @@ export function normalizeTrending(value) {
     image: image(item?.small ?? item?.thumb), price: finite(item?.data?.price),
     change24h: finite(item?.data?.price_change_percentage_24h?.usd),
   })).filter((coin) => coin.id && coin.symbol);
+}
+
+// The index's history, oldest first, for the market overview page.
+export function normalizeFearGreedHistory(value) {
+  if (!Array.isArray(value?.data)) throw new Error("fear and greed history is invalid");
+  return value.data.slice(0, 400).map((entry) => ({ value: Number(entry?.value), label: text(entry?.value_classification, 30),
+    time: Number(entry?.timestamp) * 1000 }))
+    .filter((entry) => Number.isInteger(entry.value) && entry.value >= 0 && entry.value <= 100 && Number.isFinite(entry.time))
+    .reverse();
 }
 
 export function normalizeFearGreed(value) {
@@ -236,6 +246,14 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     };
   }
 
+  // GET /market/coins?page=N — pages after the first hundred coins, 100 a page, on demand.
+  async function coinsPage(page) {
+    if (page === 1) return state.coins;
+    const entry = await onDemand(`coins:${page}`, `${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc` +
+      `&per_page=100&page=${page}&sparkline=true&price_change_percentage=1h,24h,7d`, normalizeCoins, 180_000);
+    return entry.missing ? [] : entry.value;
+  }
+
   // GET /market/search?q=… — queries are lower-cased and cached, so popular ones cost one fetch.
   async function search(query) {
     const needle = query.trim().toLowerCase().replace(/\s+/g, " ");
@@ -267,7 +285,22 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     // Sign-in, profiles and server watchlists (blockchain/market-accounts.mjs).
     if (accounts && await accounts.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
-    if (request.method === "GET" && url.pathname === "/market/search") {
+    if (request.method === "GET" && url.pathname === "/market/coins") {
+      const page = Number(url.searchParams.get("page") ?? 1);
+      if (!Number.isInteger(page) || page < 1 || page > 500) return send(response, 404, { error: "no such page" });
+      try {
+        send(response, 200, { page, coins: await coinsPage(page), total: state.global?.coins ?? null }, 60);
+      } catch {
+        send(response, 503, { error: "coins are unavailable, try again in a minute" });
+      }
+    } else if (request.method === "GET" && url.pathname === "/market/fear-greed") {
+      try {
+        const entry = await onDemand("fear-greed", "https://api.alternative.me/fng/?limit=365", normalizeFearGreedHistory, 3_600_000);
+        send(response, 200, { history: entry.missing ? [] : entry.value }, 600);
+      } catch {
+        send(response, 503, { error: "the index is unavailable, try again in a minute" });
+      }
+    } else if (request.method === "GET" && url.pathname === "/market/search") {
       try {
         send(response, 200, { coins: await search(url.searchParams.get("q") ?? "") }, 300);
       } catch {

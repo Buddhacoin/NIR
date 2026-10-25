@@ -151,6 +151,33 @@ async function loadNir() {
   } catch { /* The page works without NIR's figures. */ }
 }
 
+// The market strip on top of every page: coins, exchanges, market cap, volume,
+// dominance and fear & greed, from the server's cached overview.
+let strip = null;
+function renderStrip() {
+  if (!strip) return;
+  const g = strip.global ?? {};
+  const set = (key, value) => { for (const node of document.querySelectorAll(`[data-stat="${key}"]`)) node.textContent = value; };
+  const whole = (value) => (Number.isFinite(value) ? value.toLocaleString(locale()) : "—");
+  set("coins", whole(g.coins));
+  set("exchanges", whole(g.exchanges));
+  set("cap", big(g.marketCap, "$", 2));
+  set("volume", big(g.volume, "$", 2));
+  set("dominance", g.btcDominance ? `BTC ${g.btcDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` +
+    (g.ethDominance ? ` ETH ${g.ethDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` : "") : "—");
+  set("fear", strip.fearGreed ? `${strip.fearGreed.value}/100` : "—");
+  for (const node of document.querySelectorAll('[data-stat="capChange"]')) {
+    node.className = changeClass(g.marketCapChange24h);
+    node.textContent = percentText(g.marketCapChange24h);
+  }
+}
+async function loadStrip() {
+  const response = await fetch("/market/overview").catch(() => null);
+  if (!response?.ok) return;
+  strip = await response.json();
+  renderStrip();
+}
+
 // --- Language and theme, shared with the NIR page. `render` redraws the
 // page's own content; `onTheme` lets a page redraw what follows the theme.
 function isLight() {
@@ -170,6 +197,7 @@ function setupPage({ en, render, onTheme = () => {}, onAccount = render }) {
     $("#lang").textContent = language === "en" ? "RU" : "EN";
     render();
     renderAccount();
+    renderStrip();
     void loadNir();
   }
   $("#lang").addEventListener("click", () => {
@@ -188,7 +216,9 @@ function setupPage({ en, render, onTheme = () => {}, onAccount = render }) {
   renderTheme();
   applyLanguage();
   void loadAccount();
+  void loadStrip();
   setInterval(loadNir, 60_000);
+  setInterval(loadStrip, 60_000);
 }
 
 // --- Search over every coin: recent searches and trending coins before typing,

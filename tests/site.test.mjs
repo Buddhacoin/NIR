@@ -20,7 +20,7 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
   for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html",
-    "site/privacy/index.html", "site/terms/index.html"]) {
+    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
@@ -47,9 +47,9 @@ test("the markets home page has English for every text and links to NIR", () => 
   for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
     assert.match(script, new RegExp(`\\b${key}:`), `no English text for ${key}`);
   }
-  assert.match(html, /class="brand" href="\/nir\/"/);
-  assert.match(html, /CoinGecko/);
-  assert.match(html, /TradingView/);
+  assert.match(html, /<a href="\/nir\/" data-i18n="navNir">/, "the menu leads to the NIR page");
+  // CoinGecko's free plan asks for credit; TradingView credits itself inside its chart.
+  assert.match(html, /<span data-i18n="dataBy">Данные:<\/span> CoinGecko/);
   assert.match(script, /fetch\("\/market\/overview"/);
   assert.match(read("site/common.js"), /fetch\("\/api\/v1\/stats"/);
   assert.match(script, /location\.href = coinUrl\(coin\)/, "a coin's row opens its page");
@@ -73,8 +73,7 @@ test("a coin's page has English for every text and loads its data from the marke
   assert.match(script, /fetch\(`\/market\/chart\/\$\{encodeURIComponent\(id\)\}\?days=/);
   // Text from CoinGecko is only ever set as text, never as HTML.
   assert.doesNotMatch(script, /innerHTML\s*=\s*[^'"]*(?:coin|ticker|description)/);
-  assert.match(html, /CoinGecko/);
-  assert.match(html, /TradingView/);
+  assert.match(html, /<span data-i18n="dataBy">Данные:<\/span> CoinGecko/);
 });
 
 test("profiles have English for every text and the server keeps accounts outside the repository", () => {
@@ -89,6 +88,15 @@ test("profiles have English for every text and the server keeps accounts outside
   assert.match(deploy, /Environment=NIR_MARKET_DB=\/var\/lib\/nir-market\/accounts\.db/);
   assert.doesNotMatch(deploy, /GOOGLE_CLIENT_SECRET=/, "the Google secret never goes into the repository");
   assert.match(deploy, /www\.\$SITE_DOMAIN \{\n\s+redir https:\/\/\$SITE_DOMAIN\{uri\} permanent/);
+});
+
+test("the market overview page has English for every text", () => {
+  const html = read("site/charts/index.html");
+  const script = read("site/charts.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
+    assert.match(script, new RegExp(`\\b${key}:`), `no English text for ${key}`);
+  }
+  assert.match(script, /fetch\("\/market\/fear-greed"\)/);
 });
 
 test("the server serves the website with the network's read API under /api", () => {

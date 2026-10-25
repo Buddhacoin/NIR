@@ -149,3 +149,31 @@ test("search covers every coin, cleans the results and caches each query", async
     await new Promise((resolve) => service.server.close(resolve));
   }
 });
+
+test("pages after the first hundred, the fear and greed history and the exchange count", async () => {
+  const fetched = [];
+  const service = createMarketService({ fetch: async (url) => { fetched.push(url); return fromFixtures(url); } });
+  await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  try {
+    await service.refresh();
+    const before = fetched.length;
+    const first = await (await fetch(`${base}/market/coins?page=1`)).json();
+    assert.equal(first.coins[0].symbol, "BTC");
+    assert.equal(fetched.length, before, "page one is the overview's copy");
+    const second = await (await fetch(`${base}/market/coins?page=2`)).json();
+    assert.equal(second.page, 2);
+    assert.match(fetched.at(-1), /per_page=100&page=2&/);
+    assert.ok(second.coins.length > 0);
+    assert.ok("circulating" in second.coins[0] && "maxSupply" in second.coins[0]);
+    await fetch(`${base}/market/coins?page=2`);
+    assert.equal(fetched.filter((url) => url.includes("page=2")).length, 1, "a page is cached");
+    for (const bad of ["0", "501", "x", "1.5"]) assert.equal((await fetch(`${base}/market/coins?page=${bad}`)).status, 404);
+    const history = await (await fetch(`${base}/market/fear-greed`)).json();
+    assert.ok(history.history.length >= 1);
+    assert.equal(typeof history.history[0].value, "number");
+    assert.ok("exchanges" in service.overview().global);
+  } finally {
+    await new Promise((resolve) => service.server.close(resolve));
+  }
+});
