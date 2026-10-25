@@ -7,7 +7,7 @@
   <meta name="description" content="Какие данные NIR Markets хранит, зачем и как их удалить.">
   <link rel="icon" href="/nir-coin-icon.svg" type="image/svg+xml">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=11">
+  <link rel="stylesheet" href="/markets.css?v=12">
 </head>
 <body>
   <header class="top">
@@ -18,7 +18,7 @@
     <p class="muted">Действует с 25 октября 2026 года. Сайт: nircoin.com (NIR Markets).</p>
 
     <h2>Без входа</h2>
-    <p>Мы не используем рекламу, трекеры и сторонние счётчики. Тема, язык, недавние поиски и избранное хранятся только в вашем браузере (localStorage) и на сервер не отправляются.</p>
+    <p>Мы не используем рекламу, трекеры и сторонние счётчики. Тема, язык, недавние поиски, а без входа — избранное и портфель хранятся только в вашем браузере (localStorage) и на сервер не отправляются.</p>
 
     <h2>Вход через Google</h2>
     <p>Если вы входите через Google, мы получаем от Google только идентификатор аккаунта и адрес почты (с отметкой, что он подтверждён). Фотографию, контакты и другие данные Google мы не запрашиваем.</p>
@@ -26,11 +26,11 @@
     <ul>
       <li>идентификатор аккаунта Google и почта — чтобы узнавать вас при следующем входе; почта нигде не показывается;</li>
       <li>то, что вы указали в профиле сами: имя, ник и «о себе»;</li>
-      <li>избранные монеты, ваши комментарии, отметки «нравится», жалобы и голоса «рост/падение»;</li>
+      <li>избранные монеты, сделки портфеля (монета, количество, цена, дата, комиссия, заметка), ваши комментарии, отметки «нравится», жалобы и голоса «рост/падение»;</li>
       <li>история действий в профиле (например, «добавил в избранное») и дата регистрации;</li>
       <li>сессия входа: в браузере — cookie с длинным случайным ключом на 30 дней, на сервере — только его отпечаток (хэш).</li>
     </ul>
-    <p>Публично видны имя, ник, «о себе», дата регистрации, ваши комментарии и отметка о регистрации. Избранное и остальная история видны только вам.</p>
+    <p>Публично видны имя, ник, «о себе», дата регистрации, ваши комментарии и отметка о регистрации. Избранное, портфель и остальная история видны только вам.</p>
 
     <h2>Зачем</h2>
     <p>Данные нужны только для работы сайта: вход, профиль, избранное на всех устройствах, комментарии и защита от спама. Мы не продаём и не передаём их третьим лицам и не используем для рекламы.</p>
@@ -39,14 +39,14 @@
     <p>Цены и описания монет наш сервер получает от CoinGecko; ваши данные туда не передаются. Логотипы монет загружаются с серверов CoinGecko, а график «Свечи» — с сайта TradingView, когда вы его открываете; эти сервисы видят ваш IP-адрес, как при обычном открытии их страниц.</p>
 
     <h2>Удаление</h2>
-    <p>Вы можете удалить аккаунт сами: «Профиль» → «Редактировать» → «Удалить аккаунт». Это сразу и безвозвратно удаляет почту, профиль, избранное, комментарии, отметки, голоса и сессии. Отозвать доступ сайта к аккаунту Google можно в настройках Google: myaccount.google.com/connections.</p>
+    <p>Вы можете удалить аккаунт сами: «Профиль» → «Редактировать» → «Удалить аккаунт». Это сразу и безвозвратно удаляет почту, профиль, избранное, портфель, комментарии, отметки, голоса и сессии. Отозвать доступ сайта к аккаунту Google можно в настройках Google: myaccount.google.com/connections.</p>
 
     <h2>Связь</h2>
     <p>Вопросы о данных можно задать через раздел Issues репозитория: <a href="https://github.com/Buddhacoin/NIR/issues">github.com/Buddhacoin/NIR/issues</a>.</p>
 
     <hr>
     <h1>Privacy policy</h1>
-    <p>No ads, trackers or third-party analytics. Theme, language, recent searches and the signed-out watchlist stay in your browser. With Google sign-in we receive only your Google account ID and verified email. The server keeps those, the profile you fill in (name, username, bio), your watchlist, comments, likes, reports and rise/fall votes, your activity and a hash of your 30-day session cookie. Public: name, username, bio, join date and comments; your watchlist and other activity are private. Data is used only to run the site, never sold or shared. Coin data comes from CoinGecko; logos load from CoinGecko and the candle chart from TradingView when opened. Delete your account any time in Profile → Edit → Delete account; it removes everything at once. Contact: <a href="https://github.com/Buddhacoin/NIR/issues">github.com/Buddhacoin/NIR/issues</a>.</p>
+    <p>No ads, trackers or third-party analytics. Theme, language, recent searches and, signed out, the watchlist and portfolio stay in your browser. With Google sign-in we receive only your Google account ID and verified email. The server keeps those, the profile you fill in (name, username, bio), your watchlist, portfolio transactions, comments, likes, reports and rise/fall votes, your activity and a hash of your 30-day session cookie. Public: name, username, bio, join date and comments; your watchlist, portfolio and other activity are private. Data is used only to run the site, never sold or shared. Coin data comes from CoinGecko; logos load from CoinGecko and the candle chart from TradingView when opened. Delete your account any time in Profile → Edit → Delete account; it removes everything at once. Contact: <a href="https://github.com/Buddhacoin/NIR/issues">github.com/Buddhacoin/NIR/issues</a>.</p>
   </main>
   <footer>
     <a href="/">NIR Markets</a>

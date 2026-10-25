@@ -128,6 +128,38 @@ Until the keys are set, the site works as before and shows no sign-in button.
 
 Never put the secret in the repository or in a chat.
 
+## Portfolio
+
+`/portfolio/` turns buy and sell records into holdings at today's prices, as
+the market sites do: the balance and its 24-hour change, all-time profit, the
+cost basis, the best and worst holding of the day, each coin's share, and per
+coin the price, quantity and value, the average buy price and the profit. A
+row opens its transactions, which can be edited or deleted. A sale cannot take
+more than the portfolio holds.
+
+Profit uses the average-cost method: a sale takes coins at the average price
+paid, so the cost basis is what the coins still held cost, and profit is the
+current value minus that cost plus what sales realised, against everything
+spent on buying. Fees add to a purchase's cost and come off a sale's proceeds.
+
+Signed out, the records stay in the browser (`localStorage`). Signed in, they
+live in the accounts database (`blockchain/market-portfolio.mjs`) and follow
+the visitor to any device; records made before signing in join the account
+on the next visit. They are private: no profile or feed shows them.
+
+| Method | Path | Does |
+| --- | --- | --- |
+| GET | `/market/me/portfolio` | the visitor's records, newest first |
+| POST | `/market/me/portfolio` | adds one record, or `{ transactions: [...] }` at once |
+| PUT | `/market/me/portfolio/<id>` | replaces a record |
+| DELETE | `/market/me/portfolio/<id>` | deletes a record |
+
+A record is a coin id, `buy` or `sell`, a positive quantity, a price per coin
+and an optional fee in US dollars, a time (2009 to a day ahead) and a note of
+up to 200 characters. An account holds up to 2,000 records; changes need a
+same-site request and share the accounts' rate limit. Deleting the account
+deletes its portfolio.
+
 ## A coin's page
 
 Every coin has its own page at `/coin/<id>` (the CoinGecko id, e.g.
@@ -149,8 +181,8 @@ copy is served, or the visitor is asked to retry in a minute. Caddy serves
 
 ## Charts
 
-Charts in the table are TradingView's free embedded widget (the coin's main Binance pair), opened
-under a coin's row; stablecoins have none. The market summary is assembled from
+The table shows a 7-day line per coin; a row opens the coin's page with its
+full chart. Long names are cut short there, with the full name on hover. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
 
 A coin's page draws its own chart of price or market capitalisation for 24

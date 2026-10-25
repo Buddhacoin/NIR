@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Портфель — NIR Markets</title>
+  <meta name="description" content="Криптопортфель на NIR Markets: баланс, прибыль и убыток, средняя цена покупки и доля каждой монеты. Бесплатно и без трекеров.">
+  <link rel="icon" href="/nir-coin-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="NIR Markets">
+  <meta name="theme-color" content="#0b0907">
+  <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
+  <link rel="stylesheet" href="/markets.css?v=12">
+</head>
+<body>
+  <div class="nirbar">
+    <span><span data-i18n="stCoins">Монет:</span> <b data-stat="coins">—</b></span>
+    <span><span data-i18n="stExchanges">Бирж:</span> <b data-stat="exchanges">—</b></span>
+    <a href="/charts/"><span data-i18n="stCap">Капитализация:</span> <b data-stat="cap">—</b> <em data-stat="capChange"></em></a>
+    <a href="/charts/"><span data-i18n="stVolume">Объём 24 ч:</span> <b data-stat="volume">—</b></a>
+    <a href="/charts/#dominance"><span data-i18n="stDominance">Доминация:</span> <b data-stat="dominance">—</b></a>
+    <a href="/charts/#fear-greed"><span data-i18n="stFear">Страх и жадность:</span> <b data-stat="fear">—</b></a>
+    <a class="nir" href="/nir/#start">⛏ <span data-i18n="stNir">Сеть NIR: майнеров</span> <b data-nir="miners">—</b> · <span data-i18n="stMined">намайнено</span> <b data-nir="mined">—</b> NIR</a>
+  </div>
+
+  <header class="top">
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="32" height="32">NIR <small>Markets</small></a>
+    <nav aria-label="Разделы">
+      <a href="/" data-i18n="navCoins">Криптовалюты</a>
+      <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
+      <a href="/portfolio/" class="on" data-i18n="navPortfolio">Портфель</a>
+      <a href="/nir/" data-i18n="navNir">NIR</a>
+    </nav>
+    <form id="search-form" class="search-form" action="/" role="search">
+      <input id="search" class="search" name="q" type="search" placeholder="Поиск монеты" autocomplete="off">
+    </form>
+    <button class="pill find" id="find" type="button" aria-label="Поиск"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+    <button class="pill" id="theme" type="button" aria-label="Тема">☀︎</button>
+    <button class="pill" id="lang" type="button">EN</button>
+    <a class="pill account" id="account" hidden></a>
+  </header>
+
+  <main class="wrap portfolio">
+    <p class="note-bar" id="guest" hidden><span data-i18n="guestNote">Портфель хранится в этом браузере.</span> <a id="guest-sign" href="#" data-i18n="guestSign">Войдите через Google, чтобы он был на всех ваших устройствах →</a></p>
+
+    <section class="card pf-head">
+      <div class="pf-balance">
+        <small data-i18n="balance">Текущий баланс</small>
+        <b id="balance">$0</b>
+        <span id="balance-change"></span>
+      </div>
+      <button class="act" id="add" type="button" data-i18n="addTx">+ Добавить сделку</button>
+      <div class="pf-stats">
+        <div><small data-i18n="allTime">Прибыль за всё время</small><b id="pnl">—</b><em id="pnl-pct"></em></div>
+        <div><small data-i18n="costBasis">Вложено</small><b id="cost">—</b></div>
+        <div><small data-i18n="best">Лучший за 24 ч</small><b id="best">—</b><em id="best-pct"></em></div>
+        <div><small data-i18n="worst">Худший за 24 ч</small><b id="worst">—</b><em id="worst-pct"></em></div>
+      </div>
+      <div class="dom-bar" id="alloc-bar"></div>
+      <div class="dom-legend" id="alloc-legend"></div>
+    </section>
+
+    <h2 class="pf-title" data-i18n="assets">Активы</h2>
+    <div class="table-wrap">
+      <table class="pf-table" id="holdings-table">
+        <thead><tr>
+          <th class="left" data-i18n="colCoin">Монета</th><th data-i18n="colPrice">Цена</th><th class="hide-s" data-i18n="col24h">24 ч</th>
+          <th data-i18n="colHoldings">Количество</th><th class="hide-s" data-i18n="colAvg">Ср. цена покупки</th>
+          <th class="hide-s" data-i18n="colPnl">Прибыль / убыток</th><th class="hide-s"></th>
+        </tr></thead>
+        <tbody id="holdings"></tbody>
+      </table>
+    </div>
+    <div class="card pf-empty" id="empty" hidden>
+      <b data-i18n="emptyTitle">Здесь будет ваш портфель</b>
+      <p data-i18n="emptyText">Добавьте покупку монеты — сайт посчитает баланс, среднюю цену покупки и прибыль по текущим ценам.</p>
+      <button class="act" id="add-first" type="button" data-i18n="addTx">+ Добавить сделку</button>
+    </div>
+
+    <section class="card pf-history" id="history" hidden>
+      <div class="pf-history-top"><h2 id="history-title"></h2><button class="act ghost" id="history-close" type="button" data-i18n="close">Закрыть</button></div>
+      <div id="history-list"></div>
+    </section>
+
+    <dialog class="pf-dialog" id="dialog">
+      <form method="dialog" id="tx-form">
+        <div class="pf-dialog-top"><h2 id="dialog-title" data-i18n="addTxTitle">Сделка</h2><button class="pill" id="dialog-close" type="button" aria-label="Закрыть">✕</button></div>
+        <div class="seg" id="kind">
+          <button type="button" data-kind="buy" class="on" data-i18n="buy">Покупка</button>
+          <button type="button" data-kind="sell" data-i18n="sell">Продажа</button>
+        </div>
+        <label><span data-i18n="fieldCoin">Монета</span>
+          <span class="pf-coin-pick"><input id="f-coin" autocomplete="off" placeholder="Bitcoin, ETH…" required><span class="suggest" id="f-suggest" hidden></span></span>
+        </label>
+        <div class="pf-two">
+          <label><span data-i18n="fieldAmount">Количество</span><input id="f-amount" inputmode="decimal" required autocomplete="off" placeholder="0,00"></label>
+          <label><span data-i18n="fieldPrice">Цена за монету, $</span><input id="f-price" inputmode="decimal" required autocomplete="off"></label>
+        </div>
+        <div class="pf-two">
+          <label><span data-i18n="fieldDate">Дата и время</span><input id="f-date" type="datetime-local" required></label>
+          <label><span data-i18n="fieldFee">Комиссия, $</span><input id="f-fee" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+        </div>
+        <label><span data-i18n="fieldNote">Заметка</span><input id="f-note" maxlength="200" autocomplete="off"></label>
+        <p class="pf-total"><span data-i18n="total">Итого</span> <b id="f-total">$0</b></p>
+        <p class="form-error" id="f-error"></p>
+        <button class="act pf-save" type="submit" data-i18n="save">Сохранить</button>
+      </form>
+    </dialog>
+  </main>
+
+  <footer>
+    <span>NIR Markets</span>
+    <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
+    <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
+    <a href="/terms/" data-i18n="terms">Условия</a>
+    <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
+  </footer>
+  <nav class="tabbar" aria-label="Меню">
+    <a href="/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
+    <a href="/#watch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
+    <a href="/portfolio/" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
+    <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
+    <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
+  </nav>
+  <script src="/common.js?v=6"></script>
+  <script src="/portfolio.js?v=1"></script>
+</body>
+</html>
