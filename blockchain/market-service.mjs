@@ -234,6 +234,29 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       }
     }));
     if (state.coins.length) state.updatedAt = now();
+    if (accounts?.checkAlerts && !state.errors.coins) await checkAlerts();
+  }
+
+  // Price alerts (market-alerts.mjs) are checked against the fresh prices; coins
+  // outside the top hundred that an alert watches are priced in one more request.
+  async function checkAlerts() {
+    try {
+      const prices = new Map(state.coins.map((coin) => [coin.id, coin]));
+      const missing = accounts.alertCoins().filter((id) => !prices.has(id) && COIN_ID.test(id)).slice(0, 250);
+      if (missing.length) {
+        const list = await get(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${missing.join(",")}&per_page=250` +
+          "&price_change_percentage=24h");
+        for (const coin of Array.isArray(list) ? list : []) {
+          const quote = { price: finite(coin?.current_price),
+            change24h: finite(coin?.price_change_percentage_24h_in_currency ?? coin?.price_change_percentage_24h) };
+          if (typeof coin?.id === "string" && quote.price !== null) prices.set(coin.id, quote);
+        }
+      }
+      await accounts.checkAlerts(prices);
+      delete state.errors.alerts;
+    } catch (error) {
+      state.errors.alerts = String(error?.message ?? error).slice(0, 200);
+    }
   }
 
   function overview() {

@@ -20,7 +20,7 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
   for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html",
-    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html", "site/portfolio/index.html"]) {
+    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html", "site/portfolio/index.html", "site/alerts/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
@@ -110,6 +110,23 @@ test("the portfolio page has English for every text and keeps records on the ser
   for (const page of ["site/index.html", "site/coin/index.html", "site/charts/index.html", "site/u/index.html", "site/portfolio/index.html"]) {
     assert.match(read(page), /href="\/portfolio\/"/, page);
   }
+});
+
+test("price alerts have English for every text, a service worker and a bell on every page", () => {
+  const html = read("site/alerts/index.html");
+  const script = read("site/alerts.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) {
+    assert.match(script, new RegExp(`\\b${key}:`), `no English text for ${key}`);
+  }
+  const shared = read("site/alerts-ui.js");
+  // The dialog's Russian and English texts have the same keys.
+  const keys = (block) => [...block.matchAll(/(\w+): "/g)].map(([, key]) => key).sort();
+  const [, ru, english] = /ru: \{([^]*?)\},\n  en: \{([^]*?)\},\n\};/.exec(shared);
+  assert.deepEqual(keys(ru), keys(english));
+  assert.match(shared, /navigator\.serviceWorker\.register\("\/sw\.js"\)/);
+  assert.match(read("site/sw.js"), /addEventListener\("push"/);
+  assert.match(read("site/coin/index.html"), /src="\/alerts-ui\.js\?v=\d+"/);
+  assert.match(read("site/common.js"), /href: "\/alerts\/"/);
 });
 
 test("the server serves the website with the network's read API under /api", () => {

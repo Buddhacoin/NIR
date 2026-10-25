@@ -399,6 +399,7 @@ for (const button of document.querySelectorAll("#metric [data-metric]")) {
   button.addEventListener("click", () => { metric = button.dataset.metric; renderChart(); });
 }
 $("#watch").addEventListener("click", () => { toggleWatch(coin.id); renderHead(); });
+$("#alert").addEventListener("click", () => { if (coin) openAlertDialog(coin); });
 $("#find").addEventListener("click", () => {
   document.body.classList.toggle("searching");
   if (document.body.classList.contains("searching")) $("#search").focus();
