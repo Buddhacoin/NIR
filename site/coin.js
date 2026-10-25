@@ -8,7 +8,7 @@ const en = {
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
-  navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins",
+  navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins or addresses",
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",

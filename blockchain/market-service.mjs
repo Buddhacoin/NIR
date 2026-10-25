@@ -211,7 +211,7 @@ function createOnDemand({ get, now, perMinute, maxEntries }) {
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null } = {}) {
   const state = { coins: [], global: null, trending: [], fearGreed: null, updatedAt: null, errors: {} };
   const sources = {
     coins: [`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1` +
@@ -307,6 +307,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     const url = new URL(request.url, "http://localhost");
     // Sign-in, profiles and server watchlists (blockchain/market-accounts.mjs).
     if (accounts && await accounts.handle(request, response, url)) return;
+    // The on-chain explorer: transfers, addresses, search (blockchain/market-chain.mjs).
+    if (chain && await chain.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
     if (request.method === "GET" && url.pathname === "/market/coins") {
       const page = Number(url.searchParams.get("page") ?? 1);

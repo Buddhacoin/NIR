@@ -63,7 +63,7 @@ button, input { font: inherit; color: inherit; }
 .pill { padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
 
 .wrap { max-width: 1440px; margin: 0 auto; padding: 22px 16px 40px; }
-.cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.cards { display: grid; grid-template-columns: 1fr 1fr 1fr 1.3fr; gap: 16px; }
 .card { padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(14px); }
 :root[data-theme="light"] .card { box-shadow: 0 6px 24px #3a2a1012; }
 .card h2 { margin: 0 0 12px; font-size: 16px; }
@@ -594,3 +594,87 @@ th.th-sort.desc::after { content: "▼"; color: var(--accent); opacity: 1; }
 td.mood { font-size: 13px; font-weight: 700; }
 td.mood i { display: block; width: 70px; height: 4px; margin: 6px 0 0 auto; border-radius: 4px;
   background: linear-gradient(90deg, var(--up) var(--rise), var(--down) var(--rise)); opacity: 0.85; }
+
+/* Wallets and transfers: network dots, wallet links, the "All transfers" card. */
+.chain-dot { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 850; }
+.wallet { display: inline-flex; align-items: baseline; gap: 3px; min-width: 0; max-width: 100%; overflow: hidden; color: var(--text); white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.wallet b { overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+.wallet:hover { color: var(--accent); }
+.wallet-icon { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--soft); color: var(--accent); }
+.transfers-card h2 a { display: flex; justify-content: space-between; color: inherit; }
+.transfers-card .tf-min { margin: 2px 0 8px; }
+.transfers-card .tf-min button { padding: 4px 10px; font-size: 12px; }
+.tf-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.tf-list li { display: grid; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.tf-list li:last-child { border-bottom: 0; }
+.tf-route { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tf-route > i { flex: none; color: var(--muted); font-style: normal; }
+.tf-route .wallet { flex: 1 1 0; }
+.tf-facts { display: flex; align-items: baseline; gap: 10px; padding-left: 24px; font-variant-numeric: tabular-nums; }
+.tf-facts a { color: var(--muted); }
+.tf-facts a:hover { color: var(--accent); }
+.tf-facts .muted { margin-left: auto; font-size: 12px; }
+
+/* The explorer: a wallet's page and the transfers feed. */
+.explorer { display: grid; gap: 18px; }
+.ex-head { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; }
+.ex-avatar { display: grid; place-items: center; flex: none; width: 76px; height: 76px; border-radius: 50%; color: #fff; font-size: 30px; font-weight: 850; }
+.ex-who { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.ex-who h1 { margin: 0; font-size: 26px; overflow-wrap: anywhere; }
+.ex-address { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ex-address code { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.ex-address .pill { padding: 4px 10px; font-size: 12px; }
+.ex-total b { font-size: 30px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.ex-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ex-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-weight: 650; }
+.ex-chip.tag { background: var(--soft); }
+.ex-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ex-actions .act { padding: 10px 14px; font-size: 13px; }
+.ex-actions .act.on { border-color: var(--up); color: var(--up); }
+.ex-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.ex-card { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.ex-card h2 { margin: 0; font-size: 18px; }
+.ex-note { margin: 0; font-size: 13px; }
+.ex-table { margin-top: 0; font-size: 14px; }
+.ex-table th { position: static; background: transparent; }
+.ex-table td { padding: 10px 8px; }
+.ex-table .coin-cell span { max-width: 140px; }
+.ex-transfers td.left { max-width: 220px; overflow: hidden; }
+.ex-transfers td.left a:not(.wallet) { color: var(--accent); }
+.ex-more { justify-self: center; }
+.ex-title { display: flex; align-items: center; gap: 8px; margin: 0 auto 0 0; font-size: 24px; }
+.live { color: var(--up); font-size: 12px; }
+.live.busy { animation: pulse 0.8s infinite alternate; }
+@keyframes pulse { to { opacity: 0.2; } }
+.ex-pages { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.ex-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ex-token { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); font: inherit; }
+.tf-filter.on { border-color: var(--accent); color: var(--accent); }
+.wallet-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; margin-bottom: 14px; }
+.wallet-form input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); font: inherit; }
+.wallet-form .form-error { grid-column: 1 / -1; }
+.wallets-total { display: grid; gap: 2px; margin: 6px 0 10px; }
+.wallets-total b { font-size: 28px; font-variant-numeric: tabular-nums; }
+@media (max-width: 1000px) { .ex-grid { grid-template-columns: 1fr; } }
+@media (max-width: 720px) {
+  .ex-avatar { width: 56px; height: 56px; font-size: 22px; }
+  .ex-total b { font-size: 24px; }
+  .wallet-form { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .ex-table .coin-cell { display: flex; gap: 8px; }
+  .ex-table .coin-cell .logo { width: 26px; height: 26px; }
+  .ex-table .coin-cell b { display: inline; font-size: 14px; }
+  .ex-table .coin-cell span { display: none; }
+  #assets-table th:nth-child(3), #assets-table td:nth-child(3) { display: none; }
+  .ex-table td, .ex-table th { padding: 9px 5px; font-size: 13px; }
+  .ex-transfers .wallet { max-width: 92px; }
+  .ex-actions .act { flex: 1; }
+}
+@media (max-width: 720px) {
+  #assets-table th:nth-child(4), #assets-table td:nth-child(4) { display: none; }
+  /* A wallet's transfers keep the amount; the feed keeps the dollar value. */
+  .ex-grid .ex-transfers th:nth-child(5), .ex-grid .ex-transfers td:nth-child(5) { display: none; }
+  .explorer > .ex-card .ex-transfers th:nth-child(4), .explorer > .ex-card .ex-transfers td:nth-child(4),
+  .explorer > .ex-card .ex-transfers th:nth-child(5), .explorer > .ex-card .ex-transfers td:nth-child(5) { display: none; }
+}

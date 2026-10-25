@@ -5,7 +5,7 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins or addresses",
   title: "Market overview", cap: "Market cap", volume: "24h volume", coins: "Coins tracked", exchanges: "Exchanges",
   fearTitle: "Fear & Greed Index", domTitle: "Dominance",
   fearAbout: "From 0 to 100, the index shows the market's mood: near 0 is extreme fear (people sell), near 100 extreme greed (people buy). Source: alternative.me, updated daily.",

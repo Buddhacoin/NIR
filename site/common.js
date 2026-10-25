@@ -137,6 +137,42 @@ function sortBy(list, sort, value) {
     return sort.dir * (typeof a === "string" ? a.localeCompare(b) : a - b);
   });
 }
+// --- Wallets and transfers (the explorer, /market/chain): networks, short addresses, links.
+const CHAINS = {
+  eth: { name: "Ethereum", short: "ETH", color: "#627eea", tx: "https://eth.blockscout.com/tx/" },
+  optimism: { name: "Optimism", short: "OP", color: "#ff0420", tx: "https://explorer.optimism.io/tx/" },
+  btc: { name: "Bitcoin", short: "BTC", color: "#f7931a", tx: "https://mempool.space/tx/" },
+};
+const ADDRESS = /^(?:0x[0-9a-fA-F]{40}|bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/;
+const addressUrl = (address) => `/address/${encodeURIComponent(address)}`;
+const shortAddress = (address) => (address && address.length > 14 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address ?? "—");
+// A coloured dot with the network's initial, titled with its name.
+function chainDot(chain) {
+  const info = CHAINS[chain] ?? { name: chain, short: chain, color: "#888" };
+  const dot = Object.assign(document.createElement("span"), { className: "chain-dot", title: info.name, textContent: info.short[0] });
+  dot.style.background = info.color;
+  return dot;
+}
+// A link to a wallet's page: its open name if it has one, else the short address.
+function walletLink(party) {
+  if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
+  const link = Object.assign(document.createElement("a"), { className: "wallet", href: addressUrl(party.address), title: party.address });
+  if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
+  link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${party.address.slice(0, 5)})` : shortAddress(party.address) }));
+  return link;
+}
+function timeAgo(time) {
+  const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
+  const en = language === "en";
+  if (seconds < 60) return en ? "now" : "сейчас";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}${en ? "m" : " мин"}`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}${en ? "h" : " ч"}`;
+  return new Date(time).toLocaleDateString(locale(), { day: "numeric", month: "short" });
+}
+// Amounts and dollar sums in a few characters: 1,25 млн · 38 055 · 4,6759 · 0,00048717.
+const amountShort = (value) => (value >= 1e6 ? big(value, "") : value.toLocaleString(locale(), value >= 1000 ? { maximumFractionDigits: 0 }
+  : value >= 1 ? { maximumFractionDigits: 4 } : { maximumSignificantDigits: 5 }));
+const usdShort = (value) => (value === null || value === undefined ? "—" : value >= 1e6 ? big(value) : value >= 1000 ? `$${Math.round(value).toLocaleString(locale())}` : price(value));
 const coinUrl = (coin) => `/coin/${encodeURIComponent(coin.id)}`;
 
 // --- Numbers in the visitor's language: $80 183,42 or $80,183.42; 1,59 трлн or 1.59T.
@@ -312,7 +348,11 @@ function setupSearch({ overview = () => null }) {
     if (!market) market = await fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null);
     return market;
   };
-  const open = (coin) => { remember(coin); location.href = coinUrl(coin); };
+  const open = (item) => {
+    if (item.address) { location.href = addressUrl(item.address); return; }
+    remember(item);
+    location.href = coinUrl(item);
+  };
   function draw(groups) {
     items = groups.flatMap(([, coins]) => coins);
     active = -1;
@@ -320,8 +360,17 @@ function setupSearch({ overview = () => null }) {
       Object.assign(document.createElement("small"), { textContent: title }),
       ...coins.map((coin) => {
         const row = document.createElement("a");
-        row.href = coinUrl(coin);
         row.setAttribute("role", "option");
+        if (coin.address) {
+          // A wallet: its name (if any) and the short address.
+          row.href = addressUrl(coin.address);
+          const icon = Object.assign(document.createElement("span"), { className: "wallet-icon", textContent: "◎" });
+          row.append(icon, Object.assign(document.createElement("b"), { textContent: coin.name ?? shortAddress(coin.address) }),
+            Object.assign(document.createElement("span"), { textContent: coin.name ? shortAddress(coin.address) : t().wallet }));
+          row.addEventListener("click", (event) => { event.preventDefault(); open(coin); });
+          return row;
+        }
+        row.href = coinUrl(coin);
         const name = Object.assign(document.createElement("b"), { textContent: coin.name });
         const symbol = Object.assign(document.createElement("span"), { textContent: coin.symbol });
         const rank = Object.assign(document.createElement("em"), { textContent: coin.rank ? `#${coin.rank}` : "" });
@@ -333,10 +382,13 @@ function setupSearch({ overview = () => null }) {
     box.hidden = !items.length;
   }
   const t = () => (language === "en"
-    ? { recent: "Recent searches", trending: "Trending", coins: "Coins", none: "Nothing found" }
-    : { recent: "Недавние", trending: "В тренде", coins: "Монеты", none: "Ничего не найдено" });
+    ? { recent: "Recent searches", trending: "Trending", coins: "Coins", none: "Nothing found", wallets: "Addresses", wallet: "address" }
+    : { recent: "Недавние", trending: "В тренде", coins: "Монеты", none: "Ничего не найдено", wallets: "Адреса", wallet: "адрес" });
   async function update() {
-    const query = input.value.trim().toLowerCase();
+    const raw = input.value.trim();
+    const query = raw.toLowerCase();
+    // A wallet address opens its page; a name like zeus.eth is looked up below.
+    if (ADDRESS.test(raw)) { draw([[t().wallets, [{ address: raw, name: null }]]]); return; }
     const market = await data();
     if (!query) {
       draw([[t().recent, recent()], [t().trending, (market?.trending ?? []).slice(0, 7)]]);
@@ -348,13 +400,16 @@ function setupSearch({ overview = () => null }) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       asked = query;
-      const found = await fetch(`/market/search?q=${encodeURIComponent(query)}`)
-        .then((response) => (response.ok ? response.json() : { coins: [] })).catch(() => ({ coins: [] }));
+      const [found, wallets] = await Promise.all([
+        fetch(`/market/search?q=${encodeURIComponent(query)}`).then((response) => (response.ok ? response.json() : { coins: [] })).catch(() => ({ coins: [] })),
+        query.includes(".") ? fetch(`/market/chain/search?q=${encodeURIComponent(query)}`).then((response) => (response.ok ? response.json() : { results: [] }))
+          .catch(() => ({ results: [] })) : { results: [] },
+      ]);
       if (asked !== input.value.trim().toLowerCase()) return; // a newer query is on its way
       const seen = new Set(local.map((coin) => coin.id));
       const merged = [...local, ...found.coins.filter((coin) => !seen.has(coin.id))].slice(0, 10);
-      draw([[t().coins, merged]]);
-      if (!merged.length) {
+      draw([[t().wallets, wallets.results ?? []], [t().coins, merged]]);
+      if (!merged.length && !wallets.results?.length) {
         box.replaceChildren(Object.assign(document.createElement("p"), { textContent: t().none }));
         box.hidden = false;
       }

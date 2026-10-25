@@ -1,0 +1,290 @@
+// A wallet's page, /address/<address>, in the manner of the analytics sites:
+// its open name and tags, what it holds on every network and the total, the
+// network coin's balance by day, its transfers (all, in or out) a page at a
+// time, and the wallets it deals with most. Signed in, the visitor can track
+// it (a bookmark kept on the server) or mark it as their own, so the profile
+// adds it to their holdings. Data comes from /market/chain (market-chain.mjs).
+
+const en = {
+  stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
+  stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins or addresses",
+  loading: "Loading the address… a large wallet can take up to half a minute.", copy: "Copy", share: "Share", portfolio: "Portfolio", networks: "Assets by network",
+  colAsset: "Asset", colChain: "Network", colPrice: "Price", colAmount: "Amount", colValue: "Value", colAssets: "Assets", colShare: "Share",
+  history: "Balance history", counterparties: "Top counterparties", counterNote: "From the loaded transfers: who this address deals with most.",
+  colWallet: "Address", colIn: "Received from", colOut: "Sent to", colCount: "Transfers", dirAll: "Transfers", dirIn: "Inflow", dirOut: "Outflow",
+  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", more: "Show more",
+  barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
+  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+};
+const words = {
+  ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Отследить адрес", tracked: "★ Отслеживается",
+    mine: "Это мой адрес", isMine: "✓ Мой адрес", copied: "Скопировано", missing: "Это не адрес кошелька.",
+    unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
+    partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
+    failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noCounter: "Пока нечего показать.",
+    signIn: "Войдите через Google, чтобы отслеживать адреса.", historyNote: (symbol) => `Баланс ${symbol} по дням, по данным обозревателя.`,
+    noHistory: "Истории баланса для этой сети нет." },
+  en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Track address", tracked: "★ Tracked",
+    mine: "This is mine", isMine: "✓ My address", copied: "Copied", missing: "This is not a wallet address.",
+    unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
+    partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
+    failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noCounter: "Nothing to show yet.",
+    signIn: "Sign in with Google to track addresses.", historyNote: (symbol) => `${symbol} balance by day, from the explorer.`,
+    noHistory: "No balance history for this network." },
+};
+const t = () => words[language];
+const address = decodeURIComponent(location.pathname.split("/")[2] ?? "");
+const utxo = /^(?:bc1|[13])/.test(address);
+let data = null;
+let failure = "";
+let saved = null; // this address in the visitor's saved list, or null
+let view = "assets";
+let historyChain = "eth";
+let direction = "all";
+let transferChain = "eth";
+let dust = true; // hide transfers worth under $1 (mostly spam tokens)
+let transfers = [];
+let cursor = null;
+let loadingMore = false;
+const sort = { key: null, dir: 0 };
+const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
+const chainName = (chain) => CHAINS[chain]?.name ?? chain;
+
+// --- The head: name, address, total, tags and the buttons.
+function renderHead() {
+  const name = data.name ?? (data.contract ? t().contract : t().wallet);
+  document.title = t().title(data.name ?? shortAddress(address));
+  $("#name").textContent = name;
+  $("#address").textContent = address;
+  const hue = [...address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
+  $("#avatar").style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
+  $("#avatar").textContent = (data.name ?? "◎")[0].toUpperCase();
+  $("#total").textContent = price(data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0));
+  $("#tags").replaceChildren(...data.networks.filter((item) => item.ok).map((item) => { const chip = node("span", "ex-chip"); chip.append(chainDot(item.chain), chainName(item.chain)); return chip; }),
+    ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
+  $("#track").textContent = saved ? t().tracked : t().track;
+  $("#track").classList.toggle("ghost", Boolean(saved));
+  $("#mine").textContent = saved?.mine ? t().isMine : t().mine;
+  $("#mine").classList.toggle("on", Boolean(saved?.mine));
+  const partial = data.networks.filter((item) => item.partial).map((item) => chainName(item.chain));
+  const failed = data.networks.filter((item) => !item.ok).map((item) => chainName(item.chain));
+  $("#partial").hidden = !partial.length && !failed.length;
+  $("#partial").textContent = [partial.length ? t().partial(partial.join(", ")) : "", failed.length ? t().failed(failed.join(", ")) : ""].filter(Boolean).join(" ");
+}
+
+// --- Holdings, and their split by network.
+function renderAssets() {
+  for (const button of document.querySelectorAll("#assets-tabs [data-view]")) button.classList.toggle("on", button.dataset.view === view);
+  $("#assets-table").hidden = view !== "assets";
+  $("#networks-table").hidden = view !== "networks";
+  markSort($("#assets-table thead"), sort);
+  const rows = sortBy(data.assets, sort, (asset, key) => (key === "symbol" ? asset.token.symbol.toLowerCase() : key === "price" ? asset.token.price : asset[key]));
+  if (!rows.length) {
+    const row = node("tr");
+    const cell = node("td", "muted", t().empty);
+    cell.colSpan = 5;
+    row.append(cell);
+    $("#assets").replaceChildren(row);
+  } else {
+    $("#assets").replaceChildren(...rows.map((asset) => {
+      const row = node("tr");
+      const name = node("td", "left");
+      const cell = node("span", "coin-cell");
+      cell.append(logo({ id: asset.token.symbol, symbol: asset.token.symbol, image: asset.token.icon }), node("b", "", asset.token.symbol), node("span", "", asset.token.name));
+      name.append(cell);
+      const network = node("td", "left");
+      network.append(chainDot(asset.chain));
+      row.append(name, network, node("td", "", asset.token.price === null ? "—" : price(asset.token.price)),
+        node("td", "", `${amountShort(asset.amount)} ${asset.token.symbol}`), node("td", "", asset.usd === null ? "—" : price(asset.usd)));
+      return row;
+    }));
+  }
+  const total = data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0);
+  $("#networks").replaceChildren(...data.networks.map((item) => {
+    const assets = data.assets.filter((asset) => asset.chain === item.chain);
+    const value = assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0);
+    const row = node("tr");
+    const name = node("td", "left");
+    name.append(chainDot(item.chain), " ", chainName(item.chain));
+    row.append(name, node("td", "", String(assets.length)), node("td", "", price(value)), node("td", "", total ? `${(value / total * 100).toFixed(1)}%` : "—"));
+    return row;
+  }));
+}
+
+// --- The network coin's balance by day, drawn as a line.
+async function renderHistory() {
+  const box = $("#plot");
+  const evm = Object.keys(CHAINS).filter((chain) => chain !== "btc");
+  $("#history-chain").replaceChildren(...(utxo ? [] : evm.map((chain) => {
+    const button = node("button", chain === historyChain ? "on" : "", CHAINS[chain].short);
+    button.type = "button";
+    button.title = chainName(chain);
+    button.addEventListener("click", () => { historyChain = chain; void renderHistory(); });
+    return button;
+  })));
+  if (utxo) { $("#history-note").textContent = t().noHistory; box.replaceChildren(); return; }
+  const answer = await fetch(`/market/chain/address/${encodeURIComponent(address)}/history?chain=${historyChain}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  const points = answer?.points ?? [];
+  $("#history-note").textContent = points.length > 1 ? t().historyNote(answer.symbol) : t().noHistory;
+  if (points.length < 2) { box.replaceChildren(); return; }
+  const width = Math.max(280, box.clientWidth);
+  const height = Math.max(180, box.clientHeight);
+  const right = width - 64;
+  const values = points.map(([, value]) => value);
+  let low = Math.min(...values);
+  let high = Math.max(...values);
+  const pad = (high - low) * 0.1 || high * 0.05 || 1;
+  low = Math.max(0, low - pad);
+  high += pad;
+  const x = (time) => (time - points[0][0]) / ((points.at(-1)[0] - points[0][0]) || 1) * right;
+  const y = (value) => 10 + (high - value) / (high - low) * (height - 34);
+  const line = points.map(([time, value], index) => `${index ? "L" : "M"}${x(time).toFixed(1)},${y(value).toFixed(1)}`).join("");
+  const ticks = [0, 0.33, 0.66, 1].map((share) => low + (high - low) * share);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  svg.innerHTML = `<defs><linearGradient id="ex-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".3"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+    ${ticks.map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${amountShort(value)}</text>`).join("")}
+    <path d="${line}L${right},${height - 24}L0,${height - 24}Z" fill="url(#ex-fill)"/><path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${[0, 0.5, 1].map((share) => { const time = points[0][0] + (points.at(-1)[0] - points[0][0]) * share; return `<text class="tick" text-anchor="${share === 0 ? "start" : share === 1 ? "end" : "middle"}" x="${(share * right).toFixed(1)}" y="${height - 6}">${new Date(time).toLocaleDateString(locale(), { day: "numeric", month: "short", year: "2-digit" })}</text>`; }).join("")}`;
+  box.replaceChildren(svg);
+}
+
+// --- Transfers: a page at a time from the explorer; spam-sized ones hidden by default.
+function renderTransfers() {
+  for (const button of document.querySelectorAll("#direction [data-dir]")) button.classList.toggle("on", button.dataset.dir === direction);
+  $("#dust").classList.toggle("on", dust);
+  $("#transfer-chain").replaceChildren(...(utxo ? [] : Object.keys(CHAINS).filter((chain) => chain !== "btc").map((chain) => {
+    const button = node("button", chain === transferChain ? "on" : "", CHAINS[chain].short);
+    button.type = "button";
+    button.title = chainName(chain);
+    button.addEventListener("click", () => { transferChain = chain; void loadTransfers(true); });
+    return button;
+  })));
+  const shown = transfers.filter((item) => !dust || (item.usd ?? 0) >= 1);
+  const own = address.toLowerCase();
+  $("#transfers").replaceChildren(...(shown.length ? shown.map((item) => {
+    const row = node("tr");
+    const when = node("td", "left");
+    when.append(chainDot(item.chain), " ", Object.assign(node("a", "", timeAgo(item.time)), { href: `${CHAINS[item.chain]?.tx ?? "#"}${item.hash}`, target: "_blank", rel: "noopener" }));
+    const from = node("td", "left");
+    from.append(walletLink(item.from));
+    const to = node("td", "left");
+    to.append(walletLink(item.to));
+    const incoming = item.to.address?.toLowerCase() === own;
+    row.append(when, from, to, node("td", incoming ? "up" : "down", `${incoming ? "+" : "−"}${amountShort(item.amount)} ${item.token.symbol}`),
+      node("td", "", usdShort(item.usd)));
+    return row;
+  }) : [(() => { const row = node("tr"); const cell = node("td", "muted", t().noTransfers); cell.colSpan = 5; row.append(cell); return row; })()]));
+  $("#more").hidden = !cursor;
+  renderCounterparties();
+}
+async function loadTransfers(reset = false) {
+  if (reset) { transfers = []; cursor = null; }
+  if (loadingMore) return;
+  loadingMore = true;
+  const query = new URLSearchParams({ dir: direction, ...(utxo ? {} : { chain: transferChain }), ...(cursor ? { cursor } : {}) });
+  const answer = await fetch(`/market/chain/address/${encodeURIComponent(address)}/transfers?${query}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  loadingMore = false;
+  if (answer) {
+    transfers = [...transfers, ...answer.items];
+    cursor = answer.next;
+  }
+  renderTransfers();
+}
+// Who this address deals with most, from the transfers loaded so far.
+function renderCounterparties() {
+  const own = address.toLowerCase();
+  const byWallet = new Map();
+  for (const item of transfers) {
+    const incoming = item.to.address?.toLowerCase() === own;
+    const other = incoming ? item.from : item.to;
+    if (!other?.address || other.address.toLowerCase() === own) continue;
+    const entry = byWallet.get(other.address) ?? { party: other, in: 0, out: 0, count: 0 };
+    entry[incoming ? "in" : "out"] += item.usd ?? 0;
+    entry.count += 1;
+    byWallet.set(other.address, entry);
+  }
+  const top = [...byWallet.values()].sort((left, right) => right.in + right.out - left.in - left.out).slice(0, 8);
+  $("#counterparties").replaceChildren(...(top.length ? top.map((entry) => {
+    const row = node("tr");
+    const who = node("td", "left");
+    who.append(walletLink(entry.party));
+    row.append(who, node("td", "up", entry.in ? price(entry.in) : "—"), node("td", "down", entry.out ? price(entry.out) : "—"), node("td", "", String(entry.count)));
+    return row;
+  }) : [(() => { const row = node("tr"); const cell = node("td", "muted", t().noCounter); cell.colSpan = 4; row.append(cell); return row; })()]));
+}
+
+function render() {
+  if (!data) {
+    $("#status").textContent = failure || t().missing;
+    if (!failure && ADDRESS.test(address)) $("#status").textContent = language === "en" ? en.loading : "Загружаю адрес… крупный кошелёк может загружаться до полуминуты.";
+    return;
+  }
+  $("#status").hidden = true;
+  $("#page").hidden = false;
+  renderHead();
+  renderAssets();
+  renderTransfers();
+}
+
+async function loadSaved() {
+  if (!account.user) { saved = null; if (data) renderHead(); return; }
+  const answer = await fetch("/market/me/addresses", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  saved = answer?.addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
+  if (data) renderHead();
+}
+async function save(changes) {
+  if (!account.user) {
+    if (account.signIn) location.href = signInUrl();
+    else alert(t().signIn);
+    return;
+  }
+  const { status, data: answer } = changes === null
+    ? await send(`/market/me/addresses/${encodeURIComponent(address)}`, "DELETE")
+    : await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", changes);
+  if (status === 200) saved = answer.addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
+  renderHead();
+}
+
+async function load() {
+  if (!ADDRESS.test(address)) { failure = t().missing; render(); return; }
+  if (utxo) transferChain = "btc";
+  const response = await fetch(`/market/chain/address/${encodeURIComponent(address)}`).catch(() => null);
+  if (!response?.ok) { failure = t().unavailable; render(); return; }
+  data = await response.json();
+  // History opens on the network where the address holds the most.
+  const richest = data.assets.find((asset) => asset.chain !== "btc");
+  if (richest) historyChain = transferChain = richest.chain;
+  render();
+  void renderHistory();
+  void loadTransfers(true);
+}
+
+$("#copy").addEventListener("click", async () => {
+  await navigator.clipboard?.writeText(address).catch(() => {});
+  $("#copy").textContent = t().copied;
+  setTimeout(() => { $("#copy").textContent = language === "en" ? en.copy : "Копировать"; }, 1500);
+});
+$("#share").addEventListener("click", async () => {
+  const url = location.href;
+  if (navigator.share) await navigator.share({ title: document.title, url }).catch(() => {});
+  else { await navigator.clipboard?.writeText(url).catch(() => {}); $("#share").textContent = t().copied; }
+});
+$("#track").addEventListener("click", () => void save(saved ? null : { mine: false }));
+$("#mine").addEventListener("click", () => void save({ mine: !saved?.mine }));
+for (const button of document.querySelectorAll("#assets-tabs [data-view]")) button.addEventListener("click", () => { view = button.dataset.view; renderAssets(); });
+for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });
+$("#dust").addEventListener("click", () => { dust = !dust; renderTransfers(); });
+$("#more").addEventListener("click", () => void loadTransfers());
+sortable($("#assets-table thead"), sort, renderAssets);
+$("#find").addEventListener("click", () => {
+  document.body.classList.toggle("searching");
+  if (document.body.classList.contains("searching")) $("#search").focus();
+});
+
+setupSearch({});
+setupPage({ en, render, onAccount: () => { void loadSaved(); } });
+void load();

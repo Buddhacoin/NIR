@@ -1,0 +1,580 @@
+{
+ "items": [
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0x0B49414dc0E099d2750B076BEd5fbA80Ea4e6d46",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "log_index": 435,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0x04E6C6773665F65D5AeEe59B19aE6315e6187A6b",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "circulating_market_cap": "4538580126.869629",
+    "circulating_supply": null,
+    "decimals": "18",
+    "exchange_rate": "1.0",
+    "holders_count": "767343",
+    "icon_url": "https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png?1696509996",
+    "name": "Dai",
+    "reputation": "ok",
+    "symbol": "DAI",
+    "total_supply": "4525468577666928730106576985",
+    "type": "ERC-20",
+    "volume_24h": "44121052.82407188"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "18",
+    "value": "560086526927433214264"
+   },
+   "transaction_hash": "0xc9363d1f47bc2f39d56a17f354f4a19e59dc51f9c541398d5d07ce675f6163d6",
+   "type": "token_transfer"
+  },
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0xCFEf134392B03ADeaaFAA97B8495ea3a3F8b3E9f",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "log_index": 434,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0x6a48DEF545a2F2509D7A13f4107F58dd6d3B031e",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "circulating_market_cap": "71559352064.27118",
+    "circulating_supply": null,
+    "decimals": "6",
+    "exchange_rate": "0.999603",
+    "holders_count": "9522820",
+    "icon_url": "https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/token-icons/USDC_latest.svg",
+    "name": "USDC",
+    "reputation": "ok",
+    "symbol": "USDC",
+    "total_supply": "47694342288285080",
+    "type": "ERC-20",
+    "volume_24h": "5964005149.498207"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "6",
+    "value": "15497952"
+   },
+   "transaction_hash": "0xb0afa477fe60ee64aad5daa0c95b3598cf4b3bf4812a3ac97b636f44bfe577c2",
+   "type": "token_transfer"
+  },
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0x28D8CBF926F209f3cbe09b4931d72699A55d5267",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "log_index": 433,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0x6a48DEF545a2F2509D7A13f4107F58dd6d3B031e",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "circulating_market_cap": "71559352064.27118",
+    "circulating_supply": null,
+    "decimals": "6",
+    "exchange_rate": "0.999603",
+    "holders_count": "9522820",
+    "icon_url": "https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/token-icons/USDC_latest.svg",
+    "name": "USDC",
+    "reputation": "ok",
+    "symbol": "USDC",
+    "total_supply": "47694342288285080",
+    "type": "ERC-20",
+    "volume_24h": "5964005149.498207"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "6",
+    "value": "100374453"
+   },
+   "transaction_hash": "0xbc9a58d07b14da353b933dc938d7f674200147e8cbb28c22024cf34047a095f7",
+   "type": "token_transfer"
+  },
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0x6872b6630a3AFcD3117191a8403C2002e13Df7dE",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": true,
+    "is_verified": false,
+    "metadata": {
+     "tags": [
+      {
+       "meta": {},
+       "name": "Fake_Phishing5938164",
+       "ordinal": 10,
+       "slug": "fakephishing5938164",
+       "tagType": "name"
+      },
+      {
+       "meta": {
+        "tooltipUrl": "https://stake.com"
+       },
+       "name": "Stake: Wallet 1",
+       "ordinal": 10,
+       "slug": "stake-wallet-1",
+       "tagType": "name"
+      },
+      {
+       "meta": {},
+       "name": "Poisoning Address",
+       "ordinal": 0,
+       "slug": "poisoning-address",
+       "tagType": "generic"
+      },
+      {
+       "meta": {
+        "bgColor": "#FED7D7",
+        "textColor": "#822727"
+       },
+       "name": "Phish / Hack",
+       "ordinal": 0,
+       "slug": "phish--hack",
+       "tagType": "generic"
+      },
+      {
+       "meta": {
+        "alertStatus": "info",
+        "data": "This address has been identified as an address poisoning attacker. Please exercise caution when interacting with it."
+       },
+       "name": "note_0",
+       "ordinal": 0,
+       "slug": "note0",
+       "tagType": "note"
+      },
+      {
+       "meta": {},
+       "name": "Stake",
+       "ordinal": 0,
+       "slug": "stake",
+       "tagType": "protocol"
+      }
+     ]
+    },
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "scam",
+    "watchlist_names": []
+   },
+   "log_index": 432,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0xef8C967c70daA71AF780f54A0F1ecB0799a21F9c",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "circulating_market_cap": "71559352064.27118",
+    "circulating_supply": null,
+    "decimals": "6",
+    "exchange_rate": "0.999603",
+    "holders_count": "9522820",
+    "icon_url": "https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/token-icons/USDC_latest.svg",
+    "name": "USDC",
+    "reputation": "ok",
+    "symbol": "USDC",
+    "total_supply": "47694342288285080",
+    "type": "ERC-20",
+    "volume_24h": "5964005149.498207"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "6",
+    "value": "3250000000"
+   },
+   "transaction_hash": "0x9b0f7999ee083d15474d956467b81491c75ceac0af93d99e65e3f62dd403de21",
+   "type": "token_transfer"
+  },
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0x6872b6630a3AFcD3117191a8403C2002e13Df7dE",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": true,
+    "is_verified": false,
+    "metadata": {
+     "tags": [
+      {
+       "meta": {},
+       "name": "Fake_Phishing5938164",
+       "ordinal": 10,
+       "slug": "fakephishing5938164",
+       "tagType": "name"
+      },
+      {
+       "meta": {
+        "tooltipUrl": "https://stake.com"
+       },
+       "name": "Stake: Wallet 1",
+       "ordinal": 10,
+       "slug": "stake-wallet-1",
+       "tagType": "name"
+      },
+      {
+       "meta": {},
+       "name": "Poisoning Address",
+       "ordinal": 0,
+       "slug": "poisoning-address",
+       "tagType": "generic"
+      },
+      {
+       "meta": {
+        "bgColor": "#FED7D7",
+        "textColor": "#822727"
+       },
+       "name": "Phish / Hack",
+       "ordinal": 0,
+       "slug": "phish--hack",
+       "tagType": "generic"
+      },
+      {
+       "meta": {
+        "alertStatus": "info",
+        "data": "This address has been identified as an address poisoning attacker. Please exercise caution when interacting with it."
+       },
+       "name": "note_0",
+       "ordinal": 0,
+       "slug": "note0",
+       "tagType": "note"
+      },
+      {
+       "meta": {},
+       "name": "Stake",
+       "ordinal": 0,
+       "slug": "stake",
+       "tagType": "protocol"
+      }
+     ]
+    },
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "scam",
+    "watchlist_names": []
+   },
+   "log_index": 431,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0x5aF2Cd99E8DBA8a51353c10079c2e77312301063",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "circulating_market_cap": "182455181066.0706",
+    "circulating_supply": null,
+    "decimals": "6",
+    "exchange_rate": "0.999075",
+    "holders_count": "16924004",
+    "icon_url": "https://assets.coingecko.com/coins/images/325/small/Tether.png?1696501661",
+    "name": "Tether",
+    "reputation": "ok",
+    "symbol": "USDT",
+    "total_supply": "88301265725970534",
+    "type": "ERC-20",
+    "volume_24h": "30376784790.124065"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "6",
+    "value": "574090361"
+   },
+   "transaction_hash": "0x86c0a616f72b4db298f7e81c3d85ffa2bb188a2ae1ba46cee0c3d03642d2da70",
+   "type": "token_transfer"
+  },
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0x6872b6630a3AFcD3117191a8403C2002e13Df7dE",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": true,
+    "is_verified": false,
+    "metadata": {
+     "tags": [
+      {
+       "meta": {},
+       "name": "Fake_Phishing5938164",
+       "ordinal": 10,
+       "slug": "fakephishing5938164",
+       "tagType": "name"
+      },
+      {
+       "meta": {
+        "tooltipUrl": "https://stake.com"
+       },
+       "name": "Stake: Wallet 1",
+       "ordinal": 10,
+       "slug": "stake-wallet-1",
+       "tagType": "name"
+      },
+      {
+       "meta": {},
+       "name": "Poisoning Address",
+       "ordinal": 0,
+       "slug": "poisoning-address",
+       "tagType": "generic"
+      },
+      {
+       "meta": {
+        "bgColor": "#FED7D7",
+        "textColor": "#822727"
+       },
+       "name": "Phish / Hack",
+       "ordinal": 0,
+       "slug": "phish--hack",
+       "tagType": "generic"
+      },
+      {
+       "meta": {
+        "alertStatus": "info",
+        "data": "This address has been identified as an address poisoning attacker. Please exercise caution when interacting with it."
+       },
+       "name": "note_0",
+       "ordinal": 0,
+       "slug": "note0",
+       "tagType": "note"
+      },
+      {
+       "meta": {},
+       "name": "Stake",
+       "ordinal": 0,
+       "slug": "stake",
+       "tagType": "protocol"
+      }
+     ]
+    },
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "scam",
+    "watchlist_names": []
+   },
+   "log_index": 430,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0x089ed634f4FD554909d99DDa9879baC8a92606C8",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "circulating_market_cap": "182455181066.0706",
+    "circulating_supply": null,
+    "decimals": "6",
+    "exchange_rate": "0.999075",
+    "holders_count": "16924004",
+    "icon_url": "https://assets.coingecko.com/coins/images/325/small/Tether.png?1696501661",
+    "name": "Tether",
+    "reputation": "ok",
+    "symbol": "USDT",
+    "total_supply": "88301265725970534",
+    "type": "ERC-20",
+    "volume_24h": "30376784790.124065"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "6",
+    "value": "7976113"
+   },
+   "transaction_hash": "0x1d76231285bc64a13038d13221c08f5807f597b045cb99e0d8553c92c8fd0621",
+   "type": "token_transfer"
+  },
+  {
+   "block_hash": "0x6fb72a71eadc87689c94734cccbc5e5111e4aacfda970f537682db23f67e46c0",
+   "block_number": 26271407,
+   "from": {
+    "ens_domain_name": null,
+    "hash": "0x0B49414dc0E099d2750B076BEd5fbA80Ea4e6d46",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "log_index": 9999,
+   "method": "0xa9059cbb",
+   "timestamp": "2026-10-25T18:12:23.000000Z",
+   "to": {
+    "ens_domain_name": null,
+    "hash": "0x04E6C6773665F65D5AeEe59B19aE6315e6187A6b",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+   },
+   "token": {
+    "address_hash": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "circulating_market_cap": "4538580126.869629",
+    "circulating_supply": null,
+    "decimals": "18",
+    "exchange_rate": "1.0",
+    "holders_count": "767343",
+    "icon_url": "https://assets.coingecko.com/coins/images/9956/small/Badge_Dai.png?1696509996",
+    "name": "Dai",
+    "reputation": "scam",
+    "symbol": "DAI",
+    "total_supply": "4525468577666928730106576985",
+    "type": "ERC-20",
+    "volume_24h": "44121052.82407188"
+   },
+   "token_type": "ERC-20",
+   "total": {
+    "decimals": "18",
+    "value": "560086526927433214264"
+   },
+   "transaction_hash": "0xc9363d1f47bc2f39d56a17f354f4a19e59dc51f9c541398d5d07ce675f6163d6",
+   "type": "token_transfer"
+  }
+ ],
+ "next_page_params": {
+  "index": 339,
+  "block_number": 26271407
+ }
+}

@@ -14,6 +14,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { createCommunity } from "./market-community.mjs";
+import { createAddresses } from "./market-addresses.mjs";
 import { createAlerts } from "./market-alerts.mjs";
 import { createPortfolio } from "./market-portfolio.mjs";
 
@@ -230,6 +231,8 @@ export function createAccounts({
   const portfolio = createPortfolio({ db, now });
   // Price alerts and browser notifications (market-alerts.mjs) under /market/me/alerts and /market/me/push.
   const alerts = createAlerts({ db, now, publicUrl, fetch: pushFetch });
+  // Tracked and own wallet addresses (market-addresses.mjs) under /market/me/addresses.
+  const addresses = createAddresses({ db, now });
 
   // Answers a request under /market/auth, /market/me, /market/u or the community's paths, or returns false.
   async function handle(request, response, url) {
@@ -266,12 +269,14 @@ export function createAccounts({
     try {
       if (await portfolio.handle({ method, path, user, request, response, json, body })) return true;
       if (await alerts.handle({ method, path, user, request, response, json, body })) return true;
+      if (await addresses.handle({ method, path, user, request, response, json, body })) return true;
       const watchMatch = /^\/market\/me\/watchlist\/([^/]+)$/.exec(path);
       if (method === "DELETE" && path === "/market/me") {
         // Deleting the account removes all of its data at once, and signs it out everywhere.
         community.forget(user.id);
         portfolio.forget(user.id);
         alerts.forget(user.id);
+        addresses.forget(user.id);
         for (const table of ["sessions", "watchlist", "activity"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
         sql("DELETE FROM users WHERE id = ?").run(user.id);
         json(response, 200, { deleted: true }, { "set-cookie": cookie("", 0) });
