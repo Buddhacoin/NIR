@@ -47,4 +47,5 @@ const service = createMarketService(fixture ? {
 } : { accounts, chain });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
+chain.warm();
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

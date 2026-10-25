@@ -243,7 +243,12 @@ export function createAccounts({
   async function handle(request, response, url) {
     if (await community.handle(request, response, url)) return true;
     const path = url.pathname;
-    if (!/^\/market\/(auth|me|u|labels)(\/|$)/.test(path)) return false;
+    if (!/^\/market\/(auth|me|u|labels|stats)(\/|$)/.test(path)) return false;
+    // GET /market/stats: how many accounts the site has, for the strip at the top.
+    if (request.method === "GET" && path === "/market/stats") {
+      json(response, 200, { users: sql("SELECT COUNT(*) AS n FROM users").get().n }, { "cache-control": "public, max-age=60" });
+      return true;
+    }
     const method = request.method;
     if (method === "GET" && path === "/market/auth/google") return startSignIn(url, response), true;
     if (method === "GET" && path === "/market/auth/google/callback") return await finishSignIn(url, response), true;

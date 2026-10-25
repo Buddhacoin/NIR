@@ -691,3 +691,28 @@ td.mood i { display: block; width: 70px; height: 4px; margin: 6px 0 0 auto; bord
 .ex-grid .ex-transfers .wallet { max-width: 132px; }
 .ex-grid .ex-transfers td:nth-child(4) { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 .ex-grid .ex-transfers td, .ex-grid .ex-transfers th { padding-left: 6px; padding-right: 6px; }
+.chain-dot { overflow: hidden; }
+.chain-dot img { width: 100%; height: 100%; object-fit: cover; }
+.chain-dot svg { width: 100%; height: 100%; }
+.nirbar .users b { color: var(--accent); }
+.ex-net { white-space: nowrap; }
+.ex-net .chain-dot { margin-right: 6px; vertical-align: middle; }
+#chain button .chain-dot, .ex-alloc .chain-dot { width: 16px; height: 16px; vertical-align: middle; }
+.pf-alloc-legend .chain-dot { width: 14px; height: 14px; vertical-align: -2px; }
+/* Home cards: market status spreads its tiles over the card's full height. */
+@media (min-width: 701px) {
+  .cards > .card:first-child { display: flex; flex-direction: column; }
+  .cards > .card:first-child .mini { flex: 1; align-content: stretch; }
+}
+.chain-dot { vertical-align: middle; }
+.ex-alloc-wide { gap: 20px; }
+.ex-alloc-wide .pf-alloc-legend { min-width: 0; }
+.ex-alloc-wide .pf-alloc-legend span { grid-template-columns: 12px auto auto; }
+.ex-alloc-wide .pf-alloc-legend b { display: inline-flex; align-items: center; gap: 6px; }
+.pf-alloc-legend span .muted { white-space: nowrap; }
+@media (max-width: 700px) {
+  .ex-grid > .ex-card:has(.ex-alloc-wide) { height: auto; }
+  .pf-plot:has(.ex-alloc-wide) { height: auto; }
+  .ex-alloc-wide .pf-donut { width: 160px; height: 160px; }
+  .ex-alloc-wide .pf-alloc-legend { width: 100%; }
+}
