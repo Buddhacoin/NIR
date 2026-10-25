@@ -175,7 +175,8 @@ function renderTransfers() {
   })));
   $("#node-note").hidden = !CHAINS[transferChain]?.node;
   $("#node-note").textContent = t().nodeNote;
-  const shown = transfers.filter((item) => !dust || (item.usd ?? 0) >= 1);
+  // Pages of token and coin transfers arrive separately: shown together, newest first.
+  const shown = transfers.filter((item) => !dust || (item.usd ?? 0) >= 1).sort((left, right) => right.time - left.time);
   const own = address.toLowerCase();
   $("#transfers").replaceChildren(...(shown.length ? shown.map((item) => {
     const row = node("tr");
@@ -192,9 +193,13 @@ function renderTransfers() {
   }) : [(() => { const row = node("tr"); const cell = node("td", "muted", t().noTransfers); cell.colSpan = 5; row.append(cell); return row; })()]));
   $("#more").hidden = !cursor;
   renderCounterparties();
+  // With spam hidden a page can leave the panel half empty: the next pages come until it fills (five at most).
+  const box = $(".ex-transfers").closest(".table-wrap");
+  if (cursor && !loadingMore && autoPages < 5 && box.scrollHeight <= box.clientHeight + 80) { autoPages += 1; void loadTransfers(); }
 }
+let autoPages = 0;
 async function loadTransfers(reset = false) {
-  if (reset) { transfers = []; cursor = null; }
+  if (reset) { transfers = []; cursor = null; autoPages = 0; }
   if (loadingMore) return;
   loadingMore = true;
   const query = new URLSearchParams({ dir: direction, ...(utxo ? {} : { chain: transferChain }), ...(cursor ? { cursor } : {}) });
@@ -300,6 +305,11 @@ for (const button of document.querySelectorAll("#assets-tabs [data-view]")) butt
 for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });
 $("#dust").addEventListener("click", () => { dust = !dust; renderTransfers(); });
 $("#more").addEventListener("click", () => void loadTransfers());
+// Near the bottom of the transfers panel, the next page comes by itself.
+$(".ex-transfers").closest(".table-wrap").addEventListener("scroll", (event) => {
+  const box = event.currentTarget;
+  if (cursor && !loadingMore && box.scrollTop + box.clientHeight > box.scrollHeight - 80) void loadTransfers();
+});
 sortable($("#assets-table thead"), sort, renderAssets);
 $("#find").addEventListener("click", () => {
   document.body.classList.toggle("searching");

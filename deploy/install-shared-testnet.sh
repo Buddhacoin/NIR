@@ -28,6 +28,20 @@ if [[ -n "$SITE_DOMAIN" && ! "$SITE_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.
   echo "The site domain is invalid: $SITE_DOMAIN" >&2; exit 1
 fi
 
+# A 1 GB server has no swap: an update (packages, downloads) next to the node
+# and the market service can run it out of memory and stall every site on it.
+# A 2 GB swap file is made once and kept across reboots.
+echo "== Swap"
+if ! swapon --show --noheadings | grep -q .; then
+  if [[ ! -f /swapfile ]]; then
+    fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  fi
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+fi
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
 echo "== System packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
