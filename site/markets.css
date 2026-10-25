@@ -112,6 +112,9 @@ tbody tr.coin { cursor: pointer; }
 tbody tr.coin:hover { background: var(--soft); }
 .coin-cell { display: flex; align-items: center; gap: 10px; }
 .coin-cell span { color: var(--muted); font-size: 13px; }
+/* Long names are cut short, as on the market sites; the full name is in the tooltip. */
+.coin-cell b { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coin-cell span { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 a.coin-cell:hover b { color: var(--accent); }
 .star { width: 28px; color: var(--muted); text-align: center; cursor: pointer; }
 .star.on { color: var(--gold); }

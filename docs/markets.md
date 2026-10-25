@@ -149,8 +149,8 @@ copy is served, or the visitor is asked to retry in a minute. Caddy serves
 
 ## Charts
 
-Charts in the table are TradingView's free embedded widget (the coin's main Binance pair), opened
-under a coin's row; stablecoins have none. The market summary is assembled from
+The table shows a 7-day line per coin; a row opens the coin's page with its
+full chart. Long names are cut short there, with the full name on hover. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
 
 A coin's page draws its own chart of price or market capitalisation for 24

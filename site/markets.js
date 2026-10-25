@@ -23,13 +23,13 @@ const en = {
   dataBy: "Data:",
 };
 const words = {
-  ru: { chart: "График", close: "Скрыть", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
+  ru: { empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { chart: "Chart", close: "Hide", empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
+  en: { empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -43,7 +43,6 @@ let tab = "top";
 const page = Math.min(500, Math.max(1, Number.parseInt(new URLSearchParams(location.search).get("page") ?? "1", 10) || 1));
 let pageCoins = null;
 let query = "";
-let openChart = null;
 
 function sparkline(points, rising, className = "spark") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -62,17 +61,6 @@ function sparkline(points, rising, className = "spark") {
     svg.append(line);
   }
   return svg;
-}
-
-// --- The TradingView chart opens under a coin's row.
-function chartRow(coin) {
-  const row = document.createElement("tr");
-  row.className = "chart";
-  const cell = document.createElement("td");
-  cell.colSpan = 12;
-  cell.append(tradingView(`BINANCE:${coin.symbol}USDT`));
-  row.append(cell);
-  return row;
 }
 
 function visibleCoins() {
@@ -121,6 +109,7 @@ function renderTable() {
     cell.href = coinUrl(coin);
     const title = document.createElement("b");
     title.textContent = coin.name;
+    cell.title = `${coin.name} (${coin.symbol})`;
     const symbol = document.createElement("span");
     symbol.textContent = coin.symbol;
     // On a phone the row shows the symbol over the market cap, as in the market apps.
@@ -155,26 +144,10 @@ function renderTable() {
     const week = percentCell(coin.change7d);
     hour.classList.add("hide-s");
     week.classList.add("hide-s");
-    const action = document.createElement("td");
-    action.className = "hide-s";
-    const charted = !STABLE.has(coin.symbol);
-    if (charted) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `act${openChart === coin.id ? "" : " ghost"}`;
-      button.textContent = openChart === coin.id ? t.close : t.chart;
-      button.addEventListener("click", (event) => {
-        event.stopPropagation();
-        openChart = openChart === coin.id ? null : coin.id;
-        renderTable();
-      });
-      action.append(button);
-    }
-    // The whole row opens the coin's page; the star and the chart button do their own thing.
+    // The whole row opens the coin's page; the star does its own thing.
     row.addEventListener("click", (event) => { if (!event.target.closest("a")) location.href = coinUrl(coin); });
-    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, spark, action);
+    row.append(star, rank, name, value, hour, day, week, cap, volume, supply, spark);
     body.append(row);
-    if (openChart === coin.id && charted) body.append(chartRow(coin));
   }
   $("#status").textContent = !data ? $("#status").textContent
     : coins.length ? "" : tab === "watch" && !query ? t.watchEmpty : t.empty;
@@ -310,7 +283,6 @@ $("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("op
 if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]").click();
 
 setupSearch({ overview: () => data });
-setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } },
-  onTheme: () => { if (openChart) renderTable(); } }); // the chart follows the theme
+setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } } });
 void load();
 setInterval(load, 60_000);
