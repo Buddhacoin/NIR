@@ -14,6 +14,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { createCommunity } from "./market-community.mjs";
+import { createPortfolio } from "./market-portfolio.mjs";
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
@@ -224,6 +225,8 @@ export function createAccounts({
 
   // Comments and the daily vote (market-community.mjs) share the database and sessions.
   const community = createCommunity({ db, now, userFor, json, body, origin, log, limited, admins });
+  // The private portfolio (market-portfolio.mjs) lives under /market/me/portfolio.
+  const portfolio = createPortfolio({ db, now });
 
   // Answers a request under /market/auth, /market/me, /market/u or the community's paths, or returns false.
   async function handle(request, response, url) {
@@ -258,10 +261,12 @@ export function createAccounts({
     if (!user) return json(response, 401, { error: "sign in first" }), true;
     if (limited(user.id)) return json(response, 429, { error: "too many changes, wait a minute" }), true;
     try {
+      if (await portfolio.handle({ method, path, user, request, response, json, body })) return true;
       const watchMatch = /^\/market\/me\/watchlist\/([^/]+)$/.exec(path);
       if (method === "DELETE" && path === "/market/me") {
         // Deleting the account removes all of its data at once, and signs it out everywhere.
         community.forget(user.id);
+        portfolio.forget(user.id);
         for (const table of ["sessions", "watchlist", "activity"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
         sql("DELETE FROM users WHERE id = ?").run(user.id);
         json(response, 200, { deleted: true }, { "set-cookie": cookie("", 0) });
