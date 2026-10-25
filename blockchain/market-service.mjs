@@ -82,7 +82,7 @@ export function normalizeGlobal(value) {
 export function normalizeTrending(value) {
   const coins = value?.coins;
   if (!Array.isArray(coins)) throw new Error("trending data is invalid");
-  return coins.slice(0, 7).map(({ item } = {}) => ({
+  return coins.slice(0, 15).map(({ item } = {}) => ({
     id: text(item?.id, 80), symbol: text(item?.symbol, 20).toUpperCase(), name: text(item?.name, 60),
     image: image(item?.small ?? item?.thumb), price: finite(item?.data?.price),
     change24h: finite(item?.data?.price_change_percentage_24h?.usd),

@@ -716,3 +716,41 @@ td.mood i { display: block; width: 70px; height: 4px; margin: 6px 0 0 auto; bord
   .ex-alloc-wide .pf-donut { width: 160px; height: 160px; }
   .ex-alloc-wide .pf-alloc-legend { width: 100%; }
 }
+/* Wallet page, in the manner of the analytics sites: four panels, each with a
+   row of tabs across its top and a dense table that scrolls inside. */
+.ex-grid > .ex-panel { height: clamp(380px, calc(50vh - 20px), 520px); padding: 0; gap: 0; }
+.ex-panel > :not(.ex-ptabs) { margin-left: 14px; margin-right: 14px; }
+.ex-ptabs { display: flex; border-bottom: 1px solid var(--line); }
+.ex-ptabs button { flex: 1; padding: 13px 10px; border: 0; border-right: 1px solid var(--line); background: var(--soft); color: var(--muted); font: inherit; font-size: 12px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.ex-ptabs button:last-child { border-right: 0; }
+.ex-ptabs button:first-child { border-top-left-radius: 15px; }
+.ex-ptabs button:last-child { border-top-right-radius: 15px; }
+.ex-ptabs button.on { background: transparent; color: var(--text); }
+.ex-chart-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 6px; }
+.ex-chart-bar .ex-note { flex: 1 1 200px; font-size: 12px; }
+.ex-ranges button, .ex-chains button { padding: 5px 10px; font-size: 12px; }
+.ex-chains button { display: inline-flex; align-items: center; gap: 5px; }
+.ex-chains .chain-dot { width: 14px; height: 14px; }
+.ex-panel > .table-wrap { margin-top: 2px; margin-bottom: 8px; }
+.ex-panel .ex-table { font-size: 13px; }
+.ex-panel .ex-table th { padding: 9px 8px; font-size: 12px; }
+.ex-panel .ex-table td { padding: 7px 8px; }
+.ex-panel .ex-table .logo { width: 22px; height: 22px; }
+.ex-panel .ex-table .coin-cell { gap: 8px; }
+.ex-panel .pf-plot.ex-plot { position: relative; flex: 1 1 auto; min-height: 0; height: auto; margin-bottom: 12px; }
+.ex-panel .ex-more { display: block; margin: 8px auto; }
+.ex-empty .pill { margin-left: 6px; }
+.ex-plot .ex-cursor { stroke: var(--muted); stroke-dasharray: 3 3; }
+.ex-tip { position: absolute; top: 6px; display: grid; gap: 2px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; pointer-events: none; white-space: nowrap; }
+.ex-tip[hidden] { display: none; }
+.w-avatar { position: relative; display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; margin-right: 6px; overflow: hidden; border-radius: 50%; color: #fff; font-size: 9px; font-weight: 800; vertical-align: middle; }
+.w-avatar img, .ex-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ex-avatar { position: relative; overflow: hidden; }
+@media (max-width: 1000px) { .ex-grid > .ex-panel { height: 440px; } }
+@media (max-width: 700px) {
+  .ex-ptabs button { padding: 11px 6px; font-size: 11px; letter-spacing: .03em; }
+  .ex-panel > :not(.ex-ptabs) { margin-left: 8px; margin-right: 8px; }
+}
+.wallet .w-avatar { align-self: center; }
+.ex-grid + .ex-grid { margin-top: 18px; }
+@media (max-width: 700px) { .ex-counter th:nth-child(4), .ex-counter td:nth-child(4) { display: none; } }

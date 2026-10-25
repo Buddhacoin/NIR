@@ -77,7 +77,7 @@ function visibleCoins() {
   }
   if (tab === "gainers" || tab === "losers") {
     coins = coins.filter((coin) => coin.change24h !== null && !STABLE.has(coin.symbol))
-      .sort((a, b) => (tab === "gainers" ? b.change24h - a.change24h : a.change24h - b.change24h)).slice(0, 30);
+      .sort((a, b) => (tab === "gainers" ? b.change24h - a.change24h : a.change24h - b.change24h));
   }
   if (query) {
     const needle = query.toLowerCase();
@@ -346,8 +346,15 @@ $("#find").addEventListener("click", () => {
 });
 if (query) document.body.classList.add("searching");
 $("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("open"));
-// A coin page's bottom bar links to /#watch.
-if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]").click();
+// A coin page's bottom bar links to /#watch; the menu's movers link to /#gainers.
+function openHash() {
+  const opening = location.hash.slice(1);
+  if (!["watch", "trending", "gainers", "losers"].includes(opening)) return;
+  document.querySelector(`.tabs [data-tab=${opening}]`).click();
+  if (opening !== "watch") document.querySelector(".tabs").scrollIntoView();
+}
+openHash();
+addEventListener("hashchange", openHash);
 
 sortable($("thead"), sort, () => renderTable());
 setupSearch({ overview: () => data });

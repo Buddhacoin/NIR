@@ -169,9 +169,25 @@ function chainDot(chain) {
   return dot;
 }
 // A link to a wallet's page: its open name if it has one, else the short address.
+// A wallet's face: its name-service picture when it has one, else a colour of its own with a letter.
+const ENS_AVATAR = "https://metadata.ens.domains/mainnet/avatar/";
+function walletAvatar(party, className = "w-avatar") {
+  const face = document.createElement("span");
+  face.className = className;
+  const hue = [...party.address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
+  face.style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
+  face.textContent = (party.name?.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "").toUpperCase();
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i.test(party.name ?? "")) {
+    const picture = Object.assign(document.createElement("img"), { src: `${ENS_AVATAR}${encodeURIComponent(party.name)}`, alt: "", loading: "lazy" });
+    picture.addEventListener("error", () => picture.remove());
+    face.append(picture);
+  }
+  return face;
+}
 function walletLink(party) {
   if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
   const link = Object.assign(document.createElement("a"), { className: "wallet", href: addressUrl(party.address), title: party.address });
+  link.append(walletAvatar(party));
   if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
   link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${party.address.slice(0, 5)})` : shortAddress(party.address) }));
   return link;

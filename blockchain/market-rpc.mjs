@@ -13,13 +13,14 @@ const MULTICALL = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const COINGECKO = "https://api.coingecko.com/api/v3";
 // The networks, their public nodes, CoinGecko's platform names, and how to price the network coin.
+// `logs` and `range`: the free node that answers a wallet's log queries, and the most blocks it takes in one.
 export const NODES = {
-  base: { rpc: "https://base-rpc.publicnode.com", platform: "base", native: { symbol: "ETH" }, blockSeconds: 2 },
-  arbitrum: { rpc: "https://arbitrum-one-rpc.publicnode.com", platform: "arbitrum-one", native: { symbol: "ETH" }, blockSeconds: 0.25 },
-  polygon: { rpc: "https://polygon-bor-rpc.publicnode.com", platform: "polygon-pos", native: { symbol: "POL" }, blockSeconds: 2 },
-  bsc: { rpc: "https://bsc-rpc.publicnode.com", platform: "binance-smart-chain", native: { coin: "binancecoin" }, blockSeconds: 0.75 },
+  base: { rpc: "https://base-rpc.publicnode.com", platform: "base", native: { symbol: "ETH" }, blockSeconds: 2, range: 49_000 },
+  arbitrum: { rpc: "https://arbitrum-one-rpc.publicnode.com", logs: "https://arb1.arbitrum.io/rpc", platform: "arbitrum-one", native: { symbol: "ETH" }, blockSeconds: 0.25, range: 99_000 },
+  polygon: { rpc: "https://polygon-bor-rpc.publicnode.com", platform: "polygon-pos", native: { symbol: "POL" }, blockSeconds: 2, range: 9_999 },
+  bsc: { rpc: "https://bsc-rpc.publicnode.com", platform: "binance-smart-chain", native: { coin: "binancecoin" }, blockSeconds: 0.75, range: 9_999 },
 };
-const RANGE = 49_000; // under the public nodes' widest log query (50,000 blocks)
+const RANGE = 49_000; // the default widest log query
 const BATCH = 5; // contracts per log query; the public nodes turn larger ones away
 
 // --- ABI: just enough for Multicall3's aggregate3 and the ERC-20 reads.
@@ -175,22 +176,46 @@ export function createNodes({ rpc = postRpc, get, cached }) {
     return { number: Number(block.number), time: Number(block.timestamp) * 1000 };
   }
   const timeOf = (head, node, number) => head.time - (head.number - number) * node.blockSeconds * 1000;
-  async function addressTransfers(address, chain, direction) {
+  // A page goes back from `before` (the newest block when absent) window by
+  // window, until it holds twenty transfers or has read eight windows. The first
+  // window is small and each next one four times wider, so a busy wallet answers
+  // fast and a quiet one still reaches back. After ten seconds the page ends
+  // with what it has.
+  async function addressTransfers(address, chain, direction, before = null) {
     const node = NODES[chain];
     const list = (await tokens())[chain];
     const head = await latest(node);
-    const range = { fromBlock: `0x${Math.max(0, head.number - RANGE).toString(16)}`, toBlock: `0x${head.number.toString(16)}` };
     const padded = `0x${addressWord(address)}`;
     // The ten largest tokens, five contracts a query, each way.
     const batches = [list.tokens.slice(0, BATCH), list.tokens.slice(BATCH, BATCH * 2)].filter((batch) => batch.length);
-    const query = (topics) => Promise.all(batches.map((batch) => rpc(node.rpc, "eth_getLogs", [{ ...range, address: batch.map((item) => item.address), topics }])))
-      .then((lists) => lists.flat());
-    const [outgoing, incoming] = await Promise.all([
-      direction === "in" ? [] : query([TRANSFER, padded]),
-      direction === "out" ? [] : query([TRANSFER, null, padded]),
-    ]);
-    return [...outgoing, ...incoming].map((log) => transfer(chain, list, log, timeOf(head, node, Number(log.blockNumber)))).filter(Boolean)
-      .sort((left, right) => right.time - left.time).slice(0, 200);
+    let top = Math.min(head.number, Number.isSafeInteger(before) && before > 0 ? before : head.number);
+    const logs = [];
+    const widest = node.range ?? RANGE;
+    let span = Math.min(widest, 600);
+    const started = Date.now();
+    for (let window = 0; window < 8 && top > 0 && logs.length < 20 && (window === 0 || Date.now() - started < 10_000); window += 1, span = Math.min(widest, span * 4)) {
+      const range = { fromBlock: `0x${Math.max(0, top - span).toString(16)}`, toBlock: `0x${top.toString(16)}` };
+      const query = (topics) => Promise.all(batches.map((batch) => rpc(node.logs ?? node.rpc, "eth_getLogs", [{ ...range, address: batch.map((item) => item.address), topics }])))
+        .then((lists) => lists.flat());
+      let found;
+      try {
+        found = await Promise.all([
+          direction === "in" ? [] : query([TRANSFER, padded]),
+          direction === "out" ? [] : query([TRANSFER, null, padded]),
+        ]);
+      } catch (error) {
+        // A refused window ends the page early; the next page starts from it again.
+        if (window === 0) throw error;
+        break;
+      }
+      logs.push(...found.flat());
+      top = Math.max(0, top - span - 1);
+    }
+    // Two hundred at most: a busier stretch carries on from the last block shown.
+    logs.sort((left, right) => Number(right.blockNumber) - Number(left.blockNumber));
+    if (logs.length > 200) top = Number(logs[199].blockNumber) - 1;
+    const items = logs.slice(0, 200).map((log) => transfer(chain, list, log, timeOf(head, node, Number(log.blockNumber)))).filter(Boolean);
+    return { items, next: top > 0 ? { before: top } : null, reached: timeOf(head, node, top) };
   }
   // The newest transfers of each network's five largest tokens, over its last few seconds.
   async function feed() {

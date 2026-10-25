@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=22">
+  <link rel="stylesheet" href="/markets.css?v=23">
 </head>
 <body>
   <div class="nirbar">
@@ -30,7 +30,7 @@
     <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
     <nav aria-label="Разделы">
       <a href="/charts/" data-i18n="navCoins">Криптовалюты</a>
-      <a href="/charts/" data-i18n="navMovers">Рост и падение</a>
+      <a href="/#gainers" data-i18n="navMovers">Рост и падение</a>
       <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
       <a href="/portfolio/" data-i18n="navPortfolio">Портфель</a>
       <a href="/nir/" data-i18n="navNir">NIR</a>
@@ -58,7 +58,7 @@
         </div>
       </article>
       <article class="card list"><h2><a href="#coins" data-tab="trending"><span>🔥 <span data-i18n="trending">В тренде</span></span> <i>›</i></a></h2><ol id="trending"></ol></article>
-      <article class="card list"><h2><a href="/charts/"><span>🚀 <span data-i18n="gainers24">Лидеры роста 24 ч</span></span> <i>›</i></a></h2><ol id="gainers"></ol></article>
+      <article class="card list"><h2><a href="#coins" data-tab="gainers"><span>🚀 <span data-i18n="gainers24">Лидеры роста 24 ч</span></span> <i>›</i></a></h2><ol id="gainers"></ol></article>
       <article class="card transfers-card">
         <h2><a href="/transfers/"><span>⇄ <span data-i18n="allTransfers">Все переводы</span></span> <i>›</i></a></h2>
         <div class="seg tf-min" id="tf-min"><button type="button" data-min="1" class="on">≥ $1</button><button type="button" data-min="10000">≥ $10K</button><button type="button" data-min="1000000">≥ $1M</button></div>
@@ -118,7 +118,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=11"></script>
-  <script src="/markets.js?v=14"></script>
+  <script src="/common.js?v=12"></script>
+  <script src="/markets.js?v=15"></script>
 </body>
 </html>
