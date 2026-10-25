@@ -37,6 +37,7 @@ import { initializeBlockStore, loadBlockStore, loadBlockStoreFromSnapshot, persi
 import { createStateSnapshot, verifyStateSnapshot } from "./state-snapshot.mjs";
 import { createAccountProof } from "./account-proof.mjs";
 import { createAssetProof } from "./asset-proof.mjs";
+import { createPioneerSnapshot } from "./pioneer-snapshot.mjs";
 import { createFinalityProof, MAX_FINALITY_PROOFS } from "./light-client.mjs";
 import { AccountHistoryIndex } from "./account-history-index.mjs";
 import { proofMiningView } from "./proof-mining-state.mjs";
@@ -244,13 +245,36 @@ export class PersistentDevNode {
   // Pioneer points (docs/pioneer-program.md): the proof rewards an address
   // received on this network, against all others. The operator's own keys
   // never count.
+  #operatorAddresses() {
+    return new Set(Object.values(this.#keys).flat()
+      .map((key) => key?.address).filter((key) => typeof key === "string"));
+  }
+
   pioneerPoints(address) {
     if (!/^nir1[0-9a-f]{64}$/.test(address)) throw new Error("address is invalid");
-    const excluded = new Set(Object.values(this.#keys).flat()
-      .map((key) => key?.address).filter((key) => typeof key === "string"));
+    const excluded = this.#operatorAddresses();
     const { points, pioneers, totalPoints } = this.#chain.pioneerPoints(address, excluded);
     return { address, height: this.#chain.height, networkId: this.#chain.networkId, pioneers,
       points: points.toString(), poolNir: "210000", totalPoints: totalPoints.toString() };
+  }
+
+  // Every address's points in one file signed by the genesis validators this
+  // node holds keys for (pioneer-snapshot.mjs). Signing is slow, so the
+  // snapshot is made once per block.
+  #pioneerSnapshot = null;
+
+  pioneerSnapshot() {
+    if (this.#pioneerSnapshot?.tipHash !== this.#chain.tipHash) {
+      const excluded = this.#operatorAddresses();
+      const genesisValidators = new Set(this.#config.validators.map((member) => member.address));
+      this.#pioneerSnapshot = createPioneerSnapshot({
+        excluded: [...excluded], genesis: this.#config, height: this.#chain.height,
+        networkId: this.#chain.networkId, tipHash: this.#chain.tipHash, tipTimestamp: this.#chain.tipTimestamp,
+        totals: this.#chain.proofRewardTotalEntries().filter(([address]) => !excluded.has(address)),
+        validatorWallets: this.#keys.validators.filter((wallet) => genesisValidators.has(wallet.address)),
+      });
+    }
+    return this.#pioneerSnapshot;
   }
 
   // Public figures for the website and the founder (docs/pioneer-program.md):

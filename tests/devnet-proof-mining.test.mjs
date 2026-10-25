@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { mineOneCliqueTask } from "../blockchain/clique-miner.mjs";
 import { pioneerView } from "../blockchain/clique-mining-session.mjs";
+import { pioneerAllocation, verifyPioneerSnapshot } from "../blockchain/pioneer-snapshot.mjs";
 import { createNetworkRelay } from "../blockchain/network-relay.mjs";
 import { createDeveloperNodeHttpServer } from "../blockchain/node-service.mjs";
 import { PROGRESS_REWARD_ESCROW_DELAY_BLOCKS, PROOF_MINING_PROTOCOL_VERSION } from "../blockchain/constants.mjs";
@@ -71,6 +72,27 @@ test("a proof-mining devnet upgrades to the latest version, issues tasks from it
     assert.equal(stats.pioneers, 1);
     assert.equal(stats.minedNir, `${node.account(recipient).balance}`);
     assert.equal(stats.names, 0);
+    // A signed snapshot of every address's points, checked offline against the genesis.
+    const snapshot = node.pioneerSnapshot();
+    assert.equal(node.pioneerSnapshot(), snapshot);
+    assert.deepEqual(snapshot.pioneers, [{ address: recipient, points: pioneer.points }]);
+    assert.ok(snapshot.excluded.length > 0);
+    const genesisHash = snapshot.genesisHash;
+    assert.deepEqual(verifyPioneerSnapshot(JSON.parse(JSON.stringify(snapshot)), { genesisHash }), {
+      genesisHash, height: node.height, networkId: node.networkId, pioneers: 1, signers: snapshot.signatures.length,
+      totalPoints: pioneer.points });
+    assert.throws(() => verifyPioneerSnapshot(snapshot, { genesisHash: "0".repeat(64) }), /different network/);
+    const inflated = structuredClone(snapshot);
+    inflated.pioneers[0].points = (BigInt(pioneer.points) * 2n).toString();
+    inflated.totalPoints = inflated.pioneers[0].points;
+    assert.throws(() => verifyPioneerSnapshot(inflated), /does not match its contents/);
+    const unsigned = { ...structuredClone(snapshot), signatures: [] };
+    assert.throws(() => verifyPioneerSnapshot(unsigned), /quorum/);
+    const badTotal = { ...structuredClone(snapshot), totalPoints: "1" };
+    assert.throws(() => verifyPioneerSnapshot(badTotal), /add up/);
+    const allocation = pioneerAllocation(snapshot);
+    assert.deepEqual(allocation.entries, [{ address: recipient, amount: allocation.pool, points: pioneer.points }]);
+    assert.equal(allocation.unallocated, "0");
     // A restarted node replays the stored chain to the same state.
     assert.deepEqual(new PersistentDevNode(directory).proofMining(), node.proofMining());
     assert.deepEqual(new PersistentDevNode(directory).pioneerPoints(recipient), pioneer);
@@ -88,6 +110,8 @@ test("a proof-mining devnet upgrades to the latest version, issues tasks from it
     try {
       const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/pioneers/${recipient}`);
       assert.deepEqual(await response.json(), pioneer);
+      const served = await fetch(`http://127.0.0.1:${server.address().port}/v1/pioneers/snapshot`);
+      assert.deepEqual(await served.json(), JSON.parse(JSON.stringify(node.pioneerSnapshot())));
       const relay = createNetworkRelay(`http://127.0.0.1:${server.address().port}`);
       await new Promise((resolve) => relay.listen(0, "127.0.0.1", resolve));
       try {

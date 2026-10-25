@@ -25,7 +25,8 @@ before the main network launches receive real NIR at its launch.
   Only solved tasks count.
 - Points come from the network's own record of rewards, which anyone can
   recompute from the blocks. Before a test network is reset, the points of
-  every address are published as a signed snapshot and carried over.
+  every address are published as a signed snapshot and carried over (see
+  [Snapshots](#snapshots)).
 - The founder's addresses and the test network's operator keys earn no points:
   the founder runs today's single test host and must not be able to pay himself
   from this pool.
@@ -45,6 +46,29 @@ The whole network's figures are at `GET /v1/stats`: `miners` (miner keys
 that joined through the faucet, one per installed NIR Майнер), `pioneers`,
 `minedNir` (all NIR paid for proofs) and `names`. nircoin.com shows them in
 its ticker.
+
+## Snapshots
+
+`GET /v1/pioneers/snapshot` returns every address's points in one file: the
+network, its genesis, the height and block it was taken at, the addresses left
+out (the operator's keys), each pioneer's points and the total, signed by more
+than two thirds of the genesis validators. Anyone can download and check it:
+
+```
+npm run pioneers:snapshot                 # download, check, save pioneers-<network>-<height>.json
+npm run pioneers:verify -- <file>         # check a saved file offline
+npm run pioneers:allocation -- <file>     # what each address would receive from the pool
+```
+
+The check needs no trust in the server: the file carries the genesis it was
+taken on, which must hash to the genesis NIR's apps pin, and the signatures
+must come from that genesis's validators. A signature proves who published
+the totals, not that they are right: anyone running a node can rebuild the
+points from the blocks and compare them with a snapshot at the same height.
+
+Before a test network is reset, its final snapshot is published in this
+repository, and its points are carried over. The snapshot taken at the
+cut-off is the one the main network's genesis allocation is computed from.
 
 ## At launch
 
