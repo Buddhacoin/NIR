@@ -63,6 +63,7 @@ function renderAccount() {
     button.classList.toggle("signed", Boolean(account.user));
     button.title = account.user ? `@${account.user.username}` : words.signIn;
   }
+  renderBell();
   if (tab && (account.signIn || account.user)) {
     tab.href = account.user ? `/u/${account.user.username}` : signInUrl();
     tab.querySelector("span").textContent = account.user ? words.profile : words.signIn;
@@ -75,6 +76,36 @@ function renderAccount() {
     setTimeout(() => toast.remove(), 6000);
   }
 }
+// The bell next to the profile: price alerts that fired and were not opened yet (/alerts/).
+function renderBell() {
+  let bell = $("#bell");
+  if (!account.user) { bell?.remove(); return; }
+  if (!bell) {
+    bell = Object.assign(document.createElement("a"), { id: "bell", className: "pill bell", href: "/alerts/" });
+    bell.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><b></b>';
+    $("#account")?.before(bell);
+  }
+  const count = account.alertsUnseen ?? 0;
+  bell.title = language === "en" ? "Price alerts" : "Уведомления о цене";
+  bell.querySelector("b").textContent = count > 9 ? "9+" : String(count);
+  bell.querySelector("b").hidden = !count;
+}
+// Signed in, the bell is refreshed every minute; a new firing also shows a note on the page.
+async function pollAlerts() {
+  if (!account.user || document.hidden) return;
+  const me = await fetch("/market/me", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  if (!me?.user) return;
+  const before = account.alertsUnseen ?? 0;
+  account.alertsUnseen = me.alertsUnseen ?? 0;
+  renderBell();
+  if (account.alertsUnseen > before && location.pathname !== "/alerts/") {
+    const toast = Object.assign(document.createElement("a"), { className: "toast good", href: "/alerts/",
+      textContent: language === "en" ? "🔔 A price alert fired — open" : "🔔 Сработало уведомление о цене — открыть" });
+    document.body.append(toast);
+    setTimeout(() => toast.remove(), 8000);
+  }
+}
+setInterval(pollAlerts, 60_000);
 const coinUrl = (coin) => `/coin/${encodeURIComponent(coin.id)}`;
 
 // --- Numbers in the visitor's language: $80 183,42 or $80,183.42; 1,59 трлн or 1.59T.

@@ -458,3 +458,35 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .pf-record { grid-template-columns: 1fr auto; }
   .pf-record .pf-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
+
+/* Price alerts: the bell in the header, the dialog and /alerts/. */
+.pill.bell { position: relative; display: inline-grid; place-items: center; padding: 7px 9px; color: var(--text); }
+.pill.bell svg, .watch svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pill.bell b { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--down); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+.pill.bell b[hidden] { display: none; }
+.toast.good { background: var(--accent); }
+.watch + .watch { margin-left: 0; }
+.alert-kinds { display: grid; grid-template-columns: 1fr 1fr; }
+.alert-kinds button { justify-content: center; }
+.alert-repeat { display: flex !important; align-items: center; gap: 8px; color: var(--text) !important; font-size: 14px !important; }
+.alert-repeat input { width: 18px !important; height: 18px; accent-color: var(--accent); }
+.alert-now { margin: 0; font-size: 14px; }
+.alert-done { display: grid; gap: 12px; }
+.alert-done p { margin: 0; }
+.alerts-page { display: grid; gap: 16px; max-width: 860px; margin: 0 auto; }
+.alerts-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.alerts-top h1 { margin: 0; font-size: 26px; }
+.alert-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.alert-row:last-child { border-bottom: 0; }
+.alert-row .what { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.alert-row .what small { color: var(--muted); }
+.alert-row.off .what { opacity: 0.5; }
+.alert-event { display: grid; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.alert-event:last-child { border-bottom: 0; }
+.alert-event.new b::before { content: "● "; color: var(--accent); }
+.switch { position: relative; width: 42px; height: 24px; border: 0; border-radius: 12px; background: var(--line); cursor: pointer; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.switch.on { background: var(--up); }
+.switch.on::after { left: 21px; }
+.alert-repeat[hidden] { display: none !important; }

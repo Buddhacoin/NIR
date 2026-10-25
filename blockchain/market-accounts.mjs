@@ -14,6 +14,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { createCommunity } from "./market-community.mjs";
+import { createAlerts } from "./market-alerts.mjs";
 import { createPortfolio } from "./market-portfolio.mjs";
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -55,7 +56,7 @@ export function checkClaims(claims, { clientId, nonce, now }) {
 }
 
 export function createAccounts({
-  file, clientId = "", clientSecret = "", publicUrl = "http://localhost:8790", now = Date.now, admins = [],
+  file, clientId = "", clientSecret = "", publicUrl = "http://localhost:8790", now = Date.now, admins = [], pushFetch = fetch,
   post = async (url, form) => {
     const response = await fetch(url, { method: "POST", body: new URLSearchParams(form),
       headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
@@ -227,6 +228,8 @@ export function createAccounts({
   const community = createCommunity({ db, now, userFor, json, body, origin, log, limited, admins });
   // The private portfolio (market-portfolio.mjs) lives under /market/me/portfolio.
   const portfolio = createPortfolio({ db, now });
+  // Price alerts and browser notifications (market-alerts.mjs) under /market/me/alerts and /market/me/push.
+  const alerts = createAlerts({ db, now, publicUrl, fetch: pushFetch });
 
   // Answers a request under /market/auth, /market/me, /market/u or the community's paths, or returns false.
   async function handle(request, response, url) {
@@ -247,7 +250,7 @@ export function createAccounts({
     }
     const user = userFor(request);
     if (method === "GET" && path === "/market/me") {
-      json(response, 200, user ? { signIn: enabled, user: profile(user), watchlist: watchlist(user.id) } : { signIn: enabled, user: null });
+      json(response, 200, user ? { signIn: enabled, user: profile(user), watchlist: watchlist(user.id), alertsUnseen: alerts.unseen(user.id) } : { signIn: enabled, user: null });
       return true;
     }
     // Every change below comes from a page on this site, from a signed-in visitor.
@@ -262,11 +265,13 @@ export function createAccounts({
     if (limited(user.id)) return json(response, 429, { error: "too many changes, wait a minute" }), true;
     try {
       if (await portfolio.handle({ method, path, user, request, response, json, body })) return true;
+      if (await alerts.handle({ method, path, user, request, response, json, body })) return true;
       const watchMatch = /^\/market\/me\/watchlist\/([^/]+)$/.exec(path);
       if (method === "DELETE" && path === "/market/me") {
         // Deleting the account removes all of its data at once, and signs it out everywhere.
         community.forget(user.id);
         portfolio.forget(user.id);
+        alerts.forget(user.id);
         for (const table of ["sessions", "watchlist", "activity"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
         sql("DELETE FROM users WHERE id = ?").run(user.id);
         json(response, 200, { deleted: true }, { "set-cookie": cookie("", 0) });
@@ -291,5 +296,5 @@ export function createAccounts({
     return true;
   }
 
-  return { handle, enabled, db, close: () => db.close() };
+  return { handle, enabled, db, alertCoins: alerts.coins, checkAlerts: alerts.check, close: () => db.close() };
 }

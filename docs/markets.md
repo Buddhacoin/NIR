@@ -160,6 +160,44 @@ up to 200 characters. An account holds up to 2,000 records; changes need a
 same-site request and share the accounts' rate limit. Deleting the account
 deletes its portfolio.
 
+## Price alerts
+
+A signed-in visitor sets alerts from the bell on a coin's page or on
+`/alerts/`: the price goes above or below a level, or the coin rises or falls
+by a percent within 24 hours; once, or every time the condition comes true
+again. The bell in the header counts alerts that fired since the visitor last
+opened `/alerts/`, and a page that is open shows a note when one fires.
+
+The market service checks every switched-on alert against each minute's
+prices (`blockchain/market-alerts.mjs`). Coins outside the top hundred that an
+alert watches are priced in one extra request a minute. A one-time alert
+switches off when it fires; a repeating one fires again only after its
+condition has been false, so a price that stays above a level fires once,
+not every minute.
+
+Fired alerts also arrive as browser notifications, on a phone too, once the
+visitor turns them on (on iPhone, from the site added to the Home Screen).
+The server sends Web Push itself (`blockchain/market-push.mjs`, RFC 8291 and
+RFC 8292 with `node:crypto`): the message is encrypted for that browser only,
+and the server's VAPID key pair is made on first start and kept in the
+accounts database. The service worker `/sw.js` shows the notification and
+opens the coin's page when it is tapped; it caches nothing. Only addresses of
+the browsers' own push services are accepted, so the server never sends
+requests to an address a visitor picks.
+
+| Method | Path | Does |
+| --- | --- | --- |
+| GET | `/market/me/alerts` | alerts, the last 50 firings, the unseen count and the push key |
+| POST | `/market/me/alerts` | adds an alert: coin, name, symbol, `above`/`below`/`rise`/`fall`, value, repeat, language |
+| PUT | `/market/me/alerts/<id>` | `{ active }` switches it on or off (on arms it again), or replaces it |
+| DELETE | `/market/me/alerts/<id>` | deletes it |
+| POST | `/market/me/alerts/seen` | marks firings as seen |
+| POST, DELETE | `/market/me/push` | adds or removes this browser's push subscription |
+
+Limits: 50 alerts and 10 browsers per account, the last 100 firings kept. A
+browser whose push service says it has unsubscribed is dropped. Deleting the
+account deletes its alerts, firings and browsers.
+
 ## A coin's page
 
 Every coin has its own page at `/coin/<id>` (the CoinGecko id, e.g.
