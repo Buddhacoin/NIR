@@ -38,11 +38,17 @@ button, input { font: inherit; color: inherit; }
 .nirbar .nir { margin-left: auto; }
 
 .top { display: flex; align-items: center; gap: 26px; padding: 14px max(16px, calc((100% - 1440px) / 2)); border-bottom: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 850; letter-spacing: 0.06em; }
-.brand small { color: var(--muted); font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.brand { display: flex; align-items: center; gap: 12px; font-size: 28px; font-weight: 850; letter-spacing: 0.06em; }
+.brand img { width: 44px; height: 44px; }
+.brand small { color: var(--muted); font-size: 17px; font-weight: 650; letter-spacing: 0; }
 .top nav { display: flex; gap: 22px; color: var(--muted); font-weight: 650; }
 .top nav a:hover { color: var(--text); }
-.search { width: 280px; margin-left: auto; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+/* The search stands out: a tinted field with a magnifier and a clear border. */
+.search { width: 340px; margin-left: auto; padding: 11px 14px 11px 40px; border: 1.5px solid var(--muted); border-radius: 12px; background: var(--soft);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23808a9d' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: 13px center; background-size: 18px; color: var(--text); font-size: 15px; }
+.search::placeholder { color: var(--muted); opacity: 1; }
+.search:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 25%, transparent); outline-offset: 0; }
 .search-wrap { position: relative; margin-left: auto; }
 .suggest { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 360px; max-height: 70vh; padding: 6px; overflow-y: auto;
   border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 18px 50px #0006; }
@@ -57,7 +63,7 @@ button, input { font: inherit; color: inherit; }
 .pill { padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
 
 .wrap { max-width: 1440px; margin: 0 auto; padding: 22px 16px 40px; }
-.cards { display: grid; grid-template-columns: 1fr 1fr 1fr 1.25fr; gap: 16px; }
+.cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 .card { padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(14px); }
 :root[data-theme="light"] .card { box-shadow: 0 6px 24px #3a2a1012; }
 .card h2 { margin: 0 0 12px; font-size: 16px; }
@@ -336,8 +342,8 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   .nirbar { display: none; }
   .top { gap: 8px; padding: 12px 16px; }
-  .brand { gap: 8px; font-size: 19px; }
-  .brand img { width: 30px; height: 30px; }
+  .brand { gap: 8px; font-size: 23px; }
+  .brand img { width: 36px; height: 36px; }
   .top .pill { margin-left: 0; padding: 7px 10px; }
   .find { display: grid; place-items: center; margin-left: auto; }
   .search-wrap { display: none; }

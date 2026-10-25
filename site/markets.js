@@ -11,7 +11,6 @@ const en = {
   navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "NIR", navMine: "NIR mining",
   search: "Search coins", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
-  briefTag: "✦ MARKET SUMMARY", briefNote: "Built automatically from the last 24 hours of prices. Not financial advice.",
   tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
@@ -194,7 +193,7 @@ function renderCards() {
     $("#fg-dot").setAttribute("cy", (56 - 47 * Math.sin(angle)).toFixed(1));
   }
   const list = (target, coins, withPrice) => {
-    $(target).replaceChildren(...coins.slice(0, 4).map((coin, index) => {
+    $(target).replaceChildren(...coins.slice(0, 6).map((coin, index) => {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = coinUrl(coin);
@@ -218,11 +217,13 @@ function renderCards() {
     }));
   };
   list("#trending", data.trending ?? [], true);
-  list("#gainers", (data.gainers ?? []).filter((coin) => !STABLE.has(coin.symbol)), false);
+  // The day's top gainers among the top coins, without stablecoins.
+  list("#gainers", (data.coins ?? []).filter((coin) => coin.change24h > 0 && !STABLE.has(coin.symbol))
+    .sort((left, right) => right.change24h - left.change24h), false);
   const btc = data.coins.find((coin) => coin.symbol === "BTC");
   const top = data.gainers?.[0];
   const low = data.losers?.[0];
-  $("#brief").textContent = $("#m-brief-text").textContent = g && btc && top && low ? t.brief({
+  $("#m-brief-text").textContent = g && btc && top && low ? t.brief({
     cap: g.marketCapChange24h ?? 0, capPct: `${Math.abs(g.marketCapChange24h ?? 0).toLocaleString(locale(), { maximumFractionDigits: 2 })}%`,
     capValue: big(g.marketCap), btc: price(btc.price), btcPct: percentText(btc.change24h).replace("▲ ", "+").replace("▼ ", "−"),
     dom: `${(g.btcDominance ?? 0).toLocaleString(locale(), { maximumFractionDigits: 1 })}%`,
