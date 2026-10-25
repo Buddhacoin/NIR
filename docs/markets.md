@@ -31,8 +31,12 @@ graphite with glass cards and a violet–mint accent. Orange is kept only in the
 NIR coin.
 
 - A strip on top of every page: coins tracked, exchanges, market cap, 24h
-  volume, dominance, Fear & Greed and NIR's own network; the market items open
-  the overview page.
+  volume, dominance, Fear & Greed, NIR's own network and the number of
+  registered users; the market items open the overview page.
+- The home page's market status also counts how many of the top 100 coins
+  rose in 24 hours, and an altcoin-season score: the share of the top 50
+  (stablecoins aside) that beat the largest coin over 7 days (75 and more:
+  altcoin season, 25 and less: the largest coin's season).
 - Every card is a link: market status and its figures → `/charts/`, Fear &
   Greed → `/charts/#fear-greed`, dominance → `/charts/#dominance`; the Trending
   and Gainers titles switch the table to those lists.
@@ -232,13 +236,16 @@ wallet activity (`blockchain/market-chain.mjs`):
   the five largest tokens on Base, Arbitrum, Polygon and the Binance Smart Chain, read from
   free public nodes (`blockchain/market-rpc.mjs`), with the sender, the
   receiver, the amount and its dollar value; filters by size ($1, $10K,
-  $100K, $1M), network and token. The feed is fetched at most every 15
-  seconds, whoever asks, and keeps the newest 400.
+  $100K, $1M), network and token. The service refreshes the feed itself
+  every 15 seconds and keeps the newest 400, so visitors get the last copy
+  at once instead of waiting for the explorers and nodes.
 - **A wallet's page**, `/address/<address>`: its open name and tags, what it
-  holds on every network with the total, the share per network, the network
-  coin's balance by day, its transfers (all, inflow, outflow; spam-sized ones
-  under $1 hidden by default) a page at a time, and its top counterparties
-  among the loaded transfers. Addresses of the UTXO network are read from
+  holds on every network with the total (a coin listed on the site opens its
+  page with the chart and description), the share per network, the split by
+  asset as a ring, the network coin's balance by day, its transfers on all
+  networks at once or on one (all, inflow, outflow; spam-sized ones under $1
+  hidden by default) a page at a time, and its top counterparties among the
+  loaded transfers. Addresses of the UTXO network are read from
   `mempool.space`. Header search opens a pasted address, and names such as
   `zeus.eth` are looked up in the name service.
 - **Tracking**: signed in, "Track address" bookmarks a wallet and "This is
@@ -276,6 +283,7 @@ explorer requests a minute.
 
 | Method | Path | Does |
 | --- | --- | --- |
+| GET | `/market/stats` | `{ users }`, the number of accounts, for the bar at the top |
 | GET | `/market/chain/feed?min=&chain=` | the newest transfers worth at least `min` dollars |
 | GET | `/market/chain/address/<address>` | name, tags and holdings on every network |
 | GET | `/market/chain/address/<address>/transfers?chain=&dir=all|in|out&cursor=` | transfers, a page at a time |

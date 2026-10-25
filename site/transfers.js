@@ -31,6 +31,7 @@ function render() {
   $("#chain").replaceChildren(...[["", language === "en" ? en.allNetworks : "Все сети"], ...networks.map((id) => [id, CHAINS[id]?.name ?? id])].map(([id, label]) => {
     const button = node("button", id === chain ? "on" : "", label);
     button.type = "button";
+    if (id) button.prepend(chainDot(id), " ");
     button.addEventListener("click", () => { chain = id; page = 0; void load(); });
     return button;
   }));

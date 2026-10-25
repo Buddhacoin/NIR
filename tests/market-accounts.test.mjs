@@ -52,6 +52,7 @@ test("Google sign-in creates an account, a session cookie and a public profile",
     assert.match(me.user.username, /^user\d{6}$/);
     assert.deepEqual(me.watchlist, []);
     assert.equal(JSON.stringify(me).includes("olympus"), false, "the email never leaves the server");
+    assert.deepEqual(await (await app.call("/market/stats")).json(), { users: 1 });
 
     // The same Google account signs in to the same profile.
     const again = await app.signIn();

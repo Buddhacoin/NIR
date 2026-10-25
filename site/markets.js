@@ -18,17 +18,17 @@ const en = {
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navPortfolio: "Portfolio", mineArrow: "Mine →",
-  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", allTransfers: "All transfers", colSentiment: "Sentiment",
+  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", risingNow: "Rising in 24h", altSeason: "Altcoin season · 7d", allTransfers: "All transfers", colSentiment: "Sentiment",
   dataBy: "Data:",
 };
 const words = {
-  ru: { moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
+  ru: { altSeason: "сезон альткоинов", btcSeason: "сезон биткоина", neutralSeason: "нейтрально", moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
+  en: { altSeason: "altcoin season", btcSeason: "bitcoin season", neutralSeason: "neutral", moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -180,6 +180,16 @@ function renderCards() {
   capChange.className = changeClass(g?.marketCapChange24h);
   capChange.textContent = percentText(g?.marketCapChange24h);
   $("#g-volume").textContent = big(g?.volume, "$", 1);
+  // How many of the top coins rose today, and how many of the top 50 beat BTC over the week.
+  const moving = (data.coins ?? []).filter((coin) => Number.isFinite(coin.change24h));
+  const rising = moving.filter((coin) => coin.change24h > 0).length;
+  $("#g-rising").textContent = moving.length ? `${rising} / ${moving.length}` : "—";
+  $("#g-rising-share").textContent = moving.length ? `${Math.round(rising / moving.length * 100)}%` : "";
+  const btcWeek = (data.coins ?? []).find((coin) => coin.symbol === "BTC")?.change7d;
+  const alts = (data.coins ?? []).slice(0, 50).filter((coin) => coin.symbol !== "BTC" && !STABLE.has(coin.symbol) && Number.isFinite(coin.change7d));
+  const season = Number.isFinite(btcWeek) && alts.length ? Math.round(alts.filter((coin) => coin.change7d > btcWeek).length / alts.length * 100) : null;
+  $("#g-alt").textContent = season === null ? "—" : `${season}/100`;
+  $("#g-alt-label").textContent = season === null ? "" : season >= 75 ? t.altSeason : season <= 25 ? t.btcSeason : t.neutralSeason;
   $("#g-btc").textContent = g?.btcDominance === null || g?.btcDominance === undefined ? "—"
     : `${g.btcDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
   $("#g-eth").textContent = g?.ethDominance ? `ETH ${g.ethDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` : "";
@@ -193,7 +203,7 @@ function renderCards() {
     $("#fg-dot").setAttribute("cy", (56 - 47 * Math.sin(angle)).toFixed(1));
   }
   const list = (target, coins, withPrice) => {
-    $(target).replaceChildren(...coins.slice(0, 6).map((coin, index) => {
+    $(target).replaceChildren(...coins.slice(0, 8).map((coin, index) => {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = coinUrl(coin);
@@ -288,7 +298,7 @@ function renderTransfers() {
     box.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: language === "en" ? "No transfers this large right now." : "Сейчас таких крупных переводов нет." }));
     return;
   }
-  box.replaceChildren(...transfers.slice(0, 6).map((item) => {
+  box.replaceChildren(...transfers.slice(0, 7).map((item) => {
     const row = document.createElement("li");
     const route = document.createElement("div");
     route.className = "tf-route";

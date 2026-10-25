@@ -97,9 +97,14 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   const pending = new Map();
   let used = [];
   // Cached fetch: a fresh copy within ttl; past the budget a stale copy, or an error the page can show.
-  async function cached(key, ttl, load) {
+  // `stale`: an expired copy is answered at once while a fresh one is fetched behind it.
+  async function cached(key, ttl, load, { stale = false } = {}) {
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
+    if (hit && stale) {
+      if (!pending.has(key)) void cached(key, ttl, load).catch(() => {});
+      return hit.value;
+    }
     if (pending.has(key)) return pending.get(key);
     used = used.filter((at) => now() - at < 60_000);
     if (used.length >= perMinute) {
@@ -138,7 +143,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       seen.clear();
       for (const item of kept) seen.set(item.id, item);
       return kept;
-    });
+    }, { stale: true });
   }
 
   // --- An address: what it holds on every network, with names and tags.
@@ -244,6 +249,22 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     });
   }
 
+  // Each asset gets the id of its coin page here, by contract address or, for a network coin, by symbol.
+  async function withCoinIds(data) {
+    const ids = await nodes.coinIds().catch(() => null);
+    if (!ids) return data;
+    return { ...data, assets: data.assets.map((asset) => ({ ...asset, token: { ...asset.token,
+      coinId: asset.token.address ? ids.contract.get(asset.token.address.toLowerCase()) ?? null : ids.symbol.get(asset.token.symbol) ?? null } })) };
+  }
+  // The feed is refreshed in the background, so a visitor never waits for the explorers.
+  function warm(every = 15_000) {
+    const tick = () => { void feed().catch(() => {}); };
+    tick();
+    const timer = setInterval(tick, every);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
   // Names approved by NIR Markets moderators (market-labels.mjs) go ahead of the explorers' labels.
   const named = (party) => {
     const name = party?.address ? labelFor(party.address) : null;
@@ -275,7 +296,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
       const [, address, part] = match;
       if (!part) {
-        const data = await holdings(address);
+        const data = await withCoinIds(await holdings(address));
         const own = labelFor(address);
         // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
         return reply(response, 200, own ? { ...data, name: own, tags: ["NIR Markets", ...data.tags] } : data, 5), true;
@@ -298,5 +319,5 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
   }
 
-  return { handle, feed, holdings, transfers, history, search, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  return { handle, feed, holdings, transfers, history, search, warm, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

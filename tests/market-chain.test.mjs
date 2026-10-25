@@ -283,8 +283,28 @@ test("visitors suggest wallet names, moderators approve them, and approved names
     const wallet = (await call(`/market/chain/address/${EXCHANGE.toLowerCase()}`)).data;
     assert.equal(wallet.name, "Olympus exchange");
     assert.equal(wallet.tags[0], "NIR Markets");
+    // Assets link to coin pages: by contract, and the network coins by symbol.
+    assert.equal(wallet.assets.find((asset) => asset.chain === "base" && asset.token.symbol === "USDC").token.coinId, "usd-coin");
+    assert.equal(wallet.assets.find((asset) => asset.chain === "bsc" && asset.token.symbol === "BNB").token.coinId, "binancecoin");
     const feed = (await call("/market/chain/feed")).data.items;
     assert.ok(feed.some((item) => item.from.address.toLowerCase() === EXCHANGE.toLowerCase() && item.from.name === "Olympus exchange"));
     assert.equal(accounts.labelFor(EXCHANGE.toUpperCase().replace("0X", "0x")), "Olympus exchange");
   } finally { await new Promise((resolve) => service.server.close(resolve)); }
+});
+
+test("the feed answers at once from its last copy while a fresh one is fetched behind it", async () => {
+  const { get, rpc } = explorers();
+  let clock = Date.UTC(2026, 9, 25, 18, 15);
+  let fetched = 0;
+  const counting = async (url) => { if (url.includes("/token-transfers?type=ERC-20")) fetched += 1; return get(url); };
+  const chain = createChain({ get: counting, rpc, now: () => clock });
+  const first = await chain.feed();
+  assert.equal(fetched, 2, "both explorers asked once");
+  clock += 60_000;
+  const again = await chain.feed();
+  assert.equal(again, first, "the old copy comes back without waiting");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(fetched, 4, "and a refresh ran behind it");
+  const stop = chain.warm(1_000_000);
+  stop();
 });

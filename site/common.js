@@ -139,23 +139,33 @@ function sortBy(list, sort, value) {
 }
 // --- Wallets and transfers (the explorer, /market/chain): networks, short addresses, links.
 // `history`: the explorer keeps the coin's balance by day; `node`: read from a public node (token transfers of about the last day).
+const LOGOS = "https://coin-images.coingecko.com/coins/images/";
 const CHAINS = {
-  eth: { name: "Ethereum", short: "ETH", color: "#627eea", tx: "https://eth.blockscout.com/tx/", history: true },
-  optimism: { name: "Optimism", short: "OP", color: "#ff0420", tx: "https://explorer.optimism.io/tx/", history: true },
+  eth: { name: "Ethereum", short: "ETH", color: "#627eea", tx: "https://eth.blockscout.com/tx/", history: true, logo: `${LOGOS}279/small/ethereum.png` },
+  optimism: { name: "Optimism", short: "OP", color: "#ff0420", tx: "https://explorer.optimism.io/tx/", history: true, logo: `${LOGOS}25244/small/Token.png` },
   base: { name: "Base", short: "BASE", color: "#0052ff", tx: "https://basescan.org/tx/", node: true },
-  arbitrum: { name: "Arbitrum", short: "ARB", color: "#28a0f0", tx: "https://arbiscan.io/tx/", node: true },
-  polygon: { name: "Polygon", short: "POL", color: "#8247e5", tx: "https://polygonscan.com/tx/", node: true },
-  bsc: { name: "BNB Chain", short: "BNB", color: "#f0b90b", tx: "https://bscscan.com/tx/", node: true },
-  btc: { name: "Bitcoin", short: "BTC", color: "#f7931a", tx: "https://mempool.space/tx/" },
+  arbitrum: { name: "Arbitrum", short: "ARB", color: "#28a0f0", tx: "https://arbiscan.io/tx/", node: true, logo: `${LOGOS}16547/small/arb.jpg` },
+  polygon: { name: "Polygon", short: "POL", color: "#8247e5", tx: "https://polygonscan.com/tx/", node: true, logo: `${LOGOS}32440/small/pol.png` },
+  bsc: { name: "BNB Chain", short: "BNB", color: "#f0b90b", tx: "https://bscscan.com/tx/", node: true, logo: `${LOGOS}825/small/bnb-icon2_2x.png` },
+  btc: { name: "Bitcoin", short: "BTC", color: "#f7931a", tx: "https://mempool.space/tx/", logo: `${LOGOS}1/small/bitcoin.png` },
 };
 const ADDRESS = /^(?:0x[0-9a-fA-F]{40}|bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/;
 const addressUrl = (address) => `/address/${encodeURIComponent(address)}`;
 const shortAddress = (address) => (address && address.length > 14 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address ?? "—");
-// A coloured dot with the network's initial, titled with its name.
+// The network's logo (Base's blue square is drawn here), titled with its name; its initial if the logo fails.
 function chainDot(chain) {
   const info = CHAINS[chain] ?? { name: chain, short: chain, color: "#888" };
-  const dot = Object.assign(document.createElement("span"), { className: "chain-dot", title: info.name, textContent: info.short[0] });
+  const dot = Object.assign(document.createElement("span"), { className: "chain-dot", title: info.name });
   dot.style.background = info.color;
+  if (info.logo) {
+    const image = Object.assign(document.createElement("img"), { src: info.logo, alt: "", loading: "lazy", referrerPolicy: "no-referrer" });
+    image.addEventListener("error", () => { image.remove(); dot.textContent = info.short[0]; }, { once: true });
+    dot.append(image);
+  } else if (chain === "base") {
+    dot.innerHTML = '<svg viewBox="0 0 18 18" aria-hidden="true"><rect x="4.5" y="4.5" width="9" height="9" rx="1.5" fill="#fff"/></svg>';
+  } else {
+    dot.textContent = info.short[0];
+  }
   return dot;
 }
 // A link to a wallet's page: its open name if it has one, else the short address.
@@ -271,15 +281,28 @@ function renderStrip() {
   set("dominance", g.btcDominance ? `BTC ${g.btcDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` +
     (g.ethDominance ? ` ETH ${g.ethDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` : "") : "—");
   set("fear", strip.fearGreed ? `${strip.fearGreed.value}/100` : "—");
+  // NIR Markets' own accounts, first in the strip.
+  const bar = $(".nirbar");
+  if (bar && Number.isFinite(strip.users)) {
+    let item = bar.querySelector(".users");
+    if (!item) {
+      item = Object.assign(document.createElement("a"), { className: "users", href: "/u/me" });
+      item.append(document.createElement("span"), " ", document.createElement("b"));
+      bar.prepend(item);
+    }
+    item.querySelector("span").textContent = language === "en" ? "Users:" : "Пользователей:";
+    item.querySelector("b").textContent = strip.users.toLocaleString(locale());
+  }
   for (const node of document.querySelectorAll('[data-stat="capChange"]')) {
     node.className = changeClass(g.marketCapChange24h);
     node.textContent = percentText(g.marketCapChange24h);
   }
 }
 async function loadStrip() {
-  const response = await fetch("/market/overview").catch(() => null);
+  const [response, stats] = await Promise.all([fetch("/market/overview").catch(() => null),
+    fetch("/market/stats").then((answer) => (answer.ok ? answer.json() : null)).catch(() => null)]);
   if (!response?.ok) return;
-  strip = await response.json();
+  strip = { ...await response.json(), users: stats?.users ?? null };
   renderStrip();
 }
 

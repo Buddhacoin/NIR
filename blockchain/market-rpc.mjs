@@ -85,6 +85,7 @@ async function sendRpc(url, method, params) {
 
 export function createNodes({ rpc = postRpc, get, cached }) {
   const decimals = new Map(); // "chain:contract" → decimals
+  let ids = null; // contract and symbol → CoinGecko id, filled with the token lists
   // The listed tokens of every network: top coins with a contract there, with price and decimals.
   async function tokens() {
     return cached("rpc:tokens", 300_000, async () => {
@@ -115,6 +116,17 @@ export function createNodes({ rpc = postRpc, get, cached }) {
             price: Number.isFinite(nativeCoin?.current_price) ? nativeCoin.current_price : null },
           tokens: listed.filter((item) => (decimals.get(`${chain}:${item.address}`) ?? 99) <= 36).map((item) => ({ ...item, decimals: decimals.get(`${chain}:${item.address}`) })),
         };
+      }
+      // Every coin's contract on every network, and the top coins by symbol, for links to coin pages.
+      ids = { contract: new Map(), symbol: new Map() };
+      for (const coin of Array.isArray(list) ? list : []) {
+        for (const address of Object.values(coin.platforms ?? {})) {
+          if (/^0x[0-9a-fA-F]{40}$/.test(address ?? "") && !ids.contract.has(address.toLowerCase())) ids.contract.set(address.toLowerCase(), coin.id);
+        }
+      }
+      for (const coin of byId.values()) {
+        const symbol = String(coin.symbol ?? "").toUpperCase();
+        if (symbol && !ids.symbol.has(symbol)) ids.symbol.set(symbol, coin.id);
       }
       return result;
     });
@@ -198,5 +210,6 @@ export function createNodes({ rpc = postRpc, get, cached }) {
     return lists.flat();
   }
 
-  return { holdings, addressTransfers, feed, tokens, networks: Object.keys(NODES) };
+  const coinIds = async () => { await tokens(); return ids; };
+  return { holdings, addressTransfers, feed, tokens, coinIds, networks: Object.keys(NODES) };
 }
