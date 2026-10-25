@@ -43,6 +43,7 @@ let tab = "top";
 const page = Math.min(500, Math.max(1, Number.parseInt(new URLSearchParams(location.search).get("page") ?? "1", 10) || 1));
 let pageCoins = null;
 let query = "";
+const sort = { key: null, dir: 0 }; // the column the table is sorted by, as on the market sites
 
 function sparkline(points, rising, className = "spark") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -80,7 +81,7 @@ function visibleCoins() {
     const needle = query.toLowerCase();
     coins = coins.filter((coin) => coin.name.toLowerCase().includes(needle) || coin.symbol.toLowerCase().includes(needle));
   }
-  return coins;
+  return sortBy(coins, sort, (coin, key) => (key === "name" ? coin.name.toLowerCase() : coin[key]));
 }
 
 function renderTable() {
@@ -88,6 +89,7 @@ function renderTable() {
   body.replaceChildren();
   const t = words[language];
   const coins = visibleCoins();
+  markSort($("thead"), sort);
   for (const coin of coins) {
     const row = document.createElement("tr");
     row.className = "coin";
@@ -282,6 +284,7 @@ $("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("op
 // A coin page's bottom bar links to /#watch.
 if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]").click();
 
+sortable($("thead"), sort, () => renderTable());
 setupSearch({ overview: () => data });
 setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } } });
 void load();

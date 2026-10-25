@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=13">
+  <link rel="stylesheet" href="/markets.css?v=15">
 </head>
 <body>
   <div class="nirbar">
@@ -41,72 +41,99 @@
     <a class="pill account" id="account" hidden></a>
   </header>
 
-  <main class="wrap portfolio">
-    <p class="note-bar" id="guest" hidden><span data-i18n="guestNote">Портфель хранится в этом браузере.</span> <a id="guest-sign" href="#" data-i18n="guestSign">Войдите через Google, чтобы он был на всех ваших устройствах →</a></p>
+  <main class="wrap pf">
+    <p class="note-bar" id="guest" hidden><span data-i18n="guestNote">Портфели хранятся в этом браузере.</span> <a id="guest-sign" href="#" data-i18n="guestSign">Войдите через Google, чтобы они были на всех ваших устройствах →</a></p>
+    <div class="pf-layout">
+      <aside class="pf-side card">
+        <button class="pf-folder pf-overview" id="overview" type="button">
+          <span class="pf-icon pf-icon-all" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.6"/><circle cx="12" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/><circle cx="6" cy="18" r="1.6"/><circle cx="12" cy="18" r="1.6"/><circle cx="18" cy="18" r="1.6"/></svg></span>
+          <span><b data-i18n="overview">Обзор</b><small id="overview-value">$0</small></span>
+        </button>
+        <div class="pf-side-head"><b><span data-i18n="myPortfolios">Мои портфели</span> (<span id="folder-count">0</span>)</b>
+          <button class="pf-edit" id="edit-folders" type="button" aria-label="Изменить"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg></button></div>
+        <div id="folders"></div>
+        <button class="pf-create" id="create" type="button" data-i18n="createPortfolio">+ Создать портфель</button>
+      </aside>
 
-    <section class="card pf-head">
-      <div class="pf-balance">
-        <small data-i18n="balance">Текущий баланс</small>
-        <b id="balance">$0</b>
-        <span id="balance-change"></span>
-      </div>
-      <button class="act" id="add" type="button" data-i18n="addTx">+ Добавить сделку</button>
-      <div class="pf-stats">
-        <div><small data-i18n="allTime">Прибыль за всё время</small><b id="pnl">—</b><em id="pnl-pct"></em></div>
-        <div><small data-i18n="costBasis">Вложено</small><b id="cost">—</b></div>
-        <div><small data-i18n="best">Лучший за 24 ч</small><b id="best">—</b><em id="best-pct"></em></div>
-        <div><small data-i18n="worst">Худший за 24 ч</small><b id="worst">—</b><em id="worst-pct"></em></div>
-      </div>
-      <div class="dom-bar" id="alloc-bar"></div>
-      <div class="dom-legend" id="alloc-legend"></div>
-    </section>
+      <section class="pf-main">
+        <div class="pf-top">
+          <div class="pf-title">
+            <span id="folder-icon"></span>
+            <div>
+              <small id="folder-name"></small>
+              <div class="pf-balance-line"><b id="balance">$0</b><span id="balance-change"></span>
+                <button class="pf-eye" id="eye" type="button" aria-label="Скрыть баланс"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+            </div>
+          </div>
+          <div class="pf-buttons">
+            <button class="act" id="add" type="button" data-i18n="addTx">+ Добавить сделку</button>
+            <button class="act ghost" id="export" type="button" data-i18n="export">Экспорт</button>
+            <span class="pf-menu-wrap"><button class="act ghost" id="more" type="button" aria-label="Ещё">⋯</button><span class="pf-menu" id="more-menu" hidden></span></span>
+          </div>
+        </div>
 
-    <h2 class="pf-title" data-i18n="assets">Активы</h2>
-    <div class="table-wrap">
-      <table class="pf-table" id="holdings-table">
-        <thead><tr>
-          <th class="left" data-i18n="colCoin">Монета</th><th data-i18n="colPrice">Цена</th><th class="hide-s" data-i18n="col24h">24 ч</th>
-          <th data-i18n="colHoldings">Количество</th><th class="hide-s" data-i18n="colAvg">Ср. цена покупки</th>
-          <th class="hide-s" data-i18n="colPnl">Прибыль / убыток</th><th class="hide-s"></th>
-        </tr></thead>
-        <tbody id="holdings"></tbody>
-      </table>
+        <div class="pf-empty card" id="empty" hidden>
+          <b id="empty-title"></b>
+          <p id="empty-text"></p>
+          <button class="act" id="empty-action" type="button"></button>
+        </div>
+
+        <div id="filled">
+          <div class="pf-charts">
+            <article class="card pf-chart-card">
+              <div class="pf-chart-head">
+                <h2 data-i18n="holdingsTitle">Стоимость</h2>
+                <div class="seg" id="range">
+                  <button type="button" data-days="1" class="on" data-i18n="r1">24 ч</button><button type="button" data-days="7" data-i18n="r7">7 д</button><button type="button" data-days="30" data-i18n="r30">30 д</button><button type="button" data-days="90" data-i18n="r90">90 д</button><button type="button" data-days="all" data-i18n="rAll">Всё</button>
+                </div>
+                <div class="seg" id="view">
+                  <button type="button" data-view="history" class="on" data-i18n="history">История</button><button type="button" data-view="allocation" data-i18n="allocation">Доли</button>
+                </div>
+              </div>
+              <div class="pf-plot" id="plot"></div>
+            </article>
+            <article class="card pf-chart-card pf-perf">
+              <div class="pf-chart-head"><h2 data-i18n="performance">Доходность</h2></div>
+              <div class="pf-legend"><span><i class="dot-accent"></i><span data-i18n="allTime">Прибыль за всё время</span></span><span><i class="dot-btc"></i><span data-i18n="btcTrend">Динамика BTC</span></span></div>
+              <div class="pf-plot small" id="perf"></div>
+            </article>
+          </div>
+
+          <div class="pf-stats">
+            <div class="card"><small data-i18n="allTime">Прибыль за всё время</small><b id="pnl">—</b><em id="pnl-pct"></em></div>
+            <div class="card"><small data-i18n="costBasis">Вложено</small><b id="cost">—</b></div>
+            <div class="card"><small data-i18n="best">Лучший актив</small><b id="best">—</b><em id="best-pct"></em></div>
+            <div class="card"><small data-i18n="worst">Худший актив</small><b id="worst">—</b><em id="worst-pct"></em></div>
+          </div>
+
+          <article class="card pf-assets">
+            <div class="seg pf-tabs" id="tabs">
+              <button type="button" data-tab="assets" class="on" data-i18n="assets">Активы</button><button type="button" data-tab="transactions" data-i18n="transactions">Сделки</button>
+            </div>
+            <div class="table-wrap">
+              <table class="pf-table" id="assets-table">
+                <thead><tr>
+                  <th class="left" data-sort="name" data-i18n="colCoin">Монета</th><th data-sort="price" data-i18n="colPrice">Цена</th>
+                  <th class="hide-s" data-sort="change1h" data-i18n="col1h">1 ч</th><th class="hide-s" data-sort="change24h" data-i18n="col24h">24 ч</th>
+                  <th class="hide-s" data-sort="change7d" data-i18n="col7d">7 д</th><th data-sort="value" data-i18n="colHoldings">Количество</th>
+                  <th class="hide-s" data-sort="average" data-i18n="colAvg">Ср. цена покупки</th><th class="hide-s" data-sort="profit" data-i18n="colPnl">Прибыль / убыток</th>
+                  <th data-i18n="colActions">Действия</th>
+                </tr></thead>
+                <tbody id="assets"></tbody>
+              </table>
+              <table class="pf-table" id="tx-table" hidden>
+                <thead><tr>
+                  <th class="left" data-i18n="colType">Тип</th><th class="left" data-i18n="colCoin">Монета</th><th data-i18n="colPrice">Цена</th>
+                  <th data-i18n="colAmount">Количество</th><th class="hide-s" data-i18n="colDate">Дата</th><th class="hide-s" data-i18n="colFee">Комиссия</th>
+                  <th class="hide-s left" data-i18n="colNote">Заметка</th><th data-i18n="colActions">Действия</th>
+                </tr></thead>
+                <tbody id="txs"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
     </div>
-    <div class="card pf-empty" id="empty" hidden>
-      <b data-i18n="emptyTitle">Здесь будет ваш портфель</b>
-      <p data-i18n="emptyText">Добавьте покупку монеты — сайт посчитает баланс, среднюю цену покупки и прибыль по текущим ценам.</p>
-      <button class="act" id="add-first" type="button" data-i18n="addTx">+ Добавить сделку</button>
-    </div>
-
-    <section class="card pf-history" id="history" hidden>
-      <div class="pf-history-top"><h2 id="history-title"></h2><button class="act ghost" id="history-close" type="button" data-i18n="close">Закрыть</button></div>
-      <div id="history-list"></div>
-    </section>
-
-    <dialog class="pf-dialog" id="dialog">
-      <form method="dialog" id="tx-form">
-        <div class="pf-dialog-top"><h2 id="dialog-title" data-i18n="addTxTitle">Сделка</h2><button class="pill" id="dialog-close" type="button" aria-label="Закрыть">✕</button></div>
-        <div class="seg" id="kind">
-          <button type="button" data-kind="buy" class="on" data-i18n="buy">Покупка</button>
-          <button type="button" data-kind="sell" data-i18n="sell">Продажа</button>
-        </div>
-        <label><span data-i18n="fieldCoin">Монета</span>
-          <span class="pf-coin-pick"><input id="f-coin" autocomplete="off" placeholder="Bitcoin, ETH…" required><span class="suggest" id="f-suggest" hidden></span></span>
-        </label>
-        <div class="pf-two">
-          <label><span data-i18n="fieldAmount">Количество</span><input id="f-amount" inputmode="decimal" required autocomplete="off" placeholder="0,00"></label>
-          <label><span data-i18n="fieldPrice">Цена за монету, $</span><input id="f-price" inputmode="decimal" required autocomplete="off"></label>
-        </div>
-        <div class="pf-two">
-          <label><span data-i18n="fieldDate">Дата и время</span><input id="f-date" type="datetime-local" required></label>
-          <label><span data-i18n="fieldFee">Комиссия, $</span><input id="f-fee" inputmode="decimal" autocomplete="off" placeholder="0"></label>
-        </div>
-        <label><span data-i18n="fieldNote">Заметка</span><input id="f-note" maxlength="200" autocomplete="off"></label>
-        <p class="pf-total"><span data-i18n="total">Итого</span> <b id="f-total">$0</b></p>
-        <p class="form-error" id="f-error"></p>
-        <button class="act pf-save" type="submit" data-i18n="save">Сохранить</button>
-      </form>
-    </dialog>
   </main>
 
   <footer>
@@ -124,7 +151,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=7"></script>
-  <script src="/portfolio.js?v=1"></script>
+  <script src="/common.js?v=8"></script>
+  <script src="/portfolio.js?v=2"></script>
 </body>
 </html>

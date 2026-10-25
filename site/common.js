@@ -106,6 +106,37 @@ async function pollAlerts() {
   }
 }
 setInterval(pollAlerts, 60_000);
+// --- Sortable table headers, as on the market sites: a click sorts by the column (largest
+// first, names A to Z), a second click reverses it, a third goes back to the usual order.
+function sortable(head, sort, onChange) {
+  for (const th of head.querySelectorAll("th[data-sort]")) {
+    th.classList.add("th-sort");
+    th.addEventListener("click", () => {
+      const first = th.dataset.sort === "name" || th.dataset.sort === "rank" ? 1 : -1;
+      if (sort.key !== th.dataset.sort) Object.assign(sort, { key: th.dataset.sort, dir: first });
+      else if (sort.dir === first) sort.dir = -first;
+      else Object.assign(sort, { key: null, dir: 0 });
+      onChange();
+    });
+  }
+}
+function markSort(head, sort) {
+  for (const th of head.querySelectorAll("th[data-sort]")) {
+    th.classList.toggle("asc", th.dataset.sort === sort.key && sort.dir > 0);
+    th.classList.toggle("desc", th.dataset.sort === sort.key && sort.dir < 0);
+  }
+}
+// The list in the chosen order; empty values always go last.
+function sortBy(list, sort, value) {
+  if (!sort.key) return list;
+  return [...list].sort((left, right) => {
+    const a = value(left, sort.key);
+    const b = value(right, sort.key);
+    const missing = (item) => item === null || item === undefined || Number.isNaN(item);
+    if (missing(a) || missing(b)) return missing(a) - missing(b);
+    return sort.dir * (typeof a === "string" ? a.localeCompare(b) : a - b);
+  });
+}
 const coinUrl = (coin) => `/coin/${encodeURIComponent(coin.id)}`;
 
 // --- Numbers in the visitor's language: $80 183,42 or $80,183.42; 1,59 трлн or 1.59T.
