@@ -124,9 +124,9 @@ a.coin-cell:hover b { color: var(--accent); }
 tr.chart td { padding: 0 10px 16px; }
 .chart-box { height: 420px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; }
 .status { color: var(--muted); text-align: center; }
-/* The coin table: numbers take only the room they need, the name takes the rest. */
+/* The coin table: the room is shared between all columns, so no column is left empty. */
 th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
-tbody td:not(.left) { width: 1%; }
+td.star, td.rank { width: 1%; }
 td.supply { font-size: 13px; }
 td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; border-radius: 5px;
   background: linear-gradient(90deg, var(--muted) var(--fill), var(--line) var(--fill)); opacity: 0.7; }
@@ -202,9 +202,24 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 .ranges { display: flex; flex-wrap: wrap; gap: 4px; }
 .ranges button { padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
 .ranges button.on, .ranges button:hover { background: var(--soft); color: var(--accent); }
+.ranges.seg button.on { background: var(--panel); color: var(--text); }
 .big-chart { position: relative; height: 400px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; touch-action: pan-y; }
 .big-chart svg { display: block; width: 100%; height: 100%; }
-.big-chart .vol { fill: var(--accent); opacity: 0.2; }
+.big-chart .vol { fill: var(--muted); opacity: 0.22; }
+.big-chart.tv { height: 560px; }
+.big-chart .grid { stroke: var(--line); stroke-width: 1; }
+.big-chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.big-chart .base { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.8; }
+.big-chart .base-tag { fill: var(--panel); stroke: var(--line); }
+.big-chart .base-text { fill: var(--muted); font-size: 11px; font-weight: 700; }
+.big-chart .now { fill: #fff; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.big-chart .mark { fill: var(--muted); opacity: 0.25; font-size: 20px; font-weight: 800; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--soft); }
+.seg button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
+.seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px #0002; }
+.seg svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.seg[hidden], .seg button[hidden] { display: none; }
 .big-chart .chart-box { height: 100%; border: 0; border-radius: 0; }
 .big-chart .status { margin-top: 170px; }
 .axis { position: absolute; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
@@ -212,10 +227,11 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 .axis.start, .axis.end { bottom: 4px; padding: 1px 5px; border-radius: 6px; background: var(--panel); }
 .axis.start { left: 6px; } .axis.end { right: 6px; }
 .cursor, .dot, .tip { position: absolute; display: none; pointer-events: none; }
-.hover .cursor, .hover .dot, .hover .tip { display: block; }
+.hover .cursor, .hover .dot { display: block; } .hover .tip { display: flex; }
+.tip small { color: var(--muted); font-weight: 600; }
 .cursor { top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: 0.5; }
 .dot { width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 2px solid var(--bg); border-radius: 50%; background: var(--accent); }
-.tip { top: 8px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.tip { display: none; flex-direction: column; gap: 2px; top: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .chart-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
 .about p { margin: 0 0 10px; font-size: 14px; line-height: 1.65; }
 .about .chips { margin-bottom: 12px; }

@@ -162,7 +162,7 @@ function thin(points) {
 
 export function normalizeChart(value) {
   if (!Array.isArray(value?.prices)) throw new Error("chart data is invalid");
-  return { prices: thin(value.prices), volumes: thin(value.total_volumes) };
+  return { prices: thin(value.prices), caps: thin(value.market_caps), volumes: thin(value.total_volumes) };
 }
 
 // Search over every coin CoinGecko lists: name, symbol, rank and a thumbnail.

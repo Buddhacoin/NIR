@@ -122,7 +122,8 @@ function logo(coin) {
 }
 
 // --- The TradingView chart: the coin's main Binance pair.
-function tradingView(symbol) {
+// `full` is the coin page's chart: drawing tools on the left, daily candles, volume.
+function tradingView(symbol, full = false) {
   const box = document.createElement("div");
   box.className = "chart-box tradingview-widget-container";
   const inner = document.createElement("div");
@@ -133,7 +134,8 @@ function tradingView(symbol) {
   script.async = true;
   script.textContent = JSON.stringify({ autosize: true, symbol, interval: "60",
     timezone: "Etc/UTC", theme: isLight() ? "light" : "dark", style: "1", locale: language,
-    allow_symbol_change: true, hide_side_toolbar: true, support_host: "https://www.tradingview.com" });
+    allow_symbol_change: !full, hide_side_toolbar: !full, withdateranges: full, details: false,
+    ...(full ? { interval: "D", hide_volume: false } : {}), support_host: "https://www.tradingview.com" });
   box.append(inner, script);
   return box;
 }

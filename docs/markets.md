@@ -153,6 +153,13 @@ Charts in the table are TradingView's free embedded widget (the coin's main Bina
 under a coin's row; stablecoins have none. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
 
+A coin's page draws its own chart of price or market capitalisation for 24
+hours to a year: the line is green above the period's opening value and red
+below it, that value is dotted, the scale and the latest value's tag are on
+the right, time and volume underneath, and a crosshair shows any point. The
+TradingView button swaps in the full chart with candles, indicators and
+drawing tools for coins with a Binance pair.
+
 On phones the pages follow the layout of the market apps: four compact market
 figures, a one-line market summary that opens on tap, underlined tabs (Top,
 Watchlist, Trending, gainers, losers, stablecoins), a list of coin, price and
