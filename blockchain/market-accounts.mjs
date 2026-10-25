@@ -259,7 +259,13 @@ export function createAccounts({
     if (limited(user.id)) return json(response, 429, { error: "too many changes, wait a minute" }), true;
     try {
       const watchMatch = /^\/market\/me\/watchlist\/([^/]+)$/.exec(path);
-      if (method === "PATCH" && path === "/market/me") {
+      if (method === "DELETE" && path === "/market/me") {
+        // Deleting the account removes all of its data at once, and signs it out everywhere.
+        community.forget(user.id);
+        for (const table of ["sessions", "watchlist", "activity"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
+        sql("DELETE FROM users WHERE id = ?").run(user.id);
+        json(response, 200, { deleted: true }, { "set-cookie": cookie("", 0) });
+      } else if (method === "PATCH" && path === "/market/me") {
         const [status, result] = updateProfile(user, await body(request));
         json(response, status, result);
       } else if (method === "POST" && path === "/market/me/watchlist") {

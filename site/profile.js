@@ -8,9 +8,9 @@ const en = {
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
   navCoins: "Cryptocurrencies", navNir: "About NIR", navMine: "NIR mining", search: "Search coins",
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
-  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabComments: "Comments",
+  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabComments: "Comments", deleteAccount: "Delete account",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
-  aboutNir: "About the NIR blockchain →",
+  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
 };
 const words = {
   ru: { loading: "Загружаю профиль…", missing: "Такого профиля нет.", unavailable: "Профиль временно недоступен.",
@@ -135,6 +135,13 @@ $("#form").addEventListener("submit", async (event) => {
   if (data.user.username !== name) { location.replace(`/u/${data.user.username}`); return; }
   $("#form").hidden = true;
   await load();
+});
+$("#delete-account").addEventListener("click", async () => {
+  const ask = language === "en"
+    ? "Delete the account for good? Your profile, watchlist, comments and votes will be removed at once."
+    : "Удалить аккаунт навсегда? Профиль, избранное, комментарии и голоса удалятся сразу и без возврата.";
+  if (!confirm(ask)) return;
+  if ((await send("/market/me", "DELETE")).status === 200) location.href = "/";
 });
 $("#logout").addEventListener("click", async () => {
   await send("/market/auth/logout", "POST");
