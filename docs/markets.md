@@ -23,6 +23,38 @@ visit. A source that fails keeps its last good data. A free CoinGecko demo key
 can be set as `COINGECKO_API_KEY` in `/etc/nir-market.env`. The page credits
 CoinGecko for prices and TradingView for charts.
 
+## Design and navigation
+
+Day theme: white with a blue accent (#3861fb), thin grey dividers, green
+#16c784 and red #ea3943 for changes, like the big market sites. Night theme:
+graphite with glass cards and a violet–mint accent. Orange is kept only in the
+NIR coin.
+
+- A strip on top of every page: coins tracked, exchanges, market cap, 24h
+  volume, dominance, Fear & Greed and NIR's own network; the market items open
+  the overview page.
+- Every card is a link: market status and its figures → `/charts/`, Fear &
+  Greed → `/charts/#fear-greed`, dominance → `/charts/#dominance`; the Trending
+  and Gainers titles switch the table to those lists.
+- `/charts/` (Market overview): totals, the Fear & Greed gauge with yesterday,
+  last week, last month, the yearly high and low and a year-long chart
+  (`GET /market/fear-greed`, alternative.me, cached an hour), and the
+  dominance of the largest coins.
+- The table has a Circulating supply column with a bar towards the maximum
+  supply; numbers take only the width they need. Every coin CoinGecko lists
+  can be browsed 100 a page: `/?page=N` loads `GET /market/coins?page=N`
+  (cached three minutes, within the coin-fetch budget), with page numbers and
+  "Showing 1–100 of N" under the table.
+- CoinGecko's free plan asks for credit: a small "Данные: CoinGecko" under the
+  table and in the footers. TradingView credits itself inside its chart.
+
+## Search
+
+The search box covers every coin CoinGecko lists. Before typing it shows
+recent searches (kept in the browser) and trending coins; while typing it
+shows matches from the top 100 at once and then the rest from
+`GET /market/search?q=…`, each query cached for 10 minutes.
+
 ## Accounts: Google sign-in, profiles and the watchlist
 
 Visitors can sign in with Google (`blockchain/market-accounts.mjs`, inside the
@@ -120,6 +152,13 @@ copy is served, or the visitor is asked to retry in a minute. Caddy serves
 Charts in the table are TradingView's free embedded widget (the coin's main Binance pair), opened
 under a coin's row; stablecoins have none. The market summary is assembled from
 the prices; an AI-written brief and a per-coin "Why is it moving?" come next.
+
+A coin's page draws its own chart of price or market capitalisation for 24
+hours to a year: the line is green above the period's opening value and red
+below it, that value is dotted, the scale and the latest value's tag are on
+the right, time and volume underneath, and a crosshair shows any point. The
+TradingView button swaps in the full chart with candles, indicators and
+drawing tools for coins with a Binance pair.
 
 On phones the pages follow the layout of the market apps: four compact market
 figures, a one-line market summary that opens on tap, underlined tabs (Top,

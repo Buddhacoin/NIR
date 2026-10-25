@@ -4,19 +4,21 @@
 // markets where the coin trades. Shared helpers are in common.js.
 
 const en = {
+  stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
+  stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
-  navCoins: "Cryptocurrencies", navNir: "About NIR", navMine: "NIR mining", search: "Search coins",
+  navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins",
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
   tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", tabCommunity: "Discussion", community: "Discussion",
   sortLatest: "Latest", sortTop: "Top", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
-  d1: "1D", d7: "7D", d30: "1M", d90: "3M", d365: "1Y",
+  d1: "24h", d7: "7D", d30: "1M", d90: "3M", d365: "1Y", mPrice: "Price", mCap: "Market cap",
   more: "Show all ▾", descriptionBy: "Description: CoinGecko", whereTraded: "Where it trades", exchange: "Exchange",
   pair: "Pair", colPrice: "Price", colVolume: "Volume 24h", trust: "Trust",
   pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
-  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
+  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navNir: "NIR",
 };
 const words = {
   ru: { loading: "Загружаю данные монеты…", missing: "Такой монеты нет. Вернитесь к списку и выберите монету там.",
@@ -62,6 +64,7 @@ let chart = null;
 let chartFailed = false;
 let days = "30";
 let candles = false;
+let metric = "prices"; // or "caps": the line shows price or market cap
 let showAll = false;
 let failure = "";
 
@@ -214,74 +217,131 @@ function convert(from) {
   }
 }
 
-// --- The price chart: a line with volume bars and a crosshair, or TradingView candles.
+// --- The chart, as on the big market sites: a line that is green above the
+// period's opening value and red below it, with that level dotted, a value
+// scale and the latest value tagged on the right, time underneath, volume
+// bars and a crosshair. Or TradingView's full chart with candles, drawing
+// tools and indicators for coins with a Binance pair.
+const SVG = "http://www.w3.org/2000/svg";
+// 81.00K, 1.33T, 0.5123: short labels for the scale.
+function short(value) {
+  const units = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
+  for (const [size, unit] of units) {
+    if (Math.abs(value) >= size) return `${(value / size).toLocaleString(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${unit}`;
+  }
+  return value.toLocaleString(locale(), { maximumSignificantDigits: 4 });
+}
+// About five round steps between low and high.
+function ticks(low, high) {
+  const span = (high - low) || Math.abs(high) || 1;
+  const raw = span / 5;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((candidate) => candidate >= raw);
+  const values = [];
+  for (let value = Math.ceil(low / step) * step; value <= high; value += step) values.push(value);
+  return values;
+}
 function renderChart() {
   const plot = $("#plot");
   const symbol = tradingViewSymbol();
   $("#candles").hidden = !symbol;
   candles = candles && Boolean(symbol);
-  $("#candles").textContent = candles ? t().line : t().candles;
-  for (const button of document.querySelectorAll("#ranges [data-days]")) {
-    button.classList.toggle("on", !candles && button.dataset.days === days);
-    button.hidden = candles;
-  }
+  for (const button of document.querySelectorAll("#mode [data-mode]")) button.classList.toggle("on", (button.dataset.mode === "tv") === candles);
+  for (const button of document.querySelectorAll("#ranges [data-days]")) button.classList.toggle("on", button.dataset.days === days);
+  for (const button of document.querySelectorAll("#metric [data-metric]")) button.classList.toggle("on", button.dataset.metric === metric);
+  $("#ranges").hidden = $("#metric").hidden = candles;
+  plot.classList.toggle("tv", candles);
   $("#period-change").replaceChildren();
-  if (candles) { plot.replaceChildren(tradingView(symbol)); return; }
-  const points = chart?.prices ?? [];
+  if (candles) {
+    if (!plot.querySelector(".tradingview-widget-container")) plot.replaceChildren(tradingView(symbol, true));
+    return;
+  }
+  const points = (metric === "caps" ? chart?.caps : chart?.prices) ?? [];
   if (points.length < 2) {
     plot.replaceChildren(Object.assign(document.createElement("p"), { className: "status",
       textContent: chartFailed ? t().chartUnavailable : t().chartLoading }));
     return;
   }
-  const width = 1000;
-  const height = 360;
+  const width = Math.max(300, plot.clientWidth);
+  const height = Math.max(240, plot.clientHeight);
+  const axis = 74; // the value scale on the right
+  const right = width - axis;
+  const top = 14;
+  const bottom = height - 24 - 52; // the price area ends above the volume bars and the time labels
   const values = points.map(([, value]) => value);
-  const low = Math.min(...values);
-  const high = Math.max(...values);
-  const x = (index) => index / (points.length - 1) * width;
-  const y = (value) => 14 + (high - value) / ((high - low) || 1) * (height - 84);
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.setAttribute("preserveAspectRatio", "none");
+  const open = values[0];
+  const last = values.at(-1);
+  let low = Math.min(...values);
+  let high = Math.max(...values);
+  const pad = (high - low) * 0.06 || Math.abs(high) * 0.01 || 1;
+  low -= pad;
+  high += pad;
+  const x = (index) => index / (points.length - 1) * right;
+  const y = (value) => top + (high - value) / (high - low) * (bottom - top);
+  const baseY = y(open);
   const line = points.map(([, value], index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join("");
+  const area = `${line}L${right},${baseY.toFixed(1)}L0,${baseY.toFixed(1)}Z`;
   const volumes = chart.volumes ?? [];
   const topVolume = Math.max(1, ...volumes.map(([, value]) => value));
-  const barWidth = width / Math.max(1, volumes.length);
-  svg.innerHTML = '<defs><linearGradient id="area-fill" x1="0" x2="0" y1="0" y2="1">' +
-    '<stop offset="0" stop-color="var(--accent)" stop-opacity=".32"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>' +
-    "</linearGradient></defs>" +
-    volumes.map(([, value], index) => `<rect class="vol" x="${(index * barWidth).toFixed(1)}" y="${(height - value / topVolume * 40).toFixed(1)}" ` +
-      `width="${Math.max(1, barWidth - 1).toFixed(1)}" height="${(value / topVolume * 40).toFixed(1)}"/>`).join("") +
-    `<path d="${line}L${width},${height - 50}L0,${height - 50}Z" fill="url(#area-fill)"/>` +
-    `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
-  const label = (className, text) => Object.assign(document.createElement("span"), { className, textContent: text });
+  const barWidth = right / Math.max(1, volumes.length);
   const time = (value) => new Date(value).toLocaleString(locale(), days === "1"
     ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", ...(days === "365" ? { year: "2-digit" } : {}) });
-  const cursor = label("cursor", "");
-  const dot = label("dot", "");
-  const tip = label("tip", "");
-  const lowLabel = label("axis low", price(low));
-  lowLabel.style.top = `calc(${(y(low) / height * 100).toFixed(1)}% + 4px)`;
-  plot.replaceChildren(svg, label("axis high", price(high)), lowLabel,
-    label("axis start", time(points[0][0])), label("axis end", time(points.at(-1)[0])), cursor, dot, tip);
+  // A scale label under the latest value's tag is left out.
+  const grid = ticks(low, high).map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/>` +
+    (Math.abs(y(value) - y(values.at(-1))) < 16 ? "" : `<text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${short(value)}</text>`)).join("");
+  const times = [0, 0.2, 0.4, 0.6, 0.8, 1].map((share) => {
+    const index = Math.round(share * (points.length - 1));
+    const anchor = share === 0 ? "start" : share === 1 ? "end" : "middle";
+    return `<text class="tick" text-anchor="${anchor}" x="${x(index).toFixed(1)}" y="${height - 6}">${time(points[index][0])}</text>`;
+  }).join("");
+  const rising = last >= open;
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  svg.innerHTML = `<defs>
+      <clipPath id="above"><rect x="0" y="0" width="${right}" height="${baseY.toFixed(1)}"/></clipPath>
+      <clipPath id="below"><rect x="0" y="${baseY.toFixed(1)}" width="${right}" height="${height}"/></clipPath>
+      <linearGradient id="fill-up" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--up)" stop-opacity=".28"/><stop offset="1" stop-color="var(--up)" stop-opacity=".02"/></linearGradient>
+      <linearGradient id="fill-down" x1="0" x2="0" y1="1" y2="0"><stop offset="0" stop-color="var(--down)" stop-opacity=".28"/><stop offset="1" stop-color="var(--down)" stop-opacity=".02"/></linearGradient>
+    </defs>${grid}
+    ${volumes.map(([, value], index) => `<rect class="vol" x="${(index * barWidth).toFixed(1)}" y="${(height - 24 - value / topVolume * 44).toFixed(1)}" width="${Math.max(1, barWidth - 1).toFixed(1)}" height="${(value / topVolume * 44).toFixed(1)}"/>`).join("")}
+    <path d="${area}" fill="url(#fill-up)" clip-path="url(#above)"/><path d="${area}" fill="url(#fill-down)" clip-path="url(#below)"/>
+    <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" clip-path="url(#above)"/>
+    <path d="${line}" fill="none" stroke="var(--down)" stroke-width="2" clip-path="url(#below)"/>
+    <line class="base" x1="0" x2="${right}" y1="${baseY.toFixed(1)}" y2="${baseY.toFixed(1)}"/>
+    <rect class="base-tag" x="2" y="${(baseY - 9).toFixed(1)}" rx="3" width="${short(open).length * 7 + 10}" height="18"/>
+    <text class="base-text" x="7" y="${(baseY + 4).toFixed(1)}">${short(open)}</text>
+    <rect x="${right + 2}" y="${(y(last) - 10).toFixed(1)}" rx="4" width="${axis - 4}" height="20" fill="var(--${rising ? "up" : "down"})"/>
+    <text class="now" x="${right + 8}" y="${(y(last) + 4).toFixed(1)}">${short(last)}</text>
+    <text class="mark" x="${right - 10}" y="${bottom - 8}" text-anchor="end">NIR Markets</text>${times}`;
+  const label = (className) => Object.assign(document.createElement("span"), { className });
+  const cursor = label("cursor");
+  const dot = label("dot");
+  const tip = label("tip");
+  plot.replaceChildren(svg, cursor, dot, tip);
   plot.onpointermove = (event) => {
     const box = plot.getBoundingClientRect();
-    const index = Math.round(Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * (points.length - 1));
+    const index = Math.round(Math.min(1, Math.max(0, (event.clientX - box.left) / right)) * (points.length - 1));
     const [when, value] = points[index];
-    const left = x(index) / width * box.width;
-    const top = y(value) / height * box.height;
-    cursor.style.left = dot.style.left = `${left}px`;
-    dot.style.top = `${top}px`;
-    tip.textContent = `${price(value)} · ${new Date(when).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
-    tip.style.left = `${Math.min(box.width - tip.offsetWidth - 6, Math.max(6, left - tip.offsetWidth / 2))}px`;
+    cursor.style.left = dot.style.left = `${x(index)}px`;
+    dot.style.top = `${y(value)}px`;
+    dot.style.background = `var(--${value >= open ? "up" : "down"})`;
+    const volume = volumes[Math.round(index / (points.length - 1) * (volumes.length - 1))]?.[1];
+    tip.replaceChildren(Object.assign(document.createElement("small"), { textContent: new Date(when).toLocaleString(locale(),
+      { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) }),
+    Object.assign(document.createElement("b"), { textContent: metric === "caps" ? big(value) : price(value) }),
+    ...(volume ? [Object.assign(document.createElement("small"), { textContent: `${language === "en" ? "Vol" : "Объём"} ${big(volume)}` })] : []));
+    tip.style.left = `${Math.min(right - tip.offsetWidth - 6, Math.max(6, x(index) + 12))}px`;
     plot.classList.add("hover");
   };
   plot.onpointerleave = () => plot.classList.remove("hover");
-  const change = (values.at(-1) - values[0]) / values[0] * 100;
   const shift = document.createElement("b");
-  setChange(shift, change);
+  setChange(shift, (last - open) / open * 100);
   $("#period-change").replaceChildren(`${t().period[days]}: `, shift);
 }
+// The line is drawn to the box's real size, so it is redrawn when the box changes.
+new ResizeObserver(() => { if (coin && !candles) renderChart(); }).observe($("#plot"));
 
 function render() {
   if (!coin) {
@@ -332,7 +392,12 @@ for (const button of document.querySelectorAll("#ranges [data-days]")) {
     void loadChart();
   });
 }
-$("#candles").addEventListener("click", () => { candles = !candles; renderChart(); });
+for (const button of document.querySelectorAll("#mode [data-mode]")) {
+  button.addEventListener("click", () => { candles = button.dataset.mode === "tv"; renderChart(); });
+}
+for (const button of document.querySelectorAll("#metric [data-metric]")) {
+  button.addEventListener("click", () => { metric = button.dataset.metric; renderChart(); });
+}
 $("#watch").addEventListener("click", () => { toggleWatch(coin.id); renderHead(); });
 $("#find").addEventListener("click", () => {
   document.body.classList.toggle("searching");
@@ -348,7 +413,7 @@ for (const link of document.querySelectorAll(".coin-main .tabs a")) {
 }
 
 setupSearch({});
-setupPage({ en, render, onTheme: () => { if (candles) renderChart(); } }); // the candles follow the theme
+setupPage({ en, render, onTheme: () => { if (candles) { $("#plot").replaceChildren(); renderChart(); } } }); // the candles follow the theme
 if (COIN_ID_PATTERN.test(id)) {
   void loadCoin();
   void loadChart();

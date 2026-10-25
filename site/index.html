@@ -11,25 +11,26 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=8">
+  <link rel="stylesheet" href="/markets.css?v=11">
 </head>
 <body>
   <div class="nirbar">
-    <span>⛏ <b data-i18n="nirOpen">Сеть NIR открыта</b></span>
-    <span><span data-i18n="nirMiners">Майнеров в сети</span> <b data-nir="miners">—</b></span>
-    <span><span data-i18n="nirPioneers">Первопроходцев</span> <b data-nir="pioneers">—</b></span>
-    <span><span data-i18n="nirMined">Намайнено</span> <b data-nir="mined">—</b> NIR</span>
-    <span class="wide" data-i18n="nirPool">🏆 210 000 NIR для первопроходцев</span>
-    <a class="cta" href="/nir/#start" data-i18n="nirCta">Майнить NIR одной кнопкой →</a>
+    <span><span data-i18n="stCoins">Монет:</span> <b data-stat="coins">—</b></span>
+    <span><span data-i18n="stExchanges">Бирж:</span> <b data-stat="exchanges">—</b></span>
+    <a href="/charts/"><span data-i18n="stCap">Капитализация:</span> <b data-stat="cap">—</b> <em data-stat="capChange"></em></a>
+    <a href="/charts/"><span data-i18n="stVolume">Объём 24 ч:</span> <b data-stat="volume">—</b></a>
+    <a href="/charts/#dominance"><span data-i18n="stDominance">Доминация:</span> <b data-stat="dominance">—</b></a>
+    <a href="/charts/#fear-greed"><span data-i18n="stFear">Страх и жадность:</span> <b data-stat="fear">—</b></a>
+    <a class="nir" href="/nir/#start">⛏ <span data-i18n="stNir">Сеть NIR: майнеров</span> <b data-nir="miners">—</b> · <span data-i18n="stMined">намайнено</span> <b data-nir="mined">—</b> NIR</a>
   </div>
 
   <header class="top">
-    <a class="brand" href="/nir/" title="О блокчейне NIR"><img src="/nir-coin-icon.svg" alt="" width="36" height="36">NIR <small>MARKETS</small></a>
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="32" height="32">NIR <small>Markets</small></a>
     <nav aria-label="Разделы">
       <a href="#coins" data-tab="top" data-i18n="navCoins">Криптовалюты</a>
       <a href="#coins" data-tab="gainers" data-i18n="navMovers">Рост и падение</a>
-      <a href="/nir/" data-i18n="navNir">О NIR</a>
-      <a href="/nir/#start" data-i18n="navMine">Майнинг NIR</a>
+      <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
+      <a href="/nir/" data-i18n="navNir">NIR</a>
     </nav>
     <input id="search" class="search" type="search" placeholder="Поиск монеты" data-i18n-placeholder="search" autocomplete="off">
     <button class="pill find" id="find" type="button" aria-label="Поиск"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
@@ -41,18 +42,18 @@
   <main class="wrap">
     <section class="cards" aria-label="Рынок">
       <article class="card">
-        <h2 data-i18n="marketStatus">Состояние рынка</h2>
+        <h2><a href="/charts/"><span data-i18n="marketStatus">Состояние рынка</span> <i>›</i></a></h2>
         <div class="mini">
-          <div class="gauge"><small data-i18n="fearGreed">Страх и жадность</small>
-            <svg width="110" height="62" viewBox="0 0 110 62" aria-hidden="true"><defs><linearGradient id="fg"><stop offset="0" stop-color="#e5484d"/><stop offset=".5" stop-color="#f5a524"/><stop offset="1" stop-color="#16a34a"/></linearGradient></defs><path d="M8 56 A47 47 0 0 1 102 56" fill="none" stroke="url(#fg)" stroke-width="9" stroke-linecap="round"/><circle id="fg-dot" cx="55" cy="9" r="6"/></svg>
-            <b id="fg-value">—</b><span id="fg-label"></span></div>
-          <div><small data-i18n="marketCap">Капитализация</small><b id="g-cap">—</b><em id="g-cap-change"></em></div>
-          <div><small data-i18n="volume24">Объём за 24 ч</small><b id="g-volume">—</b></div>
-          <div><small data-i18n="dominance">Доминация BTC</small><b id="g-btc">—</b><em class="flat" id="g-eth"></em></div>
+          <a class="gauge" href="/charts/#fear-greed"><small data-i18n="fearGreed">Страх и жадность</small>
+            <svg width="110" height="62" viewBox="0 0 110 62" aria-hidden="true"><defs><linearGradient id="fg"><stop offset="0" stop-color="#ea3943"/><stop offset=".5" stop-color="#f3d42f"/><stop offset="1" stop-color="#16c784"/></linearGradient></defs><path d="M8 56 A47 47 0 0 1 102 56" fill="none" stroke="url(#fg)" stroke-width="9" stroke-linecap="round"/><circle id="fg-dot" cx="55" cy="9" r="6"/></svg>
+            <b id="fg-value">—</b><span id="fg-label"></span></a>
+          <a href="/charts/"><small data-i18n="marketCap">Капитализация</small><b id="g-cap">—</b><em id="g-cap-change"></em></a>
+          <a href="/charts/"><small data-i18n="volume24">Объём за 24 ч</small><b id="g-volume">—</b></a>
+          <a href="/charts/#dominance"><small data-i18n="dominance">Доминация BTC</small><b id="g-btc">—</b><em class="flat" id="g-eth"></em></a>
         </div>
       </article>
-      <article class="card list"><h2><span>🔥</span> <span data-i18n="trending">В тренде</span></h2><ol id="trending"></ol></article>
-      <article class="card list"><h2><span>🚀</span> <span data-i18n="gainers24">Лидеры роста 24 ч</span></h2><ol id="gainers"></ol></article>
+      <article class="card list"><h2><a href="#coins" data-tab="trending"><span>🔥 <span data-i18n="trending">В тренде</span></span> <i>›</i></a></h2><ol id="trending"></ol></article>
+      <article class="card list"><h2><a href="#coins" data-tab="gainers"><span>🚀 <span data-i18n="gainers24">Лидеры роста 24 ч</span></span> <i>›</i></a></h2><ol id="gainers"></ol></article>
       <article class="card brief">
         <span class="tag" data-i18n="briefTag">✦ СВОДКА РЫНКА</span>
         <p id="brief"></p>
@@ -62,20 +63,19 @@
 
     <button class="m-brief" id="m-brief" type="button"><span class="tag" data-i18n="briefShort">✦ Сводка</span><span id="m-brief-text"></span></button>
 
-    <a class="nir-strip" href="/nir/#start">
-      <img src="/nir-coin-icon.svg" alt="" width="24" height="24"><b>NIR</b>
-      <span data-i18n="nirRow">тестовая сеть · майнится интеллектом</span>
-      <span class="gold" data-i18n="nirNoPrice">Цены пока нет — сейчас идёт майнинг первопроходцев</span>
-      <span><b data-nir="mined">—</b> <span data-i18n="nirMinedShort">NIR намайнено</span></span>
-      <span class="act" data-i18n="mine">Майнить</span>
-    </a>
+    <nav class="chips-row" aria-label="Быстрые ссылки">
+      <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt=""><b>NIR</b> <span class="muted" data-i18n="nirNoPrice">цены пока нет — идёт майнинг первопроходцев</span> <span data-i18n="mineArrow">Майнить →</span></a>
+      <a href="/charts/#fear-greed" data-i18n="chipFear">📈 Индекс страха и жадности</a>
+      <a href="/charts/#dominance" data-i18n="chipDominance">🥧 Доминация BTC и ETH</a>
+      <a href="#coins" data-tab="trending" data-i18n="chipTrending">🔥 В тренде</a>
+    </nav>
 
     <div class="tabs" role="tablist" id="coins">
       <button type="button" class="on" data-tab="top" data-i18n="tabTop">Топ</button>
       <button type="button" data-tab="watch" data-i18n="tabWatch">Избранное</button>
       <button type="button" data-tab="trending" data-i18n="tabTrending">В тренде</button>
-      <button type="button" data-tab="gainers" data-i18n="tabGainers">Лидеры роста</button>
-      <button type="button" data-tab="losers" data-i18n="tabLosers">Лидеры падения</button>
+      <button type="button" data-tab="gainers" data-i18n="tabGainers">Рост</button>
+      <button type="button" data-tab="losers" data-i18n="tabLosers">Падение</button>
       <button type="button" data-tab="stable" data-i18n="tabStable">Стейблкоины</button>
     </div>
 
@@ -85,20 +85,22 @@
           <th class="hide-s"></th><th>#</th><th class="left" data-i18n="colCoin">Монета</th><th data-i18n="colPrice">Цена</th>
           <th class="hide-s" data-i18n="col1h">1 ч</th><th data-i18n="col24h">24 ч</th><th class="hide-s" data-i18n="col7d">7 д</th>
           <th class="hide-s" data-i18n="colCap">Капитализация</th><th class="hide-s" data-i18n="colVolume">Объём 24 ч</th>
-          <th class="hide-s" data-i18n="col7days">7 дней</th><th class="hide-s"></th>
+          <th class="hide-s" data-i18n="colSupply">В обращении</th><th class="hide-s" data-i18n="col7days">7 дней</th><th class="hide-s"></th>
         </tr></thead>
         <tbody id="rows">
         </tbody>
       </table>
       <p class="status" id="status" data-i18n="loading">Загружаю курсы…</p>
     </div>
+    <div class="pager" id="pager" hidden>
+      <span id="pager-info"></span>
+      <nav id="pages" aria-label="Страницы"></nav>
+      <small class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko · <span data-i18n="updated">Обновлено</span> <span id="updated">—</span></small>
+    </div>
   </main>
 
   <footer>
     <span>NIR Markets</span>
-    <span><span data-i18n="pricesBy">Данные о ценах:</span> <a href="https://www.coingecko.com" rel="noopener">CoinGecko</a></span>
-    <span><span data-i18n="chartsBy">Графики:</span> <a href="https://www.tradingview.com" rel="noopener">TradingView</a></span>
-    <span><span data-i18n="updated">Обновлено</span> <span id="updated">—</span></span>
     <span data-i18n="noTrackers">Без трекеров</span>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
@@ -110,7 +112,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=4"></script>
-  <script src="/markets.js?v=7"></script>
+  <script src="/common.js?v=6"></script>
+  <script src="/markets.js?v=8"></script>
 </body>
 </html>
