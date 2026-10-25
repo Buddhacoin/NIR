@@ -7,6 +7,7 @@ import { join } from "node:path";
 import process from "node:process";
 
 import { createAccounts } from "./market-accounts.mjs";
+import { createChain } from "./market-chain.mjs";
 import { createMarketService } from "./market-service.mjs";
 
 const args = process.argv.slice(2);
@@ -31,8 +32,11 @@ function fixtureFile(url) {
 const env = process.env;
 const accounts = env.NIR_MARKET_DB ? createAccounts({ file: env.NIR_MARKET_DB, clientId: env.GOOGLE_CLIENT_ID,
   clientSecret: env.GOOGLE_CLIENT_SECRET, admins: (env.NIR_MARKET_ADMINS ?? "").split(","), publicUrl: env.NIR_MARKET_PUBLIC_URL ?? `http://localhost:${port}` }) : null;
+// The explorer always reads the live public explorers; prices for the UTXO network come from the overview.
+const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
+  labelFor: (address) => accounts?.labelFor(address) ?? null });
 const service = createMarketService(fixture ? {
-  accounts,
+  accounts, chain,
   fetch: async (url) => {
     try {
       return JSON.parse(readFileSync(join(fixture, fixtureFile(url)), "utf8"));
@@ -40,7 +44,7 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts });
+} : { accounts, chain });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

@@ -159,6 +159,11 @@ $SITE_DOMAIN {
     rewrite * /u/index.html
     file_server
   }
+  handle /address/* {
+    root * $APP_DIR/site
+    rewrite * /address/index.html
+    file_server
+  }
   handle {
     root * $APP_DIR/site
     header /install.sh Content-Type "text/plain; charset=utf-8"

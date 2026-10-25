@@ -8,9 +8,9 @@ const en = {
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
-  navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins",
+  navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins or addresses",
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
-  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabComments: "Comments", deleteAccount: "Delete account",
+  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabWallets: "My addresses", tabTracked: "Tracked", tabModeration: "Moderation", tabComments: "Comments", deleteAccount: "Delete account",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
   aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR",
 };
@@ -18,11 +18,21 @@ const words = {
   ru: { loading: "Загружаю профиль…", missing: "Такого профиля нет.", unavailable: "Профиль временно недоступен.",
     since: (date) => `на NIR Markets с ${date}`, joined: "Присоединился к NIR Markets", profile: "Обновил профиль",
     watch: "Добавил в избранное", comment: "Написал о", noComments: "Комментариев пока нет.", noActivity: "Пока здесь пусто.", noWatch: "В избранном пока ничего нет. Нажмите ☆ у монеты.",
-    title: (user) => `${user.displayName} (@${user.username}) — NIR Markets` },
+    title: (user) => `${user.displayName} (@${user.username}) — NIR Markets`,
+    addAddress: "Адрес кошелька (0x… или bc1…)", addLabel: "Подпись (необязательно)", add: "Добавить", badAddress: "Это не адрес кошелька.",
+    walletsTotal: "Всего на моих адресах", noWallets: "Добавьте адреса своих кошельков — сайт сложит их балансы по всем сетям в один портфель. Адреса видите только вы.",
+    noTracked: "Вы пока не отслеживаете адреса. Откройте любой кошелёк (через поиск или ленту «Все переводы») и нажмите «Отследить адрес».",
+    remove: "Убрать", loadingWallet: "загружаю…", asset: "Актив", amount: "Количество", value: "Сумма",
+    noSuggestions: "Новых подписей на проверку нет.", approve: "Одобрить", reject: "Отклонить", source: "источник", by: "от" },
   en: { loading: "Loading the profile…", missing: "There is no such profile.", unavailable: "The profile is unavailable right now.",
     since: (date) => `on NIR Markets since ${date}`, joined: "Joined NIR Markets", profile: "Updated the profile",
     watch: "Added to the watchlist", comment: "Commented on", noComments: "No comments yet.", noActivity: "Nothing here yet.", noWatch: "The watchlist is empty. Tap ☆ next to a coin.",
-    title: (user) => `${user.displayName} (@${user.username}) — NIR Markets` },
+    title: (user) => `${user.displayName} (@${user.username}) — NIR Markets`,
+    addAddress: "Wallet address (0x… or bc1…)", addLabel: "Label (optional)", add: "Add", badAddress: "This is not a wallet address.",
+    walletsTotal: "Total on my addresses", noWallets: "Add your wallets' addresses and the site adds up their balances on every network into one portfolio. Only you see them.",
+    noTracked: "You do not track any address yet. Open a wallet (from search or All transfers) and press Track address.",
+    remove: "Remove", loadingWallet: "loading…", asset: "Asset", amount: "Amount", value: "Value",
+    noSuggestions: "No names waiting for review.", approve: "Approve", reject: "Reject", source: "source", by: "by" },
 };
 
 const name = decodeURIComponent(location.pathname.split("/")[2] ?? "").toLowerCase();
@@ -42,8 +52,137 @@ function coinLink(id) {
   return link;
 }
 
+// --- Saved wallet addresses: own ones add up into one portfolio; tracked ones are bookmarks.
+let saved = null;
+const holdings = new Map(); // address → the explorer's answer, or "loading"
+async function loadSaved() {
+  const answer = await fetch("/market/me/addresses", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  saved = answer?.addresses ?? [];
+  renderView();
+}
+function holdingsOf(address) {
+  if (!holdings.has(address)) {
+    holdings.set(address, "loading");
+    fetch(`/market/chain/address/${encodeURIComponent(address)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null)
+      .then((data) => { holdings.set(address, data); if (view === "wallets" || view === "tracked") renderView(); });
+  }
+  const data = holdings.get(address);
+  return data === "loading" ? null : data;
+}
+const totalOf = (data) => (data ? data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0) : null);
+function addressRow(item) {
+  const row = document.createElement("div");
+  row.className = "feed-row";
+  const link = walletLink({ address: item.address, name: item.label || null });
+  const data = holdingsOf(item.address);
+  const value = Object.assign(document.createElement("b"), { textContent: data ? price(totalOf(data)) : t().loadingWallet });
+  const drop = Object.assign(document.createElement("button"), { type: "button", className: "pill", textContent: t().remove });
+  drop.addEventListener("click", async () => {
+    const { status, data: answer } = await send(`/market/me/addresses/${encodeURIComponent(item.address)}`, "DELETE");
+    if (status === 200) { saved = answer.addresses; renderView(); }
+  });
+  row.append(link, value, drop);
+  return row;
+}
+function renderWallets(box) {
+  const mine = saved.filter((item) => item.mine);
+  const form = document.createElement("form");
+  form.className = "wallet-form";
+  const input = Object.assign(document.createElement("input"), { placeholder: t().addAddress, autocomplete: "off", spellcheck: false });
+  const label = Object.assign(document.createElement("input"), { placeholder: t().addLabel, maxLength: 40, autocomplete: "off" });
+  const button = Object.assign(document.createElement("button"), { type: "submit", className: "act", textContent: t().add });
+  const error = Object.assign(document.createElement("p"), { className: "form-error" });
+  form.append(input, label, button, error);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const address = input.value.trim();
+    if (!ADDRESS.test(address)) { error.textContent = t().badAddress; return; }
+    const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: true, label: label.value.trim() });
+    if (status !== 200) { error.textContent = data.error ?? t().badAddress; return; }
+    saved = data.addresses;
+    renderView();
+  });
+  if (!mine.length) { box.replaceChildren(form, Object.assign(document.createElement("p"), { className: "muted", textContent: t().noWallets })); return; }
+  // The holdings of every own address, added up by network and token.
+  const merged = new Map();
+  let total = 0;
+  for (const item of mine) {
+    const data = holdingsOf(item.address);
+    for (const asset of data?.assets ?? []) {
+      const key = `${asset.chain}:${asset.token.address ?? asset.token.symbol}`;
+      const entry = merged.get(key) ?? { ...asset, amount: 0, usd: 0 };
+      entry.amount += asset.amount;
+      entry.usd += asset.usd ?? 0;
+      merged.set(key, entry);
+      total += asset.usd ?? 0;
+    }
+  }
+  const head = document.createElement("div");
+  head.className = "wallets-total";
+  head.append(Object.assign(document.createElement("small"), { className: "muted", textContent: t().walletsTotal }), Object.assign(document.createElement("b"), { textContent: price(total) }));
+  const table = document.createElement("table");
+  table.className = "ex-table";
+  const header = document.createElement("tr");
+  for (const [text, left] of [[t().asset, true], ["", true], [t().amount], [t().value]]) header.append(Object.assign(document.createElement("th"), { className: left ? "left" : "", textContent: text }));
+  const thead = document.createElement("thead");
+  thead.append(header);
+  const body = document.createElement("tbody");
+  body.append(...[...merged.values()].sort((left, right) => right.usd - left.usd).slice(0, 50).map((asset) => {
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    name.className = "left";
+    const cell = Object.assign(document.createElement("span"), { className: "coin-cell" });
+    cell.append(logo({ id: asset.token.symbol, symbol: asset.token.symbol, image: asset.token.icon }), Object.assign(document.createElement("b"), { textContent: asset.token.symbol }));
+    name.append(cell);
+    const network = document.createElement("td");
+    network.className = "left";
+    network.append(chainDot(asset.chain));
+    row.append(name, network, Object.assign(document.createElement("td"), { textContent: `${amountShort(asset.amount)} ${asset.token.symbol}` }),
+      Object.assign(document.createElement("td"), { textContent: price(asset.usd) }));
+    return row;
+  }));
+  table.append(thead, body);
+  box.replaceChildren(form, head, ...mine.map(addressRow), table);
+}
+
+// --- Moderation: wallet names suggested by visitors, approved or rejected here.
+let suggestions = null;
+async function loadSuggestions() {
+  const answer = await fetch("/market/labels/pending", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  suggestions = answer?.suggestions ?? [];
+  renderView();
+}
+function renderModeration(box) {
+  if (suggestions === null) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().loading })); void loadSuggestions(); return; }
+  if (!suggestions.length) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().noSuggestions })); return; }
+  box.replaceChildren(...suggestions.map((item) => {
+    const row = document.createElement("div");
+    row.className = "feed-row";
+    row.append(walletLink({ address: item.address, name: null }), Object.assign(document.createElement("b"), { textContent: `«${item.name}»` }));
+    if (item.link) row.append(Object.assign(document.createElement("a"), { href: item.link, target: "_blank", rel: "noopener nofollow", textContent: t().source }));
+    if (item.username) row.append(Object.assign(document.createElement("small"), { className: "muted", textContent: `${t().by} @${item.username}` }));
+    for (const [action, label] of [["approve", t().approve], ["reject", t().reject]]) {
+      const button = Object.assign(document.createElement("button"), { type: "button", className: action === "approve" ? "act" : "pill", textContent: label });
+      button.addEventListener("click", async () => {
+        const { status, data } = await send(`/market/labels/${item.id}/${action}`, "POST");
+        if (status === 200) { suggestions = data.suggestions; renderView(); }
+      });
+      row.append(button);
+    }
+    return row;
+  }));
+}
+
 function renderView() {
   const box = $("#view");
+  if (view === "moderation") { renderModeration(box); return; }
+  if (view === "wallets" || view === "tracked") {
+    if (saved === null) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().loading })); void loadSaved(); return; }
+    if (view === "wallets") { renderWallets(box); return; }
+    const tracked = saved.filter((item) => !item.mine);
+    box.replaceChildren(...(tracked.length ? tracked.map(addressRow) : [Object.assign(document.createElement("p"), { className: "muted", textContent: t().noTracked })]));
+    return;
+  }
   if (view === "watch") {
     const ids = [...watch];
     if (!ids.length) { box.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: t().noWatch })); return; }
@@ -99,6 +238,9 @@ function render() {
   $("#bio").hidden = !user.bio;
   $("#own-actions").hidden = !own;
   $("#tab-watch").hidden = !own;
+  $("#tab-wallets").hidden = !own;
+  $("#tab-tracked").hidden = !own;
+  $("#tab-moderation").hidden = !own || !account.moderator;
   for (const item of document.querySelectorAll(".tabbar a")) item.classList.toggle("on", own && item.id === "tab-account");
   for (const button of document.querySelectorAll("[data-view]")) button.classList.toggle("on", button.dataset.view === view);
   renderView();

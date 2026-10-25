@@ -9,7 +9,7 @@ const en = {
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
   navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "NIR", navMine: "NIR mining",
-  search: "Search coins", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
+  search: "Search coins or addresses", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
   tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
@@ -18,7 +18,7 @@ const en = {
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navPortfolio: "Portfolio", mineArrow: "Mine →",
-  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", colSentiment: "Sentiment",
+  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", allTransfers: "All transfers", colSentiment: "Sentiment",
   dataBy: "Data:",
 };
 const words = {
@@ -277,6 +277,42 @@ async function load() {
   }
 }
 
+// --- "All transfers": the newest transfers on the tracked networks (/market/chain/feed), refreshed every 20 seconds.
+let transferMin = Number(store.get("nir-transfers-min")) || 1;
+let transfers = null;
+function renderTransfers() {
+  for (const button of document.querySelectorAll("#tf-min [data-min]")) button.classList.toggle("on", Number(button.dataset.min) === transferMin);
+  const box = $("#transfers");
+  if (!transfers) return;
+  if (!transfers.length) {
+    box.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: language === "en" ? "No transfers this large right now." : "Сейчас таких крупных переводов нет." }));
+    return;
+  }
+  box.replaceChildren(...transfers.slice(0, 6).map((item) => {
+    const row = document.createElement("li");
+    const route = document.createElement("div");
+    route.className = "tf-route";
+    route.append(chainDot(item.chain), walletLink(item.from), Object.assign(document.createElement("i"), { textContent: "→" }), walletLink(item.to));
+    const facts = document.createElement("div");
+    facts.className = "tf-facts";
+    const sum = Object.assign(document.createElement("a"), { href: `${CHAINS[item.chain]?.tx ?? "#"}${item.hash}`, target: "_blank", rel: "noopener",
+      textContent: `${amountShort(item.amount)} ${item.token.symbol}` });
+    facts.append(sum, Object.assign(document.createElement("b"), { textContent: usdShort(item.usd) }),
+      Object.assign(document.createElement("span"), { className: "muted", textContent: timeAgo(item.time) }));
+    row.append(route, facts);
+    return row;
+  }));
+}
+async function loadTransfers() {
+  const data = await fetch(`/market/chain/feed?min=${transferMin}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  if (data) { transfers = data.items; renderTransfers(); }
+}
+for (const button of document.querySelectorAll("#tf-min [data-min]")) {
+  button.addEventListener("click", () => { transferMin = Number(button.dataset.min); store.set("nir-transfers-min", String(transferMin)); transfers = null; renderTransfers(); void loadTransfers(); });
+}
+void loadTransfers();
+setInterval(() => { if (!document.hidden) void loadTransfers(); }, 20_000);
+
 for (const button of document.querySelectorAll("[data-tab]")) {
   button.addEventListener("click", () => {
     tab = button.dataset.tab;
@@ -305,6 +341,6 @@ if (location.hash === "#watch") document.querySelector(".tabs [data-tab=watch]")
 
 sortable($("thead"), sort, () => renderTable());
 setupSearch({ overview: () => data });
-setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } } });
+setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } renderTransfers(); } });
 void load();
 setInterval(load, 60_000);
