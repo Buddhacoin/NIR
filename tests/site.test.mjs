@@ -19,7 +19,8 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
-  for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html"]) {
+  for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html",
+    "site/privacy/index.html", "site/terms/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)

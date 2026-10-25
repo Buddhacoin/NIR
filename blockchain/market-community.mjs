@@ -142,5 +142,14 @@ export function createCommunity({ db, now, userFor, json, body, origin, log, lim
     return true;
   }
 
-  return { handle, byUser, sentiment };
+  // Removes everything a deleted account wrote: comments (with their replies), likes, reports, votes.
+  function forget(userId) {
+    const own = "SELECT id FROM comments WHERE user_id = ? OR parent_id IN (SELECT id FROM comments WHERE user_id = ?)";
+    sql(`DELETE FROM likes WHERE user_id = ? OR comment_id IN (${own})`).run(userId, userId, userId);
+    sql(`DELETE FROM reports WHERE user_id = ? OR comment_id IN (${own})`).run(userId, userId, userId);
+    sql("DELETE FROM comments WHERE user_id = ? OR parent_id IN (SELECT id FROM comments WHERE user_id = ?)").run(userId, userId);
+    sql("DELETE FROM votes WHERE user_id = ?").run(userId);
+  }
+
+  return { handle, byUser, sentiment, forget };
 }

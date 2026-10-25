@@ -66,6 +66,11 @@ Signed-out visitors read; posting, liking, reporting and voting need an
 account. The block is shown when sign-in is on or there is already something
 to read.
 
+Anyone can delete their account in Profile → Edit → Delete account; it removes
+the account, its sessions, watchlist, activity, comments (with replies),
+likes, reports and votes at once. The privacy policy and terms of use are at
+`/privacy/` and `/terms/`; Google's consent screen links to both.
+
 ### Turning on Google sign-in
 
 Until the keys are set, the site works as before and shows no sign-in button.
