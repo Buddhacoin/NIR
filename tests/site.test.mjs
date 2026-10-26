@@ -20,7 +20,7 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
   for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html",
-    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html", "site/portfolio/index.html", "site/alerts/index.html", "site/address/index.html", "site/transfers/index.html"]) {
+    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html", "site/portfolio/index.html", "site/alerts/index.html", "site/address/index.html", "site/transfers/index.html", "site/wallets/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
@@ -131,7 +131,7 @@ test("price alerts have English for every text, a service worker and a bell on e
 });
 
 test("the explorer pages have English for every text, and the server routes wallet pages", () => {
-  for (const [page, script] of [["site/address/index.html", "site/address.js"], ["site/transfers/index.html", "site/transfers.js"]]) {
+  for (const [page, script] of [["site/address/index.html", "site/address.js"], ["site/transfers/index.html", "site/transfers.js"], ["site/wallets/index.html", "site/wallets.js"]]) {
     const html = read(page);
     const code = read(script);
     for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `${script}: no English text for ${key}`);

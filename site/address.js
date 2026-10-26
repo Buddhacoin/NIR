@@ -23,6 +23,8 @@ const words = {
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
     failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noMatch: "Под фильтр ничего не подходит.", clearFilters: "Сбросить фильтры",
+    rangeFrom: "от", rangeTo: "до", rangeUsd: "Сумма в долларах", rangeAmount: "Количество токена", sortBy: "Порядок",
+    sortDesc: "↓ Сначала крупные", sortAsc: "↑ Сначала мелкие", resetRange: "Сбросить",
     allTokens: "Все токены", partyFilter: "Адрес или имя", noCounter: "Пока нечего показать.",
     emptyWallet: "На шести сетях у адреса сейчас нет монет и токенов.", activity: (list) => `Активность: ${list}.`,
     txs: (count) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? "транзакция" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "транзакции" : "транзакций"}`,
@@ -43,6 +45,8 @@ const words = {
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
     failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noMatch: "Nothing matches the filter.", clearFilters: "Clear filters",
+    rangeFrom: "from", rangeTo: "to", rangeUsd: "Dollar value", rangeAmount: "Token amount", sortBy: "Order",
+    sortDesc: "↓ Largest first", sortAsc: "↑ Smallest first", resetRange: "Reset",
     allTokens: "All tokens", partyFilter: "Address or name", noCounter: "Nothing to show yet.",
     emptyWallet: "The address holds no coins or tokens on the six networks right now.", activity: (list) => `Activity: ${list}.`,
     txs: (count) => `${count} transaction${count === 1 ? "" : "s"}`,
@@ -73,7 +77,7 @@ let transferChain = "all";
 let dust = true; // hide transfers worth under $1 (mostly spam tokens)
 // The transfers table, as on the analytics sites: time, value and dollars sort; sender, receiver and token filter.
 const tsort = { key: "time", dir: -1 };
-const tfilter = { from: "", to: "", token: null };
+const tfilter = { from: "", to: "", token: null, amount: null, usd: null }; // amount and usd: { min, max } or null
 let transfers = [];
 // Every transfer loaded in either direction-less view, by id: the history and counterparties come from it.
 const ledger = new Map();
@@ -344,7 +348,9 @@ function renderTransfers() {
   $("#node-note").textContent = t().nodeNote;
   // Pages from several networks arrive separately: shown together, newest first unless sorted otherwise.
   const matches = (party, text) => !text || [party?.address, party?.name, knownName(party?.address)].some((value) => value?.toLowerCase().includes(text.toLowerCase()));
-  const passes = (item) => matches(item.from, tfilter.from) && matches(item.to, tfilter.to) && (!tfilter.token || item.token.symbol === tfilter.token);
+  const within = (value, band) => !band || (value !== null && value !== undefined && (band.min === null || value >= band.min) && (band.max === null || value <= band.max));
+  const passes = (item) => matches(item.from, tfilter.from) && matches(item.to, tfilter.to) && (!tfilter.token || item.token.symbol === tfilter.token)
+    && within(item.amount, tfilter.amount) && within(item.usd, tfilter.usd);
   const shown = transfers.filter((item) => worth(item) && passes(item)).sort((left, right) => ((left[tsort.key] ?? -1) - (right[tsort.key] ?? -1)) * tsort.dir);
   for (const head of document.querySelectorAll(".ex-transfers [data-tsort]")) head.dataset.dir = head.dataset.tsort === tsort.key ? (tsort.dir > 0 ? "asc" : "desc") : "";
   for (const head of document.querySelectorAll(".ex-transfers [data-tfilter]")) head.classList.toggle("on", Boolean(tfilter[head.dataset.tfilter]));
@@ -387,14 +393,56 @@ function renderTransfers() {
   if (hasMore() && !loadingMore && autoPages < 5 && box.scrollHeight <= box.clientHeight + 80) { autoPages += 1; void loadTransfers(); }
 }
 let autoPages = 0;
-const filtered = () => Boolean(tfilter.from || tfilter.to || tfilter.token);
-const clearButton = () => { const button = node("button", "pill", t().clearFilters); button.type = "button"; button.addEventListener("click", () => { tfilter.from = tfilter.to = ""; tfilter.token = null; renderTransfers(); }); return button; };
+const filtered = () => Boolean(tfilter.from || tfilter.to || tfilter.token || tfilter.amount || tfilter.usd);
+const clearButton = () => { const button = node("button", "pill", t().clearFilters); button.type = "button";
+  button.addEventListener("click", () => { tfilter.from = tfilter.to = ""; tfilter.token = tfilter.amount = tfilter.usd = null; renderTransfers(); }); return button; };
+// Value and dollars: a range from–to, a few quick thresholds, and the sort order.
+function rangeFilter(key, pop) {
+  const band = tfilter[key] ?? { min: null, max: null };
+  const number = (text) => { const value = Number(String(text).replace(/\s/g, "").replace(",", ".")); return text.trim() && Number.isFinite(value) ? value : null; };
+  const field = (value, placeholder) => Object.assign(node("input", "ex-token"), { type: "text", inputMode: "decimal", value: value ?? "", placeholder });
+  const from = field(band.min, t().rangeFrom);
+  const to = field(band.max, t().rangeTo);
+  const apply = () => {
+    const min = number(from.value);
+    const max = number(to.value);
+    tfilter[key] = min === null && max === null ? null : { min, max };
+    renderTransfers();
+  };
+  from.addEventListener("input", apply);
+  to.addEventListener("input", apply);
+  const fields = node("div", "ex-range");
+  fields.append(from, node("span", "muted", "—"), to);
+  const quick = node("div", "ex-quick");
+  if (key === "usd") {
+    quick.append(...[[1, "$1"], [1_000, "$1K"], [10_000, "$10K"], [100_000, "$100K"], [1_000_000, "$1M"]].map(([value, label]) => {
+      const button = node("button", band.min === value && band.max === null ? "on" : "", `≥ ${label}`);
+      button.type = "button";
+      button.addEventListener("click", () => { from.value = String(value); to.value = ""; apply(); pop.remove(); });
+      return button;
+    }));
+  }
+  const order = node("div", "ex-quick");
+  order.append(...[[-1, t().sortDesc], [1, t().sortAsc]].map(([dir, label]) => {
+    const button = node("button", tsort.key === key && tsort.dir === dir ? "on" : "", label);
+    button.type = "button";
+    button.addEventListener("click", () => { tsort.key = key; tsort.dir = dir; renderTransfers(); pop.remove(); });
+    return button;
+  }));
+  const reset = node("button", "", t().resetRange);
+  reset.type = "button";
+  reset.addEventListener("click", () => { tfilter[key] = null; renderTransfers(); pop.remove(); });
+  pop.classList.add("wide");
+  pop.append(node("small", "muted", key === "usd" ? t().rangeUsd : t().rangeAmount), fields, quick, node("small", "muted", t().sortBy), order, reset);
+  setTimeout(() => from.focus());
+}
 // A header's filter: a field for the sender or receiver, the loaded tokens for the token column.
 function openFilter(head) {
   document.querySelector(".ex-pop")?.remove();
   const key = head.dataset.tfilter;
   const pop = node("div", "ex-pop");
-  if (key === "token") {
+  if (key === "amount" || key === "usd") rangeFilter(key, pop);
+  else if (key === "token") {
     const counts = new Map();
     for (const item of transfers.filter(worth)) counts.set(item.token.symbol, (counts.get(item.token.symbol) ?? 0) + 1);
     const choose = (symbol) => { tfilter.token = symbol; pop.remove(); renderTransfers(); };
@@ -544,7 +592,7 @@ for (const button of document.querySelectorAll("#assets-tabs [data-view]")) butt
 for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });
 for (const button of document.querySelectorAll("#chart-tabs [data-chart]")) button.addEventListener("click", () => { chart = button.dataset.chart; renderChart(); });
 $("#dust").addEventListener("click", () => { dust = !dust; renderTransfers(); });
-for (const head of document.querySelectorAll(".ex-transfers [data-tsort]")) {
+for (const head of document.querySelectorAll(".ex-transfers [data-tsort]:not([data-tfilter])")) {
   head.addEventListener("click", () => {
     const key = head.dataset.tsort;
     if (tsort.key === key) tsort.dir = -tsort.dir; else { tsort.key = key; tsort.dir = -1; }

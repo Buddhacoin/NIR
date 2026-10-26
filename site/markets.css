@@ -806,3 +806,40 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 .ex-transfers .ex-token-cell .coin-cell { gap: 6px; }
 .ex-transfers .ex-token-cell .logo { width: 18px; height: 18px; }
 .ex-transfers th[data-tfilter="token"] .ex-pop { left: auto; right: 0; }
+.suggest a.suggest-title { display: block; padding: 8px 10px 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.suggest a.suggest-title:hover { background: none; color: var(--accent); }
+.w-avatar img { background: #fff; }
+/* Popular wallets (/wallets/). */
+.ex-whale { display: inline-flex; align-items: center; gap: 10px; color: var(--text); }
+.ex-whale .ex-whale-logo { width: 28px; height: 28px; margin: 0; font-size: 12px; }
+.ex-whale span { font-size: 12px; }
+.ex-wallets td .chain-dot { margin-right: 4px; }
+.ex-wallets .pill.on { border-color: var(--accent); color: var(--accent); }
+.ex-pop.wide { min-width: 250px; gap: 6px; }
+.ex-transfers th:last-child .ex-pop, .ex-transfers th[data-tfilter="amount"] .ex-pop { left: auto; right: 0; }
+.ex-pop small { padding: 2px 4px 0; font-size: 11px; font-weight: 700; }
+.ex-range { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
+.ex-range input { width: 100%; min-width: 0; padding: 7px 9px; }
+.ex-quick { display: flex; flex-wrap: wrap; gap: 4px; }
+.ex-quick button { padding: 5px 8px; border: 1px solid var(--line); font-size: 12px; }
+.ex-quick button.on { border-color: var(--accent); color: var(--accent); background: none; }
+/* A coin's discussion: beside the chart on wide screens (a sticky column with its own scroll and
+   the post box at the bottom), under the content on narrower ones. */
+.coin-feed { display: grid; min-width: 0; }
+@media (min-width: 1400px) {
+  .coin-page:has(.coin-feed .community:not([hidden])) { grid-template-columns: 330px minmax(0, 1fr) 360px; }
+  .coin-feed { position: sticky; top: 16px; }
+  .coin-feed .community:not([hidden]) { display: flex; flex-direction: column; max-height: calc(100vh - 32px); overflow: hidden; }
+  .coin-feed .community > * { flex: none; }
+  .coin-feed #comments { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; }
+  .coin-feed #composer { order: 9; margin: 10px 0 0; }
+  .coin-feed .vote-result { min-width: 0; }
+  .coin-feed .vote { padding: 12px; }
+  .coin-main .tabs a[href="#community"] { display: none; }
+}
+@media (min-width: 1101px) and (max-width: 1399px) { .coin-feed { grid-column: 2; } }
+@media (max-width: 1100px) { .coin-feed { display: contents; } }
+.markets-table .ex-logo { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 10px; border-radius: 6px; vertical-align: middle; object-fit: cover; }
+.markets-table .ex-logo.blank { background: var(--soft); color: var(--muted); font-size: 11px; font-weight: 800; }
+.markets-table.no-trust th:last-child, .markets-table.no-trust td:last-child { display: none; }
+.coin-feed .vote-result { flex-wrap: wrap; white-space: normal; row-gap: 6px; }

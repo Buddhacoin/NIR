@@ -271,14 +271,20 @@ wallet activity (`blockchain/market-chain.mjs`):
   chips with the number of transactions sent, their transfers load under
   "All", and an empty wallet says where it was active, with links to the
   explorers.
-- The wallet's transfers table works like the analytics sites': Time, Value
-  and USD sort (click again to flip), From and To filter by address or name,
-  Token filters by one of the loaded tokens; "Clear filters" undoes them.
+- The wallet's transfers table works like the analytics sites': Time sorts
+  (click again to flip); Value and USD open a panel with a from–to range,
+  quick thresholds ($1 to $1M) and the order; From and To filter by address
+  or name; Token filters by one of the loaded tokens; "Clear filters" undoes
+  them.
 - **Popular wallets**: the search, opened empty, offers well-known public
   wallets (exchanges, funds, market makers, a government, founders; their
   own published or widely reported addresses, listed in `site/common.js`)
   next to recent searches and trending tokens with their day's change;
-  typing a name finds them, and their names show wherever they appear.
+  typing a name finds them, and their names and pictures (the
+  organisation's site icon, or the person's name-service avatar) show
+  wherever they appear. The section titles open the full lists:
+  `/wallets/` (every popular wallet with its type, networks and balance,
+  filters by type and a Track button each) and the trending coins.
 - **Balance history** is rebuilt in the browser from the transfers: today's
   holdings, with each loaded transfer undone going back in time, valued at
   today's prices (tokens without a price count as nothing). Older pages load
@@ -349,7 +355,12 @@ volume, fully diluted value, supply, all-time high and low, links (website,
 whitepaper, source, block explorers, well-known wallets, community), a
 converter, a price chart for 1 day to 1 year with volume bars (TradingView
 candles for coins with a Binance pair), the description (Russian when
-CoinGecko has it) and the markets where the coin trades.
+CoinGecko has it) and the markets where the coin trades, each with the
+exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
+column shows only when some market has a rating). On wide screens (1400 px
+and more) the discussion stands in a third column beside the chart, as on the
+big market sites: the day's vote on top, the comments scrolling inside, the
+post box at the bottom.
 
 The page asks the market service for `GET /market/coin/<id>` and
 `GET /market/chart/<id>?days=1|7|30|90|365`. Those are fetched only when
