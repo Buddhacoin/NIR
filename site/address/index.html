@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=25">
+  <link rel="stylesheet" href="/markets.css?v=27">
 </head>
 <body>
   <div class="nirbar">
@@ -96,7 +96,7 @@
           <div class="ex-ptabs" id="direction"><button type="button" data-dir="all" class="on" data-i18n="dirAll">Переводы</button><button type="button" data-dir="in" data-i18n="dirIn">Приток</button><button type="button" data-dir="out" data-i18n="dirOut">Отток</button></div>
           <div class="ex-chart-bar"><div class="seg ex-chains" id="transfer-chain"></div><button class="pill tf-filter on" id="dust" type="button">$ ≥ 1</button></div>
           <p class="muted ex-note" id="node-note" hidden></p>
-          <div class="table-wrap"><table class="ex-table ex-transfers"><thead><tr><th class="left th-sort" data-tsort="time"><span data-i18n="colTime">Время</span></th><th class="left th-filter" data-tfilter="from"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colFrom">От</span></th><th class="left th-filter" data-tfilter="to"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colTo">Кому</span></th><th class="th-sort" data-tsort="amount"><span data-i18n="colValue2">Количество</span></th><th class="left th-filter" data-tfilter="token"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colToken">Токен</span></th><th class="th-sort" data-tsort="usd"><span data-i18n="colUsd">USD</span></th></tr></thead><tbody id="transfers"></tbody></table>
+          <div class="table-wrap"><table class="ex-table ex-transfers"><thead><tr><th class="left th-sort" data-tsort="time"><span data-i18n="colTime">Время</span></th><th class="left th-filter" data-tfilter="from"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colFrom">От</span></th><th class="left th-filter" data-tfilter="to"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colTo">Кому</span></th><th class="th-sort th-filter" data-tsort="amount" data-tfilter="amount"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colValue2">Количество</span></th><th class="left th-filter" data-tfilter="token"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colToken">Токен</span></th><th class="th-sort th-filter" data-tsort="usd" data-tfilter="usd"><svg class="th-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg><span data-i18n="colUsd">USD</span></th></tr></thead><tbody id="transfers"></tbody></table>
             <button class="act ghost ex-more" id="more" type="button" data-i18n="more" hidden>Показать ещё</button></div>
         </article>
       </div>
@@ -118,7 +118,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=14"></script>
-  <script src="/address.js?v=7"></script>
+  <script src="/common.js?v=15"></script>
+  <script src="/address.js?v=8"></script>
 </body>
 </html>

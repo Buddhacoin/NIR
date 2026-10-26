@@ -22,10 +22,10 @@ test("NIR Markets serves one cached overview of prices, market, trends and Fear 
   try {
     assert.equal((await fetch(`${base}/market/overview`)).status, 503);
     await service.refresh();
-    // Four sources, and the trending coins outside the top hundred in one more request.
-    assert.equal(calls, 5);
-    await service.communityTick();
+    // Four sources, the trending coins outside the top hundred and the exchange logos in one request each.
     assert.equal(calls, 6);
+    await service.communityTick();
+    assert.equal(calls, 7);
     const response = await fetch(`${base}/market/overview`);
     assert.equal(response.status, 200);
     assert.match(response.headers.get("cache-control"), /max-age=30/);
@@ -47,7 +47,7 @@ test("NIR Markets serves one cached overview of prices, market, trends and Fear 
     assert.equal(overview.updatedAt, 1_700_000_000_000);
     // Visitors never reach the data sources: more requests, no more fetches.
     await fetch(`${base}/market/overview`);
-    assert.equal(calls, 6);
+    assert.equal(calls, 7);
     assert.equal((await fetch(`${base}/market/other`)).status, 404);
     assert.equal((await fetch(`${base}/market/overview`, { method: "POST" })).status, 404);
   } finally {
@@ -172,7 +172,7 @@ test("pages after the first hundred, the fear and greed history and the exchange
     assert.ok(second.coins.length > 0);
     assert.ok("circulating" in second.coins[0] && "maxSupply" in second.coins[0]);
     await fetch(`${base}/market/coins?page=2`);
-    assert.equal(fetched.filter((url) => url.includes("page=2")).length, 1, "a page is cached");
+    assert.equal(fetched.filter((url) => url.includes("coins/markets") && url.includes("page=2")).length, 1, "a page is cached");
     for (const bad of ["0", "501", "x", "1.5"]) assert.equal((await fetch(`${base}/market/coins?page=${bad}`)).status, 404);
     const history = await (await fetch(`${base}/market/fear-greed`)).json();
     assert.ok(history.history.length >= 1);

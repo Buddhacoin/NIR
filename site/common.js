@@ -177,41 +177,44 @@ function chainDot(chain) {
   }
   return dot;
 }
-// A link to a wallet's page: its open name if it has one, else the short address.
-// Well-known public wallets ("whales"), offered in the search and named wherever they appear.
+// Well-known public wallets ("whales"), offered in the search and on /wallets/, named and pictured
+// wherever they appear. Pictures: the organisation's site icon, or the person's name-service avatar.
+const FAVICON = "https://www.google.com/s2/favicons?sz=64&domain=";
+const ENS_AVATAR = "https://metadata.ens.domains/mainnet/avatar/";
 // Each is the entity's own published or widely reported address.
 const WHALES = [
-  { address: "0xF977814e90dA44bFA03b6295A0616a897441aceC", name: "Binance", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo", name: "Binance: BTC", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6", name: "U.S. Government", kind: { ru: "Государство", en: "Government" } },
-  { address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", name: "Satoshi Nakamoto", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", kind: { ru: "Фонд", en: "Foundation" } },
-  { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0x0000006daea1723962647b7e189d311d757Fb793", name: "Wintermute", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0x3DdfA8eC3052539b6C9549F12cEA2C295cfF5296", name: "Justin Sun", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0xF977814e90dA44bFA03b6295A0616a897441aceC", name: "Binance", logo: `${FAVICON}binance.com`, kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo", name: "Binance: BTC", logo: `${FAVICON}binance.com`, kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6", name: "U.S. Government", logo: `${FAVICON}justice.gov`, kind: { ru: "Государство", en: "Government" } },
+  { address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", name: "Satoshi Nakamoto", logo: `${LOGOS}1/small/bitcoin.png`, kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", logo: `${ENS_AVATAR}vitalik.eth`, kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", logo: `${LOGOS}279/small/ethereum.png`, kind: { ru: "Фонд", en: "Foundation" } },
+  { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", logo: `${FAVICON}jumptrading.com`, kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0x0000006daea1723962647b7e189d311d757Fb793", name: "Wintermute", logo: `${FAVICON}wintermute.com`, kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0x3DdfA8eC3052539b6C9549F12cEA2C295cfF5296", name: "Justin Sun", logo: `${FAVICON}tron.network`, kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", logo: `${FAVICON}binance.com`, kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", logo: `${FAVICON}kraken.com`, kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", logo: `${FAVICON}okx.com`, kind: { ru: "Биржа", en: "Exchange" } },
 ];
 const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
 const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
 
 // A wallet's face: its name-service picture when it has one, else a colour of its own with a letter.
-const ENS_AVATAR = "https://metadata.ens.domains/mainnet/avatar/";
 function walletAvatar(party, className = "w-avatar") {
   const face = document.createElement("span");
   face.className = className;
   const hue = [...party.address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
   face.style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   face.textContent = (party.name?.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "").toUpperCase();
-  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i.test(party.name ?? "")) {
-    const picture = Object.assign(document.createElement("img"), { src: `${ENS_AVATAR}${encodeURIComponent(party.name)}`, alt: "", loading: "lazy" });
+  const known = WHALE.get(party.address.toLowerCase())?.logo;
+  if (known || /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i.test(party.name ?? "")) {
+    const picture = Object.assign(document.createElement("img"), { src: known ?? `${ENS_AVATAR}${encodeURIComponent(party.name)}`, alt: "", loading: "lazy" });
     picture.addEventListener("error", () => picture.remove());
     face.append(picture);
   }
   return face;
 }
+// A link to a wallet's page: its open name if it has one, else the short address.
 function walletLink(party) {
   if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
   if (!party.name && knownName(party.address)) party = { ...party, name: knownName(party.address) };
@@ -432,8 +435,10 @@ function setupSearch({ overview = () => null }) {
   function draw(groups) {
     items = groups.flatMap(([, coins]) => coins);
     active = -1;
-    box.replaceChildren(...groups.filter(([, coins]) => coins.length).flatMap(([title, coins]) => [
-      Object.assign(document.createElement("small"), { textContent: title }),
+    // A section's title opens the full list when there is one (popular wallets, trending coins).
+    box.replaceChildren(...groups.filter(([, coins]) => coins.length).flatMap(([title, coins, href]) => [
+      href ? Object.assign(document.createElement("a"), { className: "suggest-title", href, textContent: `${title} ›` })
+        : Object.assign(document.createElement("small"), { textContent: title }),
       ...coins.map((coin) => {
         const row = document.createElement("a");
         row.setAttribute("role", "option");
@@ -473,13 +478,14 @@ function setupSearch({ overview = () => null }) {
     if (ADDRESS.test(raw)) { draw([[t().wallets, [{ address: raw, name: null }]]]); return; }
     const market = await data();
     if (!query) {
-      draw([[t().recent, recent()], [t().whales, WHALES.slice(0, 6)], [t().trending, (market?.trending ?? []).slice(0, 5).map((coin) => ({ ...coin, trend: true }))]]);
+      draw([[t().recent, recent()], [t().whales, WHALES.slice(0, 6), "/wallets/"],
+        [t().trending, (market?.trending ?? []).slice(0, 5).map((coin) => ({ ...coin, trend: true })), "/#trending"]]);
       return;
     }
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
       coin.symbol.toLowerCase().startsWith(query)).slice(0, 8);
     const whales = WHALES.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 4);
-    draw([[t().whales, whales], [t().coins, local]]);
+    draw([[t().whales, whales, "/wallets/"], [t().coins, local]]);
     clearTimeout(timer);
     timer = setTimeout(async () => {
       asked = query;
@@ -491,7 +497,7 @@ function setupSearch({ overview = () => null }) {
       if (asked !== input.value.trim().toLowerCase()) return; // a newer query is on its way
       const seen = new Set(local.map((coin) => coin.id));
       const merged = [...local, ...found.coins.filter((coin) => !seen.has(coin.id))].slice(0, 10);
-      draw([[t().whales, whales], [t().wallets, wallets.results ?? []], [t().coins, merged]]);
+      draw([[t().whales, whales, "/wallets/"], [t().wallets, wallets.results ?? []], [t().coins, merged]]);
       if (!merged.length && !wallets.results?.length && !whales.length) {
         box.replaceChildren(Object.assign(document.createElement("p"), { textContent: t().none }));
         box.hidden = false;
@@ -499,7 +505,7 @@ function setupSearch({ overview = () => null }) {
     }, 250);
   }
   function move(step) {
-    const rows = [...box.querySelectorAll("a")];
+    const rows = [...box.querySelectorAll("a[role=option]")];
     if (!rows.length) return;
     active = (active + step + rows.length) % rows.length;
     rows.forEach((row, index) => row.classList.toggle("on", index === active));

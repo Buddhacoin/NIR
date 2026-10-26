@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=25">
+  <link rel="stylesheet" href="/markets.css?v=27">
 </head>
 <body>
   <div class="nirbar">
@@ -142,6 +142,12 @@
           </div>
         </article>
 
+
+
+      </section>
+
+      <!-- On wide screens the discussion stands beside the chart, as on the big market sites. -->
+      <aside class="coin-feed">
         <article class="card community" id="community" hidden>
           <h2 data-i18n="community">Обсуждение</h2>
           <div class="vote" id="vote"></div>
@@ -153,8 +159,7 @@
           <div id="comments"></div>
           <button class="act ghost" id="more-comments" type="button" hidden>Показать ещё</button>
         </article>
-
-      </section>
+      </aside>
     </div>
   </main>
 
@@ -173,8 +178,8 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=14"></script>
-  <script src="/coin.js?v=11"></script>
+  <script src="/common.js?v=15"></script>
+  <script src="/coin.js?v=12"></script>
   <script src="/community.js?v=1"></script>
   <script src="/alerts-ui.js?v=1"></script>
 </body>

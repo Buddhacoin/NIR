@@ -176,6 +176,8 @@ function renderAbout() {
 
 // --- Where the coin trades.
 function renderTickers() {
+  // CoinGecko rates few markets now: the trust column shows only when some row has a rating.
+  $(".markets-table").classList.toggle("no-trust", !coin.tickers.some((ticker) => ticker.trust));
   const rows = coin.tickers.map((ticker, index) => {
     const row = document.createElement("tr");
     const cells = [String(index + 1), "", `${ticker.base}/${ticker.target}`, price(ticker.price), big(ticker.volume), ""]
@@ -185,6 +187,8 @@ function renderTickers() {
         cell.textContent = value;
         return cell;
       });
+    if (ticker.logo) cells[1].append(Object.assign(document.createElement("img"), { className: "ex-logo", src: ticker.logo, alt: "", loading: "lazy", width: 22, height: 22 }));
+    else cells[1].append(Object.assign(document.createElement("span"), { className: "ex-logo blank", textContent: ticker.market.slice(0, 1) }));
     cells[1].append(ticker.url ? external(ticker.market, ticker.url) : ticker.market);
     const trust = document.createElement("span");
     trust.className = `trust ${ticker.trust ?? "none"}`;

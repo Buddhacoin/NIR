@@ -105,6 +105,12 @@ export function normalizeTrending(value) {
   })).filter((coin) => coin.id && coin.symbol);
 }
 
+// Exchange logos by CoinGecko id, for the "where it trades" table (one list a day).
+export function normalizeExchangeLogos(list) {
+  if (!Array.isArray(list)) throw new Error("exchange list is invalid");
+  return Object.fromEntries(list.map((item) => [text(item?.id, 40), image(item?.image)]).filter(([id, logo]) => id && logo));
+}
+
 // The index's history, oldest first, for the market overview page.
 export function normalizeFearGreedHistory(value) {
   if (!Array.isArray(value?.data)) throw new Error("fear and greed history is invalid");
@@ -252,7 +258,22 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     }));
     if (state.coins.length) state.updatedAt = now();
     await trendingRows();
+    await refreshExchangeLogos();
     if (accounts?.checkAlerts && !state.errors.coins) await checkAlerts();
+  }
+
+  // Exchange logos, one list a day; a failed fetch keeps the last list and tries again next refresh.
+  let exchangeLogos = {};
+  let exchangeLogosAt = 0;
+  async function refreshExchangeLogos() {
+    if (now() - exchangeLogosAt < 86_400_000) return;
+    try {
+      exchangeLogos = normalizeExchangeLogos(await get(`${COINGECKO}/exchanges?per_page=250&page=1`));
+      exchangeLogosAt = now();
+      delete state.errors.exchangeLogos;
+    } catch (error) {
+      state.errors.exchangeLogos = String(error?.message ?? error).slice(0, 200);
+    }
   }
 
   // Trending coins outside the top hundred: their full rows (1h and 7d change, cap, volume, supply, sparkline).
@@ -347,7 +368,10 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
         "&community_data=false&developer_data=false&sparkline=false", normalizeCoin, 120_000)
       : await onDemand(`chart:${id}:${days}`, `${COINGECKO}/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
         normalizeChart, days === "1" ? 300_000 : 1_800_000);
-    return entry.missing ? null : entry.value;
+    if (entry.missing) return null;
+    if (kind !== "coin") return entry.value;
+    // The markets table shows each exchange's logo; without the list the names stand alone.
+    return { ...entry.value, tickers: entry.value.tickers.map((ticker) => ({ ...ticker, logo: exchangeLogos[ticker.exchange] ?? null })) };
   }
 
   function send(response, status, body, maxAge = 30) {
