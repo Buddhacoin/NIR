@@ -99,3 +99,4 @@ $("#find").addEventListener("click", () => {
 setupSearch({});
 setupPage({ en, render, onAccount: () => { void loadSaved(); } });
 void loadBalances();
+void loadOpenNames(WHALES.map((item) => item.address)).then(render);

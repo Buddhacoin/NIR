@@ -315,3 +315,35 @@ test("the feed answers at once from its last copy while a fresh one is fetched b
   const stop = chain.warm(1_000_000);
   stop();
 });
+
+test("open labels give known wallets a name and a picture, asked fifty at a time and kept a day", async () => {
+  const { createNames, readTags } = await import("../blockchain/market-names.mjs");
+  const oli = "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg";
+  const tags = [
+    { slug: "olympus-hot", name: "Olympus: Hot Wallet", tagType: "name", ordinal: 10, meta: JSON.stringify({ main_entity: "Olympus", "tagIcon ": oli, tooltipUrl: "https://www.olympus.example/en" }) },
+    { slug: "exchange", name: "Exchange", tagType: "generic", ordinal: 0, meta: "{}" },
+    { slug: "olympus-4", name: "Olympus 4", tagType: "name", ordinal: 0, meta: "{}" },
+  ];
+  assert.deepEqual(readTags(tags), { name: "Olympus: Hot Wallet", entity: "Olympus", site: "https://www.olympus.example",
+    logo: "https://www.google.com/s2/favicons?sz=64&domain=www.olympus.example" }, "the site's icon stands in for the labels' own badge");
+  assert.equal(readTags([{ name: "Delos", tagType: "name", meta: JSON.stringify({ appLogoURL: "https://cdn.example/delos.png" }) }]).logo, "https://cdn.example/delos.png");
+  assert.equal(readTags([{ name: "x", tagType: "generic" }]), null);
+
+  let clock = 0;
+  const asked = [];
+  const zeus = `0x${"a".repeat(40)}`;
+  const names = createNames({ now: () => clock, get: async (url) => {
+    asked.push(url);
+    return { addresses: { [zeus.toUpperCase().replace("0X", "0x")]: { tags } } };
+  } });
+  const many = Array.from({ length: 120 }, (_, index) => `0x${index.toString(16).padStart(40, "0")}`);
+  await names.lookup([zeus, ...many, "bc1notevm"]);
+  assert.equal(asked.length, 3, "121 addresses: three requests");
+  assert.equal(names.name(zeus).name, "Olympus: Hot Wallet");
+  assert.equal(names.name(many[0]), null);
+  await names.lookup([zeus]);
+  assert.equal(asked.length, 3, "known for a day");
+  clock += 86_400_001;
+  await names.lookup([zeus]);
+  assert.equal(asked.length, 4);
+});

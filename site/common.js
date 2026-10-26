@@ -177,27 +177,47 @@ function chainDot(chain) {
   }
   return dot;
 }
-// Well-known public wallets ("whales"), offered in the search and on /wallets/, named and pictured
-// wherever they appear. Pictures: the organisation's site icon, or the person's name-service avatar.
+// Well-known public wallets ("whales"), offered in the search and on /wallets/. Names and pictures
+// of wallets come by themselves from the open labels (/market/chain/names, market-names.mjs): the
+// owner's name, logo or site icon. Networks without open labels (the UTXO one) give the owner's site.
 const FAVICON = "https://www.google.com/s2/favicons?sz=64&domain=";
 const ENS_AVATAR = "https://metadata.ens.domains/mainnet/avatar/";
 // Each is the entity's own published or widely reported address.
 const WHALES = [
-  { address: "0xF977814e90dA44bFA03b6295A0616a897441aceC", name: "Binance", logo: `${FAVICON}binance.com`, kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo", name: "Binance: BTC", logo: `${FAVICON}binance.com`, kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6", name: "U.S. Government", logo: `${FAVICON}justice.gov`, kind: { ru: "Государство", en: "Government" } },
-  { address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", name: "Satoshi Nakamoto", logo: `${LOGOS}1/small/bitcoin.png`, kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", logo: `${ENS_AVATAR}vitalik.eth`, kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", logo: `${LOGOS}279/small/ethereum.png`, kind: { ru: "Фонд", en: "Foundation" } },
-  { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", logo: `${FAVICON}jumptrading.com`, kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0x0000006daea1723962647b7e189d311d757Fb793", name: "Wintermute", logo: `${FAVICON}wintermute.com`, kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0x3DdfA8eC3052539b6C9549F12cEA2C295cfF5296", name: "Justin Sun", logo: `${FAVICON}tron.network`, kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", logo: `${FAVICON}binance.com`, kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", logo: `${FAVICON}kraken.com`, kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", logo: `${FAVICON}okx.com`, kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0xF977814e90dA44bFA03b6295A0616a897441aceC", name: "Binance", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo", name: "Binance: BTC", site: "binance.com", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6", name: "U.S. Government", site: "justice.gov", kind: { ru: "Государство", en: "Government" } },
+  { address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", name: "Satoshi Nakamoto", site: "bitcoin.org", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", ens: "vitalik.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", kind: { ru: "Фонд", en: "Foundation" } },
+  { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0x0000006daea1723962647b7e189d311d757Fb793", name: "Wintermute", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0x71660c4005BA85c37ccec55d0C4493E66Fe775d3", name: "Coinbase", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", kind: { ru: "Биржа", en: "Exchange" } },
 ];
 const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
 const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
+// Open labels fetched by the page: lower-case address → { name, logo, site, entity }.
+const openNames = new Map();
+async function loadOpenNames(addresses) {
+  const wanted = [...new Set(addresses.filter((address) => /^0x[0-9a-fA-F]{40}$/.test(address ?? "") && !openNames.has(address.toLowerCase())))].slice(0, 50);
+  if (!wanted.length) return;
+  for (const address of wanted) openNames.set(address.toLowerCase(), null);
+  const answer = await fetch(`/market/chain/names?addresses=${wanted.join(",")}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  for (const [address, value] of Object.entries(answer?.names ?? {})) openNames.set(address, value);
+}
+// A wallet's picture: the logo its label gives, the owner's site icon, or its name-service avatar.
+function walletPicture(party) {
+  const lower = party.address.toLowerCase();
+  const whale = WHALE.get(lower);
+  if (party.logo) return party.logo;
+  if (openNames.get(lower)?.logo) return openNames.get(lower).logo;
+  if (whale?.site) return `${FAVICON}${whale.site}`;
+  const ens = whale?.ens ?? (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i.test(party.name ?? "") ? party.name : null);
+  return ens ? `${ENS_AVATAR}${encodeURIComponent(ens)}` : null;
+}
 
 // A wallet's face: its name-service picture when it has one, else a colour of its own with a letter.
 function walletAvatar(party, className = "w-avatar") {
@@ -206,9 +226,9 @@ function walletAvatar(party, className = "w-avatar") {
   const hue = [...party.address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
   face.style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   face.textContent = (party.name?.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "").toUpperCase();
-  const known = WHALE.get(party.address.toLowerCase())?.logo;
-  if (known || /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i.test(party.name ?? "")) {
-    const picture = Object.assign(document.createElement("img"), { src: known ?? `${ENS_AVATAR}${encodeURIComponent(party.name)}`, alt: "", loading: "lazy" });
+  const source = walletPicture(party);
+  if (source) {
+    const picture = Object.assign(document.createElement("img"), { src: source, alt: "", loading: "lazy" });
     picture.addEventListener("error", () => picture.remove());
     face.append(picture);
   }
@@ -512,6 +532,8 @@ function setupSearch({ overview = () => null }) {
     rows[active].scrollIntoView({ block: "nearest" });
   }
   input.addEventListener("focus", () => { void update(); });
+  // The popular wallets' pictures come from the open labels; the list is drawn again once they are in.
+  void loadOpenNames(WHALES.map((item) => item.address)).then(() => { if (!box.hidden && !input.value.trim()) void update(); });
   input.addEventListener("input", () => { void update(); });
   input.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") { event.preventDefault(); move(1); }

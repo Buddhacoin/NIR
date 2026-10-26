@@ -103,7 +103,7 @@ function renderHead() {
   const hue = [...address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
   $("#avatar").style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   $("#avatar").textContent = (data.name ?? "◎")[0].toUpperCase();
-  const face = walletAvatar({ address, name: data.name }).querySelector("img");
+  const face = walletAvatar({ address, name: data.name, logo: data.logo }).querySelector("img");
   if (face) $("#avatar").append(face);
   $("#total").textContent = price(data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0));
   $("#tags").replaceChildren(...data.networks.filter((item) => item.ok && item.active).map((item) => {
