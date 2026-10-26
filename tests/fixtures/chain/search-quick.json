@@ -1,0 +1,11 @@
+[
+  { "type": "token", "address_hash": "0x7712c34205737192402172409a8F7ccef8aA2AEc", "name": "Olympus Token", "symbol": "OLY" },
+  { "type": "metadata_tag", "address_hash": "0x7712c34205737192402172409a8F7ccef8aA2AEc", "is_smart_contract_address": true,
+    "metadata": { "name": "Olympus", "slug": "olympus", "tagType": "protocol" } },
+  { "type": "metadata_tag", "address_hash": "0x13e003a57432062e4EdA204F687bE80139AD622f", "is_smart_contract_address": false,
+    "metadata": { "name": "Olympus: Digital Asset Fund", "slug": "olympus-digital-asset-fund", "tagType": "name" } },
+  { "type": "metadata_tag", "address_hash": "0x13e003a57432062e4EdA204F687bE80139AD622f", "is_smart_contract_address": false,
+    "metadata": { "name": "Olympus", "slug": "olympus", "tagType": "protocol" } },
+  { "type": "ens_domain", "address_hash": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "is_smart_contract_address": false,
+    "ens_info": { "name": "vitalik.eth" } }
+]

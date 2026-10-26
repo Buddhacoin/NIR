@@ -85,6 +85,14 @@ recent searches (kept in the browser) and trending coins; while typing it
 shows matches from the top 100 at once and then the rest from
 `GET /market/search?q=…`, each query cached for 10 minutes.
 
+As on the on-chain analytics sites, everything is searched at once and shown
+in sections: **Wallets and entities** first (the popular wallets, then, from
+three letters, `GET /market/chain/search?q=`: the explorer's quick search,
+whose open labels name wallets such as a fund's or a market maker's, with
+their organisation, people's wallets ahead of contracts, an hour's cache),
+then **Coins**. The popular wallets page's filter asks the same search, so a
+wallet beyond the loaded lists is found by its name too.
+
 ## Accounts: Google sign-in, profiles and the watchlist
 
 Visitors can sign in with Google (`blockchain/market-accounts.mjs`, inside the
@@ -160,8 +168,7 @@ Never put the secret in the repository or in a chat.
 
 ### Profile pictures
 
-A user may choose a picture by tapping theirs on their profile (or "Change
-photo" in the profile form). The page cuts it to a square and sends a 128 px
+A user may choose a picture with "Change photo" in the profile form (Edit). The page cuts it to a square and sends a 128 px
 JPEG (`PUT /market/me/avatar`, a data address of at most 12 KB whose bytes
 must match its kind; `DELETE` removes it). It is served from
 `GET /market/avatar/<username>` and shows on the profile, in the header and
@@ -187,7 +194,7 @@ profile's buttons:
    is removed; more pages load on request.
 4. **All accounts**: each wallet with its largest holding, the count of the
    others and its value, a tab of its own with its tokens, × to remove it and
-   + to add one, by connecting MetaMask (the browser wallet gives its public
+   "Add +" (right after All accounts) to add one, by connecting MetaMask (the browser wallet gives its public
    address, nothing else) or by pasting an address. The addresses are private.
 
 Choosing an account or a network (top right) narrows every quadrant. The

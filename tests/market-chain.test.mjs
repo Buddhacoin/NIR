@@ -20,6 +20,7 @@ function explorers({ fail = [] } = {}) {
     if (url.includes("api.coingecko.com/api/v3/coins/markets")) return fixture("coin-markets.json");
     if (url.includes("mempool.space/api/address/") && url.endsWith("/txs")) return fixture("utxo-txs.json");
     if (url.includes("mempool.space/api/address/")) return fixture("utxo-address.json");
+    if (url.includes("/search/quick?q=")) return fixture("search-quick.json");
     if (url.includes("/search?q=")) return fixture("search.json");
     if (url.includes("/coin-balance-history-by-day")) return fixture("history.json");
     if (url.includes("/token-balances")) return fixture("token-balances.json");
@@ -167,7 +168,12 @@ test("an address shows its holdings on every network, its transfers a page at a 
 
   assert.deepEqual(await chain.search(UTXO), [{ address: UTXO, name: null, kind: "utxo" }]);
   const found = await chain.search("vitalik.eth");
-  assert.equal(found[0].name, "vitalik.eth");
+  assert.ok(found.some((item) => item.name === "vitalik.eth"));
+  // Wallets by name, as the analytics sites find entities: people's wallets first, then contracts.
+  const entity = await chain.search("olympus");
+  assert.deepEqual(entity.slice(0, 2).map((item) => [item.name, item.entity, item.contract]),
+    [["Olympus: Digital Asset Fund", "Olympus", false], ["vitalik.eth", null, false]]);
+  assert.deepEqual(entity.at(-1).address, "0x7712c34205737192402172409a8F7ccef8aA2AEc");
   assert.deepEqual(await chain.search("ab"), []);
 });
 

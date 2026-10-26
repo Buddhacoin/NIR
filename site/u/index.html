@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=33">
+  <link rel="stylesheet" href="/markets.css?v=34">
 </head>
 <body>
   <div class="nirbar">
@@ -50,9 +50,9 @@
     <p class="status" id="status">Загружаю профиль…</p>
     <div class="profile-page" id="page" hidden>
       <header class="profile-head">
-        <!-- The owner taps the picture to choose a new one. -->
-        <label class="avatar-pick" id="avatar-pick"><span id="avatar"></span><input type="file" id="avatar-file" accept="image/*" hidden disabled>
-          <span class="avatar-edit" aria-hidden="true">📷</span></label>
+        <!-- The picture is changed in the profile form ("Change photo"). -->
+        <span class="avatar-pick" id="avatar-pick"><span id="avatar"></span></span>
+        <input type="file" id="avatar-file" accept="image/*" hidden>
         <div class="who">
           <h1><span id="display-name"></span> <span class="muted handle">@<span id="username"></span></span></h1>
           <div class="profile-total" id="profile-total"></div>
@@ -106,8 +106,8 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=18"></script>
-  <script src="/dashboard.js?v=2"></script>
-  <script src="/profile.js?v=12"></script>
+  <script src="/common.js?v=19"></script>
+  <script src="/dashboard.js?v=3"></script>
+  <script src="/profile.js?v=13"></script>
 </body>
 </html>

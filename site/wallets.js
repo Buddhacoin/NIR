@@ -17,11 +17,11 @@ const words = {
   ru: { groups: { all: "Все", featured: "Известные", exchange: "Биржи", fund: "Фонды", "hot-wallet": "Горячие кошельки" },
     kinds: { exchange: "Биржа", fund: "Фонд", "hot-wallet": "Горячий кошелёк" }, filter: "Имя или адрес",
     loading: "загружаю…", unknown: "—", track: "☆ Отследить", tracked: "★ Отслеживается", empty: "Ничего не найдено.",
-    loadingList: "Загружаю список…", signIn: "Войдите через Google, чтобы отслеживать адреса." },
+    loadingList: "Загружаю список…", contract: "Контракт", wallet: "Кошелёк", signIn: "Войдите через Google, чтобы отслеживать адреса." },
   en: { groups: { all: "All", featured: "Well known", exchange: "Exchanges", fund: "Funds", "hot-wallet": "Hot wallets" },
     kinds: { exchange: "Exchange", fund: "Fund", "hot-wallet": "Hot wallet" }, filter: "Name or address",
     loading: "loading…", unknown: "—", track: "☆ Track", tracked: "★ Tracked", empty: "Nothing found.",
-    loadingList: "Loading the list…", signIn: "Sign in with Google to track addresses." },
+    loadingList: "Loading the list…", contract: "Contract", wallet: "Wallet", signIn: "Sign in with Google to track addresses." },
 };
 const t = () => words[language === "en" ? "en" : "ru"];
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
@@ -56,8 +56,14 @@ function render() {
   }));
   markSort($("thead"), sort);
   const needle = query.toLowerCase();
-  const rows = sortBy(rowsOf().filter((item) => !needle || [item.name, item.address, item.kind].some((value) => value?.toLowerCase().includes(needle))),
-    sort, (item) => balances.get(item.address)?.total ?? null);
+  const shown = rowsOf().filter((item) => !needle || [item.name, item.address, item.kind].some((value) => value?.toLowerCase().includes(needle)));
+  // Wallets the open labels know by that name, beyond the lists loaded so far (BlackRock, a fund's wallet…).
+  if (needle && found.query === needle) {
+    const have = new Set(shown.map((item) => item.address.toLowerCase()));
+    shown.push(...found.items.filter((item) => !have.has(item.address.toLowerCase())).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
+      kind: item.entity ?? (item.contract ? t().contract : t().wallet), logo: item.logo ?? null })));
+  }
+  const rows = sortBy(shown, sort, (item) => balances.get(item.address)?.total ?? null);
   const list = group === "all" ? { loading: LABELED.some((key) => lists[key]?.loading), next: LABELED.some((key) => lists[key]?.next || !lists[key]) } : lists[group];
   $("#rows").replaceChildren(...(rows.length ? rows.map((item, index) => {
     const row = node("tr", "coin");
@@ -152,7 +158,21 @@ async function toggle(address) {
 }
 
 sortable($("thead"), sort, render);
-$("#filter").addEventListener("input", (event) => { query = event.target.value.trim(); render(); });
+const found = { query: "", items: [] };
+let findTimer = null;
+$("#filter").addEventListener("input", (event) => {
+  query = event.target.value.trim();
+  render();
+  clearTimeout(findTimer);
+  const needle = query.toLowerCase();
+  if (needle.length < 3) return;
+  findTimer = setTimeout(async () => {
+    const answer = await fetch(`/market/chain/search?q=${encodeURIComponent(needle)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    if (needle !== query.toLowerCase()) return;
+    Object.assign(found, { query: needle, items: (answer?.results ?? []).filter((item) => /^0x[0-9a-fA-F]{40}$/.test(item.address)) });
+    render();
+  }, 300);
+});
 $("#more").addEventListener("click", () => void loadGroup());
 // The next page comes by itself when the "show more" button scrolls into view.
 new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting) && group !== "featured") void loadGroup(); }).observe($("#more"));
