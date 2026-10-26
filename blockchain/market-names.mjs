@@ -7,10 +7,19 @@
 // and addresses are asked fifty at a time. The same service lists every address
 // under a group tag (exchanges, funds, hot wallets), fifty a page: the popular
 // wallets directory pages through those lists.
+//
+// NIR Markets keeps its own book of wallet names (SQLite, `file`), which only grows: every label
+// looked up, every wallet the search finds, and, in the background, every address of the open
+// labels' group lists (exchanges, funds, hot and cold wallets, OTC desks, treasuries, well-known
+// people), one page every few seconds, the lists walked again each week. The search reads the book
+// first, so a name once seen is found at once and stays when a source is down.
+import { DatabaseSync } from "node:sqlite";
 
 const SERVICE = "https://metadata.services.blockscout.com/api/v1/metadata";
 const LISTS = "https://metadata.services.blockscout.com/api/v1/addresses";
 export const GROUPS = ["exchange", "fund", "hot-wallet"];
+// Every group list the book copies, walked in this order.
+export const CRAWLED = ["exchange", "fund", "hot-wallet", "cold-wallet", "otc", "treasury", "celebrity"];
 const FAVICON = "https://www.google.com/s2/favicons?sz=64&domain=";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 // Sites whose icon says nothing about the wallet's owner.
@@ -45,10 +54,34 @@ export function readTags(tags) {
   };
 }
 
-export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600_000, batch = 50 } = {}) {
+export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600_000, batch = 50, file = ":memory:" } = {}) {
+  const db = new DatabaseSync(file);
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS wallet_names (address TEXT PRIMARY KEY, name TEXT, entity TEXT, site TEXT, logo TEXT,
+      groups TEXT NOT NULL DEFAULT '', source TEXT NOT NULL, checked_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS name_crawl (slug TEXT PRIMARY KEY, token TEXT, finished_at INTEGER NOT NULL DEFAULT 0);`);
+  const sql = (text) => db.prepare(text);
+  // A name is kept for good; it is asked again after a week, and an unnamed address after a day.
+  const save = (address, value, source) => sql(`INSERT INTO wallet_names (address, name, entity, site, logo, source, checked_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (address) DO UPDATE SET
+      name = COALESCE(excluded.name, wallet_names.name), entity = COALESCE(excluded.entity, wallet_names.entity),
+      site = COALESCE(excluded.site, wallet_names.site), logo = COALESCE(excluded.logo, wallet_names.logo),
+      source = CASE WHEN excluded.name IS NULL THEN wallet_names.source ELSE excluded.source END, checked_at = excluded.checked_at`)
+    .run(address, value?.name ?? null, value?.entity ?? null, value?.site ?? null, value?.logo ?? null, source, now());
+  const stored = (address) => {
+    const row = sql("SELECT name, entity, site, logo, checked_at FROM wallet_names WHERE address = ?").get(address);
+    if (!row) return null;
+    const value = row.name ? { name: row.name, entity: row.entity, site: row.site, logo: row.logo } : null;
+    return { value, until: row.checked_at + (value ? 7 * ttl : ttl) };
+  };
   const known = new Map(); // lower-case address → { at, until, value }
   const asking = new Map(); // lower-case address → the lookup in flight
-  const fresh = (address) => { const entry = known.get(address); return entry && now() < entry.until; };
+  const fresh = (address) => {
+    if (!known.has(address)) { const row = stored(address); if (row) known.set(address, row); }
+    const entry = known.get(address);
+    return entry && now() < entry.until;
+  };
 
   // Looks the addresses up (the ones not known yet); resolves once they are in.
   async function lookup(addresses) {
@@ -62,7 +95,9 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
         const byAddress = new Map(Object.entries(answer?.addresses ?? {}).map(([address, entry]) => [address.toLowerCase(), entry]));
         for (const address of group) {
           const value = byAddress.has(address) ? readTags(byAddress.get(address)?.tags) : null;
-          known.set(address, { until: now() + (answer ? ttl : retry), value });
+          // The book keeps the old name when the service did not answer.
+          if (answer) save(address, value, "labels");
+          known.set(address, answer ? { until: now() + (value ? 7 * ttl : ttl), value } : { until: now() + retry, value: stored(address)?.value ?? null });
           asking.delete(address);
         }
         if (known.size > 50_000) for (const key of [...known.keys()].slice(0, 10_000)) known.delete(key);
@@ -71,7 +106,67 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     }
     await Promise.all(wanted.map((address) => asking.get(address)).filter(Boolean));
   }
-  const name = (address) => (typeof address === "string" ? known.get(address.toLowerCase())?.value ?? null : null);
+  const name = (address) => {
+    if (typeof address !== "string") return null;
+    const key = address.toLowerCase();
+    if (!known.has(key)) { const row = stored(key); if (row) known.set(key, row); }
+    return known.get(key)?.value ?? null;
+  };
+
+  // Wallets found elsewhere (the explorer's search, the name service) join the book.
+  function remember(items, source) {
+    for (const item of items) {
+      if (!EVM_ADDRESS.test(item?.address ?? "") || !clean(item.name, 60)) continue;
+      const key = item.address.toLowerCase();
+      const old = sql("SELECT name, source FROM wallet_names WHERE address = ?").get(key);
+      if (old?.name && old.source === "labels") continue; // an open label outranks a search hit
+      save(key, { name: clean(item.name, 60), entity: clean(item.entity ?? "", 40) || null, site: null, logo: item.logo ?? null }, source);
+      known.delete(key);
+    }
+  }
+  // The book's wallets whose name or organisation contains the words; spaces do not count.
+  function search(text, limit = 10) {
+    const needle = String(text ?? "").toLowerCase().replace(/\s+/g, "").replace(/[%_]/g, "");
+    if (needle.length < 2) return [];
+    const like = `%${needle}%`;
+    return sql(`SELECT address, name, entity, logo, groups FROM wallet_names WHERE name IS NOT NULL
+      AND (REPLACE(LOWER(name), ' ', '') LIKE ? OR REPLACE(LOWER(IFNULL(entity, '')), ' ', '') LIKE ?)
+      ORDER BY REPLACE(LOWER(name), ' ', '') LIKE ? DESC, groups != '' DESC, LENGTH(name) LIMIT ?`).all(like, like, `${needle}%`, limit)
+      .map((row) => ({ address: row.address, name: row.name, entity: row.entity, logo: row.logo, groups: row.groups ? row.groups.split(",") : [] }));
+  }
+  const count = () => sql("SELECT COUNT(*) AS n FROM wallet_names WHERE name IS NOT NULL").get().n;
+
+  // One page of the next group list into the book; a list walked to its end is walked again in a week.
+  async function crawl() {
+    const due = CRAWLED.find((slug) => (sql("SELECT finished_at FROM name_crawl WHERE slug = ?").get(slug)?.finished_at ?? 0) < now() - 7 * ttl);
+    if (!due) return false;
+    const token = sql("SELECT token FROM name_crawl WHERE slug = ?").get(due)?.token ?? null;
+    const answer = await get(`${LISTS}?slug=${due}&tagType=generic&chain_id=1&page_size=50${token ? `&page_token=${encodeURIComponent(token)}` : ""}`);
+    const addresses = (Array.isArray(answer?.items) ? answer.items : []).filter((address) => EVM_ADDRESS.test(address)).map((address) => address.toLowerCase());
+    await lookup(addresses);
+    for (const address of addresses) {
+      save(address, name(address), "labels");
+      sql(`UPDATE wallet_names SET groups = CASE WHEN groups = '' THEN ? WHEN (',' || groups || ',') LIKE ? THEN groups ELSE groups || ',' || ? END
+        WHERE address = ?`).run(due, `%,${due},%`, due, address);
+    }
+    const next = typeof answer?.next_page_params?.page_token === "string" && EVM_ADDRESS.test(answer.next_page_params.page_token)
+      ? answer.next_page_params.page_token : null;
+    sql(`INSERT INTO name_crawl (slug, token, finished_at) VALUES (?, ?, ?) ON CONFLICT (slug) DO UPDATE SET token = excluded.token,
+      finished_at = excluded.finished_at`).run(due, next, next ? 0 : now());
+    return true;
+  }
+  // The background walk: a page every few seconds, never two at once, a failure waits a minute.
+  function start(every = 5_000) {
+    let busy = false;
+    let pauseUntil = 0;
+    const timer = setInterval(() => {
+      if (busy || now() < pauseUntil) return;
+      busy = true;
+      crawl().catch(() => { pauseUntil = now() + 60_000; }).finally(() => { busy = false; });
+    }, every);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
 
   // One page of a group's addresses with their names and pictures; pages are kept six hours.
   const pages = new Map();
@@ -90,5 +185,5 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     if (pages.size > 500) pages.delete(pages.keys().next().value);
     return value;
   }
-  return { lookup, name, directory };
+  return { lookup, name, directory, remember, search, count, crawl, start };
 }

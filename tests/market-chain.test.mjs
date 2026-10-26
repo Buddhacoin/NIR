@@ -17,6 +17,7 @@ function explorers({ fail = [] } = {}) {
     asked.push(url);
     if (fail.some((part) => url.includes(part))) throw Object.assign(new Error("down"), { status: 502 });
     if (url.includes("/coins/list?include_platform=true")) return fixture("coin-list.json");
+    if (url.includes("/asset_platforms")) return [{ id: "ethereum", chain_identifier: 1 }, { id: "optimistic-ethereum", chain_identifier: 10 }];
     if (url.includes("api.coingecko.com/api/v3/coins/markets")) return fixture("coin-markets.json");
     if (url.includes("mempool.space/api/address/") && url.endsWith("/txs")) return fixture("utxo-txs.json");
     if (url.includes("mempool.space/api/address/")) return fixture("utxo-address.json");
@@ -176,7 +177,7 @@ test("an address shows its holdings on every network, its transfers a page at a 
   assert.deepEqual(entity.at(-1).address, "0x7712c34205737192402172409a8F7ccef8aA2AEc");
   // A person's name finds the name-service name made of it, first.
   const person = await chain.search("Vitalik");
-  assert.deepEqual([person[0].name, person[0].ens], ["vitalik.eth", true]);
+  assert.equal(person.find((item) => item.name === "vitalik.eth")?.ens, true);
   assert.deepEqual(await chain.search("ab"), []);
 });
 
@@ -351,10 +352,48 @@ test("open labels give known wallets a name and a picture, asked fifty at a time
   assert.equal(names.name(zeus).name, "Olympus: Hot Wallet");
   assert.equal(names.name(many[0]), null);
   await names.lookup([zeus]);
-  assert.equal(asked.length, 3, "known for a day");
+  assert.equal(asked.length, 3, "known");
   clock += 86_400_001;
+  await names.lookup([zeus, many[0]]);
+  assert.equal(asked.length, 4, "an unnamed address is asked again after a day, a named one is kept a week");
+  assert.ok(asked.at(-1).includes(many[0]) && !asked.at(-1).includes(zeus));
+  clock += 7 * 86_400_000;
   await names.lookup([zeus]);
-  assert.equal(asked.length, 4);
+  assert.equal(asked.length, 5);
+});
+
+test("NIR Markets keeps its own book of wallet names: open labels, search finds and the group lists, kept across restarts", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "names-"));
+  const file = join(dir, "names.db");
+  const hera = `0x${"b".repeat(40)}`;
+  const athena = `0x${"c".repeat(40)}`;
+  let clock = 1_700_000_000_000;
+  const get = async (url) => {
+    if (url.includes("/addresses?slug=exchange")) return { items: [hera], next_page_params: null };
+    if (url.includes("/addresses?slug=")) return { items: [], next_page_params: null };
+    return { addresses: { [hera]: { tags: [{ name: "Hera Exchange: Hot Wallet", tagType: "name", meta: JSON.stringify({ main_entity: "Hera Exchange" }) }] } } };
+  };
+  try {
+    const names = createNames({ get, now: () => clock, file });
+    assert.equal(await names.crawl(), true, "a page of the first group list");
+    assert.deepEqual(names.search("hera exchange").map((item) => [item.name, item.groups]), [["Hera Exchange: Hot Wallet", ["exchange"]]]);
+    names.remember([{ address: athena, name: "Athena Capital", entity: "Athena" }], "search");
+    names.remember([{ address: hera, name: "a guess" }], "search");
+    assert.equal(names.name(hera).name, "Hera Exchange: Hot Wallet", "an open label outranks a search hit");
+    // A restart, with the sources down: the book still knows both.
+    const again = createNames({ get: async () => { throw new Error("down"); }, now: () => clock, file });
+    assert.deepEqual(again.search("athena").map((item) => item.name), ["Athena Capital"]);
+    assert.equal(again.name(hera).name, "Hera Exchange: Hot Wallet");
+    assert.equal(again.count(), 2);
+    for (let page = 0; page < 10 && await names.crawl(); page += 1);
+    assert.equal(await names.crawl(), false, "every list walked; again in a week");
+    clock += 8 * 86_400_000;
+    assert.equal(await names.crawl(), true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("the popular wallets directory pages through a group's open labels, fifty at a time", async () => {
@@ -379,4 +418,103 @@ test("the popular wallets directory pages through a group's open labels, fifty a
   const count = asked.length;
   await names.directory("exchange");
   assert.equal(asked.length, count, "a page is kept");
+});
+
+test("when the explorer is too slow for a wallet's tokens, the largest coins' tokens come from the network's node", async () => {
+  const { get } = explorers();
+  const slow = (url) => (url.includes("/token-balances") ? new Promise((resolve) => { setTimeout(() => resolve(get(url)), 300); }) : get(url));
+  const { rpc, calls } = node();
+  const chain = createChain({ get: slow, rpc, tokenWait: 50 });
+  const data = await chain.holdings(EXCHANGE);
+  const eth = data.networks.find((item) => item.chain === "eth");
+  assert.deepEqual([eth.partial, eth.listed], [true, true]);
+  assert.ok(data.assets.some((asset) => asset.chain === "eth" && asset.token.address), "a listed token read from the node");
+  // The listed tokens' balances were read from the network's node in one call (balanceOf for each).
+  assert.ok(calls.some((call) => call.url === "https://eth.drpc.org" && call.method === "eth_call" && call.params[0].data.includes("70a08231")));
+});
+
+test("a wallet's tokens on the main explorer network come from Ethplorer, without thinly held spam", async () => {
+  const { get } = explorers();
+  const token = (address, symbol, rawBalance, decimals, rate, holdersCount) => ({ rawBalance, tokenInfo: { address, symbol, name: symbol, decimals: String(decimals), holdersCount, price: { rate } } });
+  const withEthplorer = (url) => (url.startsWith("https://api.ethplorer.io/getAddressInfo/") ? Promise.resolve({ tokens: [
+    token("0x1111111111111111111111111111111111111111", "ZEUS", "2000000", 6, 3, 50_000), // 2 ZEUS at $3
+    token("0x2222222222222222222222222222222222222222", "HERA", "1000000000000000000000", 18, 100, 12), // spam: 12 holders
+    token("0x3333333333333333333333333333333333333333", "NOPRICE", "5", 0, null, 9_000),
+  ] }) : get(url));
+  const chain = createChain({ get: withEthplorer, rpc: node().rpc, tokenWait: 50 });
+  const data = await chain.holdings(EXCHANGE);
+  const eth = data.assets.filter((asset) => asset.chain === "eth" && asset.token.address);
+  assert.deepEqual(eth.map((asset) => [asset.token.symbol, asset.amount, asset.usd]), [["ZEUS", 2, 6]]);
+  assert.equal(data.networks.find((item) => item.chain === "eth").partial, false);
+});
+
+test("token pictures are fetched once from the first source that has a real picture, kept and served from this server", async () => {
+  const { createLogos, checksum } = await import("../blockchain/market-logos.mjs");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createServer } = await import("node:http");
+  assert.equal(checksum("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"), "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+  const dir = mkdtempSync(join(tmpdir(), "logos-"));
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const asked = [];
+  const fetchBytes = async (source) => {
+    asked.push(source);
+    if (source.includes("bad")) return Buffer.from("<svg onload=alert(1)>");
+    if (source.includes("trustwallet")) return png;
+    throw Object.assign(new Error("gone"), { status: 404 });
+  };
+  const logos = createLogos({ dir, fetchBytes, catalogue: (network) => (network === "base" ? "base" : null) });
+  const zeus = `0x${"ab".repeat(20)}`;
+  try {
+    assert.equal(logos.url("base", zeus, "ZEUS", ["https://gone.example/z.png", "https://bad.example/z.svg"]), `/market/logo/base/${zeus}`);
+    assert.equal(logos.url("bsc", null, "BNB", ["https://cdn.example/bnb.png"]), "/market/logo/bsc/native-BNB");
+    const server = createServer((request, response) => { void logos.handle(request, response, new URL(request.url, "http://x")); });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const first = await fetch(`${base}/market/logo/base/${zeus}`);
+      assert.equal(first.status, 200);
+      assert.equal(first.headers.get("content-type"), "image/png");
+      assert.deepEqual(Buffer.from(await first.arrayBuffer()), png);
+      assert.ok(asked.at(-1).endsWith(`/blockchains/base/assets/${checksum(zeus)}/logo.png`), "the open assets catalogue, by the mixed-case address");
+      const count = asked.length;
+      assert.equal((await fetch(`${base}/market/logo/base/${zeus}`)).status, 200);
+      assert.equal(asked.length, count, "kept: not fetched again");
+      assert.equal((await fetch(`${base}/market/logo/base/..%2f..%2fetc`)).status, 404);
+      assert.equal((await fetch(`${base}/market/logo/bsc/native-BNB`)).status, 404, "no source had a picture");
+    } finally { await new Promise((resolve) => server.close(resolve)); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("OpenSea profiles: a wallet's username, picture and linked X account; found by name; checked only with an X account", async () => {
+  const { createOpenSea, readAccount } = await import("../blockchain/market-opensea.mjs");
+  const zeus = `0x${"d".repeat(40)}`;
+  const profile = { address: zeus, username: "zeus_olympus", profile_image_url: "https://i.example/zeus.png",
+    social_media_accounts: [{ platform: "twitter", username: "zeusolympus" }] };
+  assert.deepEqual(readAccount(profile), { address: zeus, username: "zeus_olympus", picture: "https://i.example/zeus.png", x: "zeusolympus", checked: true });
+  assert.equal(readAccount({ address: zeus, username: "" }), null, "no username, no name");
+  assert.equal(readAccount({ address: zeus, username: "0xddddddd" }), null, "an address for a username names no one");
+  assert.equal(createOpenSea({ key: "" }), null, "no key, no OpenSea");
+
+  const asked = [];
+  const get = async (url, headers) => {
+    asked.push([url, headers]);
+    if (url.endsWith(`/accounts/${zeus}`) || url.endsWith("/accounts/zeusolympus")) return profile;
+    return null; // OpenSea's 404
+  };
+  const opensea = createOpenSea({ key: "k", get, perMinute: 3 });
+  assert.equal((await opensea.account(zeus)).username, "zeus_olympus");
+  assert.equal(asked[0][1]["x-api-key"], "k");
+  await opensea.account(zeus);
+  assert.equal(asked.length, 1, "kept a day");
+  assert.equal(await opensea.account("<script>"), null);
+
+  // Found by a person's name, after the labelled wallets.
+  const { get: explorerGet } = explorers();
+  const chain = createChain({ get: explorerGet, rpc: node().rpc, opensea });
+  const found = await chain.search("Zeus Olympus");
+  const hit = found.find((item) => item.address === zeus);
+  assert.deepEqual([hit.name, hit.entity, hit.checked], ["zeus_olympus", "OpenSea · @zeusolympus", true]);
+  assert.equal(chain.names.name(zeus).name, "zeus_olympus", "the profile joins the book");
 });

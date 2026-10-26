@@ -89,10 +89,11 @@ As on the on-chain analytics sites, everything is searched at once and shown
 in sections: **Wallets and entities** first (the popular wallets, then, from
 three letters, `GET /market/chain/search?q=`: the explorer's quick search,
 whose open labels name wallets such as a fund's or a market maker's, with
-their organisation, people's wallets ahead of contracts, an hour's cache;
-and, for a person's name, the name-service names made of it: "First Last"
-tries firstlast.eth, first-last.eth, flast.eth and last.eth, each that
-exists shown first as the name it is, without claiming whose it is),
+their organisation, labelled wallets first, an hour's cache; a name with
+spaces is also asked without them, so "black rock" finds BlackRock; and,
+for a person's name, the name-service names made of it: "First Last"
+tries firstlast.eth, first-last.eth and flast.eth, each that exists shown
+after the labelled wallets as the name it is, without claiming whose it is),
 then **Coins**. The popular wallets page's filter asks the same search, so a
 wallet beyond the loaded lists is found by its name too.
 
@@ -363,8 +364,24 @@ wallet activity (`blockchain/market-chain.mjs`):
 Everything is free and keyless. The node networks (Base, Arbitrum, Polygon and
 the Binance Smart Chain, through `*.publicnode.com`) are read with Multicall3: one call
 returns the coin and every listed token's balance, the listed tokens being
-the 250 largest coins by market cap with a contract there (CoinGecko's coin
-list, refreshed daily). A wallet's token transfers there come from the
+the 1,000 largest coins by market cap with a contract there (CoinGecko's coin
+list, refreshed daily; four pages of the market list every five minutes).
+On the main explorer network a wallet's tokens come first from Ethplorer's
+free API (`freekey`): every token with a price, in a second or two even for
+thousands of tokens; tokens held by fewer than a thousand wallets are left
+out, since spam sent to well-known wallets often carries a made-up price.
+Token pictures are NIR Markets' own (`blockchain/market-logos.mjs`): the
+first time a wallet page shows a token, its picture is fetched once (the
+coin's CoinGecko logo, the source's own picture, Trust Wallet's open assets
+catalogue by the token's mixed-case address, the token's site icon, in that
+order), checked to be a real PNG, JPEG, WebP or GIF, saved beside the
+database (`logos/`) and served from `GET /market/logo/<network>/<contract |
+native-SYMBOL>` for a month of browser cache; a token no source has is
+looked for again the next day. The explorer networks (`eth` and `optimism`) read a wallet's tokens from the
+explorer, which can take minutes for a wallet holding thousands of tokens; the
+same one-call read from the network's public node runs alongside, and when the
+explorer has not answered in six seconds the listed tokens come from the node
+and the page says so. A wallet's token transfers there come from the
 nodes' logs for the network's ten largest tokens, a page at a time going
 back: each page reads windows of blocks, the first of 600 and each next four
 times wider up to what the node allows (Base 49,000; Polygon and the Binance
@@ -384,9 +401,30 @@ names, community tags), and the open labels Blockscout serves without a key
 (`blockchain/market-names.mjs`, metadata.services.blockscout.com, much of it
 from the Open Labels Initiative), which name exchanges, funds, market makers
 and protocols and bring their pictures: the logo the label names, else the
-owner's site icon. They are asked fifty addresses at a time and kept a day;
-`GET /market/chain/names?addresses=` answers them for a page. There is no private database of entities,
-so most wallets show their address. A signed-in visitor can suggest a name
+owner's site icon. They are asked fifty addresses at a time;
+`GET /market/chain/names?addresses=` answers them for a page.
+
+NIR Markets keeps its own book of wallet names (`names.db` beside the
+accounts database), which only grows and stays when a source is down: every
+open label looked up (a named wallet asked again after a week, an unnamed one
+after a day), every wallet the search finds (labelled wallets and name-service
+names, not contracts; an open label outranks a search hit), name-service names
+seen in transfers, and, in the background, every address of the open labels'
+group lists (exchanges, funds, hot and cold wallets, OTC desks, treasuries,
+well-known people), one page of fifty every five seconds, walked again each
+week. The search reads the book first. Wallets no source names still show
+their address.
+
+With `OPENSEA_API_KEY` in `/etc/nir-market.env` (free: opensea.io →
+Settings → Developer → Create API key), OpenSea profiles add to this
+(`blockchain/market-opensea.mjs`): a wallet page with no label shows the
+OpenSea username its owner chose, their picture and the X account they
+linked, and the profile joins the book; the search tries the OpenSea
+usernames made of the words ("First Last" → firstlast, first_last). A
+username is the owner's own choice, not a checked identity: it shows as
+"OpenSea", as checked only when the profile links an X account, and
+unchecked profiles come after the labelled wallets. Answers are kept a day,
+at most 50 questions a minute. A signed-in visitor can suggest a name
 on any wallet's page, with a link to where it is published; moderators
 (`NIR_MARKET_ADMINS`) approve or reject it in their profile's Moderation
 tab, and an approved name shows on every transfer, wallet page and search

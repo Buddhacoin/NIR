@@ -56,7 +56,8 @@ function render() {
   }));
   markSort($("thead"), sort);
   const needle = query.toLowerCase();
-  const shown = rowsOf().filter((item) => !needle || [item.name, item.address, item.kind].some((value) => value?.toLowerCase().includes(needle)));
+  const squeeze = (value) => value.toLowerCase().replace(/\s+/g, ""); // "black rock" finds BlackRock
+  const shown = rowsOf().filter((item) => !needle || [item.name, item.address, item.kind].some((value) => value && squeeze(value).includes(squeeze(needle))));
   // Wallets the open labels know by that name, beyond the lists loaded so far (BlackRock, a fund's wallet…).
   if (needle && found.query === needle) {
     const have = new Set(shown.map((item) => item.address.toLowerCase()));
