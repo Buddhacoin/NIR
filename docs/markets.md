@@ -315,9 +315,14 @@ contracts and block bursts, so requests to each node go one at a time,
 120 ms apart, and a refused request (403, 429) is tried twice more. Node
 requests stay out of the explorers' budget of 60 a minute.
 
-Names come from three places, in this order: names approved by NIR Markets
-moderators, name-service records, and the explorers' open labels (verified
-contract names, community tags). There is no private database of entities,
+Names come from four places, in this order: names approved by NIR Markets
+moderators, name-service records, the explorers' labels (verified contract
+names, community tags), and the open labels Blockscout serves without a key
+(`blockchain/market-names.mjs`, metadata.services.blockscout.com, much of it
+from the Open Labels Initiative), which name exchanges, funds, market makers
+and protocols and bring their pictures: the logo the label names, else the
+owner's site icon. They are asked fifty addresses at a time and kept a day;
+`GET /market/chain/names?addresses=` answers them for a page. There is no private database of entities,
 so most wallets show their address. A signed-in visitor can suggest a name
 on any wallet's page, with a link to where it is published; moderators
 (`NIR_MARKET_ADMINS`) approve or reject it in their profile's Moderation
@@ -361,6 +366,27 @@ column shows only when some market has a rating). On wide screens (1400 px
 and more) the discussion stands in a third column beside the chart, as on the
 big market sites: the day's vote on top, the comments scrolling inside, the
 post box at the bottom.
+
+**Live trades**: under the chart, the latest 300 swaps in the coin's busiest
+decentralised-exchange pool (`blockchain/market-trades.mjs`, from
+GeckoTerminal's free API; network coins trade as their wrapped tokens), as on
+the DEX trade screens: time, buy or sell, price, total with its size (flea
+under $1, shrimp to $1K, fish to $3K, dolphin to $10K, whale above), amount,
+the wallet (an EVM wallet opens its page here) and the transaction. Time,
+price, total and amount sort; type, size and wallet filter; a bar weighs the
+dollars bought against those sold; new trades flash as they arrive. The pool
+is looked up once an hour and its trades at most every 15 seconds, whoever
+asks (`GET /market/trades?network=&token=`).
+
+**The page never waits on a busy source.** It opens at once from the market
+list the browser already has; a coin seen before is served from its copy
+while a fresh one is fetched behind it; when CoinGecko is busy and the coin
+was never fetched, the server answers from the market list (price, changes,
+cap, supply, the week's prices) and the page asks again until it has
+everything. CoinGecko's free plan allows few requests a minute: a "too many"
+answer pauses the background work (warming coin pages one at a time, which
+also brings the community votes) for two minutes, so visitors' pages get the
+room.
 
 The page asks the market service for `GET /market/coin/<id>` and
 `GET /market/chart/<id>?days=1|7|30|90|365`. Those are fetched only when

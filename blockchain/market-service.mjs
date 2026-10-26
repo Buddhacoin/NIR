@@ -18,6 +18,8 @@
 // alternative.me (Fear & Greed). COINGECKO_API_KEY adds a free demo key.
 import { createServer } from "node:http";
 
+import { createTrades } from "./market-trades.mjs";
+
 const COINGECKO = "https://api.coingecko.com/api/v3";
 const FEAR_GREED = "https://api.alternative.me/fng/?limit=1";
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -162,6 +164,8 @@ export function normalizeCoin(coin) {
     categories: (Array.isArray(coin.categories) ? coin.categories : []).map((name) => text(name, 60)).filter(Boolean).slice(0, 6),
     platforms: Object.entries(coin.platforms ?? {}).filter(([name, address]) => text(name) && text(address))
       .map(([name]) => text(name)).slice(0, 8),
+    contracts: Object.fromEntries(Object.entries(coin.platforms ?? {}).filter(([name, address]) => text(name) && /^[A-Za-z0-9]{20,64}$/.test(text(address, 70)))
+      .slice(0, 12).map(([name, address]) => [text(name, 40), text(address, 70)])),
     description: { en: plain(coin.description?.en), ru: plain(coin.description?.ru) },
     links: {
       websites: links(site.homepage, 3), whitepaper: link(site.whitepaper), explorers: links(site.blockchain_site, 6),
@@ -169,7 +173,7 @@ export function normalizeCoin(coin) {
       reddit: link(site.subreddit_url), x: handle(site.twitter_screen_name, /^[A-Za-z0-9_]{1,15}$/, "https://x.com/"),
       telegram: handle(site.telegram_channel_identifier, /^[A-Za-z0-9_]{3,64}$/, "https://t.me/"),
     },
-    tickers, updatedAt: text(coin.last_updated, 30),
+    tickers, updatedAt: text(coin.last_updated, 30), sentimentUp: finite(coin.sentiment_votes_up_percentage),
   };
 }
 
@@ -203,9 +207,18 @@ function createOnDemand({ get, now, perMinute, maxEntries }) {
   const entries = new Map();
   const pending = new Map();
   let fetches = [];
+  // An expired copy is served at once while a fresh one is fetched behind it, so a page never waits
+  // for the data source on a coin it has seen before.
   return async function lookup(key, url, normalize, ttlMs) {
     const entry = entries.get(key);
     if (entry && now() - entry.at < ttlMs) return entry;
+    if (entry && !entry.missing) {
+      if (!pending.has(key)) void fetchEntry(key, url, normalize, entry).catch(() => {});
+      return entry;
+    }
+    return fetchEntry(key, url, normalize, entry);
+  };
+  async function fetchEntry(key, url, normalize, entry) {
     if (pending.has(key)) return pending.get(key);
     fetches = fetches.filter((at) => now() - at < 60_000);
     if (fetches.length >= perMinute) {
@@ -229,11 +242,11 @@ function createOnDemand({ get, now, perMinute, maxEntries }) {
     })();
     pending.set(key, job);
     try { return await job; } finally { pending.delete(key); }
-  };
+  }
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 20_000 } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }) } = {}) {
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
   const community = new Map(); // coin id → { up: percent of rise votes or null, at }
   const sources = {
@@ -244,13 +257,26 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     fearGreed: [FEAR_GREED, normalizeFearGreed],
   };
   let timer = null;
-  const onDemand = createOnDemand({ get, now, perMinute: coinFetchesPerMinute, maxEntries: 500 });
+  // CoinGecko's free plan allows a handful of requests a minute. A "too many" answer pauses the
+  // background work (votes, warming coin pages) for two minutes, so visitors' pages get the room.
+  let coolUntil = 0;
+  const cg = async (url) => {
+    try {
+      return await get(url);
+    } catch (error) {
+      if (error?.status === 429) coolUntil = now() + 120_000;
+      throw error;
+    }
+  };
+  const onDemand = createOnDemand({ get: cg, now, perMinute: coinFetchesPerMinute, maxEntries: 500 });
+  const coinUrl = (id) => `${COINGECKO}/coins/${id}?localization=true&tickers=true&market_data=true` +
+    "&community_data=false&developer_data=false&sparkline=false";
 
   // A source that fails keeps its last good value; the others still refresh.
   async function refresh() {
     await Promise.all(Object.entries(sources).map(async ([key, [url, normalize]]) => {
       try {
-        state[key] = normalize(await get(url));
+        state[key] = normalize(await cg(url));
         delete state.errors[key];
       } catch (error) {
         state.errors[key] = String(error?.message ?? error).slice(0, 200);
@@ -296,16 +322,18 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     }
   }
 
-  // One coin's community votes at a time: the top hundred and the trending ones, the oldest first.
+  // In the background, one coin at a time (the top hundred and the trending ones, the stalest
+  // first): its page data is fetched ahead of visitors, and its community votes come with it.
+  // Paused while CoinGecko asks to slow down.
   async function communityTick() {
+    if (now() < coolUntil) return;
     const ids = [...state.coins.map((coin) => coin.id), ...state.trending.map((coin) => coin.id)].filter((id) => COIN_ID.test(id));
-    const next = ids.find((id) => !community.has(id)) ?? ids.filter((id) => now() - community.get(id).at > 86_400_000)
+    const next = ids.find((id) => !community.has(id)) ?? ids.filter((id) => now() - community.get(id).at > 6 * 3_600_000)
       .sort((left, right) => community.get(left).at - community.get(right).at)[0];
     if (!next) return;
     try {
-      const coin = await get(`${COINGECKO}/coins/${next}?localization=false&tickers=false&market_data=false` +
-        "&community_data=false&developer_data=false&sparkline=false");
-      community.set(next, { up: finite(coin?.sentiment_votes_up_percentage), at: now() });
+      const entry = await onDemand(`coin:${next}`, coinUrl(next), normalizeCoin, 120_000);
+      community.set(next, { up: entry.missing ? null : entry.value.sentimentUp, at: now() });
       if (community.size > 400) community.delete(community.keys().next().value);
     } catch {}
   }
@@ -363,15 +391,37 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   // GET /market/coin/<id> and /market/chart/<id>?days=1|7|30|90|365
   async function coinData(kind, id, days) {
     if (!COIN_ID.test(id) || (kind === "chart" && !CHART_DAYS.has(days))) return null;
-    const entry = kind === "coin"
-      ? await onDemand(`coin:${id}`, `${COINGECKO}/coins/${id}?localization=true&tickers=true&market_data=true` +
-        "&community_data=false&developer_data=false&sparkline=false", normalizeCoin, 120_000)
-      : await onDemand(`chart:${id}:${days}`, `${COINGECKO}/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
-        normalizeChart, days === "1" ? 300_000 : 1_800_000);
+    let entry;
+    try {
+      entry = kind === "coin"
+        ? await onDemand(`coin:${id}`, coinUrl(id), normalizeCoin, 120_000)
+        : await onDemand(`chart:${id}:${days}`, `${COINGECKO}/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
+          normalizeChart, days === "1" ? 300_000 : 1_800_000);
+    } catch (error) {
+      // CoinGecko is busy and the coin was never fetched: the page opens from the market list
+      // (price, changes, cap, supply, the week's prices) and asks again for the rest.
+      const row = [...state.coins, ...state.trendingCoins].find((coin) => coin.id === id);
+      if (!row) throw error;
+      return kind === "coin" ? partialCoin(row) : weekChart(row, days);
+    }
     if (entry.missing) return null;
     if (kind !== "coin") return entry.value;
+    if (entry.value.sentimentUp !== null) community.set(id, { up: entry.value.sentimentUp, at: now() });
     // The markets table shows each exchange's logo; without the list the names stand alone.
     return { ...entry.value, tickers: entry.value.tickers.map((ticker) => ({ ...ticker, logo: exchangeLogos[ticker.exchange] ?? null })) };
+  }
+  function partialCoin(row) {
+    return { ...row, partial: true, change30d: null, change1y: null, fullyDiluted: null, high24h: null, low24h: null, totalSupply: null,
+      ath: null, athChange: null, athDate: "", atl: null, atlChange: null, atlDate: "", categories: [], platforms: [], contracts: {},
+      description: { en: "", ru: "" }, tickers: [], updatedAt: "", sentimentUp: null,
+      links: { websites: [], whitepaper: null, explorers: [], source: [], forums: [], chats: [], reddit: null, x: null, telegram: null } };
+  }
+  // The week's prices from the market list, spread evenly over seven days, while the real chart waits.
+  function weekChart(row, days) {
+    if (days !== "7" || row.sparkline.length < 2) throw Object.assign(new Error("busy"), { status: 503 });
+    const step = 7 * 86_400_000 / (row.sparkline.length - 1);
+    const start = now() - 7 * 86_400_000;
+    return { prices: row.sparkline.map((value, index) => [Math.round(start + index * step), value]), caps: [], volumes: [], partial: true };
   }
 
   function send(response, status, body, maxAge = 30) {
@@ -386,6 +436,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (accounts && await accounts.handle(request, response, url)) return;
     // The on-chain explorer: transfers, addresses, search (blockchain/market-chain.mjs).
     if (chain && await chain.handle(request, response, url)) return;
+    // Live trades in a coin's busiest exchange pool (blockchain/market-trades.mjs).
+    if (await trades.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
     if (request.method === "GET" && url.pathname === "/market/coins") {
       const page = Number(url.searchParams.get("page") ?? 1);
@@ -414,7 +466,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     } else if (request.method === "GET" && kind) {
       try {
         const value = await coinData(kind, id, url.searchParams.get("days"));
-        if (value) send(response, 200, value, 60);
+        if (value) send(response, 200, value, value.partial ? 0 : 60);
         else send(response, 404, { error: "unknown coin" });
       } catch {
         send(response, 503, { error: "coin data is unavailable, try again in a minute" });

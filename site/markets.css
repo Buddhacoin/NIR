@@ -843,3 +843,28 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 .markets-table .ex-logo.blank { background: var(--soft); color: var(--muted); font-size: 11px; font-weight: 800; }
 .markets-table.no-trust th:last-child, .markets-table.no-trust td:last-child { display: none; }
 .coin-feed .vote-result { flex-wrap: wrap; white-space: normal; row-gap: 6px; }
+/* Live trades on a coin's page (trades.js), as on the DEX trade screens. */
+.trades { display: grid; gap: 10px; }
+.trades-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.trades-head h2 { margin: 0; font-size: 18px; }
+.trades-head .live { color: var(--up); font-size: 12px; animation: pulse 1.2s infinite alternate; }
+.trades-head .muted { font-size: 12px; }
+.trades-bar { display: flex; overflow: hidden; border-radius: 8px; font-size: 12px; font-weight: 750; }
+.trades-bar span { min-width: 90px; padding: 6px 10px; white-space: nowrap; }
+.trades-bar .buys { background: color-mix(in srgb, var(--up) 18%, transparent); color: var(--up); }
+.trades-bar .sells { background: color-mix(in srgb, var(--down) 18%, transparent); color: var(--down); text-align: right; }
+.trades-wrap { max-height: 520px; overflow: auto; overscroll-behavior: contain; }
+.trades-table thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
+.trades-table td { padding: 7px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.trades-table .trade-kind { font-weight: 750; text-transform: uppercase; font-size: 12px; }
+.trades-table .trade-size { font-size: 15px; }
+.trades-table .trade-tx { color: var(--muted); }
+.trades-table .trade-tx:hover { color: var(--accent); }
+.trades-table tr.fresh td { animation: trade-in 2s ease-out; }
+@keyframes trade-in { from { background: color-mix(in srgb, var(--accent) 22%, transparent); } to { background: transparent; } }
+.ex-check { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.ex-check:hover { background: var(--soft); }
+.trades-table th[data-trfilter="maker"] .ex-pop { left: auto; right: 0; }
+@media (max-width: 700px) { .trades-table th:nth-child(3), .trades-table td:nth-child(3), .trades-table th:nth-child(7), .trades-table td:nth-child(7) { display: none; } }
+@media (max-width: 1100px) { #trades { order: 2; } }
+.ex-pop input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }

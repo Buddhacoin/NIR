@@ -13,6 +13,7 @@ const en = {
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
   tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", tabCommunity: "Discussion", community: "Discussion",
+  tradesTitle: "Live trades", trTime: "Time", trType: "Type", trPrice: "Price (USD)", trTotal: "Total", trAmount: "Amount", trMaker: "Wallet",
   sortLatest: "Latest", sortTop: "Top", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
   d1: "24h", d7: "7D", d30: "1M", d90: "3M", d365: "1Y", mPrice: "Price", mCap: "Market cap",
   more: "Show all ▾", descriptionBy: "Description: CoinGecko", whereTraded: "Where it trades", exchange: "Exchange",
@@ -25,7 +26,7 @@ const words = {
     unavailable: "Данные монеты временно недоступны. Попробуйте обновить страницу через минуту.",
     chartLoading: "Загружаю график…", chartUnavailable: "График временно недоступен.",
     chart: (name) => `График ${name}`, about: (name) => `Что такое ${name}`, english: "Описание есть только на английском.",
-    noDescription: "Описания пока нет.", noMarkets: "Нет данных о биржах.", line: "Линия", candles: "Свечи",
+    noDescription: "Описания пока нет.", noMarkets: "Нет данных о биржах.", fetching: "Загружаю…", line: "Линия", candles: "Свечи",
     period: { 1: "За сутки", 7: "За неделю", 30: "За месяц", 90: "За 3 месяца", 365: "За год" },
     sections: { site: "Сайт и документы", explorers: "Обозреватели блоков", wallets: "Кошельки", community: "Сообщество" },
     title: (coin) => `${coin.name} (${coin.symbol}) — цена, график и капитализация | NIR Markets` },
@@ -33,7 +34,7 @@ const words = {
     unavailable: "Coin data is unavailable right now. Try reloading in a minute.",
     chartLoading: "Loading the chart…", chartUnavailable: "The chart is unavailable right now.",
     chart: (name) => `${name} chart`, about: (name) => `What is ${name}`, english: "",
-    noDescription: "No description yet.", noMarkets: "No market data.", line: "Line", candles: "Candles",
+    noDescription: "No description yet.", noMarkets: "No market data.", fetching: "Loading…", line: "Line", candles: "Candles",
     period: { 1: "In 24 hours", 7: "In a week", 30: "In a month", 90: "In 3 months", 365: "In a year" },
     sections: { site: "Website and documents", explorers: "Block explorers", wallets: "Wallets", community: "Community" },
     title: (coin) => `${coin.name} (${coin.symbol}) price, chart and market cap | NIR Markets` },
@@ -167,7 +168,7 @@ function renderAbout() {
     paragraph.textContent = part;
     return paragraph;
   });
-  if (!paragraphs.length) nodes.push(Object.assign(document.createElement("p"), { textContent: t().noDescription }));
+  if (!paragraphs.length) nodes.push(Object.assign(document.createElement("p"), { className: coin.partial ? "muted" : "", textContent: coin.partial ? t().fetching : t().noDescription }));
   else if (language === "ru" && !russian) nodes.unshift(Object.assign(document.createElement("p"), { className: "muted", textContent: t().english }));
   $("#description").replaceChildren(...nodes);
   $("#more").hidden = shown.length === paragraphs.length;
@@ -201,7 +202,7 @@ function renderTickers() {
     const cell = document.createElement("td");
     cell.colSpan = 6;
     cell.className = "status";
-    cell.textContent = t().noMarkets;
+    cell.textContent = coin.partial ? t().fetching : t().noMarkets;
     row.append(cell);
     rows.push(row);
   }
@@ -360,30 +361,50 @@ function render() {
   renderTickers();
   renderChart();
   if (typeof renderCommunity === "function") renderCommunity(); // community.js
+  if (typeof startTrades === "function") { startTrades(); renderTrades(); } // trades.js
 }
 
+// The page never waits on a busy data source: it opens from the market list the browser already
+// has, takes a short answer from the server when CoinGecko is busy, and asks again until it has
+// everything; the error shows only after a minute with nothing at all.
+let retries = 0;
 async function loadCoin() {
   try {
     const response = await fetch(`/market/coin/${encodeURIComponent(id)}`, { cache: "no-store" });
     if (response.status === 404) { failure = t().missing; return; }
     if (!response.ok) throw new Error("coin data unavailable");
-    coin = await response.json();
+    const next = await response.json();
+    if (!next.partial || !coin || coin.partial) coin = next;
   } catch {
-    if (!coin) failure = t().unavailable;
+    if (!coin && retries >= 12) failure = t().unavailable;
   } finally {
+    if ((!coin || coin.partial) && retries < 30) { retries += 1; setTimeout(loadCoin, Math.min(10_000, 2_000 + retries * 1_000)); }
     render();
   }
 }
+async function quickStart() {
+  const overview = await fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  const row = [...(overview?.coins ?? []), ...(overview?.trendingCoins ?? [])].find((item) => item.id === id);
+  if (coin || !row) return;
+  coin = { ...row, partial: true, change30d: null, change1y: null, fullyDiluted: null, high24h: null, low24h: null, totalSupply: null,
+    ath: null, athChange: null, athDate: "", atl: null, atlChange: null, atlDate: "", categories: [], platforms: [], contracts: {},
+    description: { en: "", ru: "" }, tickers: [], updatedAt: "",
+    links: { websites: [], whitepaper: null, explorers: [], source: [], forums: [], chats: [], reddit: null, x: null, telegram: null } };
+  render();
+}
 
+let chartRetries = 0;
 async function loadChart() {
   const wanted = days;
   try {
     const response = await fetch(`/market/chart/${encodeURIComponent(id)}?days=${wanted}`, { cache: "no-store" });
     if (!response.ok) throw new Error("chart unavailable");
     const value = await response.json();
-    if (wanted === days) { chart = value; chartFailed = false; }
+    if (wanted === days) { chart = value; chartFailed = false; chartRetries = 0; }
   } catch {
-    if (wanted === days) chartFailed = !chart;
+    // A busy source: the chart keeps "loading" and is asked for again a few seconds later.
+    if (wanted === days && chartRetries < 20) { chartRetries += 1; setTimeout(() => { if (wanted === days) void loadChart(); }, Math.min(10_000, 2_000 + chartRetries * 1_000)); }
+    else if (wanted === days) chartFailed = !chart;
   }
   if (coin && wanted === days) renderChart();
 }
@@ -392,6 +413,7 @@ for (const button of document.querySelectorAll("#ranges [data-days]")) {
   button.addEventListener("click", () => {
     days = button.dataset.days;
     chart = null;
+    chartRetries = 0;
     renderChart();
     void loadChart();
   });
@@ -420,6 +442,7 @@ for (const link of document.querySelectorAll(".coin-main .tabs a")) {
 setupSearch({});
 setupPage({ en, render, onTheme: () => { if (candles) { $("#plot").replaceChildren(); renderChart(); } } }); // the candles follow the theme
 if (COIN_ID_PATTERN.test(id)) {
+  void quickStart();
   void loadCoin();
   void loadChart();
   setInterval(loadCoin, 120_000);

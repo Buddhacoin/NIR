@@ -15,6 +15,7 @@
 // minute keeps a burst of visitors from hammering the explorers; past it, a
 // cached copy is served or the visitor is asked to retry.
 
+import { createNames } from "./market-names.mjs";
 import { createNodes, NODES, postRpc } from "./market-rpc.mjs";
 
 const EXPLORERS = {
@@ -92,7 +93,7 @@ export function normalizeTransaction(chain, item, native) {
 }
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
-  labelFor = () => null } = {}) {
+  labelFor = () => null, names = createNames({ get, now }) } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -191,8 +192,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       assets: amount > 0 ? [{ chain: UTXO.id, token: { address: null, symbol: UTXO.native, name: UTXO.native, icon: null, price },
         amount, usd: price === null ? null : amount * price }] : [] };
   }
+  // A wallet seen before opens at once from its copy while a fresh one is read behind it.
   const holdings = (address) => cached(`holdings:${address.toLowerCase()}`, 600_000,
-    () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)));
+    () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true });
 
   // --- An address's transfers on one network, in or out, a page at a time.
   async function evmTransfers(address, chain, direction, cursor) {
@@ -270,12 +272,20 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     return () => clearInterval(timer);
   }
 
-  // Names approved by NIR Markets moderators (market-labels.mjs) go ahead of the explorers' labels.
+  // Names approved by NIR Markets moderators (market-labels.mjs) go ahead of the explorers' labels,
+  // and those ahead of the open labels (market-names.mjs), which also bring the owner's picture.
   const named = (party) => {
-    const name = party?.address ? labelFor(party.address) : null;
-    return name ? { ...party, name, tags: ["NIR Markets", ...(party.tags ?? []).filter((tag) => tag !== "NIR Markets")] } : party;
+    if (!party?.address) return party;
+    const open = names.name(party.address);
+    const withOpen = open ? { ...party, name: party.name ?? open.name, logo: open.logo, ...(open.entity ? { entity: open.entity } : {}) } : party;
+    const name = labelFor(party.address);
+    return name ? { ...withOpen, name, tags: ["NIR Markets", ...(party.tags ?? []).filter((tag) => tag !== "NIR Markets")] } : withOpen;
   };
   const relabel = (items) => items.map((item) => ({ ...item, from: named(item.from), to: named(item.to) }));
+  // The open labels of every address in the list: waited for up to `wait` milliseconds, then the
+  // rest comes on the next request.
+  const learn = (items, wait) => Promise.race([names.lookup(items.flatMap((item) => [item.from?.address, item.to?.address])),
+    new Promise((resolve) => { setTimeout(resolve, wait).unref?.(); })]);
   const reply = (response, status, body, maxAge = 15) => {
     response.writeHead(status, { "content-type": "application/json; charset=utf-8",
       "cache-control": status === 200 ? `public, max-age=${maxAge}` : "no-store" });
@@ -290,8 +300,17 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       if (path === "/market/chain/feed") {
         const min = Math.max(0, Number(url.searchParams.get("min")) || 0);
         const chain = url.searchParams.get("chain");
-        const items = relabel((await feed()).filter((item) => (item.usd ?? 0) >= min && (!chain || item.chain === chain)).slice(0, 200));
+        const chosen = (await feed()).filter((item) => (item.usd ?? 0) >= min && (!chain || item.chain === chain)).slice(0, 200);
+        await learn(chosen, 300);
+        const items = relabel(chosen);
         return reply(response, 200, { networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES)], items }, 10), true;
+      }
+      // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.
+      if (path === "/market/chain/names") {
+        const wanted = (url.searchParams.get("addresses") ?? "").split(",").filter((address) => /^0x[0-9a-fA-F]{40}$/.test(address)).slice(0, 50);
+        await names.lookup(wanted);
+        const found = Object.fromEntries(wanted.map((address) => [address.toLowerCase(), names.name(address)]).filter(([, value]) => value));
+        return reply(response, 200, { names: found }, 3600), true;
       }
       if (path === "/market/chain/search") {
         const results = (await search(url.searchParams.get("q") ?? "")).map((item) => ({ ...item, name: labelFor(item.address) ?? item.name }));
@@ -301,10 +320,12 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
       const [, address, part] = match;
       if (!part) {
-        const data = await withCoinIds(await holdings(address));
+        const [data] = await Promise.all([holdings(address).then(withCoinIds), learn([{ from: { address } }], 2_000)]);
         const own = labelFor(address);
+        const open = names.name(address);
+        const labelled = open ? { ...data, name: data.name ?? open.name, logo: open.logo, site: open.site } : data;
         // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
-        return reply(response, 200, own ? { ...data, name: own, tags: ["NIR Markets", ...data.tags] } : data, 5), true;
+        return reply(response, 200, own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled, 5), true;
       }
       const chain = addressKind(address) === "utxo" ? UTXO.id : url.searchParams.get("chain") ?? "eth";
       if (chain !== UTXO.id && !EXPLORERS[chain] && !NODES[chain]) return reply(response, 404, { error: "unknown network" }), true;
@@ -318,6 +339,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       try { cursor = url.searchParams.get("cursor") ? JSON.parse(Buffer.from(url.searchParams.get("cursor"), "base64url").toString("utf8")) : null; } catch {}
       if (cursor !== null && (typeof cursor !== "object" || JSON.stringify(cursor).length > 600)) cursor = null;
       const page = await transfers(address, chain, direction, cursor);
+      await learn(page.items, 2_000);
       return reply(response, 200, { chain, items: relabel(page.items), next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null,
         ...(page.reached ? { reached: page.reached } : {}) }, 30), true;
     } catch (error) {

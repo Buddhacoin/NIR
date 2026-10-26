@@ -196,3 +196,77 @@ test("a change CoinGecko leaves out is read off the 7-day prices, and a coin too
   assert.equal(young.change7d, null);
   assert.ok(young.change24h !== null);
 });
+
+test("a coin's page opens from the market list while CoinGecko is busy, and fills in later", async () => {
+  let clock = 1_700_000_000_000;
+  let busy = false;
+  const service = createMarketService({ now: () => clock, fetch: async (url) => {
+    if (busy && /\/coins\/(?!markets)/.test(url)) throw Object.assign(new Error("api.coingecko.com answered 429"), { status: 429 });
+    return fromFixtures(url);
+  } });
+  await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  try {
+    await service.refresh();
+    busy = true;
+    const response = await fetch(`${base}/market/coin/bitcoin`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control"), /max-age=0/);
+    const partial = await response.json();
+    assert.equal(partial.partial, true);
+    assert.equal(partial.price, 80183.42);
+    assert.deepEqual(partial.tickers, []);
+    const week = await (await fetch(`${base}/market/chart/bitcoin?days=7`)).json();
+    assert.ok(week.partial && week.prices.length > 30);
+    assert.equal((await fetch(`${base}/market/chart/bitcoin?days=30`)).status, 503);
+    // Once fetched, a coin is served from the copy at once, even after it expires and while the source is busy.
+    busy = false;
+    assert.equal((await (await fetch(`${base}/market/coin/bitcoin`)).json()).partial, undefined);
+    busy = true;
+    clock += 10 * 60_000;
+    const stale = await fetch(`${base}/market/coin/bitcoin`);
+    assert.equal(stale.status, 200);
+    assert.equal((await stale.json()).symbol, "BTC");
+  } finally {
+    await new Promise((resolve) => service.server.close(resolve));
+  }
+});
+
+test("a coin's live trades come from its busiest exchange pool, read from the coin's side", async () => {
+  const { choosePool, readTrades } = await import("../blockchain/market-trades.mjs");
+  const token = "0x00000000000000000000000000000000000000aa";
+  const pools = { data: [
+    { attributes: { name: "OLY / USD 0.3%", address: "0xpool1", volume_usd: { h24: "100" } }, relationships: { base_token: { data: { id: `eth_${token}` } }, dex: { data: { id: "olympus_swap" } } } },
+    { attributes: { name: "OLY / ETH", address: "0xpool2", volume_usd: { h24: "900" } }, relationships: { base_token: { data: { id: `eth_${token}` } }, dex: { data: { id: "delos_dex" } } } },
+    { attributes: { name: "ETH / OLY", address: "0xpool3", volume_usd: { h24: "5000" } }, relationships: { base_token: { data: { id: "eth_0xother" } }, dex: { data: { id: "x" } } } },
+  ] };
+  assert.deepEqual(choosePool(pools, "eth", token), { name: "OLY / ETH", address: "0xpool2", network: "eth", dex: "delos_dex" });
+  const trades = { data: [
+    { attributes: { block_timestamp: "2026-10-26T12:00:00Z", kind: "buy", from_token_address: "0xusd", to_token_address: token, from_token_amount: "200",
+      to_token_amount: "2", price_from_in_usd: "1", price_to_in_usd: "100", volume_in_usd: "200", tx_from_address: "0xzeus", tx_hash: "0xt1" } },
+    { attributes: { block_timestamp: "2026-10-26T12:01:00Z", kind: "sell", from_token_address: token.toUpperCase().replace("0X", "0x"), to_token_address: "0xusd",
+      from_token_amount: "0.5", to_token_amount: "50", price_from_in_usd: "101", price_to_in_usd: "1", volume_in_usd: "50.5", tx_from_address: "0xhera", tx_hash: "0xt2" } },
+    { attributes: { block_timestamp: "2026-10-26T12:02:00Z", kind: "buy", is_anomalous: true, volume_in_usd: "1", from_token_amount: "1", to_token_amount: "1" } },
+  ] };
+  assert.deepEqual(readTrades(trades, token), [
+    { time: Date.parse("2026-10-26T12:00:00Z"), kind: "buy", price: 100, usd: 200, amount: 2, maker: "0xzeus", tx: "0xt1" },
+    { time: Date.parse("2026-10-26T12:01:00Z"), kind: "sell", price: 101, usd: 50.5, amount: 0.5, maker: "0xhera", tx: "0xt2" },
+  ]);
+
+  const asked = [];
+  const service = createMarketService({ fetch: async (url) => { asked.push(url); return url.includes("/pools?") ? pools : url.includes("/trades") ? trades : fromFixtures(url); } });
+  await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${service.server.address().port}`;
+  try {
+    const answer = await (await fetch(`${base}/market/trades?network=eth&token=${token}`)).json();
+    assert.equal(answer.pool.address, "0xpool2");
+    assert.equal(answer.trades.length, 2);
+    assert.equal(answer.buys, 200);
+    assert.equal(answer.sells, 50.5);
+    await fetch(`${base}/market/trades?network=eth&token=${token}`);
+    assert.equal(asked.length, 2, "the pool and its trades are kept: a second visitor costs nothing");
+    assert.equal((await fetch(`${base}/market/trades?network=eth&token=../x`)).status, 400);
+  } finally {
+    await new Promise((resolve) => service.server.close(resolve));
+  }
+});
