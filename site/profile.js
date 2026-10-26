@@ -245,8 +245,6 @@ function render() {
   $("#status").textContent = "";
   $("#page").hidden = false;
   $("#avatar").replaceChildren(avatar(user, 96));
-  $("#avatar-pick").classList.toggle("own", own);
-  $("#avatar-file").disabled = !own;
   $("#photo-remove").hidden = !user.avatar;
   $("#display-name").textContent = user.displayName;
   $("#username").textContent = user.username;

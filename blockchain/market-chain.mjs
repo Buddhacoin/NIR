@@ -267,15 +267,36 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     });
   }
 
-  // --- Search: an address as it is, or a name from the name service and the explorers' labels.
+  // --- Search: an address as it is, or wallets by name, as the analytics sites find entities: the
+  // explorer's quick search brings the open labels (BlackRock: Digital Asset Fund, Wintermute 2…),
+  // name-service names and verified labels, people's wallets ahead of contracts, with their pictures.
   function search(query) {
     const text = query.trim();
     if (addressKind(text)) return Promise.resolve([{ address: text, name: null, kind: addressKind(text) }]);
     if (text.length < 3 || text.length > 60) return Promise.resolve([]);
-    return cached(`search:${text.toLowerCase()}`, 600_000, async () => {
-      const data = await get(`${EXPLORERS.eth.api}/search?q=${encodeURIComponent(text)}`);
-      return (data?.items ?? []).filter((item) => (item.type === "ens_domain" || item.type === "address" || item.type === "label") && EVM_ADDRESS.test(item.address_hash ?? item.address ?? ""))
-        .map((item) => ({ address: item.address_hash ?? item.address, name: label(item.ens_info?.name ?? item.name), kind: "evm" })).slice(0, 8);
+    return cached(`search:${text.toLowerCase()}`, 3_600_000, async () => {
+      const data = await get(`${EXPLORERS.eth.api}/search/quick?q=${encodeURIComponent(text)}`);
+      const found = new Map();
+      for (const item of Array.isArray(data) ? data : data?.items ?? []) {
+        const address = item?.address_hash ?? item?.address ?? "";
+        if (!EVM_ADDRESS.test(address) || !["metadata_tag", "ens_domain", "address", "label"].includes(item.type)) continue;
+        const tag = item.type === "metadata_tag" ? item.metadata : null;
+        const name = label(tag?.tagType === "name" ? tag.name : item.ens_info?.name ?? item.name ?? tag?.name);
+        // Collectors' handles copied from marketplaces ("_zeus1" on OpenSea) are not entities.
+        if (!name || /^["“]/.test(name)) continue;
+        const key = address.toLowerCase();
+        const entry = found.get(key) ?? { address, name, entity: null, contract: Boolean(item.is_smart_contract_address), kind: "evm" };
+        // A name tag names the wallet; a protocol or generic tag names its organisation.
+        if (tag && tag.tagType !== "name") entry.entity ??= label(tag.name);
+        else if (tag) entry.name = name;
+        found.set(key, entry);
+      }
+      const results = [...found.values()].sort((left, right) => left.contract - right.contract).slice(0, 10);
+      await names.lookup(results.map((item) => item.address)).catch(() => {});
+      return results.map((item) => {
+        const open = names.name(item.address);
+        return { ...item, entity: item.entity ?? open?.entity ?? null, logo: open?.logo ?? null };
+      });
     });
   }
 

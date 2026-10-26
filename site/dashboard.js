@@ -12,7 +12,7 @@ const dashWords = {
     asset: "Актив", price: "Цена", holdings: "Количество", value: "Стоимость", network: "Сеть", share: "Доля", account: "Аккаунт",
     time: "Время", from: "От", to: "Кому", amount: "Количество", token: "Токен", usd: "USD", day: "24 ч", week: "7 д",
     ranges: [[7, "1Н"], [30, "1М"], [90, "3М"], [0, "Всё"]], empty: "Пусто", loading: "загружаю…", more: "Загрузить ещё",
-    add: "Добавить аккаунт", metamask: "Подключить MetaMask", noMetamask: "MetaMask не найден в браузере — установите его с metamask.io или вставьте адрес вручную.",
+    add: "Добавить аккаунт", addShort: "Добавить", metamask: "Подключить MetaMask", noMetamask: "MetaMask не найден в браузере — установите его с metamask.io или вставьте адрес вручную.",
     manual: "Или вставьте адрес вручную", address: "Адрес кошелька (0x… или bc1…)", label: "Подпись (необязательно)", save: "Добавить",
     private: "Добавленные адреса видите только вы.", badAddress: "Это не адрес кошелька.", remove: "Убрать аккаунт",
     others: (count) => `(+${count})`, minUsd: "USD ≥ $0,10", archiveFrom: "Дата 1", archiveTo: "Дата 2", change: "Изменение",
@@ -24,7 +24,7 @@ const dashWords = {
     asset: "Asset", price: "Price", holdings: "Holdings", value: "Value", network: "Network", share: "Share", account: "Account",
     time: "Time", from: "From", to: "To", amount: "Amount", token: "Token", usd: "USD", day: "24h", week: "7d",
     ranges: [[7, "1W"], [30, "1M"], [90, "3M"], [0, "All"]], empty: "Empty", loading: "loading…", more: "Load more",
-    add: "Add an account", metamask: "Connect MetaMask", noMetamask: "MetaMask is not in this browser: install it from metamask.io or paste the address by hand.",
+    add: "Add an account", addShort: "Add", metamask: "Connect MetaMask", noMetamask: "MetaMask is not in this browser: install it from metamask.io or paste the address by hand.",
     manual: "Or paste an address", address: "Wallet address (0x… or bc1…)", label: "Label (optional)", save: "Add",
     private: "Only you see the addresses you add.", badAddress: "This is not a wallet address.", remove: "Remove the account",
     others: (count) => `(+${count})`, minUsd: "USD ≥ $0.10", archiveFrom: "Date 1", archiveTo: "Date 2", change: "Change",
@@ -384,7 +384,12 @@ function renderAccounts(box) {
   const allTab = dashNode("button", dash.account ? "" : "on", words.accounts);
   allTab.type = "button";
   allTab.addEventListener("click", () => { dash.account = null; renderDashboard(); });
-  head.append(allTab, ...accounts.map((item) => {
+  // "Add +" stands right after "All accounts", where it is seen.
+  const plus = dashNode("button", "dash-plus", `${words.addShort} +`);
+  plus.type = "button";
+  plus.title = words.add;
+  plus.addEventListener("click", () => { addBox().hidden = !addBox().hidden; if (!addBox().hidden) addBox().querySelector("input")?.focus(); });
+  head.append(allTab, plus, ...accounts.map((item) => {
     const tab = dashNode("span", `dash-account-tab${dash.account === item.address ? " on" : ""}`);
     const open = dashNode("button", "", item.label || shortAddress(item.address));
     open.type = "button";
@@ -404,11 +409,6 @@ function renderAccounts(box) {
     tab.append(open, drop);
     return tab;
   }));
-  const plus = dashNode("button", "dash-plus", "+");
-  plus.type = "button";
-  plus.title = words.add;
-  plus.addEventListener("click", () => { addBox().hidden = !addBox().hidden; if (!addBox().hidden) addBox().querySelector("input")?.focus(); });
-  head.append(plus);
   const body = dashNode("div", "dash-body");
   if (!dash.account) {
     const rows = accounts.map((item) => {

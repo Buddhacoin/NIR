@@ -278,11 +278,7 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 .avatar-pick { position: relative; flex: none; border-radius: 50%; }
 .avatar-pick .avatar { overflow: hidden; }
 .avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; grid-area: 1 / 1; }
-.avatar-pick .avatar-edit { position: absolute; right: -2px; bottom: -2px; display: none; place-items: center; width: 30px; height: 30px;
-  border: 2px solid var(--card); border-radius: 50%; background: var(--accent); font-size: 14px; }
-.avatar-pick.own { cursor: pointer; }
-.avatar-pick.own .avatar-edit { display: grid; }
-.avatar-pick.own:hover .avatar { filter: brightness(0.85); }
+
 .own-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .profile-form { display: grid; gap: 12px; }
 .profile-form h2 { margin: 0; }
@@ -910,10 +906,10 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 .coin-page .side { border-right: 1px solid var(--line); }
 .coin-page .coin-main .tabs { padding: 0 24px; }
 .coin-page .big-chart { height: 520px; border: 0; border-radius: 0; }
-.coin-page .big-chart.tv { height: 600px; }
+.coin-page .big-chart.tv { height: 516px; }
 .coin-page .big-chart .status { margin-top: 230px; }
-.coin-page #chart { padding-left: 16px; padding-right: 8px; }
-.coin-page #chart .chart-top { padding-left: 8px; }
+.coin-page #chart { padding-left: 0; padding-right: 0; }
+.coin-page #chart .chart-top, .coin-page #chart .chart-note { padding-left: 16px; padding-right: 16px; }
 @media (min-width: 1400px) {
   .coin-page .coin-main { border-right: 1px solid var(--line); }
   .coin-page .coin-feed .community { border-bottom: 0; }
@@ -983,7 +979,8 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 .dash-account-tab.on > button:first-child { color: var(--text); }
 .dash-x { padding: 4px 10px 4px 4px; border: 0; background: none; color: var(--muted); font-size: 15px; cursor: pointer; }
 .dash-x:hover { color: var(--down); }
-.dash-plus { flex: none; margin-left: auto; width: 44px; border: 0; background: var(--accent); color: #fff; font-size: 20px; font-weight: 700; cursor: pointer; }
+.dash-tabs > .dash-plus { flex: none; align-self: center; margin: 0 10px; padding: 7px 14px; border: 0; border-radius: 9px; background: var(--accent); color: #fff; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+.dash-tabs > .dash-plus:hover { filter: brightness(1.08); }
 .dash-add { display: grid; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--soft); }
 .dash-add[hidden] { display: none; }
 .dash-add .act { justify-self: start; }

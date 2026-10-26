@@ -481,8 +481,11 @@ function setupSearch({ overview = () => null }) {
           row.href = addressUrl(coin.address);
           const whale = WHALE.get(coin.address.toLowerCase());
           const name = coin.name ?? whale?.name ?? null;
-          row.append(walletAvatar({ address: coin.address, name: name ?? "◎" }, "w-avatar s-avatar"), Object.assign(document.createElement("b"), { textContent: name ?? shortAddress(coin.address) }),
-            Object.assign(document.createElement("span"), { textContent: whale ? whale.kind[language === "en" ? "en" : "ru"] : name ? shortAddress(coin.address) : t().wallet }));
+          // The organisation (from the open labels) or the kind on the right, as the analytics sites show entities.
+          const side = whale ? whale.kind[language === "en" ? "en" : "ru"] : coin.entity ?? (coin.contract ? t().contract : null);
+          row.append(walletAvatar({ address: coin.address, name: name ?? "◎", logo: coin.logo ?? null }, "w-avatar s-avatar"), Object.assign(document.createElement("b"), { textContent: name ?? shortAddress(coin.address) }),
+            Object.assign(document.createElement("span"), { textContent: name ? shortAddress(coin.address) : t().wallet }),
+            Object.assign(document.createElement("em"), { textContent: side ?? "" }));
           row.addEventListener("click", (event) => { event.preventDefault(); open(coin); });
           return row;
         }
@@ -503,8 +506,8 @@ function setupSearch({ overview = () => null }) {
     box.hidden = !items.length;
   }
   const t = () => (language === "en"
-    ? { recent: "Recent searches", trending: "Trending tokens", coins: "Coins", none: "Nothing found", wallets: "Addresses", wallet: "address", whales: "Popular wallets" }
-    : { recent: "Недавние", trending: "Токены в тренде", coins: "Монеты", none: "Ничего не найдено", wallets: "Адреса", wallet: "адрес", whales: "Популярные кошельки" });
+    ? { recent: "Recent searches", trending: "Trending tokens", coins: "Coins", none: "Nothing found", wallets: "Addresses", wallet: "address", whales: "Popular wallets", entities: "Wallets and entities", contract: "Contract" }
+    : { recent: "Недавние", trending: "Токены в тренде", coins: "Монеты", none: "Ничего не найдено", wallets: "Адреса", wallet: "адрес", whales: "Популярные кошельки", entities: "Кошельки и организации", contract: "Контракт" });
   async function update() {
     const raw = input.value.trim();
     const query = raw.toLowerCase();
@@ -519,20 +522,23 @@ function setupSearch({ overview = () => null }) {
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
       coin.symbol.toLowerCase().startsWith(query) || coin.id.includes(query)).slice(0, 8);
     const whales = WHALES.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 4);
-    draw([[t().whales, whales, "/wallets/"], [t().coins, local]]);
+    // Wallets and organisations first, then coins, each its own section, as on the analytics sites.
+    draw([[t().entities, whales, "/wallets/"], [t().coins, local]]);
     clearTimeout(timer);
     timer = setTimeout(async () => {
       asked = query;
       const [found, wallets] = await Promise.all([
         fetch(`/market/search?q=${encodeURIComponent(query)}`).then((response) => (response.ok ? response.json() : { coins: [] })).catch(() => ({ coins: [] })),
-        query.includes(".") ? fetch(`/market/chain/search?q=${encodeURIComponent(query)}`).then((response) => (response.ok ? response.json() : { results: [] }))
+        query.length >= 3 ? fetch(`/market/chain/search?q=${encodeURIComponent(query)}`).then((response) => (response.ok ? response.json() : { results: [] }))
           .catch(() => ({ results: [] })) : { results: [] },
       ]);
       if (asked !== input.value.trim().toLowerCase()) return; // a newer query is on its way
       const seen = new Set(local.map((coin) => coin.id));
       const merged = [...local, ...found.coins.filter((coin) => !seen.has(coin.id))].slice(0, 10);
-      draw([[t().whales, whales, "/wallets/"], [t().wallets, wallets.results ?? []], [t().coins, merged]]);
-      if (!merged.length && !wallets.results?.length && !whales.length) {
+      const known = new Set(whales.map((item) => item.address.toLowerCase()));
+      const entities = [...whales, ...(wallets.results ?? []).filter((item) => !known.has(item.address.toLowerCase()))].slice(0, 8);
+      draw([[t().entities, entities, "/wallets/"], [t().coins, merged]]);
+      if (!merged.length && !entities.length) {
         box.replaceChildren(Object.assign(document.createElement("p"), { textContent: t().none }));
         box.hidden = false;
       }
