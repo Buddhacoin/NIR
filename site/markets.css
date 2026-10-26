@@ -674,7 +674,7 @@ td.mood i { display: block; width: 70px; height: 4px; margin: 6px 0 0 auto; bord
 @media (max-width: 720px) {
   #assets-table th:nth-child(4), #assets-table td:nth-child(4) { display: none; }
   /* A wallet's transfers keep the amount; the feed keeps the dollar value. */
-  .ex-grid .ex-transfers th:nth-child(5), .ex-grid .ex-transfers td:nth-child(5) { display: none; }
+  .ex-grid .ex-transfers th:nth-child(4), .ex-grid .ex-transfers td:nth-child(4) { display: none; }
   .explorer > .ex-card .ex-transfers th:nth-child(4), .explorer > .ex-card .ex-transfers td:nth-child(4),
   .explorer > .ex-card .ex-transfers th:nth-child(5), .explorer > .ex-card .ex-transfers td:nth-child(5) { display: none; }
 }
@@ -779,3 +779,30 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 1000px) { .ex-grid > .ex-panel:has(#assets .ex-empty) { height: auto; min-height: 160px; } }
 /* The bottom bar on phones spreads whatever links the visitor has (guests see fewer). */
 .tabbar { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; }
+/* Home cards hold still: the transfers card takes the row's height from its
+   neighbours instead of setting it, and its list clips inside. */
+@media (min-width: 701px) {
+  .cards > .transfers-card { contain: size; display: flex; flex-direction: column; overflow: hidden; }
+  .cards > .transfers-card .tf-list { flex: 1 1 auto; min-height: 0; overflow: hidden; align-content: start; }
+}
+.suggest .s-avatar { width: 24px; height: 24px; margin: 0; font-size: 11px; }
+.suggest a > .s-avatar ~ span { margin-left: auto; }
+.suggest a em.up { color: var(--up); } .suggest a em.down { color: var(--down); }
+/* Transfers headers: sorting (arrow) and filtering (funnel) as on the analytics sites. */
+.ex-transfers th.th-sort, .ex-transfers th.th-filter { position: relative; cursor: pointer; user-select: none; white-space: nowrap; }
+.ex-transfers th.th-sort::after { content: "⇅"; margin-left: 4px; opacity: .4; font-size: 11px; }
+.ex-transfers th.th-sort[data-dir="desc"]::after { content: "↓"; opacity: 1; color: var(--accent); }
+.ex-transfers th.th-sort[data-dir="asc"]::after { content: "↑"; opacity: 1; color: var(--accent); }
+.ex-transfers th[data-tsort="time"][data-dir="desc"]::after { opacity: .5; color: inherit; }
+.ex-transfers .th-icon { width: 12px; height: 12px; margin-right: 4px; vertical-align: -1px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linejoin: round; opacity: .6; }
+.ex-transfers th.th-filter.on { color: var(--accent); }
+.ex-transfers th.th-filter.on .th-icon { opacity: 1; fill: currentColor; }
+.ex-transfers th:hover { color: var(--text); }
+.ex-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: grid; gap: 2px; min-width: 180px; max-height: 280px; padding: 6px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); font-weight: 500; text-transform: none; letter-spacing: 0; cursor: default; }
+.ex-pop button { display: flex; justify-content: space-between; gap: 12px; padding: 7px 9px; border: 0; border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.ex-pop button:hover, .ex-pop button.on { background: var(--soft); }
+.ex-pop input { width: 220px; }
+.ex-transfers .ex-token-cell .coin-cell { gap: 6px; }
+.ex-transfers .ex-token-cell .logo { width: 18px; height: 18px; }
+.ex-transfers th[data-tfilter="token"] .ex-pop { left: auto; right: 0; }
