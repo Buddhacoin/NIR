@@ -413,7 +413,18 @@ seen in transfers, and, in the background, every address of the open labels'
 group lists (exchanges, funds, hot and cold wallets, OTC desks, treasuries,
 well-known people), one page of fifty every five seconds, walked again each
 week. The search reads the book first. Wallets no source names still show
-their address. A signed-in visitor can suggest a name
+their address.
+
+With `OPENSEA_API_KEY` in `/etc/nir-market.env` (free: opensea.io →
+Settings → Developer → Create API key), OpenSea profiles add to this
+(`blockchain/market-opensea.mjs`): a wallet page with no label shows the
+OpenSea username its owner chose, their picture and the X account they
+linked, and the profile joins the book; the search tries the OpenSea
+usernames made of the words ("First Last" → firstlast, first_last). A
+username is the owner's own choice, not a checked identity: it shows as
+"OpenSea", as checked only when the profile links an X account, and
+unchecked profiles come after the labelled wallets. Answers are kept a day,
+at most 50 questions a minute. A signed-in visitor can suggest a name
 on any wallet's page, with a link to where it is published; moderators
 (`NIR_MARKET_ADMINS`) approve or reject it in their profile's Moderation
 tab, and an approved name shows on every transfer, wallet page and search

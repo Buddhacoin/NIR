@@ -486,3 +486,35 @@ test("token pictures are fetched once from the first source that has a real pict
     } finally { await new Promise((resolve) => server.close(resolve)); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("OpenSea profiles: a wallet's username, picture and linked X account; found by name; checked only with an X account", async () => {
+  const { createOpenSea, readAccount } = await import("../blockchain/market-opensea.mjs");
+  const zeus = `0x${"d".repeat(40)}`;
+  const profile = { address: zeus, username: "zeus_olympus", profile_image_url: "https://i.example/zeus.png",
+    social_media_accounts: [{ platform: "twitter", username: "zeusolympus" }] };
+  assert.deepEqual(readAccount(profile), { address: zeus, username: "zeus_olympus", picture: "https://i.example/zeus.png", x: "zeusolympus", checked: true });
+  assert.equal(readAccount({ address: zeus, username: "" }), null, "no username, no name");
+  assert.equal(readAccount({ address: zeus, username: "0xddddddd" }), null, "an address for a username names no one");
+  assert.equal(createOpenSea({ key: "" }), null, "no key, no OpenSea");
+
+  const asked = [];
+  const get = async (url, headers) => {
+    asked.push([url, headers]);
+    if (url.endsWith(`/accounts/${zeus}`) || url.endsWith("/accounts/zeusolympus")) return profile;
+    return null; // OpenSea's 404
+  };
+  const opensea = createOpenSea({ key: "k", get, perMinute: 3 });
+  assert.equal((await opensea.account(zeus)).username, "zeus_olympus");
+  assert.equal(asked[0][1]["x-api-key"], "k");
+  await opensea.account(zeus);
+  assert.equal(asked.length, 1, "kept a day");
+  assert.equal(await opensea.account("<script>"), null);
+
+  // Found by a person's name, after the labelled wallets.
+  const { get: explorerGet } = explorers();
+  const chain = createChain({ get: explorerGet, rpc: node().rpc, opensea });
+  const found = await chain.search("Zeus Olympus");
+  const hit = found.find((item) => item.address === zeus);
+  assert.deepEqual([hit.name, hit.entity, hit.checked], ["zeus_olympus", "OpenSea · @zeusolympus", true]);
+  assert.equal(chain.names.name(zeus).name, "zeus_olympus", "the profile joins the book");
+});

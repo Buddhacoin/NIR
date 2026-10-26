@@ -28,8 +28,8 @@ const UTXO_ADDRESS = /^(?:bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25
 const ICON = /^https:\/\/(?:coin-images\.coingecko\.com|assets\.coingecko\.com|raw\.githubusercontent\.com\/trustwallet)\//;
 const MAX_BYTES = 8_000_000;
 
-export async function fetchExplorer(url) {
-  const response = await fetch(url, { headers: { accept: "application/json", "user-agent": "NIR-Markets/1.0" },
+export async function fetchExplorer(url, headers = {}) {
+  const response = await fetch(url, { headers: { accept: "application/json", "user-agent": "NIR-Markets/1.0", ...headers },
     signal: AbortSignal.timeout(45_000) });
   if (response.status === 404) return null;
   if (!response.ok) throw Object.assign(new Error(`${new URL(url).host} answered ${response.status}`), { status: response.status });
@@ -93,7 +93,7 @@ export function normalizeTransaction(chain, item, native) {
 }
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
-  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null } = {}) {
+  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -358,13 +358,22 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         // A wallet the open labels already name keeps that name.
         if (!found.has(key)) found.set(key, { address: item.address_hash, name: item.ens_info.name, entity: null, contract: false, kind: "evm", ens: true });
       }
-      // Labelled wallets of the organisation or person first, then the name-service names, then contracts.
-      const rank = (item) => (item.contract ? 2 : item.ens ? 1 : 0);
+      // OpenSea usernames made of the words ("James Wynn" → jameswynn, james_wynn), when a key is set:
+      // shown as OpenSea profiles, checked when they link an X account.
+      const handles = opensea && !text.includes(".") ? [...new Set([words.join(""), words.join("_")])].filter((handle) => /^[a-z0-9_]{3,40}$/.test(handle)) : [];
+      const profiles = (await Promise.all(handles.map((handle) => opensea.account(handle).catch(() => null)))).filter(Boolean);
+      for (const profile of profiles) {
+        const key = profile.address.toLowerCase();
+        if (!found.has(key)) found.set(key, { address: profile.address, name: profile.username, entity: profile.x ? `OpenSea · @${profile.x}` : "OpenSea",
+          logo: profile.picture, contract: false, kind: "evm", opensea: true, checked: profile.checked });
+      }
+      // Labelled wallets and checked profiles first, then name-service names and unchecked profiles, then contracts.
+      const rank = (item) => (item.contract ? 2 : item.ens || (item.opensea && !item.checked) ? 1 : 0);
       const results = [...found.values()].sort((left, right) => rank(left) - rank(right)).slice(0, 10);
       await names.lookup(results.map((item) => item.address)).catch(() => {});
       const answer = results.map((item) => {
         const open = names.name(item.address);
-        return { ...item, entity: item.entity ?? open?.entity ?? null, logo: open?.logo ?? null };
+        return { ...item, entity: item.entity ?? open?.entity ?? null, logo: open?.logo ?? item.logo ?? null };
       });
       // Labelled wallets and name-service names join the book; contracts do not.
       names.remember(answer.filter((item) => !item.contract), "search");
@@ -457,7 +466,15 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       if (!part) {
         const [data] = await Promise.all([holdings(address).then(withCoinIds), learn([{ from: { address } }], 2_000)]);
         const own = labelFor(address);
-        const open = names.name(address);
+        let open = names.name(address);
+        // A wallet no label names may have an OpenSea profile: its username, picture and linked X account.
+        if (!open && !own && opensea && addressKind(address) === "evm") {
+          const profile = await Promise.race([opensea.account(address), new Promise((resolve) => { setTimeout(resolve, 2_500, null).unref?.(); })]);
+          if (profile) {
+            names.remember([{ address, name: profile.username, entity: profile.x ? `OpenSea · @${profile.x}` : "OpenSea", logo: profile.picture }], "opensea");
+            open = { name: profile.username, entity: null, site: profile.x ? `https://x.com/${profile.x}` : null, logo: profile.picture };
+          }
+        }
         const labelled = open ? { ...data, name: data.name ?? open.name, logo: open.logo, site: open.site } : data;
         // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
         return reply(response, 200, own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled, 5), true;

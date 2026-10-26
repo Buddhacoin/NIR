@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 
 import { createAccounts } from "./market-accounts.mjs";
-import { createChain } from "./market-chain.mjs";
+import { createChain, fetchExplorer } from "./market-chain.mjs";
+import { createOpenSea } from "./market-opensea.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
 
@@ -42,7 +43,9 @@ const catalogue = { optimism: "optimism", base: "base", arbitrum: "arbitrum", po
 const logos = env.NIR_MARKET_DB ? createLogos({ dir: join(dirname(env.NIR_MARKET_DB), "logos"),
   catalogue: (network) => catalogue[network] ?? (network === "eth" ? chain.platform(1) : null) }) : null;
 const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
-  labelFor: (address) => accounts?.labelFor(address) ?? null, namesFile, logos });
+  labelFor: (address) => accounts?.labelFor(address) ?? null, namesFile, logos,
+  // OpenSea profiles when OPENSEA_API_KEY is set in /etc/nir-market.env (market-opensea.mjs).
+  opensea: createOpenSea({ key: env.OPENSEA_API_KEY, get: fetchExplorer }) });
 const service = createMarketService(fixture ? {
   accounts, chain,
   fetch: async (url) => {
