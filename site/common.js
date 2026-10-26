@@ -203,6 +203,21 @@ const WHALES = [
   { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", kind: { ru: "Биржа", en: "Exchange" } },
   { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", kind: { ru: "Биржа", en: "Exchange" } },
   { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", kind: { ru: "Биржа", en: "Exchange" } },
+  // Well-known people by the name-service name they set on their own wallet (each resolves to this address).
+  { address: "0x8589cd7a7B9E0C3eA3552FacB8ff11B3135baAD7", name: "James Wynn", ens: "jwynn.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x020cA66C30beC2c4Fe3861a94E4DB4A498A35872", name: "Machi Big Brother", ens: "machibigbrother.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x648aA14e4424e0825A5cE739C8C68610e143FB79", name: "Anthony Sassano", ens: "sassal.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xfD22004806A6846EA67ad883356be810F0428793", name: "punk6529", ens: "punk6529.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xD387A6E4e84a6C86bd90C158C6028A58CC8Ac459", name: "Pranksy", ens: "pranksy.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x0109731B26B26b33De264DcE92c8C7Aa882Da613", name: "Gary Vaynerchuk", ens: "garyvee.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5", name: "Nick Johnson", ens: "nick.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x2E21f5d32841cf8C7da805185A041400bF15f21A", name: "Stani Kulechov", ens: "stani.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x50EC05ADe8280758E2077fcBC08D878D4aef79C3", name: "Hayden Adams", ens: "hayden.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x42f9134E9d3Bf7eEE1f8A5Ac2a4328B059E7468c", name: "Kain Warwick", ens: "kain.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xD64aA5F70F228dC486b70D83d9b948fae3Cc698c", name: "Dan Romero", ens: "dwr.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x0916C04994849c676ab2667Ce5bbDF7CcC94310a", name: "Balaji Srinivasan", ens: "balajis.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x849151d7D0bF1F34b70d5caD5149D28CC2308bf1", name: "Jesse Pollak", ens: "jessepollak.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x983110309620D911731Ac0932219af06091b6744", name: "Brantly Millegan", ens: "brantly.eth", kind: { ru: "Персона", en: "Individual" } },
 ];
 const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
 const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
@@ -482,7 +497,7 @@ function setupSearch({ overview = () => null }) {
           const whale = WHALE.get(coin.address.toLowerCase());
           const name = coin.name ?? whale?.name ?? null;
           // The organisation (from the open labels) or the kind on the right, as the analytics sites show entities.
-          const side = whale ? whale.kind[language === "en" ? "en" : "ru"] : coin.entity ?? (coin.contract ? t().contract : null);
+          const side = whale ? whale.kind[language === "en" ? "en" : "ru"] : coin.entity ?? (coin.ens ? "ENS" : coin.contract ? t().contract : null);
           row.append(walletAvatar({ address: coin.address, name: name ?? "◎", logo: coin.logo ?? null }, "w-avatar s-avatar"), Object.assign(document.createElement("b"), { textContent: name ?? shortAddress(coin.address) }),
             Object.assign(document.createElement("span"), { textContent: name ? shortAddress(coin.address) : t().wallet }),
             Object.assign(document.createElement("em"), { textContent: side ?? "" }));
@@ -521,7 +536,7 @@ function setupSearch({ overview = () => null }) {
     }
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
       coin.symbol.toLowerCase().startsWith(query) || coin.id.includes(query)).slice(0, 8);
-    const whales = WHALES.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 4);
+    const whales = WHALES.filter((item) => [item.name, item.ens].some((value) => value?.toLowerCase().includes(query))).slice(0, 4);
     // Wallets and organisations first, then coins, each its own section, as on the analytics sites.
     draw([[t().entities, whales, "/wallets/"], [t().coins, local]]);
     clearTimeout(timer);

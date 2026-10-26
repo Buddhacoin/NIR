@@ -1016,3 +1016,6 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 }
 .own-actions { align-items: center; }
 .profile-page .dash-top { display: none; }
+/* Under TradingView's chart only the dividing line, no empty strip. */
+.coin-page #chart:has(.big-chart.tv) { padding-bottom: 0; }
+.coin-page #chart .chart-note:empty { display: none; }

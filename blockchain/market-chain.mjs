@@ -291,7 +291,21 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         else if (tag) entry.name = name;
         found.set(key, entry);
       }
-      const results = [...found.values()].sort((left, right) => left.contract - right.contract).slice(0, 10);
+      // A person is often found by the name-service name made of their name: "James Wynn" →
+      // jameswynn.eth, james-wynn.eth, jwynn.eth, wynn.eth. Each that exists comes first, shown as it is.
+      const words = text.toLowerCase().split(/\s+/).map((word) => word.replace(/[^a-z0-9]/g, "")).filter(Boolean);
+      const guesses = text.includes(".") || !words.length ? [] : [...new Set([words.join(""), words.join("-"),
+        words.length > 1 ? `${words[0][0]}${words.at(-1)}` : "", words.length > 1 ? words.at(-1) : ""])]
+        .filter((guess) => /^[a-z0-9-]{3,40}$/.test(guess)).slice(0, 4);
+      const named = (await Promise.all(guesses.map((guess) => get(`${EXPLORERS.eth.api}/search/quick?q=${guess}.eth`).then((answer) =>
+        (Array.isArray(answer) ? answer : []).find((item) => item?.type === "ens_domain" && item.ens_info?.name === `${guess}.eth` && EVM_ADDRESS.test(item.address_hash ?? "")))
+        .catch(() => null)))).filter(Boolean);
+      for (const item of named.reverse()) {
+        const key = item.address_hash.toLowerCase();
+        found.delete(key);
+        found.set(key, { address: item.address_hash, name: item.ens_info.name, entity: null, contract: false, kind: "evm", ens: true });
+      }
+      const results = [...found.values()].sort((left, right) => Boolean(right.ens) - Boolean(left.ens) || left.contract - right.contract).slice(0, 10);
       await names.lookup(results.map((item) => item.address)).catch(() => {});
       return results.map((item) => {
         const open = names.name(item.address);
