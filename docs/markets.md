@@ -89,7 +89,10 @@ As on the on-chain analytics sites, everything is searched at once and shown
 in sections: **Wallets and entities** first (the popular wallets, then, from
 three letters, `GET /market/chain/search?q=`: the explorer's quick search,
 whose open labels name wallets such as a fund's or a market maker's, with
-their organisation, people's wallets ahead of contracts, an hour's cache),
+their organisation, people's wallets ahead of contracts, an hour's cache;
+and, for a person's name, the name-service names made of it: "First Last"
+tries firstlast.eth, first-last.eth, flast.eth and last.eth, each that
+exists shown first as the name it is, without claiming whose it is),
 then **Coins**. The popular wallets page's filter asks the same search, so a
 wallet beyond the loaded lists is found by its name too.
 
@@ -327,8 +330,9 @@ wallet activity (`blockchain/market-chain.mjs`):
   or name; Token filters by one of the loaded tokens; "Clear filters" undoes
   them.
 - **Popular wallets**: the search, opened empty, offers well-known public
-  wallets (exchanges, funds, market makers, a government, founders; their
-  own published or widely reported addresses, listed in `site/common.js`)
+  wallets (exchanges, funds, market makers, a government, founders, and
+  well-known people by the name-service name they set on their own wallet;
+  their own published or widely reported addresses, listed in `site/common.js`)
   next to recent searches and trending tokens with their day's change;
   typing a name finds them, and their names and pictures (the
   organisation's site icon, or the person's name-service avatar) show

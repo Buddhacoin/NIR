@@ -174,6 +174,9 @@ test("an address shows its holdings on every network, its transfers a page at a 
   assert.deepEqual(entity.slice(0, 2).map((item) => [item.name, item.entity, item.contract]),
     [["Olympus: Digital Asset Fund", "Olympus", false], ["vitalik.eth", null, false]]);
   assert.deepEqual(entity.at(-1).address, "0x7712c34205737192402172409a8F7ccef8aA2AEc");
+  // A person's name finds the name-service name made of it, first.
+  const person = await chain.search("Vitalik");
+  assert.deepEqual([person[0].name, person[0].ens], ["vitalik.eth", true]);
   assert.deepEqual(await chain.search("ab"), []);
 });
 
