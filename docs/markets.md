@@ -158,11 +158,22 @@ Until the keys are set, the site works as before and shows no sign-in button.
 
 Never put the secret in the repository or in a chat.
 
+### Profile pictures
+
+A user may choose a picture by tapping theirs on their profile (or "Change
+photo" in the profile form). The page cuts it to a square and sends a 128 px
+JPEG (`PUT /market/me/avatar`, a data address of at most 12 KB whose bytes
+must match its kind; `DELETE` removes it). It is served from
+`GET /market/avatar/<username>` and shows on the profile, in the header and
+next to the user's comments; without one, the coloured letter stays.
+
 ### The owner's dashboard
 
 On their own profile, above the activity tabs, the owner sees four quadrants
 over the wallets they marked as their own (`site/dashboard.js`), as on the
-on-chain analytics sites; empty until a wallet is added:
+on-chain analytics sites; empty until a wallet is added. The total of the
+wallets stands under the owner's name, with the network choice beside the
+profile's buttons:
 
 1. **Portfolio**: every token across networks and accounts with its price,
    amount and value and the day's change of each; **Holdings by chain**: the
@@ -400,13 +411,16 @@ it. It shows the price with 1h/24h/7d changes and the 24h range, market cap,
 volume, fully diluted value, supply, all-time high and low, links (website,
 whitepaper, source, block explorers, well-known wallets, community), a
 converter, a price chart for 1 day to 1 year with volume bars (TradingView
-candles for coins with a Binance pair; the largest coin opens on TradingView's
-full chart of its cross-exchange index, a trial before the others), the description (Russian when
+candles; every coin TradingView knows opens on its full chart with drawing
+tools and indicators, the largest coin on its cross-exchange index and the
+rest on their Binance pair, and the line chart stays one click away), the description (Russian when
 CoinGecko has it) and the markets where the coin trades, each with the
 exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
 column shows only when some market has a rating). The page is one panel, its
 columns and sections divided by thin lines rather than separate cards, and the
-chart takes the whole middle column at 520 px high. On wide screens (1400 px
+chart takes the whole middle column at 520 px high. The page spans the
+window and the side columns take about a quarter each (331 px at 1440 px,
+442 and 390 px at 1920 px, as on the big market sites). On wide screens (1400 px
 and more) the discussion stands in a third column beside the chart, as on the
 big market sites: the day's vote on top, the comments scrolling inside, the
 post box at the bottom.

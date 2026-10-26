@@ -259,14 +259,30 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 /* Accounts: the header button, avatars, profiles (/u/<username>). */
 .pill.account { display: inline-flex; align-items: center; background: var(--btn); color: var(--btn-text); font-weight: 800; }
 .pill.account.signed { padding: 3px; background: transparent; }
-.avatar { display: inline-grid; place-items: center; flex: none; border-radius: 50%; color: #fff; font-weight: 850; }
+.avatar { display: inline-grid; place-items: center; flex: none; border-radius: 50%; overflow: hidden; color: #fff; font-weight: 850; }
 .toast { position: fixed; left: 50%; bottom: 96px; z-index: 40; padding: 12px 18px; border-radius: 14px; background: var(--down); color: #fff;
   font-weight: 700; transform: translateX(-50%); }
 .profile-page { display: grid; gap: 16px; max-width: 860px; margin: 0 auto; }
-.profile-head { display: flex; align-items: center; gap: 18px; }
-.profile-head .who { flex: 1; min-width: 0; }
-.profile-head h1 { margin: 0 0 4px; font-size: 26px; }
-.profile-head p { margin: 10px 0 0; line-height: 1.55; white-space: pre-line; }
+/* The profile's head, as on the analytics sites: no frame, the picture, the name with the handle,
+   the total of the owner's wallets and small chips. */
+.profile-head { display: flex; align-items: center; gap: 20px; padding: 4px 0; }
+.profile-head .who { display: grid; flex: 1; gap: 6px; min-width: 0; }
+.profile-head h1 { margin: 0; font-size: 24px; }
+.profile-head h1 .handle { font-size: 16px; font-weight: 600; }
+.profile-head p { margin: 2px 0 0; line-height: 1.55; white-space: pre-line; }
+.profile-total:empty { display: none; }
+.profile-total b { font-size: 30px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.profile-total small { margin-left: 6px; font-size: 14px; font-weight: 700; }
+.profile-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.profile-chips .chip { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; }
+.avatar-pick { position: relative; flex: none; border-radius: 50%; }
+.avatar-pick .avatar { overflow: hidden; }
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; grid-area: 1 / 1; }
+.avatar-pick .avatar-edit { position: absolute; right: -2px; bottom: -2px; display: none; place-items: center; width: 30px; height: 30px;
+  border: 2px solid var(--card); border-radius: 50%; background: var(--accent); font-size: 14px; }
+.avatar-pick.own { cursor: pointer; }
+.avatar-pick.own .avatar-edit { display: grid; }
+.avatar-pick.own:hover .avatar { filter: brightness(0.85); }
 .own-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .profile-form { display: grid; gap: 12px; }
 .profile-form h2 { margin: 0; }
@@ -923,7 +939,7 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 /* The owner's dashboard on the profile (dashboard.js): four quadrants as on the on-chain analytics
    sites — portfolio, balances history, accounts, transactions — each with its own tabs and scroll. */
 .dash { display: grid; gap: 12px; margin: 16px 0; }
-.dash-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px; }
+.dash-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 10px; margin-top: -8px; }
 .dash-total b { font-size: 30px; font-weight: 850; font-variant-numeric: tabular-nums; }
 .dash-total small { font-size: 14px; font-weight: 700; }
 .dash-network { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); font: inherit; font-weight: 700; }
@@ -980,3 +996,26 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 /* The owner's profile with the dashboard takes the page's full width. */
 .profile-page:has(.dash:not([hidden])) { max-width: none; }
 .dash { margin: 0; }
+/* A coin's page spans the window as on the big market sites: the side columns take about a quarter
+   each (331 px at 1440, 442 and 390 at 1920) and the chart the rest. */
+.wrap:has(> .coin-page:not([hidden])) { max-width: none; }
+@media (min-width: 1101px) {
+  .coin-page { grid-template-columns: clamp(300px, 23vw, 442px) minmax(0, 1fr); }
+  .coin-page .card { padding: 18px 20px; }
+}
+@media (min-width: 1400px) {
+  .coin-page:has(.coin-feed .community:not([hidden])) { grid-template-columns: clamp(300px, 23vw, 442px) minmax(0, 1fr) clamp(300px, 23vw, 390px); }
+}
+/* The coin's head fits the narrower side column in one line. */
+@media (min-width: 1101px) {
+  .coin-head { flex-wrap: nowrap; gap: 6px; }
+  .coin-head h1 { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: 20px; text-overflow: ellipsis; white-space: nowrap; }
+  .coin-head .logo { width: 28px; height: 28px; }
+  .coin-head h1.long { font-size: 17px; }
+  .coin-head .sym { flex: 0 3 auto; min-width: 0; font-size: 13px; }
+  .coin-head .badge { padding: 2px 6px; font-size: 11px; }
+  .coin-head .watch { width: 30px; height: 30px; font-size: 16px; border-radius: 9px; }
+  .coin-head .watch svg { width: 17px; height: 17px; }
+}
+.own-actions { align-items: center; }
+.profile-page .dash-top { display: none; }

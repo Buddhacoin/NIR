@@ -78,7 +78,8 @@ export function createAccounts({
       PRIMARY KEY (user_id, coin_id));
     CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, kind TEXT NOT NULL,
       coin_id TEXT, public INTEGER NOT NULL, at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS activity_user ON activity (user_id, at);`);
+    CREATE INDEX IF NOT EXISTS activity_user ON activity (user_id, at);
+    CREATE TABLE IF NOT EXISTS avatars (user_id INTEGER PRIMARY KEY, type TEXT NOT NULL, image BLOB NOT NULL, updated_at INTEGER NOT NULL);`);
   const sql = (text) => db.prepare(text);
   const origin = new URL(publicUrl).origin;
   const secure = origin.startsWith("https:");
@@ -106,7 +107,26 @@ export function createAccounts({
     return row ?? null;
   }
 
-  const profile = (user) => ({ username: user.username, displayName: user.display_name, bio: user.bio, joinedAt: user.created_at });
+  // A picture the user chose, served from /market/avatar/<username>; the version in the address changes with it.
+  const avatarUrl = (userId, username) => {
+    const row = sql("SELECT updated_at FROM avatars WHERE user_id = ?").get(userId);
+    return row ? `/market/avatar/${username}?v=${row.updated_at}` : null;
+  };
+  const profile = (user) => ({ username: user.username, displayName: user.display_name, bio: user.bio, joinedAt: user.created_at,
+    avatar: avatarUrl(user.id, user.username) });
+  // A small square picture, made by the page (128 px), as a data address: JPEG, PNG or WebP, 12 KB at most.
+  function setAvatar(user, changes) {
+    const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(changes?.image ?? ""));
+    if (!match) return [400, { error: "a JPEG, PNG or WebP picture, please" }];
+    const image = Buffer.from(match[2], "base64");
+    const kinds = { jpeg: [0xff, 0xd8, 0xff], png: [0x89, 0x50, 0x4e, 0x47] };
+    const looks = match[1] === "webp" ? image.subarray(0, 4).toString("latin1") === "RIFF" && image.subarray(8, 12).toString("latin1") === "WEBP"
+      : kinds[match[1]].every((byte, index) => image[index] === byte);
+    if (!looks || image.length > 12_000) return [400, { error: "the picture is not valid or is too large" }];
+    sql("INSERT INTO avatars (user_id, type, image, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET type = excluded.type, image = excluded.image, updated_at = excluded.updated_at")
+      .run(user.id, `image/${match[1]}`, image, now());
+    return [200, { user: profile(user) }];
+  }
   const activity = (userId, publicOnly) => sql(`SELECT kind, coin_id AS coinId, at FROM activity
     WHERE user_id = ? ${publicOnly ? "AND public = 1" : ""} ORDER BY at DESC, id DESC LIMIT 50`).all(userId)
     .map((row) => ({ ...row }));
@@ -243,7 +263,17 @@ export function createAccounts({
   async function handle(request, response, url) {
     if (await community.handle(request, response, url)) return true;
     const path = url.pathname;
-    if (!/^\/market\/(auth|me|u|labels|stats)(\/|$)/.test(path)) return false;
+    if (!/^\/market\/(auth|me|u|labels|stats|avatar)(\/|$)/.test(path)) return false;
+    // GET /market/avatar/<username>: the picture a user chose.
+    const avatarMatch = /^\/market\/avatar\/([a-z0-9_]{3,20})$/.exec(path);
+    if (avatarMatch && request.method === "GET") {
+      const row = sql("SELECT avatars.type, avatars.image FROM avatars JOIN users ON users.id = avatars.user_id WHERE users.username = ?").get(avatarMatch[1]);
+      if (!row) { json(response, 404, { error: "no picture" }); return true; }
+      response.writeHead(200, { "content-type": row.type, "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'" });
+      response.end(Buffer.from(row.image));
+      return true;
+    }
     // GET /market/stats: how many accounts the site has, for the strip at the top.
     if (request.method === "GET" && path === "/market/stats") {
       json(response, 200, { users: sql("SELECT COUNT(*) AS n FROM users").get().n }, { "cache-control": "public, max-age=60" });
@@ -289,9 +319,15 @@ export function createAccounts({
         alerts.forget(user.id);
         addresses.forget(user.id);
         labels.forget(user.id);
-        for (const table of ["sessions", "watchlist", "activity"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
+        for (const table of ["sessions", "watchlist", "activity", "avatars"]) sql(`DELETE FROM ${table} WHERE user_id = ?`).run(user.id);
         sql("DELETE FROM users WHERE id = ?").run(user.id);
         json(response, 200, { deleted: true }, { "set-cookie": cookie("", 0) });
+      } else if (method === "PUT" && path === "/market/me/avatar") {
+        const [status, result] = setAvatar(user, await body(request));
+        json(response, status, result);
+      } else if (method === "DELETE" && path === "/market/me/avatar") {
+        sql("DELETE FROM avatars WHERE user_id = ?").run(user.id);
+        json(response, 200, { user: profile(user) });
       } else if (method === "PATCH" && path === "/market/me") {
         const [status, result] = updateProfile(user, await body(request));
         json(response, status, result);
