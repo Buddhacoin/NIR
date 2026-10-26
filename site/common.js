@@ -14,11 +14,18 @@ const watch = new Set((store.get("nir-markets-watch") ?? "").split(",").filter(B
 let account = { signIn: false, user: null };
 let accountChanged = () => {};
 const saveWatch = () => store.set("nir-markets-watch", [...watch].join(","));
+// The watchlist belongs to an account: signed out, a star leads to signing in.
 function toggleWatch(id) {
+  if (!account.user) {
+    if (account.signIn) location.href = signInUrl();
+    else alert(language === "en" ? "The watchlist needs an account; sign-in is off on this site." : "Избранное доступно после входа, а вход на сайте сейчас выключен.");
+    return false;
+  }
   const adding = !watch.has(id);
   if (adding) watch.add(id); else watch.delete(id);
   saveWatch();
-  if (account.user) void send(`/market/me/watchlist/${encodeURIComponent(id)}`, adding ? "PUT" : "DELETE");
+  void send(`/market/me/watchlist/${encodeURIComponent(id)}`, adding ? "PUT" : "DELETE");
+  return true;
 }
 async function send(path, method, body) {
   const response = await fetch(path, { method, headers: { "content-type": "application/json" },
@@ -64,6 +71,8 @@ function renderAccount() {
     button.title = account.user ? `@${account.user.username}` : words.signIn;
   }
   renderBell();
+  // Watchlist and portfolio links: for signed-in visitors only.
+  for (const link of document.querySelectorAll("[data-member]")) link.hidden = !account.user;
   if (tab && (account.signIn || account.user)) {
     tab.href = account.user ? `/u/${account.user.username}` : signInUrl();
     tab.querySelector("span").textContent = account.user ? words.profile : words.signIn;

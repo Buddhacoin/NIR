@@ -8,6 +8,12 @@
 // minutes and capped at a number of fetches a minute, so a crowd on one coin
 // or a crawler walking every coin cannot spend the free CoinGecko limit.
 //
+// Trending coins outside the top hundred get their full market rows in one
+// more request, and the community's rise votes on CoinGecko (the share of
+// "good" votes over a day) are read for one coin every twenty seconds and
+// kept a day, so the sentiment column is filled where NIR Markets' own votes
+// are still few.
+//
 // Sources: CoinGecko (prices, market, trending; credited on the page) and
 // alternative.me (Fear & Greed). COINGECKO_API_KEY adds a free demo key.
 import { createServer } from "node:http";
@@ -54,14 +60,24 @@ function sparkline(prices) {
     .map(finite).filter((value) => value !== null).map((value) => Number(value.toPrecision(6)));
 }
 
+// A change CoinGecko leaves out (young or thinly traded coins) is read off the
+// hourly 7-day prices instead: the price now against an hour, a day or a week back.
+function changeFrom(prices, hoursBack) {
+  const list = Array.isArray(prices) ? prices.filter((value) => finite(value) !== null) : [];
+  // A coin younger than the span gets no figure rather than a shorter one.
+  if (list.length < 2 || list.length < hoursBack) return null;
+  const then = list[Math.max(0, list.length - 1 - hoursBack)];
+  return then > 0 ? Number(((list.at(-1) / then - 1) * 100).toFixed(2)) : null;
+}
+
 export function normalizeCoins(list) {
   if (!Array.isArray(list)) throw new Error("coin list is invalid");
   return list.slice(0, 100).map((coin) => ({
     id: text(coin?.id, 80), symbol: text(coin?.symbol, 20).toUpperCase(), name: text(coin?.name, 60),
     image: image(coin?.image), rank: finite(coin?.market_cap_rank), price: finite(coin?.current_price),
-    change1h: finite(coin?.price_change_percentage_1h_in_currency),
-    change24h: finite(coin?.price_change_percentage_24h_in_currency ?? coin?.price_change_percentage_24h),
-    change7d: finite(coin?.price_change_percentage_7d_in_currency),
+    change1h: finite(coin?.price_change_percentage_1h_in_currency) ?? changeFrom(coin?.sparkline_in_7d?.price, 1),
+    change24h: finite(coin?.price_change_percentage_24h_in_currency ?? coin?.price_change_percentage_24h) ?? changeFrom(coin?.sparkline_in_7d?.price, 24),
+    change7d: finite(coin?.price_change_percentage_7d_in_currency) ?? changeFrom(coin?.sparkline_in_7d?.price, 168),
     marketCap: finite(coin?.market_cap), volume: finite(coin?.total_volume),
     circulating: finite(coin?.circulating_supply), maxSupply: finite(coin?.max_supply),
     sparkline: sparkline(coin?.sparkline_in_7d?.price),
@@ -211,8 +227,9 @@ function createOnDemand({ get, now, perMinute, maxEntries }) {
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null } = {}) {
-  const state = { coins: [], global: null, trending: [], fearGreed: null, updatedAt: null, errors: {} };
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 20_000 } = {}) {
+  const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
+  const community = new Map(); // coin id → { up: percent of rise votes or null, at }
   const sources = {
     coins: [`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1` +
       "&sparkline=true&price_change_percentage=1h,24h,7d", normalizeCoins],
@@ -234,7 +251,42 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       }
     }));
     if (state.coins.length) state.updatedAt = now();
+    await trendingRows();
     if (accounts?.checkAlerts && !state.errors.coins) await checkAlerts();
+  }
+
+  // Trending coins outside the top hundred: their full rows (1h and 7d change, cap, volume, supply, sparkline).
+  let trendingAsked = "";
+  let trendingAt = 0;
+  async function trendingRows() {
+    const top = new Set(state.coins.map((coin) => coin.id));
+    const ids = state.trending.map((coin) => coin.id).filter((id) => !top.has(id) && COIN_ID.test(id));
+    const key = ids.join(",");
+    if (!ids.length) { state.trendingCoins = []; return; }
+    if (key === trendingAsked && now() - trendingAt < 300_000) return;
+    try {
+      state.trendingCoins = normalizeCoins(await get(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${key}&per_page=50` +
+        "&sparkline=true&price_change_percentage=1h,24h,7d"));
+      trendingAsked = key;
+      trendingAt = now();
+      delete state.errors.trendingCoins;
+    } catch (error) {
+      state.errors.trendingCoins = String(error?.message ?? error).slice(0, 200);
+    }
+  }
+
+  // One coin's community votes at a time: the top hundred and the trending ones, the oldest first.
+  async function communityTick() {
+    const ids = [...state.coins.map((coin) => coin.id), ...state.trending.map((coin) => coin.id)].filter((id) => COIN_ID.test(id));
+    const next = ids.find((id) => !community.has(id)) ?? ids.filter((id) => now() - community.get(id).at > 86_400_000)
+      .sort((left, right) => community.get(left).at - community.get(right).at)[0];
+    if (!next) return;
+    try {
+      const coin = await get(`${COINGECKO}/coins/${next}?localization=false&tickers=false&market_data=false` +
+        "&community_data=false&developer_data=false&sparkline=false");
+      community.set(next, { up: finite(coin?.sentiment_votes_up_percentage), at: now() });
+      if (community.size > 400) community.delete(community.keys().next().value);
+    } catch {}
   }
 
   // Price alerts (market-alerts.mjs) are checked against the fresh prices; coins
@@ -265,7 +317,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     return {
       coins: state.coins, fearGreed: state.fearGreed, gainers: movers.slice(0, 5),
       global: state.global, losers: movers.slice(-5).reverse(), source: "CoinGecko",
-      trending: state.trending, updatedAt: state.updatedAt,
+      trending: state.trending, trendingCoins: state.trendingCoins, updatedAt: state.updatedAt,
+      community: Object.fromEntries([...community].filter(([, entry]) => entry.up !== null).map(([id, entry]) => [id, entry.up])),
     };
   }
 
@@ -346,14 +399,17 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       send(response, 404, { error: "not found" });
     }
   });
-  server.on("close", () => clearInterval(timer));
+  let communityTimer = null;
+  server.on("close", () => { clearInterval(timer); clearInterval(communityTimer); });
 
   return {
-    server, refresh, overview, state,
+    server, refresh, overview, state, communityTick,
     start() {
       void refresh();
       timer = setInterval(() => { void refresh(); }, refreshMs);
       timer.unref?.();
+      communityTimer = setInterval(() => { void communityTick(); }, communityMs);
+      communityTimer.unref?.();
     },
   };
 }

@@ -13,7 +13,7 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins or addresses",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   guestNote: "Portfolios are kept in this browser.", guestSign: "Sign in with Google to have them on all your devices →",
   overview: "Overview", myPortfolios: "My portfolios", createPortfolio: "+ Create portfolio", addTx: "+ Add transaction", export: "Export",
   holdingsTitle: "Holdings", r1: "24h", r7: "7d", r30: "30d", r90: "90d", rAll: "All", history: "History", allocation: "Allocation",

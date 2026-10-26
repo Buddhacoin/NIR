@@ -8,7 +8,7 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins or addresses",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   loading: "Loading the address… a large wallet can take up to half a minute.", copy: "Copy", share: "Share", portfolio: "Portfolio", networks: "Assets by network",
   colAsset: "Asset", colChain: "Network", colPrice: "Price", colAmount: "Amount", colValue: "Value", colAssets: "Assets", colShare: "Share",
   history: "Balance history", shares: "Asset shares", counterparties: "Top counterparties", counterNote: "From the loaded transfers: who this address deals with most.",
@@ -23,6 +23,10 @@ const words = {
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
     failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noCounter: "Пока нечего показать.",
+    emptyWallet: "На шести сетях у адреса сейчас нет монет и токенов.", activity: (list) => `Активность: ${list}.`,
+    txs: (count) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? "транзакция" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "транзакции" : "транзакций"}`,
+    noActivity: "Следов активности нет: адрес не получал и не отправлял монеты на этих сетях.", openIn: "Смотреть в обозревателе:",
+    noHistoryYet: "Истории пока нет: на кошельке ничего нет, и переводов не найдено.",
     signIn: "Войдите через Google, чтобы отслеживать адреса.",
     sharesNote: "Из чего состоит кошелёк, по стоимости в долларах.", others: "Остальные", allChains: "Все", loadingTransfers: "Загружаю переводы по всем сетям…",
     ranges: [[7, "1н"], [30, "1м"], [90, "3м"], [365, "1г"], [0, "Все"]],
@@ -38,6 +42,10 @@ const words = {
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
     failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noCounter: "Nothing to show yet.",
+    emptyWallet: "The address holds no coins or tokens on the six networks right now.", activity: (list) => `Activity: ${list}.`,
+    txs: (count) => `${count} transaction${count === 1 ? "" : "s"}`,
+    noActivity: "No trace of activity: the address has not received or sent coins on these networks.", openIn: "See it in the explorer:",
+    noHistoryYet: "No history yet: the wallet holds nothing and no transfers were found.",
     signIn: "Sign in with Google to track addresses.",
     sharesNote: "What the wallet is made of, by dollar value.", others: "Others", allChains: "All", loadingTransfers: "Loading transfers on every network…",
     ranges: [[7, "1W"], [30, "1M"], [90, "3M"], [365, "1Y"], [0, "All"]],
@@ -71,6 +79,10 @@ let generation = 0; // a new filter starts a new generation; answers to an older
 const sort = { key: null, dir: 0 };
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const chainName = (chain) => CHAINS[chain]?.name ?? chain;
+// Networks where the address left a trace, and the explorer pages to look further.
+const activeChains = () => (data?.networks ?? []).filter((item) => item.ok && item.active).map((item) => item.chain);
+const explorerLinks = () => activeChains().map((chain) => Object.assign(node("a", "pill", chainName(chain)),
+  { href: `${(CHAINS[chain]?.tx ?? "").replace(/\/tx\/$/, "/address/")}${address}`, target: "_blank", rel: "noopener" }));
 const COLORS = ["#3861fb", "#16c784", "#f3a12f", "#8b7bff", "#ea3943", "#2ee6a6", "#f7931a", "#00b8d9", "#c05cff", "#9aa4b5"];
 
 // --- The head: name, address, total, tags and the buttons.
@@ -85,8 +97,11 @@ function renderHead() {
   const face = walletAvatar({ address, name: data.name }).querySelector("img");
   if (face) $("#avatar").append(face);
   $("#total").textContent = price(data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0));
-  const held = new Set(data.assets.map((asset) => asset.chain));
-  $("#tags").replaceChildren(...data.networks.filter((item) => item.ok && held.has(item.chain)).map((item) => { const chip = node("span", "ex-chip"); chip.append(chainDot(item.chain), chainName(item.chain)); return chip; }),
+  $("#tags").replaceChildren(...data.networks.filter((item) => item.ok && item.active).map((item) => {
+    const chip = node("span", "ex-chip");
+    chip.append(chainDot(item.chain), chainName(item.chain), ...(item.sent ? [node("span", "muted", `· ${t().txs(item.sent)}`)] : []));
+    return chip;
+  }),
     ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
   $("#track").textContent = saved ? t().tracked : t().track;
   $("#track").classList.toggle("ghost", Boolean(saved));
@@ -107,7 +122,9 @@ function renderAssets() {
   const rows = sortBy(data.assets, sort, (asset, key) => (key === "symbol" ? asset.token.symbol.toLowerCase() : key === "price" ? asset.token.price : asset[key]));
   if (!rows.length) {
     const row = node("tr");
-    const cell = node("td", "muted", t().empty);
+    const active = data.networks.filter((item) => item.ok && item.active);
+    const cell = node("td", "muted ex-empty", data.networks.length > 1 ? `${t().emptyWallet} ${active.length
+      ? t().activity(active.map((item) => (item.sent ? `${chainName(item.chain)} — ${t().txs(item.sent)}` : chainName(item.chain))).join(", ")) : t().noActivity}` : t().empty);
     cell.colSpan = 5;
     row.append(cell);
     $("#assets").replaceChildren(row);
@@ -205,6 +222,11 @@ async function reachBack() {
 }
 
 function drawHistory(box) {
+  if (!data.assets.length && !ledger.size && !loadingMore) {
+    $("#history-note").textContent = "";
+    box.replaceChildren(node("p", "status muted ex-blank", t().noHistoryYet));
+    return;
+  }
   const steps = valueSteps();
   const covered = coverage();
   const now = Date.now();
@@ -341,6 +363,7 @@ function renderTransfers() {
       node("td", "", usdShort(item.usd)));
     return row;
   }), ...(shown.length ? [] : [message(loadingMore ? t().loadingTransfers : hidden ? t().hiddenDust(hidden) : t().noTransfers, !loadingMore && hidden ? reveal() : null)]),
+    ...(!shown.length && !hidden && !loadingMore && explorerLinks().length ? [(() => { const row = message(t().openIn); row.firstChild.append(" ", ...explorerLinks()); return row; })()] : []),
     ...(shown.length && hidden && !hasMore() ? [message(t().hiddenDust(hidden), reveal())] : []));
   $("#more").hidden = !hasMore();
   renderCounterparties();
@@ -353,7 +376,7 @@ let autoPages = 0;
 // "All" asks the explorer networks and the node networks where the wallet holds something, all at once;
 // each one's rows show as soon as it answers.
 const transferChainsAll = () => (utxo ? ["btc"] : Object.keys(CHAINS).filter((chain) => chain !== "btc"
-  && (!CHAINS[chain].node || data?.assets.some((asset) => asset.chain === chain))));
+  && (!CHAINS[chain].node || data?.assets.some((asset) => asset.chain === chain) || activeChains().includes(chain))));
 const transferChains = () => (utxo ? ["btc"] : transferChain === "all" ? transferChainsAll() : [transferChain]);
 const hasMore = () => transferChains().some((chain) => cursors[chain] !== null);
 async function loadTransfers(reset = false) {
@@ -364,8 +387,9 @@ async function loadTransfers(reset = false) {
   await Promise.all(transferChains().filter((chain) => cursors[chain] !== null).map(async (chain) => {
     const query = new URLSearchParams({ dir: direction, ...(utxo ? {} : { chain }), ...(cursors[chain] ? { cursor: cursors[chain] } : {}) });
     const ask = () => fetch(`/market/chain/address/${encodeURIComponent(address)}/transfers?${query}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
-    // A busy public node may turn one request away: one more try after a pause.
-    const answer = await ask() ?? await new Promise((done) => setTimeout(done, 2500)).then(ask);
+    // A busy network may turn a request away: two more tries, a little later each.
+    const later = (ms) => new Promise((done) => { setTimeout(done, ms); }).then(ask);
+    const answer = await ask() ?? await later(2500) ?? await later(6000);
     if (mine !== generation) return;
     cursors[chain] = answer?.next ?? null;
     if (answer) {

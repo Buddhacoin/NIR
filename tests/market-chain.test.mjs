@@ -47,6 +47,7 @@ function node() {
   const rpc = async (url, method, params) => {
     calls.push({ url, method, params });
     if (method === "eth_getBlockByNumber") return { number: "0x100000", timestamp: "0x6700000" };
+    if (method === "eth_getTransactionCount") return url.includes("base") ? "0x3" : "0x0";
     if (method === "eth_getLogs") {
       const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
       // The transfer sits in the newest window only.
@@ -123,6 +124,8 @@ test("an address shows its holdings on every network, its transfers a page at a 
   assert.equal(holdings.kind, "evm");
   assert.deepEqual(holdings.networks.map((item) => item.chain), ["eth", "optimism", "base", "arbitrum", "polygon", "bsc"]);
   // The node networks: the coin and the listed tokens with a balance, priced; unpriced tokens never listed.
+  assert.deepEqual(holdings.networks.find((item) => item.chain === "base"), { chain: "base", ok: true, partial: false, active: true, sent: 3 },
+    "a node network counts the address's own transactions");
   const base = holdings.assets.filter((asset) => asset.chain === "base");
   assert.deepEqual(base.map((asset) => [asset.token.symbol, asset.amount, asset.usd]).sort(), [["ETH", 0.5, 1175], ["USDC", 125, 125]]);
   const polygon = holdings.assets.filter((asset) => asset.chain === "polygon").map((asset) => asset.token.symbol);
@@ -174,8 +177,8 @@ test("a slow network leaves the rest standing, and a busy minute serves copies i
   const down = async () => { throw new Error("node down"); };
   const chain = createChain({ get, rpc: down, now: () => clock, perMinute: 4 });
   const holdings = await chain.holdings(EXCHANGE);
-  assert.deepEqual(holdings.networks, [{ chain: "eth", ok: true, partial: false }, { chain: "optimism", ok: false, partial: false },
-    ...["base", "arbitrum", "polygon", "bsc"].map((name) => ({ chain: name, ok: false, partial: false }))]);
+  assert.deepEqual(holdings.networks, [{ chain: "eth", ok: true, partial: false, active: true }, { chain: "optimism", ok: false, partial: false, active: false },
+    ...["base", "arbitrum", "polygon", "bsc"].map((name) => ({ chain: name, ok: false, partial: false, active: false }))]);
   await chain.feed();
   await assert.rejects(chain.transfers(EXCHANGE, "eth", "all", null), /busy/);
   clock += 61_000;

@@ -22,7 +22,10 @@ test("NIR Markets serves one cached overview of prices, market, trends and Fear 
   try {
     assert.equal((await fetch(`${base}/market/overview`)).status, 503);
     await service.refresh();
-    assert.equal(calls, 4);
+    // Four sources, and the trending coins outside the top hundred in one more request.
+    assert.equal(calls, 5);
+    await service.communityTick();
+    assert.equal(calls, 6);
     const response = await fetch(`${base}/market/overview`);
     assert.equal(response.status, 200);
     assert.match(response.headers.get("cache-control"), /max-age=30/);
@@ -36,13 +39,15 @@ test("NIR Markets serves one cached overview of prices, market, trends and Fear 
     assert.equal(overview.global.btcDominance, 60.2);
     assert.deepEqual(overview.fearGreed, { label: "Neutral", value: 46 });
     assert.equal(overview.trending[0].symbol, "ORE");
+    assert.ok(overview.trendingCoins.length > 0 && overview.trendingCoins.every((coin) => "change7d" in coin && "sparkline" in coin));
+    assert.equal(typeof overview.community.bitcoin, "number", "the community's rise votes come one coin at a time");
     assert.equal(overview.gainers[0].symbol, "SUI");
     assert.equal(overview.losers[0].symbol, "DOGE");
     assert.equal(overview.source, "CoinGecko");
     assert.equal(overview.updatedAt, 1_700_000_000_000);
     // Visitors never reach the data sources: more requests, no more fetches.
     await fetch(`${base}/market/overview`);
-    assert.equal(calls, 4);
+    assert.equal(calls, 6);
     assert.equal((await fetch(`${base}/market/other`)).status, 404);
     assert.equal((await fetch(`${base}/market/overview`, { method: "POST" })).status, 404);
   } finally {
@@ -176,4 +181,18 @@ test("pages after the first hundred, the fear and greed history and the exchange
   } finally {
     await new Promise((resolve) => service.server.close(resolve));
   }
+});
+
+test("a change CoinGecko leaves out is read off the 7-day prices, and a coin too young for it gets none", () => {
+  const prices = Array.from({ length: 168 }, (_, hour) => 100 + hour * 0.1);
+  const [full, young] = normalizeCoins([
+    { id: "olympus", symbol: "oly", name: "Olympus", current_price: 116.7, price_change_percentage_1h_in_currency: null,
+      price_change_percentage_24h: null, price_change_percentage_7d_in_currency: null, sparkline_in_7d: { price: prices } },
+    { id: "delos", symbol: "del", name: "Delos", current_price: 2, sparkline_in_7d: { price: prices.slice(0, 30) } },
+  ]);
+  assert.equal(full.change7d, Number(((116.7 / 100 - 1) * 100).toFixed(2)));
+  assert.equal(full.change24h, Number(((116.7 / 114.3 - 1) * 100).toFixed(2)));
+  assert.equal(full.change1h, Number(((116.7 / 116.6 - 1) * 100).toFixed(2)));
+  assert.equal(young.change7d, null);
+  assert.ok(young.change24h !== null);
 });

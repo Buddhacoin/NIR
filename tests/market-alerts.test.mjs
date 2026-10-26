@@ -180,8 +180,10 @@ test("the market service checks alerts after each refresh and prices coins outsi
     throw new Error("unexpected");
   } });
   await service.refresh();
-  assert.equal(asked.filter((url) => url.includes("ids=")).length, 1);
-  assert.match(asked.find((url) => url.includes("ids=")), /ids=olympus-token&/);
+  // The trending coins' rows ask by ids too, with sparklines; the alerts' prices come in their own request.
+  const forAlerts = asked.filter((url) => url.includes("ids=") && !url.includes("sparkline=true"));
+  assert.equal(forAlerts.length, 1);
+  assert.match(forAlerts[0], /ids=olympus-token&/);
   assert.equal(checked.length, 1);
   assert.equal(checked[0].get("bitcoin").price, 80183.42);
   assert.deepEqual(checked[0].get("olympus-token"), { price: 2.5, change24h: 4 });
