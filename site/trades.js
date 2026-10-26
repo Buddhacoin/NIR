@@ -61,9 +61,10 @@ function tradeTargetOf(item) {
   return null;
 }
 
-// Called by coin.js whenever the coin is drawn; starts once the full coin data is in.
+// Called by coin.js whenever the coin is drawn. Network coins start at once; tokens once the full
+// coin data with their contracts is in.
 function startTrades() {
-  if (tradeTarget || !coin || coin.partial) return;
+  if (tradeTarget || !coin || (coin.partial && !TRADE_NATIVE[coin.id])) return;
   tradeTarget = tradeTargetOf(coin);
   $("#trades").hidden = !tradeTarget;
   if (!tradeTarget) return;

@@ -207,8 +207,16 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         amount, usd: price === null ? null : amount * price }] : [] };
   }
   // A wallet seen before opens at once from its copy while a fresh one is read behind it.
-  const holdings = (address) => cached(`holdings:${address.toLowerCase()}`, 600_000,
-    () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true });
+  const holdings = async (address) => reprice(await cached(`holdings:${address.toLowerCase()}`, 600_000,
+    () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true }));
+  // The UTXO network's coin is valued at today's price when answered, not when its copy was read:
+  // a copy made before the prices were in would show a balance of nothing for ten minutes.
+  function reprice(value) {
+    const price = value?.kind === "utxo" ? nativePrice(UTXO.native) : null;
+    if (price === null) return value;
+    return { ...value, assets: value.assets.map((asset) => (asset.token.address === null
+      ? { ...asset, token: { ...asset.token, price }, usd: asset.amount * price } : asset)) };
+  }
 
   // --- An address's transfers on one network, in or out, a page at a time.
   async function evmTransfers(address, chain, direction, cursor) {
