@@ -57,12 +57,21 @@ test("NIR Markets serves one cached overview of prices, market, trends and Fear 
 
 test("a failing source keeps its last good data while the others refresh", async () => {
   let failing = false;
-  const service = createMarketService({ fetch: async (url) => {
+  let clock = 1_700_000_000_000;
+  const asked = [];
+  const service = createMarketService({ now: () => clock, fetch: async (url) => {
+    asked.push(url);
     if (failing && url.includes("fng")) throw new Error("alternative.me answered 500");
     return fromFixtures(url);
   } });
   await service.refresh();
+  // A minute later only the prices are asked again; the slower figures wait their turn.
+  clock += 60_000;
+  const before = asked.length;
+  await service.refresh();
+  assert.deepEqual(asked.slice(before).map((url) => new URL(url).pathname.split("/").pop()), ["markets"]);
   failing = true;
+  clock += 600_000;
   await service.refresh();
   assert.deepEqual(service.overview().fearGreed, { label: "Neutral", value: 46 });
   assert.match(service.state.errors.fearGreed, /500/);
@@ -218,9 +227,12 @@ test("a coin's page opens from the market list while CoinGecko is busy, and fill
     assert.deepEqual(partial.tickers, []);
     const week = await (await fetch(`${base}/market/chart/bitcoin?days=7`)).json();
     assert.ok(week.partial && week.prices.length > 30);
-    assert.equal((await fetch(`${base}/market/chart/bitcoin?days=30`)).status, 503);
+    const month = await (await fetch(`${base}/market/chart/bitcoin?days=30`)).json();
+    assert.ok(month.partial && month.days === 7, "any period gets the week while the real chart waits");
     // Once fetched, a coin is served from the copy at once, even after it expires and while the source is busy.
+    // (A "too many" answer pauses new fetches for two minutes.)
     busy = false;
+    clock += 121_000;
     assert.equal((await (await fetch(`${base}/market/coin/bitcoin`)).json()).partial, undefined);
     busy = true;
     clock += 10 * 60_000;

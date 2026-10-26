@@ -347,3 +347,27 @@ test("open labels give known wallets a name and a picture, asked fifty at a time
   await names.lookup([zeus]);
   assert.equal(asked.length, 4);
 });
+
+test("the popular wallets directory pages through a group's open labels, fifty at a time", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const zeus = `0x${"1".repeat(40)}`;
+  const hera = `0x${"2".repeat(40)}`;
+  const asked = [];
+  const names = createNames({ get: async (url) => {
+    asked.push(url);
+    if (url.includes("/addresses?")) return url.includes("page_token") ? { items: [hera], next_page_params: null }
+      : { items: [zeus, "not-an-address"], next_page_params: { page_token: hera, page_size: 50 } };
+    return { addresses: { [zeus]: { tags: [{ name: "Olympus Exchange: Hot Wallet", tagType: "name", meta: JSON.stringify({ tooltipUrl: "https://olympus.example" }) }] } } };
+  } });
+  const first = await names.directory("exchange");
+  assert.deepEqual(first.items.map((item) => [item.address, item.name]), [[zeus, "Olympus Exchange: Hot Wallet"]]);
+  assert.equal(first.items[0].logo, "https://www.google.com/s2/favicons?sz=64&domain=olympus.example");
+  assert.equal(first.next, hera);
+  assert.match(asked[0], /slug=exchange&tagType=generic&chain_id=1&page_size=50$/);
+  const second = await names.directory("exchange", first.next);
+  assert.deepEqual(second, { items: [{ address: hera, name: null, entity: null, site: null, logo: null }], next: null });
+  assert.equal(await names.directory("everyone"), null);
+  const count = asked.length;
+  await names.directory("exchange");
+  assert.equal(asked.length, count, "a page is kept");
+});

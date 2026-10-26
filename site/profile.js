@@ -64,10 +64,10 @@ function holdingsOf(address) {
   if (!holdings.has(address)) {
     holdings.set(address, "loading");
     fetch(`/market/chain/address/${encodeURIComponent(address)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null)
-      .then((data) => { holdings.set(address, data); if (view === "wallets" || view === "tracked") renderView(); });
+      .then((data) => { holdings.set(address, data ?? "failed"); if (view === "wallets" || view === "tracked") renderView(); });
   }
   const data = holdings.get(address);
-  return data === "loading" ? null : data;
+  return data === "loading" || data === "failed" ? null : data;
 }
 const totalOf = (data) => (data ? data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0) : null);
 function addressRow(item) {
@@ -75,7 +75,7 @@ function addressRow(item) {
   row.className = "feed-row";
   const link = walletLink({ address: item.address, name: item.label || null });
   const data = holdingsOf(item.address);
-  const value = Object.assign(document.createElement("b"), { textContent: data ? price(totalOf(data)) : t().loadingWallet });
+  const value = Object.assign(document.createElement("b"), { textContent: data ? price(totalOf(data)) : holdings.get(item.address) === "failed" ? "—" : t().loadingWallet });
   const drop = Object.assign(document.createElement("button"), { type: "button", className: "pill", textContent: t().remove });
   drop.addEventListener("click", async () => {
     const { status, data: answer } = await send(`/market/me/addresses/${encodeURIComponent(item.address)}`, "DELETE");
@@ -84,12 +84,21 @@ function addressRow(item) {
   row.append(link, value, drop);
   return row;
 }
+const draft = { address: "", label: "" };
 function renderWallets(box) {
+  const focused = document.activeElement?.dataset?.draft ?? null; // the field being typed in keeps the focus
   const mine = saved.filter((item) => item.mine);
   const form = document.createElement("form");
   form.className = "wallet-form";
-  const input = Object.assign(document.createElement("input"), { placeholder: t().addAddress, autocomplete: "off", spellcheck: false });
-  const label = Object.assign(document.createElement("input"), { placeholder: t().addLabel, maxLength: 40, autocomplete: "off" });
+  // What is being typed survives the redraws that come as each wallet's balance arrives.
+  const input = Object.assign(document.createElement("input"), { placeholder: t().addAddress, autocomplete: "off", spellcheck: false, value: draft.address });
+  const label = Object.assign(document.createElement("input"), { placeholder: t().addLabel, maxLength: 40, autocomplete: "off", value: draft.label });
+  input.dataset.draft = "address";
+  label.dataset.draft = "label";
+  input.addEventListener("input", () => { draft.address = input.value; });
+  label.addEventListener("input", () => { draft.label = label.value; });
+  if (focused === "address") setTimeout(() => input.focus());
+  if (focused === "label") setTimeout(() => label.focus());
   const button = Object.assign(document.createElement("button"), { type: "submit", className: "act", textContent: t().add });
   const error = Object.assign(document.createElement("p"), { className: "form-error" });
   form.append(input, label, button, error);
@@ -100,6 +109,7 @@ function renderWallets(box) {
     const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: true, label: label.value.trim() });
     if (status !== 200) { error.textContent = data.error ?? t().badAddress; return; }
     saved = data.addresses;
+    draft.address = draft.label = "";
     renderView();
   });
   if (!mine.length) { box.replaceChildren(form, Object.assign(document.createElement("p"), { className: "muted", textContent: t().noWallets })); return; }

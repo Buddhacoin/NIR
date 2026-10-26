@@ -45,11 +45,16 @@ export function readTrades(answer, token) {
 export function createTrades({ get, now = Date.now, perMinute = 25 } = {}) {
   const cache = new Map();
   const pending = new Map();
+  const failedUntil = new Map(); // key → time before which a failed lookup is not tried again
   let used = [];
   async function cached(key, ttl, load) {
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
     if (pending.has(key)) return pending.get(key);
+    if ((failedUntil.get(key) ?? 0) > now()) {
+      if (hit) return hit.value;
+      throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
+    }
     used = used.filter((at) => now() - at < 60_000);
     if (used.length >= perMinute) {
       if (hit) return hit.value;
@@ -63,6 +68,9 @@ export function createTrades({ get, now = Date.now, perMinute = 25 } = {}) {
         if (cache.size > 2_000) cache.delete(cache.keys().next().value);
         return value;
       } catch (error) {
+        // Asked again in a minute, not on every visitor's refresh.
+        failedUntil.set(key, now() + 60_000);
+        if (failedUntil.size > 2_000) failedUntil.delete(failedUntil.keys().next().value);
         if (hit) return hit.value;
         throw error;
       }
@@ -72,8 +80,12 @@ export function createTrades({ get, now = Date.now, perMinute = 25 } = {}) {
   }
 
   async function trades(network, token) {
+    // A token GeckoTerminal does not know is "no pool" for the hour.
     const pool = await cached(`pool:${network}:${token.toLowerCase()}`, 3_600_000,
-      async () => choosePool(await get(`${API}/networks/${network}/tokens/${token}/pools?page=1`), network, token));
+      async () => choosePool(await get(`${API}/networks/${network}/tokens/${token}/pools?page=1`).catch((error) => {
+        if (error?.status === 404) return null;
+        throw error;
+      }), network, token));
     if (!pool) return { pool: null, trades: [], buys: 0, sells: 0 };
     const list = await cached(`trades:${network}:${pool.address}`, 15_000,
       async () => readTrades(await get(`${API}/networks/${network}/pools/${pool.address}/trades`), token));

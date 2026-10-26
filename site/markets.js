@@ -71,9 +71,27 @@ function sparkline(points, rising, className = "spark") {
   return svg;
 }
 
+let watchExtra = [];
+let watchAsked = "";
+async function loadWatchExtra(ids) {
+  const key = ids.slice().sort().join(",");
+  if (key === watchAsked) return;
+  watchAsked = key;
+  const answer = await fetch(`/market/coins?ids=${encodeURIComponent(ids.slice(0, 50).join(","))}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  if (!answer) { watchAsked = ""; return; }
+  watchExtra = answer.coins;
+  renderTable();
+}
+
 function visibleCoins() {
   let coins = (tab === "top" && page > 1 ? pageCoins : data?.coins) ?? [];
-  if (tab === "watch") coins = coins.filter((coin) => watch.has(coin.id));
+  // The watchlist: starred coins from the top hundred, and the others fetched by id.
+  if (tab === "watch") {
+    coins = coins.filter((coin) => watch.has(coin.id));
+    const missing = [...watch].filter((id) => !coins.some((coin) => coin.id === id));
+    coins = [...coins, ...watchExtra.filter((coin) => watch.has(coin.id))];
+    if (missing.some((id) => !watchExtra.some((coin) => coin.id === id))) void loadWatchExtra(missing);
+  }
   if (tab === "stable") coins = coins.filter((coin) => STABLE.has(coin.symbol));
   // Trending coins outside the top 100 come with a price and a 24h change only.
   if (tab === "trending") {

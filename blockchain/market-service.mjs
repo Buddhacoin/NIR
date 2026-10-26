@@ -203,7 +203,8 @@ export function normalizeSearch(value) {
 // Coin pages and charts: fetched on demand, kept for ttl, shared by everyone
 // asking at once, and limited to `perMinute` fetches. When the limit is spent
 // a stale copy is served; with no copy at all the visitor is asked to retry.
-function createOnDemand({ get, now, perMinute, maxEntries }) {
+// `blocked()`: while true (CoinGecko asked to slow down) nothing new is fetched; copies are served.
+function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false }) {
   const entries = new Map();
   const pending = new Map();
   let fetches = [];
@@ -213,15 +214,15 @@ function createOnDemand({ get, now, perMinute, maxEntries }) {
     const entry = entries.get(key);
     if (entry && now() - entry.at < ttlMs) return entry;
     if (entry && !entry.missing) {
-      if (!pending.has(key)) void fetchEntry(key, url, normalize, entry).catch(() => {});
+      if (!pending.has(key)) void fetchEntry(key, url, normalize, entry, ttlMs).catch(() => {});
       return entry;
     }
-    return fetchEntry(key, url, normalize, entry);
+    return fetchEntry(key, url, normalize, entry, ttlMs);
   };
-  async function fetchEntry(key, url, normalize, entry) {
+  async function fetchEntry(key, url, normalize, entry, ttlMs) {
     if (pending.has(key)) return pending.get(key);
     fetches = fetches.filter((at) => now() - at < 60_000);
-    if (fetches.length >= perMinute) {
+    if (fetches.length >= perMinute || blocked()) {
       if (entry) return entry;
       throw Object.assign(new Error("busy"), { status: 503 });
     }
@@ -232,8 +233,11 @@ function createOnDemand({ get, now, perMinute, maxEntries }) {
         fresh = { at: now(), value: normalize(await get(url)) };
       } catch (error) {
         if (error?.status === 404) fresh = { at: now(), missing: true };
-        else if (entry) return entry;
-        else throw error;
+        else if (entry) {
+          // The old copy stays and is tried again in a minute, not on every request.
+          entry.at = Math.max(entry.at, now() - ttlMs + 60_000);
+          return entry;
+        } else throw error;
       }
       entries.delete(key);
       entries.set(key, fresh);
@@ -252,10 +256,13 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   const sources = {
     coins: [`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1` +
       "&sparkline=true&price_change_percentage=1h,24h,7d", normalizeCoins],
-    global: [`${COINGECKO}/global`, normalizeGlobal],
-    trending: [`${COINGECKO}/search/trending`, normalizeTrending],
-    fearGreed: [FEAR_GREED, normalizeFearGreed],
+    global: [`${COINGECKO}/global`, normalizeGlobal, 180_000],
+    trending: [`${COINGECKO}/search/trending`, normalizeTrending, 300_000],
+    fearGreed: [FEAR_GREED, normalizeFearGreed, 600_000],
   };
+  // The prices refresh every minute; the slower figures less often, to spare CoinGecko's free limit
+  // for visitors' coin pages. A source that failed is tried again on the next refresh.
+  const fetchedAt = {};
   let timer = null;
   // CoinGecko's free plan allows a handful of requests a minute. A "too many" answer pauses the
   // background work (votes, warming coin pages) for two minutes, so visitors' pages get the room.
@@ -268,15 +275,25 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       throw error;
     }
   };
-  const onDemand = createOnDemand({ get: cg, now, perMinute: coinFetchesPerMinute, maxEntries: 500 });
+  const onDemand = createOnDemand({ get: cg, now, perMinute: coinFetchesPerMinute, maxEntries: 500, blocked: () => now() < coolUntil });
+  // Search has a smaller budget of its own, so typing visitors cannot use up the coin pages' room.
+  const onSearch = createOnDemand({ get: cg, now, perMinute: 6, maxEntries: 300, blocked: () => now() < coolUntil });
   const coinUrl = (id) => `${COINGECKO}/coins/${id}?localization=true&tickers=true&market_data=true` +
     "&community_data=false&developer_data=false&sparkline=false";
 
   // A source that fails keeps its last good value; the others still refresh.
-  async function refresh() {
-    await Promise.all(Object.entries(sources).map(async ([key, [url, normalize]]) => {
+  // One refresh at a time: a slow one never overlaps the next.
+  let refreshing = null;
+  function refresh() {
+    refreshing ??= refreshOnce().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+  async function refreshOnce() {
+    await Promise.all(Object.entries(sources).map(async ([key, [url, normalize, every = 0]]) => {
+      if (fetchedAt[key] && now() - fetchedAt[key] < every && !state.errors[key]) return;
       try {
         state[key] = normalize(await cg(url));
+        fetchedAt[key] = now();
         delete state.errors[key];
       } catch (error) {
         state.errors[key] = String(error?.message ?? error).slice(0, 200);
@@ -288,16 +305,19 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (accounts?.checkAlerts && !state.errors.coins) await checkAlerts();
   }
 
-  // Exchange logos, one list a day; a failed fetch keeps the last list and tries again next refresh.
+  // Exchange logos, one list a day; a failed fetch keeps the last list and tries again ten minutes later.
   let exchangeLogos = {};
   let exchangeLogosAt = 0;
   async function refreshExchangeLogos() {
     if (now() - exchangeLogosAt < 86_400_000) return;
     try {
-      exchangeLogos = normalizeExchangeLogos(await get(`${COINGECKO}/exchanges?per_page=250&page=1`));
+      if (now() < coolUntil) return;
+      exchangeLogos = normalizeExchangeLogos(await cg(`${COINGECKO}/exchanges?per_page=250&page=1`));
       exchangeLogosAt = now();
       delete state.errors.exchangeLogos;
     } catch (error) {
+      // Tried again in ten minutes, not on every refresh.
+      exchangeLogosAt = now() - 86_400_000 + 600_000;
       state.errors.exchangeLogos = String(error?.message ?? error).slice(0, 200);
     }
   }
@@ -312,7 +332,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (!ids.length) { state.trendingCoins = []; return; }
     if (key === trendingAsked && now() - trendingAt < 300_000) return;
     try {
-      state.trendingCoins = normalizeCoins(await get(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${key}&per_page=50` +
+      if (now() < coolUntil) return;
+      state.trendingCoins = normalizeCoins(await cg(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${key}&per_page=50` +
         "&sparkline=true&price_change_percentage=1h,24h,7d"));
       trendingAsked = key;
       trendingAt = now();
@@ -345,7 +366,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       const prices = new Map(state.coins.map((coin) => [coin.id, coin]));
       const missing = accounts.alertCoins().filter((id) => !prices.has(id) && COIN_ID.test(id)).slice(0, 250);
       if (missing.length) {
-        const list = await get(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${missing.join(",")}&per_page=250` +
+        const list = await cg(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${missing.join(",")}&per_page=250` +
           "&price_change_percentage=24h");
         for (const coin of Array.isArray(list) ? list : []) {
           const quote = { price: finite(coin?.current_price),
@@ -382,8 +403,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   // GET /market/search?q=… — queries are lower-cased and cached, so popular ones cost one fetch.
   async function search(query) {
     const needle = query.trim().toLowerCase().replace(/\s+/g, " ");
-    if (!needle || needle.length > 40) return [];
-    const entry = await onDemand(`search:${needle}`, `${COINGECKO}/search?query=${encodeURIComponent(needle)}`,
+    if (needle.length < 2 || needle.length > 40) return [];
+    const entry = await onSearch(`search:${needle}`, `${COINGECKO}/search?query=${encodeURIComponent(needle)}`,
       normalizeSearch, 600_000);
     return entry.missing ? [] : entry.value;
   }
@@ -392,17 +413,22 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   async function coinData(kind, id, days) {
     if (!COIN_ID.test(id) || (kind === "chart" && !CHART_DAYS.has(days))) return null;
     let entry;
+    const row = [...state.coins, ...state.trendingCoins].find((coin) => coin.id === id);
+    const stand = () => (kind === "coin" ? partialCoin(row) : weekChart(row));
     try {
-      entry = kind === "coin"
-        ? await onDemand(`coin:${id}`, coinUrl(id), normalizeCoin, 120_000)
-        : await onDemand(`chart:${id}:${days}`, `${COINGECKO}/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
+      const fetching = kind === "coin"
+        ? onDemand(`coin:${id}`, coinUrl(id), normalizeCoin, 120_000)
+        : onDemand(`chart:${id}:${days}`, `${COINGECKO}/coins/${id}/market_chart?vs_currency=usd&days=${days}`,
           normalizeChart, days === "1" ? 300_000 : 1_800_000);
+      // A coin in the market list never waits long on a slow source: after 2.5 seconds the page gets
+      // the list's figures, and the fetch finishes behind it for the next ask.
+      entry = row ? await Promise.race([fetching, new Promise((resolve) => { setTimeout(resolve, 2_500, null).unref?.(); })]) : await fetching;
+      if (!entry) { fetching.catch(() => {}); return stand(); }
     } catch (error) {
       // CoinGecko is busy and the coin was never fetched: the page opens from the market list
       // (price, changes, cap, supply, the week's prices) and asks again for the rest.
-      const row = [...state.coins, ...state.trendingCoins].find((coin) => coin.id === id);
       if (!row) throw error;
-      return kind === "coin" ? partialCoin(row) : weekChart(row, days);
+      return stand();
     }
     if (entry.missing) return null;
     if (kind !== "coin") return entry.value;
@@ -416,12 +442,13 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       description: { en: "", ru: "" }, tickers: [], updatedAt: "", sentimentUp: null,
       links: { websites: [], whitepaper: null, explorers: [], source: [], forums: [], chats: [], reddit: null, x: null, telegram: null } };
   }
-  // The week's prices from the market list, spread evenly over seven days, while the real chart waits.
-  function weekChart(row, days) {
-    if (days !== "7" || row.sparkline.length < 2) throw Object.assign(new Error("busy"), { status: 503 });
+  // The week's prices from the market list, spread evenly over seven days, while the real chart waits
+  // (for any period: the page says it shows the week).
+  function weekChart(row) {
+    if (row.sparkline.length < 2) throw Object.assign(new Error("busy"), { status: 503 });
     const step = 7 * 86_400_000 / (row.sparkline.length - 1);
     const start = now() - 7 * 86_400_000;
-    return { prices: row.sparkline.map((value, index) => [Math.round(start + index * step), value]), caps: [], volumes: [], partial: true };
+    return { prices: row.sparkline.map((value, index) => [Math.round(start + index * step), value]), caps: [], volumes: [], partial: true, days: 7 };
   }
 
   function send(response, status, body, maxAge = 30) {
@@ -430,7 +457,14 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     response.end(JSON.stringify(body));
   }
 
-  const server = createServer(async (request, response) => {
+  // An error in a handler answers 500 instead of stopping the service (and losing every cache).
+  const server = createServer((request, response) => {
+    handleRequest(request, response).catch(() => {
+      if (!response.headersSent) send(response, 500, { error: "something went wrong" });
+      else response.destroy();
+    });
+  });
+  async function handleRequest(request, response) {
     const url = new URL(request.url, "http://localhost");
     // Sign-in, profiles and server watchlists (blockchain/market-accounts.mjs).
     if (accounts && await accounts.handle(request, response, url)) return;
@@ -439,7 +473,18 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     // Live trades in a coin's busiest exchange pool (blockchain/market-trades.mjs).
     if (await trades.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
-    if (request.method === "GET" && url.pathname === "/market/coins") {
+    // GET /market/coins?ids=a,b,… — chosen coins' rows (a watchlist beyond the top hundred), 50 at most.
+    if (request.method === "GET" && url.pathname === "/market/coins" && url.searchParams.has("ids")) {
+      const ids = [...new Set((url.searchParams.get("ids") ?? "").split(",").filter((id) => COIN_ID.test(id)))].sort().slice(0, 50);
+      if (!ids.length) return send(response, 200, { coins: [] }, 60);
+      try {
+        const entry = await onDemand(`ids:${ids.join(",")}`, `${COINGECKO}/coins/markets?vs_currency=usd&ids=${ids.join(",")}&per_page=50` +
+          "&sparkline=true&price_change_percentage=1h,24h,7d", normalizeCoins, 120_000);
+        send(response, 200, { coins: entry.missing ? [] : entry.value }, 60);
+      } catch {
+        send(response, 503, { error: "coins are unavailable, try again in a minute" });
+      }
+    } else if (request.method === "GET" && url.pathname === "/market/coins") {
       const page = Number(url.searchParams.get("page") ?? 1);
       if (!Number.isInteger(page) || page < 1 || page > 500) return send(response, 404, { error: "no such page" });
       try {
@@ -474,7 +519,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     } else {
       send(response, 404, { error: "not found" });
     }
-  });
+  }
   let communityTimer = null;
   server.on("close", () => { clearInterval(timer); clearInterval(communityTimer); });
 

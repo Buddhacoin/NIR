@@ -99,29 +99,40 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   let used = [];
   // Cached fetch: a fresh copy within ttl; past the budget a stale copy, or an error the page can show.
   // `stale`: an expired copy is answered at once while a fresh one is fetched behind it.
-  // `free`: work that does not touch the explorers (the public nodes keep their own pace) stays out of the budget.
-  async function cached(key, ttl, load, { stale = false, free = false } = {}) {
+  // `nodes`: work on the public nodes, which has a budget of its own (the nodes keep their own pace,
+  // one request at a time, so a flood of new wallets must not queue up behind each other).
+  let nodeUsed = [];
+  const failedUntil = new Map(); // key → time before which a lookup that failed without a copy is not tried again
+  async function cached(key, ttl, load, { stale = false, nodes: onNodes = false } = {}) {
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
+    if (!hit && (failedUntil.get(key) ?? 0) > now()) throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
     if (hit && stale) {
-      if (!pending.has(key)) void cached(key, ttl, load, { free }).catch(() => {});
+      if (!pending.has(key)) void cached(key, ttl, load, { nodes: onNodes }).catch(() => {});
       return hit.value;
     }
     if (pending.has(key)) return pending.get(key);
     used = used.filter((at) => now() - at < 60_000);
-    if (!free && used.length >= perMinute) {
+    nodeUsed = nodeUsed.filter((at) => now() - at < 60_000);
+    const spent = onNodes ? nodeUsed : used;
+    if (spent.length >= (onNodes ? 30 : perMinute)) {
       if (hit) return hit.value;
       throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
     }
-    if (!free) used.push(now());
+    spent.push(now());
     const job = (async () => {
       try {
         const value = await load();
+        // Most recently used last: the cache drops the longest unused entry, never a busy one.
+        cache.delete(key);
         cache.set(key, { at: now(), value });
         if (cache.size > 800) cache.delete(cache.keys().next().value);
         return value;
       } catch (error) {
-        if (hit) return hit.value;
+        // A failed refresh keeps the old copy and tries again in a minute, not on every request.
+        if (hit) { hit.at = now() - ttl + 60_000; return hit.value; }
+        failedUntil.set(key, now() + Math.min(20_000, ttl));
+        if (failedUntil.size > 2_000) failedUntil.delete(failedUntil.keys().next().value);
         throw error;
       }
     })();
@@ -175,7 +186,10 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       }
     }));
     // The other networks, read from public nodes in one call each.
-    chains.push(...await nodes.holdings(address).catch(() => Object.keys(NODES).map((chain) => ({ chain, ok: false, partial: false, info: null, assets: [] }))));
+    // The node networks answer within the token wait, or show as not answering this time.
+    const unanswered = () => Object.keys(NODES).map((chain) => ({ chain, ok: false, partial: false, info: null, assets: [] }));
+    chains.push(...await Promise.race([nodes.holdings(address).catch(unanswered),
+      new Promise((resolve) => { setTimeout(() => resolve(unanswered()), tokenWait).unref?.(); })]));
     const named = chains.map((item) => item.info).find((info) => info?.name) ?? chains.find((item) => item.info)?.info;
     return { address, kind: "evm", name: named?.name ?? null, tags: [...new Set(chains.flatMap((item) => item.info?.tags ?? []))],
       contract: chains.some((item) => item.info?.contract), networks: chains.map(({ chain, ok, partial, active, sent }) => ({ chain, ok, partial: Boolean(partial),
@@ -211,7 +225,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     return { items: items.sort((left, right) => right.time - left.time), next: next.tokens || next.coins ? next : null };
   }
   async function utxoTransfers(address, direction, cursor) {
-    const list = await get(`${UTXO.api}/address/${address}/txs${cursor?.after ? `/chain/${cursor.after}` : ""}`);
+    const after = /^[0-9a-f]{64}$/.test(cursor?.after ?? "") ? cursor.after : null;
+    const list = await get(`${UTXO.api}/address/${address}/txs${after ? `/chain/${after}` : ""}`);
     const price = nativePrice(UTXO.native);
     const items = (Array.isArray(list) ? list : []).map((tx) => {
       const spent = (tx.vin ?? []).filter((input) => input.prevout?.scriptpubkey_address === address).reduce((sum, input) => sum + (input.prevout.value ?? 0), 0);
@@ -232,7 +247,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     const key = `transfers:${address.toLowerCase()}:${chain}:${direction}:${JSON.stringify(cursor ?? null)}`;
     return cached(key, 60_000, async () => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor)
       : NODES[chain] ? nodes.addressTransfers(address, chain, direction, cursor?.before ?? null) : evmTransfers(address, chain, direction, cursor)),
-    { free: Boolean(NODES[chain]) && addressKind(address) !== "utxo" });
+    { nodes: Boolean(NODES[chain]) && addressKind(address) !== "utxo" });
   }
 
   // --- The network coin's balance by day, from the explorer.
@@ -305,6 +320,13 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const items = relabel(chosen);
         return reply(response, 200, { networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES)], items }, 10), true;
       }
+      // GET /market/chain/popular?group=exchange|fund|hot-wallet&cursor=…: a page of known wallets.
+      if (path === "/market/chain/popular") {
+        const cursor = url.searchParams.get("cursor");
+        const page = await names.directory(url.searchParams.get("group") ?? "", cursor && /^0x[0-9a-fA-F]{40}$/.test(cursor) ? cursor : null);
+        if (!page) return reply(response, 404, { error: "unknown group" }), true;
+        return reply(response, 200, page, 3600), true;
+      }
       // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.
       if (path === "/market/chain/names") {
         const wanted = (url.searchParams.get("addresses") ?? "").split(",").filter((address) => /^0x[0-9a-fA-F]{40}$/.test(address)).slice(0, 50);
@@ -328,7 +350,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         return reply(response, 200, own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled, 5), true;
       }
       const chain = addressKind(address) === "utxo" ? UTXO.id : url.searchParams.get("chain") ?? "eth";
-      if (chain !== UTXO.id && !EXPLORERS[chain] && !NODES[chain]) return reply(response, 404, { error: "unknown network" }), true;
+      if (chain !== UTXO.id && !Object.hasOwn(EXPLORERS, chain) && !Object.hasOwn(NODES, chain)) return reply(response, 404, { error: "unknown network" }), true;
       if (part === "history") {
         // Balance history needs an explorer; the node networks have none.
         if (!EXPLORERS[chain]) return reply(response, 200, { chain, points: [] }, 600), true;

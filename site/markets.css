@@ -827,7 +827,7 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
    the post box at the bottom), under the content on narrower ones. */
 .coin-feed { display: grid; min-width: 0; }
 @media (min-width: 1400px) {
-  .coin-page:has(.coin-feed .community:not([hidden])) { grid-template-columns: 330px minmax(0, 1fr) 360px; }
+  .coin-page:has(.coin-feed .community:not([hidden])) { grid-template-columns: 380px minmax(0, 1fr) 340px; }
   .coin-feed { position: sticky; top: 16px; }
   .coin-feed .community:not([hidden]) { display: flex; flex-direction: column; max-height: calc(100vh - 32px); overflow: hidden; }
   .coin-feed .community > * { flex: none; }
