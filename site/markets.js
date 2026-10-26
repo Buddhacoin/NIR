@@ -8,7 +8,7 @@ const en = {
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
-  navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "NIR", navMine: "NIR mining",
+  navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "About NIR", navMine: "NIR mining",
   search: "Search coins or addresses", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
   tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins",
@@ -22,13 +22,13 @@ const en = {
   dataBy: "Data:",
 };
 const words = {
-  ru: { altSeason: "сезон альткоинов", btcSeason: "сезон биткоина", neutralSeason: "нейтрально", moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
+  ru: { altSeason: "сезон альткоинов", btcSeason: "сезон биткоина", neutralSeason: "нейтрально", moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, communityTitle: "Голоса сообщества CoinGecko за сутки: доля «рост»", rate: "Оценить", rateTitle: "Голосов пока нет — оцените первым", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { altSeason: "altcoin season", btcSeason: "bitcoin season", neutralSeason: "neutral", moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
+  en: { altSeason: "altcoin season", btcSeason: "bitcoin season", neutralSeason: "neutral", moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, communityTitle: "CoinGecko community votes over a day: share of “rise”", rate: "Rate", rateTitle: "No votes yet — be the first", empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -45,7 +45,12 @@ let query = "";
 const sort = { key: null, dir: 0 };
 // Rise and fall votes per coin over the last 7 days (/market/sentiment), for the sentiment column.
 let votes = {};
-const sentiment = (coin) => { const count = votes[coin.id]; return count && count.rise + count.fall ? count.rise / (count.rise + count.fall) * 100 : null; }; // the column the table is sorted by, as on the market sites
+// Where NIR Markets has no votes on a coin yet, the CoinGecko community's share of rise votes stands in.
+const sentiment = (coin) => {
+  const count = votes[coin.id];
+  if (count && count.rise + count.fall) return count.rise / (count.rise + count.fall) * 100;
+  return Number.isFinite(data?.community?.[coin.id]) ? data.community[coin.id] : null;
+};
 
 function sparkline(points, rising, className = "spark") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -72,7 +77,7 @@ function visibleCoins() {
   if (tab === "stable") coins = coins.filter((coin) => STABLE.has(coin.symbol));
   // Trending coins outside the top 100 come with a price and a 24h change only.
   if (tab === "trending") {
-    coins = (data?.trending ?? []).map((item) => data.coins.find((coin) => coin.id === item.id) ??
+    coins = (data?.trending ?? []).map((item) => data.coins.find((coin) => coin.id === item.id) ?? data.trendingCoins?.find((coin) => coin.id === item.id) ??
       { ...item, rank: null, change1h: null, change7d: null, marketCap: null, volume: null, sparkline: [] });
   }
   if (tab === "gainers" || tab === "losers") {
@@ -154,15 +159,17 @@ function renderTable() {
     const mood = document.createElement("td");
     mood.className = "hide-s mood";
     const share = sentiment(coin);
-    if (share === null) mood.textContent = "—";
-    else {
+    if (share === null) {
+      // No votes anywhere yet: an invitation to rate it on the coin's page.
+      mood.append(Object.assign(document.createElement("a"), { className: "rate", href: `${coinUrl(coin)}#vote`, textContent: t.rate, title: t.rateTitle }));
+    } else {
       const count = votes[coin.id];
       mood.className = `hide-s mood ${share >= 50 ? "up" : "down"}`;
       mood.textContent = `${share >= 50 ? "▲" : "▼"} ${Math.round(share >= 50 ? share : 100 - share)}%`;
       const bar = document.createElement("i");
       bar.style.setProperty("--rise", `${share.toFixed(0)}%`);
       mood.append(bar);
-      mood.title = t.moodTitle(count.rise, count.fall);
+      mood.title = count && count.rise + count.fall ? t.moodTitle(count.rise, count.fall) : t.communityTitle;
     }
     row.append(star, rank, name, value, hour, day, week, cap, volume, supply, mood, spark);
     body.append(row);
@@ -327,6 +334,8 @@ for (const button of document.querySelectorAll("[data-tab]")) {
   button.addEventListener("click", () => {
     tab = button.dataset.tab;
     for (const other of document.querySelectorAll(".tabs [data-tab]")) other.classList.toggle("on", other.dataset.tab === tab);
+    // The watchlist opens from the menu at the top; its tab shows only while it is open.
+    $(".tabs [data-tab=watch]").hidden = tab !== "watch";
     // The bottom bar on phones: Watchlist, or Markets for every other list.
     for (const item of document.querySelectorAll(".tabbar [data-tab]")) {
       item.classList.toggle("on", (item.dataset.tab === "watch") === (tab === "watch"));

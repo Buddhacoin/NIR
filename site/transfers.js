@@ -6,7 +6,7 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR", search: "Search coins or addresses",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   title: "All transfers", refresh: "Refresh", allNetworks: "All networks", tokenFilter: "Token: USDC, ETH…",
   colTime: "Time", colFrom: "From", colTo: "To", colAmount: "Amount", colToken: "Token", colUsd: "USD",
   note: "Transfers on Ethereum, Optimism, Base, Arbitrum, Polygon and BNB Chain from the open Blockscout explorers and public nodes, refreshed every 20 seconds. Names are labels checked by NIR Markets moderators and open labels (ENS, verified contracts, community tags).",

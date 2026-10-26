@@ -30,6 +30,11 @@ Day theme: white with a blue accent (#3861fb), thin grey dividers, green
 graphite with glass cards and a violet–mint accent. Orange is kept only in the
 NIR coin.
 
+- The header: Cryptocurrencies, Gainers & losers and Market overview, then,
+  as small grey links with icons by the search, Watchlist and Portfolio
+  (shown to signed-in visitors only; the watchlist is an account's, and a
+  star clicked signed out leads to signing in) and About NIR. On phones the
+  bottom bar carries them the same way.
 - A strip on top of every page: coins tracked, exchanges, market cap, 24h
   volume, dominance, Fear & Greed, NIR's own network and the number of
   registered users; the market items open the overview page.
@@ -42,7 +47,14 @@ NIR coin.
   and Gainers titles switch the table below to the full lists (the fifteen
   trending coins; every top coin by its 24-hour change, highest first, or
   lowest first under Losers). `/#trending`, `/#gainers` and `/#losers` open
-  those lists, so the menu's "Gainers & losers" lands on them.
+  those lists, so the menu's "Gainers & losers" lands on them. Trending coins
+  outside the top hundred come with their full rows (one more request). A
+  change CoinGecko leaves out (young or thinly traded coins) is read off the
+  hourly 7-day prices; a coin younger than the span shows none.
+- The sentiment column shows NIR Markets' own rise votes over 7 days; where
+  there are none yet, the CoinGecko community's share of rise votes over a
+  day (read for one coin every 20 seconds and kept a day); where neither
+  exists, a "Rate" link to the coin's vote.
 - `/charts/` (Market overview): totals, the Fear & Greed gauge with yesterday,
   last week, last month, the yearly high and low and a year-long chart
   (`GET /market/fear-greed`, alternative.me, cached an hour), and the
@@ -251,6 +263,11 @@ wallet activity (`blockchain/market-chain.mjs`):
   ring, its transfers on all networks at once or on one (all, inflow, outflow;
   ones under $1, mostly spam, hidden by default with a count and "show all"),
   and its top counterparties.
+- A network counts as the wallet's when it holds something there or left any
+  trace (a transaction sent, a token or a transfer): such networks show as
+  chips with the number of transactions sent, their transfers load under
+  "All", and an empty wallet says where it was active, with links to the
+  explorers.
 - **Balance history** is rebuilt in the browser from the transfers: today's
   holdings, with each loaded transfer undone going back in time, valued at
   today's prices (tokens without a price count as nothing). Older pages load
@@ -278,7 +295,8 @@ Smart Chain 9,999; Arbitrum 99,000, read from the network's own free node
 seconds, and at most two hundred. The coin's own transfers need an explorer
 and are not shown. The free nodes refuse queries for more than five
 contracts and block bursts, so requests to each node go one at a time,
-120 ms apart.
+120 ms apart, and a refused request (403, 429) is tried twice more. Node
+requests stay out of the explorers' budget of 60 a minute.
 
 Names come from three places, in this order: names approved by NIR Markets
 moderators, name-service records, and the explorers' open labels (verified

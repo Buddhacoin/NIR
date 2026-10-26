@@ -72,8 +72,16 @@ function queued(url, job) {
   queues.set(host, run.catch(() => {}).then(() => new Promise((resolve) => { setTimeout(resolve, 120); })));
   return run;
 }
-export function postRpc(url, method, params) {
-  return queued(url, () => sendRpc(url, method, params));
+// A node that turns a request away (403, 429: too many at once) gets two more tries, a little later each.
+export async function postRpc(url, method, params) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await queued(url, () => sendRpc(url, method, params));
+    } catch (error) {
+      if (attempt >= 2 || !/answered (?:403|429|5\d\d)/.test(error.message)) throw error;
+      await new Promise((resolve) => { setTimeout(resolve, 1500 * (attempt + 1)); });
+    }
+  }
 }
 async function sendRpc(url, method, params) {
   const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "user-agent": "NIR-Markets/1.0" },
@@ -130,7 +138,8 @@ export function createNodes({ rpc = postRpc, get, cached }) {
         if (symbol && !ids.symbol.has(symbol)) ids.symbol.set(symbol, coin.id);
       }
       return result;
-    });
+      // Kept while a refresh runs: the lists change slowly, and a slow refresh must not hold up a page.
+    }, { stale: true });
   }
   const tokenAt = (list, address) => list.tokens.find((item) => item.address === address.toLowerCase());
   const coinOf = (item) => ({ address: item.address, symbol: item.symbol, name: item.name, icon: item.icon, price: item.price });
@@ -142,7 +151,8 @@ export function createNodes({ rpc = postRpc, get, cached }) {
       try {
         const list = listed[chain];
         const calls = [{ target: MULTICALL, data: nativeBalance(address) }, ...list.tokens.map((item) => ({ target: item.address, data: balanceOf(address) }))];
-        const answers = decodeAggregate3(await rpc(node.rpc, "eth_call", [{ to: MULTICALL, data: encodeAggregate3(calls) }, "latest"]));
+        const [answers, sent] = await Promise.all([rpc(node.rpc, "eth_call", [{ to: MULTICALL, data: encodeAggregate3(calls) }, "latest"]).then(decodeAggregate3),
+          rpc(node.rpc, "eth_getTransactionCount", [address, "latest"]).then((count) => Number(count) || 0).catch(() => 0)]);
         const assets = [];
         const native = answers[0]?.success ? toNumber(answers[0].data, 18) : 0;
         if (native > 0) assets.push({ chain, token: list.native, amount: native, usd: list.native.price === null ? null : native * list.native.price });
@@ -154,7 +164,7 @@ export function createNodes({ rpc = postRpc, get, cached }) {
           if (/^0x0{30,}/.test(item.address)) return;
           if (amount > 0 && item.price !== null && amount * item.price >= 0.01) assets.push({ chain, token: coinOf(item), amount, usd: amount * item.price });
         });
-        return { chain, ok: true, partial: false, info: null, assets };
+        return { chain, ok: true, partial: false, info: null, assets, sent, active: sent > 0 || assets.length > 0 };
       } catch {
         return { chain, ok: false, partial: false, info: null, assets: [] };
       }

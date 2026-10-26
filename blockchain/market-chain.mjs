@@ -98,20 +98,21 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   let used = [];
   // Cached fetch: a fresh copy within ttl; past the budget a stale copy, or an error the page can show.
   // `stale`: an expired copy is answered at once while a fresh one is fetched behind it.
-  async function cached(key, ttl, load, { stale = false } = {}) {
+  // `free`: work that does not touch the explorers (the public nodes keep their own pace) stays out of the budget.
+  async function cached(key, ttl, load, { stale = false, free = false } = {}) {
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
     if (hit && stale) {
-      if (!pending.has(key)) void cached(key, ttl, load).catch(() => {});
+      if (!pending.has(key)) void cached(key, ttl, load, { free }).catch(() => {});
       return hit.value;
     }
     if (pending.has(key)) return pending.get(key);
     used = used.filter((at) => now() - at < 60_000);
-    if (used.length >= perMinute) {
+    if (!free && used.length >= perMinute) {
       if (hit) return hit.value;
       throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
     }
-    used.push(now());
+    if (!free) used.push(now());
     const job = (async () => {
       try {
         const value = await load();
@@ -165,7 +166,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
           if (!amount || coin.price === null || amount * coin.price < 0.01) continue;
           assets.push({ chain, token: coin, amount, usd: amount * coin.price });
         }
-        return { chain, ok: true, partial: balances === undefined, info: info ? party({ ...info, hash: address }) : null, assets: assets.sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)).slice(0, 100) };
+        // Any trace on the network: a balance, a token, a transfer or a transaction.
+        const active = Boolean(native > 0 || info?.has_tokens || info?.has_token_transfers || info?.has_logs || info?.creation_tx_hash || Number(info?.nonce) > 0);
+        return { chain, ok: true, partial: balances === undefined, active, info: info ? party({ ...info, hash: address }) : null, assets: assets.sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)).slice(0, 100) };
       } catch {
         return { chain, ok: false, info: null, assets: [] };
       }
@@ -174,7 +177,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     chains.push(...await nodes.holdings(address).catch(() => Object.keys(NODES).map((chain) => ({ chain, ok: false, partial: false, info: null, assets: [] }))));
     const named = chains.map((item) => item.info).find((info) => info?.name) ?? chains.find((item) => item.info)?.info;
     return { address, kind: "evm", name: named?.name ?? null, tags: [...new Set(chains.flatMap((item) => item.info?.tags ?? []))],
-      contract: chains.some((item) => item.info?.contract), networks: chains.map(({ chain, ok, partial }) => ({ chain, ok, partial: Boolean(partial) })),
+      contract: chains.some((item) => item.info?.contract), networks: chains.map(({ chain, ok, partial, active, sent }) => ({ chain, ok, partial: Boolean(partial),
+        active: Boolean(active) || chains.find((item) => item.chain === chain).assets.length > 0, ...(sent ? { sent } : {}) })),
       assets: chains.flatMap((item) => item.assets).sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)) };
   }
   async function utxoHoldings(address) {
@@ -225,7 +229,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   function transfers(address, chain, direction, cursor) {
     const key = `transfers:${address.toLowerCase()}:${chain}:${direction}:${JSON.stringify(cursor ?? null)}`;
     return cached(key, 60_000, async () => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor)
-      : NODES[chain] ? nodes.addressTransfers(address, chain, direction, cursor?.before ?? null) : evmTransfers(address, chain, direction, cursor)));
+      : NODES[chain] ? nodes.addressTransfers(address, chain, direction, cursor?.before ?? null) : evmTransfers(address, chain, direction, cursor)),
+    { free: Boolean(NODES[chain]) && addressKind(address) !== "utxo" });
   }
 
   // --- The network coin's balance by day, from the explorer.

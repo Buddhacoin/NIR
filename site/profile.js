@@ -12,7 +12,7 @@ const en = {
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
   fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabWallets: "My addresses", tabTracked: "Tracked", tabModeration: "Moderation", tabComments: "Comments", deleteAccount: "Delete account",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
-  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "NIR",
+  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR",
 };
 const words = {
   ru: { loading: "Загружаю профиль…", missing: "Такого профиля нет.", unavailable: "Профиль временно недоступен.",
