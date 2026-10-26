@@ -10,7 +10,6 @@ const en = {
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   title: "Popular wallets", colWallet: "Wallet", colKind: "Type and owner", colNetworks: "Networks", colTotal: "Balance", more: "Show more",
   intro: "Thousands of known wallets: exchanges, funds, market makers, a government and well-known people. Names and logos come from the open labels. Open any to see its assets, history and transfers, and tap “Track” to keep it in your profile.",
-  note: "Addresses and names come from Blockscout's open labels (Open Labels Initiative) and from the organisations themselves. Balances come from the open explorers and network nodes, load for the rows on screen and refresh every 10 minutes.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };

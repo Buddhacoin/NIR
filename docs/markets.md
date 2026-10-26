@@ -379,7 +379,9 @@ converter, a price chart for 1 day to 1 year with volume bars (TradingView
 candles for coins with a Binance pair), the description (Russian when
 CoinGecko has it) and the markets where the coin trades, each with the
 exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
-column shows only when some market has a rating). On wide screens (1400 px
+column shows only when some market has a rating). The page is one panel, its
+columns and sections divided by thin lines rather than separate cards, and the
+chart takes the whole middle column at 520 px high. On wide screens (1400 px
 and more) the discussion stands in a third column beside the chart, as on the
 big market sites: the day's vote on top, the comments scrolling inside, the
 post box at the bottom.
@@ -391,7 +393,8 @@ the DEX trade screens: time, buy or sell, price, total with its size (flea
 under $1, shrimp to $1K, fish to $3K, dolphin to $10K, whale above), amount,
 the wallet (an EVM wallet opens its page here) and the transaction. Time,
 price, total and amount sort; type, size and wallet filter; a bar weighs the
-dollars bought against those sold; new trades flash as they arrive. The pool
+dollars bought against those sold; new trades flash as they arrive. Network coins (traded as their wrapped tokens) start at
+once; tokens once the coin's contracts are known. The pool
 is looked up once an hour and its trades at most every 15 seconds, whoever
 asks (`GET /market/trades?network=&token=`).
 
