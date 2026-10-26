@@ -352,10 +352,48 @@ test("open labels give known wallets a name and a picture, asked fifty at a time
   assert.equal(names.name(zeus).name, "Olympus: Hot Wallet");
   assert.equal(names.name(many[0]), null);
   await names.lookup([zeus]);
-  assert.equal(asked.length, 3, "known for a day");
+  assert.equal(asked.length, 3, "known");
   clock += 86_400_001;
+  await names.lookup([zeus, many[0]]);
+  assert.equal(asked.length, 4, "an unnamed address is asked again after a day, a named one is kept a week");
+  assert.ok(asked.at(-1).includes(many[0]) && !asked.at(-1).includes(zeus));
+  clock += 7 * 86_400_000;
   await names.lookup([zeus]);
-  assert.equal(asked.length, 4);
+  assert.equal(asked.length, 5);
+});
+
+test("NIR Markets keeps its own book of wallet names: open labels, search finds and the group lists, kept across restarts", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "names-"));
+  const file = join(dir, "names.db");
+  const hera = `0x${"b".repeat(40)}`;
+  const athena = `0x${"c".repeat(40)}`;
+  let clock = 1_700_000_000_000;
+  const get = async (url) => {
+    if (url.includes("/addresses?slug=exchange")) return { items: [hera], next_page_params: null };
+    if (url.includes("/addresses?slug=")) return { items: [], next_page_params: null };
+    return { addresses: { [hera]: { tags: [{ name: "Hera Exchange: Hot Wallet", tagType: "name", meta: JSON.stringify({ main_entity: "Hera Exchange" }) }] } } };
+  };
+  try {
+    const names = createNames({ get, now: () => clock, file });
+    assert.equal(await names.crawl(), true, "a page of the first group list");
+    assert.deepEqual(names.search("hera exchange").map((item) => [item.name, item.groups]), [["Hera Exchange: Hot Wallet", ["exchange"]]]);
+    names.remember([{ address: athena, name: "Athena Capital", entity: "Athena" }], "search");
+    names.remember([{ address: hera, name: "a guess" }], "search");
+    assert.equal(names.name(hera).name, "Hera Exchange: Hot Wallet", "an open label outranks a search hit");
+    // A restart, with the sources down: the book still knows both.
+    const again = createNames({ get: async () => { throw new Error("down"); }, now: () => clock, file });
+    assert.deepEqual(again.search("athena").map((item) => item.name), ["Athena Capital"]);
+    assert.equal(again.name(hera).name, "Hera Exchange: Hot Wallet");
+    assert.equal(again.count(), 2);
+    for (let page = 0; page < 10 && await names.crawl(); page += 1);
+    assert.equal(await names.crawl(), false, "every list walked; again in a week");
+    clock += 8 * 86_400_000;
+    assert.equal(await names.crawl(), true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("the popular wallets directory pages through a group's open labels, fifty at a time", async () => {
@@ -408,4 +446,43 @@ test("a wallet's tokens on the main explorer network come from Ethplorer, withou
   const eth = data.assets.filter((asset) => asset.chain === "eth" && asset.token.address);
   assert.deepEqual(eth.map((asset) => [asset.token.symbol, asset.amount, asset.usd]), [["ZEUS", 2, 6]]);
   assert.equal(data.networks.find((item) => item.chain === "eth").partial, false);
+});
+
+test("token pictures are fetched once from the first source that has a real picture, kept and served from this server", async () => {
+  const { createLogos, checksum } = await import("../blockchain/market-logos.mjs");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createServer } = await import("node:http");
+  assert.equal(checksum("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"), "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+  const dir = mkdtempSync(join(tmpdir(), "logos-"));
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const asked = [];
+  const fetchBytes = async (source) => {
+    asked.push(source);
+    if (source.includes("bad")) return Buffer.from("<svg onload=alert(1)>");
+    if (source.includes("trustwallet")) return png;
+    throw Object.assign(new Error("gone"), { status: 404 });
+  };
+  const logos = createLogos({ dir, fetchBytes, catalogue: (network) => (network === "base" ? "base" : null) });
+  const zeus = `0x${"ab".repeat(20)}`;
+  try {
+    assert.equal(logos.url("base", zeus, "ZEUS", ["https://gone.example/z.png", "https://bad.example/z.svg"]), `/market/logo/base/${zeus}`);
+    assert.equal(logos.url("bsc", null, "BNB", ["https://cdn.example/bnb.png"]), "/market/logo/bsc/native-BNB");
+    const server = createServer((request, response) => { void logos.handle(request, response, new URL(request.url, "http://x")); });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const first = await fetch(`${base}/market/logo/base/${zeus}`);
+      assert.equal(first.status, 200);
+      assert.equal(first.headers.get("content-type"), "image/png");
+      assert.deepEqual(Buffer.from(await first.arrayBuffer()), png);
+      assert.ok(asked.at(-1).endsWith(`/blockchains/base/assets/${checksum(zeus)}/logo.png`), "the open assets catalogue, by the mixed-case address");
+      const count = asked.length;
+      assert.equal((await fetch(`${base}/market/logo/base/${zeus}`)).status, 200);
+      assert.equal(asked.length, count, "kept: not fetched again");
+      assert.equal((await fetch(`${base}/market/logo/base/..%2f..%2fetc`)).status, 404);
+      assert.equal((await fetch(`${base}/market/logo/bsc/native-BNB`)).status, 404, "no source had a picture");
+    } finally { await new Promise((resolve) => server.close(resolve)); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

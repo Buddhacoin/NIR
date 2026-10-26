@@ -93,7 +93,7 @@ export function normalizeTransaction(chain, item, native) {
 }
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
-  labelFor = () => null, names = createNames({ get, now }) } = {}) {
+  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -310,10 +310,21 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   // --- Search: an address as it is, or wallets by name, as the analytics sites find entities: the
   // explorer's quick search brings the open labels (BlackRock: Digital Asset Fund, Wintermute 2…),
   // name-service names and verified labels, people's wallets ahead of contracts, with their pictures.
-  function search(query) {
+  // NIR Markets' own book of wallet names (market-names.mjs) answers first, then the live sources,
+  // whose finds join the book.
+  async function search(query) {
     const text = query.trim();
-    if (addressKind(text)) return Promise.resolve([{ address: text, name: null, kind: addressKind(text) }]);
-    if (text.length < 3 || text.length > 60) return Promise.resolve([]);
+    if (addressKind(text)) return [{ address: text, name: null, kind: addressKind(text) }];
+    if (text.length < 3 || text.length > 60) return [];
+    const local = names.search(text, 8).map((item) => ({ address: item.address, name: item.name, entity: item.entity, logo: item.logo, contract: false, kind: "evm" }));
+    const live = await liveSearch(text).catch(() => []);
+    // A wallet both know shows in the book's place with the live details (its kind, a fresh picture).
+    const fresh = new Map(live.map((item) => [item.address.toLowerCase(), item]));
+    const seen = new Set(local.map((item) => item.address.toLowerCase()));
+    return [...local.map((item) => ({ ...item, ...fresh.get(item.address.toLowerCase()) })),
+      ...live.filter((item) => !seen.has(item.address.toLowerCase()))].slice(0, 12);
+  }
+  function liveSearch(text) {
     return cached(`search:${text.toLowerCase()}`, 3_600_000, async () => {
       // "black rock" is also asked as "blackrock": organisations are often labelled as one word.
       const asked = [...new Set([text, text.replace(/\s+/g, "")])].filter((query) => query.length >= 3);
@@ -351,10 +362,13 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       const rank = (item) => (item.contract ? 2 : item.ens ? 1 : 0);
       const results = [...found.values()].sort((left, right) => rank(left) - rank(right)).slice(0, 10);
       await names.lookup(results.map((item) => item.address)).catch(() => {});
-      return results.map((item) => {
+      const answer = results.map((item) => {
         const open = names.name(item.address);
         return { ...item, entity: item.entity ?? open?.entity ?? null, logo: open?.logo ?? null };
       });
+      // Labelled wallets and name-service names join the book; contracts do not.
+      names.remember(answer.filter((item) => !item.contract), "search");
+      return answer;
     });
   }
 
@@ -364,8 +378,10 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     if (!ids) return data;
     return { ...data, assets: data.assets.map((asset) => {
       const coinId = asset.token.address ? ids.contract.get(asset.token.address.toLowerCase()) ?? null : ids.symbol.get(asset.token.symbol) ?? null;
-      // A token or network coin without a picture gets its coin's logo.
-      return { ...asset, token: { ...asset.token, coinId, icon: (coinId ? ids.image?.get(coinId) : null) ?? asset.token.icon ?? null } };
+      // The coin's logo, else the source's own picture; kept on this server when it has a picture store.
+      const sources = [coinId ? ids.image?.get(coinId) : null, asset.token.icon];
+      const icon = logos ? logos.url(asset.chain, asset.token.address, asset.token.symbol, sources) : sources.find(Boolean) ?? null;
+      return { ...asset, token: { ...asset.token, coinId, icon } };
     }) };
   }
   // The feed is refreshed in the background, so a visitor never waits for the explorers.
@@ -389,7 +405,12 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   const relabel = (items) => items.map((item) => ({ ...item, from: named(item.from), to: named(item.to) }));
   // The open labels of every address in the list: waited for up to `wait` milliseconds, then the
   // rest comes on the next request.
-  const learn = (items, wait) => Promise.race([names.lookup(items.flatMap((item) => [item.from?.address, item.to?.address])),
+  const learn = (items, wait) => {
+    // Name-service names seen in transfers join the book too.
+    names.remember(items.flatMap((item) => [item.from, item.to]).filter((party) => /\.eth$/i.test(party?.name ?? "")), "ens");
+    return learnNames(items, wait);
+  };
+  const learnNames = (items, wait) => Promise.race([names.lookup(items.flatMap((item) => [item.from?.address, item.to?.address])),
     new Promise((resolve) => { setTimeout(resolve, wait).unref?.(); })]);
   const reply = (response, status, body, maxAge = 15) => {
     response.writeHead(status, { "content-type": "application/json; charset=utf-8",
@@ -399,6 +420,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   // Answers GET /market/chain/..., or returns false.
   async function handle(request, response, url) {
     const path = url.pathname;
+    // Token pictures kept on this server (market-logos.mjs).
+    if (logos && path.startsWith("/market/logo/")) return logos.handle(request, response, url);
     if (!path.startsWith("/market/chain/")) return false;
     if (request.method !== "GET") return reply(response, 405, { error: "read only" }), true;
     try {
@@ -459,5 +482,5 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
   }
 
-  return { handle, feed, holdings, transfers, history, search, warm, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  return { handle, feed, holdings, transfers, history, search, warm, names, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

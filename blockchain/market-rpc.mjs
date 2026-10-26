@@ -101,7 +101,8 @@ async function sendRpc(url, method, params) {
 
 export function createNodes({ rpc = postRpc, get, cached }) {
   const decimals = new Map(); // "chain:contract" → decimals
-  let ids = null; // contract and symbol → CoinGecko id, filled with the token lists
+  let ids = null;
+  const platformIds = new Map(); // chain id → CoinGecko's platform name, once the lists are in // contract and symbol → CoinGecko id, filled with the token lists
   // The listed tokens of every network: top coins with a contract there, with price and decimals.
   async function tokens() {
     return cached("rpc:tokens", 300_000, async () => {
@@ -117,6 +118,7 @@ export function createNodes({ rpc = postRpc, get, cached }) {
       ]);
       const byId = new Map([markets, ...more].flatMap((answer) => (Array.isArray(answer) ? answer : [])).map((coin) => [coin.id, coin]));
       const result = {};
+      for (const item of Array.isArray(platforms) ? platforms : []) if (Number.isSafeInteger(item?.chain_identifier) && item.id) platformIds.set(item.chain_identifier, String(item.id));
       const platformOf = (node) => node.platform ?? (Array.isArray(platforms) ? platforms : []).find((item) => item?.chain_identifier === node.chainId)?.id;
       for (const [chain, setup] of Object.entries({ ...NODES, ...BACKUP })) {
         const node = { ...setup, platform: platformOf(setup) };
@@ -279,5 +281,6 @@ export function createNodes({ rpc = postRpc, get, cached }) {
   }
 
   const coinIds = async () => { await tokens(); return ids; };
-  return { holdings, listedTokens, addressTransfers, feed, tokens, coinIds, networks: Object.keys(NODES) };
+  const platform = (chainId) => platformIds.get(chainId) ?? null;
+  return { platform, holdings, listedTokens, addressTransfers, feed, tokens, coinIds, networks: Object.keys(NODES) };
 }

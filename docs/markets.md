@@ -370,8 +370,14 @@ On the main explorer network a wallet's tokens come first from Ethplorer's
 free API (`freekey`): every token with a price, in a second or two even for
 thousands of tokens; tokens held by fewer than a thousand wallets are left
 out, since spam sent to well-known wallets often carries a made-up price.
-Tokens without a picture get their coin's logo from CoinGecko, else their
-own site's icon. The explorer networks (`eth` and `optimism`) read a wallet's tokens from the
+Token pictures are NIR Markets' own (`blockchain/market-logos.mjs`): the
+first time a wallet page shows a token, its picture is fetched once (the
+coin's CoinGecko logo, the source's own picture, Trust Wallet's open assets
+catalogue by the token's mixed-case address, the token's site icon, in that
+order), checked to be a real PNG, JPEG, WebP or GIF, saved beside the
+database (`logos/`) and served from `GET /market/logo/<network>/<contract |
+native-SYMBOL>` for a month of browser cache; a token no source has is
+looked for again the next day. The explorer networks (`eth` and `optimism`) read a wallet's tokens from the
 explorer, which can take minutes for a wallet holding thousands of tokens; the
 same one-call read from the network's public node runs alongside, and when the
 explorer has not answered in six seconds the listed tokens come from the node
@@ -395,9 +401,19 @@ names, community tags), and the open labels Blockscout serves without a key
 (`blockchain/market-names.mjs`, metadata.services.blockscout.com, much of it
 from the Open Labels Initiative), which name exchanges, funds, market makers
 and protocols and bring their pictures: the logo the label names, else the
-owner's site icon. They are asked fifty addresses at a time and kept a day;
-`GET /market/chain/names?addresses=` answers them for a page. There is no private database of entities,
-so most wallets show their address. A signed-in visitor can suggest a name
+owner's site icon. They are asked fifty addresses at a time;
+`GET /market/chain/names?addresses=` answers them for a page.
+
+NIR Markets keeps its own book of wallet names (`names.db` beside the
+accounts database), which only grows and stays when a source is down: every
+open label looked up (a named wallet asked again after a week, an unnamed one
+after a day), every wallet the search finds (labelled wallets and name-service
+names, not contracts; an open label outranks a search hit), name-service names
+seen in transfers, and, in the background, every address of the open labels'
+group lists (exchanges, funds, hot and cold wallets, OTC desks, treasuries,
+well-known people), one page of fifty every five seconds, walked again each
+week. The search reads the book first. Wallets no source names still show
+their address. A signed-in visitor can suggest a name
 on any wallet's page, with a link to where it is published; moderators
 (`NIR_MARKET_ADMINS`) approve or reject it in their profile's Moderation
 tab, and an approved name shows on every transfer, wallet page and search
