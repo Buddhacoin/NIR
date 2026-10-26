@@ -13,7 +13,7 @@ const en = {
   colAsset: "Asset", colChain: "Network", colPrice: "Price", colAmount: "Amount", colValue: "Value", colAssets: "Assets", colShare: "Share",
   history: "Balance history", shares: "Asset shares", counterparties: "Top counterparties", counterNote: "From the loaded transfers: who this address deals with most.",
   colWallet: "Address", colIn: "Received from", colOut: "Sent to", colCount: "Transfers", dirAll: "Transfers", dirIn: "Inflow", dirOut: "Outflow",
-  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", more: "Show more", suggest: "✎ Suggest a name",
+  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", colValue2: "Value", colToken: "Token", more: "Show more", suggest: "✎ Suggest a name",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
@@ -22,7 +22,8 @@ const words = {
     mine: "Это мой адрес", isMine: "✓ Мой адрес", copied: "Скопировано", missing: "Это не адрес кошелька.",
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
-    failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noCounter: "Пока нечего показать.",
+    failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noMatch: "Под фильтр ничего не подходит.", clearFilters: "Сбросить фильтры",
+    allTokens: "Все токены", partyFilter: "Адрес или имя", noCounter: "Пока нечего показать.",
     emptyWallet: "На шести сетях у адреса сейчас нет монет и токенов.", activity: (list) => `Активность: ${list}.`,
     txs: (count) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? "транзакция" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "транзакции" : "транзакций"}`,
     noActivity: "Следов активности нет: адрес не получал и не отправлял монеты на этих сетях.", openIn: "Смотреть в обозревателе:",
@@ -41,7 +42,8 @@ const words = {
     mine: "This is mine", isMine: "✓ My address", copied: "Copied", missing: "This is not a wallet address.",
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
-    failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noCounter: "Nothing to show yet.",
+    failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noMatch: "Nothing matches the filter.", clearFilters: "Clear filters",
+    allTokens: "All tokens", partyFilter: "Address or name", noCounter: "Nothing to show yet.",
     emptyWallet: "The address holds no coins or tokens on the six networks right now.", activity: (list) => `Activity: ${list}.`,
     txs: (count) => `${count} transaction${count === 1 ? "" : "s"}`,
     noActivity: "No trace of activity: the address has not received or sent coins on these networks.", openIn: "See it in the explorer:",
@@ -69,6 +71,9 @@ let range = 90; // days shown by the history chart; 0: everything loaded
 let direction = "all";
 let transferChain = "all";
 let dust = true; // hide transfers worth under $1 (mostly spam tokens)
+// The transfers table, as on the analytics sites: time, value and dollars sort; sender, receiver and token filter.
+const tsort = { key: "time", dir: -1 };
+const tfilter = { from: "", to: "", token: null };
 let transfers = [];
 // Every transfer loaded in either direction-less view, by id: the history and counterparties come from it.
 const ledger = new Map();
@@ -337,14 +342,18 @@ function renderTransfers() {
   })));
   $("#node-note").hidden = !CHAINS[transferChain]?.node;
   $("#node-note").textContent = t().nodeNote;
-  // Pages from several networks arrive separately: shown together, newest first.
-  const shown = transfers.filter(worth).sort((left, right) => right.time - left.time);
+  // Pages from several networks arrive separately: shown together, newest first unless sorted otherwise.
+  const matches = (party, text) => !text || [party?.address, party?.name, knownName(party?.address)].some((value) => value?.toLowerCase().includes(text.toLowerCase()));
+  const passes = (item) => matches(item.from, tfilter.from) && matches(item.to, tfilter.to) && (!tfilter.token || item.token.symbol === tfilter.token);
+  const shown = transfers.filter((item) => worth(item) && passes(item)).sort((left, right) => ((left[tsort.key] ?? -1) - (right[tsort.key] ?? -1)) * tsort.dir);
+  for (const head of document.querySelectorAll(".ex-transfers [data-tsort]")) head.dataset.dir = head.dataset.tsort === tsort.key ? (tsort.dir > 0 ? "asc" : "desc") : "";
+  for (const head of document.querySelectorAll(".ex-transfers [data-tfilter]")) head.classList.toggle("on", Boolean(tfilter[head.dataset.tfilter]));
   const hidden = transfers.length - shown.length;
   const own = address.toLowerCase();
   const message = (text, button) => {
     const row = node("tr");
     const cell = node("td", "muted ex-empty", text);
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     if (button) cell.append(" ", button);
     row.append(cell);
     return row;
@@ -359,10 +368,15 @@ function renderTransfers() {
     const to = node("td", "left");
     to.append(walletLink(item.to));
     const incoming = item.to.address?.toLowerCase() === own;
-    row.append(when, from, to, node("td", incoming ? "up" : "down", `${incoming ? "+" : "−"}${amountShort(item.amount)} ${item.token.symbol}`),
+    const token = node("td", "left ex-token-cell");
+    const coin = node("span", "coin-cell");
+    coin.append(logo({ id: item.token.symbol, symbol: item.token.symbol, image: item.token.icon }), node("b", "", item.token.symbol));
+    token.append(coin);
+    row.append(when, from, to, node("td", incoming ? "up" : "down", `${incoming ? "+" : "−"}${amountShort(item.amount)}`), token,
       node("td", "", usdShort(item.usd)));
     return row;
-  }), ...(shown.length ? [] : [message(loadingMore ? t().loadingTransfers : hidden ? t().hiddenDust(hidden) : t().noTransfers, !loadingMore && hidden ? reveal() : null)]),
+  }), ...(shown.length ? [] : [message(loadingMore ? t().loadingTransfers : filtered() ? t().noMatch : hidden ? t().hiddenDust(hidden) : t().noTransfers,
+    !loadingMore && filtered() ? clearButton() : !loadingMore && hidden ? reveal() : null)]),
     ...(!shown.length && !hidden && !loadingMore && explorerLinks().length ? [(() => { const row = message(t().openIn); row.firstChild.append(" ", ...explorerLinks()); return row; })()] : []),
     ...(shown.length && hidden && !hasMore() ? [message(t().hiddenDust(hidden), reveal())] : []));
   $("#more").hidden = !hasMore();
@@ -373,6 +387,36 @@ function renderTransfers() {
   if (hasMore() && !loadingMore && autoPages < 5 && box.scrollHeight <= box.clientHeight + 80) { autoPages += 1; void loadTransfers(); }
 }
 let autoPages = 0;
+const filtered = () => Boolean(tfilter.from || tfilter.to || tfilter.token);
+const clearButton = () => { const button = node("button", "pill", t().clearFilters); button.type = "button"; button.addEventListener("click", () => { tfilter.from = tfilter.to = ""; tfilter.token = null; renderTransfers(); }); return button; };
+// A header's filter: a field for the sender or receiver, the loaded tokens for the token column.
+function openFilter(head) {
+  document.querySelector(".ex-pop")?.remove();
+  const key = head.dataset.tfilter;
+  const pop = node("div", "ex-pop");
+  if (key === "token") {
+    const counts = new Map();
+    for (const item of transfers.filter(worth)) counts.set(item.token.symbol, (counts.get(item.token.symbol) ?? 0) + 1);
+    const choose = (symbol) => { tfilter.token = symbol; pop.remove(); renderTransfers(); };
+    const all = node("button", tfilter.token ? "" : "on", t().allTokens);
+    all.type = "button";
+    all.addEventListener("click", () => choose(null));
+    pop.append(all, ...[...counts].sort((left, right) => right[1] - left[1]).slice(0, 30).map(([symbol, count]) => {
+      const button = node("button", tfilter.token === symbol ? "on" : "");
+      button.type = "button";
+      button.append(node("b", "", symbol), node("span", "muted", String(count)));
+      button.addEventListener("click", () => choose(symbol));
+      return button;
+    }));
+  } else {
+    const field = Object.assign(node("input", "ex-token"), { type: "search", value: tfilter[key], placeholder: t().partyFilter });
+    field.addEventListener("input", () => { tfilter[key] = field.value.trim(); renderTransfers(); });
+    field.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === "Escape") pop.remove(); });
+    pop.append(field);
+    setTimeout(() => field.focus());
+  }
+  head.append(pop);
+}
 // "All" asks the explorer networks and the node networks where the wallet holds something, all at once;
 // each one's rows show as soon as it answers.
 const transferChainsAll = () => (utxo ? ["btc"] : Object.keys(CHAINS).filter((chain) => chain !== "btc"
@@ -500,6 +544,17 @@ for (const button of document.querySelectorAll("#assets-tabs [data-view]")) butt
 for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });
 for (const button of document.querySelectorAll("#chart-tabs [data-chart]")) button.addEventListener("click", () => { chart = button.dataset.chart; renderChart(); });
 $("#dust").addEventListener("click", () => { dust = !dust; renderTransfers(); });
+for (const head of document.querySelectorAll(".ex-transfers [data-tsort]")) {
+  head.addEventListener("click", () => {
+    const key = head.dataset.tsort;
+    if (tsort.key === key) tsort.dir = -tsort.dir; else { tsort.key = key; tsort.dir = -1; }
+    renderTransfers();
+  });
+}
+for (const head of document.querySelectorAll(".ex-transfers [data-tfilter]")) {
+  head.addEventListener("click", (event) => { if (!event.target.closest(".ex-pop")) openFilter(head); });
+}
+document.addEventListener("click", (event) => { if (!event.target.closest(".ex-pop, [data-tfilter]")) document.querySelector(".ex-pop")?.remove(); });
 addEventListener("resize", () => scheduleChart());
 $("#more").addEventListener("click", () => void loadTransfers());
 // Near the bottom of the transfers panel, the next page comes by itself.

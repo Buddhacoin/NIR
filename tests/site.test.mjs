@@ -139,6 +139,12 @@ test("the explorer pages have English for every text, and the server routes wall
   }
   assert.match(read("site/index.html"), /id="transfers"/);
   assert.match(read("site/markets.js"), /\/market\/chain\/feed/);
+  // The wallet's transfers sort by time, value and dollars, and filter by sender, receiver and token.
+  const wallet = read("site/address/index.html");
+  for (const key of ["time", "amount", "usd"]) assert.match(wallet, new RegExp(`data-tsort="${key}"`));
+  for (const key of ["from", "to", "token"]) assert.match(wallet, new RegExp(`data-tfilter="${key}"`));
+  // The search offers popular wallets.
+  assert.match(read("site/common.js"), /const WHALES = \[/);
   assert.match(read("deploy/install-shared-testnet.sh"), /handle \/address\/\* \{\n\s+root \* \$APP_DIR\/site\n\s+rewrite \* \/address\/index\.html/);
   const profile = read("site/u/index.html");
   for (const key of ["tabWallets", "tabTracked", "tabModeration"]) {

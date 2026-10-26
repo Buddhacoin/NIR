@@ -42,6 +42,9 @@ NIR coin.
   rose in 24 hours, and an altcoin-season score: the share of the top 50
   (stablecoins aside) that beat the largest coin over 7 days (75 and more:
   altcoin season, 25 and less: the largest coin's season).
+- The four cards keep one height: the transfers card takes the row's height
+  from its neighbours and its list clips inside, so new transfers or a
+  filter with nothing to show never shift the page.
 - Every card is a link: market status and its figures → `/charts/`, Fear &
   Greed → `/charts/#fear-greed`, dominance → `/charts/#dominance`; the Trending
   and Gainers titles switch the table below to the full lists (the fifteen
@@ -268,6 +271,14 @@ wallet activity (`blockchain/market-chain.mjs`):
   chips with the number of transactions sent, their transfers load under
   "All", and an empty wallet says where it was active, with links to the
   explorers.
+- The wallet's transfers table works like the analytics sites': Time, Value
+  and USD sort (click again to flip), From and To filter by address or name,
+  Token filters by one of the loaded tokens; "Clear filters" undoes them.
+- **Popular wallets**: the search, opened empty, offers well-known public
+  wallets (exchanges, funds, market makers, a government, founders; their
+  own published or widely reported addresses, listed in `site/common.js`)
+  next to recent searches and trending tokens with their day's change;
+  typing a name finds them, and their names show wherever they appear.
 - **Balance history** is rebuilt in the browser from the transfers: today's
   holdings, with each loaded transfer undone going back in time, valued at
   today's prices (tokens without a price count as nothing). Older pages load

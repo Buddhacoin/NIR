@@ -178,6 +178,25 @@ function chainDot(chain) {
   return dot;
 }
 // A link to a wallet's page: its open name if it has one, else the short address.
+// Well-known public wallets ("whales"), offered in the search and named wherever they appear.
+// Each is the entity's own published or widely reported address.
+const WHALES = [
+  { address: "0xF977814e90dA44bFA03b6295A0616a897441aceC", name: "Binance", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo", name: "Binance: BTC", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6", name: "U.S. Government", kind: { ru: "Государство", en: "Government" } },
+  { address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", name: "Satoshi Nakamoto", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", kind: { ru: "Фонд", en: "Foundation" } },
+  { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0x0000006daea1723962647b7e189d311d757Fb793", name: "Wintermute", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0x3DdfA8eC3052539b6C9549F12cEA2C295cfF5296", name: "Justin Sun", kind: { ru: "Персона", en: "Individual" } },
+  { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", kind: { ru: "Биржа", en: "Exchange" } },
+];
+const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
+const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
+
 // A wallet's face: its name-service picture when it has one, else a colour of its own with a letter.
 const ENS_AVATAR = "https://metadata.ens.domains/mainnet/avatar/";
 function walletAvatar(party, className = "w-avatar") {
@@ -195,6 +214,7 @@ function walletAvatar(party, className = "w-avatar") {
 }
 function walletLink(party) {
   if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
+  if (!party.name && knownName(party.address)) party = { ...party, name: knownName(party.address) };
   const link = Object.assign(document.createElement("a"), { className: "wallet", href: addressUrl(party.address), title: party.address });
   link.append(walletAvatar(party));
   if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
@@ -394,16 +414,19 @@ function setupSearch({ overview = () => null }) {
   let timer = null;
   let asked = "";
   const recent = () => { try { return JSON.parse(store.get("nir-recent-searches") ?? "[]").slice(0, 5); } catch { return []; } };
-  const remember = (coin) => store.set("nir-recent-searches", JSON.stringify([{ id: coin.id, symbol: coin.symbol,
-    name: coin.name, image: coin.image ?? null, rank: coin.rank ?? null }, ...recent().filter((item) => item.id !== coin.id)].slice(0, 5)));
+  // Coins and wallets opened from the search, newest first.
+  const remember = (item) => store.set("nir-recent-searches", JSON.stringify([item.address
+    ? { address: item.address, name: item.name ?? null }
+    : { id: item.id, symbol: item.symbol, name: item.name, image: item.image ?? null, rank: item.rank ?? null },
+  ...recent().filter((entry) => (item.address ? entry.address !== item.address : entry.id !== item.id))].slice(0, 5)));
   const data = async () => {
     market = overview() ?? market;
     if (!market) market = await fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null);
     return market;
   };
   const open = (item) => {
-    if (item.address) { location.href = addressUrl(item.address); return; }
     remember(item);
+    if (item.address) { location.href = addressUrl(item.address); return; }
     location.href = coinUrl(item);
   };
   function draw(groups) {
@@ -417,16 +440,22 @@ function setupSearch({ overview = () => null }) {
         if (coin.address) {
           // A wallet: its name (if any) and the short address.
           row.href = addressUrl(coin.address);
-          const icon = Object.assign(document.createElement("span"), { className: "wallet-icon", textContent: "◎" });
-          row.append(icon, Object.assign(document.createElement("b"), { textContent: coin.name ?? shortAddress(coin.address) }),
-            Object.assign(document.createElement("span"), { textContent: coin.name ? shortAddress(coin.address) : t().wallet }));
+          const whale = WHALE.get(coin.address.toLowerCase());
+          const name = coin.name ?? whale?.name ?? null;
+          row.append(walletAvatar({ address: coin.address, name: name ?? "◎" }, "w-avatar s-avatar"), Object.assign(document.createElement("b"), { textContent: name ?? shortAddress(coin.address) }),
+            Object.assign(document.createElement("span"), { textContent: whale ? whale.kind[language === "en" ? "en" : "ru"] : name ? shortAddress(coin.address) : t().wallet }));
           row.addEventListener("click", (event) => { event.preventDefault(); open(coin); });
           return row;
         }
         row.href = coinUrl(coin);
         const name = Object.assign(document.createElement("b"), { textContent: coin.name });
         const symbol = Object.assign(document.createElement("span"), { textContent: coin.symbol });
+        // Trending coins show their price and day's change, the rest their rank.
         const rank = Object.assign(document.createElement("em"), { textContent: coin.rank ? `#${coin.rank}` : "" });
+        if (coin.trend && Number.isFinite(coin.change24h)) {
+          rank.textContent = `${coin.change24h >= 0 ? "+" : ""}${coin.change24h.toLocaleString(locale(), { maximumFractionDigits: 2 })}%`;
+          rank.className = coin.change24h >= 0 ? "up" : "down";
+        }
         row.append(logo(coin), name, symbol, rank);
         row.addEventListener("click", (event) => { event.preventDefault(); open(coin); });
         return row;
@@ -435,8 +464,8 @@ function setupSearch({ overview = () => null }) {
     box.hidden = !items.length;
   }
   const t = () => (language === "en"
-    ? { recent: "Recent searches", trending: "Trending", coins: "Coins", none: "Nothing found", wallets: "Addresses", wallet: "address" }
-    : { recent: "Недавние", trending: "В тренде", coins: "Монеты", none: "Ничего не найдено", wallets: "Адреса", wallet: "адрес" });
+    ? { recent: "Recent searches", trending: "Trending tokens", coins: "Coins", none: "Nothing found", wallets: "Addresses", wallet: "address", whales: "Popular wallets" }
+    : { recent: "Недавние", trending: "Токены в тренде", coins: "Монеты", none: "Ничего не найдено", wallets: "Адреса", wallet: "адрес", whales: "Популярные кошельки" });
   async function update() {
     const raw = input.value.trim();
     const query = raw.toLowerCase();
@@ -444,12 +473,13 @@ function setupSearch({ overview = () => null }) {
     if (ADDRESS.test(raw)) { draw([[t().wallets, [{ address: raw, name: null }]]]); return; }
     const market = await data();
     if (!query) {
-      draw([[t().recent, recent()], [t().trending, (market?.trending ?? []).slice(0, 7)]]);
+      draw([[t().recent, recent()], [t().whales, WHALES.slice(0, 6)], [t().trending, (market?.trending ?? []).slice(0, 5).map((coin) => ({ ...coin, trend: true }))]]);
       return;
     }
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
       coin.symbol.toLowerCase().startsWith(query)).slice(0, 8);
-    draw([[t().coins, local]]);
+    const whales = WHALES.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 4);
+    draw([[t().whales, whales], [t().coins, local]]);
     clearTimeout(timer);
     timer = setTimeout(async () => {
       asked = query;
@@ -461,8 +491,8 @@ function setupSearch({ overview = () => null }) {
       if (asked !== input.value.trim().toLowerCase()) return; // a newer query is on its way
       const seen = new Set(local.map((coin) => coin.id));
       const merged = [...local, ...found.coins.filter((coin) => !seen.has(coin.id))].slice(0, 10);
-      draw([[t().wallets, wallets.results ?? []], [t().coins, merged]]);
-      if (!merged.length && !wallets.results?.length) {
+      draw([[t().whales, whales], [t().wallets, wallets.results ?? []], [t().coins, merged]]);
+      if (!merged.length && !wallets.results?.length && !whales.length) {
         box.replaceChildren(Object.assign(document.createElement("p"), { textContent: t().none }));
         box.hidden = false;
       }
