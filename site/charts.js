@@ -119,4 +119,4 @@ setupPage({ en, render, onTheme: drawHistory });
 fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).then((data) => { market = data; render(); }).catch(() => {});
 fetch("/market/fear-greed").then((response) => (response.ok ? response.json() : null)).then((data) => { history = data?.history ?? []; render(); }).catch(() => {});
 // Opening /charts/#fear-greed scrolls once the content is drawn.
-if (location.hash) setTimeout(() => document.querySelector(location.hash)?.scrollIntoView(), 600);
+if (location.hash) setTimeout(() => document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView(), 600);

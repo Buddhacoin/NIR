@@ -175,10 +175,14 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 .coin-page { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 22px; align-items: start; }
 .side, .coin-main { display: grid; gap: 16px; min-width: 0; }
 .coin-main .tabs { margin: 0; }
-.coin-head { display: flex; align-items: center; gap: 10px; }
+.coin-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .coin-head .logo { width: 40px; height: 40px; font-size: 18px; }
-.coin-head h1 { margin: 0; overflow: hidden; font-size: 26px; text-overflow: ellipsis; white-space: nowrap; }
-.coin-head .sym { color: var(--muted); font-weight: 700; }
+.coin-head h1 { margin: 0; font-size: 26px; line-height: 1.15; overflow-wrap: break-word; }
+.coin-head h1.long { font-size: 20px; }
+.coin-head .sym { flex: none; max-width: 90px; overflow: hidden; color: var(--muted); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.coin-head .logo, .coin-head .badge { flex: none; }
+/* A long name or ticker is cut short instead of widening the column under the chart. */
+.side > * { min-width: 0; }
 .badge { padding: 3px 8px; border-radius: 8px; background: var(--soft); color: var(--accent); font-size: 12px; font-weight: 800; }
 .watch { display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-left: auto; border: 1px solid var(--line); border-radius: 12px;
   background: transparent; color: var(--muted); font-size: 21px; cursor: pointer; }
@@ -827,7 +831,7 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
    the post box at the bottom), under the content on narrower ones. */
 .coin-feed { display: grid; min-width: 0; }
 @media (min-width: 1400px) {
-  .coin-page:has(.coin-feed .community:not([hidden])) { grid-template-columns: 330px minmax(0, 1fr) 360px; }
+  .coin-page:has(.coin-feed .community:not([hidden])) { grid-template-columns: 380px minmax(0, 1fr) 340px; }
   .coin-feed { position: sticky; top: 16px; }
   .coin-feed .community:not([hidden]) { display: flex; flex-direction: column; max-height: calc(100vh - 32px); overflow: hidden; }
   .coin-feed .community > * { flex: none; }
@@ -850,7 +854,7 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 .trades-head .live { color: var(--up); font-size: 12px; animation: pulse 1.2s infinite alternate; }
 .trades-head .muted { font-size: 12px; }
 .trades-bar { display: flex; overflow: hidden; border-radius: 8px; font-size: 12px; font-weight: 750; }
-.trades-bar span { min-width: 90px; padding: 6px 10px; white-space: nowrap; }
+.trades-bar span { flex-grow: 1; min-width: max-content; padding: 6px 10px; white-space: nowrap; }
 .trades-bar .buys { background: color-mix(in srgb, var(--up) 18%, transparent); color: var(--up); }
 .trades-bar .sells { background: color-mix(in srgb, var(--down) 18%, transparent); color: var(--down); text-align: right; }
 .trades-wrap { max-height: 520px; overflow: auto; overscroll-behavior: contain; }
@@ -868,3 +872,14 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 700px) { .trades-table th:nth-child(3), .trades-table td:nth-child(3), .trades-table th:nth-child(7), .trades-table td:nth-child(7) { display: none; } }
 @media (max-width: 1100px) { #trades { order: 2; } }
 .ex-pop input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
+/* Phones: the network and list tabs scroll sideways instead of widening the page; the wallets list
+   keeps the wallet, its balance and the Track button. */
+.ex-card > * { min-width: 0; }
+.ex-filters .seg, .pf-chart-head .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.ex-filters .seg button, .pf-chart-head .seg button { flex: none; }
+@media (max-width: 700px) {
+  .ex-wallets th:nth-child(1), .ex-wallets td:nth-child(1), .ex-wallets th:nth-child(3), .ex-wallets td:nth-child(3),
+  .ex-wallets th:nth-child(4), .ex-wallets td:nth-child(4) { display: none; }
+  .ex-wallets .ex-whale > span.muted { display: none; }
+  .ex-wallets td { padding-left: 6px; padding-right: 6px; }
+}

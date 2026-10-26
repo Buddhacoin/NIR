@@ -10,12 +10,18 @@ leads to the NIR page at `/nir/`, and a strip on top shows NIR's own network
 ## Data
 
 `blockchain/market-service.mjs` runs on the website's server
-(`nir-market.service`, `127.0.0.1:8790`, `npm run market:serve`). Once a
-minute it fetches:
+(`nir-market.service`, `127.0.0.1:8790`, `npm run market:serve`). It fetches,
+each source on its own clock:
 
 - CoinGecko: `/coins/markets` (top 100 with 1h/24h/7d changes and 7-day
-  sparklines), `/global` and `/search/trending`;
-- alternative.me: the Fear & Greed index.
+  sparklines) every minute, `/global` every three minutes and
+  `/search/trending` every five;
+- alternative.me: the Fear & Greed index every ten minutes.
+
+A failing source is asked again only when it is next due, and one refresh
+runs at a time. A "too many requests" answer from CoinGecko pauses every
+background call (trending rows, exchange logos, alerts, coin warming) for two
+minutes, so the visitors' own requests get the room.
 
 It serves every visitor from that copy at `GET /market/overview` (Caddy passes
 `/market/*` to it), so the free sources see one client however many people
@@ -66,7 +72,9 @@ NIR coin.
   supply; numbers take only the width they need. Every coin CoinGecko lists
   can be browsed 100 a page: `/?page=N` loads `GET /market/coins?page=N`
   (cached three minutes, within the coin-fetch budget), with page numbers and
-  "Showing 1–100 of N" under the table.
+  "Showing 1–100 of N" under the table. The Watchlist tab also shows starred
+  coins outside the top 100, from `GET /market/coins?ids=a,b` (up to 50 ids,
+  cached two minutes).
 - CoinGecko's free plan asks for credit: a small "Данные: CoinGecko" under the
   table and in the footers. TradingView credits itself inside its chart.
 
@@ -283,8 +291,15 @@ wallet activity (`blockchain/market-chain.mjs`):
   typing a name finds them, and their names and pictures (the
   organisation's site icon, or the person's name-service avatar) show
   wherever they appear. The section titles open the full lists:
-  `/wallets/` (every popular wallet with its type, networks and balance,
-  filters by type and a Track button each) and the trending coins.
+  `/wallets/` and the trending coins.
+- **Popular wallets** (`/wallets/`): the hand-picked wallets above, and
+  thousands more from the open labels in three tabs, exchanges, funds and
+  hot wallets (`GET /market/chain/popular?group=exchange|fund|hot-wallet&cursor=`,
+  fifty a page from Blockscout's address directory, each page kept six
+  hours). Every row has the name, logo, organisation, networks, balance and a
+  Track button; the next page loads by itself as the list scrolls, a filter
+  searches the loaded names and addresses, and balances load only for the
+  rows on screen, two at a time.
 - **Balance history** is rebuilt in the browser from the transfers: today's
   holdings, with each loaded transfer undone going back in time, valued at
   today's prices (tokens without a price count as nothing). Older pages load
@@ -313,7 +328,9 @@ seconds, and at most two hundred. The coin's own transfers need an explorer
 and are not shown. The free nodes refuse queries for more than five
 contracts and block bursts, so requests to each node go one at a time,
 120 ms apart, and a refused request (403, 429) is tried twice more. Node
-requests stay out of the explorers' budget of 60 a minute.
+requests stay out of the explorers' budget of 60 a minute and have their own
+of 30 a minute. A wallet whose last fetch failed shows its last copy, or
+answers "busy" for twenty seconds instead of asking the nodes again at once.
 
 Names come from four places, in this order: names approved by NIR Markets
 moderators, name-service records, the explorers' labels (verified contract
@@ -383,7 +400,11 @@ list the browser already has; a coin seen before is served from its copy
 while a fresh one is fetched behind it; when CoinGecko is busy and the coin
 was never fetched, the server answers from the market list (price, changes,
 cap, supply, the week's prices) and the page asks again until it has
-everything. CoinGecko's free plan allows few requests a minute: a "too many"
+everything. A coin in the market list never waits more than 2.5 seconds for
+CoinGecko: past that it is answered from the list while the fetch finishes
+behind it. Any chart period that is not ready yet is drawn from the week's
+prices, marked "showing the week while the chosen period loads", and the
+page swaps in the full chart when it comes. CoinGecko's free plan allows few requests a minute: a "too many"
 answer pauses the background work (warming coin pages one at a time, which
 also brings the community votes) for two minutes, so visitors' pages get the
 room.
@@ -392,7 +413,10 @@ The page asks the market service for `GET /market/coin/<id>` and
 `GET /market/chart/<id>?days=1|7|30|90|365`. Those are fetched only when
 someone opens the page: a coin is kept for 2 minutes, a chart for 5 to 30
 minutes, visitors asking for the same coin at once share one fetch, and no
-more than 20 such fetches go to CoinGecko a minute. Past that limit a cached
+more than 20 such fetches go to CoinGecko a minute (search has its own
+budget of 6 a minute and needs two letters). A failed fetch keeps the old
+copy for another minute instead of asking again on every visit; a failed
+trades lookup waits a minute too. Past that limit a cached
 copy is served, or the visitor is asked to retry in a minute. Caddy serves
 `site/coin/index.html` for every `/coin/*` path.
 

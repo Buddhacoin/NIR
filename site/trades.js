@@ -181,6 +181,9 @@ function openTradeFilter(head) {
     setTimeout(() => field.focus());
   }
   head.append(pop);
+  // On a phone the list must not run past the screen's right edge.
+  const over = pop.getBoundingClientRect().right - (document.documentElement.clientWidth - 8);
+  if (over > 0) pop.style.left = `${-over}px`;
 }
 
 for (const head of document.querySelectorAll(".trades-table [data-trsort]")) {

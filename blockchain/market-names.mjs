@@ -4,9 +4,13 @@
 // Initiative). Each label gives a name and often the owner's site; the picture
 // is the logo the label names, else the site's icon. Answers are kept a day
 // (unknown addresses too, for ten minutes when the service did not answer),
-// and addresses are asked fifty at a time.
+// and addresses are asked fifty at a time. The same service lists every address
+// under a group tag (exchanges, funds, hot wallets), fifty a page: the popular
+// wallets directory pages through those lists.
 
 const SERVICE = "https://metadata.services.blockscout.com/api/v1/metadata";
+const LISTS = "https://metadata.services.blockscout.com/api/v1/addresses";
+export const GROUPS = ["exchange", "fund", "hot-wallet"];
 const FAVICON = "https://www.google.com/s2/favicons?sz=64&domain=";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 // Sites whose icon says nothing about the wallet's owner.
@@ -68,5 +72,23 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     await Promise.all(wanted.map((address) => asking.get(address)).filter(Boolean));
   }
   const name = (address) => (typeof address === "string" ? known.get(address.toLowerCase())?.value ?? null : null);
-  return { lookup, name };
+
+  // One page of a group's addresses with their names and pictures; pages are kept six hours.
+  const pages = new Map();
+  async function directory(group, token = null) {
+    if (!GROUPS.includes(group)) return null;
+    const key = `${group}:${token ?? ""}`;
+    const hit = pages.get(key);
+    if (hit && now() - hit.at < 6 * 3_600_000) return hit.value;
+    const answer = await get(`${LISTS}?slug=${group}&tagType=generic&chain_id=1&page_size=50${token ? `&page_token=${encodeURIComponent(token)}` : ""}`);
+    const addresses = (Array.isArray(answer?.items) ? answer.items : []).filter((address) => EVM_ADDRESS.test(address));
+    await lookup(addresses);
+    const next = typeof answer?.next_page_params?.page_token === "string" && EVM_ADDRESS.test(answer.next_page_params.page_token)
+      ? answer.next_page_params.page_token : null;
+    const value = { items: addresses.map((address) => ({ address, ...(name(address) ?? { name: null, entity: null, site: null, logo: null }) })), next };
+    pages.set(key, { at: now(), value });
+    if (pages.size > 500) pages.delete(pages.keys().next().value);
+    return value;
+  }
+  return { lookup, name, directory };
 }

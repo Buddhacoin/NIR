@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=29">
+  <link rel="stylesheet" href="/markets.css?v=30">
 </head>
 <body>
   <div class="nirbar">
@@ -51,15 +51,17 @@
       <div class="pf-chart-head">
         <h1 class="ex-title" data-i18n="title">Популярные кошельки</h1>
         <div class="seg" id="kinds"></div>
+        <input class="ex-token" id="filter" type="search" placeholder="Имя или адрес" autocomplete="off">
       </div>
-      <p class="muted ex-note" data-i18n="intro">Кошельки бирж, фондов, маркет-мейкеров, государства и известных людей. Откройте любой, чтобы увидеть его активы, историю и переводы, и нажмите «Отследить адрес», чтобы он появился в вашем профиле.</p>
+      <p class="muted ex-note" data-i18n="intro">Тысячи известных кошельков: биржи, фонды, маркет-мейкеры, государство и известные люди. Имена и логотипы — из открытой базы меток. Откройте любой, чтобы увидеть активы, историю и переводы, и нажмите «Отследить», чтобы он появился в вашем профиле.</p>
       <div class="table-wrap">
         <table class="ex-table ex-wallets">
-          <thead><tr><th class="left">#</th><th class="left" data-i18n="colWallet">Кошелёк</th><th class="left" data-i18n="colKind">Тип</th><th class="left" data-i18n="colNetworks">Сети</th><th data-sort="total" data-i18n="colTotal">Баланс</th><th></th></tr></thead>
+          <thead><tr><th class="left">#</th><th class="left" data-i18n="colWallet">Кошелёк</th><th class="left" data-i18n="colKind">Тип и организация</th><th class="left" data-i18n="colNetworks">Сети</th><th data-sort="total" data-i18n="colTotal">Баланс</th><th></th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
+        <button class="act ghost ex-more" id="more" type="button" data-i18n="more" hidden>Показать ещё</button>
       </div>
-      <p class="muted ex-note" data-i18n="note">Адреса — опубликованные самими организациями или широко известные. Балансы — по открытым обозревателям и узлам сетей, обновляются раз в 10 минут.</p>
+      <p class="muted ex-note" data-i18n="note">Адреса и имена — из открытой базы меток Blockscout (Open Labels Initiative) и опубликованных самими организациями. Балансы — по открытым обозревателям и узлам сетей, загружаются для видимых строк и обновляются раз в 10 минут.</p>
     </article>
   </main>
 
@@ -78,7 +80,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=16"></script>
-  <script src="/wallets.js?v=2"></script>
+  <script src="/common.js?v=17"></script>
+  <script src="/wallets.js?v=3"></script>
 </body>
 </html>

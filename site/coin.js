@@ -24,7 +24,7 @@ const en = {
 const words = {
   ru: { loading: "Загружаю данные монеты…", missing: "Такой монеты нет. Вернитесь к списку и выберите монету там.",
     unavailable: "Данные монеты временно недоступны. Попробуйте обновить страницу через минуту.",
-    chartLoading: "Загружаю график…", chartUnavailable: "График временно недоступен.",
+    chartLoading: "Загружаю график…", standIn: "пока показана неделя, выбранный период загружается", young: "С начала торгов", chartUnavailable: "График временно недоступен.",
     chart: (name) => `График ${name}`, about: (name) => `Что такое ${name}`, english: "Описание есть только на английском.",
     noDescription: "Описания пока нет.", noMarkets: "Нет данных о биржах.", fetching: "Загружаю…", line: "Линия", candles: "Свечи",
     period: { 1: "За сутки", 7: "За неделю", 30: "За месяц", 90: "За 3 месяца", 365: "За год" },
@@ -32,7 +32,7 @@ const words = {
     title: (coin) => `${coin.name} (${coin.symbol}) — цена, график и капитализация | NIR Markets` },
   en: { loading: "Loading the coin…", missing: "There is no such coin. Go back to the list and pick one there.",
     unavailable: "Coin data is unavailable right now. Try reloading in a minute.",
-    chartLoading: "Loading the chart…", chartUnavailable: "The chart is unavailable right now.",
+    chartLoading: "Loading the chart…", standIn: "the week is shown while the chosen period loads", young: "Since trading began", chartUnavailable: "The chart is unavailable right now.",
     chart: (name) => `${name} chart`, about: (name) => `What is ${name}`, english: "",
     noDescription: "No description yet.", noMarkets: "No market data.", fetching: "Loading…", line: "Line", candles: "Candles",
     period: { 1: "In 24 hours", 7: "In a week", 30: "In a month", 90: "In 3 months", 365: "In a year" },
@@ -95,6 +95,7 @@ function renderHead() {
   $("#crumb").textContent = coin.name;
   $("#logo").replaceChildren(logo(coin));
   $("#name").textContent = coin.name;
+  $("#name").classList.toggle("long", coin.name.length > 10); // a long name gets a smaller size and wraps between words
   $("#symbol").textContent = coin.symbol;
   $("#rank").textContent = coin.rank ? `#${coin.rank}` : "";
   $("#rank").hidden = !coin.rank;
@@ -209,16 +210,17 @@ function renderTickers() {
   $("#tickers").replaceChildren(...rows);
 }
 
-// --- The converter works both ways: coins to dollars and dollars to coins.
+// --- The converter works both ways: coins to dollars and dollars to coins. The fields hold plain
+// numbers (no thousands separators), so a comma there is only ever the decimal mark.
 const parse = (value) => Number(value.replace(/[\s ]/g, "").replace(",", "."));
 function convert(from) {
   if (!coin?.price) return;
   if (from === "coin") {
     const value = parse($("#conv-coin").value);
-    $("#conv-usd").value = Number.isFinite(value) ? (value * coin.price).toLocaleString(locale(), { maximumFractionDigits: 2 }) : "";
+    $("#conv-usd").value = Number.isFinite(value) ? (value * coin.price).toLocaleString(locale(), { maximumFractionDigits: 2, useGrouping: false }) : "";
   } else {
     const value = parse($("#conv-usd").value);
-    $("#conv-coin").value = Number.isFinite(value) ? (value / coin.price).toLocaleString(locale(), { maximumSignificantDigits: 8 }) : "";
+    $("#conv-coin").value = Number.isFinite(value) ? (value / coin.price).toLocaleString(locale(), { maximumSignificantDigits: 8, useGrouping: false }) : "";
   }
 }
 
@@ -261,13 +263,20 @@ function renderChart() {
     if (!plot.querySelector(".tradingview-widget-container")) plot.replaceChildren(tradingView(symbol, true));
     return;
   }
-  const points = (metric === "caps" ? chart?.caps : chart?.prices) ?? [];
+  let points = (metric === "caps" ? chart?.caps : chart?.prices) ?? [];
+  // While the chosen period loads, the week from the market list stands in, so the box is never empty.
+  const stand = points.length < 2 && metric === "prices" && (coin.sparkline?.length ?? 0) > 1;
+  if (stand) {
+    const step = 7 * 86_400_000 / (coin.sparkline.length - 1);
+    const start = Date.now() - 7 * 86_400_000;
+    points = coin.sparkline.map((value, index) => [start + index * step, value]);
+  }
   if (points.length < 2) {
     plot.replaceChildren(Object.assign(document.createElement("p"), { className: "status",
       textContent: chartFailed ? t().chartUnavailable : t().chartLoading }));
     return;
   }
-  const width = Math.max(300, plot.clientWidth);
+  const width = Math.max(200, plot.clientWidth);
   const height = Math.max(240, plot.clientHeight);
   const axis = 74; // the value scale on the right
   const right = width - axis;
@@ -286,11 +295,14 @@ function renderChart() {
   const baseY = y(open);
   const line = points.map(([, value], index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join("");
   const area = `${line}L${right},${baseY.toFixed(1)}L0,${baseY.toFixed(1)}Z`;
-  const volumes = chart.volumes ?? [];
+  const volumes = stand ? [] : chart?.volumes ?? [];
   const topVolume = Math.max(1, ...volumes.map(([, value]) => value));
   const barWidth = right / Math.max(1, volumes.length);
-  const time = (value) => new Date(value).toLocaleString(locale(), days === "1"
-    ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", ...(days === "365" ? { year: "2-digit" } : {}) });
+  // A young coin's history is shorter than the chosen period: the labels follow what is drawn.
+  const span = points.at(-1)[0] - points[0][0];
+  const young = !stand && span < Number(days) * 86_400_000 * 0.8;
+  const time = (value) => new Date(value).toLocaleString(locale(), span < 2.5 * 86_400_000
+    ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", ...(span > 200 * 86_400_000 ? { year: "2-digit" } : {}) });
   // A scale label under the latest value's tag is left out.
   const grid = ticks(low, high).map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/>` +
     (Math.abs(y(value) - y(values.at(-1))) < 16 ? "" : `<text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${short(value)}</text>`)).join("");
@@ -343,7 +355,7 @@ function renderChart() {
   plot.onpointerleave = () => plot.classList.remove("hover");
   const shift = document.createElement("b");
   setChange(shift, (last - open) / open * 100);
-  $("#period-change").replaceChildren(`${t().period[days]}: `, shift);
+  $("#period-change").replaceChildren(`${stand ? t().period["7"] : young ? t().young : t().period[days]}: `, shift, ...(stand && days !== "7" ? [Object.assign(document.createElement("span"), { className: "muted", textContent: ` · ${t().standIn}` })] : []));
 }
 // The line is drawn to the box's real size, so it is redrawn when the box changes.
 new ResizeObserver(() => { if (coin && !candles) renderChart(); }).observe($("#plot"));
@@ -360,31 +372,41 @@ function render() {
   renderAbout();
   renderTickers();
   renderChart();
-  if (typeof renderCommunity === "function") renderCommunity(); // community.js
+  // The discussion draws itself as its data comes (community.js); here only the first time and when the
+  // language or the account changes, so a refresh of the coin never wipes a comment being written.
+  const drawn = `${language}|${account.signIn}|${account.user?.username ?? ""}`;
+  if (typeof renderCommunity === "function" && communityDrawnIn !== drawn) { communityDrawnIn = drawn; renderCommunity(); }
   if (typeof startTrades === "function") { startTrades(); renderTrades(); } // trades.js
 }
 
 // The page never waits on a busy data source: it opens from the market list the browser already
 // has, takes a short answer from the server when CoinGecko is busy, and asks again until it has
 // everything; the error shows only after a minute with nothing at all.
+let communityDrawnIn = null;
 let retries = 0;
+let gone = false; // the coin does not exist: no more asking
 async function loadCoin() {
+  if (gone) return;
   try {
     const response = await fetch(`/market/coin/${encodeURIComponent(id)}`, { cache: "no-store" });
-    if (response.status === 404) { failure = t().missing; return; }
+    if (response.status === 404) { failure = t().missing; gone = true; return; }
     if (!response.ok) throw new Error("coin data unavailable");
     const next = await response.json();
-    if (!next.partial || !coin || coin.partial) coin = next;
+    // The full answer has no week of prices; the one from the market list stays for the stand-in chart.
+    if (!next.partial || !coin || coin.partial) coin = { ...next, sparkline: next.sparkline ?? coin?.sparkline ?? [] };
   } catch {
     if (!coin && retries >= 12) failure = t().unavailable;
   } finally {
-    if ((!coin || coin.partial) && retries < 30) { retries += 1; setTimeout(loadCoin, Math.min(10_000, 2_000 + retries * 1_000)); }
+    if (!gone && (!coin || coin.partial) && retries < 30) { retries += 1; setTimeout(loadCoin, Math.min(10_000, 2_000 + retries * 1_000)); }
+    // Out of tries: what is missing shows as missing instead of "loading" for ever.
+    else if (coin?.partial) coin.partial = false;
     render();
   }
 }
 async function quickStart() {
-  const overview = await fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  const overview = await marketOverview();
   const row = [...(overview?.coins ?? []), ...(overview?.trendingCoins ?? [])].find((item) => item.id === id);
+  if (coin && row && !coin.sparkline?.length) { coin.sparkline = row.sparkline; renderChart(); }
   if (coin || !row) return;
   coin = { ...row, partial: true, change30d: null, change1y: null, fullyDiluted: null, high24h: null, low24h: null, totalSupply: null,
     ath: null, athChange: null, athDate: "", atl: null, atlChange: null, atlDate: "", categories: [], platforms: [], contracts: {},
@@ -394,19 +416,27 @@ async function quickStart() {
 }
 
 let chartRetries = 0;
-async function loadChart() {
+let chartAsk = 0; // each range choice starts a new line of asks; older ones stop
+async function loadChart(ask = chartAsk) {
+  if (ask !== chartAsk) return;
   const wanted = days;
+  let again = false;
   try {
     const response = await fetch(`/market/chart/${encodeURIComponent(id)}?days=${wanted}`, { cache: "no-store" });
     if (!response.ok) throw new Error("chart unavailable");
     const value = await response.json();
-    if (wanted === days) { chart = value; chartFailed = false; chartRetries = 0; }
+    if (ask !== chartAsk) return;
+    // The week standing in for a busy source is drawn by the page itself; the real chart is asked again.
+    if (value.partial) again = true;
+    else { chart = value; chartFailed = false; chartRetries = 0; }
   } catch {
-    // A busy source: the chart keeps "loading" and is asked for again a few seconds later.
-    if (wanted === days && chartRetries < 20) { chartRetries += 1; setTimeout(() => { if (wanted === days) void loadChart(); }, Math.min(10_000, 2_000 + chartRetries * 1_000)); }
-    else if (wanted === days) chartFailed = !chart;
+    if (ask !== chartAsk) return;
+    again = true;
   }
-  if (coin && wanted === days) renderChart();
+  // A busy source: the chart keeps its stand-in and is asked for again a few seconds later.
+  if (again && chartRetries < 20) { chartRetries += 1; setTimeout(() => void loadChart(ask), Math.min(10_000, 2_000 + chartRetries * 1_000)); }
+  else if (again) chartFailed = !chart;
+  if (coin) renderChart();
 }
 
 for (const button of document.querySelectorAll("#ranges [data-days]")) {
@@ -414,6 +444,8 @@ for (const button of document.querySelectorAll("#ranges [data-days]")) {
     days = button.dataset.days;
     chart = null;
     chartRetries = 0;
+    chartFailed = false;
+    chartAsk += 1;
     renderChart();
     void loadChart();
   });

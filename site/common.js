@@ -121,7 +121,8 @@ function sortable(head, sort, onChange) {
   for (const th of head.querySelectorAll("th[data-sort]")) {
     th.classList.add("th-sort");
     th.addEventListener("click", () => {
-      const first = th.dataset.sort === "name" || th.dataset.sort === "rank" ? 1 : -1;
+      // Words and ranks start A→Z / 1→N; figures start with the largest.
+      const first = ["name", "rank", "symbol"].includes(th.dataset.sort) ? 1 : -1;
       if (sort.key !== th.dataset.sort) Object.assign(sort, { key: th.dataset.sort, dir: first });
       else if (sort.dir === first) sort.dir = -first;
       else Object.assign(sort, { key: null, dir: 0 });
@@ -272,7 +273,7 @@ function big(value, prefix = "$", digits = 2) {
   for (const [size, unit] of units) {
     if (Math.abs(value) >= size) return `${prefix}${(value / size).toLocaleString(locale(), { maximumFractionDigits: digits })}${unit}`;
   }
-  return `${prefix}${value.toLocaleString(locale())}`;
+  return `${prefix}${value.toLocaleString(locale(), { maximumFractionDigits: Math.abs(value) >= 100 ? 0 : 2 })}`;
 }
 const percentText = (value) => (value === null || value === undefined ? "—"
   : `${value > 0 ? "▲" : value < 0 ? "▼" : ""} ${Math.abs(value).toLocaleString(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`.trim());
@@ -366,11 +367,18 @@ function renderStrip() {
     node.textContent = percentText(g.marketCapChange24h);
   }
 }
+// The market overview, asked once per page load and shared by the strip, the search and the page.
+let overviewAsk = null;
+function marketOverview() {
+  overviewAsk ??= fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null)
+    .then((value) => { if (!value) overviewAsk = null; return value; });
+  return overviewAsk;
+}
 async function loadStrip() {
-  const [response, stats] = await Promise.all([fetch("/market/overview").catch(() => null),
+  const [overview, stats] = await Promise.all([marketOverview(),
     fetch("/market/stats").then((answer) => (answer.ok ? answer.json() : null)).catch(() => null)]);
-  if (!response?.ok) return;
-  strip = { ...await response.json(), users: stats?.users ?? null };
+  if (!overview) return;
+  strip = { ...overview, users: stats?.users ?? null };
   renderStrip();
 }
 
@@ -444,7 +452,7 @@ function setupSearch({ overview = () => null }) {
   ...recent().filter((entry) => (item.address ? entry.address !== item.address : entry.id !== item.id))].slice(0, 5)));
   const data = async () => {
     market = overview() ?? market;
-    if (!market) market = await fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    if (!market) market = await marketOverview();
     return market;
   };
   const open = (item) => {
@@ -503,7 +511,7 @@ function setupSearch({ overview = () => null }) {
       return;
     }
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
-      coin.symbol.toLowerCase().startsWith(query)).slice(0, 8);
+      coin.symbol.toLowerCase().startsWith(query) || coin.id.includes(query)).slice(0, 8);
     const whales = WHALES.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 4);
     draw([[t().whales, whales, "/wallets/"], [t().coins, local]]);
     clearTimeout(timer);
@@ -532,6 +540,7 @@ function setupSearch({ overview = () => null }) {
     rows[active].scrollIntoView({ block: "nearest" });
   }
   input.addEventListener("focus", () => { void update(); });
+  input.addEventListener("click", () => { if (box.hidden) void update(); });
   // The popular wallets' pictures come from the open labels; the list is drawn again once they are in.
   void loadOpenNames(WHALES.map((item) => item.address)).then(() => { if (!box.hidden && !input.value.trim()) void update(); });
   input.addEventListener("input", () => { void update(); });
@@ -544,5 +553,8 @@ function setupSearch({ overview = () => null }) {
       open(items[Math.max(active, 0)]);
     }
   });
-  document.addEventListener("click", (event) => { if (event.target !== input && !box.contains(event.target)) box.hidden = true; });
+  // The phone's search button opens the field and its list; that same click must not close the list.
+  document.addEventListener("click", (event) => {
+    if (event.target !== input && !box.contains(event.target) && !event.target.closest?.("#find")) box.hidden = true;
+  });
 }
