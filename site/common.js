@@ -511,7 +511,7 @@ function setupSearch({ overview = () => null }) {
       return;
     }
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
-      coin.symbol.toLowerCase().startsWith(query)).slice(0, 8);
+      coin.symbol.toLowerCase().startsWith(query) || coin.id.includes(query)).slice(0, 8);
     const whales = WHALES.filter((item) => item.name.toLowerCase().includes(query)).slice(0, 4);
     draw([[t().whales, whales, "/wallets/"], [t().coins, local]]);
     clearTimeout(timer);
@@ -540,6 +540,7 @@ function setupSearch({ overview = () => null }) {
     rows[active].scrollIntoView({ block: "nearest" });
   }
   input.addEventListener("focus", () => { void update(); });
+  input.addEventListener("click", () => { if (box.hidden) void update(); });
   // The popular wallets' pictures come from the open labels; the list is drawn again once they are in.
   void loadOpenNames(WHALES.map((item) => item.address)).then(() => { if (!box.hidden && !input.value.trim()) void update(); });
   input.addEventListener("input", () => { void update(); });
@@ -552,5 +553,8 @@ function setupSearch({ overview = () => null }) {
       open(items[Math.max(active, 0)]);
     }
   });
-  document.addEventListener("click", (event) => { if (event.target !== input && !box.contains(event.target)) box.hidden = true; });
+  // The phone's search button opens the field and its list; that same click must not close the list.
+  document.addEventListener("click", (event) => {
+    if (event.target !== input && !box.contains(event.target) && !event.target.closest?.("#find")) box.hidden = true;
+  });
 }

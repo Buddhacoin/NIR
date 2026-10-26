@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { createMarketService, normalizeCoin, normalizeCoins } from "../blockchain/market-service.mjs";
+import { createMarketService, normalizeCoin, normalizeCoins, withoutLookalikes } from "../blockchain/market-service.mjs";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/market/${name}`, import.meta.url), "utf8"));
 const responses = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", fng: "fng.json" };
@@ -281,4 +281,10 @@ test("a coin's live trades come from its busiest exchange pool, read from the co
   } finally {
     await new Promise((resolve) => service.server.close(resolve));
   }
+});
+
+test("trending tokens borrowing a large coin's ticker are left out", () => {
+  const coins = [{ id: "zeus", symbol: "ZEUS" }, { id: "hera", symbol: "HERA" }];
+  const trending = [{ id: "fake-zeus", symbol: "ZEUS" }, { id: "hera", symbol: "HERA" }, { id: "olympus", symbol: "OLY" }];
+  assert.deepEqual(withoutLookalikes(trending, coins).map((coin) => coin.id), ["hera", "olympus"]);
 });

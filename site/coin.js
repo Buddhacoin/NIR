@@ -24,7 +24,7 @@ const en = {
 const words = {
   ru: { loading: "Загружаю данные монеты…", missing: "Такой монеты нет. Вернитесь к списку и выберите монету там.",
     unavailable: "Данные монеты временно недоступны. Попробуйте обновить страницу через минуту.",
-    chartLoading: "Загружаю график…", standIn: "пока показана неделя, выбранный период загружается", chartUnavailable: "График временно недоступен.",
+    chartLoading: "Загружаю график…", standIn: "пока показана неделя, выбранный период загружается", young: "С начала торгов", chartUnavailable: "График временно недоступен.",
     chart: (name) => `График ${name}`, about: (name) => `Что такое ${name}`, english: "Описание есть только на английском.",
     noDescription: "Описания пока нет.", noMarkets: "Нет данных о биржах.", fetching: "Загружаю…", line: "Линия", candles: "Свечи",
     period: { 1: "За сутки", 7: "За неделю", 30: "За месяц", 90: "За 3 месяца", 365: "За год" },
@@ -32,7 +32,7 @@ const words = {
     title: (coin) => `${coin.name} (${coin.symbol}) — цена, график и капитализация | NIR Markets` },
   en: { loading: "Loading the coin…", missing: "There is no such coin. Go back to the list and pick one there.",
     unavailable: "Coin data is unavailable right now. Try reloading in a minute.",
-    chartLoading: "Loading the chart…", standIn: "the week is shown while the chosen period loads", chartUnavailable: "The chart is unavailable right now.",
+    chartLoading: "Loading the chart…", standIn: "the week is shown while the chosen period loads", young: "Since trading began", chartUnavailable: "The chart is unavailable right now.",
     chart: (name) => `${name} chart`, about: (name) => `What is ${name}`, english: "",
     noDescription: "No description yet.", noMarkets: "No market data.", fetching: "Loading…", line: "Line", candles: "Candles",
     period: { 1: "In 24 hours", 7: "In a week", 30: "In a month", 90: "In 3 months", 365: "In a year" },
@@ -95,6 +95,7 @@ function renderHead() {
   $("#crumb").textContent = coin.name;
   $("#logo").replaceChildren(logo(coin));
   $("#name").textContent = coin.name;
+  $("#name").classList.toggle("long", coin.name.length > 10); // a long name gets a smaller size and wraps between words
   $("#symbol").textContent = coin.symbol;
   $("#rank").textContent = coin.rank ? `#${coin.rank}` : "";
   $("#rank").hidden = !coin.rank;
@@ -297,8 +298,11 @@ function renderChart() {
   const volumes = stand ? [] : chart?.volumes ?? [];
   const topVolume = Math.max(1, ...volumes.map(([, value]) => value));
   const barWidth = right / Math.max(1, volumes.length);
-  const time = (value) => new Date(value).toLocaleString(locale(), days === "1"
-    ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", ...(days === "365" ? { year: "2-digit" } : {}) });
+  // A young coin's history is shorter than the chosen period: the labels follow what is drawn.
+  const span = points.at(-1)[0] - points[0][0];
+  const young = !stand && span < Number(days) * 86_400_000 * 0.8;
+  const time = (value) => new Date(value).toLocaleString(locale(), span < 2.5 * 86_400_000
+    ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", ...(span > 200 * 86_400_000 ? { year: "2-digit" } : {}) });
   // A scale label under the latest value's tag is left out.
   const grid = ticks(low, high).map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/>` +
     (Math.abs(y(value) - y(values.at(-1))) < 16 ? "" : `<text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${short(value)}</text>`)).join("");
@@ -351,7 +355,7 @@ function renderChart() {
   plot.onpointerleave = () => plot.classList.remove("hover");
   const shift = document.createElement("b");
   setChange(shift, (last - open) / open * 100);
-  $("#period-change").replaceChildren(`${stand ? t().period["7"] : t().period[days]}: `, shift, ...(stand && days !== "7" ? [Object.assign(document.createElement("span"), { className: "muted", textContent: ` · ${t().standIn}` })] : []));
+  $("#period-change").replaceChildren(`${stand ? t().period["7"] : young ? t().young : t().period[days]}: `, shift, ...(stand && days !== "7" ? [Object.assign(document.createElement("span"), { className: "muted", textContent: ` · ${t().standIn}` })] : []));
 }
 // The line is drawn to the box's real size, so it is redrawn when the box changes.
 new ResizeObserver(() => { if (coin && !candles) renderChart(); }).observe($("#plot"));
@@ -394,6 +398,8 @@ async function loadCoin() {
     if (!coin && retries >= 12) failure = t().unavailable;
   } finally {
     if (!gone && (!coin || coin.partial) && retries < 30) { retries += 1; setTimeout(loadCoin, Math.min(10_000, 2_000 + retries * 1_000)); }
+    // Out of tries: what is missing shows as missing instead of "loading" for ever.
+    else if (coin?.partial) coin.partial = false;
     render();
   }
 }

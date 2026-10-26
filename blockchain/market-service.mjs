@@ -107,6 +107,13 @@ export function normalizeTrending(value) {
   })).filter((coin) => coin.id && coin.symbol);
 }
 
+// Trending tokens that borrow a large coin's ticker (a meme "BTC" at two cents) are left out of
+// the lists, so they are never taken for the real coin.
+export function withoutLookalikes(trending, coins) {
+  const owners = new Map(coins.slice(0, 50).map((coin) => [coin.symbol, coin.id]));
+  return trending.filter((coin) => (owners.get(coin.symbol) ?? coin.id) === coin.id);
+}
+
 // Exchange logos by CoinGecko id, for the "where it trades" table (one list a day).
 export function normalizeExchangeLogos(list) {
   if (!Array.isArray(list)) throw new Error("exchange list is invalid");
@@ -387,7 +394,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     return {
       coins: state.coins, fearGreed: state.fearGreed, gainers: movers.slice(0, 5),
       global: state.global, losers: movers.slice(-5).reverse(), source: "CoinGecko",
-      trending: state.trending, trendingCoins: state.trendingCoins, updatedAt: state.updatedAt,
+      trending: withoutLookalikes(state.trending, state.coins), trendingCoins: withoutLookalikes(state.trendingCoins, state.coins),
+      updatedAt: state.updatedAt,
       community: Object.fromEntries([...community].filter(([, entry]) => entry.up !== null).map(([id, entry]) => [id, entry.up])),
     };
   }
