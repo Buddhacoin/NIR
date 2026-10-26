@@ -158,6 +158,30 @@ Until the keys are set, the site works as before and shows no sign-in button.
 
 Never put the secret in the repository or in a chat.
 
+### The owner's dashboard
+
+On their own profile, above the activity tabs, the owner sees four quadrants
+over the wallets they marked as their own (`site/dashboard.js`), as on the
+on-chain analytics sites; empty until a wallet is added:
+
+1. **Portfolio**: every token across networks and accounts with its price,
+   amount and value and the day's change of each; **Holdings by chain**: the
+   value per network with its share; **Portfolio archive**: two dates and the
+   amounts held on each, rebuilt from the loaded transfers.
+2. **Balances history** (1W, 1M, 3M, All), rebuilt from the transfers of all
+   own wallets at today's prices, and **Profit & loss** over 24 hours and 7
+   days from the price changes on today's amounts.
+3. **Transactions**, **Inflow** and **Outflow** of all own wallets, sortable by
+   time, amount and dollars, with transfers under $0.10 hidden until the chip
+   is removed; more pages load on request.
+4. **All accounts**: each wallet with its largest holding, the count of the
+   others and its value, a tab of its own with its tokens, × to remove it and
+   + to add one, by connecting MetaMask (the browser wallet gives its public
+   address, nothing else) or by pasting an address. The addresses are private.
+
+Choosing an account or a network (top right) narrows every quadrant. The
+menu below (Activity, Comments, Watchlist, My addresses, Tracked) stays.
+
 ## Portfolio
 
 `/portfolio/` follows the market sites' portfolio. A visitor makes named
@@ -294,7 +318,7 @@ wallet activity (`blockchain/market-chain.mjs`):
   `/wallets/` and the trending coins.
 - **Popular wallets** (`/wallets/`): the hand-picked wallets above, and
   thousands more from the open labels in three tabs, exchanges, funds and
-  hot wallets (`GET /market/chain/popular?group=exchange|fund|hot-wallet&cursor=`,
+  hot wallets; the first tab, All, holds every one of them (`GET /market/chain/popular?group=exchange|fund|hot-wallet&cursor=`,
   fifty a page from Blockscout's address directory, each page kept six
   hours). Every row has the name, logo, organisation, networks, balance and a
   Track button; the next page loads by itself as the list scrolls, a filter
@@ -376,7 +400,8 @@ it. It shows the price with 1h/24h/7d changes and the 24h range, market cap,
 volume, fully diluted value, supply, all-time high and low, links (website,
 whitepaper, source, block explorers, well-known wallets, community), a
 converter, a price chart for 1 day to 1 year with volume bars (TradingView
-candles for coins with a Binance pair), the description (Russian when
+candles for coins with a Binance pair; the largest coin opens on TradingView's
+full chart of its cross-exchange index, a trial before the others), the description (Russian when
 CoinGecko has it) and the markets where the coin trades, each with the
 exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
 column shows only when some market has a rating). The page is one panel, its

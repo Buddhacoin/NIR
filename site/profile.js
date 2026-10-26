@@ -1,5 +1,6 @@
 // A profile, /u/<username>: the name, bio and join date, the activity anyone
-// may see (joining; comments come next) and, for its owner, the full activity,
+// may see (joining; comments come next) and, for its owner, the dashboard of their own wallets
+// (dashboard.js), the full activity,
 // the watchlist and a form to change name, username and bio. /u/me opens the
 // visitor's own profile. Shared helpers are in common.js.
 
@@ -59,12 +60,13 @@ async function loadSaved() {
   const answer = await fetch("/market/me/addresses", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
   saved = answer?.addresses ?? [];
   renderView();
+  renderDashboard(); // dashboard.js
 }
 function holdingsOf(address) {
   if (!holdings.has(address)) {
     holdings.set(address, "loading");
     fetch(`/market/chain/address/${encodeURIComponent(address)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null)
-      .then((data) => { holdings.set(address, data ?? "failed"); if (view === "wallets" || view === "tracked") renderView(); });
+      .then((data) => { holdings.set(address, data ?? "failed"); if (view === "wallets" || view === "tracked") renderView(); renderDashboard(); });
   }
   const data = holdings.get(address);
   return data === "loading" || data === "failed" ? null : data;
@@ -79,7 +81,7 @@ function addressRow(item) {
   const drop = Object.assign(document.createElement("button"), { type: "button", className: "pill", textContent: t().remove });
   drop.addEventListener("click", async () => {
     const { status, data: answer } = await send(`/market/me/addresses/${encodeURIComponent(item.address)}`, "DELETE");
-    if (status === 200) { saved = answer.addresses; renderView(); }
+    if (status === 200) { saved = answer.addresses; renderView(); renderDashboard(); }
   });
   row.append(link, value, drop);
   return row;
@@ -111,6 +113,7 @@ function renderWallets(box) {
     saved = data.addresses;
     draft.address = draft.label = "";
     renderView();
+    renderDashboard();
   });
   if (!mine.length) { box.replaceChildren(form, Object.assign(document.createElement("p"), { className: "muted", textContent: t().noWallets })); return; }
   // The holdings of every own address, added up by network and token.
@@ -254,6 +257,7 @@ function render() {
   for (const item of document.querySelectorAll(".tabbar a")) item.classList.toggle("on", own && item.id === "tab-account");
   for (const button of document.querySelectorAll("[data-view]")) button.classList.toggle("on", button.dataset.view === view);
   renderView();
+  renderDashboard();
 }
 
 async function load() {

@@ -14,11 +14,11 @@ const en = {
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { groups: { featured: "Известные", exchange: "Биржи", fund: "Фонды", "hot-wallet": "Горячие кошельки" },
+  ru: { groups: { all: "Все", featured: "Известные", exchange: "Биржи", fund: "Фонды", "hot-wallet": "Горячие кошельки" },
     kinds: { exchange: "Биржа", fund: "Фонд", "hot-wallet": "Горячий кошелёк" }, filter: "Имя или адрес",
     loading: "загружаю…", unknown: "—", track: "☆ Отследить", tracked: "★ Отслеживается", empty: "Ничего не найдено.",
     loadingList: "Загружаю список…", signIn: "Войдите через Google, чтобы отслеживать адреса." },
-  en: { groups: { featured: "Well known", exchange: "Exchanges", fund: "Funds", "hot-wallet": "Hot wallets" },
+  en: { groups: { all: "All", featured: "Well known", exchange: "Exchanges", fund: "Funds", "hot-wallet": "Hot wallets" },
     kinds: { exchange: "Exchange", fund: "Fund", "hot-wallet": "Hot wallet" }, filter: "Name or address",
     loading: "loading…", unknown: "—", track: "☆ Track", tracked: "★ Tracked", empty: "Nothing found.",
     loadingList: "Loading the list…", signIn: "Sign in with Google to track addresses." },
@@ -27,7 +27,8 @@ const t = () => words[language === "en" ? "en" : "ru"];
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const balances = new Map(); // address → { total, chains } once loaded, null if it failed
 const lists = {}; // group → { items, next, loading }
-let group = "featured";
+let group = "all";
+const LABELED = ["exchange", "fund", "hot-wallet"]; // the groups from the open labels; "all" holds them and the hand-picked ones
 let query = "";
 let saved = new Set();
 const sort = { key: null, dir: 0 };
@@ -35,9 +36,13 @@ const sort = { key: null, dir: 0 };
 // The rows of the chosen list: the hand-picked wallets, or a group from the open labels.
 function rowsOf() {
   const lang = language === "en" ? "en" : "ru";
-  if (group === "featured") return WHALES.map((item) => ({ address: item.address, name: item.name, kind: item.kind[lang], logo: null }));
-  return (lists[group]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
-    kind: [t().kinds[group], item.entity].filter(Boolean).join(" · "), logo: item.logo }));
+  const featured = () => WHALES.map((item) => ({ address: item.address, name: item.name, kind: item.kind[lang], logo: null }));
+  const labeled = (key) => (lists[key]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
+    kind: [t().kinds[key], item.entity].filter(Boolean).join(" · "), logo: item.logo }));
+  if (group === "featured") return featured();
+  if (group !== "all") return labeled(group);
+  const seen = new Set();
+  return [...featured(), ...LABELED.flatMap(labeled)].filter((item) => !seen.has(item.address.toLowerCase()) && seen.add(item.address.toLowerCase()));
 }
 
 function render() {
@@ -46,14 +51,14 @@ function render() {
   $("#kinds").replaceChildren(...Object.entries(t().groups).map(([key, label]) => {
     const button = node("button", key === group ? "on" : "", label);
     button.type = "button";
-    button.addEventListener("click", () => { group = key; render(); if (key !== "featured" && !lists[key]) void loadGroup(); });
+    button.addEventListener("click", () => { group = key; render(); if (key === "all" ? LABELED.some((name) => !lists[name]) : key !== "featured" && !lists[key]) void loadGroup(); });
     return button;
   }));
   markSort($("thead"), sort);
   const needle = query.toLowerCase();
   const rows = sortBy(rowsOf().filter((item) => !needle || [item.name, item.address, item.kind].some((value) => value?.toLowerCase().includes(needle))),
     sort, (item) => balances.get(item.address)?.total ?? null);
-  const list = lists[group];
+  const list = group === "all" ? { loading: LABELED.some((key) => lists[key]?.loading), next: LABELED.some((key) => lists[key]?.next || !lists[key]) } : lists[group];
   $("#rows").replaceChildren(...(rows.length ? rows.map((item, index) => {
     const row = node("tr", "coin");
     row.dataset.address = item.address;
@@ -79,12 +84,13 @@ function render() {
   watchRows();
 }
 
-// A group's next page of fifty from the open labels.
-async function loadGroup() {
-  const list = lists[group] ??= { items: [], next: null, loading: false, done: false };
+// A group's next page of fifty from the open labels; "all" takes the next page of each.
+async function loadGroup(asked = group) {
+  if (asked === "featured") return;
+  if (asked === "all") { await Promise.all(LABELED.map((key) => loadGroup(key))); return; }
+  const list = lists[asked] ??= { items: [], next: null, loading: false, done: false };
   if (list.loading || list.done) return;
   list.loading = true;
-  const asked = group;
   render();
   const answer = await fetch(`/market/chain/popular?group=${encodeURIComponent(asked)}${list.next ? `&cursor=${list.next}` : ""}`)
     .then((response) => (response.ok ? response.json() : null)).catch(() => null);
@@ -156,4 +162,5 @@ $("#find").addEventListener("click", () => {
 });
 setupSearch({});
 setupPage({ en, render, onAccount: () => { void loadSaved(); } });
+void loadGroup("all");
 void loadOpenNames(WHALES.map((item) => item.address)).then(render);
