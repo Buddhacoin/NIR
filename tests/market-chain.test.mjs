@@ -17,6 +17,7 @@ function explorers({ fail = [] } = {}) {
     asked.push(url);
     if (fail.some((part) => url.includes(part))) throw Object.assign(new Error("down"), { status: 502 });
     if (url.includes("/coins/list?include_platform=true")) return fixture("coin-list.json");
+    if (url.includes("/asset_platforms")) return [{ id: "ethereum", chain_identifier: 1 }, { id: "optimistic-ethereum", chain_identifier: 10 }];
     if (url.includes("api.coingecko.com/api/v3/coins/markets")) return fixture("coin-markets.json");
     if (url.includes("mempool.space/api/address/") && url.endsWith("/txs")) return fixture("utxo-txs.json");
     if (url.includes("mempool.space/api/address/")) return fixture("utxo-address.json");
@@ -176,7 +177,7 @@ test("an address shows its holdings on every network, its transfers a page at a 
   assert.deepEqual(entity.at(-1).address, "0x7712c34205737192402172409a8F7ccef8aA2AEc");
   // A person's name finds the name-service name made of it, first.
   const person = await chain.search("Vitalik");
-  assert.deepEqual([person[0].name, person[0].ens], ["vitalik.eth", true]);
+  assert.equal(person.find((item) => item.name === "vitalik.eth")?.ens, true);
   assert.deepEqual(await chain.search("ab"), []);
 });
 
@@ -379,4 +380,32 @@ test("the popular wallets directory pages through a group's open labels, fifty a
   const count = asked.length;
   await names.directory("exchange");
   assert.equal(asked.length, count, "a page is kept");
+});
+
+test("when the explorer is too slow for a wallet's tokens, the largest coins' tokens come from the network's node", async () => {
+  const { get } = explorers();
+  const slow = (url) => (url.includes("/token-balances") ? new Promise((resolve) => { setTimeout(() => resolve(get(url)), 300); }) : get(url));
+  const { rpc, calls } = node();
+  const chain = createChain({ get: slow, rpc, tokenWait: 50 });
+  const data = await chain.holdings(EXCHANGE);
+  const eth = data.networks.find((item) => item.chain === "eth");
+  assert.deepEqual([eth.partial, eth.listed], [true, true]);
+  assert.ok(data.assets.some((asset) => asset.chain === "eth" && asset.token.address), "a listed token read from the node");
+  // The listed tokens' balances were read from the network's node in one call (balanceOf for each).
+  assert.ok(calls.some((call) => call.url === "https://eth.drpc.org" && call.method === "eth_call" && call.params[0].data.includes("70a08231")));
+});
+
+test("a wallet's tokens on the main explorer network come from Ethplorer, without thinly held spam", async () => {
+  const { get } = explorers();
+  const token = (address, symbol, rawBalance, decimals, rate, holdersCount) => ({ rawBalance, tokenInfo: { address, symbol, name: symbol, decimals: String(decimals), holdersCount, price: { rate } } });
+  const withEthplorer = (url) => (url.startsWith("https://api.ethplorer.io/getAddressInfo/") ? Promise.resolve({ tokens: [
+    token("0x1111111111111111111111111111111111111111", "ZEUS", "2000000", 6, 3, 50_000), // 2 ZEUS at $3
+    token("0x2222222222222222222222222222222222222222", "HERA", "1000000000000000000000", 18, 100, 12), // spam: 12 holders
+    token("0x3333333333333333333333333333333333333333", "NOPRICE", "5", 0, null, 9_000),
+  ] }) : get(url));
+  const chain = createChain({ get: withEthplorer, rpc: node().rpc, tokenWait: 50 });
+  const data = await chain.holdings(EXCHANGE);
+  const eth = data.assets.filter((asset) => asset.chain === "eth" && asset.token.address);
+  assert.deepEqual(eth.map((asset) => [asset.token.symbol, asset.amount, asset.usd]), [["ZEUS", 2, 6]]);
+  assert.equal(data.networks.find((item) => item.chain === "eth").partial, false);
 });

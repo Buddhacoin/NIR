@@ -16,7 +16,7 @@
 // cached copy is served or the visitor is asked to retry.
 
 import { createNames } from "./market-names.mjs";
-import { createNodes, NODES, postRpc } from "./market-rpc.mjs";
+import { BACKUP, createNodes, NODES, postRpc } from "./market-rpc.mjs";
 
 const EXPLORERS = {
   eth: { api: "https://eth.blockscout.com/api/v2", native: "ETH" },
@@ -159,14 +159,45 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }, { stale: true });
   }
 
+  // Ethplorer (free key): an address's tokens with prices. Tokens held by fewer than a thousand
+  // wallets are left out: spam sent to well-known wallets often carries a made-up price.
+  // A token's own site icon, when its source has no logo.
+  const siteIcon = (site) => {
+    try {
+      const url = new URL(String(site ?? ""));
+      return url.protocol === "https:" ? `https://www.google.com/s2/favicons?sz=64&domain=${url.hostname.toLowerCase()}` : null;
+    } catch { return null; }
+  };
+  async function ethplorer(address) {
+    const data = await get(`https://api.ethplorer.io/getAddressInfo/${address}?apiKey=freekey`).catch(() => null);
+    if (!Array.isArray(data?.tokens)) return null;
+    const result = [];
+    for (const item of data.tokens) {
+      const info = item?.tokenInfo;
+      const rate = number(info?.price?.rate);
+      if (!info || !rate || !EVM_ADDRESS.test(info.address ?? "") || Number(info.holdersCount) < 1_000) continue;
+      const amount = units(String(item.rawBalance ?? ""), info.decimals ?? 0);
+      if (!amount || amount * rate < 0.01) continue;
+      result.push({ token: { address: info.address, symbol: label(info.symbol, 20) ?? "?", name: label(info.name) ?? "",
+        icon: /^\/images\/[\w./-]+$/.test(info.image ?? "") ? `https://ethplorer.io${info.image}` : siteIcon(info.website), price: rate }, amount, usd: amount * rate });
+    }
+    return result;
+  }
+
   // --- An address: what it holds on every network, with names and tags.
   async function evmHoldings(address) {
     const chains = await Promise.all(Object.entries(EXPLORERS).map(async ([chain, explorer]) => {
       try {
         // Addresses holding thousands of tokens can take the explorer minutes; the coin balance still shows.
+        // Every token with a price, from Ethplorer's free API (a second or two even for thousands of tokens);
+        // the explorer and the network's node stand behind it.
+        const full = chain === "eth" ? Promise.race([ethplorer(address), new Promise((resolve) => { setTimeout(resolve, 8_000, null).unref?.(); })]) : Promise.resolve(null);
+        // The listed tokens are read from the network's node at the same time, in case the explorer is too slow.
+        const backup = nodes.listedTokens(chain, address).catch(() => null);
         const [info, balances] = await Promise.all([get(`${explorer.api}/addresses/${address}`),
           Promise.race([get(`${explorer.api}/addresses/${address}/token-balances`),
-            new Promise((resolve) => { setTimeout(resolve, tokenWait, undefined).unref?.(); })]).catch(() => undefined)]);
+            // With the node's copy on its way, the explorer gets a few seconds only.
+            new Promise((resolve) => { setTimeout(resolve, BACKUP[chain] ? Math.min(tokenWait, 6_000) : tokenWait, undefined).unref?.(); })]).catch(() => undefined)]);
         const price = number(info?.exchange_rate);
         const native = units(info?.coin_balance ?? "0", 18) ?? 0;
         const assets = native > 0 ? [{ chain, token: { address: null, symbol: explorer.native, name: explorer.native, icon: null, price },
@@ -178,9 +209,18 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
           if (!amount || coin.price === null || amount * coin.price < 0.01) continue;
           assets.push({ chain, token: coin, amount, usd: amount * coin.price });
         }
+        const priced = await full;
+        if (priced) {
+          // Ethplorer's list replaces the explorer's: it has every token, the explorer's may be cut short.
+          assets.splice(native > 0 ? 1 : 0);
+          assets.push(...priced.map((item) => ({ chain, ...item })));
+        }
+        // The explorer did not answer in time: the largest coins' tokens come from the node instead.
+        const listed = !priced && balances === undefined ? await backup : null;
+        if (listed) assets.push(...listed);
         // Any trace on the network: a balance, a token, a transfer or a transaction.
         const active = Boolean(native > 0 || info?.has_tokens || info?.has_token_transfers || info?.has_logs || info?.creation_tx_hash || Number(info?.nonce) > 0);
-        return { chain, ok: true, partial: balances === undefined, active, info: info ? party({ ...info, hash: address }) : null, assets: assets.sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)).slice(0, 100) };
+        return { chain, ok: true, partial: !priced && balances === undefined, listed: Boolean(listed), active, info: info ? party({ ...info, hash: address }) : null, assets: assets.sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)).slice(0, 100) };
       } catch {
         return { chain, ok: false, info: null, assets: [] };
       }
@@ -192,7 +232,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       new Promise((resolve) => { setTimeout(() => resolve(unanswered()), tokenWait).unref?.(); })]));
     const named = chains.map((item) => item.info).find((info) => info?.name) ?? chains.find((item) => item.info)?.info;
     return { address, kind: "evm", name: named?.name ?? null, tags: [...new Set(chains.flatMap((item) => item.info?.tags ?? []))],
-      contract: chains.some((item) => item.info?.contract), networks: chains.map(({ chain, ok, partial, active, sent }) => ({ chain, ok, partial: Boolean(partial),
+      contract: chains.some((item) => item.info?.contract), networks: chains.map(({ chain, ok, partial, listed, active, sent }) => ({ chain, ok, partial: Boolean(partial), ...(listed ? { listed: true } : {}),
         active: Boolean(active) || chains.find((item) => item.chain === chain).assets.length > 0, ...(sent ? { sent } : {}) })),
       assets: chains.flatMap((item) => item.assets).sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)) };
   }
@@ -275,9 +315,11 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     if (addressKind(text)) return Promise.resolve([{ address: text, name: null, kind: addressKind(text) }]);
     if (text.length < 3 || text.length > 60) return Promise.resolve([]);
     return cached(`search:${text.toLowerCase()}`, 3_600_000, async () => {
-      const data = await get(`${EXPLORERS.eth.api}/search/quick?q=${encodeURIComponent(text)}`);
+      // "black rock" is also asked as "blackrock": organisations are often labelled as one word.
+      const asked = [...new Set([text, text.replace(/\s+/g, "")])].filter((query) => query.length >= 3);
+      const answers = await Promise.all(asked.map((query) => get(`${EXPLORERS.eth.api}/search/quick?q=${encodeURIComponent(query)}`).catch(() => [])));
       const found = new Map();
-      for (const item of Array.isArray(data) ? data : data?.items ?? []) {
+      for (const item of answers.flatMap((data) => (Array.isArray(data) ? data : data?.items ?? []))) {
         const address = item?.address_hash ?? item?.address ?? "";
         if (!EVM_ADDRESS.test(address) || !["metadata_tag", "ens_domain", "address", "label"].includes(item.type)) continue;
         const tag = item.type === "metadata_tag" ? item.metadata : null;
@@ -285,7 +327,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         // Collectors' handles copied from marketplaces ("_zeus1" on OpenSea) are not entities.
         if (!name || /^["“]/.test(name)) continue;
         const key = address.toLowerCase();
-        const entry = found.get(key) ?? { address, name, entity: null, contract: Boolean(item.is_smart_contract_address), kind: "evm" };
+        const entry = found.get(key) ?? { address, name, entity: null, contract: Boolean(item.is_smart_contract_address), kind: "evm", ...(item.type === "ens_domain" ? { ens: true } : {}) };
         // A name tag names the wallet; a protocol or generic tag names its organisation.
         if (tag && tag.tagType !== "name") entry.entity ??= label(tag.name);
         else if (tag) entry.name = name;
@@ -295,17 +337,19 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       // jameswynn.eth, james-wynn.eth, jwynn.eth, wynn.eth. Each that exists comes first, shown as it is.
       const words = text.toLowerCase().split(/\s+/).map((word) => word.replace(/[^a-z0-9]/g, "")).filter(Boolean);
       const guesses = text.includes(".") || !words.length ? [] : [...new Set([words.join(""), words.join("-"),
-        words.length > 1 ? `${words[0][0]}${words.at(-1)}` : "", words.length > 1 ? words.at(-1) : ""])]
+        words.length > 1 ? `${words[0][0]}${words.at(-1)}` : ""])]
         .filter((guess) => /^[a-z0-9-]{3,40}$/.test(guess)).slice(0, 4);
       const named = (await Promise.all(guesses.map((guess) => get(`${EXPLORERS.eth.api}/search/quick?q=${guess}.eth`).then((answer) =>
         (Array.isArray(answer) ? answer : []).find((item) => item?.type === "ens_domain" && item.ens_info?.name === `${guess}.eth` && EVM_ADDRESS.test(item.address_hash ?? "")))
         .catch(() => null)))).filter(Boolean);
       for (const item of named.reverse()) {
         const key = item.address_hash.toLowerCase();
-        found.delete(key);
-        found.set(key, { address: item.address_hash, name: item.ens_info.name, entity: null, contract: false, kind: "evm", ens: true });
+        // A wallet the open labels already name keeps that name.
+        if (!found.has(key)) found.set(key, { address: item.address_hash, name: item.ens_info.name, entity: null, contract: false, kind: "evm", ens: true });
       }
-      const results = [...found.values()].sort((left, right) => Boolean(right.ens) - Boolean(left.ens) || left.contract - right.contract).slice(0, 10);
+      // Labelled wallets of the organisation or person first, then the name-service names, then contracts.
+      const rank = (item) => (item.contract ? 2 : item.ens ? 1 : 0);
+      const results = [...found.values()].sort((left, right) => rank(left) - rank(right)).slice(0, 10);
       await names.lookup(results.map((item) => item.address)).catch(() => {});
       return results.map((item) => {
         const open = names.name(item.address);
@@ -318,8 +362,11 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   async function withCoinIds(data) {
     const ids = await nodes.coinIds().catch(() => null);
     if (!ids) return data;
-    return { ...data, assets: data.assets.map((asset) => ({ ...asset, token: { ...asset.token,
-      coinId: asset.token.address ? ids.contract.get(asset.token.address.toLowerCase()) ?? null : ids.symbol.get(asset.token.symbol) ?? null } })) };
+    return { ...data, assets: data.assets.map((asset) => {
+      const coinId = asset.token.address ? ids.contract.get(asset.token.address.toLowerCase()) ?? null : ids.symbol.get(asset.token.symbol) ?? null;
+      // A token or network coin without a picture gets its coin's logo.
+      return { ...asset, token: { ...asset.token, coinId, icon: (coinId ? ids.image?.get(coinId) : null) ?? asset.token.icon ?? null } };
+    }) };
   }
   // The feed is refreshed in the background, so a visitor never waits for the explorers.
   function warm(every = 15_000) {

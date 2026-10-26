@@ -21,6 +21,7 @@ const words = {
   ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Отследить адрес", tracked: "★ Отслеживается",
     mine: "Это мой адрес", isMine: "✓ Мой адрес", copied: "Скопировано", missing: "Это не адрес кошелька.",
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
+    listed: (names) => `В сети ${names} у адреса слишком много токенов для обозревателя: показаны токены 1000 крупнейших монет, прочитанные напрямую из сети; мелкие и редкие токены могут не войти.`,
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
     failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noMatch: "Под фильтр ничего не подходит.", clearFilters: "Сбросить фильтры",
     rangeFrom: "от", rangeTo: "до", rangeUsd: "Сумма в долларах", rangeAmount: "Количество токена", sortBy: "Порядок",
@@ -43,6 +44,7 @@ const words = {
   en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Track address", tracked: "★ Tracked",
     mine: "This is mine", isMine: "✓ My address", copied: "Copied", missing: "This is not a wallet address.",
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
+    listed: (names) => `On ${names} the address holds too many tokens for the explorer: the tokens of the 1,000 largest coins are shown, read from the network itself; small and rare tokens may be missing.`,
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
     failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noMatch: "Nothing matches the filter.", clearFilters: "Clear filters",
     rangeFrom: "from", rangeTo: "to", rangeUsd: "Dollar value", rangeAmount: "Token amount", sortBy: "Order",
@@ -116,10 +118,12 @@ function renderHead() {
   $("#track").classList.toggle("ghost", Boolean(saved));
   $("#mine").textContent = saved?.mine ? t().isMine : t().mine;
   $("#mine").classList.toggle("on", Boolean(saved?.mine));
-  const partial = data.networks.filter((item) => item.partial).map((item) => chainName(item.chain));
+  const partial = data.networks.filter((item) => item.partial && !item.listed).map((item) => chainName(item.chain));
+  const listed = data.networks.filter((item) => item.partial && item.listed).map((item) => chainName(item.chain));
   const failed = data.networks.filter((item) => !item.ok).map((item) => chainName(item.chain));
-  $("#partial").hidden = !partial.length && !failed.length;
-  $("#partial").textContent = [partial.length ? t().partial(partial.join(", ")) : "", failed.length ? t().failed(failed.join(", ")) : ""].filter(Boolean).join(" ");
+  $("#partial").hidden = !partial.length && !listed.length && !failed.length;
+  $("#partial").textContent = [partial.length ? t().partial(partial.join(", ")) : "", listed.length ? t().listed(listed.join(", ")) : "",
+    failed.length ? t().failed(failed.join(", ")) : ""].filter(Boolean).join(" ");
 }
 
 // --- Holdings, and their split by network.

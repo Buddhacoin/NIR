@@ -536,7 +536,9 @@ function setupSearch({ overview = () => null }) {
     }
     const local = (market?.coins ?? []).filter((coin) => coin.name.toLowerCase().includes(query) ||
       coin.symbol.toLowerCase().startsWith(query) || coin.id.includes(query)).slice(0, 8);
-    const whales = WHALES.filter((item) => [item.name, item.ens].some((value) => value?.toLowerCase().includes(query))).slice(0, 4);
+    // "black rock" finds BlackRock too: spaces do not count.
+    const squeeze = (value) => value.toLowerCase().replace(/\s+/g, "");
+    const whales = WHALES.filter((item) => [item.name, item.ens].some((value) => value && squeeze(value).includes(squeeze(query)))).slice(0, 4);
     // Wallets and organisations first, then coins, each its own section, as on the analytics sites.
     draw([[t().entities, whales, "/wallets/"], [t().coins, local]]);
     clearTimeout(timer);

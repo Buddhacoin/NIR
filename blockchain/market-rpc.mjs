@@ -20,6 +20,13 @@ export const NODES = {
   polygon: { rpc: "https://polygon-bor-rpc.publicnode.com", platform: "polygon-pos", native: { symbol: "POL" }, blockSeconds: 2, range: 9_999 },
   bsc: { rpc: "https://bsc-rpc.publicnode.com", platform: "binance-smart-chain", native: { coin: "binancecoin" }, blockSeconds: 0.75, range: 9_999 },
 };
+// Networks whose explorer reads a wallet's tokens, with a public node to read the listed ones from when
+// the explorer is too slow (a wallet with thousands of tokens can take it minutes).
+export const BACKUP = {
+  // CoinGecko's platform for each is found by the network's chain id (/asset_platforms).
+  eth: { rpc: "https://eth.drpc.org", chainId: 1 },
+  optimism: { rpc: "https://mainnet.optimism.io", chainId: 10 },
+};
 const RANGE = 49_000; // the default widest log query
 const BATCH = 5; // contracts per log query; the public nodes turn larger ones away
 
@@ -98,18 +105,27 @@ export function createNodes({ rpc = postRpc, get, cached }) {
   // The listed tokens of every network: top coins with a contract there, with price and decimals.
   async function tokens() {
     return cached("rpc:tokens", 300_000, async () => {
-      const [list, markets] = await Promise.all([
-        cached("rpc:coin-list", 86_400_000, () => get(`${COINGECKO}/coins/list?include_platform=true`)),
-        get(`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1`),
+      // The 1,000 largest coins (a later page may fail on a busy minute; the first is enough then).
+      const page = (number) => get(`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${number}`);
+      // The coin list and the networks' platform names change slowly: both are kept a day.
+      const [{ list, platforms }, markets, ...more] = await Promise.all([
+        cached("rpc:coin-list", 86_400_000, async () => {
+          const [coins, known] = await Promise.all([get(`${COINGECKO}/coins/list?include_platform=true`), get(`${COINGECKO}/asset_platforms`).catch(() => [])]);
+          return { list: coins, platforms: known };
+        }),
+        page(1), ...[2, 3, 4].map((number) => page(number).catch(() => [])),
       ]);
-      const byId = new Map((Array.isArray(markets) ? markets : []).map((coin) => [coin.id, coin]));
+      const byId = new Map([markets, ...more].flatMap((answer) => (Array.isArray(answer) ? answer : [])).map((coin) => [coin.id, coin]));
       const result = {};
-      for (const [chain, node] of Object.entries(NODES)) {
+      const platformOf = (node) => node.platform ?? (Array.isArray(platforms) ? platforms : []).find((item) => item?.chain_identifier === node.chainId)?.id;
+      for (const [chain, setup] of Object.entries({ ...NODES, ...BACKUP })) {
+        const node = { ...setup, platform: platformOf(setup) };
+        if (!node.platform) continue;
         const listed = (Array.isArray(list) ? list : []).filter((coin) => byId.has(coin.id) && /^0x[0-9a-fA-F]{40}$/.test(coin.platforms?.[node.platform] ?? ""))
           .map((coin) => { const market = byId.get(coin.id); return { address: coin.platforms[node.platform].toLowerCase(), symbol: String(market.symbol ?? "").toUpperCase().slice(0, 20),
             name: String(market.name ?? "").slice(0, 60), icon: /^https:\/\/(?:coin-images|assets)\.coingecko\.com\//.test(market.image ?? "") ? market.image : null,
             price: Number.isFinite(market.current_price) ? market.current_price : null, cap: market.market_cap ?? 0 }; })
-          .sort((left, right) => right.cap - left.cap).slice(0, 120);
+          .sort((left, right) => right.cap - left.cap).slice(0, 1000);
         // Decimals never change: each contract is asked once.
         const missing = listed.filter((item) => !decimals.has(`${chain}:${item.address}`));
         if (missing.length) {
@@ -118,16 +134,16 @@ export function createNodes({ rpc = postRpc, get, cached }) {
             missing.forEach((item, index) => { if (answers[index]?.success && answers[index].data.length > 2) decimals.set(`${chain}:${item.address}`, Number(BigInt(answers[index].data))); });
           } catch {}
         }
-        const nativeCoin = node.native.coin ? byId.get(node.native.coin) : [...byId.values()].find((coin) => String(coin.symbol).toUpperCase() === node.native.symbol);
+        const nativeCoin = !node.native ? null : node.native.coin ? byId.get(node.native.coin) : [...byId.values()].find((coin) => String(coin.symbol).toUpperCase() === node.native.symbol);
         result[chain] = {
-          native: { address: null, symbol: String(nativeCoin?.symbol ?? node.native.symbol ?? "").toUpperCase(), name: String(nativeCoin?.name ?? ""),
+          native: { address: null, symbol: String(nativeCoin?.symbol ?? node.native?.symbol ?? "").toUpperCase(), name: String(nativeCoin?.name ?? ""),
             icon: /^https:\/\/(?:coin-images|assets)\.coingecko\.com\//.test(nativeCoin?.image ?? "") ? nativeCoin.image : null,
             price: Number.isFinite(nativeCoin?.current_price) ? nativeCoin.current_price : null },
           tokens: listed.filter((item) => (decimals.get(`${chain}:${item.address}`) ?? 99) <= 36).map((item) => ({ ...item, decimals: decimals.get(`${chain}:${item.address}`) })),
         };
       }
       // Every coin's contract on every network, and the top coins by symbol, for links to coin pages.
-      ids = { contract: new Map(), symbol: new Map() };
+      ids = { contract: new Map(), symbol: new Map(), image: new Map() };
       for (const coin of Array.isArray(list) ? list : []) {
         for (const address of Object.values(coin.platforms ?? {})) {
           if (/^0x[0-9a-fA-F]{40}$/.test(address ?? "") && !ids.contract.has(address.toLowerCase())) ids.contract.set(address.toLowerCase(), coin.id);
@@ -136,6 +152,8 @@ export function createNodes({ rpc = postRpc, get, cached }) {
       for (const coin of byId.values()) {
         const symbol = String(coin.symbol ?? "").toUpperCase();
         if (symbol && !ids.symbol.has(symbol)) ids.symbol.set(symbol, coin.id);
+        // Each of the largest coins' logo, for tokens whose source brings none.
+        if (/^https:\/\/(?:coin-images|assets)\.coingecko\.com\//.test(coin.image ?? "")) ids.image.set(coin.id, coin.image);
       }
       return result;
       // Kept while a refresh runs: the lists change slowly, and a slow refresh must not hold up a page.
@@ -169,6 +187,21 @@ export function createNodes({ rpc = postRpc, get, cached }) {
         return { chain, ok: false, partial: false, info: null, assets: [] };
       }
     }));
+  }
+
+  // The listed tokens an address holds on an explorer network, read from its public node in one call.
+  async function listedTokens(chain, address) {
+    const list = (await tokens())[chain];
+    if (!BACKUP[chain] || !list?.tokens.length) return [];
+    const answers = decodeAggregate3(await rpc(BACKUP[chain].rpc, "eth_call", [{ to: MULTICALL, data: encodeAggregate3(list.tokens.map((item) => ({ target: item.address, data: balanceOf(address) }))) }, "latest"]));
+    const assets = [];
+    list.tokens.forEach((item, index) => {
+      const answer = answers[index];
+      if (!answer?.success) return;
+      const amount = toNumber(answer.data, item.decimals);
+      if (amount > 0 && item.price !== null && amount * item.price >= 0.01) assets.push({ chain, token: coinOf(item), amount, usd: amount * item.price });
+    });
+    return assets;
   }
 
   // Token transfers of the listed tokens: an address's own (in, out or both) or the network's newest.
@@ -246,5 +279,5 @@ export function createNodes({ rpc = postRpc, get, cached }) {
   }
 
   const coinIds = async () => { await tokens(); return ids; };
-  return { holdings, addressTransfers, feed, tokens, coinIds, networks: Object.keys(NODES) };
+  return { holdings, listedTokens, addressTransfers, feed, tokens, coinIds, networks: Object.keys(NODES) };
 }

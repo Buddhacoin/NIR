@@ -89,10 +89,11 @@ As on the on-chain analytics sites, everything is searched at once and shown
 in sections: **Wallets and entities** first (the popular wallets, then, from
 three letters, `GET /market/chain/search?q=`: the explorer's quick search,
 whose open labels name wallets such as a fund's or a market maker's, with
-their organisation, people's wallets ahead of contracts, an hour's cache;
-and, for a person's name, the name-service names made of it: "First Last"
-tries firstlast.eth, first-last.eth, flast.eth and last.eth, each that
-exists shown first as the name it is, without claiming whose it is),
+their organisation, labelled wallets first, an hour's cache; a name with
+spaces is also asked without them, so "black rock" finds BlackRock; and,
+for a person's name, the name-service names made of it: "First Last"
+tries firstlast.eth, first-last.eth and flast.eth, each that exists shown
+after the labelled wallets as the name it is, without claiming whose it is),
 then **Coins**. The popular wallets page's filter asks the same search, so a
 wallet beyond the loaded lists is found by its name too.
 
@@ -363,8 +364,18 @@ wallet activity (`blockchain/market-chain.mjs`):
 Everything is free and keyless. The node networks (Base, Arbitrum, Polygon and
 the Binance Smart Chain, through `*.publicnode.com`) are read with Multicall3: one call
 returns the coin and every listed token's balance, the listed tokens being
-the 250 largest coins by market cap with a contract there (CoinGecko's coin
-list, refreshed daily). A wallet's token transfers there come from the
+the 1,000 largest coins by market cap with a contract there (CoinGecko's coin
+list, refreshed daily; four pages of the market list every five minutes).
+On the main explorer network a wallet's tokens come first from Ethplorer's
+free API (`freekey`): every token with a price, in a second or two even for
+thousands of tokens; tokens held by fewer than a thousand wallets are left
+out, since spam sent to well-known wallets often carries a made-up price.
+Tokens without a picture get their coin's logo from CoinGecko, else their
+own site's icon. The explorer networks (`eth` and `optimism`) read a wallet's tokens from the
+explorer, which can take minutes for a wallet holding thousands of tokens; the
+same one-call read from the network's public node runs alongside, and when the
+explorer has not answered in six seconds the listed tokens come from the node
+and the page says so. A wallet's token transfers there come from the
 nodes' logs for the network's ten largest tokens, a page at a time going
 back: each page reads windows of blocks, the first of 600 and each next four
 times wider up to what the node allows (Base 49,000; Polygon and the Binance
