@@ -23,9 +23,12 @@ const words = {
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
     failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noCounter: "Пока нечего показать.",
-    signIn: "Войдите через Google, чтобы отслеживать адреса.", historyNote: (symbol) => `Баланс ${symbol} по дням, по данным обозревателя.`,
-    noHistory: "Истории баланса для этой сети нет.", sharesTab: "Доли", sharesTitle: "Доли активов", historyTitle: "История баланса",
+    signIn: "Войдите через Google, чтобы отслеживать адреса.",
     sharesNote: "Из чего состоит кошелёк, по стоимости в долларах.", others: "Остальные", allChains: "Все", loadingTransfers: "Загружаю переводы по всем сетям…",
+    ranges: [[7, "1н"], [30, "1м"], [90, "3м"], [365, "1г"], [0, "Все"]],
+    historyFrom: (date) => `Стоимость по текущим ценам, восстановлена по переводам с ${date}. Более ранние дни появятся по мере загрузки переводов.`,
+    historyAll: "Стоимость по текущим ценам, восстановлена по переводам.", historyWait: "Собираю историю по переводам…",
+    hiddenDust: (count) => `Скрыто переводов дешевле $1: ${count} (чаще всего это спам).`, showAll: "Показать все",
     nodeNote: "Эта сеть читается с открытого узла: видны переводы токенов примерно за последние сутки, переводы самой монеты сети не видны.",
     askName: "Как называется этот кошелёк? (2–40 символов, например «Биржа Olympus — горячий кошелёк»)",
     askLink: "Ссылка, где это опубликовано (необязательно, https://…)", sent: "Спасибо! Подпись появится после проверки модератором.",
@@ -35,9 +38,12 @@ const words = {
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
     failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noCounter: "Nothing to show yet.",
-    signIn: "Sign in with Google to track addresses.", historyNote: (symbol) => `${symbol} balance by day, from the explorer.`,
-    noHistory: "No balance history for this network.", sharesTab: "Shares", sharesTitle: "Asset shares", historyTitle: "Balance history",
+    signIn: "Sign in with Google to track addresses.",
     sharesNote: "What the wallet is made of, by dollar value.", others: "Others", allChains: "All", loadingTransfers: "Loading transfers on every network…",
+    ranges: [[7, "1W"], [30, "1M"], [90, "3M"], [365, "1Y"], [0, "All"]],
+    historyFrom: (date) => `Value at today's prices, rebuilt from transfers since ${date}. Earlier days appear as more transfers load.`,
+    historyAll: "Value at today's prices, rebuilt from transfers.", historyWait: "Rebuilding the history from transfers…",
+    hiddenDust: (count) => `Transfers under $1 hidden: ${count} (mostly spam).`, showAll: "Show all",
     nodeNote: "This network is read from a public node: token transfers of about the last day are visible, the network coin's own transfers are not.",
     askName: "What is this wallet? (2–40 characters, e.g. “Olympus exchange hot wallet”)",
     askLink: "A link where this is published (optional, https://…)", sent: "Thank you! The name shows once a moderator approves it.",
@@ -50,11 +56,15 @@ let data = null;
 let failure = "";
 let saved = null; // this address in the visitor's saved list, or null
 let view = "assets";
-let historyChain = "shares"; // "shares" draws the asset split; a network draws its coin's balance by day
+let chart = "history"; // "history": the wallet's value by day; "shares": its split by asset
+let range = 90; // days shown by the history chart; 0: everything loaded
 let direction = "all";
 let transferChain = "all";
 let dust = true; // hide transfers worth under $1 (mostly spam tokens)
 let transfers = [];
+// Every transfer loaded in either direction-less view, by id: the history and counterparties come from it.
+const ledger = new Map();
+const reached = {}; // network → the oldest transfer time loaded into the ledger, or 0 once its last page is in
 let cursors = {}; // network → the next page's cursor; missing: not asked yet, null: no more pages
 let loadingMore = false;
 let generation = 0; // a new filter starts a new generation; answers to an older one are dropped
@@ -72,6 +82,8 @@ function renderHead() {
   const hue = [...address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
   $("#avatar").style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   $("#avatar").textContent = (data.name ?? "◎")[0].toUpperCase();
+  const face = walletAvatar({ address, name: data.name }).querySelector("img");
+  if (face) $("#avatar").append(face);
   $("#total").textContent = price(data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0));
   const held = new Set(data.assets.map((asset) => asset.chain));
   $("#tags").replaceChildren(...data.networks.filter((item) => item.ok && held.has(item.chain)).map((item) => { const chip = node("span", "ex-chip"); chip.append(chainDot(item.chain), chainName(item.chain)); return chip; }),
@@ -127,46 +139,128 @@ function renderAssets() {
   }));
 }
 
-// --- The network coin's balance by day, drawn as a line.
-async function renderHistory() {
-  const box = $("#plot");
-  const evm = Object.keys(CHAINS).filter((chain) => CHAINS[chain].history);
-  if (historyChain !== "shares" && !CHAINS[historyChain]?.history) historyChain = "shares";
-  $("#history-chain").replaceChildren(...["shares", ...(utxo ? [] : evm)].map((chain) => {
-    const button = node("button", chain === historyChain ? "on" : "", chain === "shares" ? t().sharesTab : CHAINS[chain].short);
+// --- The wallet's value by day, rebuilt from its transfers: today's holdings,
+// with each transfer undone going back in time, at today's prices. Tokens
+// without a price (mostly spam) weigh nothing.
+const keyOf = (chain, token) => `${chain}:${(token.address ?? "native").toLowerCase()}`;
+function valueSteps() {
+  const own = address.toLowerCase();
+  const book = new Map(data.assets.map((asset) => [keyOf(asset.chain, asset.token), { amount: asset.amount, price: asset.token.price }]));
+  let total = [...book.values()].reduce((sum, entry) => sum + Math.max(0, entry.amount) * (entry.price ?? 0), 0);
+  const steps = [[Date.now(), total]]; // newest first: [time of a transfer, value just before it]
+  for (const item of [...ledger.values()].sort((left, right) => right.time - left.time)) {
+    const incoming = item.to.address?.toLowerCase() === own;
+    if (incoming === (item.from.address?.toLowerCase() === own)) continue;
+    const key = keyOf(item.chain, item.token);
+    if (!book.has(key)) book.set(key, { amount: 0, price: item.token.price ?? (item.usd && item.amount ? item.usd / item.amount : null) });
+    const entry = book.get(key);
+    if (!entry.price) continue;
+    const before = Math.max(0, entry.amount);
+    entry.amount += incoming ? -item.amount : item.amount;
+    total += (Math.max(0, entry.amount) - before) * entry.price;
+    steps.push([item.time, total]);
+  }
+  return steps;
+}
+// The time from which the transfers are loaded. The public nodes reach back only hours, so when the
+// wallet holds anything on a network with an explorer, the explorers' reach decides; the node
+// networks then count with what they have.
+function coverage() {
+  const chains = transferChainsAll();
+  const explored = chains.filter((chain) => !CHAINS[chain]?.node);
+  const leading = explored.length && data.assets.some((asset) => !CHAINS[asset.chain]?.node) ? explored : chains;
+  const times = leading.map((chain) => reached[chain]).filter((time) => time !== undefined);
+  return times.length ? Math.max(...times) : Date.now();
+}
+
+function renderChart() {
+  for (const button of document.querySelectorAll("#chart-tabs [data-chart]")) button.classList.toggle("on", button.dataset.chart === chart);
+  $("#ranges").hidden = chart !== "history";
+  if (chart === "shares") { $("#history-note").textContent = t().sharesNote; drawShares($("#plot")); return; }
+  $("#ranges").replaceChildren(...t().ranges.map(([days, label]) => {
+    const button = node("button", days === range ? "on" : "", label);
     button.type = "button";
-    button.title = chain === "shares" ? t().sharesTitle : chainName(chain);
-    button.addEventListener("click", () => { historyChain = chain; void renderHistory(); });
+    button.addEventListener("click", () => { range = days; renderChart(); void reachBack(); });
     return button;
   }));
-  $("#history-title").textContent = historyChain === "shares" ? t().sharesTitle : t().historyTitle;
-  if (historyChain === "shares") { $("#history-note").textContent = t().sharesNote; drawShares(box); return; }
-  const answer = await fetch(`/market/chain/address/${encodeURIComponent(address)}/history?chain=${historyChain}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
-  const points = answer?.points ?? [];
-  $("#history-note").textContent = points.length > 1 ? t().historyNote(answer.symbol) : t().noHistory;
-  if (points.length < 2) { box.replaceChildren(); return; }
+  drawHistory($("#plot"));
+}
+let drawPending = false;
+function scheduleChart() {
+  if (drawPending || chart !== "history") return;
+  drawPending = true;
+  requestAnimationFrame(() => { drawPending = false; renderChart(); });
+}
+// Loads older transfers until the chosen period is covered (eight pages at most).
+let reaching = false;
+async function reachBack() {
+  if (reaching || direction !== "all" || transferChain !== "all") return;
+  reaching = true;
+  for (let page = 0; page < 8 && hasMore(); page += 1) {
+    const start = range ? Date.now() - range * 86_400_000 : 0;
+    if (coverage() <= start) break;
+    await loadTransfers();
+  }
+  reaching = false;
+}
+
+function drawHistory(box) {
+  const steps = valueSteps();
+  const covered = coverage();
+  const now = Date.now();
+  // The chart spans the chosen period, or the part of it the loaded transfers cover.
+  const start = Math.min(now - 3_600_000, range ? Math.max(now - range * 86_400_000, covered) : covered || (steps.length > 1 ? steps.at(-1)[0] : now - 30 * 86_400_000));
+  const from = start;
+  const short = now - from < 2 * 86_400_000;
+  if (!ledger.size && loadingMore) { $("#history-note").textContent = t().historyWait; }
+  else $("#history-note").textContent = covered > (range ? now - range * 86_400_000 : 0) ? t().historyFrom(new Date(covered).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) : t().historyAll;
+  // The value from each moment on, oldest first, inside the shown period.
+  const ascending = [];
+  for (let index = steps.length - 1; index >= 1; index -= 1) ascending.push([steps[index][0], steps[index - 1][1]]);
+  // At the start: the value after the last transfer before it, or before the oldest one.
+  const points = [[start, ascending.findLast(([time]) => time <= start)?.[1] ?? steps.at(-1)[1]]];
+  points.push(...ascending.filter(([time]) => time > start && time <= now));
+  points.push([now, steps[0][1]]);
   const width = Math.max(280, box.clientWidth);
   const height = Math.max(180, box.clientHeight);
   const right = width - 64;
   const values = points.map(([, value]) => value);
-  let low = Math.min(...values);
-  let high = Math.max(...values);
-  const pad = (high - low) * 0.1 || high * 0.05 || 1;
-  low = Math.max(0, low - pad);
-  high += pad;
-  const x = (time) => (time - points[0][0]) / ((points.at(-1)[0] - points[0][0]) || 1) * right;
+  const pad = (Math.max(...values) - Math.min(...values)) * 0.15 || Math.max(...values) * 0.05 || 1;
+  const low = Math.max(0, Math.min(...values) - pad);
+  const high = Math.max(...values) + pad;
+  const x = (time) => (time - from) / ((now - from) || 1) * right;
   const y = (value) => 10 + (high - value) / (high - low) * (height - 34);
-  const line = points.map(([time, value], index) => `${index ? "L" : "M"}${x(time).toFixed(1)},${y(value).toFixed(1)}`).join("");
-  const ticks = [0, 0.33, 0.66, 1].map((share) => low + (high - low) * share);
+  // Steps: the value holds until the next transfer, then jumps.
+  let line = `M${x(points[0][0]).toFixed(1)},${y(points[0][1]).toFixed(1)}`;
+  for (let index = 1; index < points.length; index += 1) line += `H${x(points[index][0]).toFixed(1)}V${y(points[index][1]).toFixed(1)}`;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((share) => low + (high - low) * share);
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("width", width);
   svg.setAttribute("height", height);
+  const left = x(points[0][0]).toFixed(1);
   svg.innerHTML = `<defs><linearGradient id="ex-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".3"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
-    ${ticks.map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${amountShort(value)}</text>`).join("")}
-    <path d="${line}L${right},${height - 24}L0,${height - 24}Z" fill="url(#ex-fill)"/><path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
-    ${[0, 0.5, 1].map((share) => { const time = points[0][0] + (points.at(-1)[0] - points[0][0]) * share; return `<text class="tick" text-anchor="${share === 0 ? "start" : share === 1 ? "end" : "middle"}" x="${(share * right).toFixed(1)}" y="${height - 6}">${new Date(time).toLocaleDateString(locale(), { day: "numeric", month: "short", year: "2-digit" })}</text>`; }).join("")}`;
-  box.replaceChildren(svg);
+    ${ticks.map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${usdShort(value)}</text>`).join("")}
+    <path d="${line}V${height - 24}H${left}Z" fill="url(#ex-fill)"/><path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${[0, 0.25, 0.5, 0.75, 1].map((share) => { const time = from + (now - from) * share; return `<text class="tick" text-anchor="${share === 0 ? "start" : share === 1 ? "end" : "middle"}" x="${(share * right).toFixed(1)}" y="${height - 6}">${(short ? new Date(time).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }) : new Date(time).toLocaleDateString(locale(), { day: "numeric", month: "short" }))}</text>`; }).join("")}
+    <line class="ex-cursor" x1="0" x2="0" y1="0" y2="${height - 24}" visibility="hidden"/>`;
+  const tip = node("div", "ex-tip");
+  tip.hidden = true;
+  box.replaceChildren(svg, tip);
+  // Hover: the value on that day.
+  svg.addEventListener("pointermove", (event) => {
+    const scale = width / svg.getBoundingClientRect().width;
+    const at = Math.min(right, Math.max(0, (event.clientX - svg.getBoundingClientRect().left) * scale));
+    const time = from + at / right * (now - from);
+    if (time < points[0][0]) { tip.hidden = true; return; }
+    const value = points.findLast((point) => point[0] <= time)?.[1] ?? points[0][1];
+    const cursor = svg.querySelector(".ex-cursor");
+    cursor.setAttribute("x1", at); cursor.setAttribute("x2", at); cursor.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    tip.replaceChildren(node("small", "", new Date(time).toLocaleString(locale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })), node("b", "", price(value)));
+    tip.style.left = `${Math.min(box.clientWidth - 140, at / scale + 12)}px`;
+  });
+  svg.addEventListener("pointerleave", () => { tip.hidden = true; svg.querySelector(".ex-cursor").setAttribute("visibility", "hidden"); });
 }
 
 // The wallet's split by asset, as a ring with a legend.
@@ -206,12 +300,14 @@ function drawShares(box) {
   box.replaceChildren(wrap);
 }
 
-// --- Transfers: a page at a time from the explorer; spam-sized ones hidden by default.
+// --- Transfers: a page at a time; spam-sized ones hidden by default.
+const worth = (item) => !dust || (item.usd ?? 0) >= 1;
 function renderTransfers() {
   for (const button of document.querySelectorAll("#direction [data-dir]")) button.classList.toggle("on", button.dataset.dir === direction);
   $("#dust").classList.toggle("on", dust);
   $("#transfer-chain").replaceChildren(...(utxo ? [] : ["all", ...Object.keys(CHAINS).filter((chain) => chain !== "btc")].map((chain) => {
-    const button = node("button", chain === transferChain ? "on" : "", chain === "all" ? t().allChains : CHAINS[chain].short);
+    const button = node("button", chain === transferChain ? "on" : "", chain === "all" ? t().allChains : "");
+    if (chain !== "all") button.append(chainDot(chain), CHAINS[chain].short);
     button.type = "button";
     button.title = chain === "all" ? t().allChains : chainName(chain);
     button.addEventListener("click", () => { transferChain = chain; void loadTransfers(true); });
@@ -219,10 +315,20 @@ function renderTransfers() {
   })));
   $("#node-note").hidden = !CHAINS[transferChain]?.node;
   $("#node-note").textContent = t().nodeNote;
-  // Pages of token and coin transfers arrive separately: shown together, newest first.
-  const shown = transfers.filter((item) => !dust || (item.usd ?? 0) >= 1).sort((left, right) => right.time - left.time);
+  // Pages from several networks arrive separately: shown together, newest first.
+  const shown = transfers.filter(worth).sort((left, right) => right.time - left.time);
+  const hidden = transfers.length - shown.length;
   const own = address.toLowerCase();
-  $("#transfers").replaceChildren(...(shown.length ? shown.map((item) => {
+  const message = (text, button) => {
+    const row = node("tr");
+    const cell = node("td", "muted ex-empty", text);
+    cell.colSpan = 5;
+    if (button) cell.append(" ", button);
+    row.append(cell);
+    return row;
+  };
+  const reveal = () => { const button = node("button", "pill", t().showAll); button.type = "button"; button.addEventListener("click", () => { dust = false; renderTransfers(); }); return button; };
+  $("#transfers").replaceChildren(...shown.map((item) => {
     const row = node("tr");
     const when = node("td", "left");
     when.append(chainDot(item.chain), " ", Object.assign(node("a", "", timeAgo(item.time)), { href: `${CHAINS[item.chain]?.tx ?? "#"}${item.hash}`, target: "_blank", rel: "noopener" }));
@@ -234,16 +340,21 @@ function renderTransfers() {
     row.append(when, from, to, node("td", incoming ? "up" : "down", `${incoming ? "+" : "−"}${amountShort(item.amount)} ${item.token.symbol}`),
       node("td", "", usdShort(item.usd)));
     return row;
-  }) : [(() => { const row = node("tr"); const cell = node("td", "muted", loadingMore ? t().loadingTransfers : t().noTransfers); cell.colSpan = 5; row.append(cell); return row; })()]));
+  }), ...(shown.length ? [] : [message(loadingMore ? t().loadingTransfers : hidden ? t().hiddenDust(hidden) : t().noTransfers, !loadingMore && hidden ? reveal() : null)]),
+    ...(shown.length && hidden && !hasMore() ? [message(t().hiddenDust(hidden), reveal())] : []));
   $("#more").hidden = !hasMore();
   renderCounterparties();
+  scheduleChart();
   // With spam hidden a page can leave the panel half empty: the next pages come until it fills (five at most).
   const box = $(".ex-transfers").closest(".table-wrap");
   if (hasMore() && !loadingMore && autoPages < 5 && box.scrollHeight <= box.clientHeight + 80) { autoPages += 1; void loadTransfers(); }
 }
 let autoPages = 0;
-// "All" asks every network at once; each one's rows show as soon as it answers.
-const transferChains = () => (utxo ? ["btc"] : transferChain === "all" ? Object.keys(CHAINS).filter((chain) => chain !== "btc") : [transferChain]);
+// "All" asks the explorer networks and the node networks where the wallet holds something, all at once;
+// each one's rows show as soon as it answers.
+const transferChainsAll = () => (utxo ? ["btc"] : Object.keys(CHAINS).filter((chain) => chain !== "btc"
+  && (!CHAINS[chain].node || data?.assets.some((asset) => asset.chain === chain))));
+const transferChains = () => (utxo ? ["btc"] : transferChain === "all" ? transferChainsAll() : [transferChain]);
 const hasMore = () => transferChains().some((chain) => cursors[chain] !== null);
 async function loadTransfers(reset = false) {
   if (reset) { transfers = []; cursors = {}; autoPages = 0; generation += 1; loadingMore = false; }
@@ -252,21 +363,32 @@ async function loadTransfers(reset = false) {
   const mine = generation;
   await Promise.all(transferChains().filter((chain) => cursors[chain] !== null).map(async (chain) => {
     const query = new URLSearchParams({ dir: direction, ...(utxo ? {} : { chain }), ...(cursors[chain] ? { cursor: cursors[chain] } : {}) });
-    const answer = await fetch(`/market/chain/address/${encodeURIComponent(address)}/transfers?${query}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    const ask = () => fetch(`/market/chain/address/${encodeURIComponent(address)}/transfers?${query}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    // A busy public node may turn one request away: one more try after a pause.
+    const answer = await ask() ?? await new Promise((done) => setTimeout(done, 2500)).then(ask);
     if (mine !== generation) return;
     cursors[chain] = answer?.next ?? null;
-    if (answer) transfers = [...transfers, ...answer.items];
+    if (answer) {
+      transfers = [...transfers, ...answer.items];
+      // Pages with no direction filter are complete: they feed the history and the counterparties.
+      if (direction === "all") {
+        for (const item of answer.items) ledger.set(item.id, item);
+        // A node page says how far back it read, transfers or not.
+        reached[chain] = cursors[chain] === null ? 0 : Math.min(reached[chain] ?? Date.now(), answer.reached ?? Date.now(), ...answer.items.map((item) => item.time));
+      }
+    } else if (direction === "all") reached[chain] = 0;
     renderTransfers();
   }));
   if (mine !== generation) return;
   loadingMore = false;
   renderTransfers();
 }
-// Who this address deals with most, from the transfers loaded so far.
+// Who this address deals with most, from the transfers loaded so far (spam-sized ones left out while hidden).
 function renderCounterparties() {
   const own = address.toLowerCase();
   const byWallet = new Map();
-  for (const item of transfers) {
+  for (const item of ledger.values()) {
+    if (!worth(item)) continue;
     const incoming = item.to.address?.toLowerCase() === own;
     const other = incoming ? item.from : item.to;
     if (!other?.address || other.address.toLowerCase() === own) continue;
@@ -275,14 +397,14 @@ function renderCounterparties() {
     entry.count += 1;
     byWallet.set(other.address, entry);
   }
-  const top = [...byWallet.values()].sort((left, right) => right.in + right.out - left.in - left.out).slice(0, 8);
+  const top = [...byWallet.values()].sort((left, right) => right.in + right.out - left.in - left.out || right.count - left.count).slice(0, 30);
   $("#counterparties").replaceChildren(...(top.length ? top.map((entry) => {
     const row = node("tr");
     const who = node("td", "left");
     who.append(walletLink(entry.party));
-    row.append(who, node("td", "up", entry.in ? price(entry.in) : "—"), node("td", "down", entry.out ? price(entry.out) : "—"), node("td", "", String(entry.count)));
+    row.append(who, node("td", "up", entry.in ? usdShort(entry.in) : "—"), node("td", "down", entry.out ? usdShort(entry.out) : "—"), node("td", "", String(entry.count)));
     return row;
-  }) : [(() => { const row = node("tr"); const cell = node("td", "muted", t().noCounter); cell.colSpan = 4; row.append(cell); return row; })()]));
+  }) : [(() => { const row = node("tr"); const cell = node("td", "muted ex-empty", loadingMore ? t().loadingTransfers : t().noCounter); cell.colSpan = 4; row.append(cell); return row; })()]));
 }
 
 function render() {
@@ -296,6 +418,7 @@ function render() {
   renderHead();
   renderAssets();
   renderTransfers();
+  renderChart();
 }
 
 async function loadSaved() {
@@ -324,8 +447,8 @@ async function load() {
   if (!response?.ok) { failure = t().unavailable; render(); return; }
   data = await response.json();
   render();
-  void renderHistory();
-  void loadTransfers(true);
+  await loadTransfers(true);
+  void reachBack();
 }
 
 $("#copy").addEventListener("click", async () => {
@@ -351,7 +474,9 @@ $("#suggest").addEventListener("click", async () => {
 $("#mine").addEventListener("click", () => void save({ mine: !saved?.mine }));
 for (const button of document.querySelectorAll("#assets-tabs [data-view]")) button.addEventListener("click", () => { view = button.dataset.view; renderAssets(); });
 for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });
+for (const button of document.querySelectorAll("#chart-tabs [data-chart]")) button.addEventListener("click", () => { chart = button.dataset.chart; renderChart(); });
 $("#dust").addEventListener("click", () => { dust = !dust; renderTransfers(); });
+addEventListener("resize", () => scheduleChart());
 $("#more").addEventListener("click", () => void loadTransfers());
 // Near the bottom of the transfers panel, the next page comes by itself.
 $(".ex-transfers").closest(".table-wrap").addEventListener("scroll", (event) => {

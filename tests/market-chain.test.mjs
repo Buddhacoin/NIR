@@ -49,7 +49,8 @@ function node() {
     if (method === "eth_getBlockByNumber") return { number: "0x100000", timestamp: "0x6700000" };
     if (method === "eth_getLogs") {
       const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-      if (!url.includes("base") || !params[0].address.includes(usdc)) return [];
+      // The transfer sits in the newest window only.
+      if (!url.includes("base") || !params[0].address.includes(usdc) || params[0].toBlock !== "0x100000") return [];
       return [{ address: usdc, topics: ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", `0x${word(`0x${EXCHANGE.slice(2)}`)}`, `0x${word("0x1234")}`],
         data: `0x${word(2_500_000_000)}`, blockNumber: "0xfffff0", transactionHash: `0x${"ab".repeat(32)}`, logIndex: "0x3" }];
     }
@@ -146,7 +147,10 @@ test("an address shows its holdings on every network, its transfers a page at a 
 
   const onNode = await chain.transfers(EXCHANGE, "base", "out", null);
   assert.equal(onNode.items.length, 1);
-  assert.equal(onNode.next, null);
+  // Windows of 600, 2,400, 9,600, 38,400 and then 49,000 blocks: eight in all.
+  assert.equal(onNode.next.before, 0x100000 - (601 + 2_401 + 9_601 + 38_401 + 4 * 49_001), "a node page reads eight widening windows back, then hands the next block");
+  const older = await chain.transfers(EXCHANGE, "base", "out", onNode.next);
+  assert.equal(older.items.length, 0);
 
   const history = await chain.history(EXCHANGE, "eth");
   assert.ok(history.length > 3 && history.every(([time, value], index) => index === 0 || history[index - 1][0] < time) && history[0][1] > 0);

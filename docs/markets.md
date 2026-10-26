@@ -39,7 +39,10 @@ NIR coin.
   altcoin season, 25 and less: the largest coin's season).
 - Every card is a link: market status and its figures → `/charts/`, Fear &
   Greed → `/charts/#fear-greed`, dominance → `/charts/#dominance`; the Trending
-  and Gainers titles switch the table to those lists.
+  and Gainers titles switch the table below to the full lists (the fifteen
+  trending coins; every top coin by its 24-hour change, highest first, or
+  lowest first under Losers). `/#trending`, `/#gainers` and `/#losers` open
+  those lists, so the menu's "Gainers & losers" lands on them.
 - `/charts/` (Market overview): totals, the Fear & Greed gauge with yesterday,
   last week, last month, the yearly high and low and a year-long chart
   (`GET /market/fear-greed`, alternative.me, cached an hour), and the
@@ -239,13 +242,22 @@ wallet activity (`blockchain/market-chain.mjs`):
   $100K, $1M), network and token. The service refreshes the feed itself
   every 15 seconds and keeps the newest 400, so visitors get the last copy
   at once instead of waiting for the explorers and nodes.
-- **A wallet's page**, `/address/<address>`: its open name and tags, what it
-  holds on every network with the total (a coin listed on the site opens its
-  page with the chart and description), the share per network, the split by
-  asset as a ring, the network coin's balance by day, its transfers on all
-  networks at once or on one (all, inflow, outflow; spam-sized ones under $1
-  hidden by default) a page at a time, and its top counterparties among the
-  loaded transfers. Addresses of the UTXO network are read from
+- **A wallet's page**, `/address/<address>`, laid out like the analytics
+  sites: four panels with tabs across the top and tables that scroll inside.
+  Its open name, tags and picture (the name-service avatar when there is one;
+  other wallets get a colour of their own), what it holds on every network
+  with the total (a coin listed on the site opens its page), the share per
+  network, the balance history (1W, 1M, 3M, 1Y, all), the split by asset as a
+  ring, its transfers on all networks at once or on one (all, inflow, outflow;
+  ones under $1, mostly spam, hidden by default with a count and "show all"),
+  and its top counterparties.
+- **Balance history** is rebuilt in the browser from the transfers: today's
+  holdings, with each loaded transfer undone going back in time, valued at
+  today's prices (tokens without a price count as nothing). Older pages load
+  by themselves until the chosen period is covered (eight at most); the note
+  above the chart says from when the history is complete. The node networks
+  reach back hours to days, so when a wallet holds something on a network
+  with an explorer, the explorers' reach sets the period. Addresses of the UTXO network are read from
   `mempool.space`. Header search opens a pasted address, and names such as
   `zeus.eth` are looked up in the name service.
 - **Tracking**: signed in, "Track address" bookmarks a wallet and "This is
@@ -258,11 +270,15 @@ the Binance Smart Chain, through `*.publicnode.com`) are read with Multicall3: o
 returns the coin and every listed token's balance, the listed tokens being
 the 250 largest coins by market cap with a contract there (CoinGecko's coin
 list, refreshed daily). A wallet's token transfers there come from the
-nodes' logs over the last 49,000 blocks (about a day; hours on Arbitrum),
-for its ten largest tokens; the coin's own transfers and balance history
-need an explorer and are not shown. The free nodes refuse queries for more
-than five contracts and block bursts, so requests to each node go one at a
-time, 120 ms apart.
+nodes' logs for the network's ten largest tokens, a page at a time going
+back: each page reads windows of blocks, the first of 600 and each next four
+times wider up to what the node allows (Base 49,000; Polygon and the Binance
+Smart Chain 9,999; Arbitrum 99,000, read from the network's own free node
+`arb1.arbitrum.io`), until it has twenty transfers, eight windows or ten
+seconds, and at most two hundred. The coin's own transfers need an explorer
+and are not shown. The free nodes refuse queries for more than five
+contracts and block bursts, so requests to each node go one at a time,
+120 ms apart.
 
 Names come from three places, in this order: names approved by NIR Markets
 moderators, name-service records, and the explorers' open labels (verified

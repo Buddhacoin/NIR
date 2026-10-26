@@ -225,7 +225,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   function transfers(address, chain, direction, cursor) {
     const key = `transfers:${address.toLowerCase()}:${chain}:${direction}:${JSON.stringify(cursor ?? null)}`;
     return cached(key, 60_000, async () => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor)
-      : NODES[chain] ? { items: await nodes.addressTransfers(address, chain, direction), next: null } : evmTransfers(address, chain, direction, cursor)));
+      : NODES[chain] ? nodes.addressTransfers(address, chain, direction, cursor?.before ?? null) : evmTransfers(address, chain, direction, cursor)));
   }
 
   // --- The network coin's balance by day, from the explorer.
@@ -313,7 +313,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       try { cursor = url.searchParams.get("cursor") ? JSON.parse(Buffer.from(url.searchParams.get("cursor"), "base64url").toString("utf8")) : null; } catch {}
       if (cursor !== null && (typeof cursor !== "object" || JSON.stringify(cursor).length > 600)) cursor = null;
       const page = await transfers(address, chain, direction, cursor);
-      return reply(response, 200, { chain, items: relabel(page.items), next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null }, 30), true;
+      return reply(response, 200, { chain, items: relabel(page.items), next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null,
+        ...(page.reached ? { reached: page.reached } : {}) }, 30), true;
     } catch (error) {
       return reply(response, error?.status === 503 ? 503 : 502, { error: "the explorer is unavailable, try again in a minute" }), true;
     }
