@@ -218,7 +218,8 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 .ranges.seg button.on { background: var(--panel); color: var(--text); }
 .big-chart { position: relative; height: 400px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; touch-action: pan-y; }
 .big-chart svg { display: block; width: 100%; height: 100%; }
-.big-chart .vol { fill: var(--muted); opacity: 0.22; }
+.big-chart .vol { fill: var(--muted); opacity: 0.16; }
+.big-chart .frame { fill: none; stroke: var(--line); stroke-width: 1; }
 .big-chart.tv { height: 560px; }
 .big-chart .grid { stroke: var(--line); stroke-width: 1; }
 .big-chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -914,3 +915,68 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
   .coin-page .big-chart .status { margin-top: 140px; }
   .coin-page #chart { padding-left: 8px; padding-right: 4px; }
 }
+/* The popular wallets' lists: clear tabs, the chosen one filled. */
+.seg.kinds { gap: 4px; padding: 4px; border: 1px solid var(--line); background: var(--soft); }
+.seg.kinds button { padding: 8px 14px; color: var(--text); font-size: 14px; font-weight: 700; }
+.seg.kinds button:hover { background: var(--panel); }
+.seg.kinds button.on { background: var(--accent); color: #fff; box-shadow: none; }
+/* The owner's dashboard on the profile (dashboard.js): four quadrants as on the on-chain analytics
+   sites — portfolio, balances history, accounts, transactions — each with its own tabs and scroll. */
+.dash { display: grid; gap: 12px; margin: 16px 0; }
+.dash-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px; }
+.dash-total b { font-size: 30px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.dash-total small { font-size: 14px; font-weight: 700; }
+.dash-network { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); font: inherit; font-weight: 700; }
+.dash-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dash-q { position: relative; display: flex; flex-direction: column; height: 440px; padding: 0; overflow: hidden; }
+.dash-tabs { display: flex; flex: none; align-items: stretch; border-bottom: 1px solid var(--line); background: var(--soft); }
+.dash-tabs > button, .dash-account-tab > button:first-child { flex: 1 1 0; min-width: 0; padding: 11px 10px; border: 0; background: none; color: var(--muted);
+  font: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.dash-tabs > button.on { background: var(--card); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.dash-tabs > button:hover { color: var(--text); }
+.dash-body { flex: 1 1 auto; min-height: 0; padding: 4px 14px 12px; overflow: auto; overscroll-behavior: contain; }
+.dash-table th { position: sticky; top: 0; z-index: 1; background: var(--card); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.dash-table td { padding: 8px 8px; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dash-table td small { margin-left: 4px; font-size: 12px; }
+.dash-table .bar { width: 120px; margin: 0; }
+.dash-empty { display: grid; place-items: center; min-height: 200px; margin: 0; text-align: center; }
+.dash-note { margin: 8px 0 0; font-size: 12px; }
+.dash-ranges { display: flex; justify-content: flex-end; gap: 4px; padding: 6px 0; }
+.dash-ranges button { padding: 4px 9px; border: 0; border-radius: 7px; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.dash-ranges button.on { background: var(--soft); color: var(--text); }
+.dash-plot { position: relative; height: 290px; }
+.dash-plot svg { display: block; width: 100%; height: 100%; }
+.dash-plot .grid { stroke: var(--line); }
+.dash-plot .tick { fill: var(--muted); font-size: 11px; }
+.dash-pnl { display: flex; gap: 24px; padding: 10px 0; }
+.dash-pnl div { display: grid; gap: 2px; }
+.dash-pnl b { font-size: 22px; }
+.dash-dates { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
+.dash-dates input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
+.dash-chip { position: absolute; top: 46px; left: 14px; z-index: 2; padding: 3px 9px; border: 1px solid var(--accent); border-radius: 999px;
+  background: var(--card); color: var(--accent); font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+.dash-chip:not(.on) { border-color: var(--line); color: var(--muted); }
+.dash-q[data-q="3"] .dash-body { padding-top: 30px; }
+.dash-time { margin-left: 6px; color: var(--accent); font-weight: 700; }
+.dash-more { margin: 10px auto 0; display: block; }
+.dash-accounts-tabs { overflow-x: auto; scrollbar-width: none; }
+.dash-accounts-tabs > button:first-child { flex: none; padding: 11px 16px; }
+.dash-account-tab { display: flex; flex: none; align-items: center; max-width: 200px; }
+.dash-account-tab > button:first-child { padding: 11px 4px 11px 12px; text-transform: none; letter-spacing: 0; font-family: ui-monospace, monospace; }
+.dash-account-tab.on { background: var(--card); box-shadow: inset 0 -2px 0 var(--accent); }
+.dash-account-tab.on > button:first-child { color: var(--text); }
+.dash-x { padding: 4px 10px 4px 4px; border: 0; background: none; color: var(--muted); font-size: 15px; cursor: pointer; }
+.dash-x:hover { color: var(--down); }
+.dash-plus { flex: none; margin-left: auto; width: 44px; border: 0; background: var(--accent); color: #fff; font-size: 20px; font-weight: 700; cursor: pointer; }
+.dash-add { display: grid; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--soft); }
+.dash-add[hidden] { display: none; }
+.dash-add .act { justify-self: start; }
+.dash-add-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.dash-add-form input { flex: 1 1 200px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
+@media (max-width: 1000px) {
+  .dash-grid { grid-template-columns: minmax(0, 1fr); }
+  .dash-q { height: 420px; }
+}
+/* The owner's profile with the dashboard takes the page's full width. */
+.profile-page:has(.dash:not([hidden])) { max-width: none; }
+.dash { margin: 0; }

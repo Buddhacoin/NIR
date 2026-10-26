@@ -64,13 +64,14 @@ let coin = null;
 let chart = null;
 let chartFailed = false;
 let days = "30";
-let candles = false;
+// Bitcoin opens on TradingView's full chart (the CRYPTO:BTCUSD index); a trial before every coin gets it.
+let candles = id === "bitcoin";
 let metric = "prices"; // or "caps": the line shows price or market cap
 let showAll = false;
 let failure = "";
 
 const t = () => words[language];
-const tradingViewSymbol = () => (!coin || STABLE.has(coin.symbol) ? null
+const tradingViewSymbol = () => (coin?.id === "bitcoin" ? "CRYPTO:BTCUSD" : !coin || STABLE.has(coin.symbol) ? null
   : coin.tickers.some((ticker) => ticker.exchange === "binance" && ticker.base === coin.symbol && ticker.target === "USDT")
     ? `BINANCE:${coin.symbol}USDT` : null);
 const host = (url) => new URL(url).hostname.replace(/^www\./, "");
@@ -238,10 +239,10 @@ function short(value) {
   }
   return value.toLocaleString(locale(), { maximumSignificantDigits: 4 });
 }
-// About five round steps between low and high.
+// About eight round steps between low and high, as on the big market sites.
 function ticks(low, high) {
   const span = (high - low) || Math.abs(high) || 1;
-  const raw = span / 5;
+  const raw = span / 8;
   const power = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((candidate) => candidate >= raw);
   const values = [];
@@ -306,7 +307,7 @@ function renderChart() {
   // A scale label under the latest value's tag is left out.
   const grid = ticks(low, high).map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/>` +
     (Math.abs(y(value) - y(values.at(-1))) < 16 ? "" : `<text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${short(value)}</text>`)).join("");
-  const times = [0, 0.2, 0.4, 0.6, 0.8, 1].map((share) => {
+  const times = [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1].map((share) => {
     const index = Math.round(share * (points.length - 1));
     const anchor = share === 0 ? "start" : share === 1 ? "end" : "middle";
     return `<text class="tick" text-anchor="${anchor}" x="${x(index).toFixed(1)}" y="${height - 6}">${time(points[index][0])}</text>`;
@@ -321,7 +322,7 @@ function renderChart() {
       <clipPath id="below"><rect x="0" y="${baseY.toFixed(1)}" width="${right}" height="${height}"/></clipPath>
       <linearGradient id="fill-up" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--up)" stop-opacity=".28"/><stop offset="1" stop-color="var(--up)" stop-opacity=".02"/></linearGradient>
       <linearGradient id="fill-down" x1="0" x2="0" y1="1" y2="0"><stop offset="0" stop-color="var(--down)" stop-opacity=".28"/><stop offset="1" stop-color="var(--down)" stop-opacity=".02"/></linearGradient>
-    </defs>${grid}
+    </defs><rect class="frame" x="0.5" y="0.5" width="${(right - 1).toFixed(1)}" height="${(height - 24.5).toFixed(1)}"/>${grid}
     ${volumes.map(([, value], index) => `<rect class="vol" x="${(index * barWidth).toFixed(1)}" y="${(height - 24 - value / topVolume * 44).toFixed(1)}" width="${Math.max(1, barWidth - 1).toFixed(1)}" height="${(value / topVolume * 44).toFixed(1)}"/>`).join("")}
     <path d="${area}" fill="url(#fill-up)" clip-path="url(#above)"/><path d="${area}" fill="url(#fill-down)" clip-path="url(#below)"/>
     <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" clip-path="url(#above)"/>
