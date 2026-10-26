@@ -64,8 +64,10 @@ let coin = null;
 let chart = null;
 let chartFailed = false;
 let days = "30";
-// Bitcoin opens on TradingView's full chart (the CRYPTO:BTCUSD index); a trial before every coin gets it.
-let candles = id === "bitcoin";
+// Every coin TradingView knows opens on its full chart (Bitcoin on the CRYPTO:BTCUSD index, the rest on
+// their Binance pair); the others, and anyone who picks the line, get the page's own chart.
+let wantCandles = true;
+let candles = false;
 let metric = "prices"; // or "caps": the line shows price or market cap
 let showAll = false;
 let failure = "";
@@ -96,6 +98,7 @@ function renderHead() {
   $("#crumb").textContent = coin.name;
   $("#logo").replaceChildren(logo(coin));
   $("#name").textContent = coin.name;
+  $("#name").title = coin.name;
   $("#name").classList.toggle("long", coin.name.length > 10); // a long name gets a smaller size and wraps between words
   $("#symbol").textContent = coin.symbol;
   $("#rank").textContent = coin.rank ? `#${coin.rank}` : "";
@@ -253,7 +256,7 @@ function renderChart() {
   const plot = $("#plot");
   const symbol = tradingViewSymbol();
   $("#candles").hidden = !symbol;
-  candles = candles && Boolean(symbol);
+  candles = wantCandles && Boolean(symbol);
   for (const button of document.querySelectorAll("#mode [data-mode]")) button.classList.toggle("on", (button.dataset.mode === "tv") === candles);
   for (const button of document.querySelectorAll("#ranges [data-days]")) button.classList.toggle("on", button.dataset.days === days);
   for (const button of document.querySelectorAll("#metric [data-metric]")) button.classList.toggle("on", button.dataset.metric === metric);
@@ -452,7 +455,7 @@ for (const button of document.querySelectorAll("#ranges [data-days]")) {
   });
 }
 for (const button of document.querySelectorAll("#mode [data-mode]")) {
-  button.addEventListener("click", () => { candles = button.dataset.mode === "tv"; renderChart(); });
+  button.addEventListener("click", () => { wantCandles = button.dataset.mode === "tv"; renderChart(); });
 }
 for (const button of document.querySelectorAll("#metric [data-metric]")) {
   button.addEventListener("click", () => { metric = button.dataset.metric; renderChart(); });

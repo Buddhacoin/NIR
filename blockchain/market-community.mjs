@@ -31,11 +31,12 @@ export function createCommunity({ db, now, userFor, json, body, origin, log, lim
 
   const SELECT = `SELECT comments.id, comments.coin_id AS coinId, comments.parent_id AS parentId, comments.body, comments.side,
     comments.created_at AS createdAt, comments.user_id AS userId, users.username, users.display_name AS displayName,
+    (SELECT updated_at FROM avatars WHERE avatars.user_id = comments.user_id) AS avatarAt,
     (SELECT COUNT(*) FROM likes WHERE likes.comment_id = comments.id) AS likes
     FROM comments JOIN users ON users.id = comments.user_id`;
   function shape(row, viewer) {
     return { id: row.id, coinId: row.coinId, parentId: row.parentId, body: row.body, side: row.side, createdAt: row.createdAt,
-      author: { username: row.username, displayName: row.displayName }, likes: row.likes,
+      author: { username: row.username, displayName: row.displayName, avatar: row.avatarAt ? `/market/avatar/${row.username}?v=${row.avatarAt}` : null }, likes: row.likes,
       liked: Boolean(viewer && sql("SELECT 1 FROM likes WHERE comment_id = ? AND user_id = ?").get(row.id, viewer.id)),
       mine: viewer?.id === row.userId, canDelete: viewer?.id === row.userId || isModerator(viewer) };
   }

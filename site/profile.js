@@ -12,6 +12,7 @@ const en = {
   navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins or addresses",
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
   fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabWallets: "My addresses", tabTracked: "Tracked", tabModeration: "Moderation", tabComments: "Comments", deleteAccount: "Delete account",
+  photoChange: "Change photo", photoRemove: "Remove photo",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
   aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR",
 };
@@ -243,7 +244,10 @@ function render() {
   document.title = t().title(user);
   $("#status").textContent = "";
   $("#page").hidden = false;
-  $("#avatar").replaceChildren(avatar(user, 72));
+  $("#avatar").replaceChildren(avatar(user, 96));
+  $("#avatar-pick").classList.toggle("own", own);
+  $("#avatar-file").disabled = !own;
+  $("#photo-remove").hidden = !user.avatar;
   $("#display-name").textContent = user.displayName;
   $("#username").textContent = user.username;
   $("#joined").textContent = t().since(new Date(user.joinedAt).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" }));
@@ -293,6 +297,34 @@ $("#form").addEventListener("submit", async (event) => {
   if (data.user.username !== name) { location.replace(`/u/${data.user.username}`); return; }
   $("#form").hidden = true;
   await load();
+});
+// A new picture: cut to a square in the middle, made 128 px and sent as a small JPEG.
+async function choosePhoto(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) return;
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = Object.assign(document.createElement("canvas"), { width: 128, height: 128 });
+  canvas.getContext("2d").drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 128, 128);
+  let image = "";
+  for (const quality of [0.85, 0.7, 0.55, 0.4]) {
+    image = canvas.toDataURL("image/jpeg", quality);
+    if (image.length < 15_000) break;
+  }
+  const { status, data } = await send("/market/me/avatar", "PUT", { image });
+  if (status !== 200) { alert(data?.error ?? "Error"); return; }
+  page.user = data.user;
+  if (account.user) { account.user.avatar = data.user.avatar; renderAccount(); }
+  render();
+}
+$("#avatar-file").addEventListener("change", (event) => { void choosePhoto(event.target.files?.[0]); event.target.value = ""; });
+$("#photo-change").addEventListener("click", () => $("#avatar-file").click());
+$("#photo-remove").addEventListener("click", async () => {
+  const { status, data } = await send("/market/me/avatar", "DELETE");
+  if (status !== 200) return;
+  page.user = data.user;
+  if (account.user) { account.user.avatar = null; renderAccount(); }
+  render();
 });
 $("#delete-account").addEventListener("click", async () => {
   const ask = language === "en"

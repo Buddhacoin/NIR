@@ -11,7 +11,7 @@ const en = {
   navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "About NIR", navMine: "NIR mining",
   search: "Search coins or addresses", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
   volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
-  tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins",
+  tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins", tabWallets: "Popular wallets",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
   nirNoPrice: "no price yet — pioneers are mining", nirMinedShort: "NIR mined", mine: "Mine",

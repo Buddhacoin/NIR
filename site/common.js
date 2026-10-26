@@ -56,6 +56,12 @@ function avatar(user, size = 30) {
   const hue = [...user.username].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
   circle.style.cssText = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.45)}px;background:hsl(${hue} 70% 45%)`;
   circle.textContent = [...(user.displayName || user.username)][0].toUpperCase();
+  // The picture the user chose, over their letter (which shows if it fails to load).
+  if (user.avatar) {
+    const picture = Object.assign(document.createElement("img"), { src: user.avatar, alt: "", loading: "lazy" });
+    picture.addEventListener("error", () => picture.remove(), { once: true });
+    circle.append(picture);
+  }
   return circle;
 }
 function renderAccount() {

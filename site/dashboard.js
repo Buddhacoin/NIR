@@ -502,14 +502,17 @@ function renderDashboard() {
         + '<div class="dash-grid"><section class="card dash-q" data-q="1"></section><section class="card dash-q" data-q="2"></section>'
         + '<section class="card dash-q" data-q="4"></section><section class="card dash-q" data-q="3"></section></div>';
       root.querySelector(".dash-network").addEventListener("change", (event) => { dash.network = event.target.value; renderDashboard(); });
+      // The network choice stands with the profile's buttons, top right.
+      $("#own-actions")?.prepend(root.querySelector(".dash-network"));
       dashBuilt = true;
     }
     const assets = chosenAssets();
     const total = assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0);
     const day = byToken(assets).reduce((sum, row) => sum + (changeOver(row.usd, marketCoin(row.token)?.change24h) ?? 0), 0);
-    const head = root.querySelector(".dash-total");
+    // The total stands next to the owner's name, as on the analytics sites.
+    const head = $("#profile-total") ?? root.querySelector(".dash-total");
     head.replaceChildren(dashNode("b", "", price(total)), " ", signedUsd(day));
-    const select = root.querySelector(".dash-network");
+    const select = document.querySelector(".dash-network");
     const chains = [...new Set(ownAccounts().flatMap((item) => (holdingsOf(item.address)?.assets ?? []).map((asset) => asset.chain)))];
     select.replaceChildren(...[["all", words.allNetworks], ...chains.map((chain) => [chain, CHAINS[chain]?.name ?? chain])].map(([value, text]) => {
       const option = Object.assign(document.createElement("option"), { value, textContent: text });

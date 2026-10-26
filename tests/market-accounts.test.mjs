@@ -154,3 +154,27 @@ test("deleting an account removes its data and signs it out", async () => {
     assert.notEqual((await (await app.call("/market/me", { cookie: again.cookie })).json()).user, null);
   } finally { await app.stop(); }
 });
+
+test("a user chooses a picture, served from its own address and shown with their comments", async () => {
+  const app = await start();
+  try {
+    const { cookie } = await app.signIn();
+    const name = (await (await app.call("/market/me", { cookie })).json()).user.username;
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]).toString("base64");
+    assert.equal((await app.call("/market/me/avatar", { cookie, method: "PUT", body: { image: "data:text/html;base64,PGI+" } })).status, 400);
+    assert.equal((await app.call("/market/me/avatar", { cookie, method: "PUT", body: { image: `data:image/png;base64,${jpeg}` } })).status, 400, "the bytes must match the kind");
+    assert.equal((await app.call("/market/me/avatar", { cookie, method: "PUT", origin: "https://evil.example", body: { image: `data:image/jpeg;base64,${jpeg}` } })).status, 403);
+    const set = await (await app.call("/market/me/avatar", { cookie, method: "PUT", body: { image: `data:image/jpeg;base64,${jpeg}` } })).json();
+    assert.match(set.user.avatar, new RegExp(`^/market/avatar/${name}\\?v=\\d+$`));
+    const picture = await app.call(`/market/avatar/${name}`);
+    assert.equal(picture.headers.get("content-type"), "image/jpeg");
+    assert.equal(picture.headers.get("x-content-type-options"), "nosniff");
+    assert.deepEqual([...Buffer.from(await picture.arrayBuffer())], [0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+    assert.equal((await (await app.call(`/market/u/${name}`)).json()).user.avatar, set.user.avatar);
+    await app.call("/market/coin/bitcoin/comments", { cookie, method: "POST", body: { body: "Hello." } });
+    assert.equal((await (await app.call("/market/coin/bitcoin/comments")).json()).comments[0].author.avatar, set.user.avatar);
+    await app.call("/market/me/avatar", { cookie, method: "DELETE" });
+    assert.equal((await app.call(`/market/avatar/${name}`)).status, 404);
+    assert.equal((await (await app.call("/market/me", { cookie })).json()).user.avatar, null);
+  } finally { await app.stop(); }
+});
