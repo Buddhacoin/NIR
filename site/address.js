@@ -21,7 +21,8 @@ const words = {
   ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Следить за кошельком", tracked: "★ Слежу",
     trackHint: "Кошелёк появится в профиле во вкладке «Отслеживаемые»: видно его баланс и новые переводы.",
     mineHint: "Для своих кошельков: их монеты прибавятся к вашему портфелю в профиле.",
-    satoshi: "Это лишь один из ~22 000 адресов Сатоши Накамото: здесь видна только его доля.", satoshiOpen: "Все монеты Сатоши →",
+    addresses: (count) => (count >= 1000 ? `${(count / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. адресов` : `${count} ${plural(count, "адрес", "адреса", "адресов")}`),
+    entityHint: (name) => `Все адреса: ${name}`, guessed: "по поведению",
     mineDone: "Готово: монеты этого кошелька теперь считаются в вашем портфеле (профиль → «Мои адреса»).",
     trackDone: "Готово: кошелёк добавлен в ваш профиль, вкладка «Отслеживаемые» — там его баланс и новые переводы.", openTracked: "Открыть →",
     mine: "＋ Это мой кошелёк", isMine: "✓ Мой кошелёк", copied: "Скопировано", missing: "Это не адрес кошелька.",
@@ -49,7 +50,8 @@ const words = {
   en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Watch wallet", tracked: "★ Watching",
     trackHint: "The wallet shows in your profile under Tracked, with its balance and new transfers.",
     mineHint: "For your own wallets: their coins add up in your profile's portfolio.",
-    satoshi: "This is only one of Satoshi Nakamoto's ~22,000 addresses: it shows only its own share.", satoshiOpen: "All of Satoshi's coins →",
+    addresses: (count) => `${count >= 1000 ? `${(count / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}k` : count} addresses`,
+    entityHint: (name) => `All addresses: ${name}`, guessed: "by behaviour",
     mineDone: "Done: this wallet's coins now count in your portfolio (profile → My addresses).",
     trackDone: "Done: the wallet is in your profile under Tracked, with its balance and new transfers.", openTracked: "Open →",
     mine: "＋ This is my wallet", isMine: "✓ My wallet", copied: "Copied", missing: "This is not a wallet address.",
@@ -107,14 +109,37 @@ const explorerLinks = () => activeChains().map((chain) => Object.assign(node("a"
 const COLORS = ["#3861fb", "#16c784", "#f3a12f", "#8b7bff", "#ea3943", "#2ee6a6", "#f7931a", "#00b8d9", "#c05cff", "#9aa4b5"];
 
 // --- The head: name, address, total, tags and the buttons.
+// Russian plural: 1 адрес, 2 адреса, 5 адресов.
+const plural = (count, one, few, many) => { const ten = count % 10; const hundred = count % 100;
+  return ten === 1 && hundred !== 11 ? one : ten >= 2 && ten <= 4 && (hundred < 12 || hundred > 14) ? few : many; };
+let entityCount = 0;
+let entityAsked = "";
+async function loadEntityCount() {
+  const entity = data?.name ? entityName(data.name) : "";
+  if (!entity || entity === entityAsked) return;
+  entityAsked = entity;
+  if (entity === "Satoshi Nakamoto") {
+    const answer = await fetch("/market/chain/satoshi").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    entityCount = answer?.keys ?? 0;
+  } else {
+    const answer = await fetch(`/market/chain/entities?names=${encodeURIComponent(entity)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    entityCount = Math.max(answer?.counts?.[entity] ?? 0, WHALES.filter((item) => entityName(item.name) === entity).length);
+  }
+  if (entityCount > 1) renderHead();
+}
 function renderHead() {
   // A well-known wallet keeps the name it has in the popular list, also where the explorer gives none.
   if (!data.name && knownName(address)) data.name = knownName(address);
-  // One of Satoshi Nakamoto's addresses: all his coins are on his page.
-  if (data.name === "Satoshi Nakamoto" && !$("#satoshi-note")) {
-    const note = Object.assign(node("p", "note-bar ok"), { id: "satoshi-note" });
-    note.append(t().satoshi, " ", Object.assign(node("a", "", t().satoshiOpen), { href: entityUrl("Satoshi Nakamoto") }));
-    $("#partial").before(note);
+  // An address of an organisation or a person with several known addresses: beside the name, how many
+  // there are, linking to the page where they all add up (as on the analytics sites).
+  void loadEntityCount();
+  const entityLink = $("#entity-link");
+  entityLink.hidden = !(entityCount > 1);
+  if (entityCount > 1) {
+    entityLink.href = entityUrl(entityName(data.name));
+    entityLink.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>';
+    entityLink.append(node("span", "", t().addresses(entityCount)));
+    entityLink.title = t().entityHint(entityName(data.name));
   }
   const name = data.name ?? (data.contract ? t().contract : t().wallet);
   document.title = t().title(data.name ?? shortAddress(address));
@@ -133,7 +158,9 @@ function renderHead() {
     chip.append(chainDot(item.chain), chainName(item.chain), ...(item.sent ? [node("span", "muted", `· ${t().txs(item.sent)}`)] : []));
     return chip;
   }),
-    ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
+    ...data.tags.map((tag) => node("span", "ex-chip tag", tag)),
+    // The owner's kind from NIR Markets' book; a guess from the wallet's behaviour says so.
+    ...(categoryName(data.category) ? [node("span", "ex-chip tag", data.guessed ? `${categoryName(data.category)} · ${t().guessed}` : categoryName(data.category))] : []));
   $("#track").textContent = saved ? t().tracked : t().track;
   $("#track").classList.toggle("on", Boolean(saved));
   $("#track").title = t().trackHint;

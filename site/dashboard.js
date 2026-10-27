@@ -356,6 +356,8 @@ async function loadDashTransfers() {
   for (const item of ownAccounts()) {
     const data = holdingsOf(item.address);
     if (!data) continue;
+    // An organisation brings its recent transfers with its balances.
+    if (data.kind === "entity") { for (const transfer of data.transfers ?? []) dashLedger.set(transfer.id, transfer); dashCursors.set(`${item.address}|entity`, null); continue; }
     const utxo = data.kind === "utxo";
     const chains = utxo ? ["btc"] : [...new Set([...(data.networks ?? []).filter((entry) => entry.ok && entry.active).map((entry) => entry.chain),
       ...data.assets.map((asset) => asset.chain)])].filter((chain) => chain !== "btc");

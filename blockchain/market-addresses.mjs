@@ -9,6 +9,7 @@
 // analytics sites: the profile's dashboard shows one portfolio at a time.
 //
 // GET /market/me/addresses → { addresses: [{ address, label, mine, portfolioId, addedAt }], portfolios: [{ id, name }] }
+// (an address may be an organisation followed as one wallet: "entity:<name>")
 // PUT/DELETE /market/me/addresses/<address> { label?, mine?, portfolioId? }
 // POST /market/me/wallet-portfolios { name } · PATCH …/wallet-portfolios/<id> { name } · DELETE …/wallet-portfolios/<id>
 import { addressKind } from "./market-chain.mjs";
@@ -65,8 +66,12 @@ export function createAddresses({ db, now }) {
     }
     const match = /^\/market\/me\/addresses\/([^/]+)$/.exec(path);
     if (!match || (method !== "PUT" && method !== "DELETE")) return false;
-    if (!addressKind(match[1])) return json(response, 400, { error: "not an address" }), true;
-    const address = canonical(match[1]);
+    // An organisation followed as one wallet ("entity:Binance"): its addresses stay on the server.
+    let raw = match[1];
+    try { raw = decodeURIComponent(match[1]); } catch {}
+    const entity = /^entity:[^\u0000-\u001f]{2,60}$/.test(raw);
+    if (!entity && !addressKind(match[1])) return json(response, 400, { error: "not an address" }), true;
+    const address = entity ? raw.replace(/\s+/g, " ").trim() : canonical(match[1]);
     if (method === "DELETE") {
       sql("DELETE FROM saved_addresses WHERE user_id = ? AND address = ?").run(user.id, address);
       return json(response, 200, answer(user.id)), true;

@@ -7,7 +7,8 @@
 // answer servers, free public nodes for the other account-based networks
 // (market-rpc.mjs), and mempool.space for the UTXO network. Names are
 // the explorers' open labels (name service records, verified contract names,
-// community tags); there is no private entity database.
+// community tags), kept in NIR Markets' own book with guesses from wallets' behaviour (market-names.mjs,
+// market-behaviour.mjs); an organisation's addresses stay on the server, its pages show it as one wallet.
 //
 // Everything is fetched on demand and cached: the feed for 15 seconds, an
 // address, its history and search for 10 minutes; an explorer that takes
@@ -94,7 +95,7 @@ export function normalizeTransaction(chain, item, native) {
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
   labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null, patoshi = null,
-  crawlGap = 400, crawlPages = 40 } = {}) {
+  crawlGap = 400, crawlPages = 400 } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -383,7 +384,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     const key = address.toLowerCase();
     const first = crawl(address);
     if (!ledger.rows(address, 1).length) await Promise.race([first, new Promise((resolve) => { setTimeout(resolve, 6_000).unref?.(); })]);
-    const rows = ledger.rows(address, 6_000);
+    const rows = ledger.rows(address, 15_000);
     const index = new Map();
     const parties = [];
     const counts = new Map();
@@ -401,6 +402,88 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       const party = named({ address: other });
       return { address: other, name: party.name ?? null, logo: party.logo ?? null };
     }), rows: out };
+  }
+
+  // --- An organisation as one wallet, as on the analytics sites: its holdings added up, its recent transfers
+  // with its own side shown as its name, and how many addresses it has; the addresses themselves stay on
+  // the server (one is shown half hidden), so the book of attributions cannot be copied off the site.
+  // Each organisation's wallets are read in the background, two at a time and gently, and kept half an hour.
+  const ENTITY_TTL = 30 * 60_000;
+  const entityJobs = new Map(); // lower-case name → { name, at, members, holdings: Map, running }
+  const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); });
+  const masked = (address) => (address ? `${address.slice(0, Math.ceil(address.length / 2))}…` : null);
+  function entityJob(name, extra) {
+    const key = name.toLowerCase();
+    let job = entityJobs.get(key);
+    if (!job || now() - job.at > ENTITY_TTL) {
+      job = { name, at: now(), members: [], holdings: new Map(), running: false };
+      entityJobs.delete(key);
+      entityJobs.set(key, job);
+      if (entityJobs.size > 200) entityJobs.delete(entityJobs.keys().next().value);
+    }
+    const seen = new Set(job.members.map((address) => address.toLowerCase()));
+    for (const address of [...extra, ...names.members(name, 300).map((item) => item.address)]) {
+      if (!seen.has(address.toLowerCase())) { seen.add(address.toLowerCase()); job.members.push(address); }
+    }
+    if (!job.running && job.holdings.size < job.members.length) void fillEntity(job);
+    return job;
+  }
+  async function fillEntity(job) {
+    job.running = true;
+    let next = 0;
+    const worker = async () => {
+      while (next < job.members.length) {
+        const address = job.members[next++];
+        if (job.holdings.has(address)) continue;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try { job.holdings.set(address, await holdings(address)); break; } catch { await pause(10_000); }
+        }
+        if (!job.holdings.has(address)) job.holdings.set(address, null);
+        await pause(1_000);
+      }
+    };
+    await Promise.all([worker(), worker()]).catch(() => {});
+    job.running = false;
+  }
+  // The organisation's recent transfers from the store: its own side carries its name, not an address.
+  function entityTransfers(name, members, limit = 60) {
+    const own = new Set(members.map((address) => address.toLowerCase()));
+    const self = { address: `entity:${name}`, name };
+    const seen = new Set();
+    return members.slice(0, 80).flatMap((address) => ledger?.rows(address, 40) ?? [])
+      .filter((row) => !seen.has(row.id) && seen.add(row.id) && own.has(row.from) !== own.has(row.to))
+      .sort((left, right) => right.time - left.time).slice(0, limit)
+      .map((row) => ({ id: row.id, chain: row.chain, time: row.time, amount: row.amount, usd: row.usd,
+        token: { address: null, symbol: row.symbol ?? "", name: row.symbol ?? "", icon: null, price: null },
+        from: own.has(row.from) ? self : named({ address: row.from }), to: own.has(row.to) ? self : named({ address: row.to }) }));
+  }
+  function entitySummary(name, extra = []) {
+    const category = names.entityCategory(name);
+    // Satoshi Nakamoto: his early blocks' coins, read key by key (market-patoshi.mjs).
+    if (/^satoshi nakamoto$/i.test(name) && patoshi) {
+      const coins = patoshi.summary();
+      const rate = nativePrice(UTXO.native);
+      const genesis = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+      return { name, category: "individual", count: coins.keys, loaded: coins.checked, done: coins.done, sample: masked(genesis),
+        total: rate === null ? null : coins.estimate * rate, assets: [{ chain: UTXO.id, token: { address: null, symbol: UTXO.native, name: UTXO.native, icon: null, price: rate },
+          amount: coins.estimate, usd: rate === null ? null : coins.estimate * rate }], transfers: entityTransfers(name, [genesis]) };
+    }
+    const job = entityJob(name, extra);
+    const assets = new Map();
+    for (const data of job.holdings.values()) {
+      for (const asset of data?.assets ?? []) {
+        const key = `${asset.chain}:${String(asset.token.address ?? asset.token.symbol).toLowerCase()}`;
+        const entry = assets.get(key) ?? { chain: asset.chain, token: asset.token, amount: 0, usd: 0 };
+        entry.amount += asset.amount;
+        entry.usd += asset.usd ?? 0;
+        assets.set(key, entry);
+      }
+    }
+    const list = [...assets.values()].sort((left, right) => right.usd - left.usd);
+    const logo = names.members(name, 300).find((item) => item.logo)?.logo ?? null;
+    return { name, category, logo, count: job.members.length, loaded: job.holdings.size, done: !job.running && job.holdings.size >= job.members.length,
+      sample: masked(job.members[0]), total: list.reduce((sum, asset) => sum + asset.usd, 0), assets: list.slice(0, 100),
+      transfers: entityTransfers(name, job.members) };
   }
 
   // --- The network coin's balance by day, from the explorer.
@@ -512,7 +595,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   const named = (party) => {
     if (!party?.address) return party;
     const open = names.name(party.address);
-    const withOpen = open ? { ...party, name: party.name ?? open.name, logo: open.logo, ...(open.entity ? { entity: open.entity } : {}) } : party;
+    const withOpen = open ? { ...party, name: party.name ?? open.name, logo: open.logo, ...(open.entity ? { entity: open.entity } : {}),
+      ...(open.category ? { category: open.category, ...(open.guessed ? { guessed: true } : {}) } : {}) } : party;
     const name = labelFor(party.address);
     return name ? { ...withOpen, name, tags: ["NIR Markets", ...(party.tags ?? []).filter((tag) => tag !== "NIR Markets")] } : withOpen;
   };
@@ -557,7 +641,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         if (ids?.contract) page.items = page.items.filter((item) => !ids.contract.has(String(item.address).toLowerCase()));
         return reply(response, 200, page, 3600), true;
       }
-      // GET /market/chain/entity?name=…: an organisation's known wallets (the open labels' book);
+      // GET /market/chain/entity?name=…&extra=…: an organisation as one wallet (entitySummary: its holdings added up, its transfers, how many addresses);
       // GET /market/chain/entities?names=a,b,… (60 at most): how many each has.
       // GET /market/chain/satoshi: Satoshi Nakamoto's early coins (market-patoshi.mjs).
       if (path === "/market/chain/satoshi") {
@@ -566,7 +650,10 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       }
       if (path === "/market/chain/entity") {
         const name = (url.searchParams.get("name") ?? "").trim().slice(0, 60);
-        return reply(response, 200, { name, members: names.members(name, 80) }, 600), true;
+        if (name.length < 2) return reply(response, 400, { error: "a name, please" }), true;
+        // The popular list's public wallets of the organisation, which the page knows already, may join in.
+        const extra = (url.searchParams.get("extra") ?? "").split(",").filter((address) => addressKind(address)).slice(0, 30);
+        return reply(response, 200, entitySummary(name, extra), 5), true;
       }
       if (path === "/market/chain/entities") {
         const wanted = (url.searchParams.get("names") ?? "").split(",").map((item) => item.trim()).filter((item) => item.length >= 2 && item.length <= 60).slice(0, 60);
@@ -598,7 +685,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
             open = { name: profile.username, entity: null, site: profile.x ? `https://x.com/${profile.x}` : null, logo: profile.picture };
           }
         }
-        const labelled = open ? { ...data, name: data.name ?? open.name, logo: open.logo, site: open.site } : data;
+        const labelled = open ? { ...data, name: data.name ?? open.name, logo: open.logo, site: open.site,
+          category: open.category ?? null, ...(open.guessed ? { guessed: true } : {}) } : data;
         // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
         return reply(response, 200, own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled, 5), true;
       }

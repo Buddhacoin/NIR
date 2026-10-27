@@ -25,7 +25,7 @@ const words = {
     expand: "Expand links", collapse: "Collapse links", open: "Open wallet", center: "Make it the centre", title: (name) => `${name} — wallet links on NIR Markets` },
 };
 const t = () => words[language === "en" ? "en" : "ru"];
-const LIMITS = [25, 50, 100];
+const LIMITS = [25, 50, 100, 250, 500, 1000];
 const MINIMUMS = [0, 1, 100, 1_000, 10_000, 100_000];
 const ZERO = /^0x0{40}$/i;
 const SVG = "http://www.w3.org/2000/svg";
@@ -41,7 +41,7 @@ function money(value) {
 const root = new URLSearchParams(location.search).get("address")?.trim() ?? "";
 const utxo = /^(?:bc1|[13])/.test(root);
 const lower = (address) => String(address ?? "").toLowerCase();
-const filters = { limit: 25, order: "usd", min: 1, chain: "all" };
+const filters = { limit: 100, order: "usd", min: 1, chain: "all" };
 let chains = []; // networks the root wallet is active on
 let rootInfo = null;
 const ledger = new Map(); // transfer id → transfer, every wallet's loaded so far
@@ -53,6 +53,7 @@ let shown = { nodes: [], edges: [] };
 let selected = null;
 let failure = "";
 let touched = false; // the visitor moved the picture: it no longer fits itself to the bubbles
+let ticks = 0;
 let fitted = false; // the picture was fitted once this layout settled
 
 // --- Data: a wallet's transfers on the networks, a few pages each.
@@ -300,8 +301,9 @@ function step() {
   }
   place();
   warmth *= 0.97;
-  // Until the visitor moves it, the picture fits itself to the bubbles as they settle.
-  if (!touched && !fitted && warmth < 0.15) { fitted = true; fit(); }
+  // Until the visitor moves it, the picture keeps fitting itself to the bubbles as they spread and settle.
+  ticks += 1;
+  if (!touched && (ticks % 12 === 0 || (!fitted && warmth < 0.15))) { if (warmth < 0.15) fitted = true; fit(); }
   if (warmth > 0.02) frame = requestAnimationFrame(step);
 }
 
@@ -309,7 +311,7 @@ function step() {
 const view = { x: 0, y: 0, k: 1 };
 const applyView = () => $("#view").setAttribute("transform", `translate(${view.x.toFixed(1)} ${view.y.toFixed(1)}) scale(${view.k.toFixed(3)})`);
 function zoomAt(factor, cx, cy) {
-  const k = Math.max(0.25, Math.min(4, view.k * factor));
+  const k = Math.max(0.08, Math.min(4, view.k * factor));
   view.x = cx - ((cx - view.x) * k) / view.k;
   view.y = cy - ((cy - view.y) * k) / view.k;
   view.k = k;
@@ -323,7 +325,7 @@ function fit() {
   const ys = points.map((at) => at.y);
   const width = Math.max(200, Math.max(...xs) - Math.min(...xs) + 120);
   const height = Math.max(200, Math.max(...ys) - Math.min(...ys) + 120);
-  view.k = Math.max(0.25, Math.min(1.4, Math.min(box.width / width, box.height / height)));
+  view.k = Math.max(0.08, Math.min(1.4, Math.min(box.width / width, box.height / height)));
   view.x = box.width / 2 - ((Math.max(...xs) + Math.min(...xs)) / 2) * view.k;
   view.y = box.height / 2 - ((Math.max(...ys) + Math.min(...ys)) / 2) * view.k;
   applyView();
