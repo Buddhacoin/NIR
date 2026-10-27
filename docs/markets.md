@@ -331,8 +331,23 @@ its page (the explorer's coin lists, `coinOfSymbol`). The page picks the period 
 ready filters (gainers, losers, open interest rising, high funding, volatile),
 a minimum volume and a search, colours each change by its size and
 refreshes every half minute; on a phone it keeps the coin with the chosen
-period's change under it, the price and the volume. Order book densities,
-arbitrage, liquidations and listings come next.
+period's change under it, the price and the volume. Arbitrage, liquidations and listings come next.
+
+`/screener/densities/` is the order-book density screener
+(`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit
+orders ("walls") in the perpetual futures books of Binance, Bybit, OKX and
+Bitget, read without a key. Each exchange's books are read one after another
+at its own pace, well inside its public limits (about one a second on Binance,
+whose deep books weigh more, three a second elsewhere), the trend screener's
+100 busiest coins first, so each book is read about once a minute. A level
+within 5% of the price is a wall when it is worth at least $100K and a share
+of the coin's day volume, and at least four times the average level near
+the price; the biggest five a side are kept. A wall keeps the time its price
+was first seen, so the page shows how long it has stood. The page filters
+by side, exchange, size, distance and age, draws a bar behind each size,
+links each coin to its page and refreshes every ten seconds; on a phone it
+keeps the coin with the side and exchange under it, the size and the
+distance.
 
 ## Wallets and transfers
 

@@ -362,3 +362,27 @@ test("coin pages fetched before are kept on disk and answer at once after a rest
     assert.equal((await response.json()).id, "bitcoin");
   } finally { await new Promise((resolve) => second.service.server.close(resolve)); }
 });
+
+test("the density screener finds the big resting orders in each exchange's book and keeps how long they stand", async () => {
+  const { createDensities, findWalls, EXCHANGES } = await import("../blockchain/market-densities.mjs");
+  const book = { bids: [[99.5, 1], [99, 1], [98.5, 1], [98, 1], [97.5, 1], [97, 1], [96, 50], [80, 900]], asks: [[101, 1], [102, 1], [103, 2], [104, 1]] };
+  const walls = findWalls(book, { minimum: 1_000 });
+  assert.equal(walls.length, 1, "only the level many times the average, near the price and big enough");
+  assert.deepEqual([walls[0].side, walls[0].price, walls[0].usd], ["bid", 96, 4_800]);
+  assert.ok(Math.abs(walls[0].distance - ((100.25 - 96) / 100.25) * 100) < 1e-9, "distance from the middle of the spread");
+  // Each exchange's own answer reads into the same book; OKX's contracts become coins.
+  assert.deepEqual(EXCHANGES.bybit.read({ result: { b: [["10", "2"]], a: [["11", "3"]] } }), { bids: [[10, 2]], asks: [[11, 3]] });
+  assert.deepEqual(EXCHANGES.okx.read({ data: [{ bids: [["10", "5", "0", "1"]], asks: [["11", "5", "0", "1"]] }] }, "ZEUS", new Map([["ZEUS", 0.1]])),
+    { bids: [[10, 0.5]], asks: [[11, 0.5]] });
+
+  let clock = 1_700_000_000_000;
+  const answer = { bids: [["99.5", "1"], ["99", "1"], ["98.5", "1"], ["98", "1"], ["97", "1"], ["96", "5000"]], asks: [["101", "1"], ["102", "1"], ["103", "1"]] };
+  const densities = createDensities({ get: async () => answer, now: () => clock, floor: 100_000, names: ["binance"],
+    coins: () => [{ symbol: "ZEUS", volume: 1_000_000 }], coinOf: (symbol) => (symbol === "ZEUS" ? { id: "zeus", image: null } : null) });
+  assert.equal(await densities.read("binance", "ZEUS"), true);
+  clock += 120_000;
+  await densities.read("binance", "ZEUS");
+  const [wall] = densities.snapshot().rows;
+  assert.deepEqual([wall.symbol, wall.exchange, wall.side, wall.price, wall.usd, wall.id], ["ZEUS", "binance", "bid", 96, 480_000, "zeus"]);
+  assert.equal(clock - wall.since, 120_000, "the wall has stood since the first reading");
+});

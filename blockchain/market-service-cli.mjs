@@ -11,6 +11,7 @@ import { createChain, fetchExplorer } from "./market-chain.mjs";
 import { createOpenSea } from "./market-opensea.mjs";
 import { createScreener } from "./market-screener.mjs";
 import { createLedger } from "./market-ledger.mjs";
+import { createDensities } from "./market-densities.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
 
@@ -54,6 +55,9 @@ const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((c
 // The screener keeps its price snapshots next to the accounts, so a restart does not empty the short-term columns.
 const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol), file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "screener.json") : null,
   read: (path) => readFileSync(path, "utf8"), write: (path, text) => writeFileSync(path, text) });
+// The density screener reads the exchanges' futures order books, the screener's busiest coins first.
+const densities = fixture ? null : createDensities({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol),
+  coins: () => screener?.snapshot().rows ?? [] });
 const service = createMarketService(fixture ? {
   accounts, chain,
   fetch: async (url) => {
@@ -63,10 +67,11 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts, chain, screener, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
+} : { accounts, chain, screener, densities, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 chain.warm();
 screener?.start();
+densities?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

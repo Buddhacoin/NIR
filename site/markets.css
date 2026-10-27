@@ -1178,3 +1178,16 @@ html.touch { overscroll-behavior-y: contain; }
 
 #theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; display: block; }
 #theme { color: var(--text); }
+
+/* The screeners' tabs, and the density table (densities.js): a bar behind each size, green for bids, red for asks. */
+.sc-tabs { display: flex; gap: 6px; margin: 0 0 12px; }
+.sc-tabs a { padding: 7px 14px; border-radius: 999px; color: var(--muted); font-weight: 700; }
+.sc-tabs a.on { background: var(--soft); color: var(--text); }
+.dn-table .dn-size { font-weight: 750; background: linear-gradient(to left, var(--dn-color) calc(var(--dn) * 100%), transparent 0); }
+.dn-table tr.dn-bid { --dn-color: color-mix(in srgb, var(--up) 18%, transparent); }
+.dn-table tr.dn-ask { --dn-color: color-mix(in srgb, var(--down) 18%, transparent); }
+@media (max-width: 700px) {
+  /* A phone keeps the coin (with the order's side under it), the size and the distance. */
+  .dn-table th, .dn-table td { display: table-cell !important; }
+  .dn-table :is(th, td):is(:nth-child(1), :nth-child(3), :nth-child(4), :nth-child(5), :nth-child(8), :nth-child(9)) { display: none !important; }
+}
