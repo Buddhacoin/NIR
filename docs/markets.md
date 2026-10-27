@@ -204,6 +204,14 @@ profile's buttons:
 Choosing an account or a network (top right) narrows every quadrant. The
 menu below (Activity, Comments, Watchlist, My addresses, Tracked) stays.
 
+Own wallets on the profile sit in named portfolios ("Main", "Trading"…, up to
+20; `POST /market/me/wallet-portfolios`, `PATCH`/`DELETE …/wallet-portfolios/<id>`):
+the dashboard shows one portfolio at a time, a bar over it switches between
+them, makes a new one, renames or deletes the chosen one (its wallets stay
+under Tracked), and "Add +" puts a wallet into the chosen portfolio. Own
+wallets saved before portfolios existed join a first one. "Watch wallet" on
+a wallet's page saves it under Tracked and links there.
+
 ## Portfolio
 
 `/portfolio/` follows the market sites' portfolio. A visitor makes named

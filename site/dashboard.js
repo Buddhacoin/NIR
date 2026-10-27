@@ -18,7 +18,9 @@ const dashWords = {
     others: (count) => `(+${count})`, minUsd: "USD ≥ $0,10", archiveFrom: "Дата 1", archiveTo: "Дата 2", change: "Изменение",
     historyNote: (date) => `По загруженным переводам с ${date}, в сегодняшних ценах.`, archiveNote: "Количества восстановлены по загруженным переводам; стоимость — в сегодняшних ценах.",
     pnlNote: "Прибыль и убыток — по изменению цен за 24 часа и 7 дней на сегодняшние количества.", total: "Итого",
-    hint: "Добавьте свои кошельки кнопкой «+» — здесь появятся портфель, история, транзакции и прибыль по всем сетям." },
+    hint: "Добавьте свои кошельки кнопкой «+» — здесь появятся портфель, история, транзакции и прибыль по всем сетям.",
+    newPortfolio: "＋ Новый портфель", askPortfolio: "Название портфеля (например «Долгосрок» или «Трейдинг»)", rename: "Переименовать", removePortfolio: "Удалить портфель",
+    confirmRemove: (name) => `Удалить портфель «${name}»? Кошельки из него останутся в «Отслеживаемых».`, firstPortfolio: "Основной" },
   en: { portfolio: "Portfolio", chains: "Holdings by chain", archive: "Portfolio archive", history: "Balances history", pnl: "Profit & loss",
     transactions: "Transactions", inflow: "Inflow", outflow: "Outflow", accounts: "All accounts", allNetworks: "All networks",
     asset: "Asset", price: "Price", holdings: "Holdings", value: "Value", network: "Network", share: "Share", account: "Account",
@@ -30,18 +32,22 @@ const dashWords = {
     others: (count) => `(+${count})`, minUsd: "USD ≥ $0.10", archiveFrom: "Date 1", archiveTo: "Date 2", change: "Change",
     historyNote: (date) => `From the loaded transfers since ${date}, at today's prices.`, archiveNote: "Amounts are rebuilt from the loaded transfers; values are at today's prices.",
     pnlNote: "Profit and loss from the 24-hour and 7-day price change on today's amounts.", total: "Total",
-    hint: "Add your wallets with the + button: the portfolio, history, transactions and profit across all networks show here." },
+    hint: "Add your wallets with the + button: the portfolio, history, transactions and profit across all networks show here.",
+    newPortfolio: "+ New portfolio", askPortfolio: "Portfolio name (say “Long term” or “Trading”)", rename: "Rename", removePortfolio: "Delete portfolio",
+    confirmRemove: (name) => `Delete the portfolio “${name}”? Its wallets stay under Tracked.`, firstPortfolio: "Main" },
 };
 const dw = () => dashWords[language === "en" ? "en" : "ru"];
 const dashNode = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
-const dash = { q1: "portfolio", q2: "history", q3: "all", range: 30, account: null, network: "all", minUsd: true,
+const dash = { q1: "portfolio", q2: "history", q3: "all", range: 30, account: null, network: "all", minUsd: true, portfolio: null,
   tsort: { key: "time", dir: -1 }, from: "", to: "" };
 const dashLedger = new Map(); // transfer id → the transfer, from any own account
 const dashCursors = new Map(); // "address|chain" → the next page's cursor, null once the last page is in
 let dashLoading = false;
 let dashBuilt = false;
 
-const ownAccounts = () => (saved ?? []).filter((item) => item.mine);
+// The chosen portfolio (the first one until another is picked), and its wallets.
+const currentPortfolio = () => walletPortfolios.find((item) => item.id === dash.portfolio) ?? walletPortfolios[0] ?? null;
+const ownAccounts = () => (saved ?? []).filter((item) => item.mine && (!currentPortfolio() || item.portfolioId === currentPortfolio().id));
 const chosenAccounts = () => ownAccounts().filter((item) => !dash.account || item.address === dash.account);
 const inNetwork = (chain) => dash.network === "all" || chain === dash.network;
 const marketCoin = (token) => (market?.coins ?? []).find((coin) => (token.coinId ? coin.id === token.coinId : coin.symbol === token.symbol)) ?? null;
@@ -402,6 +408,7 @@ function renderAccounts(box) {
       const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(item.address)}`, "DELETE");
       if (status !== 200) return;
       saved = data.addresses;
+      walletPortfolios = data.portfolios ?? walletPortfolios;
       if (dash.account === item.address) dash.account = null;
       renderDashboard();
       if (typeof renderView === "function") renderView();
@@ -476,12 +483,56 @@ function addBox() {
   return dashAdd;
 }
 async function addAccount(address, label) {
-  const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: true, label });
+  // The first wallet makes the first portfolio.
+  if (!currentPortfolio()) {
+    const made = await send("/market/me/wallet-portfolios", "POST", { name: dw().firstPortfolio });
+    if (made.status !== 200) return made.data?.error ?? dw().badAddress;
+    walletPortfolios = made.data.portfolios;
+    dash.portfolio = made.data.id;
+  }
+  const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: true, label, portfolioId: currentPortfolio().id });
   if (status !== 200) return data?.error ?? dw().badAddress;
   saved = data.addresses;
+  walletPortfolios = data.portfolios ?? walletPortfolios;
   renderDashboard();
   if (typeof renderView === "function") renderView();
   return null;
+}
+
+// The portfolios bar over the quadrants: each named portfolio, a new one, and rename / delete for the chosen one.
+async function changePortfolios(path, method, body) {
+  const { status, data } = await send(path, method, body);
+  if (status !== 200) { alert(data?.error ?? "error"); return null; }
+  saved = data.addresses;
+  walletPortfolios = data.portfolios;
+  dashLedger.clear();
+  dashCursors.clear();
+  dash.account = null;
+  renderDashboard();
+  if (typeof renderView === "function") renderView();
+  return data;
+}
+function renderPortfolios(bar) {
+  const words = dw();
+  const chosen = currentPortfolio();
+  const chip = (label, on, click, className = "") => { const button = dashNode("button", `${className}${on ? " on" : ""}`, label); button.type = "button"; button.addEventListener("click", click); return button; };
+  bar.replaceChildren(...walletPortfolios.map((item) => chip(item.name, item.id === chosen?.id, () => {
+    dash.portfolio = item.id; dash.account = null; dashLedger.clear(); dashCursors.clear(); renderDashboard();
+  })), chip(words.newPortfolio, false, async () => {
+    const name = prompt(words.askPortfolio)?.trim();
+    if (!name) return;
+    const data = await changePortfolios("/market/me/wallet-portfolios", "POST", { name });
+    if (data) { dash.portfolio = data.id; renderDashboard(); }
+  }, "dash-new"), ...(chosen ? [chip("✎", false, async () => {
+    const name = prompt(words.askPortfolio, chosen.name)?.trim();
+    if (name) await changePortfolios(`/market/me/wallet-portfolios/${chosen.id}`, "PATCH", { name });
+  }, "dash-icon"), chip("🗑", false, async () => {
+    if (!confirm(words.confirmRemove(chosen.name))) return;
+    dash.portfolio = null;
+    await changePortfolios(`/market/me/wallet-portfolios/${chosen.id}`, "DELETE");
+  }, "dash-icon")] : []));
+  bar.querySelectorAll(".dash-icon")[0]?.setAttribute("title", words.rename);
+  bar.querySelectorAll(".dash-icon")[1]?.setAttribute("title", words.removePortfolio);
 }
 
 // Draws the four quadrants; only on the owner's own profile.
@@ -499,7 +550,7 @@ function renderDashboard() {
     const words = dw();
     if (!dashBuilt) {
       root.innerHTML = '<div class="dash-top"><div class="dash-total"></div><select class="dash-network" aria-label="network"></select></div>'
-        + '<div class="dash-grid"><section class="card dash-q" data-q="1"></section><section class="card dash-q" data-q="2"></section>'
+        + '<div class="dash-portfolios"></div><div class="dash-grid"><section class="card dash-q" data-q="1"></section><section class="card dash-q" data-q="2"></section>'
         + '<section class="card dash-q" data-q="4"></section><section class="card dash-q" data-q="3"></section></div>';
       root.querySelector(".dash-network").addEventListener("change", (event) => { dash.network = event.target.value; renderDashboard(); });
       // The network choice stands with the profile's buttons, top right.
@@ -519,6 +570,7 @@ function renderDashboard() {
       option.selected = value === dash.network;
       return option;
     }));
+    renderPortfolios(root.querySelector(".dash-portfolios"));
     renderPortfolio(root.querySelector('[data-q="1"]'));
     renderHistory(root.querySelector('[data-q="2"]'));
     renderAccounts(root.querySelector('[data-q="4"]'));

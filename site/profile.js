@@ -57,10 +57,12 @@ function coinLink(id) {
 
 // --- Saved wallet addresses: own ones add up into one portfolio; tracked ones are bookmarks.
 let saved = null;
+let walletPortfolios = []; // the owner's named portfolios of own wallets ({ id, name }), for dashboard.js
 const holdings = new Map(); // address → the explorer's answer, or "loading"
 async function loadSaved() {
   const answer = await fetch("/market/me/addresses", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
   saved = answer?.addresses ?? [];
+  walletPortfolios = answer?.portfolios ?? [];
   renderView();
   renderDashboard(); // dashboard.js
 }
@@ -83,7 +85,7 @@ function addressRow(item) {
   const drop = Object.assign(document.createElement("button"), { type: "button", className: "pill", textContent: t().remove });
   drop.addEventListener("click", async () => {
     const { status, data: answer } = await send(`/market/me/addresses/${encodeURIComponent(item.address)}`, "DELETE");
-    if (status === 200) { saved = answer.addresses; renderView(); renderDashboard(); }
+    if (status === 200) { saved = answer.addresses; walletPortfolios = answer.portfolios ?? walletPortfolios; renderView(); renderDashboard(); }
   });
   row.append(link, value, drop);
   return row;
@@ -113,6 +115,7 @@ function renderWallets(box) {
     const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: true, label: label.value.trim() });
     if (status !== 200) { error.textContent = data.error ?? t().badAddress; return; }
     saved = data.addresses;
+    walletPortfolios = data.portfolios ?? walletPortfolios;
     draft.address = draft.label = "";
     renderView();
     renderDashboard();

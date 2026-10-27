@@ -1206,3 +1206,9 @@ html.touch { overscroll-behavior-y: contain; }
 .copy-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .copy-link.done { color: var(--up); }
 .chain-dot svg { width: 100%; height: 100%; }
+/* The profile's named portfolios of own wallets (dashboard.js renderPortfolios). */
+.dash-portfolios { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+.dash-portfolios button { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-weight: 700; cursor: pointer; }
+.dash-portfolios button.on { border-color: var(--accent); background: var(--tint); color: var(--text); }
+.dash-portfolios .dash-new { border-style: dashed; color: var(--accent); }
+.dash-portfolios .dash-icon { padding: 6px 10px; }
