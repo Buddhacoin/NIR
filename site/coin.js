@@ -4,6 +4,7 @@
 // markets where the coin trades. Shared helpers are in common.js.
 
 const en = {
+  docTitle: "Coin — NIR Markets",
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
@@ -12,7 +13,7 @@ const en = {
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
-  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", tabCommunity: "Discussion", community: "Discussion",
+  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Exchanges", tabCommunity: "Discussion", community: "Discussion",
   tradesTitle: "Live trades", trTime: "Time", trType: "Type", trPrice: "Price (USD)", trTotal: "Total", trAmount: "Amount", trMaker: "Wallet",
   sortLatest: "Latest", sortTop: "Top", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
   d1: "24h", d7: "7D", d30: "1M", d90: "3M", d365: "1Y", mPrice: "Price", mCap: "Market cap",
@@ -59,7 +60,8 @@ const NETWORKS = { ethereum: "ethereum", "binance-smart-chain": "binancecoin", s
   "the-open-network": "the-open-network" };
 
 const COIN_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/; // as in blockchain/market-service.mjs
-const id = decodeURIComponent(location.pathname.split("/")[2] ?? "").toLowerCase();
+// /coin/<id>, or an older link's /coin/?id=<id>.
+const id = decodeURIComponent(location.pathname.split("/")[2] || new URLSearchParams(location.search).get("id") || "").toLowerCase();
 let coin = null;
 let chart = null;
 let chartFailed = false;
@@ -232,7 +234,9 @@ function convert(from) {
   if (!coin?.price) return;
   if (from === "coin") {
     const value = parse($("#conv-coin").value);
-    $("#conv-usd").value = Number.isFinite(value) ? (value * coin.price).toLocaleString(locale(), { maximumFractionDigits: 2, useGrouping: false }) : "";
+    const usd = value * coin.price;
+    // Cents for the usual sums; the significant digits for the tiny ones (a coin priced in fractions of a cent).
+    $("#conv-usd").value = Number.isFinite(value) ? usd.toLocaleString(locale(), Math.abs(usd) < 1 ? { maximumSignificantDigits: 6, useGrouping: false } : { maximumFractionDigits: 2, useGrouping: false }) : "";
   } else {
     const value = parse($("#conv-usd").value);
     $("#conv-coin").value = Number.isFinite(value) ? (value / coin.price).toLocaleString(locale(), { maximumSignificantDigits: 8, useGrouping: false }) : "";

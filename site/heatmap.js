@@ -33,41 +33,6 @@ let spot = null;
 let futures = null;
 let coins = new Map(); // symbol → market coin, for the futures tiles' logos and links
 
-// --- The squarified treemap: rows of tiles laid along the shorter side, each row as close to square as it gets.
-function squarify(items, x, y, width, height) {
-  const total = items.reduce((sum, item) => sum + item.weight, 0);
-  const scale = (width * height) / total;
-  const rest = items.map((item) => ({ ...item, area: item.weight * scale }));
-  const tiles = [];
-  const worst = (row, side) => {
-    const sum = row.reduce((all, item) => all + item.area, 0);
-    const max = Math.max(...row.map((item) => item.area));
-    const min = Math.min(...row.map((item) => item.area));
-    return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
-  };
-  let box = { x, y, width, height };
-  while (rest.length) {
-    const side = Math.min(box.width, box.height);
-    const row = [rest.shift()];
-    while (rest.length && worst([...row, rest[0]], side) <= worst(row, side)) row.push(rest.shift());
-    const sum = row.reduce((all, item) => all + item.area, 0);
-    if (box.width >= box.height) {
-      // A column on the left.
-      const columnWidth = sum / box.height;
-      let top = box.y;
-      for (const item of row) { const h = item.area / columnWidth; tiles.push({ ...item, x: box.x, y: top, width: columnWidth, height: h }); top += h; }
-      box = { x: box.x + columnWidth, y: box.y, width: box.width - columnWidth, height: box.height };
-    } else {
-      // A row along the top.
-      const rowHeight = sum / box.width;
-      let left = box.x;
-      for (const item of row) { const w = item.area / rowHeight; tiles.push({ ...item, x: left, y: box.y, width: w, height: rowHeight }); left += w; }
-      box = { x: box.x, y: box.y + rowHeight, width: box.width, height: box.height - rowHeight };
-    }
-  }
-  return tiles;
-}
-
 // A stablecoin: a known one, or a coin that holds a dollar (within 3%, under 1% over the week).
 const isStable = (coin) => STABLE.has(coin.symbol) || (coin.price > 0.97 && coin.price < 1.03 && Math.abs(coin.change7d ?? coin.ch24h ?? 99) < 1);
 function items() {
@@ -100,11 +65,32 @@ function render() {
   const known = list.filter((item) => item.change !== null);
   const average = known.reduce((sum, item) => sum + item.change, 0) / (known.length || 1);
   $("#note").textContent = t().note(known.filter((item) => item.change > 0).length, known.filter((item) => item.change < 0).length, percent(average));
+  draw(list, full);
+}
+// Zoom (the wheel, a pinch or the buttons) and drag: the map is laid out again at the zoomed size, so a small
+// coin's tile grows big enough for its name and change, and only the part in view is drawn.
+const view = { zoom: 1, x: 0, y: 0 };
+let last = null;
+function draw(list = last?.list, full = last?.full) {
+  if (!list) return;
+  last = { list, full };
+  const map = $("#map");
   // A square root keeps the biggest coin from taking the whole map, so the rest stay readable.
   const width = map.clientWidth;
   const height = Math.round(width < 600 ? width * 1.7 : Math.min(760, width * 0.56));
   map.style.height = `${height}px`;
-  const tiles = squarify(list.map((item) => ({ ...item, weight: Math.sqrt(item.size) })).sort((left, right) => right.weight - left.weight), 0, 0, width, height);
+  view.x = Math.max(0, Math.min(view.x, width * view.zoom - width));
+  view.y = Math.max(0, Math.min(view.y, height * view.zoom - height));
+  map.classList.toggle("zoomed", view.zoom > 1);
+  $("#zoom-reset").hidden = view.zoom === 1;
+  const tiles = squarify(list.map((item) => ({ ...item, weight: Math.sqrt(item.size) })).sort((left, right) => right.weight - left.weight),
+    -view.x, -view.y, width * view.zoom, height * view.zoom).filter((tile) => tile.x < width && tile.y < height && tile.x + tile.width > 0 && tile.y + tile.height > 0)
+    // Each tile cut to the part in view, so its name sits in the middle of what is seen.
+    .map((tile) => {
+      const x = Math.max(0, tile.x);
+      const y = Math.max(0, tile.y);
+      return { ...tile, x, y, width: Math.min(width, tile.x + tile.width) - x, height: Math.min(height, tile.y + tile.height) - y };
+    });
   map.replaceChildren(...tiles.map((tile) => {
     const box = node(tile.coin ? "a" : "div", `hm-tile ${tile.change === null ? "" : tile.change >= 0 ? "up" : "down"}`);
     if (tile.coin) box.href = coinUrl(tile.coin);
@@ -119,11 +105,69 @@ function render() {
       box.append(node("b", "", tile.symbol));
       if (tile.height > 38) box.append(node("span", "", percent(tile.change)));
     }
-    box.addEventListener("pointerenter", () => showTip(tile, box));
+    box.addEventListener("pointerenter", (event) => { if (event.pointerType === "mouse" && !drag) showTip(tile, box); });
     box.addEventListener("pointerleave", () => { $("#tip").hidden = true; });
     return box;
   }));
 }
+// Zoom to `zoom`, keeping the point (x, y) of the map (from its top left corner) where it is.
+function zoomTo(zoom, x = $("#map").clientWidth / 2, y = $("#map").clientHeight / 2) {
+  const next = Math.max(1, Math.min(8, zoom));
+  view.x = (view.x + x) / view.zoom * next - x;
+  view.y = (view.y + y) / view.zoom * next - y;
+  view.zoom = next;
+  $("#tip").hidden = true;
+  draw();
+}
+const mapBox = $("#map");
+mapBox.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const rect = mapBox.getBoundingClientRect();
+  zoomTo(view.zoom * Math.exp(-event.deltaY * (event.ctrlKey ? 0.008 : 0.0012)), event.clientX - rect.left, event.clientY - rect.top);
+}, { passive: false });
+// Dragging moves a zoomed map; two fingers zoom. A drag is not a click on a tile.
+const pointers = new Map();
+let drag = null;
+let dragged = false;
+mapBox.addEventListener("pointerdown", (event) => {
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (pointers.size === 1) { drag = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y }; dragged = false; }
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    drag = { pinch: Math.hypot(a.x - b.x, a.y - b.y), zoom: view.zoom };
+  }
+});
+mapBox.addEventListener("pointermove", (event) => {
+  if (!pointers.has(event.pointerId) || !drag) return;
+  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  const rect = mapBox.getBoundingClientRect();
+  if (pointers.size === 2 && drag.pinch) {
+    const [a, b] = [...pointers.values()];
+    dragged = true;
+    zoomTo(drag.zoom * Math.hypot(a.x - b.x, a.y - b.y) / drag.pinch, (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top);
+    return;
+  }
+  if (view.zoom === 1 || drag.pinch) return;
+  const dx = event.clientX - drag.x;
+  const dy = event.clientY - drag.y;
+  if (!dragged && Math.hypot(dx, dy) < 5) return;
+  if (!dragged) mapBox.setPointerCapture(event.pointerId);
+  dragged = true;
+  $("#tip").hidden = true;
+  view.x = drag.viewX - dx;
+  view.y = drag.viewY - dy;
+  draw();
+});
+const release = (event) => {
+  pointers.delete(event.pointerId);
+  if (!pointers.size) drag = null;
+};
+mapBox.addEventListener("pointerup", release);
+mapBox.addEventListener("pointercancel", release);
+mapBox.addEventListener("click", (event) => { if (dragged) { event.preventDefault(); event.stopPropagation(); dragged = false; } }, true);
+$("#zoom-in").addEventListener("click", () => zoomTo(view.zoom * 1.6));
+$("#zoom-out").addEventListener("click", () => zoomTo(view.zoom / 1.6));
+$("#zoom-reset").addEventListener("click", () => { view.zoom = 1; view.x = 0; view.y = 0; draw(); });
 function showTip(tile, box) {
   const tip = $("#tip");
   tip.replaceChildren(node("b", "", `${tile.name} · ${tile.symbol}`), node("span", "", `${t().price}: ${price(tile.price)}`),
@@ -133,7 +177,7 @@ function showTip(tile, box) {
   const rect = box.getBoundingClientRect();
   const page = $("#map").getBoundingClientRect();
   tip.style.left = `${Math.min(page.width - 200, Math.max(0, rect.left - page.left + rect.width / 2 - 100))}px`;
-  tip.style.top = `${rect.top - page.top + $("#map").offsetTop + Math.min(rect.height, 40)}px`;
+  tip.style.top = `${rect.top - page.top + Math.min(rect.height, 40)}px`;
 }
 
 let futuresLoading = false;
@@ -152,7 +196,7 @@ $("#find").addEventListener("click", () => {
   if (document.body.classList.contains("searching")) $("#search").focus();
 });
 let resizeTimer = 0;
-addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { view.zoom = 1; view.x = 0; view.y = 0; render(); }, 150); });
 setupSearch({});
 setupPage({ en, render });
 void marketOverview().then((overview) => {

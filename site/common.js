@@ -236,9 +236,13 @@ async function loadOpenNames(addresses) {
   for (const [address, value] of Object.entries(answer?.names ?? {})) openNames.set(address, value);
 }
 // A wallet's picture: the logo its label gives, the owner's site icon, or its name-service avatar.
+// Pictures of our own for a few names. Satoshi: the bust in Budapest, photo by Fekist, CC BY-SA 4.0
+// (commons.wikimedia.org/wiki/File:Bust_of_Satoshi_Nakamoto_in_Budapest.jpg), cropped.
+const NAME_PICTURES = { "Satoshi Nakamoto": "/satoshi.jpg" };
 function walletPicture(party) {
   const lower = party.address.toLowerCase();
   const whale = WHALE.get(lower);
+  if (NAME_PICTURES[party.name ?? whale?.name]) return NAME_PICTURES[party.name ?? whale?.name];
   if (party.logo) return party.logo;
   if (openNames.get(lower)?.logo) return openNames.get(lower).logo;
   if (whale?.site) return `${FAVICON}${whale.site}`;
@@ -413,7 +417,7 @@ function renderStrip() {
   if (bar && Number.isFinite(strip.users)) {
     let item = bar.querySelector(".users");
     if (!item) {
-      item = Object.assign(document.createElement("a"), { className: "users", href: "/u/me" });
+      item = Object.assign(document.createElement("span"), { className: "users" });
       item.append(document.createElement("span"), " ", document.createElement("b"));
       bar.prepend(item);
     }
@@ -446,6 +450,108 @@ function isLight() {
   return document.documentElement.dataset.theme === "light" ||
     (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
 }
+// --- The header's sections on wide screens: each opens (on hover or a click) a menu of the pages inside it,
+// so the lists, screeners and on-chain tools hidden in tabs can be found from any page.
+const MENU = [
+  { ru: "Рынок", en: "Market", match: /^\/(?:$|charts\/|coin\/)/, groups: [
+    { ru: "Монеты", en: "Coins", items: [
+      ["/", "Криптовалюты", "Топ монет по капитализации", "Cryptocurrencies", "Top coins by market cap"],
+      ["/#trending", "В тренде", "Что ищут чаще всего", "Trending", "The most searched coins"],
+      ["/#gainers", "Рост и падение", "Лидеры роста и падения за сутки", "Gainers & losers", "The day's biggest movers"],
+      ["/#stable", "Стейблкоины", "Монеты, привязанные к доллару", "Stablecoins", "Coins pegged to the dollar"]] },
+    { ru: "Обзор", en: "Overview", items: [
+      ["/charts/", "Обзор рынка", "Капитализация и объём за всё время", "Market overview", "Market cap and volume over time"],
+      ["/charts/#fear-greed", "Индекс страха и жадности", "Настроение рынка сегодня и раньше", "Fear & Greed Index", "The market's mood, now and before"],
+      ["/charts/#dominance", "Доминация BTC и ETH", "Доля биткоина и эфира в рынке", "BTC and ETH dominance", "Bitcoin's and Ether's share of the market"]] }] },
+  { ru: "Ончейн", en: "On-chain", match: /^\/(?:wallets|transfers|address|entity|visualizer)\//, groups: [
+    { ru: "Кошельки", en: "Wallets", items: [
+      ["/wallets/", "Популярные кошельки", "Биржи, фонды, киты и их балансы", "Popular wallets", "Exchanges, funds, whales and their balances"],
+      ["/entity/?name=Satoshi%20Nakamoto", "Монеты Сатоши", "Сколько намайнил создатель биткоина", "Satoshi's coins", "What Bitcoin's creator mined"]] },
+    { ru: "Переводы", en: "Transfers", items: [
+      ["/transfers/", "Все переводы", "Переводы в сетях в реальном времени", "All transfers", "Transfers across chains, live"]] }] },
+  { ru: "Скринеры", en: "Screeners", match: /^\/screener\//, groups: [
+    { ru: "Фьючерсы", en: "Futures", items: [
+      ["/screener/", "Тренды", "Рост, падение, объём и открытый интерес", "Trends", "Moves, volume and open interest"],
+      ["/screener/densities/", "Плотности", "Крупные заявки в стаканах бирж", "Order book walls", "Big orders in the exchanges' books"],
+      ["/screener/arbitrage/", "Арбитраж", "Разница цен между биржами", "Arbitrage", "Price gaps between exchanges"],
+      ["/screener/liquidations/", "Ликвидации", "Закрытые принудительно позиции", "Liquidations", "Positions closed by force"],
+      ["/screener/listings/", "Листинги", "Новые монеты на биржах", "Listings", "New coins on the exchanges"],
+      ["/screener/heatmap/", "Тепловая карта", "Весь рынок одной картинкой", "Heatmap", "The whole market at a glance"]] }] },
+];
+function renderMenu() {
+  const nav = document.querySelector(".top nav");
+  if (!nav) return;
+  const en = language === "en";
+  const make = (tag, className, text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
+  nav.classList.add("menu");
+  nav.replaceChildren(...MENU.map((section) => {
+    const box = make("div", `menu-item${section.match.test(location.pathname) ? " on" : ""}`);
+    const button = make("button", "menu-head", en ? section.en : section.ru);
+    button.type = "button";
+    button.setAttribute("aria-expanded", "false");
+    const panel = make("div", "menu-panel");
+    for (const group of section.groups) {
+      panel.append(make("small", "menu-group", en ? group.en : group.ru));
+      for (const [href, ruName, ruNote, enName, enNote] of group.items) {
+        const link = make("a", "menu-link");
+        link.href = href;
+        link.append(make("b", "", en ? enName : ruName), make("span", "", en ? enNote : ruNote));
+        panel.append(link);
+      }
+    }
+    // A click (a touch screen has no hover) opens it and closes the others.
+    button.addEventListener("click", () => {
+      const open = !box.classList.contains("open");
+      for (const other of nav.querySelectorAll(".menu-item.open")) { other.classList.remove("open"); other.firstChild.setAttribute("aria-expanded", "false"); }
+      box.classList.toggle("open", open);
+      button.setAttribute("aria-expanded", String(open));
+    });
+    box.append(button, panel);
+    return box;
+  }));
+}
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.(".menu-item")) for (const box of document.querySelectorAll(".menu-item.open")) box.classList.remove("open");
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") for (const box of document.querySelectorAll(".menu-item.open")) box.classList.remove("open");
+});
+
+// The hints on buttons and the names of page regions (read out by screen readers), in English.
+const LABELS_EN = {
+  "Разделы": "Sections", "Тема": "Theme", "Поиск": "Search", "Мои разделы": "My sections", "Меню": "Menu", "Монета": "Coin",
+  "Уведомление о цене": "Price alert", "Токен: USDC, ETH…": "Token: USDC, ETH…", "Имя или адрес": "Name or address", "Страницы": "Pages",
+  "Скрыть баланс": "Hide balance", "Система": "System", "Сеть сейчас": "Network now", "Связи кошелька": "Wallet links", "Рынок": "Market",
+  "Разделы профиля": "Profile sections", "Разделы монеты": "Coin sections", "Линия": "Line", "Изменить": "Edit", "Избранное": "Watchlist",
+  "Ещё": "More", "Добавить сделку": "Add transaction", "Быстрые ссылки": "Quick links", "Назад": "Back",
+};
+function translateLabels() {
+  for (const attribute of ["aria-label", "title", "placeholder"]) {
+    for (const element of document.querySelectorAll(`[${attribute}]`)) {
+      const key = `ru${attribute.replace(/-./, (part) => part[1].toUpperCase()).replace(/^./, (first) => first.toUpperCase())}`;
+      const original = element.dataset[key] ?? element.getAttribute(attribute);
+      if (!LABELS_EN[original]) continue;
+      element.dataset[key] = original;
+      element.setAttribute(attribute, language === "en" ? LABELS_EN[original] : original);
+    }
+  }
+}
+
+function addBackButton() {
+  const top = document.querySelector(".top");
+  if (!top || top.querySelector(".back")) return;
+  const back = Object.assign(document.createElement("button"), { type: "button", className: "pill back" });
+  back.setAttribute("aria-label", "Назад");
+  back.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+  // Back where the visitor came from on this site; from outside (a shared link), to the home page.
+  back.addEventListener("click", () => {
+    if (history.length > 1 && document.referrer.startsWith(location.origin)) history.back();
+    else location.href = "/";
+  });
+  top.prepend(back);
+  document.body.classList.add("inner-page");
+}
+
 function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) {
   const en = { navScreener: "Screeners", ...own }; // words every page's header shares
   accountChanged = onAccount;
@@ -453,8 +559,12 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
   const ru = Object.fromEntries(textNodes.map((node) => [node.dataset.i18n, node.textContent]));
   const search = $("#search");
   const ruPlaceholder = search.placeholder;
+  const ruTitle = document.title; // a page's render may set its own
   function applyLanguage() {
     document.documentElement.lang = language;
+    renderMenu();
+    translateLabels();
+    document.title = language === "en" && en.docTitle ? en.docTitle : ruTitle;
     for (const node of textNodes) node.textContent = (language === "en" ? en : ru)[node.dataset.i18n] ?? node.textContent;
     search.placeholder = language === "en" ? en.search : ruPlaceholder;
     $("#lang").textContent = language === "en" ? "RU" : "EN";
@@ -479,8 +589,13 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
     renderTheme();
     onTheme();
   });
+  // Phones: a back button on every page but the home page, where the logo's name gives it room.
+  if (location.pathname !== "/") addBackButton();
   renderTheme();
   applyLanguage();
+  // A row of section tabs wider than the screen shows the open one.
+  const openTab = document.querySelector(".sc-tabs a.on");
+  if (openTab) openTab.parentElement.scrollLeft = openTab.offsetLeft - openTab.parentElement.offsetLeft - (openTab.parentElement.clientWidth - openTab.offsetWidth) / 2;
   void loadAccount();
   void loadStrip();
   setInterval(loadNir, 60_000);
@@ -639,7 +754,7 @@ function setupSearch({ overview = () => null }) {
   let pull = 0;
   const reset = () => { start = null; pull = 0; mark.style.transform = ""; mark.classList.remove("ready", "show"); };
   window.addEventListener("touchstart", (event) => {
-    if (window.scrollY > 0 || event.touches.length > 1 || event.target.closest?.(".pf-sheet, dialog, .table-wrap, textarea, input")) return;
+    if (window.scrollY > 0 || event.touches.length > 1 || document.body.classList.contains("searching") || event.target.closest?.(".pf-sheet, dialog, .table-wrap, textarea, input, #stage, .suggest, .sc-tabs, .hm")) return;
     start = { x: event.touches[0].clientX, y: event.touches[0].clientY };
   }, { passive: true });
   window.addEventListener("touchmove", (event) => {
@@ -658,3 +773,38 @@ function setupSearch({ overview = () => null }) {
     reset();
   }, { passive: true });
 })();
+
+// A squarified treemap (the heatmaps): rows of tiles laid along the shorter side, each row as close to square as it gets.
+function squarify(items, x, y, width, height) {
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  const scale = (width * height) / total;
+  const rest = items.map((item) => ({ ...item, area: item.weight * scale }));
+  const tiles = [];
+  const worst = (row, side) => {
+    const sum = row.reduce((all, item) => all + item.area, 0);
+    const max = Math.max(...row.map((item) => item.area));
+    const min = Math.min(...row.map((item) => item.area));
+    return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
+  };
+  let box = { x, y, width, height };
+  while (rest.length) {
+    const side = Math.min(box.width, box.height);
+    const row = [rest.shift()];
+    while (rest.length && worst([...row, rest[0]], side) <= worst(row, side)) row.push(rest.shift());
+    const sum = row.reduce((all, item) => all + item.area, 0);
+    if (box.width >= box.height) {
+      // A column on the left.
+      const columnWidth = sum / box.height;
+      let top = box.y;
+      for (const item of row) { const h = item.area / columnWidth; tiles.push({ ...item, x: box.x, y: top, width: columnWidth, height: h }); top += h; }
+      box = { x: box.x + columnWidth, y: box.y, width: box.width - columnWidth, height: box.height };
+    } else {
+      // A row along the top.
+      const rowHeight = sum / box.width;
+      let left = box.x;
+      for (const item of row) { const w = item.area / rowHeight; tiles.push({ ...item, x: left, y: box.y, width: w, height: rowHeight }); left += w; }
+      box = { x: box.x, y: box.y + rowHeight, width: box.width, height: box.height - rowHeight };
+    }
+  }
+  return tiles;
+}

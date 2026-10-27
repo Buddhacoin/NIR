@@ -33,10 +33,14 @@ function renderSatoshi() {
   $("#total").textContent = rate ? price(estimate * rate) : `${estimate.toLocaleString(locale(), { maximumFractionDigits: 0 })} BTC`;
   $("#count").textContent = t().satoshiCount(keys, checked);
   $("#note").textContent = t().satoshiNote(keys, checked, moved);
+  // The picture's licence asks for its author.
+  const credit = Object.assign(node("a", "muted", language === "en" ? "Photo: Fekist, CC BY-SA 4.0" : "Фото: Fekist, CC BY-SA 4.0"),
+    { href: "https://commons.wikimedia.org/wiki/File:Bust_of_Satoshi_Nakamoto_in_Budapest.jpg", target: "_blank", rel: "noopener" });
+  $("#note").append(" · ", credit);
   const tr = node("tr");
   const name = node("td", "left");
   const cell = node("span", "coin-cell");
-  cell.append(logo({ id: "bitcoin", symbol: "BTC", image: null }), node("b", "", "BTC"));
+  cell.append(logo({ id: "bitcoin", symbol: "BTC", image: CHAINS.btc.logo }), node("b", "", "BTC"));
   name.append(cell);
   tr.append(name, node("td", "", `${estimate.toLocaleString(locale(), { maximumFractionDigits: 0 })} BTC`), node("td", "", rate ? price(estimate * rate) : "—"));
   $("#assets").replaceChildren(tr);

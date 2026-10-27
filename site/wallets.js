@@ -27,6 +27,7 @@ const t = () => words[language === "en" ? "en" : "ru"];
 // How many known wallets each organisation has (/market/chain/entities), asked for the rows shown.
 const entityCounts = new Map();
 let satoshi = null; // /market/chain/satoshi, for Satoshi Nakamoto's row
+const GENERIC_LABEL = /^(?:fund|funds|whale|whales|exchange|hot wallet|cold wallet|deployer|contract|bridge|multisig|unknown|token|wallet|miner|mev bot|bot|dex|cex|otc|market maker)$/i;
 const askCounts = new Set();
 async function loadCounts() {
   const wanted = [...askCounts].filter((name) => name.length >= 2 && !entityCounts.has(name)).slice(0, 60);
@@ -110,7 +111,9 @@ function render() {
     // An organisation with several known wallets links to its page, where they all add up.
     const kind = node("td", "left muted", item.kind);
     const org = entityName(item.name);
-    if ((entityCounts.get(org) ?? 0) > 1) kind.append(" · ", Object.assign(node("a", "w-entity", t().wallets(entityCounts.get(org))), { href: entityUrl(org) }));
+    // Only a named organisation: a generic label ("Fund: 0x…") is no organisation of its own.
+    if (GENERIC_LABEL.test(org)) { /* no organisation page */ }
+    else if ((entityCounts.get(org) ?? 0) > 1) kind.append(" · ", Object.assign(node("a", "w-entity", t().wallets(entityCounts.get(org))), { href: entityUrl(org) }));
     else if (!entityCounts.has(org)) askCounts.add(org);
     row.append(node("td", "rank", String(index + 1)), who, kind, networks,
       node("td", "", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total)), action);

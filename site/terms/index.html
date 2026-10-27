@@ -9,13 +9,15 @@
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=61">
+  <link rel="stylesheet" href="/markets.css?v=72">
 </head>
 <body>
   <header class="top">
     <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
+    <button class="pill" id="lang" type="button" style="margin-left:auto">EN</button>
   </header>
   <main class="wrap legal">
+    <div data-lang="ru" lang="ru">
     <h1>Условия использования</h1>
     <p class="muted">Действуют с 25 октября 2026 года. Сайт: nircoin.com (NIR Markets).</p>
 
@@ -39,15 +41,60 @@
 
     <h2>Изменения</h2>
     <p>Условия могут обновляться; новая версия публикуется на этой странице. Вопросы: <a href="https://github.com/Buddhacoin/NIR/issues">github.com/Buddhacoin/NIR/issues</a>.</p>
-
-    <hr>
+    </div>
+    <div data-lang="en" lang="en" hidden>
     <h1>Terms of use</h1>
-    <p>NIR Markets shows prices, charts and coin information from CoinGecko and TradingView, provided as is and possibly delayed or inaccurate. Nothing on the site is financial advice. You sign in with Google and are responsible for what you post. In discussions: no abuse, threats, doxxing, scams, impersonation, spam or illegal content; reported comments are hidden and moderators may remove posts or restrict accounts. You can delete your account at any time. These terms may change; the current version is on this page.</p>
+    <p class="muted">In force from 25 October 2026. Site: nircoin.com (NIR Markets).</p>
+
+    <h2>The service</h2>
+    <p>NIR Markets shows prices, charts and information about cryptocurrencies from CoinGecko and TradingView data. The data may be delayed or contain errors. The site is provided "as is".</p>
+
+    <h2>Not financial advice</h2>
+    <p>Nothing on the site — prices, summaries, comments or rise/fall votes — is an investment recommendation. You make your own decisions at your own risk.</p>
+
+    <h2>Your account</h2>
+    <p>You sign in with a Google account. You are responsible for what you publish under your name. You can delete your account at any time from your profile.</p>
+
+    <h2>Discussion rules</h2>
+    <ul>
+      <li>no insulting people, threats or publishing other people's personal data;</li>
+      <li>no scams, "guaranteed profit" schemes or pretending to be someone else;</li>
+      <li>no spam or repeating the same message;</li>
+      <li>no illegal content.</li>
+    </ul>
+    <p>Comments reported by several people are hidden. Moderators may remove comments and restrict accounts that break the rules.</p>
+
+    <h2>Changes</h2>
+    <p>These terms may be updated; the new version is published on this page. Questions: <a href="https://github.com/Buddhacoin/NIR/issues">github.com/Buddhacoin/NIR/issues</a>.</p>
+    </div>
   </main>
   <footer>
-    <a href="/">NIR Markets</a>
-    <a href="/privacy/">Политика конфиденциальности</a>
-    <a href="/nir/">О блокчейне NIR</a>
+    <a href="/" data-ru="NIR Markets" data-en="NIR Markets">NIR Markets</a>
+    <a href="/privacy/" data-ru="Политика конфиденциальности" data-en="Privacy policy">Политика конфиденциальности</a>
+    <a href="/nir/" data-ru="О блокчейне NIR" data-en="About the NIR blockchain">О блокчейне NIR</a>
   </footer>
+  <script>
+    // Russian or English, as on the rest of the site (the choice is shared through localStorage).
+    (() => {
+      let saved = null;
+      try { saved = localStorage.getItem("nir-site-language"); } catch {}
+      let language = saved === "en" || (!saved && !/^(ru|be|uk|kk)/i.test(navigator.language || "")) ? "en" : "ru";
+      const titles = { ru: "Условия использования — NIR Markets", en: "Terms of use — NIR Markets" };
+      const apply = () => {
+        document.documentElement.lang = language;
+        document.title = titles[language];
+        for (const part of document.querySelectorAll("[data-lang]")) part.hidden = part.dataset.lang !== language;
+        for (const link of document.querySelectorAll("footer a")) link.textContent = link.dataset[language];
+        document.querySelector("#lang").textContent = language === "en" ? "RU" : "EN";
+      };
+      document.querySelector("#lang").addEventListener("click", () => {
+        language = language === "en" ? "ru" : "en";
+        try { localStorage.setItem("nir-site-language", language); } catch {}
+        apply();
+      });
+      apply();
+    })();
+  </script>
+  <script src="/tabbar.js?v=1"></script>
 </body>
 </html>

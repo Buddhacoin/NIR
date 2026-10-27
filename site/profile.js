@@ -139,7 +139,7 @@ function renderWallets(box) {
   head.className = "wallets-total";
   head.append(Object.assign(document.createElement("small"), { className: "muted", textContent: t().walletsTotal }), Object.assign(document.createElement("b"), { textContent: price(total) }));
   const table = document.createElement("table");
-  table.className = "ex-table";
+  table.className = "ex-table pr-assets";
   const header = document.createElement("tr");
   for (const [text, left] of [[t().asset, true], ["", true], [t().amount], [t().value]]) header.append(Object.assign(document.createElement("th"), { className: left ? "left" : "", textContent: text }));
   const thead = document.createElement("thead");
