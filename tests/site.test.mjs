@@ -169,3 +169,11 @@ test("the density screener page has English for every text and reads the server'
   assert.match(code, /fetch\("\/market\/densities"\)/);
   assert.match(read("site/screener/index.html"), /href="\/screener\/densities\/"/, "the trend screener links to the walls");
 });
+
+test("the arbitrage screener page has English for every text and reads the server's price gaps", () => {
+  const html = read("site/screener/arbitrage/index.html");
+  const code = read("site/arbitrage.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `arbitrage.js: no English text for ${key}`);
+  assert.match(code, /fetch\("\/market\/arbitrage"\)/);
+  for (const page of ["site/screener/index.html", "site/screener/densities/index.html"]) assert.match(read(page), /href="\/screener\/arbitrage\/"/);
+});

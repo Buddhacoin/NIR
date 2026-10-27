@@ -157,7 +157,7 @@ function sortBy(list, sort, value) {
 // `history`: the explorer keeps the coin's balance by day; `node`: read from a public node (token transfers of about the last day).
 const LOGOS = "https://coin-images.coingecko.com/coins/images/";
 const CHAINS = {
-  eth: { name: "Ethereum", short: "ETH", color: "#627eea", tx: "https://eth.blockscout.com/tx/", history: true, logo: `${LOGOS}279/small/ethereum.png` },
+  eth: { name: "Ethereum", short: "ETH", color: "#2f3034", tx: "https://eth.blockscout.com/tx/", history: true },
   optimism: { name: "Optimism", short: "OP", color: "#ff0420", tx: "https://explorer.optimism.io/tx/", history: true, logo: `${LOGOS}25244/small/Token.png` },
   base: { name: "Base", short: "BASE", color: "#0052ff", tx: "https://basescan.org/tx/", node: true },
   arbitrum: { name: "Arbitrum", short: "ARB", color: "#28a0f0", tx: "https://arbiscan.io/tx/", node: true, logo: `${LOGOS}16547/small/arb.jpg` },
@@ -177,6 +177,8 @@ function chainDot(chain) {
     const image = Object.assign(document.createElement("img"), { src: info.logo, alt: "", loading: "lazy", referrerPolicy: "no-referrer" });
     image.addEventListener("error", () => { image.remove(); dot.textContent = info.short[0]; }, { once: true });
     dot.append(image);
+  } else if (chain === "eth") {
+    dot.innerHTML = '<svg viewBox="0 0 18 18" aria-hidden="true"><path fill="#c4c4c4" d="M9 2.2 4.8 9.2 9 11.7l4.2-2.5z"/><path fill="#8a8a8a" d="M9 2.2v9.5l4.2-2.5z"/><path fill="#c4c4c4" d="M4.8 10 9 15.8V12.5z"/><path fill="#8a8a8a" d="M9 12.5v3.3l4.2-5.8z"/></svg>';
   } else if (chain === "base") {
     dot.innerHTML = '<svg viewBox="0 0 18 18" aria-hidden="true"><rect x="4.5" y="4.5" width="9" height="9" rx="1.5" fill="#fff"/></svg>';
   } else {
@@ -273,13 +275,30 @@ function walletLink(party, { bubbles = true } = {}) {
   if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
   if (!party.name && knownName(party.address)) party = { ...party, name: knownName(party.address) };
   const link = Object.assign(document.createElement("a"), { className: "wallet", href: addressUrl(party.address), title: party.address });
-  link.append(walletAvatar(party));
+  // A picture only for a wallet with a name; a bare address gets a copy button instead.
+  if (party.name || party.logo) link.append(walletAvatar(party));
   if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
   link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${party.address.slice(0, 5)})` : shortAddress(party.address) }));
-  if (!bubbles || !ADDRESS.test(party.address)) return link;
-  const both = document.createDocumentFragment();
-  both.append(link, bubblesLink(party.address));
-  return both;
+  const all = document.createDocumentFragment();
+  all.append(link);
+  if (!party.name) all.append(copyButton(party.address));
+  if (bubbles && ADDRESS.test(party.address)) all.append(bubblesLink(party.address));
+  return all;
+}
+// A one-click copy of an address, with a tick for a moment after.
+const COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.7a2.2 2.2 0 0 0-2.2-2.2H6.7a2.2 2.2 0 0 0-2.2 2.2v6.6a2.2 2.2 0 0 0 2.2 2.2h1.8"/></svg>';
+function copyButton(text) {
+  const button = Object.assign(document.createElement("button"), { type: "button", className: "copy-link", title: language === "en" ? "Copy address" : "Скопировать адрес" });
+  button.innerHTML = COPY_ICON;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void navigator.clipboard?.writeText(text).then(() => {
+      button.classList.add("done");
+      setTimeout(() => button.classList.remove("done"), 1_200);
+    }).catch(() => {});
+  });
+  return button;
 }
 function timeAgo(time) {
   const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));

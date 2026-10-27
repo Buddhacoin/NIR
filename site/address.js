@@ -22,7 +22,7 @@ const words = {
     trackHint: "Кошелёк появится в профиле во вкладке «Отслеживаемые»: видно его баланс и новые переводы.",
     mineHint: "Для своих кошельков: их монеты прибавятся к вашему портфелю в профиле.",
     mineDone: "Готово: монеты этого кошелька теперь считаются в вашем портфеле (профиль → «Мои адреса»).",
-    trackDone: "Готово: кошелёк в профиле во вкладке «Отслеживаемые».",
+    trackDone: "Готово: кошелёк добавлен в ваш профиль, вкладка «Отслеживаемые» — там его баланс и новые переводы.", openTracked: "Открыть →",
     mine: "＋ Это мой кошелёк", isMine: "✓ Мой кошелёк", copied: "Скопировано", missing: "Это не адрес кошелька.",
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     listed: (names) => `В сети ${names} у адреса слишком много токенов для обозревателя: показаны токены 1000 крупнейших монет, прочитанные напрямую из сети; мелкие и редкие токены могут не войти.`,
@@ -49,7 +49,7 @@ const words = {
     trackHint: "The wallet shows in your profile under Tracked, with its balance and new transfers.",
     mineHint: "For your own wallets: their coins add up in your profile's portfolio.",
     mineDone: "Done: this wallet's coins now count in your portfolio (profile → My addresses).",
-    trackDone: "Done: the wallet is in your profile under Tracked.",
+    trackDone: "Done: the wallet is in your profile under Tracked, with its balance and new transfers.", openTracked: "Open →",
     mine: "＋ This is my wallet", isMine: "✓ My wallet", copied: "Copied", missing: "This is not a wallet address.",
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     listed: (names) => `On ${names} the address holds too many tokens for the explorer: the tokens of the 1,000 largest coins are shown, read from the network itself; small and rare tokens may be missing.`,
@@ -106,6 +106,8 @@ const COLORS = ["#3861fb", "#16c784", "#f3a12f", "#8b7bff", "#ea3943", "#2ee6a6"
 
 // --- The head: name, address, total, tags and the buttons.
 function renderHead() {
+  // A well-known wallet keeps the name it has in the popular list, also where the explorer gives none.
+  if (!data.name && knownName(address)) data.name = knownName(address);
   const name = data.name ?? (data.contract ? t().contract : t().wallet);
   document.title = t().title(data.name ?? shortAddress(address));
   $("#name").textContent = name;
@@ -126,10 +128,7 @@ function renderHead() {
     ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
   $("#track").textContent = saved ? t().tracked : t().track;
   $("#track").classList.toggle("on", Boolean(saved));
-  $("#mine").textContent = saved?.mine ? t().isMine : t().mine;
-  $("#mine").title = t().mineHint;
   $("#track").title = t().trackHint;
-  $("#mine").classList.toggle("on", Boolean(saved?.mine));
   const partial = data.networks.filter((item) => item.partial && !item.listed).map((item) => chainName(item.chain));
   const listed = data.networks.filter((item) => item.partial && item.listed).map((item) => chainName(item.chain));
   const failed = data.networks.filter((item) => !item.ok).map((item) => chainName(item.chain));
@@ -576,7 +575,7 @@ async function save(changes) {
   // A word on what the button did, since a phone shows no hints on hover.
   if (status === 200 && changes) {
     const note = $("#action-note");
-    note.textContent = changes.mine ? t().mineDone : t().trackDone;
+    note.replaceChildren(t().trackDone, " ", Object.assign(node("a", "", t().openTracked), { href: `/u/${encodeURIComponent(account.user?.username ?? "")}#tracked` }));
     note.hidden = false;
     clearTimeout(note.timer);
     note.timer = setTimeout(() => { note.hidden = true; }, 6_000);
@@ -614,7 +613,6 @@ $("#suggest").addEventListener("click", async () => {
   const { status, data: answer } = await send("/market/labels", "POST", { address, name, link });
   alert(status === 201 ? t().sent : answer.error ?? "Error");
 });
-$("#mine").addEventListener("click", () => void save({ mine: !saved?.mine }));
 for (const button of document.querySelectorAll("#assets-tabs [data-view]")) button.addEventListener("click", () => { view = button.dataset.view; renderAssets(); });
 for (const button of document.querySelectorAll("#direction [data-dir]")) button.addEventListener("click", () => { direction = button.dataset.dir; void loadTransfers(true); });
 for (const button of document.querySelectorAll("#chart-tabs [data-chart]")) button.addEventListener("click", () => { chart = button.dataset.chart; renderChart(); });

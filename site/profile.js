@@ -40,7 +40,8 @@ const words = {
 const name = decodeURIComponent(location.pathname.split("/")[2] ?? "").toLowerCase();
 let page = null;
 let market = null;
-let view = "activity";
+// A link such as /u/<name>#tracked opens that tab (the wallet page sends visitors there after "Watch").
+let view = ["tracked", "wallets", "watch", "comments"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "activity";
 let failure = "";
 const t = () => words[language];
 const coinsById = () => new Map((market?.coins ?? []).map((coin) => [coin.id, coin]));
