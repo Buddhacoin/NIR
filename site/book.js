@@ -16,7 +16,7 @@ const en = {
   source: "The book, trades and candles come from the exchanges' open APIs and streams, every 2 seconds. Prices are the exchange's own levels; orders of at least the smallest within the depth show, big ones with a lighter bold row; the totals on top are every order within the depth. Point at a row for the volume from the price through it. Not financial advice.",
   exchangesCredit: "the exchanges' open APIs",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { modes: { single: "Одиночный режим", multi: "Конструктор", stats: "Статистика" }, bid: "Покупка (BID)", ask: "Продажа (ASK)", price: "Цена", amount: "Объём", time: "Время", type: "Тип",

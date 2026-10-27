@@ -12,7 +12,7 @@ const en = {
   fearAbout: "From 0 to 100, the index shows the market's mood: near 0 is extreme fear (people sell), near 100 extreme greed (people buy). Source: alternative.me, updated daily.",
   domAbout: "A coin's share of the whole market's capitalisation. Bitcoin dominance rises when money moves from altcoins into BTC.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },

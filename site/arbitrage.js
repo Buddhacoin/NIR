@@ -12,7 +12,7 @@ const en = {
   colSell: "Sell", colSpread: "Spread", colFunding: "Funding gap", colVolume: "24h volume", colMarkets: "Exchanges",
   source: "Data: the open futures markets of Binance, Bybit, OKX, Bitget, Gate and MEXC, updated every minute. The spread is how much higher the price is on the dearest exchange than on the cheapest; the volume is the smaller of the two. A coin under the same ticker but priced more than 5% away counts as another coin and is not compared. Mind the fees, the transfer between exchanges and the funding: this is not financial advice.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { spreads: [[0.1, "от 0,1%"], [0.3, "от 0,3%"], [0.5, "от 0,5%"], [1, "от 1%"]], volumes: [[1e5, "от $100 тыс"], [1e6, "от $1 млн"], [1e7, "от $10 млн"]],

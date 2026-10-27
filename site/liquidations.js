@@ -12,7 +12,7 @@ const en = {
   colTime: "Time", colPosition: "Position", colPrice: "Price", colSize: "Size",
   source: "Data: the open streams of forced closes on the futures of Binance, Bybit and OKX. A long is a position on a rise closed (the price fell); a short, a position on a fall (the price rose). The server keeps the last day.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { periods: { h1: "1 ч", h4: "4 ч", d1: "24 ч" }, longs: "Лонги", shorts: "Шорты", total: "Всего", long: "Лонг", short: "Шорт",

@@ -10,7 +10,7 @@ const en = {
   title: "New listings", colCoin: "Coin", colExchange: "Exchange", colWhen: "When", colThen: "Price at listing", colNow: "Price now", colChange: "Change",
   source: "Data: the futures market lists of Binance, Bybit, OKX, Bitget, Gate and MEXC, read by the server every minute. A listing is a coin that appeared on an exchange after the server began watching it.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { allExchanges: "Все биржи", filter: "Монета", loading: "Загружаю…", ago: (text) => `${text} назад`,

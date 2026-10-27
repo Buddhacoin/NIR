@@ -11,7 +11,7 @@ const en = {
   title: "Heatmap",
   source: "A tile's size is the coin's market cap (for futures, its day's trading volume); its colour is the price change over the chosen period: the brighter, the stronger. Data: CoinGecko (spot) and the open futures markets of six exchanges.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { sources: { spot: "Капитализация", futures: "Фьючерсы" }, counts: [[50, "50 монет"], [100, "100 монет"], [200, "200 монет"]], stables: "Без стейблкоинов",

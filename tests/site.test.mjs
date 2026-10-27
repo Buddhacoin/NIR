@@ -56,7 +56,9 @@ test("the markets home page has English for every text and links to NIR", () => 
   assert.match(script, /location\.href = coinUrl\(coin\)/, "a coin's row opens its page");
   const deploy = read("deploy/install-shared-testnet.sh");
   assert.match(deploy, /handle \/market\/\* \{\n\s+reverse_proxy 127\.0\.0\.1:8790/);
-  assert.match(deploy, /handle \/coin\/\* \{\n\s+root \* \$APP_DIR\/site\n\s+rewrite \* \/coin\/index\.html/);
+  // A coin's page comes from the market service, with the coin's figures in its HTML (market-seo.mjs).
+  assert.match(deploy, /handle \/coin\/\* \{\n\s+rewrite \* \/market\/page\{path\}\n\s+reverse_proxy 127\.0\.0\.1:8790/);
+  assert.match(deploy, /handle \/sitemap\.xml \{\n\s+rewrite \* \/market\/sitemap\.xml/);
   assert.match(deploy, /market-service-cli\.mjs 8790/);
 });
 

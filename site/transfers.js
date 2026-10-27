@@ -11,7 +11,7 @@ const en = {
   colTime: "Time", colFrom: "From", colTo: "To", colAmount: "Amount", colToken: "Token", colUsd: "USD",
   note: "Transfers on Ethereum, Optimism, Base, Arbitrum, Polygon and BNB Chain from the open Blockscout explorers and public nodes, refreshed every 20 seconds. Names are labels checked by NIR Markets moderators and open labels (ENS, verified contracts, community tags).",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const PAGE = 50;
 let items = [];

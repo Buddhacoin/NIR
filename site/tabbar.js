@@ -6,6 +6,7 @@
     watch: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>',
     portfolio: '<path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
     screener: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>',
+    mine: '<path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/>',
     profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   };
   const WORDS = {
@@ -47,7 +48,7 @@
       ["/", ICONS.markets, words.markets, false],
       ["/#watch", ICONS.watch, words.watch, !signedIn],
       ["/portfolio/", ICONS.portfolio, words.portfolio, !signedIn],
-      ["/nir/#start", null, words.mine, false, location.pathname.startsWith("/nir")],
+      ["/nir/#start", ICONS.mine, words.mine, false, location.pathname.startsWith("/nir")],
       signedIn ? [`/u/${encodeURIComponent(account.user.username)}`, ICONS.profile, words.profile, false]
         : account.signIn ? [`/market/auth/google?return=${encodeURIComponent(location.pathname)}`, ICONS.profile, words.signIn, false]
           : ["/screener/", ICONS.screener, words.screener, false],
@@ -59,7 +60,7 @@
       link.href = href;
       link.hidden = hidden;
       if (on) link.className = "on";
-      link.innerHTML = icon ? `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>` : '<img src="/nir-coin-icon.svg" alt="">';
+      link.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`;
       link.append(Object.assign(document.createElement("span"), { textContent: label }));
       return link;
     }));
