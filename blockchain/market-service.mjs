@@ -20,6 +20,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 
 import { createTrades } from "./market-trades.mjs";
+import { coinPage, siteBase, sitemap } from "./market-seo.mjs";
 
 const COINGECKO = "https://api.coingecko.com/api/v3";
 const FEAR_GREED = "https://api.alternative.me/fng/?limit=1";
@@ -277,7 +278,7 @@ function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, liquidations = null, book = null, cacheFile = null } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, liquidations = null, book = null, cacheFile = null, coinTemplate = () => null } = {}) {
   // Coin pages and charts fetched before are kept on disk (cache.db), so a restart does not empty them.
   const keep = cacheFile ? createDiskCache(cacheFile) : null;
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
@@ -562,6 +563,18 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     } else if (request.method === "GET" && url.pathname === "/market/overview") {
       const ready = state.updatedAt !== null;
       send(response, ready ? 200 : 503, ready ? overview() : { error: "market data is loading" });
+    } else if (request.method === "GET" && url.pathname === "/market/sitemap.xml") {
+      // For search engines: the site's pages and every coin of the market list (blockchain/market-seo.mjs).
+      response.writeHead(200, { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" });
+      response.end(sitemap(siteBase(request.headers.host), state.coins));
+    } else if (request.method === "GET" && url.pathname.startsWith("/market/page/coin/")) {
+      // A coin's page with its name, price and summary already in the HTML (Caddy passes /coin/* here).
+      const template = coinTemplate();
+      if (!template) return send(response, 404, { error: "not found" });
+      const id = decodeURIComponent(url.pathname.slice("/market/page/coin/".length).split("/")[0] ?? "").toLowerCase();
+      const coin = COIN_ID.test(id) ? [...state.coins, ...state.trendingCoins].find((row) => row.id === id) ?? null : null;
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
+      response.end(coinPage(template, siteBase(request.headers.host), COIN_ID.test(id) ? id : "", coin));
     } else if (request.method === "GET" && kind) {
       try {
         const value = await coinData(kind, id, url.searchParams.get("days"));

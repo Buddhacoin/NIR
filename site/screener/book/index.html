@@ -5,15 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Стакан — NIR Markets</title>
   <meta name="description" content="Стакан ордеров в реальном времени на 8 биржах, спот и фьючерсы: крупные заявки, лента сделок, уровни на графике и несколько бирж рядом. Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex, HitBTC.">
-  <link rel="icon" href="/favicon.ico" sizes="48x48">
-  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="canonical" href="https://nircoin.com/screener/book/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Стакан — NIR Markets">
+  <meta property="og:description" content="Стакан ордеров в реальном времени на 8 биржах, спот и фьючерсы: крупные заявки, лента сделок, уровни на графике и несколько бирж рядом. Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex, HitBTC.">
+  <meta property="og:url" content="https://nircoin.com/screener/book/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
+  <link rel="icon" href="/favicon.ico?v=2" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png?v=2" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+  <link rel="manifest" href="/manifest.webmanifest?v=2">
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=77">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -27,7 +34,7 @@
   </div>
 
   <header class="top">
-    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-app-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
     <nav aria-label="Разделы">
       <a href="/" data-i18n="navCoins">Криптовалюты</a>
       <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
@@ -36,7 +43,7 @@
     <div class="quick" aria-label="Мои разделы">
       <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
       <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
-      <a href="/nir/"><img src="/nir-coin-icon.svg" alt="" width="16" height="16"><span data-i18n="navNir">О NIR</span></a>
+      <a href="/nir/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/></svg><span data-i18n="navNir">О NIR</span></a>
     </div>
     <form id="search-form" class="search-form" action="/" role="search">
       <input id="search" class="search" name="q" type="search" placeholder="Поиск монеты или адреса" autocomplete="off">
@@ -67,12 +74,29 @@
       </div>
       <div class="bk-chart-box" id="chart-box">
         <div class="bk-chart-head"><span class="muted" id="chart-title"></span><div class="seg" id="tfs"></div></div>
-        <div class="bk-chart" id="chart"></div>
+        <div class="bk-chart-body"><div class="bk-chart-tools" id="chart-tools"></div><div class="bk-chart" id="chart"><div class="bk-measure" id="measure" hidden></div></div></div>
       </div>
       <p class="muted ex-note" id="status"></p>
       <div class="bk-books" id="books"></div>
-      <p class="muted ex-note" data-i18n="source">Стакан, сделки и свечи — из открытых API бирж, обновляются каждые 2 секунды. Цены сгруппированы по шагу; показаны уровни не меньше минимального ордера в пределах глубины, жирным — крупные ордера. Не финансовый совет.</p>
+      <div class="bk-stats" id="stats" hidden></div>
+      <p class="muted ex-note" data-i18n="source">Стакан, сделки и свечи — из открытых API и потоков бирж, обновляются каждые 2 секунды. Цены — настоящие уровни биржи; показаны ордера не меньше минимального в пределах глубины, крупные выделены строкой и жирным; итоги сверху — все ордера в пределах глубины. Наведите на строку, чтобы увидеть объём от цены до неё. Не финансовый совет.</p>
     </article>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Стакан показывает лимитные заявки на покупку (зелёные) и продажу (красные) одной пары на Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex и HitBTC — спот и фьючерсы. Цены — собственные уровни биржи; крупные заявки выделены и нанесены уровнями на свечной график.</p>
+      <p>Глубина: Binance и Bybit — полный стакан из потока биржи; Coinbase, Bitstamp и HitBTC — весь стакан; OKX и Kraken — несколько процентов от цены. Данные обновляются каждые 2 секунды из открытых API бирж.</p>
+      <p>Конструктор ставит несколько бирж рядом, у каждой свои пороги крупной заявки. Режим статистики даёт среднюю волатильность, объём и ожидаемый диапазон дня по дневным свечам.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>The order book shows the buy (green) and sell (red) limit orders of one pair on Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex and HitBTC, spot and futures. Prices are the exchange's own levels; big orders are highlighted and drawn as levels on the candle chart.</p>
+      <p>Depth: Binance and Bybit keep the full book from the exchange's stream; Coinbase, Bitstamp and HitBTC give the whole book; OKX and Kraken a few per cent around the price. Data refreshes every 2 seconds from the exchanges' open APIs.</p>
+      <p>The constructor puts several exchanges side by side, each with its own big-order threshold. Statistics mode gives the average volatility, volume and the day's expected range from the daily candles.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
   <div class="bk-drawer-back" id="drawer" hidden>
     <aside class="bk-drawer" role="dialog" aria-modal="true">
@@ -85,6 +109,7 @@
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> <span data-i18n="exchangesCredit">открытые API бирж</span> · <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -93,11 +118,11 @@
     <a href="/" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
     <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
     <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
-    <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
+    <a href="/nir/#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/></svg><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=37"></script>
+  <script src="/common.js?v=39"></script>
   <script src="/vendor/lightweight-charts.js?v=4.2.3"></script>
-  <script src="/book.js?v=4"></script>
+  <script src="/book.js?v=10"></script>
 </body>
 </html>

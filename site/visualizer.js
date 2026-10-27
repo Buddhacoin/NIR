@@ -12,7 +12,7 @@ const en = {
   vizTitle: "Visualizer", vizLoading: "Loading transfers…",
   vizNote: "A green line: coins came to the wallet; red: they left it; the thicker the line, the larger the sum. Bubbles can be dragged; tap a bubble to expand its links or open the wallet.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { limit: (count) => `Связей: ${count}`, byUsd: "По сумме", byTime: "По времени", min: (value) => (value ? `$ ≥ ${money(value)}` : "Любая сумма"),

@@ -1396,11 +1396,14 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-sides { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 10px; }
 .bk-side, .bk-trades { width: 100%; font-variant-numeric: tabular-nums; }
 .bk-side td, .bk-trades td { padding: 7px 10px; }
+/* The bars grow out from the middle between the two sides, like a fir tree: bids to the left, asks to the right. */
 .bk-side tbody tr:not(.bk-total) { background: linear-gradient(to left, var(--bar) var(--fill), transparent var(--fill)); }
+.bk-side.ask tbody tr:not(.bk-total) { background: linear-gradient(to right, var(--bar) var(--fill), transparent var(--fill)); }
 .bk-side.bid { --bar: color-mix(in srgb, var(--up) 22%, transparent); }
 .bk-side.ask { --bar: color-mix(in srgb, var(--down) 22%, transparent); }
 .bk-side tr.big td, .bk-trades tr.big td { font-weight: 800; }
-.bk-side tr.big { box-shadow: inset 3px 0 0 var(--bar-edge, transparent); }
+.bk-side tr.big { box-shadow: inset -3px 0 0 var(--bar-edge, transparent); }
+.bk-side.ask tr.big { box-shadow: inset 3px 0 0 var(--bar-edge, transparent); }
 .bk-side.bid tr.big { --bar-edge: var(--up); }
 .bk-side.ask tr.big { --bar-edge: var(--down); }
 .bk-total td { background: var(--soft); font-weight: 700; font-size: 13px; }
@@ -1441,3 +1444,70 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-books.multi .bk-feed { grid-column: 1 / -1; max-height: 420px; }
 .bk-books.multi .bk-side td, .bk-books.multi .bk-side th { padding: 6px 6px; font-size: 13px; }
 .bk-trades th:first-child, .bk-trades td:first-child { width: 78px; }
+/* Order book, as the order-book tools show it: a big order's whole row lighter and bold (a big trade's too),
+   a row under the pointer tinted by its side, the sides scrolling under their heads. */
+.bk-side tbody tr.big, .bk-trades tbody tr.big { background-color: color-mix(in srgb, var(--text) 9%, transparent); }
+.bk-side tbody tr.big td, .bk-trades tbody tr.big td { color: var(--text); font-weight: 800; }
+.bk-side.bid tbody tr:not(.bk-total):hover { background: color-mix(in srgb, var(--up) 35%, transparent); }
+.bk-side.ask tbody tr:not(.bk-total):hover { background: color-mix(in srgb, var(--down) 35%, transparent); }
+.bk-sides { max-height: 78vh; overflow-y: auto; }
+.bk-side thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
+.bk-select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--text); font: inherit; }
+/* The chart library lays itself out with a table: the site's table styles stay out of it. */
+.bk-chart table, .bk-chart tr, .bk-chart td, .bk-chart th { margin: 0; padding: 0; border: 0; background: none; line-height: 0; }
+/* Phones: the watchlist alone, from the top: no cards' room above it, no footer under it. */
+@media (max-width: 700px) {
+  body.watching .tabs { margin-top: 0; }
+  body.watching main.wrap { padding-top: 0; }
+  body.watching footer, body.watching #pages { display: none; }
+}
+/* The chart's tools along its left side (book.js); the ruler's reading over the chart. */
+.bk-chart-body { display: flex; }
+.bk-chart-tools { display: flex; flex-direction: column; gap: 4px; padding: 8px 6px; border-right: 1px solid var(--line); }
+.bk-tool { min-width: 34px; height: 32px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.bk-tool:hover { background: var(--soft); color: var(--text); }
+.bk-tool.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.bk-tool-gap { height: 1px; margin: 4px 2px; background: var(--line); }
+.bk-chart { position: relative; flex: 1; min-width: 0; }
+.bk-chart.drawing { cursor: crosshair; }
+.bk-measure { position: absolute; z-index: 3; padding: 5px 9px; border-radius: 8px; color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; white-space: nowrap; }
+.bk-measure.up { background: #16a96b; }
+.bk-measure.down { background: #e0394f; }
+.bk-measure[hidden] { display: none; }
+@media (max-width: 700px) {
+  .bk-chart-body { flex-direction: column; }
+  .bk-chart-tools { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .bk-tool-gap { width: 1px; height: auto; margin: 2px 4px; }
+}
+/* Order book: an exchange's own thresholds in the constructor; the statistics mode. */
+.bk-own { margin-left: 8px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.bk-own:hover { border-color: var(--accent); color: var(--text); }
+.bk-stats { display: grid; gap: 18px; }
+.bk-stats[hidden] { display: none; }
+.bk-period h3 { margin: 0 0 10px; font-size: 16px; }
+.bk-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.bk-stat { display: grid; gap: 4px; padding: 12px 14px; border-radius: 12px; background: var(--soft); }
+.bk-stat small { font-size: 12px; }
+.bk-stat b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.bk-expected .bk-stat:nth-child(2) b { color: var(--down); }
+.bk-expected .bk-stat:nth-child(3) b { color: var(--up); }
+.bk-daily-wrap { max-height: 560px; overflow-y: auto; }
+.bk-daily { font-variant-numeric: tabular-nums; }
+.bk-daily thead th { position: sticky; top: 0; background: var(--card); }
+/* Room beside the order book's chart, so the page can be scrolled with the pointer next to it. */
+@media (min-width: 1000px) { .bk-chart-box { margin-right: 56px; margin-left: 56px; } }
+/* "How it works" under each tool: plain text for readers and search engines, in the page's language. */
+.explain { max-width: 820px; margin: 36px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.explain h2 { margin: 0 0 8px; color: var(--text); font-size: 17px; }
+.explain p { margin: 0 0 10px; }
+.explain a { color: var(--accent); text-decoration: none; }
+html[lang="en"] .explain [lang="ru"], html:not([lang="en"]) .explain [lang="en"] { display: none; }
+body.watching .explain { display: none; }
+.about h1 { margin-bottom: 6px; }
+.about section { max-width: 820px; margin: 26px 0 0; line-height: 1.6; }
+.about h2 { margin: 0 0 8px; font-size: 18px; }
+.about p, .about li { color: var(--muted); }
+.about ul { margin: 0; padding-left: 20px; }
+.about li { margin: 0 0 8px; }
+.about li b a { color: var(--text); text-decoration: none; }
+html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { display: none; }

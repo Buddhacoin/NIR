@@ -23,7 +23,7 @@ const en = {
   col24h: "24h", col7d: "7d", colHoldings: "Holdings", colAvg: "Avg. buy price", colPnl: "Profit / loss", colActions: "Actions",
   colType: "Type", colAmount: "Amount", colDate: "Date", colFee: "Fees", colNote: "Notes",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { title: "Портфель — NIR Markets", buy: "Покупка", sell: "Продажа", transfer: "Перевод", in: "Перевод на кошелёк", out: "Перевод с кошелька",

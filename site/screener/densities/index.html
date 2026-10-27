@@ -5,15 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Скринер плотностей — NIR Markets</title>
   <meta name="description" content="Скринер плотностей: крупные лимитные заявки в стаканах фьючерсов Binance, Bybit, OKX и Bitget — размер, расстояние до цены и сколько они стоят. NIR Markets.">
-  <link rel="icon" href="/favicon.ico" sizes="48x48">
-  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="canonical" href="https://nircoin.com/screener/densities/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Скринер плотностей — NIR Markets">
+  <meta property="og:description" content="Скринер плотностей: крупные лимитные заявки в стаканах фьючерсов Binance, Bybit, OKX и Bitget — размер, расстояние до цены и сколько они стоят. NIR Markets.">
+  <meta property="og:url" content="https://nircoin.com/screener/densities/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
+  <link rel="icon" href="/favicon.ico?v=2" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png?v=2" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+  <link rel="manifest" href="/manifest.webmanifest?v=2">
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=77">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -27,7 +34,7 @@
   </div>
 
   <header class="top">
-    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-app-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
     <nav aria-label="Разделы">
       <a href="/" data-i18n="navCoins">Криптовалюты</a>
       <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
@@ -36,7 +43,7 @@
     <div class="quick" aria-label="Мои разделы">
       <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
       <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
-      <a href="/nir/"><img src="/nir-coin-icon.svg" alt="" width="16" height="16"><span data-i18n="navNir">О NIR</span></a>
+      <a href="/nir/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/></svg><span data-i18n="navNir">О NIR</span></a>
     </div>
     <form id="search-form" class="search-form" action="/" role="search">
       <input id="search" class="search" name="q" type="search" placeholder="Поиск монеты или адреса" autocomplete="off">
@@ -74,12 +81,27 @@
       </div>
       <p class="muted ex-note" data-i18n="source">Данные: открытые стаканы фьючерсов Binance, Bybit, OKX и Bitget; сервер по очереди читает стаканы 100 самых торгуемых монет, примерно раз в минуту каждый. Плотность — уровень стакана в пределах 5% от цены, который в несколько раз больше среднего уровня рядом и не меньше $100 тыс. «Стоит» — сколько времени заявка держится на этой цене.</p>
     </article>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Плотности — крупные лимитные заявки («стены») в стаканах фьючерсов Binance, Bybit, OKX и Bitget. Заявка считается стеной, если она не дальше 5% от цены, стоит не меньше $100 тыс. и минимум вчетверо больше средней заявки рядом.</p>
+      <p>Видно сторону, размер, расстояние до цены и как давно стена стоит. Каждый стакан читается примерно раз в минуту, страница обновляется каждые 10 секунд.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>Densities are big limit orders ("walls") in the futures books of Binance, Bybit, OKX and Bitget. An order counts as a wall when it is within 5% of the price, worth at least $100K and at least four times the average order near it.</p>
+      <p>You see the side, size, distance to the price and how long the wall has stood. Each book is read about once a minute; the page refreshes every 10 seconds.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
 
   <footer>
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -88,10 +110,10 @@
     <a href="/" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
     <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
     <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
-    <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
+    <a href="/nir/#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/></svg><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=37"></script>
-  <script src="/densities.js?v=5"></script>
+  <script src="/common.js?v=39"></script>
+  <script src="/densities.js?v=6"></script>
 </body>
 </html>

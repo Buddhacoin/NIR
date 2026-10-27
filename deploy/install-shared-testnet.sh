@@ -157,16 +157,26 @@ www.$SITE_DOMAIN {
 
 $SITE_DOMAIN {
   encode gzip
+  # Scripts and styles carry their version in the address (?v=…): browsers keep them for good.
+  @versioned query v=*
+  header @versioned Cache-Control "public, max-age=31536000, immutable"
+  @pictures path *.svg *.png *.ico *.jpg *.webp *.webmanifest
+  header @pictures Cache-Control "public, max-age=86400"
   handle_path /api/* {
     reverse_proxy 127.0.0.1:8787
   }
   handle /market/* {
     reverse_proxy 127.0.0.1:8790
   }
+  # A coin's page comes from the market service with the coin's name and price in its HTML, for search
+  # engines (blockchain/market-seo.mjs); so does the site map.
   handle /coin/* {
-    root * $APP_DIR/site
-    rewrite * /coin/index.html
-    file_server
+    rewrite * /market/page{path}
+    reverse_proxy 127.0.0.1:8790
+  }
+  handle /sitemap.xml {
+    rewrite * /market/sitemap.xml
+    reverse_proxy 127.0.0.1:8790
   }
   handle /u/* {
     root * $APP_DIR/site

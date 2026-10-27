@@ -12,7 +12,7 @@ const en = {
   colPrice: "Price", colSize: "Size", colDistance: "To price", colRatio: "× average", colAge: "Standing",
   source: "Data: the open futures order books of Binance, Bybit, OKX and Bitget; the server reads the books of the 100 most traded coins in turn, each about once a minute. A wall is a book level within 5% of the price, several times the average level around it and at least $100K. “Standing” is how long the order has held that price.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { sides: { all: "Все", bid: "Покупка", ask: "Продажа" }, bid: "Покупка", ask: "Продажа", allExchanges: "Все биржи",

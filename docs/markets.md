@@ -29,6 +29,22 @@ visit. A source that fails keeps its last good data. A free CoinGecko demo key
 can be set as `COINGECKO_API_KEY` in `/etc/nir-market.env`. The page credits
 CoinGecko for prices and TradingView for charts.
 
+## Search engines
+
+The pages draw their figures in the browser, so what a crawler reads is in the
+HTML: each page has its title, description, canonical address and Open Graph
+tags, and each tool ends with a short "How it works" in both languages
+(`.explain`, the page's language shown). `/about/` lists every section and
+where its data comes from; the footer links it. `site/robots.txt` keeps
+crawlers out of the visitor's own pages (portfolio, alerts, profiles) and
+points at `/sitemap.xml`, which the market service writes
+(`blockchain/market-seo.mjs`, `GET /market/sitemap.xml`): the site's pages
+and every coin of the market list. A coin's page (`/coin/<id>`) comes from the
+service too (`GET /market/page/coin/<id>`): `site/coin/index.html` with the
+coin's name, price, change, market cap and volume in its title, description
+and heading; a coin outside the list gets the page as it is. Caddy passes both
+addresses to it.
+
 ## Design and navigation
 
 Day theme: white with a blue accent (#3861fb), thin grey dividers, green
@@ -362,29 +378,55 @@ coloured by the change, stablecoins left out unless asked for.
 
 The order book screener (`/screener/book/`, `site/book.js`,
 `blockchain/market-book.mjs`): one pair on one of eight exchanges, spot or
-futures (Binance, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
+futures (Binance — its spot market from its market-data addresses, which serve the Netherlands —, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
 Bitfinex, HitBTC), or several side by side in the constructor. `GET
 /market/book?ex=…&base=…&quote=…` reads the exchange's public book (no key) at
-most every two seconds whoever asks and sends it gathered into steps of about
-1/2000 of the price within 90 % of it. Depth: Coinbase, Bitstamp and HitBTC
+most every two seconds whoever asks and sends the exchange's own price levels
+(each side's 800 largest within its whole reach, each with the volume from the
+best price through it) and each side's totals out to every whole per cent. Depth: Coinbase, Bitstamp and HitBTC
 answer with their whole book; Bitfinex is read at three precisions (exact near
 the price, coarser further out); Binance (spot and futures) is kept in full
 depth by the server from the exchange's stream of every change on top of a
-snapshot, re-read every ten minutes and on any gap, for the pairs looked at in
-the last half hour and the trend screener's six busiest all the time; OKX, Kraken and Bybit
+snapshot, re-read every ten minutes and on any gap; Bybit (spot and futures)
+from its stream's 1,000 levels (its REST answer has 200 or 500); for the pairs looked at in
+the last half hour and the trend screener's six busiest all the time; OKX and Kraken
 give what their open answers hold (a few per cent around the price). The page
 says how far each book reaches. `/market/book/trades` and
 `/market/book/candles?tf=1m…1d` read the latest trades and candles the same
 way (candles every twenty seconds); exchanges that quote dollars answer for
-the stablecoin. The page gathers the book into a coarser step, keeps the
-levels of at least the smallest order within the chosen depth, shows big
-orders in bold, sums each side within the depth, filters the trades feed by
+the stablecoin. As on the order-book tools, the page shows the exchange's own prices (a
+price step in the settings gathers them), keeps the levels of at least the
+smallest order within the chosen depth (5–60 %, 90 % or MAX, the default),
+shows a big order's whole row lighter and bold, sums every order of each side
+within the depth, gives the volume from the price through a row on a pointer, filters the trades feed by
 the smallest trade, and draws the big orders on a candle chart as levels
 (green under the price, red above; hide, depth and reversed colours in the
 chart settings). Thresholds left empty follow the book (about forty levels
 shown, the eight biggest big); a dollar mode sets and shows them in dollars.
 Settings stay in the browser. The chart is TradingView's Lightweight Charts
 (`site/vendor/lightweight-charts.js`, Apache 2.0, credited in the footer).
+
+The chart has tools along its left side, as on the trading terminals: a
+cursor, horizontal and trend lines, a ruler giving the move between two
+points in per cent, price and candles, erasing the drawings and fitting the
+whole chart, and indicators (volume, MA 20 and 50, EMA 200); drawings are kept
+in the browser for each exchange and pair. In the constructor each exchange
+may have its own smallest and big order (its gear beside its price). The
+statistics mode reads the exchange's daily candles: for the last 7, 14 and 30
+days the open, close, low, high, average daily volatility ((high − low) / open)
+and volume; today's expected range (its open ± the 7-day average volatility);
+and every day back as far as the candles go.
+
+Pages open at once, as in an app (`site/common.js`, `site/sw.js`): the last
+answers of the data a page starts from (the market overview, the visitor's
+portfolio, wallets and profile) are kept in the browser for a minute or two
+and handed to the page straight away while a fresh copy is fetched behind
+them, and any change the visitor makes drops their kept copies; the account
+as last seen draws the menus before the server answers; the service worker
+keeps versioned scripts and styles for good, answers a page from its kept
+copy when the server takes over a second, and fetches the bottom menu's pages
+and the visitor's data ahead while the browser is idle. Caddy marks versioned
+files immutable.
 
 `/screener/densities/` is the order-book density screener
 (`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit

@@ -20,7 +20,7 @@ const en = {
   more: "Show all ▾", descriptionBy: "Description: CoinGecko", whereTraded: "Where it trades", exchange: "Exchange",
   pair: "Pair", colPrice: "Price", colVolume: "Volume 24h", trust: "Trust",
   pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
-  aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR",
+  aboutNir: "About the NIR blockchain →", howItWorks: "How it works", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR",
 };
 const words = {
   ru: { loading: "Загружаю данные монеты…", missing: "Такой монеты нет. Вернитесь к списку и выберите монету там.",

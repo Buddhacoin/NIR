@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createMarketService, normalizeCoin, normalizeCoins, withoutLookalikes } from "../blockchain/market-service.mjs";
+import { coinPage, siteBase, sitemap } from "../blockchain/market-seo.mjs";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/market/${name}`, import.meta.url), "utf8"));
 const responses = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", fng: "fng.json" };
@@ -443,14 +444,17 @@ test("a futures market that appears after the screener began watching an exchang
   assert.deepEqual([listing.symbol, listing.exchange, listing.price, listing.at], ["HERA", "bitget", 2, clock]);
 });
 
-test("the order book screener gathers a book into price steps and reads each exchange's answers its own way", async () => {
+test("the order book screener keeps the exchange's own levels with their totals and reads each exchange's answers its own way", async () => {
   const { createBook, gatherBook, niceStep } = await import("../blockchain/market-book.mjs");
   assert.equal(niceStep(1.17), 2);
   assert.equal(niceStep(0.0031), 0.005);
-  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [10, 5]], asks: [[100.1, 3], [100.9, 4]] }, 0.5, 100);
-  assert.equal(gathered.step, 1);
-  assert.deepEqual(gathered.bids, [[99, 3]], "bids round down into their step; one far from the price is left out");
-  assert.deepEqual(gathered.asks, [[101, 7]], "asks round up");
+  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5], [10, 5]], asks: [[100.9, 4], [100.1, 3]] }, 0.5, 2);
+  assert.equal(gathered.price, 100);
+  assert.deepEqual(gathered.bids, [[99.1, 2, 3], [60, 5, 8]], "the exchange's own prices, the largest kept, each with the volume through it; one beyond the range is left out");
+  assert.deepEqual(gathered.asks, [[100.1, 3, 3], [100.9, 4, 7]], "asks best first");
+  assert.deepEqual(gathered.totals.bids[0], [3, 298.1], "within 1 %: every order, the small ones too");
+  assert.deepEqual(gathered.totals.bids[39], [8, 598.1], "within 40 %");
+  assert.equal(gathered.totals.asks.length, 100);
   const asked = [];
   const get = async (url) => {
     asked.push(url);
@@ -468,6 +472,7 @@ test("the order book screener gathers a book into price steps and reads each exc
   };
   const swap = await call("/market/book?ex=okx-f&base=ETH&quote=U" + "SDT");
   assert.deepEqual([swap.data.bids[0][1], swap.data.asks[0][1]], [1, 2], "contracts count as their coins");
+  assert.deepEqual(swap.data.bids[0], [2000, 1, 1]);
   assert.deepEqual((await call("/market/book/trades?ex=okx-f&base=ETH&quote=U" + "SDT")).data.trades, [{ time: 1000, price: 2000.5, amount: 0.30000000000000004, side: "sell" }]);
   const dollars = await call("/market/book?ex=bitfinex&base=ETH&quote=U" + "SDT");
   assert.equal(dollars.data.quote, "USD", "an exchange that trades dollars answers for the stablecoin");
@@ -509,4 +514,40 @@ test("Binance's book is kept in full depth from its stream of changes on top of 
   // Bitfinex at several precisions: each coarser layer adds only what lies beyond the finer one.
   assert.deepEqual(layered([{ bids: [[100, 1], [99, 1]], asks: [[101, 1]] }, { bids: [[100, 5], [90, 2]], asks: [[101, 9], [120, 3]] }]),
     { bids: [[100, 1], [99, 1], [90, 2]], asks: [[101, 1], [120, 3]] });
+});
+
+test("Bybit's book comes from its stream: a snapshot, then changes; a depth it does not offer falls back to a smaller one", async () => {
+  const { createDeep } = await import("../blockchain/market-book.mjs");
+  const sockets = [];
+  const deep = createDeep({ get: async () => null, socket: () => { const ws = { sent: [], send(text) { this.sent.push(JSON.parse(text)); }, close() {} }; sockets.push(ws); return ws; }, now: () => 0 });
+  deep.open("bybit-f", "ETHX", null);
+  const ws = sockets[0];
+  ws.onopen();
+  assert.deepEqual(ws.sent[0], { op: "subscribe", args: ["orderbook.1000.ETHX"] });
+  ws.onmessage({ data: JSON.stringify({ op: "subscribe", success: false }) });
+  assert.deepEqual(ws.sent[1], { op: "subscribe", args: ["orderbook.500.ETHX"] });
+  ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "delta", data: { b: [["1", "1"]], a: [], u: 5 } }) });
+  assert.equal(deep.read("bybit-f", "ETHX"), null, "a change before the snapshot is not a book");
+  ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "snapshot", data: { b: [["99", "2"], ["98", "1"]], a: [["101", "3"]], u: 10 } }) });
+  ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "delta", data: { b: [["98", "0"], ["97", "4"]], a: [], u: 11 } }) });
+  assert.deepEqual(deep.read("bybit-f", "ETHX").bids.sort((left, right) => right[0] - left[0]), [[99, 2], [97, 4]]);
+});
+
+test("search engines get a site map with every coin and a coin page with its name and price in the HTML", () => {
+  const coins = [{ id: "alpha", symbol: "ALP", name: "Alpha <One>", price: 1234.5, change24h: -2.5, marketCap: 3.2e9, volume: 4.5e6, rank: 7 }];
+  assert.equal(siteBase("nircoin.com"), "https://nircoin.com");
+  assert.equal(siteBase("evil.com/x"), "https://nircoin.com");
+  const map = sitemap("https://nircoin.com", coins);
+  assert.match(map, /<loc>https:\/\/nircoin\.com\/screener\/book\/<\/loc>/);
+  assert.match(map, /<loc>https:\/\/nircoin\.com\/coin\/alpha<\/loc>/);
+  const template = readFileSync(new URL("../site/coin/index.html", import.meta.url), "utf8");
+  const page = coinPage(template, "https://nircoin.com", "alpha", coins[0]);
+  assert.match(page, /<title>Alpha &lt;One&gt; \(ALP\) — цена/);
+  assert.match(page, /content="Курс Alpha &lt;One&gt; \(ALP\) сегодня: \$1,234\.5, −2\.50% за 24 ч\. Капитализация \$3\.20 млрд \(№7\)/);
+  assert.match(page, /<link rel="canonical" href="https:\/\/nircoin\.com\/coin\/alpha">/);
+  assert.match(page, /<h1 id="name">Alpha &lt;One&gt;<\/h1>/);
+  // A coin the server does not know keeps the page as it is, with its own address.
+  const unknown = coinPage(template, "https://nircoin.com", "beta", null);
+  assert.match(unknown, /<title>Монета — NIR Markets<\/title>/);
+  assert.match(unknown, /<link rel="canonical" href="https:\/\/nircoin\.com\/coin\/beta">/);
 });

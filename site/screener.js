@@ -12,7 +12,7 @@ const en = {
   colVolume: "24h volume", colOi: "Open interest", colOi1h: "OI 1h", colFunding: "Funding", colExchanges: "Exchanges",
   source: "Data: the open futures markets of Bitget, OKX, Gate and MEXC, updated every minute. Changes over 5 minutes to 4 hours come from the server's own price snapshots, so after a restart they fill in gradually.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { frames: { ch5m: "5м", ch15m: "15м", ch1h: "1ч", ch4h: "4ч", ch24h: "24ч" },

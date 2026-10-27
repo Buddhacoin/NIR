@@ -15,7 +15,7 @@ const en = {
   colWallet: "Address", colIn: "Received from", colOut: "Sent to", colCount: "Transfers", dirAll: "Transfers", dirIn: "Inflow", dirOut: "Outflow",
   colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", colValue2: "Value", colToken: "Token", more: "Show more", suggest: "✎ Suggest a name", visualize: "Bubbles: links",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
   ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Следить за кошельком", tracked: "★ Слежу",
