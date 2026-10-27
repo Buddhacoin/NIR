@@ -1212,3 +1212,4 @@ html.touch { overscroll-behavior-y: contain; }
 .dash-portfolios button.on { border-color: var(--accent); background: var(--tint); color: var(--text); }
 .dash-portfolios .dash-new { border-style: dashed; color: var(--accent); }
 .dash-portfolios .dash-icon { padding: 6px 10px; }
+.w-entity { color: var(--accent); font-weight: 650; white-space: nowrap; }

@@ -200,7 +200,7 @@ const WHALES = [
   { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", ens: "vitalik.eth", kind: { ru: "Персона", en: "Individual" } },
   { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", kind: { ru: "Фонд", en: "Foundation" } },
   { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0x0000006daea1723962647b7e189d311d757Fb793", name: "Wintermute", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "0xDBF5E9c5206d0dB70a90108bf936DA60221dC080", name: "Wintermute", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
   { address: "0x71660c4005BA85c37ccec55d0C4493E66Fe775d3", name: "Coinbase", kind: { ru: "Биржа", en: "Exchange" } },
   { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", kind: { ru: "Биржа", en: "Exchange" } },
   { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", kind: { ru: "Биржа", en: "Exchange" } },
@@ -223,6 +223,9 @@ const WHALES = [
 ];
 const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
 const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
+// An organisation's name from a wallet's label: "Binance 14" or "Binance: Hot Wallet" → "Binance".
+const entityName = (name) => String(name ?? "").split(/[:(]/)[0].replace(/\s+\d+$/, "").trim();
+const entityUrl = (name) => `/entity/?name=${encodeURIComponent(name)}`;
 // Open labels fetched by the page: lower-case address → { name, logo, site, entity }.
 const openNames = new Map();
 async function loadOpenNames(addresses) {

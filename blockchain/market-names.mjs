@@ -185,5 +185,17 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     if (pages.size > 500) pages.delete(pages.keys().next().value);
     return value;
   }
-  return { lookup, name, directory, remember, search, count, crawl, start };
+  // An organisation's known wallets: those its label names as the entity, or whose name starts with it
+  // ("Binance 14", "Binance: Hot Wallet"); the busiest names first, at most `limit`.
+  function members(entity, limit = 40) {
+    const wanted = String(entity ?? "").trim();
+    if (wanted.length < 2 || wanted.length > 60) return [];
+    const like = `${wanted.replace(/[%_\\]/g, (char) => `\\${char}`)}%`;
+    return sql(`SELECT address, name, entity, logo FROM wallet_names WHERE name IS NOT NULL AND (entity = ? COLLATE NOCASE
+      OR name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\' AND (substr(name, ?, 1) IN (':', ' ', '(')) ) LIMIT ?`)
+      .all(wanted, wanted, `${wanted}%`.replace(/%$/, "%"), wanted.length + 1, limit)
+      .filter((row) => !/exploit|scam|phish|deposit/i.test(row.name))
+      .map((row) => ({ address: row.address, name: row.name, logo: row.logo ?? null }));
+  }
+  return { lookup, name, directory, remember, search, count, crawl, start, members };
 }

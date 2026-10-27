@@ -20,7 +20,7 @@ test("the Mac installer is valid bash, pins Node.js like the server, and verifie
 test("the website links only files it ships and shows the same install command", () => {
   // The markets page is the home page; the NIR page moved to /nir/.
   for (const page of ["site/index.html", "site/nir/index.html", "site/coin/index.html", "site/u/index.html",
-    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html", "site/portfolio/index.html", "site/alerts/index.html", "site/address/index.html", "site/transfers/index.html", "site/wallets/index.html", "site/screener/index.html", "site/visualizer/index.html", "site/screener/densities/index.html"]) {
+    "site/privacy/index.html", "site/terms/index.html", "site/charts/index.html", "site/portfolio/index.html", "site/alerts/index.html", "site/address/index.html", "site/transfers/index.html", "site/wallets/index.html", "site/screener/index.html", "site/visualizer/index.html", "site/screener/densities/index.html", "site/entity/index.html"]) {
     const html = read(page);
     for (const [, file] of html.matchAll(/(?:src|href)="([^"#:?]+)(?:\?[^"]*)?"/g)) {
       const target = file.startsWith("/") ? new URL(`../site${file}`, import.meta.url)
@@ -176,4 +176,12 @@ test("the arbitrage screener page has English for every text and reads the serve
   for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `arbitrage.js: no English text for ${key}`);
   assert.match(code, /fetch\("\/market\/arbitrage"\)/);
   for (const page of ["site/screener/index.html", "site/screener/densities/index.html"]) assert.match(read(page), /href="\/screener\/arbitrage\/"/);
+});
+
+test("an organisation's page adds up its known wallets, and popular wallets link to it", () => {
+  const html = read("site/entity/index.html");
+  const code = read("site/entity.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `entity.js: no English text for ${key}`);
+  assert.match(code, /\/market\/chain\/entity\?name=/);
+  assert.match(read("site/wallets.js"), /\/market\/chain\/entities\?names=/);
 });

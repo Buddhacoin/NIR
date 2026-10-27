@@ -16,14 +16,27 @@ const en = {
 const words = {
   ru: { groups: { all: "Все", featured: "Известные", exchange: "Биржи", fund: "Фонды", "hot-wallet": "Горячие кошельки" },
     kinds: { exchange: "Биржа", fund: "Фонд", "hot-wallet": "Горячий кошелёк" }, filter: "Имя или адрес",
-    loading: "загружаю…", unknown: "—", track: "☆ Отследить", tracked: "★ Отслеживается", empty: "Ничего не найдено.",
+    loading: "загружаю…", unknown: "—", track: "☆ Следить", tracked: "★ Слежу", wallets: (count) => `${count} адресов →`, empty: "Ничего не найдено.",
     loadingList: "Загружаю список…", contract: "Контракт", wallet: "Кошелёк", signIn: "Войдите через Google, чтобы отслеживать адреса." },
   en: { groups: { all: "All", featured: "Well known", exchange: "Exchanges", fund: "Funds", "hot-wallet": "Hot wallets" },
     kinds: { exchange: "Exchange", fund: "Fund", "hot-wallet": "Hot wallet" }, filter: "Name or address",
-    loading: "loading…", unknown: "—", track: "☆ Track", tracked: "★ Tracked", empty: "Nothing found.",
+    loading: "loading…", unknown: "—", track: "☆ Watch", tracked: "★ Watching", wallets: (count) => `${count} wallets →`, empty: "Nothing found.",
     loadingList: "Loading the list…", contract: "Contract", wallet: "Wallet", signIn: "Sign in with Google to track addresses." },
 };
 const t = () => words[language === "en" ? "en" : "ru"];
+// How many known wallets each organisation has (/market/chain/entities), asked for the rows shown.
+const entityCounts = new Map();
+const askCounts = new Set();
+async function loadCounts() {
+  const wanted = [...askCounts].filter((name) => name.length >= 2 && !entityCounts.has(name)).slice(0, 60);
+  askCounts.clear();
+  if (!wanted.length) return;
+  for (const name of wanted) entityCounts.set(name, 0);
+  const answer = await fetch(`/market/chain/entities?names=${wanted.map(encodeURIComponent).join(",")}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  // The popular list's own wallets of an organisation count too.
+  for (const name of wanted) entityCounts.set(name, Math.max(answer?.counts?.[name] ?? 0, WHALES.filter((item) => entityName(item.name) === name).length));
+  if (wanted.some((name) => entityCounts.get(name) > 1)) render();
+}
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const balances = new Map(); // address → { total, chains } once loaded, null if it failed
 const lists = {}; // group → { items, next, loading }
@@ -87,12 +100,18 @@ function render() {
     track.addEventListener("click", () => void toggle(item.address));
     const action = node("td");
     action.append(bubblesLink(item.address, true), track);
-    row.append(node("td", "rank", String(index + 1)), who, node("td", "left muted", item.kind), networks,
+    // An organisation with several known wallets links to its page, where they all add up.
+    const kind = node("td", "left muted", item.kind);
+    const org = entityName(item.name);
+    if ((entityCounts.get(org) ?? 0) > 1) kind.append(" · ", Object.assign(node("a", "w-entity", t().wallets(entityCounts.get(org))), { href: entityUrl(org) }));
+    else if (!entityCounts.has(org)) askCounts.add(org);
+    row.append(node("td", "rank", String(index + 1)), who, kind, networks,
       node("td", "", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total)), action);
     return row;
   }) : [(() => { const row = node("tr"); const cell = node("td", "muted ex-empty", list?.loading ? t().loadingList : t().empty); cell.colSpan = 6; row.append(cell); return row; })()]));
   $("#more").hidden = group === "featured" || !list?.next;
   watchRows();
+  void loadCounts();
 }
 
 // A group's next page of fifty from the open labels; "all" takes the next page of each.

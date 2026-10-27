@@ -555,3 +555,15 @@ test("the service keeps every transfer it reads in its own store and answers a w
   assert.ok(again.rows.length >= links.rows.length);
   assert.ok(asked.length - before <= 4, "a fresh wallet is answered from the store, not the explorers");
 });
+
+test("an organisation's known wallets are found by its label or the start of their names", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const names = createNames({ get: async () => null });
+  const wallet = (digit) => `0x${digit.repeat(40)}`;
+  names.remember([{ address: wallet("1"), name: "Olympus 14", entity: null }, { address: wallet("2"), name: "Olympus: Hot Wallet", entity: null },
+    { address: wallet("3"), name: "Cold storage", entity: "Olympus" }, { address: wallet("4"), name: "Olympus Exploiter", entity: null },
+    { address: wallet("5"), name: "Olympusdao", entity: null }, { address: wallet("6"), name: "Olympus Deposit", entity: null }], "test");
+  assert.deepEqual(names.members("Olympus").map((item) => item.address).sort(), [wallet("1"), wallet("2"), wallet("3")],
+    "not an exploiter, a deposit address or another name that merely starts the same");
+  assert.deepEqual(names.members("O"), [], "too short a name finds nothing");
+});
