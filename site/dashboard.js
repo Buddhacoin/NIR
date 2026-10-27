@@ -540,8 +540,8 @@ let dashFrame = false;
 function renderDashboard() {
   const root = $("#dash");
   if (!root) return;
-  root.hidden = !page?.own;
-  if (!page?.own) return;
+  root.hidden = !page?.own || view !== "dash";
+  if (root.hidden) return;
   if (saved === null) { void loadSaved(); return; }
   if (dashFrame) return;
   dashFrame = true;

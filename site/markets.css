@@ -996,7 +996,7 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
   .dash-q { height: 420px; }
 }
 /* The owner's profile with the dashboard takes the page's full width. */
-.profile-page:has(.dash:not([hidden])) { max-width: none; }
+.profile-page:has(.dash:not([hidden])), .profile-page:has(#tab-dash:not([hidden])) { max-width: none; }
 .dash { margin: 0; }
 /* A coin's page spans the window as on the big market sites: the side columns take about a quarter
    each (331 px at 1440, 442 and 390 at 1920) and the chart the rest. */
@@ -1213,3 +1213,4 @@ html.touch { overscroll-behavior-y: contain; }
 .dash-portfolios .dash-new { border-style: dashed; color: var(--accent); }
 .dash-portfolios .dash-icon { padding: 6px 10px; }
 .w-entity { color: var(--accent); font-weight: 650; white-space: nowrap; }
+.profile-page .profile-tabs { margin: 4px 0 16px; }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -184,4 +184,12 @@ test("an organisation's page adds up its known wallets, and popular wallets link
   for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `entity.js: no English text for ${key}`);
   assert.match(code, /\/market\/chain\/entity\?name=/);
   assert.match(read("site/wallets.js"), /\/market\/chain\/entities\?names=/);
+});
+
+test("every page script parses", () => {
+  // A typo in one script (a stray quote in a text) would break a whole page without failing any other test.
+  for (const name of readdirSync(new URL("../site/", import.meta.url)).filter((file) => file.endsWith(".js"))) {
+    const result = spawnSync(process.execPath, ["--check", `site/${name}`], { cwd: new URL("..", import.meta.url) });
+    assert.equal(result.status, 0, `site/${name}: ${result.stderr}`);
+  }
 });

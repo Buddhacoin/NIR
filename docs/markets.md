@@ -211,6 +211,10 @@ them, makes a new one, renames or deletes the chosen one (its wallets stay
 under Tracked), and "Add +" puts a wallet into the chosen portfolio. Own
 wallets saved before portfolios existed join a first one. "Watch wallet" on
 a wallet's page saves it under Tracked and links there.
+The profile's sections stand in a row under its head: "Tracking" (the
+owner's dashboard of portfolios, shown first), Activity, Comments,
+Watchlist, My addresses and Tracked; one shows at a time, and a link such
+as `/u/<name>#tracked` opens that section.
 
 ## Portfolio
 
