@@ -163,7 +163,8 @@ function sideTable(kind, shown, base) {
   const head = node("thead");
   head.innerHTML = `<tr><th class="left"></th><th></th></tr>`;
   head.querySelector("th").textContent = kind === "bid" ? t().bid : t().ask;
-  head.querySelectorAll("th")[1].textContent = t().amount;
+  // The unit in the head, so it reads plainly: coins (or dollars in dollar mode).
+  head.querySelectorAll("th")[1].textContent = `${t().amount}, ${cfg.usd ? "$" : base.toLowerCase()}`;
   const body = node("tbody");
   const sum = node("tr", "bk-total");
   sum.title = t().total;
@@ -194,7 +195,7 @@ function tradesTable(shown, withExchange) {
   const table = node("table", "ex-table bk-trades");
   const head = node("thead");
   const row = node("tr");
-  for (const [label, left] of [[t().time, true], ...(withExchange ? [[t().exchangeCol, true]] : []), [t().price], [t().amount], [t().type]]) row.append(node("th", left ? "left" : "", label));
+  for (const [label, left] of [[t().time, true], ...(withExchange ? [[t().exchangeCol, true]] : []), [t().price], [`${t().amount}, ${cfg.usd ? "$" : cfg.base.toLowerCase()}`], [t().type]]) row.append(node("th", left ? "left" : "", label));
   head.append(row);
   const body = node("tbody");
   const list = trades.filter((item) => sizeOf(item.price, item.amount) >= limits.min).slice(0, cfg.tradesCount);
